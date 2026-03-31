@@ -1,0 +1,17 @@
+{
+  "commitment_type": "mock",
+  "kvstore_type": "memory",
+  "eat_type": "simple",
+  "cas_type": "mock",
+  "kvstore": {
+    "path": "./data/malt.db",
+    "in_memory": true
+  },
+  "commitment": {
+    "vector_size": 256
+  },
+  "cas": {
+    "gateway_url": "https://ipfs.io/ipfs",
+    "timeout": "30s"
+  }
+}

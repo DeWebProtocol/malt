@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/internal/eat/simple"
+	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/internal/sce"
-	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
-	"github.com/dewebprotocol/malt/key"
 	malt "github.com/dewebprotocol/malt/malt"
+	"github.com/dewebprotocol/malt/key"
 )
 
 func main() {
@@ -36,20 +35,50 @@ func printUsage() {
 	fmt.Println("MALT - Mutable structure LAyer on Top")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  malt <command> [args]")
+	fmt.Println("  malt <command> [options]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  demo    Run a demo showing MALT capabilities")
 	fmt.Println("  help    Show this help message")
+	fmt.Println()
+	fmt.Println("Options (for demo and future commands):")
+	fmt.Println("  -config <path>        Config file path (JSON)")
+	fmt.Println("  -commitment <type>    Commitment type: mock/kzg/verkle/ipa")
+	fmt.Println("  -kvstore <type>       KVStore type: memory/badger")
+	fmt.Println("  -eat <type>           EAT type: simple/versioned")
+	fmt.Println("  -cas <type>           CAS type: mock/ipfs-gateway")
+	fmt.Println("  -kv-path <path>       BadgerDB database path")
+	fmt.Println("  -ipfs-gateway <url>   IPFS gateway URL")
+	fmt.Println()
+	fmt.Println("Environment variables:")
+	fmt.Println("  MALT_COMMITMENT       Commitment type")
+	fmt.Println("  MALT_KVSTORE          KVStore type")
+	fmt.Println("  MALT_EAT              EAT type")
+	fmt.Println("  MALT_CAS              CAS type")
+	fmt.Println("  MALT_KV_PATH          BadgerDB path")
+	fmt.Println("  MALT_IPFS_GATEWAY     IPFS gateway URL")
 }
 
 func runDemo() {
+	// Load configuration from file, env, and flags
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Println("=== MALT Demo ===")
 	fmt.Println()
+	fmt.Printf("Configuration: %s\n", cfg)
+	fmt.Println()
 
-	// Create components
-	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	// Create node with injected dependencies
+	node, err := malt.NewNode(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating node: %v\n", err)
+		os.Exit(1)
+	}
+	defer node.Close()
 
 	// Create target CIDs
 	target1, _ := key.NewPayloadCID([]byte("target1"))
@@ -60,8 +89,8 @@ func runDemo() {
 	arcs.Add("link1", target1)
 	arcs.Add("link2", target2)
 
-	// Create structure
-	structure, err := malt.NewStructure(arcs, e, s)
+	// Create structure using node
+	structure, err := node.NewStructure(arcs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating structure: %v\n", err)
 		os.Exit(1)
@@ -92,4 +121,7 @@ func runDemo() {
 
 	fmt.Printf("Updated link1 -> %s\n", newTarget)
 	fmt.Printf("New root: %s\n", newStructure.Root())
+
+	fmt.Println()
+	fmt.Println("=== Demo Complete ===")
 }

@@ -4,9 +4,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/internal/eat/simple"
+	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/internal/sce"
-	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
@@ -15,16 +14,50 @@ func main() {
 	fmt.Println("=== MALT (Mutable structure LAyer on Top) Demo ===")
 	fmt.Println()
 
-	// Create components
-	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	// Method 1: Use default configuration
+	fmt.Println("Method 1: Default configuration")
+	fmt.Println("--------------------------------")
+	runWithConfig(config.DefaultConfig())
+	fmt.Println()
 
-	// Simulate target CIDs (in practice, these would come from CAS/IPFS)
+	// Method 2: Custom configuration
+	fmt.Println("Method 2: Custom configuration")
+	fmt.Println("-------------------------------")
+	cfg := &config.Config{
+		CommitmentType: "mock",
+		KVStoreType:    "memory",
+		EATType:        "simple",
+		CASType:        "mock",
+		KVStore: config.KVStoreConfig{
+			InMemory: true,
+		},
+		Commitment: config.CommitmentConfig{
+			VectorSize: 256,
+		},
+		CAS: config.CASConfig{
+			GatewayURL: "https://ipfs.io/ipfs",
+			Timeout:    "30s",
+		},
+	}
+	runWithConfig(cfg)
+}
+
+func runWithConfig(cfg *config.Config) {
+	// Create node - this initializes all components based on config
+	node, err := malt.NewNode(cfg)
+	if err != nil {
+		panic(err)
+	}
+	defer node.Close()
+
+	fmt.Printf("Node initialized with: %s\n", cfg)
+
+	// Simulate target CIDs
 	target1CID, _ := key.NewPayloadCID([]byte("document.pdf"))
 	target2CID, _ := key.NewPayloadCID([]byte("image.png"))
 	target3CID, _ := key.NewPayloadCID([]byte("data.json"))
 
-	fmt.Println("Step 1: Create initial structure")
+	fmt.Println("\nStep 1: Create initial structure")
 	fmt.Println("--------------------------------")
 
 	// Create a structure with explicit arcs
@@ -32,7 +65,8 @@ func main() {
 	arcs.Add("document", target1CID)
 	arcs.Add("image", target2CID)
 
-	structure, err := malt.NewStructure(arcs, e, s)
+	// Use node to create structure (injects EAT and commitment automatically)
+	structure, err := node.NewStructure(arcs)
 	if err != nil {
 		panic(err)
 	}
@@ -40,10 +74,9 @@ func main() {
 	fmt.Printf("Created structure with commitment: %s\n", structure.Root())
 	fmt.Printf("  - document -> %s\n", target1CID)
 	fmt.Printf("  - image -> %s\n", target2CID)
-	fmt.Println()
 
 	// Resolve and verify
-	fmt.Println("Step 2: Resolve and verify arcs")
+	fmt.Println("\nStep 2: Resolve and verify arcs")
 	fmt.Println("--------------------------------")
 
 	resolved, proof, err := structure.Resolve("document")
@@ -58,10 +91,9 @@ func main() {
 
 	fmt.Printf("Resolved 'document': %s\n", resolved)
 	fmt.Printf("Proof valid: %v\n", valid)
-	fmt.Println()
 
 	// Update an arc
-	fmt.Println("Step 3: Update arc (localized update)")
+	fmt.Println("\nStep 3: Update arc (localized update)")
 	fmt.Println("--------------------------------------")
 
 	updatedStructure, err := structure.Update("document", target3CID)
@@ -72,24 +104,11 @@ func main() {
 	fmt.Printf("Updated 'document' -> %s\n", target3CID)
 	fmt.Printf("New commitment: %s\n", updatedStructure.Root())
 	fmt.Printf("Old commitment preserved: %s\n", structure.Root())
-	fmt.Println()
 
-	// Verify new commitment
-	resolved, proof, err = updatedStructure.Resolve("document")
-	if err != nil {
-		panic(err)
-	}
-
-	valid, _ = updatedStructure.Verify("document", resolved, proof)
-	fmt.Printf("Resolved 'document' with new commitment: %s\n", resolved)
-	fmt.Printf("Proof valid: %v\n", valid)
-	fmt.Println()
-
-	// Add new arc by updating the arc set
-	fmt.Println("Step 4: Add new arc")
+	// Add new arc
+	fmt.Println("\nStep 4: Add new arc")
 	fmt.Println("-------------------")
 
-	// Get current arcs and add new one
 	newArcs := sce.NewMapArcSetView()
 	currentArcs := updatedStructure.GetArcSet()
 	iter := currentArcs.Iterate()
@@ -102,21 +121,18 @@ func main() {
 	}
 	newArcs.Add("data", target3CID)
 
-	// Create new structure with updated arcs
-	structure2, err := malt.NewStructure(newArcs, e, s)
+	structure2, err := node.NewStructure(newArcs)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Printf("Added 'data' -> %s\n", target3CID)
 	fmt.Printf("New commitment: %s\n", structure2.Root())
-	fmt.Println()
 
 	// Stats
-	fmt.Println("Statistics")
+	fmt.Println("\nStatistics")
 	fmt.Println("----------")
 	fmt.Printf("Arc count: %d\n", structure2.GetArcSet().Len())
 
-	fmt.Println()
-	fmt.Println("=== Demo Complete ===")
+	fmt.Println("\n=== Demo Complete ===")
 }
