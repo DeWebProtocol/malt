@@ -8,7 +8,7 @@ import (
 )
 
 func TestBadgerKV(t *testing.T) {
-	store, err := New(&Config{InMemory: true})
+	store, err := New(WithInMemory(true))
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestBadgerKV(t *testing.T) {
 }
 
 func TestBadgerKVIterator(t *testing.T) {
-	store, err := New(&Config{InMemory: true})
+	store, err := New(WithInMemory(true))
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}

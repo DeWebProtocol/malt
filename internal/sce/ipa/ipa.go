@@ -23,38 +23,14 @@ const (
 
 // Commitment implements sce.CommitmentScheme using Inner Product Arguments.
 type Commitment struct {
-	config *Config
+	opts *options
+
+	// ipaConfig is the underlying IPA configuration
+	ipaConfig *ipa.IPAConfig
 
 	// auxStore stores auxiliary data for local updates
 	mu       sync.RWMutex
 	auxStore map[string]*auxData
-}
-
-// Config holds configuration for IPA commitment.
-type Config struct {
-	// VectorSize is the maximum size of the vector (must be <= 256)
-	VectorSize int
-
-	// ipaConfig is the underlying IPA configuration
-	ipaConfig *ipa.IPAConfig
-}
-
-// NewConfig creates a new IPA configuration.
-func NewConfig(vectorSize int) (*Config, error) {
-	if vectorSize <= 0 || vectorSize > MaxVectorSize {
-		return nil, fmt.Errorf("vector size must be between 1 and %d, got %d", MaxVectorSize, vectorSize)
-	}
-
-	// Initialize IPA settings (generates SRS)
-	ipaConfig, err := ipa.NewIPASettings()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create IPA settings: %w", err)
-	}
-
-	return &Config{
-		VectorSize: vectorSize,
-		ipaConfig:  ipaConfig,
-	}, nil
 }
 
 // auxData holds auxiliary data for a commitment.
@@ -64,18 +40,26 @@ type auxData struct {
 	indexToPath map[int]string
 }
 
-// NewCommitment creates a new IPA commitment scheme.
-func NewCommitment(cfg *Config) (*Commitment, error) {
-	if cfg == nil {
-		var err error
-		cfg, err = NewConfig(MaxVectorSize)
-		if err != nil {
-			return nil, err
-		}
+// NewCommitment creates a new IPA commitment scheme with the given options.
+func NewCommitment(opts ...Option) (*Commitment, error) {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	if options.vectorSize <= 0 || options.vectorSize > MaxVectorSize {
+		return nil, fmt.Errorf("vector size must be between 1 and %d, got %d", MaxVectorSize, options.vectorSize)
+	}
+
+	// Initialize IPA settings (generates SRS)
+	ipaConfig, err := ipa.NewIPASettings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IPA settings: %w", err)
 	}
 
 	return &Commitment{
-		config:    cfg,
+		opts:      options,
+		ipaConfig: ipaConfig,
 		auxStore:  make(map[string]*auxData),
 	}, nil
 }
@@ -93,7 +77,7 @@ func (i *Commitment) Commit(arcs sce.ArcSetView) (key.Key, error) {
 	}
 
 	// Compute IPA commitment
-	comm := i.config.ipaConfig.Commit(vector)
+	comm := i.ipaConfig.Commit(vector)
 
 	// Store auxiliary data for later updates
 	commBytes := comm.Bytes()
@@ -150,7 +134,7 @@ func (i *Commitment) Prove(root key.Key, arcs sce.ArcSetView, path string) (key.
 	evalPoint.SetUint64(uint64(index))
 
 	// Create IPA proof
-	proof, err := ipa.CreateIPAProof(transcript, i.config.ipaConfig, comm, aux.vector, evalPoint)
+	proof, err := ipa.CreateIPAProof(transcript, i.ipaConfig, comm, aux.vector, evalPoint)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create IPA proof: %w", err)
 	}
@@ -209,7 +193,7 @@ func (i *Commitment) Verify(root key.Key, path string, target key.Key, proof sce
 	output := keyToFieldElement(target)
 
 	// Verify IPA proof
-	ok, err = ipa.CheckIPAProof(transcript, i.config.ipaConfig, comm, *ipaProof, evalPoint, output)
+	ok, err = ipa.CheckIPAProof(transcript, i.ipaConfig, comm, *ipaProof, evalPoint, output)
 	if err != nil {
 		return false, fmt.Errorf("failed to check IPA proof: %w", err)
 	}
@@ -316,7 +300,7 @@ func (i *Commitment) BatchUpdate(root key.Key, arcs sce.ArcSetView, updates map[
 
 // arcSetToVector converts an arc set to an IPA vector.
 func (i *Commitment) arcSetToVector(arcs sce.ArcSetView) ([]fr.Element, map[string]int, map[int]string, error) {
-	vector := make([]fr.Element, i.config.VectorSize)
+	vector := make([]fr.Element, i.opts.vectorSize)
 	pathToIndex := make(map[string]int)
 	indexToPath := make(map[int]string)
 
@@ -344,8 +328,8 @@ func (i *Commitment) arcSetToVector(arcs sce.ArcSetView) ([]fr.Element, map[stri
 
 	// Map paths to indices
 	for idx, path := range paths {
-		if idx >= i.config.VectorSize {
-			return nil, nil, nil, fmt.Errorf("arc set exceeds maximum vector size (%d)", i.config.VectorSize)
+		if idx >= i.opts.vectorSize {
+			return nil, nil, nil, fmt.Errorf("arc set exceeds maximum vector size (%d)", i.opts.vectorSize)
 		}
 
 		target, ok := arcs.Get(path)
@@ -371,7 +355,7 @@ func (i *Commitment) updateCommitment(commBytes []byte, index int, diff fr.Eleme
 
 	// Compute diff * G[index]
 	var update banderwagon.Element
-	update.ScalarMul(&i.config.ipaConfig.SRS[index], &diff)
+	update.ScalarMul(&i.ipaConfig.SRS[index], &diff)
 
 	// C' = C + update
 	var newComm banderwagon.Element

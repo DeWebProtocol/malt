@@ -22,6 +22,7 @@ const (
 
 // Commitment implements sce.CommitmentScheme using Verkle Trees.
 type Commitment struct {
+	opts  *options
 	mu    sync.RWMutex
 	cache map[string]*cacheEntry
 }
@@ -33,9 +34,15 @@ type cacheEntry struct {
 	pathToIndex map[string]int
 }
 
-// NewCommitment creates a new Verkle commitment scheme.
-func NewCommitment() (*Commitment, error) {
+// NewCommitment creates a new Verkle commitment scheme with the given options.
+func NewCommitment(opts ...Option) (*Commitment, error) {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &Commitment{
+		opts:  options,
 		cache: make(map[string]*cacheEntry),
 	}, nil
 }

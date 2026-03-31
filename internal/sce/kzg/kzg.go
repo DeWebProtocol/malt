@@ -21,6 +21,7 @@ const (
 
 // Commitment implements sce.CommitmentScheme using KZG polynomial commitments.
 type Commitment struct {
+	opts    *options
 	context *gokzg4844.Context
 
 	mu    sync.RWMutex
@@ -32,15 +33,25 @@ type cacheEntry struct {
 	pathToIndex map[string]int
 }
 
-// NewCommitment creates a new KZG commitment scheme.
-func NewCommitment() (*Commitment, error) {
-	// Use the secure trusted setup from the library
-	context, err := gokzg4844.NewContext4096Secure()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create KZG context: %w", err)
+// NewCommitment creates a new KZG commitment scheme with the given options.
+func NewCommitment(opts ...Option) (*Commitment, error) {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Use provided context or create default
+	context := options.context
+	if context == nil {
+		var err error
+		context, err = gokzg4844.NewContext4096Secure()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create KZG context: %w", err)
+		}
 	}
 
 	return &Commitment{
+		opts:    options,
 		context: context,
 		cache:   make(map[string]*cacheEntry),
 	}, nil

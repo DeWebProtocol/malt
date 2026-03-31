@@ -15,7 +15,6 @@ import (
 )
 
 var (
-	// Version information (set at build time)
 	Version = "dev"
 	cfgFile string
 )
@@ -41,19 +40,9 @@ var demoCmd = &cobra.Command{
 	Run: runDemo,
 }
 
-var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print the version number",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("malt version %s\n", Version)
-	},
-}
-
 func init() {
-	// Initialize config
 	config.Init()
 
-	// Add persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
 	rootCmd.PersistentFlags().String("commitment", "", "commitment type: kzg/verkle/ipa")
 	rootCmd.PersistentFlags().String("kvstore", "", "KVStore type: memory/badger")
@@ -63,7 +52,6 @@ func init() {
 	rootCmd.PersistentFlags().String("ipfs-gateway", "", "IPFS gateway URL")
 	rootCmd.PersistentFlags().Int("vector-size", 0, "vector size for commitment schemes")
 
-	// Bind flags to viper
 	viper.BindPFlag("commitment_type", rootCmd.PersistentFlags().Lookup("commitment"))
 	viper.BindPFlag("kvstore_type", rootCmd.PersistentFlags().Lookup("kvstore"))
 	viper.BindPFlag("eat_type", rootCmd.PersistentFlags().Lookup("eat"))
@@ -72,9 +60,7 @@ func init() {
 	viper.BindPFlag("cas.gateway_url", rootCmd.PersistentFlags().Lookup("ipfs-gateway"))
 	viper.BindPFlag("commitment.vector_size", rootCmd.PersistentFlags().Lookup("vector-size"))
 
-	// Add subcommands
 	rootCmd.AddCommand(demoCmd)
-	rootCmd.AddCommand(versionCmd)
 }
 
 func main() {
@@ -87,36 +73,33 @@ func main() {
 
 func initConfig() {
 	if cfgFile != "" {
-		// Use config file from the flag
 		viper.SetConfigFile(cfgFile)
 	}
-
-	// If a config file is found, read it in
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}
 }
 
 func runDemo(cmd *cobra.Command, args []string) {
-	// Load configuration
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+	// Build node options
+	var nodeOpts []malt.Option
+
+	if cfgFile != "" {
+		nodeOpts = append(nodeOpts, malt.WithConfigFile(cfgFile))
 	}
 
-	fmt.Println("=== MALT Demo ===")
-	fmt.Println()
-	fmt.Printf("Configuration: %s\n", cfg)
-	fmt.Println()
-
-	// Create node with injected dependencies
-	node, err := malt.NewNode(cfg)
+	// Create node
+	node, err := malt.NewNode(nodeOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating node: %v\n", err)
 		os.Exit(1)
 	}
 	defer node.Close()
+
+	fmt.Println("=== MALT Demo ===")
+	fmt.Println()
+	fmt.Printf("Configuration: %s\n", node.Config())
+	fmt.Println()
 
 	// Create target CIDs
 	target1, _ := key.NewPayloadCID([]byte("target1"))

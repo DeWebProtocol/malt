@@ -11,36 +11,31 @@ import (
 
 // KV is a BadgerDB implementation of kv.KVStore.
 type KV struct {
-	db *badger.DB
+	opts *options
+	db   *badger.DB
 }
 
-// Config holds configuration for BadgerKV.
-type Config struct {
-	// Path is the directory for the database files.
-	Path string
-
-	// InMemory runs Badger in memory mode (useful for testing).
-	InMemory bool
-}
-
-// New creates a new BadgerDB-backed KV store.
-func New(cfg *Config) (*KV, error) {
-	if cfg == nil {
-		cfg = &Config{InMemory: true}
+// New creates a new BadgerDB-backed KV store with the given options.
+func New(opts ...Option) (*KV, error) {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
 	}
 
-	opts := badger.DefaultOptions(cfg.Path)
-	opts.Logger = nil // Disable Badger logging
-	if cfg.InMemory {
-		opts.InMemory = true
+	badgerOpts := badger.DefaultOptions(options.path)
+	badgerOpts.Logger = nil // Disable Badger logging
+	if options.inMemory {
+		badgerOpts.InMemory = true
+		badgerOpts.Dir = ""      // Required for in-memory mode
+		badgerOpts.ValueDir = "" // Required for in-memory mode
 	}
 
-	db, err := badger.Open(opts)
+	db, err := badger.Open(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
 
-	return &KV{db: db}, nil
+	return &KV{opts: options, db: db}, nil
 }
 
 // Get retrieves a value by key.

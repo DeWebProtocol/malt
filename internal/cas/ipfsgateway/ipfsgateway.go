@@ -6,45 +6,28 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/dewebprotocol/malt/internal/cas"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// Config holds configuration for IPFS gateway client.
-type Config struct {
-	// GatewayURL is the base URL of the IPFS gateway.
-	GatewayURL string
-
-	// Timeout is the HTTP request timeout.
-	Timeout time.Duration
-}
-
-// DefaultConfig returns default configuration.
-func DefaultConfig() *Config {
-	return &Config{
-		GatewayURL: "https://ipfs.io/ipfs",
-		Timeout:    30 * time.Second,
-	}
-}
-
 // Client implements cas.Client using IPFS HTTP gateway.
 type Client struct {
-	config *Config
+	opts   *options
 	client *http.Client
 }
 
-// NewClient creates a new IPFS gateway client.
-func NewClient(cfg *Config) *Client {
-	if cfg == nil {
-		cfg = DefaultConfig()
+// NewClient creates a new IPFS gateway client with the given options.
+func NewClient(opts ...Option) *Client {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
 	}
 
 	return &Client{
-		config: cfg,
+		opts: options,
 		client: &http.Client{
-			Timeout: cfg.Timeout,
+			Timeout: options.timeout,
 		},
 	}
 }
@@ -56,7 +39,7 @@ func (c *Client) Get(ctx context.Context, k key.Key) ([]byte, error) {
 	}
 
 	// Build gateway URL
-	url := fmt.Sprintf("%s/%s", c.config.GatewayURL, k.String())
+	url := fmt.Sprintf("%s/%s", c.opts.gatewayURL, k.String())
 
 	// Make HTTP request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -97,7 +80,7 @@ func (c *Client) Has(ctx context.Context, k key.Key) (bool, error) {
 	}
 
 	// Try HEAD request to check existence
-	url := fmt.Sprintf("%s/%s", c.config.GatewayURL, k.String())
+	url := fmt.Sprintf("%s/%s", c.opts.gatewayURL, k.String())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {

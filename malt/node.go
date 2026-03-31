@@ -26,9 +26,10 @@ import (
 // Node is the main MALT runtime that holds all components.
 // It is the entry point for the MALT system.
 type Node struct {
-	config *config.Config
+	cfg *config.Config
+	opts *options
 
-	// Core components (injected based on config)
+	// Core components
 	kv         kv.KVStore
 	commitment sce.CommitmentScheme
 	eat        eat.EAT
@@ -36,103 +37,151 @@ type Node struct {
 	resolver   *resolver.Resolver
 }
 
-// NewNode creates a new MALT node with the given configuration.
-// It initializes all components based on the configuration.
-func NewNode(cfg *config.Config) (*Node, error) {
-	if cfg == nil {
-		cfg = config.DefaultConfig()
+// NewNode creates a new MALT node with the given options.
+//
+// Example usage:
+//
+//	// Simple: use defaults
+//	node, _ := malt.NewNode()
+//
+//	// From config file
+//	node, _ := malt.NewNode(malt.WithConfigFile("malt.json"))
+//
+//	// Custom components
+//	node, _ := malt.NewNode(
+//	    malt.WithKVStore(badger.New(badger.WithPath("./data"))),
+//	    malt.WithCommitment(kzg.NewCommitment()),
+//	)
+func NewNode(opts ...Option) (*Node, error) {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
 	}
 
-	node := &Node{config: cfg}
+	node := &Node{opts: options}
 
-	// Initialize KVStore
+	// Load config if file specified
+	if options.configFile != "" {
+		cfg, err := config.LoadFromFile(options.configFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config: %w", err)
+		}
+		node.cfg = cfg
+	} else {
+		// Use empty config with defaults
+		node.cfg = &config.Config{
+			CommitmentType: "kzg",
+			KVStoreType:    "memory",
+			EATType:        "simple",
+			CASType:        "mock",
+		}
+	}
+
+	// Initialize components (use provided or create from config)
 	var err error
-	node.kv, err = node.initKVStore()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize KVStore: %w", err)
+
+	// KVStore
+	if options.kvStore != nil {
+		node.kv = options.kvStore
+	} else {
+		node.kv, err = node.initKVStore()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize KVStore: %w", err)
+		}
 	}
 
-	// Initialize Commitment Scheme
-	node.commitment, err = node.initCommitment()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize commitment scheme: %w", err)
+	// Commitment
+	if options.commitment != nil {
+		node.commitment = options.commitment
+	} else {
+		node.commitment, err = node.initCommitment()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize commitment: %w", err)
+		}
 	}
 
-	// Initialize EAT
-	node.eat, err = node.initEAT()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize EAT: %w", err)
+	// EAT
+	if options.eat != nil {
+		node.eat = options.eat
+	} else {
+		node.eat, err = node.initEAT()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize EAT: %w", err)
+		}
 	}
 
-	// Initialize CAS
-	node.cas, err = node.initCAS()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize CAS: %w", err)
+	// CAS
+	if options.cas != nil {
+		node.cas = options.cas
+	} else {
+		node.cas, err = node.initCAS()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize CAS: %w", err)
+		}
 	}
 
-	// Initialize Resolver
+	// Resolver
 	node.resolver = resolver.NewResolver(node.eat, node.commitment, node.cas)
 
 	return node, nil
 }
 
-// initKVStore initializes the KVStore based on configuration.
+// initKVStore creates a KVStore from config.
 func (n *Node) initKVStore() (kv.KVStore, error) {
-	switch n.config.KVStoreType {
+	switch n.cfg.KVStoreType {
 	case "memory":
 		return kvmemory.New(), nil
 	case "badger":
-		return badger.New(&badger.Config{
-			Path:     n.config.KVStore.Path,
-			InMemory: n.config.KVStore.InMemory,
-		})
+		return badger.New(
+			badger.WithPath(n.cfg.KVStore.Path),
+			badger.WithInMemory(n.cfg.KVStore.InMemory),
+		)
 	default:
-		return nil, fmt.Errorf("unknown kvstore type: %s", n.config.KVStoreType)
+		return nil, fmt.Errorf("unknown kvstore type: %s", n.cfg.KVStoreType)
 	}
 }
 
-// initCommitment initializes the commitment scheme based on configuration.
+// initCommitment creates a commitment scheme from config.
 func (n *Node) initCommitment() (sce.CommitmentScheme, error) {
-	switch n.config.CommitmentType {
+	switch n.cfg.CommitmentType {
 	case "kzg":
 		return kzg.NewCommitment()
 	case "verkle":
 		return verkle.NewCommitment()
 	case "ipa":
-		return ipa.NewCommitment(nil) // uses default config
+		return ipa.NewCommitment(
+			ipa.WithVectorSize(n.cfg.Commitment.VectorSize),
+		)
 	default:
-		return nil, fmt.Errorf("unknown commitment type: %s", n.config.CommitmentType)
+		return nil, fmt.Errorf("unknown commitment type: %s", n.cfg.CommitmentType)
 	}
 }
 
-// initEAT initializes the EAT based on configuration.
+// initEAT creates an EAT from config.
 func (n *Node) initEAT() (eat.EAT, error) {
-	switch n.config.EATType {
+	switch n.cfg.EATType {
 	case "simple":
 		return simple.NewEAT(), nil
 	case "versioned":
 		return versioned.NewEAT(n.kv)
 	default:
-		return nil, fmt.Errorf("unknown eat type: %s", n.config.EATType)
+		return nil, fmt.Errorf("unknown eat type: %s", n.cfg.EATType)
 	}
 }
 
-// initCAS initializes the CAS client based on configuration.
+// initCAS creates a CAS client from config.
 func (n *Node) initCAS() (cas.Client, error) {
-	switch n.config.CASType {
+	switch n.cfg.CASType {
 	case "mock":
 		return casmock.NewCAS(), nil
 	case "ipfs-gateway":
-		timeout, err := n.config.CASTimeout()
-		if err != nil {
-			timeout = 30e9 // 30s default
-		}
-		return ipfsgateway.NewClient(&ipfsgateway.Config{
-			GatewayURL: n.config.CAS.GatewayURL,
-			Timeout:    timeout,
-		}), nil
+		timeout, _ := n.cfg.CASTimeout()
+		return ipfsgateway.NewClient(
+			ipfsgateway.WithGatewayURL(n.cfg.CAS.GatewayURL),
+			ipfsgateway.WithTimeout(timeout),
+		), nil
 	default:
-		return nil, fmt.Errorf("unknown cas type: %s", n.config.CASType)
+		return nil, fmt.Errorf("unknown cas type: %s", n.cfg.CASType)
 	}
 }
 
@@ -163,11 +212,10 @@ func (n *Node) KVStore() kv.KVStore {
 
 // Config returns the node configuration.
 func (n *Node) Config() *config.Config {
-	return n.config
+	return n.cfg
 }
 
 // NewStructure creates a new structure from an arc set.
-// This is a convenience method that uses the node's components.
 func (n *Node) NewStructure(arcs sce.ArcSetView) (*Structure, error) {
 	return NewStructure(arcs, n.eat, n.commitment)
 }
