@@ -1,9 +1,12 @@
-// Package main provides a CLI tool for MALT.
+// Package main provides a CLI tool for MALT using Cobra.
 package main
 
 import (
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/internal/sce"
@@ -11,57 +14,92 @@ import (
 	"github.com/dewebprotocol/malt/key"
 )
 
+var (
+	// Version information (set at build time)
+	Version = "dev"
+	cfgFile string
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "malt",
+	Short: "MALT - Mutable structure LAyer on Top",
+	Long: `MALT (Mutable structure LAyer on Top) provides verifiable, evolvable
+structures on top of content-addressable storage.
+
+It enables mutable references on immutable content-addressed data structures,
+supporting cryptographic proofs and efficient updates.`,
+	Version: Version,
+}
+
+var demoCmd = &cobra.Command{
+	Use:   "demo",
+	Short: "Run a demo showing MALT capabilities",
+	Long: `Demonstrates the core features of MALT:
+- Creating structures with explicit arcs
+- Resolving and verifying arcs
+- Localized updates with new commitments`,
+	Run: runDemo,
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version number",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("malt version %s\n", Version)
+	},
+}
+
+func init() {
+	// Initialize config
+	config.Init()
+
+	// Add persistent flags (available to all subcommands)
+	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
+	rootCmd.PersistentFlags().String("commitment", "", "commitment type: mock/kzg/verkle/ipa")
+	rootCmd.PersistentFlags().String("kvstore", "", "KVStore type: memory/badger")
+	rootCmd.PersistentFlags().String("eat", "", "EAT type: simple/versioned")
+	rootCmd.PersistentFlags().String("cas", "", "CAS type: mock/ipfs-gateway")
+	rootCmd.PersistentFlags().String("kv-path", "", "BadgerDB database path")
+	rootCmd.PersistentFlags().String("ipfs-gateway", "", "IPFS gateway URL")
+	rootCmd.PersistentFlags().Int("vector-size", 0, "vector size for commitment schemes")
+
+	// Bind flags to viper
+	viper.BindPFlag("commitment_type", rootCmd.PersistentFlags().Lookup("commitment"))
+	viper.BindPFlag("kvstore_type", rootCmd.PersistentFlags().Lookup("kvstore"))
+	viper.BindPFlag("eat_type", rootCmd.PersistentFlags().Lookup("eat"))
+	viper.BindPFlag("cas_type", rootCmd.PersistentFlags().Lookup("cas"))
+	viper.BindPFlag("kvstore.path", rootCmd.PersistentFlags().Lookup("kv-path"))
+	viper.BindPFlag("cas.gateway_url", rootCmd.PersistentFlags().Lookup("ipfs-gateway"))
+	viper.BindPFlag("commitment.vector_size", rootCmd.PersistentFlags().Lookup("vector-size"))
+
+	// Add subcommands
+	rootCmd.AddCommand(demoCmd)
+	rootCmd.AddCommand(versionCmd)
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	cmd := os.Args[1]
-
-	switch cmd {
-	case "demo":
-		runDemo()
-	case "help":
-		printUsage()
-	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
-		printUsage()
+	cobra.OnInitialize(initConfig)
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func printUsage() {
-	fmt.Println("MALT - Mutable structure LAyer on Top")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  malt <command> [options]")
-	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  demo    Run a demo showing MALT capabilities")
-	fmt.Println("  help    Show this help message")
-	fmt.Println()
-	fmt.Println("Options (for demo and future commands):")
-	fmt.Println("  -config <path>        Config file path (JSON)")
-	fmt.Println("  -commitment <type>    Commitment type: mock/kzg/verkle/ipa")
-	fmt.Println("  -kvstore <type>       KVStore type: memory/badger")
-	fmt.Println("  -eat <type>           EAT type: simple/versioned")
-	fmt.Println("  -cas <type>           CAS type: mock/ipfs-gateway")
-	fmt.Println("  -kv-path <path>       BadgerDB database path")
-	fmt.Println("  -ipfs-gateway <url>   IPFS gateway URL")
-	fmt.Println()
-	fmt.Println("Environment variables:")
-	fmt.Println("  MALT_COMMITMENT       Commitment type")
-	fmt.Println("  MALT_KVSTORE          KVStore type")
-	fmt.Println("  MALT_EAT              EAT type")
-	fmt.Println("  MALT_CAS              CAS type")
-	fmt.Println("  MALT_KV_PATH          BadgerDB path")
-	fmt.Println("  MALT_IPFS_GATEWAY     IPFS gateway URL")
+func initConfig() {
+	if cfgFile != "" {
+		// Use config file from the flag
+		viper.SetConfigFile(cfgFile)
+	}
+
+	// If a config file is found, read it in
+	if err := viper.ReadInConfig(); err == nil {
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	}
 }
 
-func runDemo() {
-	// Load configuration from file, env, and flags
-	cfg, err := config.Load()
+func runDemo(cmd *cobra.Command, args []string) {
+	// Load configuration
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)

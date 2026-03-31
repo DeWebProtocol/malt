@@ -1,127 +1,100 @@
-// Package config provides configuration management for MALT.
+// Package config provides configuration management for MALT using Viper.
 // Configuration can be loaded from file, environment variables,
 // command-line flags, or defaults.
 package config
 
 import (
-	"encoding/json"
-	"flag"
 	"fmt"
-	"os"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // Config holds all MALT configuration.
 type Config struct {
 	// Commitment scheme type: "mock", "kzg", "verkle", "ipa"
-	CommitmentType string `json:"commitment_type"`
+	CommitmentType string `mapstructure:"commitment_type"`
 
 	// KVStore type: "memory", "badger"
-	KVStoreType string `json:"kvstore_type"`
+	KVStoreType string `mapstructure:"kvstore_type"`
 
 	// EAT type: "simple", "versioned"
-	EATType string `json:"eat_type"`
+	EATType string `mapstructure:"eat_type"`
 
 	// CAS type: "mock", "ipfs-gateway"
-	CASType string `json:"cas_type"`
+	CASType string `mapstructure:"cas_type"`
 
 	// Component-specific configs
-	KVStore   KVStoreConfig   `json:"kvstore"`
-	Commitment CommitmentConfig `json:"commitment"`
-	CAS       CASConfig       `json:"cas"`
+	KVStore    KVStoreConfig    `mapstructure:"kvstore"`
+	Commitment CommitmentConfig `mapstructure:"commitment"`
+	CAS        CASConfig        `mapstructure:"cas"`
 }
 
 // KVStoreConfig holds KVStore-specific configuration.
 type KVStoreConfig struct {
 	// BadgerDB path (only used when type is "badger")
-	Path string `json:"path"`
+	Path string `mapstructure:"path"`
 
 	// Run in memory mode
-	InMemory bool `json:"in_memory"`
+	InMemory bool `mapstructure:"in_memory"`
 }
 
 // CommitmentConfig holds commitment scheme configuration.
 type CommitmentConfig struct {
 	// Vector size for mock/IPA (default: 256)
-	VectorSize int `json:"vector_size"`
+	VectorSize int `mapstructure:"vector_size"`
 }
 
 // CASConfig holds CAS client configuration.
 type CASConfig struct {
 	// IPFS Gateway URL (only used when type is "ipfs-gateway")
-	GatewayURL string `json:"gateway_url"`
+	GatewayURL string `mapstructure:"gateway_url"`
 
 	// HTTP timeout
-	Timeout string `json:"timeout"`
+	Timeout string `mapstructure:"timeout"`
 }
 
-// DefaultConfig returns the default configuration.
-func DefaultConfig() *Config {
-	return &Config{
-		CommitmentType: "mock",
-		KVStoreType:    "memory",
-		EATType:        "simple",
-		CASType:        "mock",
-		KVStore: KVStoreConfig{
-			Path:     "./data/malt.db",
-			InMemory: true,
-		},
-		Commitment: CommitmentConfig{
-			VectorSize: 256,
-		},
-		CAS: CASConfig{
-			GatewayURL: "https://ipfs.io/ipfs",
-			Timeout:    "30s",
-		},
-	}
+// Init initializes Viper with default values and binds flags.
+// This should be called after cobra flags are defined.
+func Init() {
+	// Set default values
+	viper.SetDefault("commitment_type", "mock")
+	viper.SetDefault("kvstore_type", "memory")
+	viper.SetDefault("eat_type", "simple")
+	viper.SetDefault("cas_type", "mock")
+	viper.SetDefault("kvstore.path", "./data/malt.db")
+	viper.SetDefault("kvstore.in_memory", true)
+	viper.SetDefault("commitment.vector_size", 256)
+	viper.SetDefault("cas.gateway_url", "https://ipfs.io/ipfs")
+	viper.SetDefault("cas.timeout", "30s")
+
+	// Enable environment variable binding
+	viper.SetEnvPrefix("malt")
+	viper.AutomaticEnv()
+
+	// Support for config file
+	viper.SetConfigName("malt")              // name of config file (without extension)
+	viper.SetConfigType("json")              // REQUIRED if the config file does not have the extension
+	viper.AddConfigPath(".")                 // optionally look for config in the working directory
+	viper.AddConfigPath("$HOME/.malt")       // call multiple times to add multiple search paths
+	viper.AddConfigPath("/etc/malt/")        // path to look for the config file in
 }
 
-// Load loads configuration from file, environment, and flags.
-// Priority: flags > env > file > defaults
-func Load() (*Config, error) {
-	cfg := DefaultConfig()
-
-	// Parse flags
-	var (
-		configFile      = flag.String("config", "", "Path to config file")
-		commitmentType  = flag.String("commitment", "", "Commitment type (mock/kzg/verkle/ipa)")
-		kvstoreType     = flag.String("kvstore", "", "KVStore type (memory/badger)")
-		eatType         = flag.String("eat", "", "EAT type (simple/versioned)")
-		casType         = flag.String("cas", "", "CAS type (mock/ipfs-gateway)")
-		kvstorePath     = flag.String("kv-path", "", "BadgerDB path")
-		ipfsGateway     = flag.String("ipfs-gateway", "", "IPFS gateway URL")
-	)
-	flag.Parse()
-
-	// Load from file if specified
-	if *configFile != "" {
-		if err := loadFromFile(cfg, *configFile); err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
+// LoadConfig loads configuration from all sources.
+// Returns the merged configuration.
+func LoadConfig() (*Config, error) {
+	// Try to read config file (ignore if not found)
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			// Config file was found but another error was produced
+			return nil, fmt.Errorf("error reading config file: %w", err)
 		}
+		// Config file not found; ignore and use defaults
 	}
 
-	// Load from environment
-	loadFromEnv(cfg)
-
-	// Override with flags
-	if *commitmentType != "" {
-		cfg.CommitmentType = *commitmentType
-	}
-	if *kvstoreType != "" {
-		cfg.KVStoreType = *kvstoreType
-	}
-	if *eatType != "" {
-		cfg.EATType = *eatType
-	}
-	if *casType != "" {
-		cfg.CASType = *casType
-	}
-	if *kvstorePath != "" {
-		cfg.KVStore.Path = *kvstorePath
-		cfg.KVStore.InMemory = false
-	}
-	if *ipfsGateway != "" {
-		cfg.CAS.GatewayURL = *ipfsGateway
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unable to decode config: %w", err)
 	}
 
 	// Validate
@@ -129,39 +102,27 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	return cfg, nil
+	return &cfg, nil
 }
 
-// loadFromFile loads configuration from a JSON file.
-func loadFromFile(cfg *Config, path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, cfg)
-}
+// LoadConfigFromFile loads configuration from a specific file.
+func LoadConfigFromFile(path string) (*Config, error) {
+	viper.SetConfigFile(path)
 
-// loadFromEnv loads configuration from environment variables.
-func loadFromEnv(cfg *Config) {
-	if v := os.Getenv("MALT_COMMITMENT"); v != "" {
-		cfg.CommitmentType = v
+	var cfg Config
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
-	if v := os.Getenv("MALT_KVSTORE"); v != "" {
-		cfg.KVStoreType = v
+
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unable to decode config: %w", err)
 	}
-	if v := os.Getenv("MALT_EAT"); v != "" {
-		cfg.EATType = v
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
-	if v := os.Getenv("MALT_CAS"); v != "" {
-		cfg.CASType = v
-	}
-	if v := os.Getenv("MALT_KV_PATH"); v != "" {
-		cfg.KVStore.Path = v
-		cfg.KVStore.InMemory = false
-	}
-	if v := os.Getenv("MALT_IPFS_GATEWAY"); v != "" {
-		cfg.CAS.GatewayURL = v
-	}
+
+	return &cfg, nil
 }
 
 // Validate validates the configuration.
@@ -202,4 +163,26 @@ func (c *Config) CASTimeout() (time.Duration, error) {
 func (c *Config) String() string {
 	return fmt.Sprintf("Config{commitment=%s, kv=%s, eat=%s, cas=%s}",
 		c.CommitmentType, c.KVStoreType, c.EATType, c.CASType)
+}
+
+// DefaultConfig returns a config with default values.
+// Useful for programmatic usage without viper.
+func DefaultConfig() *Config {
+	return &Config{
+		CommitmentType: "mock",
+		KVStoreType:    "memory",
+		EATType:        "simple",
+		CASType:        "mock",
+		KVStore: KVStoreConfig{
+			Path:     "./data/malt.db",
+			InMemory: true,
+		},
+		Commitment: CommitmentConfig{
+			VectorSize: 256,
+		},
+		CAS: CASConfig{
+			GatewayURL: "https://ipfs.io/ipfs",
+			Timeout:    "30s",
+		},
+	}
 }
