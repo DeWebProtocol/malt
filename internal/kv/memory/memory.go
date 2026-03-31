@@ -1,33 +1,35 @@
-// Package kv provides a key-value store interface and implementations.
-package kv
+// Package memory provides an in-memory implementation of kv.KVStore.
+package memory
 
 import (
 	"context"
 	"sync"
+
+	"github.com/dewebprotocol/malt/internal/kv"
 )
 
-// MemoryKV is an in-memory implementation of KVStore.
+// KV is an in-memory implementation of kv.KVStore.
 // Useful for testing and development.
-type MemoryKV struct {
-	mu    sync.RWMutex
-	data  map[string][]byte
+type KV struct {
+	mu   sync.RWMutex
+	data map[string][]byte
 }
 
-// NewMemoryKV creates a new in-memory KV store.
-func NewMemoryKV() *MemoryKV {
-	return &MemoryKV{
+// New creates a new in-memory KV store.
+func New() *KV {
+	return &KV{
 		data: make(map[string][]byte),
 	}
 }
 
 // Get retrieves a value by key.
-func (m *MemoryKV) Get(ctx context.Context, key []byte) ([]byte, error) {
+func (m *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	v, ok := m.data[string(key)]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, kv.ErrNotFound
 	}
 
 	// Return a copy to prevent mutation
@@ -37,7 +39,7 @@ func (m *MemoryKV) Get(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 // Put stores a key-value pair.
-func (m *MemoryKV) Put(ctx context.Context, key, value []byte) error {
+func (m *KV) Put(ctx context.Context, key, value []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -52,7 +54,7 @@ func (m *MemoryKV) Put(ctx context.Context, key, value []byte) error {
 }
 
 // Delete removes a key.
-func (m *MemoryKV) Delete(ctx context.Context, key []byte) error {
+func (m *KV) Delete(ctx context.Context, key []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -61,7 +63,7 @@ func (m *MemoryKV) Delete(ctx context.Context, key []byte) error {
 }
 
 // Has checks if a key exists.
-func (m *MemoryKV) Has(ctx context.Context, key []byte) (bool, error) {
+func (m *KV) Has(ctx context.Context, key []byte) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -70,7 +72,7 @@ func (m *MemoryKV) Has(ctx context.Context, key []byte) (bool, error) {
 }
 
 // NewIterator creates an iterator over keys.
-func (m *MemoryKV) NewIterator(ctx context.Context, start, end []byte) Iterator {
+func (m *KV) NewIterator(ctx context.Context, start, end []byte) kv.Iterator {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -80,7 +82,7 @@ func (m *MemoryKV) NewIterator(ctx context.Context, start, end []byte) Iterator 
 		keys = append(keys, []byte(k))
 	}
 
-	return &memoryIterator{
+	return &iterator{
 		kv:    m,
 		keys:  keys,
 		index: -1,
@@ -88,39 +90,39 @@ func (m *MemoryKV) NewIterator(ctx context.Context, start, end []byte) Iterator 
 }
 
 // Batch returns a batch writer.
-func (m *MemoryKV) Batch() Batch {
-	return &memoryBatch{kv: m, ops: make([]batchOp, 0)}
+func (m *KV) Batch() kv.Batch {
+	return &batch{kv: m, ops: make([]batchOp, 0)}
 }
 
 // Close releases resources (no-op for memory).
-func (m *MemoryKV) Close() error {
+func (m *KV) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.data = nil
 	return nil
 }
 
-// memoryIterator implements Iterator.
-type memoryIterator struct {
-	kv    *MemoryKV
+// iterator implements kv.Iterator.
+type iterator struct {
+	kv    *KV
 	keys  [][]byte
 	index int
 	err   error
 }
 
-func (it *memoryIterator) Next() bool {
+func (it *iterator) Next() bool {
 	it.index++
 	return it.index < len(it.keys)
 }
 
-func (it *memoryIterator) Key() []byte {
+func (it *iterator) Key() []byte {
 	if it.index < 0 || it.index >= len(it.keys) {
 		return nil
 	}
 	return it.keys[it.index]
 }
 
-func (it *memoryIterator) Value() []byte {
+func (it *iterator) Value() []byte {
 	if it.index < 0 || it.index >= len(it.keys) {
 		return nil
 	}
@@ -128,11 +130,11 @@ func (it *memoryIterator) Value() []byte {
 	return v
 }
 
-func (it *memoryIterator) Err() error {
+func (it *iterator) Err() error {
 	return it.err
 }
 
-func (it *memoryIterator) Close() {}
+func (it *iterator) Close() {}
 
 // batchOp represents a batch operation.
 type batchOp struct {
@@ -141,13 +143,13 @@ type batchOp struct {
 	value []byte
 }
 
-// memoryBatch implements Batch.
-type memoryBatch struct {
-	kv  *MemoryKV
+// batch implements kv.Batch.
+type batch struct {
+	kv  *KV
 	ops []batchOp
 }
 
-func (b *memoryBatch) Put(key, value []byte) error {
+func (b *batch) Put(key, value []byte) error {
 	k := make([]byte, len(key))
 	v := make([]byte, len(value))
 	copy(k, key)
@@ -156,14 +158,14 @@ func (b *memoryBatch) Put(key, value []byte) error {
 	return nil
 }
 
-func (b *memoryBatch) Delete(key []byte) error {
+func (b *batch) Delete(key []byte) error {
 	k := make([]byte, len(key))
 	copy(k, key)
 	b.ops = append(b.ops, batchOp{op: 1, key: k})
 	return nil
 }
 
-func (b *memoryBatch) Commit(ctx context.Context) error {
+func (b *batch) Commit(ctx context.Context) error {
 	b.kv.mu.Lock()
 	defer b.kv.mu.Unlock()
 
@@ -178,9 +180,9 @@ func (b *memoryBatch) Commit(ctx context.Context) error {
 	return nil
 }
 
-func (b *memoryBatch) Cancel() {
+func (b *batch) Cancel() {
 	b.ops = nil
 }
 
-// Ensure MemoryKV implements KVStore.
-var _ KVStore = (*MemoryKV)(nil)
+// Ensure KV implements kv.KVStore.
+var _ kv.KVStore = (*KV)(nil)
