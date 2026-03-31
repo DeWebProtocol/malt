@@ -7,48 +7,37 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dewebprotocol/malt/internal/kv"
 	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// VersionedEAT is a versioned EAT implementation using BadgerDB.
+// VersionedEAT is a versioned EAT implementation using a KVStore.
 // It stores path-based history: path -> [(index, target), ...]
 // with metadata: root -> index.
+//
+// The KVStore dependency is injected, allowing different backends
+// (BadgerDB, in-memory, etc.) to be used at runtime.
 type VersionedEAT struct {
-	mu   sync.RWMutex
-	db   *badger.DB
+	mu sync.RWMutex
+	kv kv.KVStore
 }
 
-// VersionedEATConfig holds configuration for VersionedEAT.
-type VersionedEATConfig struct {
-	// Dir is the database directory. Empty for in-memory.
-	Dir string
-}
-
-// NewVersionedEAT creates a new VersionedEAT.
-func NewVersionedEAT(cfg *VersionedEATConfig) (*VersionedEAT, error) {
-	if cfg == nil {
-		cfg = &VersionedEATConfig{}
+// NewVersionedEAT creates a new VersionedEAT with the given KVStore.
+// The KVStore is injected, allowing flexibility in backend choice.
+func NewVersionedEAT(store kv.KVStore) (*VersionedEAT, error) {
+	if store == nil {
+		return nil, fmt.Errorf("KVStore is required")
 	}
 
-	opts := badger.DefaultOptions(cfg.Dir)
-	if cfg.Dir == "" {
-		opts = badger.DefaultOptions("").WithInMemory(true)
-	}
-
-	db, err := badger.Open(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open badger: %w", err)
-	}
-
-	return &VersionedEAT{db: db}, nil
+	return &VersionedEAT{kv: store}, nil
 }
 
 // Key prefixes for different buckets.
 var (
-	prefixMeta  = []byte("m:")  // m:root -> index
-	prefixArcs  = []byte("a:")  // a:path -> [(index, key), ...]
+	prefixMeta = []byte("m:") // m:root -> index
+	prefixArcs = []byte("a:") // a:path -> [(index, key), ...]
+	prefixIdx  = []byte("i:") // i:counter -> next index
 )
 
 // metaKey generates a key for the metadata bucket.
@@ -68,45 +57,31 @@ func (e *VersionedEAT) Get(root key.Key, path string) (key.Key, error) {
 	defer e.mu.RUnlock()
 
 	// Get the index for this root
-	var idx uint64
-	err := e.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(metaKey(root))
-		if err != nil {
-			return err
-		}
-		return item.Value(func(v []byte) error {
-			if len(v) != 8 {
-				return fmt.Errorf("invalid index value length: %d", len(v))
-			}
-			idx = binary.BigEndian.Uint64(v)
-			return nil
-		})
-	})
+	idxBytes, err := e.kv.Get(nil, metaKey(root))
 	if err != nil {
-		if err == badger.ErrKeyNotFound {
+		if err == kv.ErrNotFound {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get root index: %w", err)
 	}
 
+	if len(idxBytes) != 8 {
+		return nil, fmt.Errorf("invalid index value length: %d", len(idxBytes))
+	}
+	idx := binary.BigEndian.Uint64(idxBytes)
+
 	// Get the path history
-	var history []historyEntry
-	err = e.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(arcsKey(path))
-		if err != nil {
-			return err
-		}
-		return item.Value(func(v []byte) error {
-			var err error
-			history, err = decodeHistory(v)
-			return err
-		})
-	})
+	historyBytes, err := e.kv.Get(nil, arcsKey(path))
 	if err != nil {
-		if err == badger.ErrKeyNotFound {
+		if err == kv.ErrNotFound {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get path history: %w", err)
+	}
+
+	history, err := decodeHistory(historyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode history: %w", err)
 	}
 
 	// Binary search: find largest index <= idx
@@ -123,54 +98,70 @@ func (e *VersionedEAT) Put(root key.Key, path string, target key.Key) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return e.db.Update(func(txn *badger.Txn) error {
-		// Get or create index for this root
-		var idx uint64
-		item, err := txn.Get(metaKey(root))
-		if err == badger.ErrKeyNotFound {
-			// New root, find next index
-			idx = 0
-			// TODO: scan for max index
-		} else if err != nil {
-			return fmt.Errorf("failed to get root index: %w", err)
-		} else {
-			err = item.Value(func(v []byte) error {
-				idx = binary.BigEndian.Uint64(v)
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-		}
+	// Get or create index for this root
+	idxBytes, err := e.kv.Get(nil, metaKey(root))
+	var idx uint64
+	if err == kv.ErrNotFound {
+		// New root, get next index
+		idx = e.getNextIndex()
+	} else if err != nil {
+		return fmt.Errorf("failed to get root index: %w", err)
+	} else {
+		idx = binary.BigEndian.Uint64(idxBytes)
+	}
 
-		// Get existing history
-		var history []historyEntry
-		item, err = txn.Get(arcsKey(path))
-		if err == nil {
-			err = item.Value(func(v []byte) error {
-				history, err = decodeHistory(v)
-				return err
-			})
-			if err != nil {
-				return err
-			}
-		} else if err != badger.ErrKeyNotFound {
-			return fmt.Errorf("failed to get path history: %w", err)
-		}
+	// Store root -> index mapping
+	newIdxBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(newIdxBytes, idx)
+	if err := e.kv.Put(nil, metaKey(root), newIdxBytes); err != nil {
+		return fmt.Errorf("failed to store root index: %w", err)
+	}
 
-		// Append new entry
-		history = append(history, historyEntry{index: idx, key: target})
-		sort.Slice(history, func(i, j int) bool {
-			return history[i].index < history[j].index
-		})
-
-		// Store updated history
-		encoded, err := encodeHistory(history)
+	// Get existing history
+	var history []historyEntry
+	historyBytes, err := e.kv.Get(nil, arcsKey(path))
+	if err == nil {
+		history, err = decodeHistory(historyBytes)
 		if err != nil {
-			return fmt.Errorf("failed to encode history: %w", err)
+			return fmt.Errorf("failed to decode history: %w", err)
 		}
-		return txn.Set(arcsKey(path), encoded)
+	} else if err != kv.ErrNotFound {
+		return fmt.Errorf("failed to get path history: %w", err)
+	}
+
+	// Append new entry
+	history = append(history, historyEntry{index: idx, key: target})
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].index < history[j].index
 	})
+
+	// Store updated history
+	encoded, err := encodeHistory(history)
+	if err != nil {
+		return fmt.Errorf("failed to encode history: %w", err)
+	}
+	return e.kv.Put(nil, arcsKey(path), encoded)
+}
+
+// getNextIndex returns the next available index.
+func (e *VersionedEAT) getNextIndex() uint64 {
+	idxBytes, err := e.kv.Get(nil, prefixIdx)
+	if err == kv.ErrNotFound {
+		// First index
+		idx := uint64(0)
+		idxBytes = make([]byte, 8)
+		binary.BigEndian.PutUint64(idxBytes, idx+1)
+		e.kv.Put(nil, prefixIdx, idxBytes)
+		return idx
+	} else if err != nil {
+		return 0
+	}
+
+	idx := binary.BigEndian.Uint64(idxBytes)
+	newIdx := make([]byte, 8)
+	binary.BigEndian.PutUint64(newIdx, idx+1)
+	e.kv.Put(nil, prefixIdx, newIdx)
+	return idx
 }
 
 // Delete removes an arc entry.
@@ -187,7 +178,7 @@ func (e *VersionedEAT) View(root key.Key) sce.ArcSetView {
 
 // Close releases resources.
 func (e *VersionedEAT) Close() error {
-	return e.db.Close()
+	return e.kv.Close()
 }
 
 // historyEntry represents a single entry in the path history.
