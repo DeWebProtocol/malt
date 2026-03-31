@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/internal/eat"
+	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/sce"
+	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
 	"github.com/dewebprotocol/malt/key"
 	malt "github.com/dewebprotocol/malt/malt"
 )
@@ -47,8 +48,8 @@ func runDemo() {
 	fmt.Println()
 
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
 
 	// Create target CIDs
 	target1, _ := key.NewPayloadCID([]byte("target1"))

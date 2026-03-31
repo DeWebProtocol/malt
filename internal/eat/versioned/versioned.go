@@ -1,5 +1,5 @@
-// Package eat defines the Explicit Arc Table interface and implementations.
-package eat
+// Package versioned provides a versioned EAT implementation using a KVStore.
+package versioned
 
 import (
 	"encoding/binary"
@@ -7,30 +7,27 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/kv"
 	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// VersionedEAT is a versioned EAT implementation using a KVStore.
+// EAT is a versioned EAT implementation using a KVStore.
 // It stores path-based history: path -> [(index, target), ...]
 // with metadata: root -> index.
-//
-// The KVStore dependency is injected, allowing different backends
-// (BadgerDB, in-memory, etc.) to be used at runtime.
-type VersionedEAT struct {
+type EAT struct {
 	mu sync.RWMutex
 	kv kv.KVStore
 }
 
-// NewVersionedEAT creates a new VersionedEAT with the given KVStore.
-// The KVStore is injected, allowing flexibility in backend choice.
-func NewVersionedEAT(store kv.KVStore) (*VersionedEAT, error) {
+// NewEAT creates a new VersionedEAT with the given KVStore.
+func NewEAT(store kv.KVStore) (*EAT, error) {
 	if store == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
 
-	return &VersionedEAT{kv: store}, nil
+	return &EAT{kv: store}, nil
 }
 
 // Key prefixes for different buckets.
@@ -51,8 +48,7 @@ func arcsKey(path string) []byte {
 }
 
 // Get retrieves the target key for (root, path).
-// It performs versioned lookup using binary search on path history.
-func (e *VersionedEAT) Get(root key.Key, path string) (key.Key, error) {
+func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -60,7 +56,7 @@ func (e *VersionedEAT) Get(root key.Key, path string) (key.Key, error) {
 	idxBytes, err := e.kv.Get(nil, metaKey(root))
 	if err != nil {
 		if err == kv.ErrNotFound {
-			return nil, ErrNotFound
+			return nil, eat.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get root index: %w", err)
 	}
@@ -74,7 +70,7 @@ func (e *VersionedEAT) Get(root key.Key, path string) (key.Key, error) {
 	historyBytes, err := e.kv.Get(nil, arcsKey(path))
 	if err != nil {
 		if err == kv.ErrNotFound {
-			return nil, ErrNotFound
+			return nil, eat.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get path history: %w", err)
 	}
@@ -87,14 +83,14 @@ func (e *VersionedEAT) Get(root key.Key, path string) (key.Key, error) {
 	// Binary search: find largest index <= idx
 	entry := binarySearchHistory(history, idx)
 	if entry == nil {
-		return nil, ErrNotFound
+		return nil, eat.ErrNotFound
 	}
 
 	return entry.key, nil
 }
 
 // Put stores an arc entry and updates metadata.
-func (e *VersionedEAT) Put(root key.Key, path string, target key.Key) error {
+func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -144,7 +140,7 @@ func (e *VersionedEAT) Put(root key.Key, path string, target key.Key) error {
 }
 
 // getNextIndex returns the next available index.
-func (e *VersionedEAT) getNextIndex() uint64 {
+func (e *EAT) getNextIndex() uint64 {
 	idxBytes, err := e.kv.Get(nil, prefixIdx)
 	if err == kv.ErrNotFound {
 		// First index
@@ -165,19 +161,17 @@ func (e *VersionedEAT) getNextIndex() uint64 {
 }
 
 // Delete removes an arc entry.
-func (e *VersionedEAT) Delete(root key.Key, path string) error {
-	// For versioned EAT, we don't actually delete, we set to nil
-	// or we could add a tombstone entry
+func (e *EAT) Delete(root key.Key, path string) error {
 	return fmt.Errorf("delete not supported in versioned EAT, use update with nil")
 }
 
 // View returns an ArcSetView for a specific root.
-func (e *VersionedEAT) View(root key.Key) sce.ArcSetView {
-	return &versionedEATView{eat: e, root: root}
+func (e *EAT) View(root key.Key) sce.ArcSetView {
+	return &eatView{eat: e, root: root}
 }
 
 // Close releases resources.
-func (e *VersionedEAT) Close() error {
+func (e *EAT) Close() error {
 	return e.kv.Close()
 }
 
@@ -188,10 +182,7 @@ type historyEntry struct {
 }
 
 // encodeHistory encodes a history slice to bytes.
-// Format: [count:4][entry1][entry2]...
-// Each entry: [index:8][key_len:4][key_bytes][kind:1]
 func encodeHistory(history []historyEntry) ([]byte, error) {
-	// Calculate total size
 	total := 4 // count
 	for _, e := range history {
 		total += 8 + 4 + len(e.key.Bytes()) + 1
@@ -277,7 +268,6 @@ func binarySearchHistory(history []historyEntry, target uint64) *historyEntry {
 		return nil
 	}
 
-	// Find first entry with index > target
 	i := sort.Search(len(history), func(i int) bool {
 		return history[i].index > target
 	})
@@ -289,15 +279,15 @@ func binarySearchHistory(history []historyEntry, target uint64) *historyEntry {
 	return &history[i-1]
 }
 
-// versionedEATView implements ArcSetView for VersionedEAT.
-type versionedEATView struct {
-	eat  *VersionedEAT
+// eatView implements ArcSetView for VersionedEAT.
+type eatView struct {
+	eat  *EAT
 	root key.Key
 	idx  uint64
 }
 
 // Get retrieves the target key for a path.
-func (v *versionedEATView) Get(path string) (key.Key, bool) {
+func (v *eatView) Get(path string) (key.Key, bool) {
 	k, err := v.eat.Get(v.root, path)
 	if err != nil {
 		return nil, false
@@ -306,17 +296,12 @@ func (v *versionedEATView) Get(path string) (key.Key, bool) {
 }
 
 // Iterate returns an iterator over all arcs for the root.
-// TODO: This requires scanning all paths, which is expensive.
-// Consider maintaining a separate index of paths per root.
-func (v *versionedEATView) Iterate() sce.ArcIterator {
-	// For now, return empty iterator
-	// This should be improved for production use
+func (v *eatView) Iterate() sce.ArcIterator {
 	return &emptyIterator{}
 }
 
 // Len returns the number of arcs.
-// TODO: This requires scanning, consider caching.
-func (v *versionedEATView) Len() int {
+func (v *eatView) Len() int {
 	return 0
 }
 
@@ -330,3 +315,6 @@ func (it *emptyIterator) Next() (string, key.Key, bool) {
 func (it *emptyIterator) Err() error {
 	return nil
 }
+
+// Ensure EAT implements eat.EAT.
+var _ eat.EAT = (*EAT)(nil)

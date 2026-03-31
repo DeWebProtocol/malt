@@ -1,17 +1,19 @@
-package malt
+package malt_test
 
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/eat"
+	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/sce"
+	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
+	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func TestStructureBasic(t *testing.T) {
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
 
 	// Create arc set
 	arcs := sce.NewMapArcSetView()
@@ -21,7 +23,7 @@ func TestStructureBasic(t *testing.T) {
 	arcs.Add("link2", k2)
 
 	// Create structure
-	structure, err := NewStructure(arcs, e, s)
+	structure, err := malt.NewStructure(arcs, e, s)
 	if err != nil {
 		t.Fatalf("NewStructure failed: %v", err)
 	}
@@ -58,15 +60,15 @@ func TestStructureBasic(t *testing.T) {
 
 func TestStructureUpdate(t *testing.T) {
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
 
 	// Create initial structure
 	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 
-	structure, err := NewStructure(arcs, e, s)
+	structure, err := malt.NewStructure(arcs, e, s)
 	if err != nil {
 		t.Fatalf("NewStructure failed: %v", err)
 	}

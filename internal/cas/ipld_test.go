@@ -1,16 +1,18 @@
-package cas
+package cas_test
 
 import (
 	"testing"
 
+	"github.com/dewebprotocol/malt/internal/cas"
+	"github.com/dewebprotocol/malt/internal/cas/mock"
 	"github.com/dewebprotocol/malt/key"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
 func TestIPLDParserRaw(t *testing.T) {
-	cas := NewMockCAS()
-	parser := NewIPLDParser(cas)
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
 
 	// Create raw data
 	data := []byte("hello world")
@@ -31,8 +33,8 @@ func TestIPLDParserRaw(t *testing.T) {
 }
 
 func TestIPLDParserDagJSON(t *testing.T) {
-	cas := NewMockCAS()
-	parser := NewIPLDParser(cas)
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
 
 	// Create DAG-JSON data with a link
 	targetCID, _ := cid.Decode("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
@@ -67,8 +69,8 @@ func TestIPLDParserDagJSON(t *testing.T) {
 }
 
 func TestIPLDParserDagJSONWithArray(t *testing.T) {
-	cas := NewMockCAS()
-	parser := NewIPLDParser(cas)
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
 
 	// Create DAG-JSON data with array of links
 	jsonData := []byte(`{"items": [{"/": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"}, {"/": "bafybeihdwdcefgh4dqkjv67ozcmhfqp46vd4swimutfj3lkq2qhwbg64vc"}]}`)
@@ -89,8 +91,8 @@ func TestIPLDParserDagJSONWithArray(t *testing.T) {
 }
 
 func TestIPLDParserCBOR(t *testing.T) {
-	cas := NewMockCAS()
-	parser := NewIPLDParser(cas)
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
 
 	// Create simple CBOR data
 	// CBOR map {"a": 1, "b": 2}
@@ -114,8 +116,8 @@ func TestIPLDParserCBOR(t *testing.T) {
 }
 
 func TestIPLDParserCBORArray(t *testing.T) {
-	cas := NewMockCAS()
-	parser := NewIPLDParser(cas)
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
 
 	// CBOR array [1, 2, 3]
 	cborData := []byte{0x83, 0x01, 0x02, 0x03}
@@ -139,13 +141,13 @@ func TestIPLDParserCBORArray(t *testing.T) {
 }
 
 func TestIPLDResolveLink(t *testing.T) {
-	cas := NewMockCAS()
-	parser := NewIPLDParser(cas)
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
 
 	// Create node with links
-	node := &IPLDNode{
+	node := &cas.IPLDNode{
 		Fields: make(map[string]interface{}),
-		Links: []LinkInfo{
+		Links: []cas.LinkInfo{
 			{Name: "data", CID: mustDecodeCID("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")},
 			{Name: "meta", CID: mustDecodeCID("bafybeihdwdcefgh4dqkjv67ozcmhfqp46vd4swimutfj3lkq2qhwbg64vc")},
 		},
@@ -174,7 +176,7 @@ func TestCreateDAGJSON(t *testing.T) {
 		"value": 42,
 	}
 
-	data, c, err := CreateDAGJSON(fields)
+	data, c, err := cas.CreateDAGJSON(fields)
 	if err != nil {
 		t.Fatalf("CreateDAGJSON failed: %v", err)
 	}
@@ -191,7 +193,7 @@ func TestCreateDAGJSON(t *testing.T) {
 func TestCreateRawBlock(t *testing.T) {
 	data := []byte("raw data")
 
-	rawData, c, err := CreateRawBlock(data)
+	rawData, c, err := cas.CreateRawBlock(data)
 	if err != nil {
 		t.Fatalf("CreateRawBlock failed: %v", err)
 	}

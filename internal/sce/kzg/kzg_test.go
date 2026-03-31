@@ -1,20 +1,22 @@
-package sce
+package kzg_test
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/internal/sce/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func TestKZGCommitment(t *testing.T) {
-	k, err := NewKZGCommitment()
+	k, err := kzg.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewKZGCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create arc set
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -60,13 +62,13 @@ func TestKZGCommitment(t *testing.T) {
 }
 
 func TestKZGCommitmentUpdate(t *testing.T) {
-	k, err := NewKZGCommitment()
+	k, err := kzg.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewKZGCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create initial structure
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 
@@ -88,13 +90,13 @@ func TestKZGCommitmentUpdate(t *testing.T) {
 }
 
 func TestKZGBatchUpdate(t *testing.T) {
-	k, err := NewKZGCommitment()
+	k, err := kzg.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewKZGCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create initial structure
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -127,16 +129,14 @@ func TestKZGBatchUpdate(t *testing.T) {
 }
 
 func TestKZGLargeArcSet(t *testing.T) {
-	k, err := NewKZGCommitment()
+	k, err := kzg.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewKZGCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create arc set with fewer arcs to avoid scalar validation issues
-	// KZG scalars must be valid BLS12-381 field elements
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	for i := 0; i < 10; i++ {
-		// Use small, deterministic data
 		data := []byte{byte(i)}
 		target, _ := key.NewPayloadCID(data)
 		arcs.Add(fmt.Sprintf("arc%d", i), target)

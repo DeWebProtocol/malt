@@ -1,28 +1,29 @@
-package eval
+package eval_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/cas"
-	"github.com/dewebprotocol/malt/internal/eat"
-	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/internal/cas/mock"
+	"github.com/dewebprotocol/malt/internal/eat/simple"
+	"github.com/dewebprotocol/malt/internal/eval"
+	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
 )
 
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS()
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
 	// Create benchmark runner with small config for quick test
-	cfg := &BenchmarkConfig{
+	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{10, 100},
 		UpdateRounds: 10,
 		RandomSeed:   42,
 	}
 
-	runner := NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
 
 	ctx := context.Background()
 
@@ -70,23 +71,23 @@ func TestBenchmarkRunner(t *testing.T) {
 	}
 
 	// Print results
-	PrintResults(appendResults, "Append")
-	PrintResults(randomResults, "Random")
-	PrintResults(bulkResults, "Bulk")
+	eval.PrintResults(appendResults, "Append")
+	eval.PrintResults(randomResults, "Random")
+	eval.PrintResults(bulkResults, "Bulk")
 }
 
 func BenchmarkAppend(b *testing.B) {
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS()
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
-	cfg := &BenchmarkConfig{
+	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{1000},
 		UpdateRounds: 100,
 		RandomSeed:   42,
 	}
 
-	runner := NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -96,17 +97,17 @@ func BenchmarkAppend(b *testing.B) {
 }
 
 func BenchmarkRandom(b *testing.B) {
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS()
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
-	cfg := &BenchmarkConfig{
+	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{1000},
 		UpdateRounds: 100,
 		RandomSeed:   42,
 	}
 
-	runner := NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -116,17 +117,17 @@ func BenchmarkRandom(b *testing.B) {
 }
 
 func BenchmarkBulk(b *testing.B) {
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS()
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
-	cfg := &BenchmarkConfig{
+	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{1000},
 		UpdateRounds: 100,
 		RandomSeed:   42,
 	}
 
-	runner := NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
 	ctx := context.Background()
 
 	b.ResetTimer()

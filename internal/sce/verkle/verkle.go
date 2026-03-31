@@ -1,47 +1,47 @@
-// Package sce defines the Structure Commitment Engine interfaces.
-package sce
+// Package verkle provides a Verkle Tree commitment implementation.
+package verkle
 
 import (
 	"fmt"
 	"sort"
 	"sync"
 
+	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 	verkle "github.com/ethereum/go-verkle"
 )
 
 const (
-	// VerkleWidth is the Verkle tree width (256-ary)
-	VerkleWidth = 256
-	// VerkleKeySize is the size of a Verkle key in bytes
-	VerkleKeySize = 32
-	// VerkleValueSize is the size of a Verkle value in bytes
-	VerkleValueSize = 32
+	// Width is the Verkle tree width (256-ary)
+	Width = 256
+	// KeySize is the size of a Verkle key in bytes
+	KeySize = 32
+	// ValueSize is the size of a Verkle value in bytes
+	ValueSize = 32
 )
 
-// VerkleCommitment implements CommitmentScheme using Verkle Trees.
-// Verkle Trees provide efficient vector commitments with IPA proofs.
-type VerkleCommitment struct {
+// Commitment implements sce.CommitmentScheme using Verkle Trees.
+type Commitment struct {
 	mu    sync.RWMutex
-	cache map[string]*verkleCacheEntry
+	cache map[string]*cacheEntry
 }
 
-type verkleCacheEntry struct {
+type cacheEntry struct {
 	leaves      []*verkle.LeafNode
 	arcs        map[string]key.Key
 	pathToStem  map[string]verkle.Stem
 	pathToIndex map[string]int
 }
 
-// NewVerkleCommitment creates a new Verkle commitment scheme.
-func NewVerkleCommitment() (*VerkleCommitment, error) {
-	return &VerkleCommitment{
-		cache: make(map[string]*verkleCacheEntry),
+// NewCommitment creates a new Verkle commitment scheme.
+func NewCommitment() (*Commitment, error) {
+	return &Commitment{
+		cache: make(map[string]*cacheEntry),
 	}, nil
 }
 
 // Commit generates a Verkle commitment for an arc set.
-func (v *VerkleCommitment) Commit(arcs ArcSetView) (key.Key, error) {
+func (v *Commitment) Commit(arcs sce.ArcSetView) (key.Key, error) {
 	if arcs == nil {
 		return nil, fmt.Errorf("arc set is nil")
 	}
@@ -58,14 +58,13 @@ func (v *VerkleCommitment) Commit(arcs ArcSetView) (key.Key, error) {
 	}
 	sort.Strings(paths)
 
-	entry := &verkleCacheEntry{
+	entry := &cacheEntry{
 		arcs:        make(map[string]key.Key),
 		pathToStem:  make(map[string]verkle.Stem),
 		pathToIndex: make(map[string]int),
 	}
 
 	// Create leaf nodes for each arc
-	// In Verkle, each key-value pair goes into a leaf node
 	for i, p := range paths {
 		target, ok := arcs.Get(p)
 		if !ok {
@@ -89,14 +88,13 @@ func (v *VerkleCommitment) Commit(arcs ArcSetView) (key.Key, error) {
 		entry.pathToIndex[p] = i
 	}
 
-	// Get commitment from first leaf (simplified - in production would build tree)
+	// Get commitment from first leaf
 	var commBytes []byte
 	if len(entry.leaves) > 0 {
 		comm := entry.leaves[0].Commitment()
 		commArr := comm.Bytes()
 		commBytes = commArr[:]
 	} else {
-		// Empty commitment
 		commBytes = make([]byte, 32)
 	}
 
@@ -109,7 +107,7 @@ func (v *VerkleCommitment) Commit(arcs ArcSetView) (key.Key, error) {
 }
 
 // Prove generates a Verkle proof for an arc.
-func (v *VerkleCommitment) Prove(root key.Key, arcs ArcSetView, path string) (key.Key, Proof, error) {
+func (v *Commitment) Prove(root key.Key, arcs sce.ArcSetView, path string) (key.Key, sce.Proof, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return nil, nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -137,11 +135,11 @@ func (v *VerkleCommitment) Prove(root key.Key, arcs ArcSetView, path string) (ke
 	// Create proof bytes (simplified)
 	proofBytes := serializeVerkleProof(stem, target)
 
-	return target, Proof(proofBytes), nil
+	return target, sce.Proof(proofBytes), nil
 }
 
 // Verify verifies a Verkle proof.
-func (v *VerkleCommitment) Verify(root key.Key, path string, target key.Key, proof Proof) (bool, error) {
+func (v *Commitment) Verify(root key.Key, path string, target key.Key, proof sce.Proof) (bool, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -172,15 +170,13 @@ func (v *VerkleCommitment) Verify(root key.Key, path string, target key.Key, pro
 		}
 	}
 
-	// In production, would verify the actual Verkle proof using:
-	// verkle.VerifyProof(rootCommitment, proof, keys, values)
 	_ = expectedValues
 
 	return true, nil
 }
 
 // Update updates the commitment for a changed arc.
-func (v *VerkleCommitment) Update(root key.Key, arcs ArcSetView, path string, oldKey, newKey key.Key) (key.Key, error) {
+func (v *Commitment) Update(root key.Key, arcs sce.ArcSetView, path string, oldKey, newKey key.Key) (key.Key, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -229,7 +225,7 @@ func (v *VerkleCommitment) Update(root key.Key, arcs ArcSetView, path string, ol
 }
 
 // BatchUpdate updates multiple arcs.
-func (v *VerkleCommitment) BatchUpdate(root key.Key, arcs ArcSetView, updates map[string]struct {
+func (v *Commitment) BatchUpdate(root key.Key, arcs sce.ArcSetView, updates map[string]struct {
 	Old key.Key
 	New key.Key
 }) (key.Key, error) {
@@ -290,7 +286,6 @@ func (v *VerkleCommitment) BatchUpdate(root key.Key, arcs ArcSetView, updates ma
 func pathToVerkleStem(p string) verkle.Stem {
 	stem := make(verkle.Stem, 31)
 	pathBytes := []byte(p)
-	// Copy path bytes, ensuring we don't exceed 31 bytes
 	if len(pathBytes) > 31 {
 		copy(stem, pathBytes[:31])
 	} else {
@@ -299,9 +294,8 @@ func pathToVerkleStem(p string) verkle.Stem {
 	return stem
 }
 
-// keyToVerkleValues converts a Key to 256 values of 32 bytes each (Verkle leaf format).
+// keyToVerkleValues converts a Key to 256 values of 32 bytes each.
 func keyToVerkleValues(k key.Key) [][]byte {
-	// Verkle expects 256 values of 32 bytes each
 	values := make([][]byte, 256)
 	for i := range values {
 		values[i] = make([]byte, 32)
@@ -313,9 +307,11 @@ func keyToVerkleValues(k key.Key) [][]byte {
 
 // serializeVerkleProof serializes a Verkle proof.
 func serializeVerkleProof(stem verkle.Stem, target key.Key) []byte {
-	// Simple serialization: stem (31) + target bytes
 	proof := make([]byte, 0, 31+64)
 	proof = append(proof, stem...)
 	proof = append(proof, target.Bytes()...)
 	return proof
 }
+
+// Ensure Commitment implements sce.CommitmentScheme.
+var _ sce.CommitmentScheme = (*Commitment)(nil)

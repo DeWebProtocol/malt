@@ -1,19 +1,21 @@
-package resolver
+package resolver_test
 
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/cas"
-	"github.com/dewebprotocol/malt/internal/eat"
+	"github.com/dewebprotocol/malt/internal/cas/mock"
+	"github.com/dewebprotocol/malt/internal/eat/simple"
+	"github.com/dewebprotocol/malt/internal/resolver"
 	"github.com/dewebprotocol/malt/internal/sce"
+	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func TestResolverExplicitStep(t *testing.T) {
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS() // Mock CAS
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths
 	arcs := sce.NewMapArcSetView()
@@ -42,7 +44,7 @@ func TestResolverExplicitStep(t *testing.T) {
 	}
 
 	// Create resolver
-	r := NewResolver(e, s, c)
+	r := resolver.NewResolver(e, s, c)
 
 	// Test longest prefix matching
 	tests := []struct {
@@ -86,9 +88,9 @@ func TestResolverExplicitStep(t *testing.T) {
 
 func TestResolverImplicitStep(t *testing.T) {
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS() // Mock CAS
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
 	// Create arc set pointing to a PayloadCID
 	arcs := sce.NewMapArcSetView()
@@ -108,7 +110,7 @@ func TestResolverImplicitStep(t *testing.T) {
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
 
 	// Create resolver
-	r := NewResolver(e, s, c)
+	r := resolver.NewResolver(e, s, c)
 
 	// Resolve should stop at PayloadCID (implicit step not implemented yet)
 	result, err := r.Resolve(root, "data")
@@ -124,9 +126,9 @@ func TestResolverImplicitStep(t *testing.T) {
 
 func TestResolverTranscript(t *testing.T) {
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
-	c := cas.NewMockCAS() // Mock CAS
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
+	c := mock.NewCAS()
 
 	// Create arc set with nested structure
 	arcs := sce.NewMapArcSetView()
@@ -153,7 +155,7 @@ func TestResolverTranscript(t *testing.T) {
 	}
 
 	// Create resolver
-	r := NewResolver(e, s, c)
+	r := resolver.NewResolver(e, s, c)
 
 	// Resolve and check transcript
 	result, err := r.Resolve(root, "inner")
@@ -166,7 +168,7 @@ func TestResolverTranscript(t *testing.T) {
 	}
 
 	step := result.Transcript.Steps[0]
-	if step.Kind != StepExplicit {
+	if step.Kind != resolver.StepExplicit {
 		t.Error("Step should be explicit")
 	}
 	if step.Path != "inner" {

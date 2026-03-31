@@ -1,23 +1,24 @@
-// Package eat defines the Explicit Arc Table interface and implementations.
-package eat
+// Package simple provides a non-versioned EAT implementation.
+package simple
 
 import (
 	"sync"
 
+	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// SimpleEAT is a non-versioned EAT implementation.
+// EAT is a non-versioned EAT implementation.
 // It stores arcs directly: (root, path) -> target.
-type SimpleEAT struct {
-	mu    sync.RWMutex
-	arcs  map[string]map[string]key.Key // root -> path -> target
+type EAT struct {
+	mu   sync.RWMutex
+	arcs map[string]map[string]key.Key // root -> path -> target
 }
 
-// NewSimpleEAT creates a new SimpleEAT.
-func NewSimpleEAT() *SimpleEAT {
-	return &SimpleEAT{
+// NewEAT creates a new SimpleEAT.
+func NewEAT() *EAT {
+	return &EAT{
 		arcs: make(map[string]map[string]key.Key),
 	}
 }
@@ -28,26 +29,26 @@ func rootKey(k key.Key) string {
 }
 
 // Get retrieves the target key for (root, path).
-func (e *SimpleEAT) Get(root key.Key, path string) (key.Key, error) {
+func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	rootStr := rootKey(root)
 	paths, ok := e.arcs[rootStr]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, eat.ErrNotFound
 	}
 
 	target, ok := paths[path]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, eat.ErrNotFound
 	}
 
 	return target, nil
 }
 
 // Put stores an arc entry.
-func (e *SimpleEAT) Put(root key.Key, path string, target key.Key) error {
+func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -61,18 +62,18 @@ func (e *SimpleEAT) Put(root key.Key, path string, target key.Key) error {
 }
 
 // Delete removes an arc entry.
-func (e *SimpleEAT) Delete(root key.Key, path string) error {
+func (e *EAT) Delete(root key.Key, path string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	rootStr := rootKey(root)
 	paths, ok := e.arcs[rootStr]
 	if !ok {
-		return ErrNotFound
+		return eat.ErrNotFound
 	}
 
 	if _, ok := paths[path]; !ok {
-		return ErrNotFound
+		return eat.ErrNotFound
 	}
 
 	delete(paths, path)
@@ -80,26 +81,26 @@ func (e *SimpleEAT) Delete(root key.Key, path string) error {
 }
 
 // View returns an ArcSetView for a specific root.
-func (e *SimpleEAT) View(root key.Key) sce.ArcSetView {
-	return &simpleEATView{eat: e, root: root}
+func (e *EAT) View(root key.Key) sce.ArcSetView {
+	return &eatView{eat: e, root: root}
 }
 
 // Close releases resources.
-func (e *SimpleEAT) Close() error {
+func (e *EAT) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.arcs = nil
 	return nil
 }
 
-// simpleEATView implements ArcSetView for SimpleEAT.
-type simpleEATView struct {
-	eat  *SimpleEAT
+// eatView implements ArcSetView for SimpleEAT.
+type eatView struct {
+	eat  *EAT
 	root key.Key
 }
 
 // Get retrieves the target key for a path.
-func (v *simpleEATView) Get(path string) (key.Key, bool) {
+func (v *eatView) Get(path string) (key.Key, bool) {
 	k, err := v.eat.Get(v.root, path)
 	if err != nil {
 		return nil, false
@@ -108,7 +109,7 @@ func (v *simpleEATView) Get(path string) (key.Key, bool) {
 }
 
 // Iterate returns an iterator over all arcs for the root.
-func (v *simpleEATView) Iterate() sce.ArcIterator {
+func (v *eatView) Iterate() sce.ArcIterator {
 	v.eat.mu.RLock()
 	defer v.eat.mu.RUnlock()
 
@@ -127,11 +128,11 @@ func (v *simpleEATView) Iterate() sce.ArcIterator {
 		}{path: p, key: k})
 	}
 
-	return &simpleEATIterator{arcs: arcs, idx: -1}
+	return &eatIterator{arcs: arcs, idx: -1}
 }
 
 // Len returns the number of arcs.
-func (v *simpleEATView) Len() int {
+func (v *eatView) Len() int {
 	v.eat.mu.RLock()
 	defer v.eat.mu.RUnlock()
 
@@ -139,8 +140,8 @@ func (v *simpleEATView) Len() int {
 	return len(v.eat.arcs[rootStr])
 }
 
-// simpleEATIterator implements ArcIterator.
-type simpleEATIterator struct {
+// eatIterator implements ArcIterator.
+type eatIterator struct {
 	arcs []struct {
 		path string
 		key  key.Key
@@ -150,7 +151,7 @@ type simpleEATIterator struct {
 }
 
 // Next advances to the next arc.
-func (it *simpleEATIterator) Next() (string, key.Key, bool) {
+func (it *eatIterator) Next() (string, key.Key, bool) {
 	it.idx++
 	if it.idx >= len(it.arcs) {
 		return "", nil, false
@@ -159,6 +160,9 @@ func (it *simpleEATIterator) Next() (string, key.Key, bool) {
 }
 
 // Err returns any error encountered.
-func (it *simpleEATIterator) Err() error {
+func (it *eatIterator) Err() error {
 	return it.err
 }
+
+// Ensure EAT implements eat.EAT.
+var _ eat.EAT = (*EAT)(nil)

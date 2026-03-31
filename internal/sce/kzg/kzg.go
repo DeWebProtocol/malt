@@ -1,5 +1,5 @@
-// Package sce defines the Structure Commitment Engine interfaces.
-package sce
+// Package kzg provides a KZG polynomial commitment implementation.
+package kzg
 
 import (
 	"crypto/sha256"
@@ -8,47 +8,46 @@ import (
 	"sync"
 
 	gokzg4844 "github.com/crate-crypto/go-kzg-4844"
+	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
 const (
-	// KZGBlobSize is the size of a KZG blob in bytes (4096 scalars * 32 bytes)
-	KZGBlobSize = 131072
-	// KZGMaxArcs is the maximum number of arcs per structure (KZG constraint)
-	KZGMaxArcs = 4096
+	// BlobSize is the size of a KZG blob in bytes (4096 scalars * 32 bytes)
+	BlobSize = 131072
+	// MaxArcs is the maximum number of arcs per structure (KZG constraint)
+	MaxArcs = 4096
 )
 
-// KZGCommitment implements CommitmentScheme using KZG polynomial commitments.
-// KZG provides constant-size proofs and supports batch verification.
-type KZGCommitment struct {
+// Commitment implements sce.CommitmentScheme using KZG polynomial commitments.
+type Commitment struct {
 	context *gokzg4844.Context
 
-	mu       sync.RWMutex
-	cache    map[string]*kzgCacheEntry
+	mu    sync.RWMutex
+	cache map[string]*cacheEntry
 }
 
-type kzgCacheEntry struct {
+type cacheEntry struct {
 	blob        *gokzg4844.Blob
 	pathToIndex map[string]int
-	vector      []byte
 }
 
-// NewKZGCommitment creates a new KZG commitment scheme.
-func NewKZGCommitment() (*KZGCommitment, error) {
+// NewCommitment creates a new KZG commitment scheme.
+func NewCommitment() (*Commitment, error) {
 	// Use the secure trusted setup from the library
 	context, err := gokzg4844.NewContext4096Secure()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KZG context: %w", err)
 	}
 
-	return &KZGCommitment{
+	return &Commitment{
 		context: context,
-		cache:   make(map[string]*kzgCacheEntry),
+		cache:   make(map[string]*cacheEntry),
 	}, nil
 }
 
 // Commit generates a KZG commitment for an arc set.
-func (k *KZGCommitment) Commit(arcs ArcSetView) (key.Key, error) {
+func (k *Commitment) Commit(arcs sce.ArcSetView) (key.Key, error) {
 	if arcs == nil {
 		return nil, fmt.Errorf("arc set is nil")
 	}
@@ -65,8 +64,8 @@ func (k *KZGCommitment) Commit(arcs ArcSetView) (key.Key, error) {
 	}
 	sort.Strings(paths)
 
-	if len(paths) > KZGMaxArcs {
-		return nil, fmt.Errorf("arc set exceeds maximum size (%d > %d)", len(paths), KZGMaxArcs)
+	if len(paths) > MaxArcs {
+		return nil, fmt.Errorf("arc set exceeds maximum size (%d > %d)", len(paths), MaxArcs)
 	}
 
 	// Create blob
@@ -97,7 +96,7 @@ func (k *KZGCommitment) Commit(arcs ArcSetView) (key.Key, error) {
 	// Cache the entry
 	commBytes := comm[:]
 	k.mu.Lock()
-	k.cache[string(commBytes)] = &kzgCacheEntry{
+	k.cache[string(commBytes)] = &cacheEntry{
 		blob:        blob,
 		pathToIndex: pathToIndex,
 	}
@@ -107,7 +106,7 @@ func (k *KZGCommitment) Commit(arcs ArcSetView) (key.Key, error) {
 }
 
 // Prove generates a KZG proof for an arc.
-func (k *KZGCommitment) Prove(root key.Key, arcs ArcSetView, path string) (key.Key, Proof, error) {
+func (k *Commitment) Prove(root key.Key, arcs sce.ArcSetView, path string) (key.Key, sce.Proof, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return nil, nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -147,11 +146,11 @@ func (k *KZGCommitment) Prove(root key.Key, arcs ArcSetView, path string) (key.K
 	proofBytes = append(proofBytes, claimedValue[:]...)
 	proofBytes = append(proofBytes, byte(index>>24), byte(index>>16), byte(index>>8), byte(index))
 
-	return target, Proof(proofBytes), nil
+	return target, sce.Proof(proofBytes), nil
 }
 
 // Verify verifies a KZG proof.
-func (k *KZGCommitment) Verify(root key.Key, path string, target key.Key, proof Proof) (bool, error) {
+func (k *Commitment) Verify(root key.Key, path string, target key.Key, proof sce.Proof) (bool, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -205,7 +204,7 @@ func (k *KZGCommitment) Verify(root key.Key, path string, target key.Key, proof 
 }
 
 // Update updates the commitment for a changed arc.
-func (k *KZGCommitment) Update(root key.Key, arcs ArcSetView, path string, oldKey, newKey key.Key) (key.Key, error) {
+func (k *Commitment) Update(root key.Key, arcs sce.ArcSetView, path string, oldKey, newKey key.Key) (key.Key, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -241,7 +240,7 @@ func (k *KZGCommitment) Update(root key.Key, arcs ArcSetView, path string, oldKe
 }
 
 // BatchUpdate updates multiple arcs.
-func (k *KZGCommitment) BatchUpdate(root key.Key, arcs ArcSetView, updates map[string]struct {
+func (k *Commitment) BatchUpdate(root key.Key, arcs sce.ArcSetView, updates map[string]struct {
 	Old key.Key
 	New key.Key
 }) (key.Key, error) {
@@ -282,16 +281,13 @@ func (k *KZGCommitment) BatchUpdate(root key.Key, arcs ArcSetView, updates map[s
 }
 
 // keyToKZGScalar converts a Key to a KZG scalar (32 bytes).
-// The result is reduced to ensure it fits in the BLS12-381 scalar field.
 func keyToKZGScalar(k key.Key) gokzg4844.Scalar {
 	var scalar gokzg4844.Scalar
 	hash := sha256.Sum256(k.Bytes())
 
-	// The BLS12-381 scalar field modulus is approximately 2^255.
-	// We need to ensure our value is less than this modulus.
-	// Clear the top bit to ensure the value fits.
+	// Clear the top bit to ensure the value fits in BLS12-381 scalar field.
 	result := hash
-	result[0] &= 0x7F // Clear the most significant bit
+	result[0] &= 0x7F
 
 	copy(scalar[:], result[:])
 	return scalar
@@ -313,3 +309,6 @@ func scalarsEqual(a, b gokzg4844.Scalar) bool {
 	}
 	return true
 }
+
+// Ensure Commitment implements sce.CommitmentScheme.
+var _ sce.CommitmentScheme = (*Commitment)(nil)

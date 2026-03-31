@@ -1,19 +1,21 @@
-package sce
+package verkle_test
 
 import (
 	"testing"
 
+	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/internal/sce/verkle"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func TestVerkleCommitment(t *testing.T) {
-	v, err := NewVerkleCommitment()
+	v, err := verkle.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewVerkleCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create arc set
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -59,13 +61,13 @@ func TestVerkleCommitment(t *testing.T) {
 }
 
 func TestVerkleCommitmentUpdate(t *testing.T) {
-	v, err := NewVerkleCommitment()
+	v, err := verkle.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewVerkleCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create initial structure
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 
@@ -87,13 +89,13 @@ func TestVerkleCommitmentUpdate(t *testing.T) {
 }
 
 func TestVerkleBatchUpdate(t *testing.T) {
-	v, err := NewVerkleCommitment()
+	v, err := verkle.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewVerkleCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Create initial structure
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -126,13 +128,13 @@ func TestVerkleBatchUpdate(t *testing.T) {
 }
 
 func TestVerkleEmptyArcSet(t *testing.T) {
-	v, err := NewVerkleCommitment()
+	v, err := verkle.NewCommitment()
 	if err != nil {
-		t.Fatalf("NewVerkleCommitment failed: %v", err)
+		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
 	// Empty arc set
-	arcs := NewMapArcSetView()
+	arcs := sce.NewMapArcSetView()
 
 	root, err := v.Commit(arcs)
 	if err != nil {

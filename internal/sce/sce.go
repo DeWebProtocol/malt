@@ -5,6 +5,7 @@ package sce
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/dewebprotocol/malt/key"
 )
@@ -86,4 +87,69 @@ type CommitmentScheme interface {
 		Old key.Key
 		New key.Key
 	}) (key.Key, error)
+}
+
+// MapArcSetView is a simple in-memory ArcSetView implementation.
+// Useful for constructing arc sets before commitment.
+type MapArcSetView struct {
+	arcs map[string]key.Key
+}
+
+// NewMapArcSetView creates a new MapArcSetView.
+func NewMapArcSetView() *MapArcSetView {
+	return &MapArcSetView{
+		arcs: make(map[string]key.Key),
+	}
+}
+
+// Add adds an arc to the view.
+func (v *MapArcSetView) Add(path string, k key.Key) {
+	v.arcs[path] = k
+}
+
+// Get retrieves the target key for a path.
+func (v *MapArcSetView) Get(path string) (key.Key, bool) {
+	k, ok := v.arcs[path]
+	return k, ok
+}
+
+// Iterate returns an iterator.
+func (v *MapArcSetView) Iterate() ArcIterator {
+	// Get sorted paths
+	paths := make([]string, 0, len(v.arcs))
+	for p := range v.arcs {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	return &mapArcIterator{view: v, paths: paths, idx: -1}
+}
+
+// Len returns the number of arcs.
+func (v *MapArcSetView) Len() int {
+	return len(v.arcs)
+}
+
+// mapArcIterator implements ArcIterator.
+type mapArcIterator struct {
+	view  *MapArcSetView
+	paths []string
+	idx   int
+	err   error
+}
+
+// Next advances to the next arc.
+func (it *mapArcIterator) Next() (string, key.Key, bool) {
+	it.idx++
+	if it.idx >= len(it.paths) {
+		return "", nil, false
+	}
+	path := it.paths[it.idx]
+	k, _ := it.view.Get(path)
+	return path, k, true
+}
+
+// Err returns any error.
+func (it *mapArcIterator) Err() error {
+	return it.err
 }

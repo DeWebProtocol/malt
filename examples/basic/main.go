@@ -4,10 +4,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/internal/eat"
+	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/key"
+	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
 	malt "github.com/dewebprotocol/malt/malt"
+	"github.com/dewebprotocol/malt/key"
 )
 
 func main() {
@@ -15,8 +16,8 @@ func main() {
 	fmt.Println()
 
 	// Create components
-	e := eat.NewSimpleEAT()
-	s := sce.NewMockCommitment(256)
+	e := simple.NewEAT()
+	s := scemock.NewCommitment(256)
 
 	// Simulate target CIDs (in practice, these would come from CAS/IPFS)
 	target1CID, _ := key.NewPayloadCID([]byte("document.pdf"))

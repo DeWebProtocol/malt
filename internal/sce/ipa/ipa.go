@@ -1,5 +1,5 @@
-// Package sce defines the Structure Commitment Engine interfaces.
-package sce
+// Package ipa provides an IPA (Inner Product Argument) commitment implementation.
+package ipa
 
 import (
 	"crypto/sha256"
@@ -12,6 +12,7 @@ import (
 	"github.com/crate-crypto/go-ipa/banderwagon"
 	"github.com/crate-crypto/go-ipa/common"
 	ipa "github.com/crate-crypto/go-ipa/ipa"
+	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
@@ -20,17 +21,17 @@ const (
 	MaxVectorSize = 256
 )
 
-// IPACommitment implements CommitmentScheme using Inner Product Arguments.
-type IPACommitment struct {
-	config *IPAConfig
+// Commitment implements sce.CommitmentScheme using Inner Product Arguments.
+type Commitment struct {
+	config *Config
 
 	// auxStore stores auxiliary data for local updates
 	mu       sync.RWMutex
 	auxStore map[string]*auxData
 }
 
-// IPAConfig holds configuration for IPA commitment.
-type IPAConfig struct {
+// Config holds configuration for IPA commitment.
+type Config struct {
 	// VectorSize is the maximum size of the vector (must be <= 256)
 	VectorSize int
 
@@ -38,8 +39,8 @@ type IPAConfig struct {
 	ipaConfig *ipa.IPAConfig
 }
 
-// NewIPAConfig creates a new IPA configuration.
-func NewIPAConfig(vectorSize int) (*IPAConfig, error) {
+// NewConfig creates a new IPA configuration.
+func NewConfig(vectorSize int) (*Config, error) {
 	if vectorSize <= 0 || vectorSize > MaxVectorSize {
 		return nil, fmt.Errorf("vector size must be between 1 and %d, got %d", MaxVectorSize, vectorSize)
 	}
@@ -50,7 +51,7 @@ func NewIPAConfig(vectorSize int) (*IPAConfig, error) {
 		return nil, fmt.Errorf("failed to create IPA settings: %w", err)
 	}
 
-	return &IPAConfig{
+	return &Config{
 		VectorSize: vectorSize,
 		ipaConfig:  ipaConfig,
 	}, nil
@@ -63,24 +64,24 @@ type auxData struct {
 	indexToPath map[int]string
 }
 
-// NewIPACommitment creates a new IPA commitment scheme.
-func NewIPACommitment(cfg *IPAConfig) (*IPACommitment, error) {
+// NewCommitment creates a new IPA commitment scheme.
+func NewCommitment(cfg *Config) (*Commitment, error) {
 	if cfg == nil {
 		var err error
-		cfg, err = NewIPAConfig(MaxVectorSize)
+		cfg, err = NewConfig(MaxVectorSize)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return &IPACommitment{
+	return &Commitment{
 		config:    cfg,
 		auxStore:  make(map[string]*auxData),
 	}, nil
 }
 
 // Commit generates an IPA commitment for an arc set.
-func (i *IPACommitment) Commit(arcs ArcSetView) (key.Key, error) {
+func (i *Commitment) Commit(arcs sce.ArcSetView) (key.Key, error) {
 	if arcs == nil {
 		return nil, fmt.Errorf("arc set is nil")
 	}
@@ -108,7 +109,7 @@ func (i *IPACommitment) Commit(arcs ArcSetView) (key.Key, error) {
 }
 
 // Prove generates an IPA proof for an arc.
-func (i *IPACommitment) Prove(root key.Key, arcs ArcSetView, path string) (key.Key, Proof, error) {
+func (i *Commitment) Prove(root key.Key, arcs sce.ArcSetView, path string) (key.Key, sce.Proof, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return nil, nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -160,11 +161,11 @@ func (i *IPACommitment) Prove(root key.Key, arcs ArcSetView, path string) (key.K
 		return nil, nil, fmt.Errorf("failed to serialize proof: %w", err)
 	}
 
-	return target, Proof(proofBytes), nil
+	return target, sce.Proof(proofBytes), nil
 }
 
 // Verify verifies an IPA proof.
-func (i *IPACommitment) Verify(root key.Key, path string, target key.Key, proof Proof) (bool, error) {
+func (i *Commitment) Verify(root key.Key, path string, target key.Key, proof sce.Proof) (bool, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -217,8 +218,7 @@ func (i *IPACommitment) Verify(root key.Key, path string, target key.Key, proof 
 }
 
 // Update updates the commitment for a changed arc.
-// Key property: O(1) update without recomputing the full commitment.
-func (i *IPACommitment) Update(root key.Key, arcs ArcSetView, path string, oldKey, newKey key.Key) (key.Key, error) {
+func (i *Commitment) Update(root key.Key, arcs sce.ArcSetView, path string, oldKey, newKey key.Key) (key.Key, error) {
 	if root.Kind() != key.KeyKindStructureRoot {
 		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
 	}
@@ -252,7 +252,6 @@ func (i *IPACommitment) Update(root key.Key, arcs ArcSetView, path string, oldKe
 	diff.Sub(&newElement, &aux.vector[index])
 
 	// Update the commitment: C' = C + diff * G[index]
-	// This is the key O(1) operation
 	commBytes, err := i.updateCommitment(root.Bytes(), index, diff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update commitment: %w", err)
@@ -268,7 +267,7 @@ func (i *IPACommitment) Update(root key.Key, arcs ArcSetView, path string, oldKe
 }
 
 // BatchUpdate updates multiple arcs.
-func (i *IPACommitment) BatchUpdate(root key.Key, arcs ArcSetView, updates map[string]struct {
+func (i *Commitment) BatchUpdate(root key.Key, arcs sce.ArcSetView, updates map[string]struct {
 	Old key.Key
 	New key.Key
 }) (key.Key, error) {
@@ -316,7 +315,7 @@ func (i *IPACommitment) BatchUpdate(root key.Key, arcs ArcSetView, updates map[s
 }
 
 // arcSetToVector converts an arc set to an IPA vector.
-func (i *IPACommitment) arcSetToVector(arcs ArcSetView) ([]fr.Element, map[string]int, map[int]string, error) {
+func (i *Commitment) arcSetToVector(arcs sce.ArcSetView) ([]fr.Element, map[string]int, map[int]string, error) {
 	vector := make([]fr.Element, i.config.VectorSize)
 	pathToIndex := make(map[string]int)
 	indexToPath := make(map[int]string)
@@ -363,7 +362,7 @@ func (i *IPACommitment) arcSetToVector(arcs ArcSetView) ([]fr.Element, map[strin
 }
 
 // updateCommitment performs O(1) commitment update.
-func (i *IPACommitment) updateCommitment(commBytes []byte, index int, diff fr.Element) ([]byte, error) {
+func (i *Commitment) updateCommitment(commBytes []byte, index int, diff fr.Element) ([]byte, error) {
 	// Reconstruct commitment
 	var comm banderwagon.Element
 	if err := comm.SetBytes(commBytes); err != nil {
@@ -383,11 +382,9 @@ func (i *IPACommitment) updateCommitment(commBytes []byte, index int, diff fr.El
 }
 
 // serializeProof serializes an IPA proof to bytes.
-func (i *IPACommitment) serializeProof(proof *ipa.IPAProof) ([]byte, error) {
-	// Simple serialization: L points + R points + A_scalar
-	// Each point is 32 bytes, scalar is 32 bytes
+func (i *Commitment) serializeProof(proof *ipa.IPAProof) ([]byte, error) {
 	numRounds := len(proof.L)
-	totalSize := 4 + (numRounds*2+1)*32 // 4 bytes for numRounds, 32 bytes per element
+	totalSize := 4 + (numRounds*2+1)*32
 
 	result := make([]byte, totalSize)
 	binary.BigEndian.PutUint32(result[0:4], uint32(numRounds))
@@ -410,7 +407,7 @@ func (i *IPACommitment) serializeProof(proof *ipa.IPAProof) ([]byte, error) {
 }
 
 // deserializeProof deserializes bytes to an IPA proof.
-func (i *IPACommitment) deserializeProof(data []byte) (*ipa.IPAProof, error) {
+func (i *Commitment) deserializeProof(data sce.Proof) (*ipa.IPAProof, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("proof data too short")
 	}
@@ -453,8 +450,10 @@ func keyToFieldElement(k key.Key) fr.Element {
 	// Hash the key bytes to get a deterministic field element
 	h := sha256.Sum256(bytes)
 
-	// Convert hash to field element (modular reduction happens automatically)
 	result.SetBytes(h[:])
 
 	return result
 }
+
+// Ensure Commitment implements sce.CommitmentScheme.
+var _ sce.CommitmentScheme = (*Commitment)(nil)
