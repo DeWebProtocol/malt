@@ -24,7 +24,7 @@ func main() {
 	fmt.Println("Method 2: Custom configuration")
 	fmt.Println("-------------------------------")
 	cfg := &config.Config{
-		CommitmentType: "mock",
+		CommitmentType: "kzg",
 		KVStoreType:    "memory",
 		EATType:        "simple",
 		CASType:        "mock",

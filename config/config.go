@@ -58,7 +58,7 @@ type CASConfig struct {
 // This should be called after cobra flags are defined.
 func Init() {
 	// Set default values
-	viper.SetDefault("commitment_type", "mock")
+	viper.SetDefault("commitment_type", "kzg")
 	viper.SetDefault("kvstore_type", "memory")
 	viper.SetDefault("eat_type", "simple")
 	viper.SetDefault("cas_type", "mock")
@@ -127,9 +127,9 @@ func LoadConfigFromFile(path string) (*Config, error) {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	validCommitment := map[string]bool{"mock": true, "kzg": true, "verkle": true, "ipa": true}
+	validCommitment := map[string]bool{"kzg": true, "verkle": true, "ipa": true}
 	if !validCommitment[c.CommitmentType] {
-		return fmt.Errorf("invalid commitment type: %s (valid: mock, kzg, verkle, ipa)", c.CommitmentType)
+		return fmt.Errorf("invalid commitment type: %s (valid: kzg, verkle, ipa)", c.CommitmentType)
 	}
 
 	validKV := map[string]bool{"memory": true, "badger": true}
@@ -169,7 +169,7 @@ func (c *Config) String() string {
 // Useful for programmatic usage without viper.
 func DefaultConfig() *Config {
 	return &Config{
-		CommitmentType: "mock",
+		CommitmentType: "kzg",
 		KVStoreType:    "memory",
 		EATType:        "simple",
 		CASType:        "mock",

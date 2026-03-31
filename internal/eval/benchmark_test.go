@@ -7,13 +7,16 @@ import (
 	"github.com/dewebprotocol/malt/internal/cas/mock"
 	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/eval"
-	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
+	"github.com/dewebprotocol/malt/internal/sce/kzg"
 )
 
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, err := kzg.NewCommitment()
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
 	c := mock.NewCAS()
 
 	// Create benchmark runner with small config for quick test
@@ -78,7 +81,7 @@ func TestBenchmarkRunner(t *testing.T) {
 
 func BenchmarkAppend(b *testing.B) {
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, _ := kzg.NewCommitment()
 	c := mock.NewCAS()
 
 	cfg := &eval.BenchmarkConfig{
@@ -98,7 +101,7 @@ func BenchmarkAppend(b *testing.B) {
 
 func BenchmarkRandom(b *testing.B) {
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, _ := kzg.NewCommitment()
 	c := mock.NewCAS()
 
 	cfg := &eval.BenchmarkConfig{
@@ -118,7 +121,7 @@ func BenchmarkRandom(b *testing.B) {
 
 func BenchmarkBulk(b *testing.B) {
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, _ := kzg.NewCommitment()
 	c := mock.NewCAS()
 
 	cfg := &eval.BenchmarkConfig{

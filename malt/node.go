@@ -18,9 +18,8 @@ import (
 	kvmemory "github.com/dewebprotocol/malt/internal/kv/memory"
 	"github.com/dewebprotocol/malt/internal/resolver"
 	"github.com/dewebprotocol/malt/internal/sce"
-	ipa "github.com/dewebprotocol/malt/internal/sce/ipa"
+	"github.com/dewebprotocol/malt/internal/sce/ipa"
 	"github.com/dewebprotocol/malt/internal/sce/kzg"
-	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
 	"github.com/dewebprotocol/malt/internal/sce/verkle"
 )
 
@@ -95,8 +94,6 @@ func (n *Node) initKVStore() (kv.KVStore, error) {
 // initCommitment initializes the commitment scheme based on configuration.
 func (n *Node) initCommitment() (sce.CommitmentScheme, error) {
 	switch n.config.CommitmentType {
-	case "mock":
-		return scemock.NewCommitment(n.config.Commitment.VectorSize), nil
 	case "kzg":
 		return kzg.NewCommitment()
 	case "verkle":

@@ -1,5 +1,5 @@
 {
-  "commitment_type": "mock",
+  "commitment_type": "kzg",
   "kvstore_type": "memory",
   "eat_type": "simple",
   "cas_type": "mock",

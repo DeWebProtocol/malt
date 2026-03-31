@@ -5,7 +5,7 @@ import (
 
 	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/sce"
-	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
+	"github.com/dewebprotocol/malt/internal/sce/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
@@ -13,7 +13,10 @@ import (
 func TestStructureBasic(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, err := kzg.NewCommitment()
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
 
 	// Create arc set
 	arcs := sce.NewMapArcSetView()
@@ -61,7 +64,10 @@ func TestStructureBasic(t *testing.T) {
 func TestStructureUpdate(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, err := kzg.NewCommitment()
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
 
 	// Create initial structure
 	arcs := sce.NewMapArcSetView()

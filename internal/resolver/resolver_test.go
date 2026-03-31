@@ -7,14 +7,17 @@ import (
 	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/resolver"
 	"github.com/dewebprotocol/malt/internal/sce"
-	scemock "github.com/dewebprotocol/malt/internal/sce/mock"
+	"github.com/dewebprotocol/malt/internal/sce/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func TestResolverExplicitStep(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, err := kzg.NewCommitment()
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
 	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths
@@ -89,7 +92,10 @@ func TestResolverExplicitStep(t *testing.T) {
 func TestResolverImplicitStep(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, err := kzg.NewCommitment()
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
 	c := mock.NewCAS()
 
 	// Create arc set pointing to a PayloadCID
@@ -127,7 +133,10 @@ func TestResolverImplicitStep(t *testing.T) {
 func TestResolverTranscript(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s := scemock.NewCommitment(256)
+	s, err := kzg.NewCommitment()
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
 	c := mock.NewCAS()
 
 	// Create arc set with nested structure
