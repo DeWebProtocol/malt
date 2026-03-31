@@ -3,6 +3,8 @@ module github.com/dewebprotocol/malt
 go 1.22
 
 require (
+	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c
+	github.com/crate-crypto/go-kzg-4844 v1.1.0
 	github.com/dgraph-io/badger/v4 v4.2.0
 	github.com/ethereum/go-verkle v0.2.2
 	github.com/ipfs/go-cid v0.4.1
@@ -14,8 +16,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/consensys/bavard v0.1.13 // indirect
 	github.com/consensys/gnark-crypto v0.13.0 // indirect
-	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c // indirect
-	github.com/crate-crypto/go-kzg-4844 v1.1.0 // indirect
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

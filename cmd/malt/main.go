@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/pkg/malt"
-	"github.com/dewebprotocol/malt/pkg/types"
+	"github.com/dewebprotocol/malt/internal/eat"
+	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/key"
+	malt "github.com/dewebprotocol/malt/malt"
 )
 
 func main() {
@@ -44,41 +46,49 @@ func runDemo() {
 	fmt.Println("=== MALT Demo ===")
 	fmt.Println()
 
-	m, err := malt.New()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating MALT: %v\n", err)
-		os.Exit(1)
-	}
-	defer m.Close()
+	// Create components
+	e := eat.NewSimpleEAT()
+	s := sce.NewMockCommitment(256)
 
 	// Create target CIDs
-	target1, _ := types.NewCID([]byte("target1"))
-	target2, _ := types.NewCID([]byte("target2"))
+	target1, _ := key.NewPayloadCID([]byte("target1"))
+	target2, _ := key.NewPayloadCID([]byte("target2"))
+
+	// Create arc set
+	arcs := sce.NewMapArcSetView()
+	arcs.Add("link1", target1)
+	arcs.Add("link2", target2)
 
 	// Create structure
-	arcs := types.NewArcSetFromPairs(
-		types.NewArcPair("link1", target1),
-		types.NewArcPair("link2", target2),
-	)
-
-	comm, err := m.CreateStructure(arcs)
+	structure, err := malt.NewStructure(arcs, e, s)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating structure: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Created structure: %s\n", comm)
+	fmt.Printf("Created structure: %s\n", structure.Root())
 	fmt.Printf("  link1 -> %s\n", target1)
 	fmt.Printf("  link2 -> %s\n", target2)
 	fmt.Println()
 
 	// Resolve
-	resolved, proof, err := m.Resolve(comm, "link1")
+	resolved, proof, err := structure.Resolve("link1")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving: %v\n", err)
 		os.Exit(1)
 	}
 
-	valid, _ := m.Verify(comm, "link1", resolved, proof)
+	valid, _ := structure.Verify("link1", resolved, proof)
 	fmt.Printf("Resolved link1: %s (valid: %v)\n", resolved, valid)
+
+	// Update
+	newTarget, _ := key.NewPayloadCID([]byte("new_target"))
+	newStructure, err := structure.Update("link1", newTarget)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error updating: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Updated link1 -> %s\n", newTarget)
+	fmt.Printf("New root: %s\n", newStructure.Root())
 }

@@ -4,41 +4,39 @@ package main
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/pkg/malt"
-	"github.com/dewebprotocol/malt/pkg/types"
+	"github.com/dewebprotocol/malt/internal/eat"
+	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/key"
+	malt "github.com/dewebprotocol/malt/malt"
 )
 
 func main() {
 	fmt.Println("=== MALT (Mutable structure LAyer on Top) Demo ===")
 	fmt.Println()
 
-	// Create MALT instance
-	m, err := malt.New()
-	if err != nil {
-		panic(err)
-	}
-	defer m.Close()
+	// Create components
+	e := eat.NewSimpleEAT()
+	s := sce.NewMockCommitment(256)
 
 	// Simulate target CIDs (in practice, these would come from CAS/IPFS)
-	target1CID, _ := types.NewCID([]byte("document.pdf"))
-	target2CID, _ := types.NewCID([]byte("image.png"))
-	target3CID, _ := types.NewCID([]byte("data.json"))
+	target1CID, _ := key.NewPayloadCID([]byte("document.pdf"))
+	target2CID, _ := key.NewPayloadCID([]byte("image.png"))
+	target3CID, _ := key.NewPayloadCID([]byte("data.json"))
 
 	fmt.Println("Step 1: Create initial structure")
 	fmt.Println("--------------------------------")
 
 	// Create a structure with explicit arcs
-	arcs := types.NewArcSetFromPairs(
-		types.NewArcPair("document", target1CID),
-		types.NewArcPair("image", target2CID),
-	)
+	arcs := sce.NewMapArcSetView()
+	arcs.Add("document", target1CID)
+	arcs.Add("image", target2CID)
 
-	comm, err := m.CreateStructure(arcs)
+	structure, err := malt.NewStructure(arcs, e, s)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Created structure with commitment: %s\n", comm)
+	fmt.Printf("Created structure with commitment: %s\n", structure.Root())
 	fmt.Printf("  - document -> %s\n", target1CID)
 	fmt.Printf("  - image -> %s\n", target2CID)
 	fmt.Println()
@@ -47,12 +45,12 @@ func main() {
 	fmt.Println("Step 2: Resolve and verify arcs")
 	fmt.Println("--------------------------------")
 
-	resolved, proof, err := m.Resolve(comm, "document")
+	resolved, proof, err := structure.Resolve("document")
 	if err != nil {
 		panic(err)
 	}
 
-	valid, err := m.Verify(comm, "document", resolved, proof)
+	valid, err := structure.Verify("document", resolved, proof)
 	if err != nil {
 		panic(err)
 	}
@@ -65,60 +63,58 @@ func main() {
 	fmt.Println("Step 3: Update arc (localized update)")
 	fmt.Println("--------------------------------------")
 
-	newComm, err := m.UpdateArc(comm, "document", target3CID)
+	updatedStructure, err := structure.Update("document", target3CID)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Printf("Updated 'document' -> %s\n", target3CID)
-	fmt.Printf("New commitment: %s\n", newComm)
-	fmt.Printf("Old commitment preserved: %s\n", comm)
+	fmt.Printf("New commitment: %s\n", updatedStructure.Root())
+	fmt.Printf("Old commitment preserved: %s\n", structure.Root())
 	fmt.Println()
 
 	// Verify new commitment
-	resolved, proof, err = m.Resolve(newComm, "document")
+	resolved, proof, err = updatedStructure.Resolve("document")
 	if err != nil {
 		panic(err)
 	}
 
-	valid, _ = m.Verify(newComm, "document", resolved, proof)
+	valid, _ = updatedStructure.Verify("document", resolved, proof)
 	fmt.Printf("Resolved 'document' with new commitment: %s\n", resolved)
 	fmt.Printf("Proof valid: %v\n", valid)
 	fmt.Println()
 
-	// Add new arc
+	// Add new arc by updating the arc set
 	fmt.Println("Step 4: Add new arc")
 	fmt.Println("-------------------")
 
-	comm2, err := m.AddArc(newComm, "data", target3CID)
+	// Get current arcs and add new one
+	newArcs := sce.NewMapArcSetView()
+	currentArcs := updatedStructure.GetArcSet()
+	iter := currentArcs.Iterate()
+	for {
+		p, k, ok := iter.Next()
+		if !ok {
+			break
+		}
+		newArcs.Add(p, k)
+	}
+	newArcs.Add("data", target3CID)
+
+	// Create new structure with updated arcs
+	structure2, err := malt.NewStructure(newArcs, e, s)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Printf("Added 'data' -> %s\n", target3CID)
-	fmt.Printf("New commitment: %s\n", comm2)
-	fmt.Println()
-
-	// Get lineage
-	fmt.Println("Step 5: Get commitment lineage")
-	fmt.Println("-------------------------------")
-
-	lineage, err := m.GetLineage(comm2)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Lineage (newest to oldest):\n")
-	for i, c := range lineage {
-		fmt.Printf("  %d. %s\n", i+1, c)
-	}
+	fmt.Printf("New commitment: %s\n", structure2.Root())
 	fmt.Println()
 
 	// Stats
 	fmt.Println("Statistics")
 	fmt.Println("----------")
-	stats := m.Stats()
-	fmt.Printf("Total structures: %d\n", stats.StructureCount)
+	fmt.Printf("Arc count: %d\n", structure2.GetArcSet().Len())
 
 	fmt.Println()
 	fmt.Println("=== Demo Complete ===")
