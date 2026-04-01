@@ -18,6 +18,8 @@ import (
 	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/resolver/explicit"
+	"github.com/dewebprotocol/malt/core/resolver/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
@@ -33,12 +35,13 @@ type Node struct {
 	opts *options
 
 	// Core components
-	kv         kvstore.KVStore
-	sce        *sce.Engine
-	eat        eat.EAT
-	cas        cas.Client
-	resolver   *resolver.Resolver
-	gateway    *gateway.Gateway
+	kv              kvstore.KVStore
+	sce             *sce.Engine
+	eat             eat.EAT
+	cas             cas.Client
+	explicitResolver resolver.Resolver
+	implicitResolver resolver.Resolver
+	gateway         *gateway.Gateway
 }
 
 // NewNode creates a new MALT node with the given options.
@@ -125,11 +128,14 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 	}
 
-	// Resolver (no CAS - single-step resolution only)
-	node.resolver = resolver.NewResolver(node.eat, node.sce)
+	// Explicit resolver (MALT arcs)
+	node.explicitResolver = explicit.NewResolver(node.eat, node.sce)
 
-	// Gateway (with CAS - full path resolution)
-	node.gateway = gateway.NewGateway(node.resolver, node.cas)
+	// Implicit resolver (Merkle DAG via CAS)
+	node.implicitResolver = implicit.NewResolver(node.cas)
+
+	// Gateway (full path resolution)
+	node.gateway = gateway.NewGateway(node.explicitResolver, node.implicitResolver)
 
 	return node, nil
 }
@@ -212,9 +218,9 @@ func (n *Node) CAS() cas.Client {
 	return n.cas
 }
 
-// Resolver returns the resolver.
-func (n *Node) Resolver() *resolver.Resolver {
-	return n.resolver
+// Resolver returns the explicit resolver for MALT arcs.
+func (n *Node) Resolver() resolver.Resolver {
+	return n.explicitResolver
 }
 
 // Gateway returns the gateway for full path resolution.

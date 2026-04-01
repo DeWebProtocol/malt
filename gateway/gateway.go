@@ -4,26 +4,25 @@
 package gateway
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/cas"
 	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/key"
 )
 
 // Gateway handles hybrid resolution with prefix consumption.
+// It dispatches to different resolvers based on key kind.
 type Gateway struct {
-	resolver *resolver.Resolver
-	cas      cas.Client
+	explicitResolver resolver.Resolver
+	implicitResolver  resolver.Resolver
 }
 
-// NewGateway creates a new gateway.
-func NewGateway(r *resolver.Resolver, c cas.Client) *Gateway {
+// NewGateway creates a new gateway with explicit and implicit resolvers.
+func NewGateway(explicit, implicit resolver.Resolver) *Gateway {
 	return &Gateway{
-		resolver: r,
-		cas:      c,
+		explicitResolver: explicit,
+		implicitResolver: implicit,
 	}
 }
 
@@ -43,31 +42,15 @@ type Transcript struct {
 
 // StepEvidence represents evidence for a single resolution step.
 type StepEvidence struct {
-	// Kind indicates whether this was an explicit or implicit step
-	Kind StepKind
-
 	// Path is the path segment consumed in this step
 	Path string
 
 	// Target is the key resolved to
 	Target key.Key
 
-	// Proof is the cryptographic proof (for explicit steps)
-	Proof arcset.Proof
-
-	// BlockContent is the raw block content (for implicit steps)
-	BlockContent []byte
+	// Evidence is the cryptographic evidence for this step
+	Evidence evidence.Evidence
 }
-
-// StepKind indicates the type of resolution step.
-type StepKind int
-
-const (
-	// StepExplicit indicates an explicit arc traversal (StructureRoot)
-	StepExplicit StepKind = iota
-	// StepImplicit indicates an implicit Merkle-DAG traversal (PayloadCID)
-	StepImplicit
-)
 
 // Resolve resolves a path from a root key.
 // It supports both explicit arcs (for StructureRoot) and implicit Merkle-DAG traversal (for PayloadCID).
@@ -84,56 +67,30 @@ func (g *Gateway) Resolve(root key.Key, path string) (*ResolveResult, error) {
 		// Dispatch based on key type
 		switch currentKey.Kind() {
 		case key.KeyKindStructureRoot:
-			// Explicit step: use resolver for longest-prefix match
-			matchedPath, target, proof, err := g.resolver.ResolveStep(currentKey, remainingPath)
+			// Explicit step: use explicit resolver for longest-prefix match
+			matchedPath, target, ev, err := g.explicitResolver.Resolve(currentKey, remainingPath)
 			if err != nil {
-				return nil, fmt.Errorf("explicit step failed: %w", err)
+				return nil, fmt.Errorf("explicit resolution failed: %w", err)
 			}
 
+			// Record step
 			transcript.Steps = append(transcript.Steps, StepEvidence{
-				Kind:   StepExplicit,
-				Path:   matchedPath,
-				Target: target,
-				Proof:  proof,
+				Path:     matchedPath,
+				Target:   target,
+				Evidence: ev,
 			})
 
 			currentKey = target
+
+			// Update remaining path
 			remainingPath = remainingPath[len(matchedPath):]
 			if remainingPath != "" && remainingPath[0] == '/' {
 				remainingPath = remainingPath[1:]
 			}
 
 		case key.KeyKindPayloadCID:
-			// Implicit step: fetch block from CAS and follow Merkle-DAG links
-			if g.cas == nil {
-				// No CAS available, stop at PayloadCID
-				return &ResolveResult{
-					Target:     currentKey,
-					Transcript: transcript,
-				}, nil
-			}
-
-			// Fetch block content
-			blockContent, err := g.cas.Get(context.Background(), currentKey)
-			if err != nil {
-				// Block not available, stop here
-				return &ResolveResult{
-					Target:     currentKey,
-					Transcript: transcript,
-				}, nil
-			}
-
-			// Record implicit step
-			transcript.Steps = append(transcript.Steps, StepEvidence{
-				Kind:         StepImplicit,
-				Path:         remainingPath,
-				Target:       currentKey,
-				BlockContent: blockContent,
-			})
-
-			// Try to parse block as IPLD node and follow links
-			// For now, return with the block content
-			// Full implementation would parse IPLD codec and follow links
+			// We've reached a PayloadCID (data layer)
+			// Stop here - we've resolved as far as we can
 			return &ResolveResult{
 				Target:     currentKey,
 				Transcript: transcript,
@@ -159,23 +116,24 @@ func (g *Gateway) VerifyTranscript(root key.Key, transcript *Transcript) (bool, 
 	currentRoot := root
 
 	for _, step := range transcript.Steps {
-		switch step.Kind {
-		case StepExplicit:
-			valid, err := g.resolver.VerifyStep(currentRoot, step.Path, step.Target, step.Proof)
-			if err != nil {
-				return false, fmt.Errorf("verification failed: %w", err)
-			}
-			if !valid {
-				return false, nil
-			}
-			currentRoot = step.Target
-
-		case StepImplicit:
-			// For implicit steps, verify the block content hash matches the CID
-			// This would require CAS integration
-			// For now, we trust the step
-			currentRoot = step.Target
+		var r resolver.Resolver
+		switch step.Evidence.Kind() {
+		case evidence.EvidenceKindExplicit:
+			r = g.explicitResolver
+		case evidence.EvidenceKindImplicit:
+			r = g.implicitResolver
+		default:
+			return false, fmt.Errorf("unknown evidence kind: %v", step.Evidence.Kind())
 		}
+
+		valid, err := r.Verify(currentRoot, step.Path, step.Target, step.Evidence)
+		if err != nil {
+			return false, fmt.Errorf("verification failed: %w", err)
+		}
+		if !valid {
+			return false, nil
+		}
+		currentRoot = step.Target
 	}
 
 	return true, nil

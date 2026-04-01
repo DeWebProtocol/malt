@@ -1,111 +1,114 @@
-# Task Plan: Refactor Resolver Architecture
+# Task Plan: Refactor Resolver Architecture (Phase 2)
 
 ## Goal
-Separate concerns between `core/resolver` (MALT-specific resolution) and `gateway/` (hybrid resolution with prefix consumption).
+Define Resolver interface and implement multiple resolver types with proper Evidence types.
 
-## Background
-
-### Current Problem
-`core/resolver/resolver.go` mixes multiple responsibilities:
-- EAT longest-prefix matching ✓ (should stay)
-- SCE proof generation ✓ (should stay)
-- Path consumption loop ✗ (should move to gateway)
-- CAS implicit resolution ✗ (should move to gateway)
-- Transcript management ✗ (should move to gateway)
-
-### Target Architecture
+## Target Architecture
 
 ```
-core/resolver/     - MALT-specific: longest prefix match + proof generation
-gateway/           - Hybrid resolution: path consumption loop, CAS, Transcript
+core/resolver/
+├── resolver.go      # Resolver interface + Evidence types
+├── explicit/        # Explicit arc resolver (MALT arcs)
+├── implicit/        # Implicit resolver (Merkle DAG via CAS)
+└── hamt/            # HAMT resolver (future)
+
+core/types/
+├── arcset/          # ArcSet types
+├── kvstore/         # KVStore types
+└── evidence/        # Evidence types (like key/)
+```
+
+## Evidence Design (like Key)
+
+```go
+// Evidence represents proof of a resolution step
+type Evidence interface {
+    Bytes() []byte
+    String() string
+    Equals(other Evidence) bool
+    Kind() EvidenceKind
+}
+
+type EvidenceKind int
+
+const (
+    EvidenceKindExplicit EvidenceKind = iota  // MALT arc proof
+    EvidenceKindImplicit                       // Block content hash
+    EvidenceKindHAMT                           // HAMT proof
+)
+
+// ExplicitEvidence - cryptographic proof from SCE
+type ExplicitEvidence struct {
+    proof []byte  // KZG/Verkle/IPA proof
+}
+
+// ImplicitEvidence - block content for Merkle DAG
+type ImplicitEvidence struct {
+    blockContent []byte
+}
+
+// HAMTEvidence - HAMT proof
+type HAMTEvidence struct {
+    proof []byte
+}
+```
+
+## Resolver Interface
+
+```go
+// Resolver resolves a single step from a root key.
+type Resolver interface {
+    // Resolve finds the longest matching prefix and returns evidence.
+    Resolve(root key.Key, path string) (matchedPath string, target key.Key, evidence Evidence, err error)
+
+    // Verify verifies the evidence for a resolution step.
+    Verify(root key.Key, path string, target key.Key, evidence Evidence) (bool, error)
+}
 ```
 
 ## Phases
 
-### Phase 1: Define core/resolver responsibilities
-Status: `complete`
+### Phase 5: Create Evidence types
+Status: `pending`
 
-**Scope:**
-- Only longest-prefix matching in EAT
-- Only SCE proof generation
-- Single-step resolution (no loop)
-- No CAS dependency
-- No Transcript
+- Create `core/types/evidence/evidence.go`
+- Define Evidence interface and implementations
+- Move arcset.Proof to evidence package
 
-**API:**
-```go
-// Resolver resolves a single step from EAT using longest-prefix match.
-type Resolver struct {
-    eat eat.EAT
-    sce *sce.Engine
-}
+### Phase 6: Define Resolver interface
+Status: `pending`
 
-// ResolveStep finds longest matching prefix and generates proof.
-// Returns: matchedPath, target, proof, error
-func (r *Resolver) ResolveStep(root key.Key, path string) (matchedPath string, target key.Key, proof arcset.Proof, err error)
+- Update `core/resolver/resolver.go` with interface
+- Create `core/resolver/explicit/` package
+- Move current implementation to explicit/
 
-// VerifyStep verifies a single step's proof.
-func (r *Resolver) VerifyStep(root key.Key, path string, target key.Key, proof arcset.Proof) (bool, error)
-```
+### Phase 7: Implement Implicit resolver
+Status: `pending`
 
-### Phase 2: Create gateway package
-Status: `complete`
+- Create `core/resolver/implicit/`
+- Implement Merkle DAG resolution via CAS
 
-**Scope:**
-- Path consumption loop
-- CAS integration for implicit resolution
-- Transcript management
-- Hybrid resolution (explicit + implicit)
+### Phase 8: Update dependencies
+Status: `pending`
 
-**API:**
-```go
-// Gateway handles hybrid resolution with prefix consumption.
-type Gateway struct {
-    resolver *resolver.Resolver
-    cas      cas.Client
-}
-
-// Resolve resolves a full path, consuming prefixes step by step.
-func (g *Gateway) Resolve(root key.Key, path string) (*ResolveResult, error)
-
-// VerifyTranscript verifies all steps in a transcript.
-func (g *Gateway) VerifyTranscript(root key.Key, transcript *Transcript) (bool, error)
-```
-
-### Phase 3: Refactor existing code
-Status: `complete`
-
-- Simplify `core/resolver/resolver.go` to single-step logic
-- Create `gateway/gateway.go` with path loop logic
-- Move Transcript types to `gateway/`
-- Update tests
-
-### Phase 4: Update tests
-Status: `complete`
-
-- Update `core/resolver/resolver_test.go` for single-step tests
-- Create `gateway/gateway_test.go` for full path resolution tests
+- Update gateway to use Resolver interface
+- Update Node to compose resolvers
+- Update all tests
 
 ## Files to Modify
 
 | File | Action |
 |------|--------|
-| `core/resolver/resolver.go` | Simplify to single-step |
-| `core/resolver/resolver_test.go` | Update tests |
-| `gateway/gateway.go` | Create new |
-| `gateway/gateway_test.go` | Create new |
-| `gateway/transcript.go` | Move Transcript types here |
+| `core/types/evidence/evidence.go` | Create new |
+| `core/resolver/resolver.go` | Define interface |
+| `core/resolver/explicit/explicit.go` | Move from resolver.go |
+| `core/resolver/implicit/implicit.go` | Create new |
+| `gateway/gateway.go` | Use Resolver interface |
 
 ## Decisions
 
 | Decision | Choice | Reason |
 |----------|--------|--------|
-| Transcript location | `gateway/` | Only gateway needs it |
-| CAS dependency | `gateway/` only | Core resolver should be pure |
-| VerifyTranscript | `gateway/` | Requires full context |
-
-## Errors Encountered
-
-| Error | Attempt | Resolution |
-|-------|---------|------------|
-| (none yet) | - | - |
+| Evidence location | `core/types/evidence/` | Similar to key package |
+| Resolver interface | `core/resolver/` | Core abstraction |
+| Proof type | Removed | Replaced by Evidence |

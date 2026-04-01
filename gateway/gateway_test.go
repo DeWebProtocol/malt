@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/simple"
-	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/resolver/explicit"
+	"github.com/dewebprotocol/malt/core/resolver/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/gateway"
@@ -50,8 +52,9 @@ func TestGatewayExplicitStep(t *testing.T) {
 	}
 
 	// Create gateway
-	r := resolver.NewResolver(e, s)
-	g := gateway.NewGateway(r, c)
+	explicitR := explicit.NewResolver(e, s)
+	implicitR := implicit.NewResolver(c)
+	g := gateway.NewGateway(explicitR, implicitR)
 
 	// Test longest prefix matching
 	tests := []struct {
@@ -121,8 +124,9 @@ func TestGatewayImplicitStep(t *testing.T) {
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
 
 	// Create gateway
-	r := resolver.NewResolver(e, s)
-	g := gateway.NewGateway(r, c)
+	explicitR := explicit.NewResolver(e, s)
+	implicitR := implicit.NewResolver(c)
+	g := gateway.NewGateway(explicitR, implicitR)
 
 	// Resolve should stop at PayloadCID (implicit step not implemented yet)
 	result, err := g.Resolve(root, "data")
@@ -171,8 +175,9 @@ func TestGatewayTranscript(t *testing.T) {
 	}
 
 	// Create gateway
-	r := resolver.NewResolver(e, s)
-	g := gateway.NewGateway(r, c)
+	explicitR := explicit.NewResolver(e, s)
+	implicitR := implicit.NewResolver(c)
+	g := gateway.NewGateway(explicitR, implicitR)
 
 	// Resolve and check transcript
 	result, err := g.Resolve(root, "inner")
@@ -185,13 +190,13 @@ func TestGatewayTranscript(t *testing.T) {
 	}
 
 	step := result.Transcript.Steps[0]
-	if step.Kind != gateway.StepExplicit {
-		t.Error("Step should be explicit")
-	}
 	if step.Path != "inner" {
 		t.Errorf("Step path = %s, want inner", step.Path)
 	}
 	if !step.Target.Equals(innerCID) {
 		t.Error("Step target should match innerCID")
+	}
+	if step.Evidence.Kind() != evidence.EvidenceKindExplicit {
+		t.Error("Step evidence should be ExplicitEvidence")
 	}
 }

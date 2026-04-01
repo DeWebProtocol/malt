@@ -4,14 +4,16 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/eat/simple"
 	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
-func TestResolverResolveStep(t *testing.T) {
+func TestExplicitResolverResolve(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
 	scheme, err := kzg.NewScheme()
@@ -46,8 +48,8 @@ func TestResolverResolveStep(t *testing.T) {
 		e.Put(root, path, target)
 	}
 
-	// Create resolver (no CAS needed for single-step resolution)
-	r := resolver.NewResolver(e, s)
+	// Create explicit resolver
+	r := explicit.NewResolver(e, s)
 
 	// Test longest prefix matching
 	tests := []struct {
@@ -64,27 +66,31 @@ func TestResolverResolveStep(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		matchedPath, target, proof, err := r.ResolveStep(root, tt.path)
+		matchedPath, target, ev, err := r.Resolve(root, tt.path)
 		if err != nil {
-			t.Errorf("ResolveStep(%s) failed: %v", tt.path, err)
+			t.Errorf("Resolve(%s) failed: %v", tt.path, err)
 			continue
 		}
 
 		if matchedPath != tt.expectedPath {
-			t.Errorf("ResolveStep(%s) matchedPath = %s, want %s", tt.path, matchedPath, tt.expectedPath)
+			t.Errorf("Resolve(%s) matchedPath = %s, want %s", tt.path, matchedPath, tt.expectedPath)
 		}
 
 		if !target.Equals(tt.expectedKey) {
-			t.Errorf("ResolveStep(%s) target = %v, want %v", tt.path, target, tt.expectedKey)
+			t.Errorf("Resolve(%s) target = %v, want %v", tt.path, target, tt.expectedKey)
 		}
 
-		if len(proof) == 0 {
-			t.Errorf("ResolveStep(%s) should generate proof", tt.path)
+		if ev == nil {
+			t.Errorf("Resolve(%s) should return evidence", tt.path)
+		}
+
+		if ev != nil && ev.Kind() != evidence.EvidenceKindExplicit {
+			t.Errorf("Resolve(%s) evidence kind = %v, want ExplicitEvidence", tt.path, ev.Kind())
 		}
 	}
 }
 
-func TestResolverVerifyStep(t *testing.T) {
+func TestExplicitResolverVerify(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
 	scheme, err := kzg.NewScheme()
@@ -107,27 +113,27 @@ func TestResolverVerifyStep(t *testing.T) {
 	// Store in EAT
 	e.Put(root, "a", k1)
 
-	// Create resolver
-	r := resolver.NewResolver(e, s)
+	// Create explicit resolver
+	r := explicit.NewResolver(e, s)
 
 	// Resolve step
-	matchedPath, target, proof, err := r.ResolveStep(root, "a/b/c")
+	matchedPath, target, ev, err := r.Resolve(root, "a/b/c")
 	if err != nil {
-		t.Fatalf("ResolveStep failed: %v", err)
+		t.Fatalf("Resolve failed: %v", err)
 	}
 
 	// Verify step
-	valid, err := r.VerifyStep(root, matchedPath, target, proof)
+	valid, err := r.Verify(root, matchedPath, target, ev)
 	if err != nil {
-		t.Fatalf("VerifyStep failed: %v", err)
+		t.Fatalf("Verify failed: %v", err)
 	}
 
 	if !valid {
-		t.Error("VerifyStep should return true")
+		t.Error("Verify should return true")
 	}
 }
 
-func TestResolverNoMatch(t *testing.T) {
+func TestExplicitResolverNoMatch(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
 	scheme, err := kzg.NewScheme()
@@ -150,12 +156,24 @@ func TestResolverNoMatch(t *testing.T) {
 	// Store in EAT
 	e.Put(root, "x/y/z", k1)
 
-	// Create resolver
-	r := resolver.NewResolver(e, s)
+	// Create explicit resolver
+	r := explicit.NewResolver(e, s)
 
 	// Try to resolve non-matching path
-	_, _, _, err = r.ResolveStep(root, "a/b/c")
+	_, _, _, err = r.Resolve(root, "a/b/c")
 	if err == nil {
-		t.Error("ResolveStep should fail for non-matching path")
+		t.Error("Resolve should fail for non-matching path")
+	}
+}
+
+func TestResolverInterface(t *testing.T) {
+	// Verify explicit.Resolver implements resolver.Resolver
+	e := simple.NewEAT()
+	scheme, _ := kzg.NewScheme()
+	s := sce.NewEngine(scheme)
+
+	var r resolver.Resolver = explicit.NewResolver(e, s)
+	if r == nil {
+		t.Error("explicit.Resolver should implement resolver.Resolver")
 	}
 }
