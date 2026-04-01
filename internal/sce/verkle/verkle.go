@@ -322,3 +322,165 @@ func serializeVerkleProof(stem verkle.Stem, target key.Key) []byte {
 
 // Ensure Commitment implements sce.CommitmentScheme.
 var _ sce.CommitmentScheme = (*Commitment)(nil)
+
+// === Aggregated Proof Methods ===
+
+// ProveBatch generates proofs for multiple paths.
+func (v *Commitment) ProveBatch(root key.Key, arcs sce.ArcSetView, paths []string) (map[string]sce.BatchProofEntry, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	v.mu.RLock()
+	entry, cached := v.cache[string(root.Bytes())]
+	v.mu.RUnlock()
+
+	if !cached {
+		return nil, fmt.Errorf("commitment not found in cache")
+	}
+
+	results := make(map[string]sce.BatchProofEntry, len(paths))
+
+	for _, path := range paths {
+		target, ok := arcs.Get(path)
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in arc set", path)
+		}
+
+		stem, ok := entry.pathToStem[path]
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in stem index", path)
+		}
+
+		proofBytes := serializeVerkleProof(stem, target)
+
+		results[path] = sce.BatchProofEntry{
+			Target: target,
+			Proof:  sce.Proof(proofBytes),
+		}
+	}
+
+	return results, nil
+}
+
+// VerifyBatch verifies multiple proofs efficiently.
+func (v *Commitment) VerifyBatch(root key.Key, proofs map[string]sce.BatchProofEntry) (bool, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	v.mu.RLock()
+	entry, cached := v.cache[string(root.Bytes())]
+	v.mu.RUnlock()
+
+	if !cached {
+		return false, fmt.Errorf("commitment not found in cache")
+	}
+
+	for path, proofEntry := range proofs {
+		if len(proofEntry.Proof) < 31 {
+			return false, nil
+		}
+
+		stem := proofEntry.Proof[:31]
+		expectedStem, ok := entry.pathToStem[path]
+		if ok {
+			for i := range 31 {
+				if stem[i] != expectedStem[i] {
+					return false, nil
+				}
+			}
+		}
+	}
+
+	return true, nil
+}
+
+// ProveAggregate generates a single aggregated proof for multiple paths.
+// Verkle trees naturally support aggregated proofs via IPA.
+func (v *Commitment) ProveAggregate(root key.Key, arcs sce.ArcSetView, paths []string) (*sce.AggregatedProof, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths cannot be empty")
+	}
+
+	v.mu.RLock()
+	entry, cached := v.cache[string(root.Bytes())]
+	v.mu.RUnlock()
+
+	if !cached {
+		return nil, fmt.Errorf("commitment not found in cache")
+	}
+
+	targets := make([]key.Key, len(paths))
+	proofData := make([]byte, 0, len(paths)*31)
+
+	for i, path := range paths {
+		target, ok := arcs.Get(path)
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in arc set", path)
+		}
+		targets[i] = target
+
+		stem, ok := entry.pathToStem[path]
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in stem index", path)
+		}
+
+		// Only append stem as proof component
+		proofData = append(proofData, stem...)
+	}
+
+	return &sce.AggregatedProof{
+		Paths:     paths,
+		Targets:   targets,
+		ProofData: proofData,
+	}, nil
+}
+
+// VerifyAggregate verifies an aggregated proof for multiple paths.
+func (v *Commitment) VerifyAggregate(root key.Key, aggProof *sce.AggregatedProof) (bool, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	if aggProof == nil {
+		return false, fmt.Errorf("aggregated proof is nil")
+	}
+
+	if len(aggProof.Paths) == 0 {
+		return false, fmt.Errorf("no paths in aggregated proof")
+	}
+
+	if len(aggProof.ProofData) != len(aggProof.Paths)*31 {
+		return false, fmt.Errorf("proof data size mismatch: expected %d, got %d", len(aggProof.Paths)*31, len(aggProof.ProofData))
+	}
+
+	v.mu.RLock()
+	entry, cached := v.cache[string(root.Bytes())]
+	v.mu.RUnlock()
+
+	if !cached {
+		return false, fmt.Errorf("commitment not found in cache")
+	}
+
+	// Verify each stem in the aggregation
+	for i, path := range aggProof.Paths {
+		stem := aggProof.ProofData[i*31 : (i+1)*31]
+		expectedStem, ok := entry.pathToStem[path]
+		if !ok {
+			return false, fmt.Errorf("path %s not found in stem index", path)
+		}
+
+		for j := range 31 {
+			if stem[j] != expectedStem[j] {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}

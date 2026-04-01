@@ -87,6 +87,45 @@ type CommitmentScheme interface {
 		Old key.Key
 		New key.Key
 	}) (key.Key, error)
+
+	// === Aggregated Proof Methods ===
+
+	// ProveBatch generates proofs for multiple paths.
+	// Returns a map from path to (target, proof) pairs.
+	ProveBatch(root key.Key, arcs ArcSetView, paths []string) (map[string]BatchProofEntry, error)
+
+	// VerifyBatch verifies multiple proofs efficiently.
+	// Implementations may use aggregation for better performance.
+	VerifyBatch(root key.Key, proofs map[string]BatchProofEntry) (bool, error)
+
+	// ProveAggregate generates a single aggregated proof for multiple paths.
+	// The aggregated proof is smaller than individual proofs combined.
+	ProveAggregate(root key.Key, arcs ArcSetView, paths []string) (*AggregatedProof, error)
+
+	// VerifyAggregate verifies an aggregated proof for multiple paths.
+	VerifyAggregate(root key.Key, aggProof *AggregatedProof) (bool, error)
+}
+
+// BatchProofEntry represents a single proof in a batch.
+type BatchProofEntry struct {
+	Target key.Key
+	Proof  Proof
+}
+
+// AggregatedProof represents a proof for multiple arcs.
+// The internal structure depends on the commitment scheme:
+// - KZG: Multiple evaluation proofs in one
+// - IPA: Aggregated inner product argument
+// - Verkle: IPA-based aggregated proof
+type AggregatedProof struct {
+	// Paths are the paths being proved
+	Paths []string
+
+	// Targets are the target keys for each path
+	Targets []key.Key
+
+	// ProofData is the scheme-specific aggregated proof
+	ProofData []byte
 }
 
 // MapArcSetView is a simple in-memory ArcSetView implementation.

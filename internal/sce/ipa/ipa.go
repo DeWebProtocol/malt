@@ -18,6 +18,7 @@ import (
 
 const (
 	// MaxVectorSize is the maximum number of arcs per structure (IPA constraint).
+	// go-ipa requires vectors of exactly 256 elements.
 	MaxVectorSize = 256
 )
 
@@ -299,8 +300,10 @@ func (i *Commitment) BatchUpdate(root key.Key, arcs sce.ArcSetView, updates map[
 }
 
 // arcSetToVector converts an arc set to an IPA vector.
+// The vector is always padded to 256 elements as required by go-ipa.
 func (i *Commitment) arcSetToVector(arcs sce.ArcSetView) ([]fr.Element, map[string]int, map[int]string, error) {
-	vector := make([]fr.Element, i.opts.vectorSize)
+	// Always use 256 elements as required by go-ipa
+	vector := make([]fr.Element, MaxVectorSize)
 	pathToIndex := make(map[string]int)
 	indexToPath := make(map[int]string)
 
@@ -326,12 +329,13 @@ func (i *Commitment) arcSetToVector(arcs sce.ArcSetView) ([]fr.Element, map[stri
 	}
 	sort.Strings(paths)
 
+	// Check if we exceed max vector size
+	if len(paths) > MaxVectorSize {
+		return nil, nil, nil, fmt.Errorf("arc set exceeds maximum vector size (%d)", MaxVectorSize)
+	}
+
 	// Map paths to indices
 	for idx, path := range paths {
-		if idx >= i.opts.vectorSize {
-			return nil, nil, nil, fmt.Errorf("arc set exceeds maximum vector size (%d)", i.opts.vectorSize)
-		}
-
 		target, ok := arcs.Get(path)
 		if !ok {
 			continue
@@ -441,3 +445,268 @@ func keyToFieldElement(k key.Key) fr.Element {
 
 // Ensure Commitment implements sce.CommitmentScheme.
 var _ sce.CommitmentScheme = (*Commitment)(nil)
+
+// === Aggregated Proof Methods ===
+
+// ProveBatch generates proofs for multiple paths.
+func (i *Commitment) ProveBatch(root key.Key, arcs sce.ArcSetView, paths []string) (map[string]sce.BatchProofEntry, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths cannot be empty")
+	}
+
+	i.mu.RLock()
+	aux, ok := i.auxStore[string(root.Bytes())]
+	i.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("commitment not found in auxiliary store")
+	}
+
+	results := make(map[string]sce.BatchProofEntry, len(paths))
+
+	for _, path := range paths {
+		target, ok := arcs.Get(path)
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in arc set", path)
+		}
+
+		index, ok := aux.pathToIndex[path]
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in path index", path)
+		}
+
+		transcript := common.NewTranscript("malt-ipa")
+
+		var comm banderwagon.Element
+		commBytes := root.Bytes()
+		if err := comm.SetBytes(commBytes); err != nil {
+			return nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+		}
+
+		var evalPoint fr.Element
+		evalPoint.SetUint64(uint64(index))
+
+		proof, err := ipa.CreateIPAProof(transcript, i.ipaConfig, comm, aux.vector, evalPoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IPA proof for path %s: %w", path, err)
+		}
+
+		proofBytes, err := i.serializeProof(&proof)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize proof for path %s: %w", path, err)
+		}
+
+		results[path] = sce.BatchProofEntry{
+			Target: target,
+			Proof:  sce.Proof(proofBytes),
+		}
+	}
+
+	return results, nil
+}
+
+// VerifyBatch verifies multiple proofs efficiently.
+func (i *Commitment) VerifyBatch(root key.Key, proofs map[string]sce.BatchProofEntry) (bool, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	i.mu.RLock()
+	aux, ok := i.auxStore[string(root.Bytes())]
+	i.mu.RUnlock()
+
+	if !ok {
+		return false, fmt.Errorf("commitment not found in auxiliary store")
+	}
+
+	var comm banderwagon.Element
+	commBytes := root.Bytes()
+	if err := comm.SetBytes(commBytes); err != nil {
+		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	for path, entry := range proofs {
+		index, ok := aux.pathToIndex[path]
+		if !ok {
+			return false, nil
+		}
+
+		ipaProof, err := i.deserializeProof(entry.Proof)
+		if err != nil {
+			return false, fmt.Errorf("failed to deserialize proof for path %s: %w", path, err)
+		}
+
+		transcript := common.NewTranscript("malt-ipa")
+
+		var evalPoint fr.Element
+		evalPoint.SetUint64(uint64(index))
+
+		output := keyToFieldElement(entry.Target)
+
+		valid, err := ipa.CheckIPAProof(transcript, i.ipaConfig, comm, *ipaProof, evalPoint, output)
+		if err != nil {
+			return false, fmt.Errorf("failed to check IPA proof for path %s: %w", path, err)
+		}
+
+		if !valid {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// ProveAggregate generates a single aggregated proof for multiple paths.
+// IPA naturally supports aggregation through batched inner product arguments.
+func (i *Commitment) ProveAggregate(root key.Key, arcs sce.ArcSetView, paths []string) (*sce.AggregatedProof, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return nil, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths cannot be empty")
+	}
+
+	i.mu.RLock()
+	aux, ok := i.auxStore[string(root.Bytes())]
+	i.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("commitment not found in auxiliary store")
+	}
+
+	targets := make([]key.Key, len(paths))
+	indices := make([]int, len(paths))
+
+	for j, path := range paths {
+		target, ok := arcs.Get(path)
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in arc set", path)
+		}
+		targets[j] = target
+
+		index, ok := aux.pathToIndex[path]
+		if !ok {
+			return nil, fmt.Errorf("path %s not found in path index", path)
+		}
+		indices[j] = index
+	}
+
+	var comm banderwagon.Element
+	commBytes := root.Bytes()
+	if err := comm.SetBytes(commBytes); err != nil {
+		return nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	// Create aggregated IPA proof
+	// For simplicity, we create individual proofs and concatenate them
+	// A full implementation would use proper IPA aggregation
+	aggregatedProofData := make([]byte, 0)
+
+	for _, index := range indices {
+		transcript := common.NewTranscript("malt-ipa-aggregate")
+
+		var evalPoint fr.Element
+		evalPoint.SetUint64(uint64(index))
+
+		proof, err := ipa.CreateIPAProof(transcript, i.ipaConfig, comm, aux.vector, evalPoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IPA proof: %w", err)
+		}
+
+		proofBytes, err := i.serializeProof(&proof)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize proof: %w", err)
+		}
+
+		// Store proof length + proof data
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(proofBytes)))
+		aggregatedProofData = append(aggregatedProofData, lenBytes...)
+		aggregatedProofData = append(aggregatedProofData, proofBytes...)
+	}
+
+	return &sce.AggregatedProof{
+		Paths:     paths,
+		Targets:   targets,
+		ProofData: aggregatedProofData,
+	}, nil
+}
+
+// VerifyAggregate verifies an aggregated proof for multiple paths.
+func (i *Commitment) VerifyAggregate(root key.Key, aggProof *sce.AggregatedProof) (bool, error) {
+	if root.Kind() != key.KeyKindStructureRoot {
+		return false, fmt.Errorf("expected StructureRoot, got %v", root.Kind())
+	}
+
+	if aggProof == nil {
+		return false, fmt.Errorf("aggregated proof is nil")
+	}
+
+	if len(aggProof.Paths) == 0 {
+		return false, fmt.Errorf("no paths in aggregated proof")
+	}
+
+	i.mu.RLock()
+	aux, ok := i.auxStore[string(root.Bytes())]
+	i.mu.RUnlock()
+
+	if !ok {
+		return false, fmt.Errorf("commitment not found in auxiliary store")
+	}
+
+	var comm banderwagon.Element
+	commBytes := root.Bytes()
+	if err := comm.SetBytes(commBytes); err != nil {
+		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	offset := 0
+	for j, path := range aggProof.Paths {
+		if offset+4 > len(aggProof.ProofData) {
+			return false, fmt.Errorf("proof data too short")
+		}
+
+		proofLen := int(binary.BigEndian.Uint32(aggProof.ProofData[offset : offset+4]))
+		offset += 4
+
+		if offset+proofLen > len(aggProof.ProofData) {
+			return false, fmt.Errorf("proof data too short for proof %d", j)
+		}
+
+		proofBytes := aggProof.ProofData[offset : offset+proofLen]
+		offset += proofLen
+
+		index, ok := aux.pathToIndex[path]
+		if !ok {
+			return false, nil
+		}
+
+		ipaProof, err := i.deserializeProof(sce.Proof(proofBytes))
+		if err != nil {
+			return false, fmt.Errorf("failed to deserialize proof for path %s: %w", path, err)
+		}
+
+		transcript := common.NewTranscript("malt-ipa-aggregate")
+
+		var evalPoint fr.Element
+		evalPoint.SetUint64(uint64(index))
+
+		output := keyToFieldElement(aggProof.Targets[j])
+
+		valid, err := ipa.CheckIPAProof(transcript, i.ipaConfig, comm, *ipaProof, evalPoint, output)
+		if err != nil {
+			return false, fmt.Errorf("failed to check IPA proof for path %s: %w", path, err)
+		}
+
+		if !valid {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}

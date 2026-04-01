@@ -10,21 +10,18 @@ import (
 
 // ExampleNewCommitment demonstrates basic usage of KZG commitment.
 func ExampleNewCommitment() {
-	// Create a new KZG commitment scheme
 	c, err := kzg.NewCommitment()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	// Create an arc set
 	arcs := sce.NewMapArcSetView()
 	target1, _ := key.NewPayloadCID([]byte("document.pdf"))
 	target2, _ := key.NewPayloadCID([]byte("image.png"))
 	arcs.Add("document", target1)
 	arcs.Add("image", target2)
 
-	// Commit to the arc set
 	root, err := c.Commit(arcs)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -41,14 +38,12 @@ func ExampleNewCommitment() {
 func ExampleCommitment_Prove() {
 	c, _ := kzg.NewCommitment()
 
-	// Create and commit an arc set
 	arcs := sce.NewMapArcSetView()
 	target, _ := key.NewPayloadCID([]byte("my-data"))
 	arcs.Add("data", target)
 
 	root, _ := c.Commit(arcs)
 
-	// Generate proof for the "data" arc
 	provedTarget, proof, err := c.Prove(root, arcs, "data")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -58,7 +53,6 @@ func ExampleCommitment_Prove() {
 	fmt.Printf("Proved target: %v\n", provedTarget.Equals(target))
 	fmt.Printf("Proof length: %d bytes\n", len(proof))
 
-	// Verify the proof
 	valid, _ := c.Verify(root, "data", target, proof)
 	fmt.Printf("Proof valid: %v\n", valid)
 
@@ -72,7 +66,6 @@ func ExampleCommitment_Prove() {
 func ExampleCommitment_Update() {
 	c, _ := kzg.NewCommitment()
 
-	// Create initial structure
 	arcs := sce.NewMapArcSetView()
 	oldTarget, _ := key.NewPayloadCID([]byte("version-1"))
 	arcs.Add("file", oldTarget)
@@ -80,7 +73,6 @@ func ExampleCommitment_Update() {
 	root, _ := c.Commit(arcs)
 	fmt.Printf("Initial root created: %v\n", root != nil)
 
-	// Update the arc to point to new content
 	newTarget, _ := key.NewPayloadCID([]byte("version-2"))
 	newRoot, err := c.Update(root, arcs, "file", oldTarget, newTarget)
 	if err != nil {
@@ -99,7 +91,6 @@ func ExampleCommitment_Update() {
 func ExampleCommitment_BatchUpdate() {
 	c, _ := kzg.NewCommitment()
 
-	// Create initial structure
 	arcs := sce.NewMapArcSetView()
 	target1, _ := key.NewPayloadCID([]byte("data-1"))
 	target2, _ := key.NewPayloadCID([]byte("data-2"))
@@ -108,7 +99,6 @@ func ExampleCommitment_BatchUpdate() {
 
 	root, _ := c.Commit(arcs)
 
-	// Batch update both arcs
 	newTarget1, _ := key.NewPayloadCID([]byte("updated-1"))
 	newTarget2, _ := key.NewPayloadCID([]byte("updated-2"))
 
@@ -129,7 +119,6 @@ func ExampleCommitment_BatchUpdate() {
 
 // ExampleNewCommitment_options demonstrates using functional options.
 func ExampleNewCommitment_options() {
-	// Create KZG with custom options
 	c, err := kzg.NewCommitment(
 		kzg.WithVectorSize(4096),
 		kzg.WithCacheSize(2000),
@@ -141,7 +130,6 @@ func ExampleNewCommitment_options() {
 
 	fmt.Printf("Created KZG commitment with custom options\n")
 
-	// Use it normally
 	arcs := sce.NewMapArcSetView()
 	target, _ := key.NewPayloadCID([]byte("test"))
 	arcs.Add("test", target)
@@ -152,4 +140,52 @@ func ExampleNewCommitment_options() {
 	// Output:
 	// Created KZG commitment with custom options
 	// Committed: true
+}
+
+// ExampleCommitment_ProveBatch demonstrates batch proof generation.
+func ExampleCommitment_ProveBatch() {
+	c, _ := kzg.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	t1, _ := key.NewPayloadCID([]byte("data1"))
+	t2, _ := key.NewPayloadCID([]byte("data2"))
+	arcs.Add("path1", t1)
+	arcs.Add("path2", t2)
+
+	root, _ := c.Commit(arcs)
+
+	proofs, _ := c.ProveBatch(root, arcs, []string{"path1", "path2"})
+	fmt.Printf("Generated %d proofs\n", len(proofs))
+
+	valid, _ := c.VerifyBatch(root, proofs)
+	fmt.Printf("Batch valid: %v\n", valid)
+
+	// Output:
+	// Generated 2 proofs
+	// Batch valid: true
+}
+
+// ExampleCommitment_ProveAggregate demonstrates aggregated proof generation.
+func ExampleCommitment_ProveAggregate() {
+	c, _ := kzg.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	t1, _ := key.NewPayloadCID([]byte("data1"))
+	t2, _ := key.NewPayloadCID([]byte("data2"))
+	arcs.Add("path1", t1)
+	arcs.Add("path2", t2)
+
+	root, _ := c.Commit(arcs)
+
+	aggProof, _ := c.ProveAggregate(root, arcs, []string{"path1", "path2"})
+	fmt.Printf("Aggregated proof for %d paths\n", len(aggProof.Paths))
+	fmt.Printf("Proof data size: %d bytes\n", len(aggProof.ProofData))
+
+	valid, _ := c.VerifyAggregate(root, aggProof)
+	fmt.Printf("Aggregate valid: %v\n", valid)
+
+	// Output:
+	// Aggregated proof for 2 paths
+	// Proof data size: 160 bytes
+	// Aggregate valid: true
 }

@@ -74,3 +74,49 @@ func ExampleCommitment_Update() {
 	// Output:
 	// Roots differ: true
 }
+
+// ExampleCommitment_ProveBatch demonstrates batch proof generation for Verkle.
+func ExampleCommitment_ProveBatch() {
+	c, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	t1, _ := key.NewPayloadCID([]byte("data1"))
+	t2, _ := key.NewPayloadCID([]byte("data2"))
+	arcs.Add("path1", t1)
+	arcs.Add("path2", t2)
+
+	root, _ := c.Commit(arcs)
+
+	proofs, _ := c.ProveBatch(root, arcs, []string{"path1", "path2"})
+	fmt.Printf("Generated %d proofs\n", len(proofs))
+
+	valid, _ := c.VerifyBatch(root, proofs)
+	fmt.Printf("Batch valid: %v\n", valid)
+
+	// Output:
+	// Generated 2 proofs
+	// Batch valid: true
+}
+
+// ExampleCommitment_ProveAggregate demonstrates aggregated proof for Verkle.
+func ExampleCommitment_ProveAggregate() {
+	c, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	t1, _ := key.NewPayloadCID([]byte("data1"))
+	t2, _ := key.NewPayloadCID([]byte("data2"))
+	arcs.Add("path1", t1)
+	arcs.Add("path2", t2)
+
+	root, _ := c.Commit(arcs)
+
+	aggProof, _ := c.ProveAggregate(root, arcs, []string{"path1", "path2"})
+	fmt.Printf("Aggregated proof for %d paths\n", len(aggProof.Paths))
+
+	valid, _ := c.VerifyAggregate(root, aggProof)
+	fmt.Printf("Aggregate valid: %v\n", valid)
+
+	// Output:
+	// Aggregated proof for 2 paths
+	// Aggregate valid: true
+}

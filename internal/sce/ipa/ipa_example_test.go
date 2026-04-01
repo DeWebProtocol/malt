@@ -32,27 +32,28 @@ func ExampleNewCommitment() {
 	// Committed: true
 }
 
-// ExampleNewCommitment_options demonstrates using functional options.
-func ExampleNewCommitment_options() {
-	c, err := ipa.NewCommitment(
-		ipa.WithVectorSize(128),
-	)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
+// ExampleCommitment_Prove demonstrates proof generation and verification.
+func ExampleCommitment_Prove() {
+	c, _ := ipa.NewCommitment()
 
 	arcs := sce.NewMapArcSetView()
-	for i := 0; i < 50; i++ {
-		target, _ := key.NewPayloadCID([]byte{byte(i)})
-		arcs.Add(fmt.Sprintf("item_%d", i), target)
-	}
+	target, _ := key.NewPayloadCID([]byte("content"))
+	arcs.Add("path", target)
 
 	root, _ := c.Commit(arcs)
-	fmt.Printf("Committed 50 items: %v\n", root != nil)
+
+	provedTarget, proof, _ := c.Prove(root, arcs, "path")
+
+	fmt.Printf("Target matches: %v\n", provedTarget.Equals(target))
+	fmt.Printf("Has proof: %v\n", len(proof) > 0)
+
+	valid, _ := c.Verify(root, "path", target, proof)
+	fmt.Printf("Valid: %v\n", valid)
 
 	// Output:
-	// Committed 50 items: true
+	// Target matches: true
+	// Has proof: true
+	// Valid: true
 }
 
 // ExampleCommitment_Update demonstrates the fast update feature of IPA.
@@ -72,4 +73,50 @@ func ExampleCommitment_Update() {
 
 	// Output:
 	// Update succeeded: true
+}
+
+// ExampleCommitment_ProveBatch demonstrates batch proof generation for IPA.
+func ExampleCommitment_ProveBatch() {
+	c, _ := ipa.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	t1, _ := key.NewPayloadCID([]byte("data1"))
+	t2, _ := key.NewPayloadCID([]byte("data2"))
+	arcs.Add("path1", t1)
+	arcs.Add("path2", t2)
+
+	root, _ := c.Commit(arcs)
+
+	proofs, _ := c.ProveBatch(root, arcs, []string{"path1", "path2"})
+	fmt.Printf("Generated %d proofs\n", len(proofs))
+
+	valid, _ := c.VerifyBatch(root, proofs)
+	fmt.Printf("Batch valid: %v\n", valid)
+
+	// Output:
+	// Generated 2 proofs
+	// Batch valid: true
+}
+
+// ExampleCommitment_ProveAggregate demonstrates aggregated proof for IPA.
+func ExampleCommitment_ProveAggregate() {
+	c, _ := ipa.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	t1, _ := key.NewPayloadCID([]byte("data1"))
+	t2, _ := key.NewPayloadCID([]byte("data2"))
+	arcs.Add("path1", t1)
+	arcs.Add("path2", t2)
+
+	root, _ := c.Commit(arcs)
+
+	aggProof, _ := c.ProveAggregate(root, arcs, []string{"path1", "path2"})
+	fmt.Printf("Aggregated proof for %d paths\n", len(aggProof.Paths))
+
+	valid, _ := c.VerifyAggregate(root, aggProof)
+	fmt.Printf("Aggregate valid: %v\n", valid)
+
+	// Output:
+	// Aggregated proof for 2 paths
+	// Aggregate valid: true
 }

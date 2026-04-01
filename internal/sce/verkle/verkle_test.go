@@ -8,20 +8,20 @@ import (
 	"github.com/dewebprotocol/malt/key"
 )
 
+// === Basic Functionality Tests ===
+
 func TestVerkleCommitment(t *testing.T) {
 	v, err := verkle.NewCommitment()
 	if err != nil {
 		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
-	// Create arc set
 	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
-	// Commit
 	root, err := v.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
@@ -35,7 +35,6 @@ func TestVerkleCommitment(t *testing.T) {
 		t.Errorf("Expected StructureRoot, got %v", root.Kind())
 	}
 
-	// Prove
 	target, proof, err := v.Prove(root, arcs, "a")
 	if err != nil {
 		t.Fatalf("Prove failed: %v", err)
@@ -49,7 +48,6 @@ func TestVerkleCommitment(t *testing.T) {
 		t.Error("Proof should not be empty")
 	}
 
-	// Verify
 	valid, err := v.Verify(root, "a", k1, proof)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
@@ -66,7 +64,6 @@ func TestVerkleCommitmentUpdate(t *testing.T) {
 		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
-	// Create initial structure
 	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
@@ -76,7 +73,6 @@ func TestVerkleCommitmentUpdate(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	// Update
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	newRoot, err := v.Update(root, arcs, "link", k1, k2)
 	if err != nil {
@@ -94,7 +90,6 @@ func TestVerkleBatchUpdate(t *testing.T) {
 		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
-	// Create initial structure
 	arcs := sce.NewMapArcSetView()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
@@ -106,7 +101,6 @@ func TestVerkleBatchUpdate(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	// Batch update
 	k3, _ := key.NewPayloadCID([]byte("target3"))
 	k4, _ := key.NewPayloadCID([]byte("target4"))
 	updates := map[string]struct {
@@ -127,13 +121,116 @@ func TestVerkleBatchUpdate(t *testing.T) {
 	}
 }
 
+// === Aggregation Proof Tests ===
+
+func TestVerkleProveBatch(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k2, _ := key.NewPayloadCID([]byte("target2"))
+	arcs.Add("a", k1)
+	arcs.Add("b", k2)
+
+	root, _ := v.Commit(arcs)
+
+	paths := []string{"a", "b"}
+	proofs, err := v.ProveBatch(root, arcs, paths)
+	if err != nil {
+		t.Fatalf("ProveBatch failed: %v", err)
+	}
+
+	if len(proofs) != 2 {
+		t.Errorf("Expected 2 proofs, got %d", len(proofs))
+	}
+}
+
+func TestVerkleVerifyBatch(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k2, _ := key.NewPayloadCID([]byte("target2"))
+	arcs.Add("a", k1)
+	arcs.Add("b", k2)
+
+	root, _ := v.Commit(arcs)
+
+	paths := []string{"a", "b"}
+	proofs, _ := v.ProveBatch(root, arcs, paths)
+
+	valid, err := v.VerifyBatch(root, proofs)
+	if err != nil {
+		t.Fatalf("VerifyBatch failed: %v", err)
+	}
+
+	if !valid {
+		t.Error("Batch proofs should be valid")
+	}
+}
+
+func TestVerkleProveAggregate(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k2, _ := key.NewPayloadCID([]byte("target2"))
+	arcs.Add("a", k1)
+	arcs.Add("b", k2)
+
+	root, _ := v.Commit(arcs)
+
+	paths := []string{"a", "b"}
+	aggProof, err := v.ProveAggregate(root, arcs, paths)
+	if err != nil {
+		t.Fatalf("ProveAggregate failed: %v", err)
+	}
+
+	if len(aggProof.Paths) != 2 {
+		t.Errorf("Expected 2 paths, got %d", len(aggProof.Paths))
+	}
+
+	if len(aggProof.Targets) != 2 {
+		t.Errorf("Expected 2 targets, got %d", len(aggProof.Targets))
+	}
+
+	if len(aggProof.ProofData) != 62 { // 2 * 31 bytes
+		t.Errorf("Expected proof data size 62, got %d", len(aggProof.ProofData))
+	}
+}
+
+func TestVerkleVerifyAggregate(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k2, _ := key.NewPayloadCID([]byte("target2"))
+	arcs.Add("a", k1)
+	arcs.Add("b", k2)
+
+	root, _ := v.Commit(arcs)
+
+	paths := []string{"a", "b"}
+	aggProof, _ := v.ProveAggregate(root, arcs, paths)
+
+	valid, err := v.VerifyAggregate(root, aggProof)
+	if err != nil {
+		t.Fatalf("VerifyAggregate failed: %v", err)
+	}
+
+	if !valid {
+		t.Error("Aggregated proof should be valid")
+	}
+}
+
+// === Error Cases ===
+
 func TestVerkleEmptyArcSet(t *testing.T) {
 	v, err := verkle.NewCommitment()
 	if err != nil {
 		t.Fatalf("NewCommitment failed: %v", err)
 	}
 
-	// Empty arc set
 	arcs := sce.NewMapArcSetView()
 
 	root, err := v.Commit(arcs)
@@ -143,5 +240,44 @@ func TestVerkleEmptyArcSet(t *testing.T) {
 
 	if root == nil {
 		t.Fatal("Root should not be nil for empty arc set")
+	}
+}
+
+func TestVerkleProveNonExistentPath(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	arcs.Add("a", k1)
+
+	root, _ := v.Commit(arcs)
+
+	_, _, err := v.Prove(root, arcs, "nonexistent")
+	if err == nil {
+		t.Error("Should error on non-existent path")
+	}
+}
+
+func TestVerkleProveAggregateEmptyPaths(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	arcs := sce.NewMapArcSetView()
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	arcs.Add("a", k1)
+
+	root, _ := v.Commit(arcs)
+
+	_, err := v.ProveAggregate(root, arcs, []string{})
+	if err == nil {
+		t.Error("Should error on empty paths")
+	}
+}
+
+func TestVerkleCommitNilArcSet(t *testing.T) {
+	v, _ := verkle.NewCommitment()
+
+	_, err := v.Commit(nil)
+	if err == nil {
+		t.Error("Should error on nil arc set")
 	}
 }
