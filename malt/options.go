@@ -6,7 +6,7 @@ import (
 	"github.com/dewebprotocol/malt/internal/cas"
 	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/kv"
-	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/internal/sce/commitment"
 )
 
 // Option configures a MALT Node.
@@ -17,10 +17,10 @@ type options struct {
 	configFile string
 
 	// Pre-built components (override config-based creation)
-	kvStore     kv.KVStore
-	commitment  sce.CommitmentScheme
-	eat         eat.EAT
-	cas         cas.Client
+	kvStore    kv.KVStore
+	commitment commitment.Scheme
+	eat        eat.EAT
+	cas        cas.Client
 }
 
 func defaultOptions() *options {
@@ -49,7 +49,7 @@ func WithKVStore(store kv.KVStore) Option {
 }
 
 // WithCommitment sets a custom commitment scheme.
-func WithCommitment(scheme sce.CommitmentScheme) Option {
+func WithCommitment(scheme commitment.Scheme) Option {
 	return func(o *options) {
 		o.commitment = scheme
 	}

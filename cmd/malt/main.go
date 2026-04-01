@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/internal/sce"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
@@ -106,7 +106,7 @@ func runDemo(cmd *cobra.Command, args []string) {
 	target2, _ := key.NewPayloadCID([]byte("target2"))
 
 	// Create arc set
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	arcs.Add("link1", target1)
 	arcs.Add("link2", target2)
 

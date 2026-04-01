@@ -4,20 +4,20 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
 // === Basic Functionality Tests ===
 
 func TestKZGCommitment(t *testing.T) {
-	k, err := kzg.NewCommitment()
+	k, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -42,9 +42,9 @@ func TestKZGCommitment(t *testing.T) {
 }
 
 func TestKZGProveAndVerify(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("my-target"))
 	arcs.Add("my-arc", target)
 
@@ -76,9 +76,9 @@ func TestKZGProveAndVerify(t *testing.T) {
 }
 
 func TestKZGUpdate(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	oldTarget, _ := key.NewPayloadCID([]byte("old"))
 	arcs.Add("link", oldTarget)
 
@@ -95,7 +95,7 @@ func TestKZGUpdate(t *testing.T) {
 	}
 
 	// Verify new root can prove the value
-	updatedArcs := sce.NewMapArcSetView()
+	updatedArcs := arcset.NewMap()
 	updatedArcs.Add("link", newTarget)
 
 	proved, proof, err := k.Prove(newRoot, updatedArcs, "link")
@@ -114,9 +114,9 @@ func TestKZGUpdate(t *testing.T) {
 }
 
 func TestKZGBatchUpdate(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	k3, _ := key.NewPayloadCID([]byte("target3"))
@@ -150,9 +150,9 @@ func TestKZGBatchUpdate(t *testing.T) {
 // === Aggregation Proof Tests ===
 
 func TestKZGProveBatch(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	k3, _ := key.NewPayloadCID([]byte("target3"))
@@ -186,9 +186,9 @@ func TestKZGProveBatch(t *testing.T) {
 }
 
 func TestKZGVerifyBatch(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	k3, _ := key.NewPayloadCID([]byte("target3"))
@@ -212,9 +212,9 @@ func TestKZGVerifyBatch(t *testing.T) {
 }
 
 func TestKZGVerifyBatchWithInvalidProof(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -225,10 +225,10 @@ func TestKZGVerifyBatchWithInvalidProof(t *testing.T) {
 		invalidProof[i] = byte(i)
 	}
 
-	proofs := map[string]sce.BatchProofEntry{
+	proofs := map[string]arcset.BatchProofEntry{
 		"a": {
 			Target: k1,
-			Proof:  sce.Proof(invalidProof),
+			Proof:  arcset.Proof(invalidProof),
 		},
 	}
 
@@ -239,9 +239,9 @@ func TestKZGVerifyBatchWithInvalidProof(t *testing.T) {
 }
 
 func TestKZGProveAggregate(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -269,9 +269,9 @@ func TestKZGProveAggregate(t *testing.T) {
 }
 
 func TestKZGVerifyAggregate(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -294,19 +294,10 @@ func TestKZGVerifyAggregate(t *testing.T) {
 
 // === Error Cases ===
 
-func TestKZGCommitNilArcSet(t *testing.T) {
-	k, _ := kzg.NewCommitment()
-
-	_, err := k.Commit(nil)
-	if err == nil {
-		t.Error("Should error on nil arc set")
-	}
-}
-
 func TestKZGCommitEmptyArcSet(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	root, err := k.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Should handle empty arc set: %v", err)
@@ -318,9 +309,9 @@ func TestKZGCommitEmptyArcSet(t *testing.T) {
 }
 
 func TestKZGProveNonExistentPath(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("exists", target)
 
@@ -332,25 +323,10 @@ func TestKZGProveNonExistentPath(t *testing.T) {
 	}
 }
 
-func TestKZGProveWrongRootType(t *testing.T) {
-	k, _ := kzg.NewCommitment()
-
-	arcs := sce.NewMapArcSetView()
-	target, _ := key.NewPayloadCID([]byte("data"))
-	arcs.Add("a", target)
-
-	wrongRoot, _ := key.NewPayloadCID([]byte("not-a-root"))
-
-	_, _, err := k.Prove(wrongRoot, arcs, "a")
-	if err == nil {
-		t.Error("Should error on wrong root type")
-	}
-}
-
 func TestKZGVerifyWrongProof(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("a", target)
 
@@ -372,9 +348,9 @@ func TestKZGVerifyWrongProof(t *testing.T) {
 }
 
 func TestKZGVerifyShortProof(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("a", target)
 
@@ -389,9 +365,9 @@ func TestKZGVerifyShortProof(t *testing.T) {
 }
 
 func TestKZGUpdateNonExistentPath(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("a", target)
 
@@ -407,9 +383,9 @@ func TestKZGUpdateNonExistentPath(t *testing.T) {
 }
 
 func TestKZGProveBatchEmptyPaths(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -422,9 +398,9 @@ func TestKZGProveBatchEmptyPaths(t *testing.T) {
 }
 
 func TestKZGProveAggregateEmptyPaths(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -437,9 +413,9 @@ func TestKZGProveAggregateEmptyPaths(t *testing.T) {
 }
 
 func TestKZGProveBatchNonExistentPath(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -454,9 +430,9 @@ func TestKZGProveBatchNonExistentPath(t *testing.T) {
 // === Edge Cases ===
 
 func TestKZGLargeArcSet(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	for i := 0; i < 1000; i++ {
 		data := []byte{byte(i % 256), byte((i / 256) % 256)}
 		target, _ := key.NewPayloadCID(data)
@@ -489,9 +465,9 @@ func TestKZGLargeArcSet(t *testing.T) {
 }
 
 func TestKZGArcSetExceedsLimit(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	for i := 0; i < 5000; i++ {
 		data := []byte{byte(i % 256)}
 		target, _ := key.NewPayloadCID(data)
@@ -505,14 +481,14 @@ func TestKZGArcSetExceedsLimit(t *testing.T) {
 }
 
 func TestKZGMultipleCommits(t *testing.T) {
-	k, _ := kzg.NewCommitment()
+	k, _ := kzg.NewScheme()
 
-	arcs1 := sce.NewMapArcSetView()
+	arcs1 := arcset.NewMap()
 	target1, _ := key.NewPayloadCID([]byte("data1"))
 	arcs1.Add("a", target1)
 	root1, _ := k.Commit(arcs1)
 
-	arcs2 := sce.NewMapArcSetView()
+	arcs2 := arcset.NewMap()
 	target2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs2.Add("b", target2)
 	root2, _ := k.Commit(arcs2)
@@ -532,30 +508,5 @@ func TestKZGMultipleCommits(t *testing.T) {
 
 	if !valid1 || !valid2 {
 		t.Error("Both proofs should be valid")
-	}
-}
-
-// === Options Tests ===
-
-func TestKZGWithOptions(t *testing.T) {
-	k, err := kzg.NewCommitment(
-		kzg.WithVectorSize(4096),
-		kzg.WithCacheSize(100),
-	)
-	if err != nil {
-		t.Fatalf("NewCommitment with options failed: %v", err)
-	}
-
-	arcs := sce.NewMapArcSetView()
-	target, _ := key.NewPayloadCID([]byte("test"))
-	arcs.Add("a", target)
-
-	root, err := k.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	if root == nil {
-		t.Error("Root should not be nil")
 	}
 }

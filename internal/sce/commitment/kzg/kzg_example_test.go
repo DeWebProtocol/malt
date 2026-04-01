@@ -3,20 +3,20 @@ package kzg_test
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// ExampleNewCommitment demonstrates basic usage of KZG commitment.
-func ExampleNewCommitment() {
-	c, err := kzg.NewCommitment()
+// ExampleNewScheme demonstrates basic usage of KZG commitment.
+func ExampleNewScheme() {
+	c, err := kzg.NewScheme()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target1, _ := key.NewPayloadCID([]byte("document.pdf"))
 	target2, _ := key.NewPayloadCID([]byte("image.png"))
 	arcs.Add("document", target1)
@@ -34,11 +34,11 @@ func ExampleNewCommitment() {
 	// Committed: true
 }
 
-// ExampleCommitment_Prove demonstrates proof generation and verification.
-func ExampleCommitment_Prove() {
-	c, _ := kzg.NewCommitment()
+// ExampleScheme_Prove demonstrates proof generation and verification.
+func ExampleScheme_Prove() {
+	c, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("my-data"))
 	arcs.Add("data", target)
 
@@ -62,11 +62,11 @@ func ExampleCommitment_Prove() {
 	// Proof valid: true
 }
 
-// ExampleCommitment_Update demonstrates updating an arc with a new target.
-func ExampleCommitment_Update() {
-	c, _ := kzg.NewCommitment()
+// ExampleScheme_Update demonstrates updating an arc with a new target.
+func ExampleScheme_Update() {
+	c, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	oldTarget, _ := key.NewPayloadCID([]byte("version-1"))
 	arcs.Add("file", oldTarget)
 
@@ -87,11 +87,11 @@ func ExampleCommitment_Update() {
 	// Roots differ: true
 }
 
-// ExampleCommitment_BatchUpdate demonstrates updating multiple arcs at once.
-func ExampleCommitment_BatchUpdate() {
-	c, _ := kzg.NewCommitment()
+// ExampleScheme_BatchUpdate demonstrates updating multiple arcs at once.
+func ExampleScheme_BatchUpdate() {
+	c, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target1, _ := key.NewPayloadCID([]byte("data-1"))
 	target2, _ := key.NewPayloadCID([]byte("data-2"))
 	arcs.Add("a", target1)
@@ -117,36 +117,11 @@ func ExampleCommitment_BatchUpdate() {
 	// Batch updated: true
 }
 
-// ExampleNewCommitment_options demonstrates using functional options.
-func ExampleNewCommitment_options() {
-	c, err := kzg.NewCommitment(
-		kzg.WithVectorSize(4096),
-		kzg.WithCacheSize(2000),
-	)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
+// ExampleScheme_ProveBatch demonstrates batch proof generation.
+func ExampleScheme_ProveBatch() {
+	c, _ := kzg.NewScheme()
 
-	fmt.Printf("Created KZG commitment with custom options\n")
-
-	arcs := sce.NewMapArcSetView()
-	target, _ := key.NewPayloadCID([]byte("test"))
-	arcs.Add("test", target)
-
-	root, _ := c.Commit(arcs)
-	fmt.Printf("Committed: %v\n", root != nil)
-
-	// Output:
-	// Created KZG commitment with custom options
-	// Committed: true
-}
-
-// ExampleCommitment_ProveBatch demonstrates batch proof generation.
-func ExampleCommitment_ProveBatch() {
-	c, _ := kzg.NewCommitment()
-
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	t1, _ := key.NewPayloadCID([]byte("data1"))
 	t2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
@@ -165,11 +140,11 @@ func ExampleCommitment_ProveBatch() {
 	// Batch valid: true
 }
 
-// ExampleCommitment_ProveAggregate demonstrates aggregated proof generation.
-func ExampleCommitment_ProveAggregate() {
-	c, _ := kzg.NewCommitment()
+// ExampleScheme_ProveAggregate demonstrates aggregated proof generation.
+func ExampleScheme_ProveAggregate() {
+	c, _ := kzg.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	t1, _ := key.NewPayloadCID([]byte("data1"))
 	t2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)

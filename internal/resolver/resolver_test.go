@@ -3,25 +3,27 @@ package resolver_test
 import (
 	"testing"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/cas/mock"
 	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/resolver"
 	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func TestResolverExplicitStep(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s, err := kzg.NewCommitment()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
+	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	k3, _ := key.NewPayloadCID([]byte("target3"))
@@ -92,14 +94,15 @@ func TestResolverExplicitStep(t *testing.T) {
 func TestResolverImplicitStep(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s, err := kzg.NewCommitment()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
+	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
 	// Create arc set pointing to a PayloadCID
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	payloadCID, _ := key.NewPayloadCID([]byte("raw-block-data"))
 	arcs.Add("data", payloadCID)
 
@@ -133,14 +136,15 @@ func TestResolverImplicitStep(t *testing.T) {
 func TestResolverTranscript(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s, err := kzg.NewCommitment()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
+	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
 	// Create arc set with nested structure
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	innerCID, _ := key.NewPayloadCID([]byte("inner"))
 	outerCID, _ := key.NewPayloadCID([]byte("outer"))
 

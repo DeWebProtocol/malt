@@ -6,7 +6,7 @@ package eat
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/key"
 )
 
@@ -33,7 +33,7 @@ type EAT interface {
 
 	// View returns an ArcSetView for a specific root.
 	// This allows EAT to be used directly as an ArcSetView source.
-	View(root key.Key) sce.ArcSetView
+	View(root key.Key) arcset.View
 
 	// Close releases resources.
 	Close() error

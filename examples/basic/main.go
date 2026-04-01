@@ -4,9 +4,9 @@ package main
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/kv/badger"
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
@@ -38,7 +38,7 @@ func runWithDefaults() {
 	fmt.Printf("Node initialized\n")
 
 	// Create structure
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target1, _ := key.NewPayloadCID([]byte("document.pdf"))
 	target2, _ := key.NewPayloadCID([]byte("image.png"))
 	arcs.Add("document", target1)
@@ -63,7 +63,7 @@ func runWithOptions() {
 		panic(err)
 	}
 
-	commitment, err := kzg.NewCommitment()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
 		panic(err)
 	}
@@ -71,7 +71,7 @@ func runWithOptions() {
 	// Create node with custom components
 	node, err := malt.NewNode(
 		malt.WithKVStore(kvStore),
-		malt.WithCommitment(commitment),
+		malt.WithCommitment(scheme),
 	)
 	if err != nil {
 		panic(err)
@@ -81,7 +81,7 @@ func runWithOptions() {
 	fmt.Printf("Node initialized with custom components\n")
 
 	// Create structure
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target1, _ := key.NewPayloadCID([]byte("data.json"))
 	arcs.Add("data", target1)
 

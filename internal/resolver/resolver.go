@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/cas"
 	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/sce"
@@ -16,12 +17,12 @@ import (
 // Resolver handles path resolution from a structure root.
 type Resolver struct {
 	eat eat.EAT
-	sce sce.CommitmentScheme
+	sce *sce.Engine
 	cas cas.Client
 }
 
 // NewResolver creates a new resolver.
-func NewResolver(e eat.EAT, s sce.CommitmentScheme, c cas.Client) *Resolver {
+func NewResolver(e eat.EAT, s *sce.Engine, c cas.Client) *Resolver {
 	return &Resolver{
 		eat: e,
 		sce: s,
@@ -55,7 +56,7 @@ type StepEvidence struct {
 	Target key.Key
 
 	// Proof is the cryptographic proof (for explicit steps)
-	Proof sce.Proof
+	Proof arcset.Proof
 
 	// BlockContent is the raw block content (for implicit steps)
 	BlockContent []byte

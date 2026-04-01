@@ -3,9 +3,10 @@ package malt_test
 import (
 	"testing"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/eat/simple"
 	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
@@ -13,13 +14,14 @@ import (
 func TestStructureBasic(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s, err := kzg.NewCommitment()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
+	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("link1", k1)
@@ -64,13 +66,14 @@ func TestStructureBasic(t *testing.T) {
 func TestStructureUpdate(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
-	s, err := kzg.NewCommitment()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
+	s := sce.NewEngine(scheme)
 
 	// Create initial structure
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 

@@ -3,20 +3,20 @@ package verkle_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/verkle"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/verkle"
 	"github.com/dewebprotocol/malt/key"
 )
 
 // === Basic Functionality Tests ===
 
 func TestVerkleCommitment(t *testing.T) {
-	v, err := verkle.NewCommitment()
+	v, err := verkle.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -59,12 +59,12 @@ func TestVerkleCommitment(t *testing.T) {
 }
 
 func TestVerkleCommitmentUpdate(t *testing.T) {
-	v, err := verkle.NewCommitment()
+	v, err := verkle.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 
@@ -85,12 +85,12 @@ func TestVerkleCommitmentUpdate(t *testing.T) {
 }
 
 func TestVerkleBatchUpdate(t *testing.T) {
-	v, err := verkle.NewCommitment()
+	v, err := verkle.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -124,9 +124,9 @@ func TestVerkleBatchUpdate(t *testing.T) {
 // === Aggregation Proof Tests ===
 
 func TestVerkleProveBatch(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -146,9 +146,9 @@ func TestVerkleProveBatch(t *testing.T) {
 }
 
 func TestVerkleVerifyBatch(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -170,9 +170,9 @@ func TestVerkleVerifyBatch(t *testing.T) {
 }
 
 func TestVerkleProveAggregate(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -200,9 +200,9 @@ func TestVerkleProveAggregate(t *testing.T) {
 }
 
 func TestVerkleVerifyAggregate(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
@@ -226,12 +226,12 @@ func TestVerkleVerifyAggregate(t *testing.T) {
 // === Error Cases ===
 
 func TestVerkleEmptyArcSet(t *testing.T) {
-	v, err := verkle.NewCommitment()
+	v, err := verkle.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 
 	root, err := v.Commit(arcs)
 	if err != nil {
@@ -244,9 +244,9 @@ func TestVerkleEmptyArcSet(t *testing.T) {
 }
 
 func TestVerkleProveNonExistentPath(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -259,9 +259,9 @@ func TestVerkleProveNonExistentPath(t *testing.T) {
 }
 
 func TestVerkleProveAggregateEmptyPaths(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -274,7 +274,7 @@ func TestVerkleProveAggregateEmptyPaths(t *testing.T) {
 }
 
 func TestVerkleCommitNilArcSet(t *testing.T) {
-	v, _ := verkle.NewCommitment()
+	v, _ := verkle.NewScheme()
 
 	_, err := v.Commit(nil)
 	if err == nil {

@@ -6,6 +6,7 @@ package malt
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
@@ -15,11 +16,11 @@ import (
 type Structure struct {
 	root key.Key
 	eat  eat.EAT
-	sce  sce.CommitmentScheme
+	sce  *sce.Engine
 }
 
 // NewStructure creates a new structure from an arc set.
-func NewStructure(arcs sce.ArcSetView, e eat.EAT, s sce.CommitmentScheme) (*Structure, error) {
+func NewStructure(arcs arcset.View, e eat.EAT, s *sce.Engine) (*Structure, error) {
 	// Generate commitment
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -55,7 +56,7 @@ func (s *Structure) Root() key.Key {
 
 // Resolve resolves a path from the structure root.
 // Returns the target key and a proof.
-func (s *Structure) Resolve(path string) (key.Key, sce.Proof, error) {
+func (s *Structure) Resolve(path string) (key.Key, arcset.Proof, error) {
 	// Get target from EAT
 	target, err := s.eat.Get(s.root, path)
 	if err != nil {
@@ -101,11 +102,11 @@ func (s *Structure) Update(path string, newKey key.Key) (*Structure, error) {
 }
 
 // Verify verifies a proof for an arc.
-func (s *Structure) Verify(path string, target key.Key, proof sce.Proof) (bool, error) {
+func (s *Structure) Verify(path string, target key.Key, proof arcset.Proof) (bool, error) {
 	return s.sce.Verify(s.root, path, target, proof)
 }
 
 // GetArcSet returns an ArcSetView for this structure.
-func (s *Structure) GetArcSet() sce.ArcSetView {
+func (s *Structure) GetArcSet() arcset.View {
 	return s.eat.View(s.root)
 }

@@ -7,9 +7,9 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/kv"
-	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
@@ -166,7 +166,7 @@ func (e *EAT) Delete(root key.Key, path string) error {
 }
 
 // View returns an ArcSetView for a specific root.
-func (e *EAT) View(root key.Key) sce.ArcSetView {
+func (e *EAT) View(root key.Key) arcset.View {
 	return &eatView{eat: e, root: root}
 }
 
@@ -296,7 +296,7 @@ func (v *eatView) Get(path string) (key.Key, bool) {
 }
 
 // Iterate returns an iterator over all arcs for the root.
-func (v *eatView) Iterate() sce.ArcIterator {
+func (v *eatView) Iterate() arcset.Iterator {
 	return &emptyIterator{}
 }
 

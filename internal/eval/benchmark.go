@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/cas"
 	"github.com/dewebprotocol/malt/internal/eat"
 	"github.com/dewebprotocol/malt/internal/sce"
@@ -56,12 +57,12 @@ func DefaultBenchmarkConfig() *BenchmarkConfig {
 type BenchmarkRunner struct {
 	config *BenchmarkConfig
 	eat    eat.EAT
-	sce    sce.CommitmentScheme
+	sce    *sce.Engine
 	cas    cas.Client
 }
 
 // NewBenchmarkRunner creates a new benchmark runner.
-func NewBenchmarkRunner(cfg *BenchmarkConfig, e eat.EAT, s sce.CommitmentScheme, c cas.Client) *BenchmarkRunner {
+func NewBenchmarkRunner(cfg *BenchmarkConfig, e eat.EAT, s *sce.Engine, c cas.Client) *BenchmarkRunner {
 	if cfg == nil {
 		cfg = DefaultBenchmarkConfig()
 	}
@@ -95,7 +96,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Track current arc set
-	currentArcs := sce.NewMapArcSetView()
+	currentArcs := arcset.NewMap()
 
 	totalUpdateTime := time.Duration(0)
 	var root key.Key
@@ -131,7 +132,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	// First commit is the initial one
 	firstStart := time.Now()
-	emptyArcs := sce.NewMapArcSetView()
+	emptyArcs := arcset.NewMap()
 	_, _ = b.sce.Commit(emptyArcs)
 	metrics.CommitTime = time.Since(firstStart)
 
@@ -189,7 +190,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure with all arcs
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	keys := make(map[string]key.Key)
 
 	for i := range arcCount {
@@ -306,7 +307,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	keys := make(map[string]key.Key)
 
 	for i := range arcCount {

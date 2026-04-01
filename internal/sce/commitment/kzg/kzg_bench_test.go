@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/key"
 )
 
 func BenchmarkKZGCommit(b *testing.B) {
-	c, _ := kzg.NewCommitment()
+	c, _ := kzg.NewScheme()
 
 	benchmarks := []int{10, 100, 500, 1000}
 	for _, n := range benchmarks {
@@ -28,7 +28,7 @@ func BenchmarkKZGCommit(b *testing.B) {
 }
 
 func BenchmarkKZGProve(b *testing.B) {
-	c, _ := kzg.NewCommitment()
+	c, _ := kzg.NewScheme()
 	arcs := generateRandomArcSet(100)
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -45,7 +45,7 @@ func BenchmarkKZGProve(b *testing.B) {
 }
 
 func BenchmarkKZGVerify(b *testing.B) {
-	c, _ := kzg.NewCommitment()
+	c, _ := kzg.NewScheme()
 	arcs := generateRandomArcSet(100)
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -66,7 +66,7 @@ func BenchmarkKZGVerify(b *testing.B) {
 }
 
 func BenchmarkKZGUpdate(b *testing.B) {
-	c, _ := kzg.NewCommitment()
+	c, _ := kzg.NewScheme()
 	arcs := generateRandomArcSet(100)
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -86,11 +86,9 @@ func BenchmarkKZGUpdate(b *testing.B) {
 }
 
 // generateRandomArcSet creates an arc set with simple deterministic keys.
-// Using simple keys avoids the scalar validation issues with random data.
-func generateRandomArcSet(n int) *sce.MapArcSetView {
-	arcs := sce.NewMapArcSetView()
+func generateRandomArcSet(n int) *arcset.Map {
+	arcs := arcset.NewMap()
 	for i := 0; i < n; i++ {
-		// Use simple deterministic data that won't cause scalar validation issues
 		data := []byte{byte(i % 256), byte((i / 256) % 256), byte(i >> 16)}
 		k, _ := key.NewPayloadCID(data)
 		arcs.Add(fmt.Sprintf("arc_%d", i), k)
@@ -99,7 +97,6 @@ func generateRandomArcSet(n int) *sce.MapArcSetView {
 }
 
 func generateRandomKey() key.Key {
-	// Use simple deterministic data
 	data := []byte{0xAB, 0xCD, 0xEF}
 	k, _ := key.NewPayloadCID(data)
 	return k

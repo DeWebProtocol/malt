@@ -3,20 +3,20 @@ package verkle_test
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/verkle"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/verkle"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// ExampleNewCommitment demonstrates basic usage of Verkle commitment.
-func ExampleNewCommitment() {
-	c, err := verkle.NewCommitment()
+// ExampleNewScheme demonstrates basic usage of Verkle commitment.
+func ExampleNewScheme() {
+	c, err := verkle.NewScheme()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("my-data"))
 	arcs.Add("data", target)
 
@@ -32,11 +32,11 @@ func ExampleNewCommitment() {
 	// Committed: true
 }
 
-// ExampleCommitment_Prove demonstrates proof generation and verification.
-func ExampleCommitment_Prove() {
-	c, _ := verkle.NewCommitment()
+// ExampleScheme_Prove demonstrates proof generation and verification.
+func ExampleScheme_Prove() {
+	c, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("content"))
 	arcs.Add("path", target)
 
@@ -56,11 +56,11 @@ func ExampleCommitment_Prove() {
 	// Valid: true
 }
 
-// ExampleCommitment_Update demonstrates updating an arc.
-func ExampleCommitment_Update() {
-	c, _ := verkle.NewCommitment()
+// ExampleScheme_Update demonstrates updating an arc.
+func ExampleScheme_Update() {
+	c, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	oldTarget, _ := key.NewPayloadCID([]byte("v1"))
 	arcs.Add("item", oldTarget)
 
@@ -75,11 +75,11 @@ func ExampleCommitment_Update() {
 	// Roots differ: true
 }
 
-// ExampleCommitment_ProveBatch demonstrates batch proof generation for Verkle.
-func ExampleCommitment_ProveBatch() {
-	c, _ := verkle.NewCommitment()
+// ExampleScheme_ProveBatch demonstrates batch proof generation for Verkle.
+func ExampleScheme_ProveBatch() {
+	c, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	t1, _ := key.NewPayloadCID([]byte("data1"))
 	t2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
@@ -98,11 +98,11 @@ func ExampleCommitment_ProveBatch() {
 	// Batch valid: true
 }
 
-// ExampleCommitment_ProveAggregate demonstrates aggregated proof for Verkle.
-func ExampleCommitment_ProveAggregate() {
-	c, _ := verkle.NewCommitment()
+// ExampleScheme_ProveAggregate demonstrates aggregated proof for Verkle.
+func ExampleScheme_ProveAggregate() {
+	c, _ := verkle.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	t1, _ := key.NewPayloadCID([]byte("data1"))
 	t2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)

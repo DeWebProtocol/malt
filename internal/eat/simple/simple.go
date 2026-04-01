@@ -2,10 +2,11 @@
 package simple
 
 import (
+	"sort"
 	"sync"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/internal/eat"
-	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
@@ -81,7 +82,7 @@ func (e *EAT) Delete(root key.Key, path string) error {
 }
 
 // View returns an ArcSetView for a specific root.
-func (e *EAT) View(root key.Key) sce.ArcSetView {
+func (e *EAT) View(root key.Key) arcset.View {
 	return &eatView{eat: e, root: root}
 }
 
@@ -109,7 +110,7 @@ func (v *eatView) Get(path string) (key.Key, bool) {
 }
 
 // Iterate returns an iterator over all arcs for the root.
-func (v *eatView) Iterate() sce.ArcIterator {
+func (v *eatView) Iterate() arcset.Iterator {
 	v.eat.mu.RLock()
 	defer v.eat.mu.RUnlock()
 
@@ -128,6 +129,11 @@ func (v *eatView) Iterate() sce.ArcIterator {
 		}{path: p, key: k})
 	}
 
+	// Sort by path
+	sort.Slice(arcs, func(i, j int) bool {
+		return arcs[i].path < arcs[j].path
+	})
+
 	return &eatIterator{arcs: arcs, idx: -1}
 }
 
@@ -140,7 +146,7 @@ func (v *eatView) Len() int {
 	return len(v.eat.arcs[rootStr])
 }
 
-// eatIterator implements ArcIterator.
+// eatIterator implements Iterator.
 type eatIterator struct {
 	arcs []struct {
 		path string

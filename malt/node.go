@@ -6,6 +6,7 @@ package malt
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt/arcset"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/internal/cas"
 	"github.com/dewebprotocol/malt/internal/cas/ipfsgateway"
@@ -18,9 +19,10 @@ import (
 	kvmemory "github.com/dewebprotocol/malt/internal/kv/memory"
 	"github.com/dewebprotocol/malt/internal/resolver"
 	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/ipa"
-	"github.com/dewebprotocol/malt/internal/sce/kzg"
-	"github.com/dewebprotocol/malt/internal/sce/verkle"
+	"github.com/dewebprotocol/malt/internal/sce/commitment"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/ipa"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/verkle"
 )
 
 // Node is the main MALT runtime that holds all components.
@@ -31,7 +33,7 @@ type Node struct {
 
 	// Core components
 	kv         kv.KVStore
-	commitment sce.CommitmentScheme
+	sce        *sce.Engine
 	eat        eat.EAT
 	cas        cas.Client
 	resolver   *resolver.Resolver
@@ -92,12 +94,13 @@ func NewNode(opts ...Option) (*Node, error) {
 
 	// Commitment
 	if options.commitment != nil {
-		node.commitment = options.commitment
+		node.sce = sce.NewEngine(options.commitment)
 	} else {
-		node.commitment, err = node.initCommitment()
+		scheme, err := node.initCommitmentScheme()
 		if err != nil {
-			return nil, fmt.Errorf("failed to initialize commitment: %w", err)
+			return nil, fmt.Errorf("failed to initialize commitment scheme: %w", err)
 		}
+		node.sce = sce.NewEngine(scheme)
 	}
 
 	// EAT
@@ -121,7 +124,7 @@ func NewNode(opts ...Option) (*Node, error) {
 	}
 
 	// Resolver
-	node.resolver = resolver.NewResolver(node.eat, node.commitment, node.cas)
+	node.resolver = resolver.NewResolver(node.eat, node.sce, node.cas)
 
 	return node, nil
 }
@@ -141,17 +144,15 @@ func (n *Node) initKVStore() (kv.KVStore, error) {
 	}
 }
 
-// initCommitment creates a commitment scheme from config.
-func (n *Node) initCommitment() (sce.CommitmentScheme, error) {
+// initCommitmentScheme creates a commitment scheme from config.
+func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 	switch n.cfg.CommitmentType {
 	case "kzg":
-		return kzg.NewCommitment()
+		return kzg.NewScheme()
 	case "verkle":
-		return verkle.NewCommitment()
+		return verkle.NewScheme()
 	case "ipa":
-		return ipa.NewCommitment(
-			ipa.WithVectorSize(n.cfg.Commitment.VectorSize),
-		)
+		return ipa.NewScheme()
 	default:
 		return nil, fmt.Errorf("unknown commitment type: %s", n.cfg.CommitmentType)
 	}
@@ -185,9 +186,15 @@ func (n *Node) initCAS() (cas.Client, error) {
 	}
 }
 
-// Commitment returns the commitment scheme.
-func (n *Node) Commitment() sce.CommitmentScheme {
-	return n.commitment
+// SCE returns the SCE engine.
+func (n *Node) SCE() *sce.Engine {
+	return n.sce
+}
+
+// Commitment returns the underlying commitment scheme.
+func (n *Node) Commitment() commitment.Scheme {
+	// Return the underlying scheme from the engine
+	return n.sce.Scheme()
 }
 
 // EAT returns the EAT.
@@ -216,8 +223,8 @@ func (n *Node) Config() *config.Config {
 }
 
 // NewStructure creates a new structure from an arc set.
-func (n *Node) NewStructure(arcs sce.ArcSetView) (*Structure, error) {
-	return NewStructure(arcs, n.eat, n.commitment)
+func (n *Node) NewStructure(arcs arcset.View) (*Structure, error) {
+	return NewStructure(arcs, n.eat, n.sce)
 }
 
 // Close releases all resources.

@@ -3,20 +3,20 @@ package ipa_test
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/ipa"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/key"
 )
 
-// ExampleNewCommitment demonstrates basic usage of IPA commitment.
-func ExampleNewCommitment() {
-	c, err := ipa.NewCommitment()
+// ExampleNewScheme demonstrates basic usage of IPA commitment.
+func ExampleNewScheme() {
+	c, err := ipa.NewScheme()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("key", target)
 
@@ -32,11 +32,11 @@ func ExampleNewCommitment() {
 	// Committed: true
 }
 
-// ExampleCommitment_Prove demonstrates proof generation and verification.
-func ExampleCommitment_Prove() {
-	c, _ := ipa.NewCommitment()
+// ExampleScheme_Prove demonstrates proof generation and verification.
+func ExampleScheme_Prove() {
+	c, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("content"))
 	arcs.Add("path", target)
 
@@ -56,11 +56,11 @@ func ExampleCommitment_Prove() {
 	// Valid: true
 }
 
-// ExampleCommitment_Update demonstrates the fast update feature of IPA.
-func ExampleCommitment_Update() {
-	c, _ := ipa.NewCommitment()
+// ExampleScheme_Update demonstrates the fast update feature of IPA.
+func ExampleScheme_Update() {
+	c, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	oldTarget, _ := key.NewPayloadCID([]byte("old"))
 	arcs.Add("data", oldTarget)
 
@@ -75,11 +75,11 @@ func ExampleCommitment_Update() {
 	// Update succeeded: true
 }
 
-// ExampleCommitment_ProveBatch demonstrates batch proof generation for IPA.
-func ExampleCommitment_ProveBatch() {
-	c, _ := ipa.NewCommitment()
+// ExampleScheme_ProveBatch demonstrates batch proof generation for IPA.
+func ExampleScheme_ProveBatch() {
+	c, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	t1, _ := key.NewPayloadCID([]byte("data1"))
 	t2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
@@ -98,11 +98,11 @@ func ExampleCommitment_ProveBatch() {
 	// Batch valid: true
 }
 
-// ExampleCommitment_ProveAggregate demonstrates aggregated proof for IPA.
-func ExampleCommitment_ProveAggregate() {
-	c, _ := ipa.NewCommitment()
+// ExampleScheme_ProveAggregate demonstrates aggregated proof for IPA.
+func ExampleScheme_ProveAggregate() {
+	c, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	t1, _ := key.NewPayloadCID([]byte("data1"))
 	t2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)

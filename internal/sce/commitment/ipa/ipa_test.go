@@ -4,26 +4,26 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/ipa"
+	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/internal/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/key"
 )
 
 // === Basic Functionality Tests ===
 
 func TestIPACommitment(t *testing.T) {
-	i, err := ipa.NewCommitment()
+	s, err := ipa.NewScheme()
 	if err != nil {
-		t.Fatalf("NewCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
-	root, err := i.Commit(arcs)
+	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -38,15 +38,15 @@ func TestIPACommitment(t *testing.T) {
 }
 
 func TestIPAProveAndVerify(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("my-target"))
 	arcs.Add("my-arc", target)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
-	provedTarget, proof, err := i.Prove(root, arcs, "my-arc")
+	provedTarget, proof, err := s.Prove(root, arcs, "my-arc")
 	if err != nil {
 		t.Fatalf("Prove failed: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestIPAProveAndVerify(t *testing.T) {
 		t.Error("Proof should not be empty")
 	}
 
-	valid, err := i.Verify(root, "my-arc", target, proof)
+	valid, err := s.Verify(root, "my-arc", target, proof)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -70,16 +70,16 @@ func TestIPAProveAndVerify(t *testing.T) {
 }
 
 func TestIPAUpdate(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	oldTarget, _ := key.NewPayloadCID([]byte("old"))
 	arcs.Add("link", oldTarget)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	newTarget, _ := key.NewPayloadCID([]byte("new"))
-	newRoot, err := i.Update(root, arcs, "link", oldTarget, newTarget)
+	newRoot, err := s.Update(root, arcs, "link", oldTarget, newTarget)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -90,9 +90,9 @@ func TestIPAUpdate(t *testing.T) {
 }
 
 func TestIPABatchUpdate(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	k3, _ := key.NewPayloadCID([]byte("target3"))
@@ -100,7 +100,7 @@ func TestIPABatchUpdate(t *testing.T) {
 	arcs.Add("b", k2)
 	arcs.Add("c", k3)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	newK1, _ := key.NewPayloadCID([]byte("new1"))
 	newK2, _ := key.NewPayloadCID([]byte("new2"))
@@ -113,7 +113,7 @@ func TestIPABatchUpdate(t *testing.T) {
 		"b": {Old: k2, New: newK2},
 	}
 
-	newRoot, err := i.BatchUpdate(root, arcs, updates)
+	newRoot, err := s.BatchUpdate(root, arcs, updates)
 	if err != nil {
 		t.Fatalf("BatchUpdate failed: %v", err)
 	}
@@ -126,18 +126,18 @@ func TestIPABatchUpdate(t *testing.T) {
 // === Aggregation Proof Tests ===
 
 func TestIPAProveBatch(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	proofs, err := i.ProveBatch(root, arcs, paths)
+	proofs, err := s.ProveBatch(root, arcs, paths)
 	if err != nil {
 		t.Fatalf("ProveBatch failed: %v", err)
 	}
@@ -148,20 +148,20 @@ func TestIPAProveBatch(t *testing.T) {
 }
 
 func TestIPAVerifyBatch(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	proofs, _ := i.ProveBatch(root, arcs, paths)
+	proofs, _ := s.ProveBatch(root, arcs, paths)
 
-	valid, err := i.VerifyBatch(root, proofs)
+	valid, err := s.VerifyBatch(root, proofs)
 	if err != nil {
 		t.Fatalf("VerifyBatch failed: %v", err)
 	}
@@ -172,18 +172,18 @@ func TestIPAVerifyBatch(t *testing.T) {
 }
 
 func TestIPAProveAggregate(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, err := i.ProveAggregate(root, arcs, paths)
+	aggProof, err := s.ProveAggregate(root, arcs, paths)
 	if err != nil {
 		t.Fatalf("ProveAggregate failed: %v", err)
 	}
@@ -198,20 +198,20 @@ func TestIPAProveAggregate(t *testing.T) {
 }
 
 func TestIPAVerifyAggregate(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	k2, _ := key.NewPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, _ := i.ProveAggregate(root, arcs, paths)
+	aggProof, _ := s.ProveAggregate(root, arcs, paths)
 
-	valid, err := i.VerifyAggregate(root, aggProof)
+	valid, err := s.VerifyAggregate(root, aggProof)
 	if err != nil {
 		t.Fatalf("VerifyAggregate failed: %v", err)
 	}
@@ -222,18 +222,18 @@ func TestIPAVerifyAggregate(t *testing.T) {
 }
 
 func TestIPAProveBatchWithMultiplePaths(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	for j := 0; j < 10; j++ {
 		k, _ := key.NewPayloadCID([]byte{byte(j)})
 		arcs.Add(fmt.Sprintf("item_%d", j), k)
 	}
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	paths := []string{"item_0", "item_5", "item_9"}
-	proofs, err := i.ProveBatch(root, arcs, paths)
+	proofs, err := s.ProveBatch(root, arcs, paths)
 	if err != nil {
 		t.Fatalf("ProveBatch failed: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestIPAProveBatchWithMultiplePaths(t *testing.T) {
 		t.Errorf("Expected 3 proofs, got %d", len(proofs))
 	}
 
-	valid, _ := i.VerifyBatch(root, proofs)
+	valid, _ := s.VerifyBatch(root, proofs)
 	if !valid {
 		t.Error("Batch proofs should be valid")
 	}
@@ -251,19 +251,19 @@ func TestIPAProveBatchWithMultiplePaths(t *testing.T) {
 // === Error Cases ===
 
 func TestIPACommitNilArcSet(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	_, err := i.Commit(nil)
+	_, err := s.Commit(nil)
 	if err == nil {
 		t.Error("Should error on nil arc set")
 	}
 }
 
 func TestIPACommitEmptyArcSet(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
-	root, err := i.Commit(arcs)
+	arcs := arcset.NewMap()
+	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Should handle empty arc set: %v", err)
 	}
@@ -274,93 +274,93 @@ func TestIPACommitEmptyArcSet(t *testing.T) {
 }
 
 func TestIPAProveNonExistentPath(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("exists", target)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
-	_, _, err := i.Prove(root, arcs, "non-existent")
+	_, _, err := s.Prove(root, arcs, "non-existent")
 	if err == nil {
 		t.Error("Should error on non-existent path")
 	}
 }
 
 func TestIPAProveWrongRootType(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("a", target)
 
 	wrongRoot, _ := key.NewPayloadCID([]byte("not-a-root"))
 
-	_, _, err := i.Prove(wrongRoot, arcs, "a")
+	_, _, err := s.Prove(wrongRoot, arcs, "a")
 	if err == nil {
 		t.Error("Should error on wrong root type")
 	}
 }
 
 func TestIPAUpdateNonExistentPath(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	target, _ := key.NewPayloadCID([]byte("data"))
 	arcs.Add("a", target)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
 	oldKey, _ := key.NewPayloadCID([]byte("old"))
 	newKey, _ := key.NewPayloadCID([]byte("new"))
 
-	_, err := i.Update(root, arcs, "non-existent", oldKey, newKey)
+	_, err := s.Update(root, arcs, "non-existent", oldKey, newKey)
 	if err == nil {
 		t.Error("Should error on non-existent path")
 	}
 }
 
 func TestIPAProveBatchEmptyPaths(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
-	_, err := i.ProveBatch(root, arcs, []string{})
+	_, err := s.ProveBatch(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}
 }
 
 func TestIPAProveAggregateEmptyPaths(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
-	_, err := i.ProveAggregate(root, arcs, []string{})
+	_, err := s.ProveAggregate(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}
 }
 
 func TestIPAProveBatchNonExistentPath(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	k1, _ := key.NewPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
-	root, _ := i.Commit(arcs)
+	root, _ := s.Commit(arcs)
 
-	_, err := i.ProveBatch(root, arcs, []string{"nonexistent"})
+	_, err := s.ProveBatch(root, arcs, []string{"nonexistent"})
 	if err == nil {
 		t.Error("Should error on non-existent path")
 	}
@@ -369,16 +369,16 @@ func TestIPAProveBatchNonExistentPath(t *testing.T) {
 // === Edge Cases ===
 
 func TestIPALargeArcSet(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	for j := 0; j < 200; j++ {
 		data := []byte{byte(j % 256), byte((j / 256) % 256)}
 		target, _ := key.NewPayloadCID(data)
 		arcs.Add(fmt.Sprintf("arc_%d", j), target)
 	}
 
-	root, err := i.Commit(arcs)
+	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Commit failed for large arc set: %v", err)
 	}
@@ -390,13 +390,13 @@ func TestIPALargeArcSet(t *testing.T) {
 			t.Fatalf("Arc %s not found", path)
 		}
 
-		_, proof, err := i.Prove(root, arcs, path)
+		_, proof, err := s.Prove(root, arcs, path)
 		if err != nil {
 			t.Errorf("Prove failed for %s: %v", path, err)
 			continue
 		}
 
-		valid, _ := i.Verify(root, path, target, proof)
+		valid, _ := s.Verify(root, path, target, proof)
 		if !valid {
 			t.Errorf("Proof invalid for %s", path)
 		}
@@ -404,9 +404,9 @@ func TestIPALargeArcSet(t *testing.T) {
 }
 
 func TestIPAArcSetExceedsLimit(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs := sce.NewMapArcSetView()
+	arcs := arcset.NewMap()
 	// IPA has max 256 arcs
 	for j := 0; j < 300; j++ {
 		data := []byte{byte(j % 256)}
@@ -414,37 +414,37 @@ func TestIPAArcSetExceedsLimit(t *testing.T) {
 		arcs.Add(fmt.Sprintf("arc_%d", j), target)
 	}
 
-	_, err := i.Commit(arcs)
+	_, err := s.Commit(arcs)
 	if err == nil {
 		t.Error("Should error when arc set exceeds limit")
 	}
 }
 
 func TestIPAMultipleCommits(t *testing.T) {
-	i, _ := ipa.NewCommitment()
+	s, _ := ipa.NewScheme()
 
-	arcs1 := sce.NewMapArcSetView()
+	arcs1 := arcset.NewMap()
 	target1, _ := key.NewPayloadCID([]byte("data1"))
 	arcs1.Add("a", target1)
-	root1, _ := i.Commit(arcs1)
+	root1, _ := s.Commit(arcs1)
 
-	arcs2 := sce.NewMapArcSetView()
+	arcs2 := arcset.NewMap()
 	target2, _ := key.NewPayloadCID([]byte("data2"))
 	arcs2.Add("b", target2)
-	root2, _ := i.Commit(arcs2)
+	root2, _ := s.Commit(arcs2)
 
-	_, proof1, err := i.Prove(root1, arcs1, "a")
+	_, proof1, err := s.Prove(root1, arcs1, "a")
 	if err != nil {
 		t.Errorf("Prove root1 failed: %v", err)
 	}
 
-	_, proof2, err := i.Prove(root2, arcs2, "b")
+	_, proof2, err := s.Prove(root2, arcs2, "b")
 	if err != nil {
 		t.Errorf("Prove root2 failed: %v", err)
 	}
 
-	valid1, _ := i.Verify(root1, "a", target1, proof1)
-	valid2, _ := i.Verify(root2, "b", target2, proof2)
+	valid1, _ := s.Verify(root1, "a", target1, proof1)
+	valid2, _ := s.Verify(root2, "b", target2, proof2)
 
 	if !valid1 || !valid2 {
 		t.Error("Both proofs should be valid")
