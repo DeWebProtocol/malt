@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/eat/simple"
+	"github.com/dewebprotocol/malt/core/eat/simple"
 	"github.com/dewebprotocol/malt/eval"
-	"github.com/dewebprotocol/malt/sce"
-	"github.com/dewebprotocol/malt/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 )
 
 func TestBenchmarkRunner(t *testing.T) {

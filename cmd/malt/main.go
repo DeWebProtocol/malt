@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/dewebprotocol/malt/arcset"
+	"github.com/dewebprotocol/malt/types/arcset"
 	"github.com/dewebprotocol/malt/config"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"

@@ -4,9 +4,9 @@ package main
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/arcset"
-	"github.com/dewebprotocol/malt/kv/badger"
-	"github.com/dewebprotocol/malt/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/types/kv/badger"
+	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )
