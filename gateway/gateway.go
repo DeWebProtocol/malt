@@ -18,6 +18,7 @@ import (
 type Gateway struct {
 	explicitResolver resolver.Resolver
 	implicitResolver  resolver.Resolver
+	hamtResolver      resolver.Resolver
 }
 
 // NewGateway creates a new gateway with explicit and implicit resolvers.
@@ -25,6 +26,16 @@ func NewGateway(explicit, implicit resolver.Resolver) *Gateway {
 	return &Gateway{
 		explicitResolver: explicit,
 		implicitResolver:  implicit,
+		hamtResolver:      nil,
+	}
+}
+
+// NewGatewayWithHAMT creates a new gateway with all resolver types.
+func NewGatewayWithHAMT(explicit, implicit, hamt resolver.Resolver) *Gateway {
+	return &Gateway{
+		explicitResolver: explicit,
+		implicitResolver:  implicit,
+		hamtResolver:      hamt,
 	}
 }
 
@@ -76,7 +87,8 @@ func (g *Gateway) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		var err error
 
 		// Dispatch based on CID codec
-		if codec.IsMaltCid(currentCID) {
+		switch {
+		case codec.IsMaltCid(currentCID):
 			// Explicit step: use explicit resolver for longest-prefix match
 			if g.explicitResolver == nil {
 				return &ResolveResult{
@@ -85,7 +97,12 @@ func (g *Gateway) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 				}, nil
 			}
 			matchedPath, target, ev, err = g.explicitResolver.Resolve(currentCID, remainingPath)
-		} else {
+
+		case g.hamtResolver != nil && codec.IsHamtCid(currentCID):
+			// HAMT step: use HAMT resolver for hash-based routing
+			matchedPath, target, ev, err = g.hamtResolver.Resolve(currentCID, remainingPath)
+
+		default:
 			// Implicit step: use implicit resolver for DAG traversal
 			if g.implicitResolver == nil {
 				return &ResolveResult{
@@ -146,8 +163,14 @@ func (g *Gateway) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, 
 			r = g.explicitResolver
 		case evidence.EvidenceKindImplicit:
 			r = g.implicitResolver
+		case evidence.EvidenceKindHAMT:
+			r = g.hamtResolver
 		default:
 			return false, fmt.Errorf("unknown evidence kind: %v", step.Evidence.Kind())
+		}
+
+		if r == nil {
+			return false, fmt.Errorf("resolver not available for evidence kind: %v", step.Evidence.Kind())
 		}
 
 		valid, err := r.Verify(currentRoot, step.Path, step.Target, step.Evidence)

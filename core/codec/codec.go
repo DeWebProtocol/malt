@@ -22,6 +22,17 @@ const (
 	CodecMaltIPA = 0x300003
 )
 
+// HAMT multicodec constants
+// These codecs identify HAMT (Hash Array Mapped Trie) data structures.
+// TODO: Update with official multicodec values when available.
+const (
+	// CodecHamtV1 is the codec for HAMT version 1 (placeholder).
+	CodecHamtV1 = 0x300100
+
+	// CodecHamtV2 is the codec for HAMT version 2 with different hash.
+	CodecHamtV2 = 0x300110
+)
+
 // KZG commitment size constants
 const (
 	// KZGCommitmentSize is the size of a KZG commitment in bytes (48 bytes).
@@ -85,6 +96,12 @@ func newMaltCid(codec uint64, commitment []byte) (cid.Cid, error) {
 func IsMaltCid(c cid.Cid) bool {
 	codec := c.Prefix().Codec
 	return codec == CodecMaltKZG || codec == CodecMaltVerkle || codec == CodecMaltIPA
+}
+
+// IsHamtCid checks if a CID is a HAMT data structure CID.
+func IsHamtCid(c cid.Cid) bool {
+	codec := c.Prefix().Codec
+	return codec == CodecHamtV1 || codec == CodecHamtV2
 }
 
 // GetMaltCodec returns the MALT codec type for a CID.
