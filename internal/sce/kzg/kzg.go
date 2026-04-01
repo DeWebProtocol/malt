@@ -4,6 +4,7 @@ package kzg
 import (
 	"crypto/sha256"
 	"fmt"
+	"math/big"
 	"sort"
 	"sync"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/dewebprotocol/malt/internal/sce"
 	"github.com/dewebprotocol/malt/key"
 )
+
+// bls12381ScalarMod is the BLS12-381 scalar field modulus.
+var bls12381ScalarMod, _ = new(big.Int).SetString("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001", 16)
 
 const (
 	// BlobSize is the size of a KZG blob in bytes (4096 scalars * 32 bytes)
@@ -292,15 +296,19 @@ func (k *Commitment) BatchUpdate(root key.Key, arcs sce.ArcSetView, updates map[
 }
 
 // keyToKZGScalar converts a Key to a KZG scalar (32 bytes).
+// The value is reduced modulo the BLS12-381 scalar field modulus.
 func keyToKZGScalar(k key.Key) gokzg4844.Scalar {
 	var scalar gokzg4844.Scalar
 	hash := sha256.Sum256(k.Bytes())
 
-	// Clear the top bit to ensure the value fits in BLS12-381 scalar field.
-	result := hash
-	result[0] &= 0x7F
+	// Convert hash to big.Int and reduce modulo scalar field
+	value := new(big.Int).SetBytes(hash[:])
+	value.Mod(value, bls12381ScalarMod)
 
-	copy(scalar[:], result[:])
+	// Pad to 32 bytes
+	result := value.FillBytes(make([]byte, 32))
+	copy(scalar[:], result)
+
 	return scalar
 }
 
