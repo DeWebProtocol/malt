@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dewebprotocol/malt/types/kv"
+	"github.com/dewebprotocol/malt/types/kvstore"
 )
 
 func TestMemoryKV(t *testing.T) {

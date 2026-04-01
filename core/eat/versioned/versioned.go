@@ -9,7 +9,7 @@ import (
 
 	"github.com/dewebprotocol/malt/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/types/kv"
+	"github.com/dewebprotocol/malt/types/kvstore"
 	"github.com/dewebprotocol/malt/key"
 )
 

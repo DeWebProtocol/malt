@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/types/arcset"
-	"github.com/dewebprotocol/malt/types/kv/badger"
+	"github.com/dewebprotocol/malt/types/kvstore/badger"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
