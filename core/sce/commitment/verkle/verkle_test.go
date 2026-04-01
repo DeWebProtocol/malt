@@ -3,7 +3,7 @@ package verkle_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
 	"github.com/dewebprotocol/malt/key"
 )

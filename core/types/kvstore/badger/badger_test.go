@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dewebprotocol/malt/types/kvstore"
+	"github.com/dewebprotocol/malt/core/types/kvstore"
 )
 
 func TestBadgerKV(t *testing.T) {

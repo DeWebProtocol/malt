@@ -11,7 +11,7 @@ import (
 	"github.com/crate-crypto/go-ipa/banderwagon"
 	"github.com/crate-crypto/go-ipa/common"
 	ipa "github.com/crate-crypto/go-ipa/ipa"
-	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/key"
 )

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/key"
 )

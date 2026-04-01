@@ -3,7 +3,7 @@ package malt_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat/simple"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"

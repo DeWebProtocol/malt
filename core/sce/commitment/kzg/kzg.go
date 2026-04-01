@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	gokzg4844 "github.com/crate-crypto/go-kzg-4844"
-	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/key"
 )

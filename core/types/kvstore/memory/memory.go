@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/dewebprotocol/malt/types/kvstore"
+	"github.com/dewebprotocol/malt/core/types/kvstore"
 )
 
 // KV is an in-memory implementation of kvstore.KVStore.

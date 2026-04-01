@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dewebprotocol/malt/types/kvstore"
-	"github.com/dewebprotocol/malt/types/kvstore/fs"
+	"github.com/dewebprotocol/malt/core/types/kvstore"
+	"github.com/dewebprotocol/malt/core/types/kvstore/fs"
 )
 
 func TestFSKV(t *testing.T) {

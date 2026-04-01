@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/dewebprotocol/malt/types/kvstore"
+	"github.com/dewebprotocol/malt/core/types/kvstore"
 )
 
 // KV is a BadgerDB implementation of kvstore.KVStore.

@@ -6,7 +6,7 @@ package malt
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/cas"
 	"github.com/dewebprotocol/malt/cas/ipfsgateway"
@@ -14,9 +14,9 @@ import (
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/simple"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
-	"github.com/dewebprotocol/malt/types/kvstore"
-	"github.com/dewebprotocol/malt/types/kvstore/badger"
-	kvmemory "github.com/dewebprotocol/malt/types/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/types/kvstore"
+	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
+	kvmemory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
