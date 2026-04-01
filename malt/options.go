@@ -3,10 +3,10 @@ package malt
 
 import (
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/internal/cas"
-	"github.com/dewebprotocol/malt/internal/eat"
-	"github.com/dewebprotocol/malt/internal/kv"
-	"github.com/dewebprotocol/malt/internal/sce/commitment"
+	"github.com/dewebprotocol/malt/cas"
+	"github.com/dewebprotocol/malt/eat"
+	"github.com/dewebprotocol/malt/kv"
+	"github.com/dewebprotocol/malt/sce/commitment"
 )
 
 // Option configures a MALT Node.

@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/arcset"
-	"github.com/dewebprotocol/malt/internal/eat/simple"
-	"github.com/dewebprotocol/malt/internal/sce"
-	"github.com/dewebprotocol/malt/internal/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/eat/simple"
+	"github.com/dewebprotocol/malt/sce"
+	"github.com/dewebprotocol/malt/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
 	"github.com/dewebprotocol/malt/key"
 )

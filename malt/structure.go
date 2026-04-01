@@ -7,8 +7,8 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/arcset"
-	"github.com/dewebprotocol/malt/internal/eat"
-	"github.com/dewebprotocol/malt/internal/sce"
+	"github.com/dewebprotocol/malt/eat"
+	"github.com/dewebprotocol/malt/sce"
 	"github.com/dewebprotocol/malt/key"
 )
 
