@@ -7,30 +7,30 @@ package resolver
 
 import (
 	"github.com/dewebprotocol/malt/core/types/evidence"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
-// Resolver resolves a single step from a root key.
+// Resolver resolves a single step from a root CID.
 // It finds the longest matching prefix and returns evidence.
 type Resolver interface {
 	// Resolve finds the longest matching prefix and returns evidence.
 	// Returns: matchedPath, target, evidence, error
-	Resolve(root key.Key, path string) (matchedPath string, target key.Key, ev evidence.Evidence, err error)
+	Resolve(root cid.Cid, path string) (matchedPath string, target cid.Cid, ev evidence.Evidence, err error)
 
 	// Verify verifies the evidence for a resolution step.
-	Verify(root key.Key, path string, target key.Key, ev evidence.Evidence) (bool, error)
+	Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error)
 }
 
 // ResolverFunc is a function type that implements Resolver.
 // Useful for composing resolvers.
-type ResolverFunc func(root key.Key, path string) (string, key.Key, evidence.Evidence, error)
+type ResolverFunc func(root cid.Cid, path string) (string, cid.Cid, evidence.Evidence, error)
 
 // Resolve implements Resolver.
-func (f ResolverFunc) Resolve(root key.Key, path string) (string, key.Key, evidence.Evidence, error) {
+func (f ResolverFunc) Resolve(root cid.Cid, path string) (string, cid.Cid, evidence.Evidence, error) {
 	return f(root, path)
 }
 
 // Verify implements Resolver with a default no-op.
-func (f ResolverFunc) Verify(root key.Key, path string, target key.Key, ev evidence.Evidence) (bool, error) {
+func (f ResolverFunc) Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error) {
 	return true, nil
 }

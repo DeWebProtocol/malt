@@ -6,7 +6,8 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/cas"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 // CAS is a mock CAS implementation for testing.
@@ -22,39 +23,37 @@ func NewCAS() *CAS {
 }
 
 // Get retrieves a block from mock storage.
-func (m *CAS) Get(ctx context.Context, k key.Key) ([]byte, error) {
-	if k.Kind() != key.KeyKindPayloadCID {
-		return nil, fmt.Errorf("expected PayloadCID, got %v", k.Kind())
-	}
-
-	data, ok := m.blocks[k.String()]
+func (m *CAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
+	data, ok := m.blocks[c.String()]
 	if !ok {
-		return nil, fmt.Errorf("block not found: %s", k.String())
+		return nil, fmt.Errorf("block not found: %s", c.String())
 	}
 
 	return data, nil
 }
 
 // Put stores a block in mock storage.
-func (m *CAS) Put(ctx context.Context, data []byte) (key.Key, error) {
-	k, err := key.NewPayloadCID(data)
+func (m *CAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	// Create a CID with raw codec and sha2-256 hash
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
 	if err != nil {
-		return nil, err
+		return cid.Cid{}, err
 	}
+	c := cid.NewCidV1(cid.Raw, mhash)
 
-	m.blocks[k.String()] = data
-	return k, nil
+	m.blocks[c.String()] = data
+	return c, nil
 }
 
 // Has checks if a block exists in mock storage.
-func (m *CAS) Has(ctx context.Context, k key.Key) (bool, error) {
-	_, ok := m.blocks[k.String()]
+func (m *CAS) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	_, ok := m.blocks[c.String()]
 	return ok, nil
 }
 
 // AddBlock adds a pre-existing block to mock storage.
-func (m *CAS) AddBlock(k key.Key, data []byte) {
-	m.blocks[k.String()] = data
+func (m *CAS) AddBlock(c cid.Cid, data []byte) {
+	m.blocks[c.String()] = data
 }
 
 // Ensure CAS implements cas.Client.

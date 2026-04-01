@@ -6,13 +6,15 @@ package gateway
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/evidence"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // Gateway handles hybrid resolution with prefix consumption.
-// It dispatches to different resolvers based on key kind.
+// It dispatches to different resolvers based on CID codec and continues
+// traversal until the path is consumed or resolution fails.
 type Gateway struct {
 	explicitResolver resolver.Resolver
 	implicitResolver  resolver.Resolver
@@ -22,14 +24,14 @@ type Gateway struct {
 func NewGateway(explicit, implicit resolver.Resolver) *Gateway {
 	return &Gateway{
 		explicitResolver: explicit,
-		implicitResolver: implicit,
+		implicitResolver:  implicit,
 	}
 }
 
 // ResolveResult contains the result of a resolution operation.
 type ResolveResult struct {
-	// Target is the final resolved key
-	Target key.Key
+	// Target is the final resolved CID
+	Target cid.Cid
 
 	// Transcript contains the evidence for each step
 	Transcript *Transcript
@@ -45,70 +47,92 @@ type StepEvidence struct {
 	// Path is the path segment consumed in this step
 	Path string
 
-	// Target is the key resolved to
-	Target key.Key
+	// Target is the CID resolved to
+	Target cid.Cid
 
 	// Evidence is the cryptographic evidence for this step
 	Evidence evidence.Evidence
 }
 
-// Resolve resolves a path from a root key.
-// It supports both explicit arcs (for StructureRoot) and implicit Merkle-DAG traversal (for PayloadCID).
-func (g *Gateway) Resolve(root key.Key, path string) (*ResolveResult, error) {
-	if root == nil {
-		return nil, fmt.Errorf("root is nil")
+// Resolve resolves a path from a root CID.
+// It supports both explicit arcs (for MALT commitments) and implicit Merkle-DAG traversal (for payload CIDs).
+// The resolution continues until:
+//   - The path is fully consumed
+//   - A resolution step fails (no matching arc or link)
+//   - The target cannot be resolved further
+func (g *Gateway) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
+	if !root.Defined() {
+		return nil, fmt.Errorf("root is not defined")
 	}
 
 	transcript := &Transcript{Steps: make([]StepEvidence, 0)}
-	currentKey := root
+	currentCID := root
 	remainingPath := path
 
 	for remainingPath != "" {
-		// Dispatch based on key type
-		switch currentKey.Kind() {
-		case key.KeyKindStructureRoot:
+		var matchedPath string
+		var target cid.Cid
+		var ev evidence.Evidence
+		var err error
+
+		// Dispatch based on CID codec
+		if codec.IsMaltCid(currentCID) {
 			// Explicit step: use explicit resolver for longest-prefix match
-			matchedPath, target, ev, err := g.explicitResolver.Resolve(currentKey, remainingPath)
-			if err != nil {
-				return nil, fmt.Errorf("explicit resolution failed: %w", err)
+			if g.explicitResolver == nil {
+				return &ResolveResult{
+					Target:     currentCID,
+					Transcript: transcript,
+				}, nil
 			}
-
-			// Record step
-			transcript.Steps = append(transcript.Steps, StepEvidence{
-				Path:     matchedPath,
-				Target:   target,
-				Evidence: ev,
-			})
-
-			currentKey = target
-
-			// Update remaining path
-			remainingPath = remainingPath[len(matchedPath):]
-			if remainingPath != "" && remainingPath[0] == '/' {
-				remainingPath = remainingPath[1:]
+			matchedPath, target, ev, err = g.explicitResolver.Resolve(currentCID, remainingPath)
+		} else {
+			// Implicit step: use implicit resolver for DAG traversal
+			if g.implicitResolver == nil {
+				return &ResolveResult{
+					Target:     currentCID,
+					Transcript: transcript,
+				}, nil
 			}
+			matchedPath, target, ev, err = g.implicitResolver.Resolve(currentCID, remainingPath)
+		}
 
-		case key.KeyKindPayloadCID:
-			// We've reached a PayloadCID (data layer)
-			// Stop here - we've resolved as far as we can
+		if err != nil {
+			return nil, fmt.Errorf("resolution failed: %w", err)
+		}
+
+		// If no path was matched, we can't continue
+		if matchedPath == "" {
 			return &ResolveResult{
-				Target:     currentKey,
+				Target:     currentCID,
 				Transcript: transcript,
 			}, nil
+		}
 
-		default:
-			return nil, fmt.Errorf("unknown key kind: %v", currentKey.Kind())
+		// Record step
+		transcript.Steps = append(transcript.Steps, StepEvidence{
+			Path:     matchedPath,
+			Target:   target,
+			Evidence: ev,
+		})
+
+		// Update current CID
+		currentCID = target
+
+		// Update remaining path
+		remainingPath = remainingPath[len(matchedPath):]
+		if remainingPath != "" && remainingPath[0] == '/' {
+			remainingPath = remainingPath[1:]
 		}
 	}
 
 	return &ResolveResult{
-		Target:     currentKey,
+		Target:     currentCID,
 		Transcript: transcript,
 	}, nil
 }
 
 // VerifyTranscript verifies all steps in a transcript.
-func (g *Gateway) VerifyTranscript(root key.Key, transcript *Transcript) (bool, error) {
+func (g *Gateway) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, error) {
 	if transcript == nil {
 		return false, fmt.Errorf("transcript is nil")
 	}

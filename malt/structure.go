@@ -9,12 +9,12 @@ import (
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // Structure represents a MALT structure with explicit arcs.
 type Structure struct {
-	root key.Key
+	root cid.Cid
 	eat  eat.EAT
 	sce  *sce.Engine
 }
@@ -49,25 +49,25 @@ func NewStructure(arcs arcset.View, e eat.EAT, s *sce.Engine) (*Structure, error
 	}, nil
 }
 
-// Root returns the structure root (commitment).
-func (s *Structure) Root() key.Key {
+// Root returns the structure root (commitment CID).
+func (s *Structure) Root() cid.Cid {
 	return s.root
 }
 
 // Resolve resolves a path from the structure root.
-// Returns the target key and a proof.
-func (s *Structure) Resolve(path string) (key.Key, arcset.Proof, error) {
+// Returns the target CID and a proof.
+func (s *Structure) Resolve(path string) (cid.Cid, arcset.Proof, error) {
 	// Get target from EAT
 	target, err := s.eat.Get(s.root, path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get arc: %w", err)
+		return cid.Cid{}, nil, fmt.Errorf("failed to get arc: %w", err)
 	}
 
 	// Generate proof
 	view := s.eat.View(s.root)
 	_, proof, err := s.sce.Prove(s.root, view, path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate proof: %w", err)
+		return cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
 	}
 
 	return target, proof, nil
@@ -75,7 +75,7 @@ func (s *Structure) Resolve(path string) (key.Key, arcset.Proof, error) {
 
 // Update updates an arc in the structure.
 // Returns a new Structure with the updated arc.
-func (s *Structure) Update(path string, newKey key.Key) (*Structure, error) {
+func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 	// Get current value
 	oldKey, err := s.eat.Get(s.root, path)
 	if err != nil {
@@ -102,7 +102,7 @@ func (s *Structure) Update(path string, newKey key.Key) (*Structure, error) {
 }
 
 // Verify verifies a proof for an arc.
-func (s *Structure) Verify(path string, target key.Key, proof arcset.Proof) (bool, error) {
+func (s *Structure) Verify(path string, target cid.Cid, proof arcset.Proof) (bool, error) {
 	return s.sce.Verify(s.root, path, target, proof)
 }
 

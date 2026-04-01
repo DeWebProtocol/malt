@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 	verkle "github.com/ethereum/go-verkle"
 )
 
@@ -26,7 +27,7 @@ type Scheme struct {
 
 type cacheEntry struct {
 	paths       []string
-	values      []key.Key
+	values      []cid.Cid
 	pathToStem  map[string]verkle.Stem
 	pathToIndex map[string]int
 }
@@ -39,7 +40,7 @@ func NewScheme() (*Scheme, error) {
 }
 
 // Commit generates a Verkle commitment.
-func (s *Scheme) Commit(arcs arcset.View) (key.Key, error) {
+func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 	paths, values := extractSortedPathsValues(arcs)
 
 	entry := &cacheEntry{
@@ -65,26 +66,41 @@ func (s *Scheme) Commit(arcs arcset.View) (key.Key, error) {
 		commBytes = make([]byte, 32)
 	}
 
+	// For Verkle, we use the first 31 bytes as the stem
+	stemBytes := make([]byte, StemSize)
+	if len(commBytes) >= StemSize {
+		copy(stemBytes, commBytes[:StemSize])
+	} else {
+		copy(stemBytes, commBytes)
+	}
+
 	s.mu.Lock()
-	s.cache[string(commBytes)] = entry
+	s.cache[string(stemBytes)] = entry
 	s.mu.Unlock()
 
-	return key.NewStructureRoot(commBytes), nil
+	// Create MALT CID from stem bytes
+	return codec.NewVerkleCid(stemBytes)
 }
 
 // Prove generates a Verkle proof.
-func (s *Scheme) Prove(comm key.Key, arcs arcset.View, path string) (key.Key, arcset.Proof, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error) {
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.RLock()
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, nil, fmt.Errorf("commitment not found in cache")
+		return cid.Cid{}, nil, fmt.Errorf("commitment not found in cache")
 	}
 
 	stem, ok := entry.pathToStem[path]
 	if !ok {
-		return nil, nil, fmt.Errorf("path %s not found in stem index", path)
+		return cid.Cid{}, nil, fmt.Errorf("path %s not found in stem index", path)
 	}
 
 	index := entry.pathToIndex[path]
@@ -97,13 +113,19 @@ func (s *Scheme) Prove(comm key.Key, arcs arcset.View, path string) (key.Key, ar
 }
 
 // Verify verifies a Verkle proof.
-func (s *Scheme) Verify(comm key.Key, path string, value key.Key, proof arcset.Proof) (bool, error) {
+func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof arcset.Proof) (bool, error) {
 	if len(proof) < StemSize {
 		return false, nil
 	}
 
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.RLock()
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -126,64 +148,90 @@ func (s *Scheme) Verify(comm key.Key, path string, value key.Key, proof arcset.P
 }
 
 // Update updates a value in the commitment.
-func (s *Scheme) Update(comm key.Key, arcs arcset.View, path string, oldValue, newValue key.Key) (key.Key, error) {
+func (s *Scheme) Update(comm cid.Cid, arcs arcset.View, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	if !ok {
-		return nil, fmt.Errorf("commitment not found in cache")
+		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
 	}
 
 	index, ok := entry.pathToIndex[path]
 	if !ok {
-		return nil, fmt.Errorf("path %s not found", path)
+		return cid.Cid{}, fmt.Errorf("path %s not found", path)
 	}
 
 	entry.values[index] = newValue
 
 	// Recompute commitment bytes
-	commBytes := make([]byte, 32)
-	copy(commBytes, entry.pathToStem[entry.paths[0]])
+	newCommBytes := make([]byte, 32)
+	copy(newCommBytes, entry.pathToStem[entry.paths[0]])
 
-	s.cache[string(commBytes)] = entry
+	stemBytes := make([]byte, StemSize)
+	copy(stemBytes, newCommBytes[:StemSize])
 
-	return key.NewStructureRoot(commBytes), nil
+	s.cache[string(stemBytes)] = entry
+
+	// Create MALT CID from stem bytes
+	return codec.NewVerkleCid(stemBytes)
 }
 
 // BatchUpdate updates multiple values.
-func (s *Scheme) BatchUpdate(comm key.Key, arcs arcset.View, updates map[string]struct {
-	Old key.Key
-	New key.Key
-}) (key.Key, error) {
+func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]struct {
+	Old cid.Cid
+	New cid.Cid
+}) (cid.Cid, error) {
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	if !ok {
-		return nil, fmt.Errorf("commitment not found in cache")
+		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
 	}
 
 	for path, update := range updates {
 		index, ok := entry.pathToIndex[path]
 		if !ok {
-			return nil, fmt.Errorf("path %s not found", path)
+			return cid.Cid{}, fmt.Errorf("path %s not found", path)
 		}
 		entry.values[index] = update.New
 	}
 
-	commBytes := make([]byte, 32)
+	commBytes = make([]byte, 32)
 	copy(commBytes, entry.pathToStem[entry.paths[0]])
 
-	s.cache[string(commBytes)] = entry
+	stemBytes := make([]byte, StemSize)
+	copy(stemBytes, commBytes[:StemSize])
 
-	return key.NewStructureRoot(commBytes), nil
+	s.cache[string(stemBytes)] = entry
+
+	// Create MALT CID from stem bytes
+	return codec.NewVerkleCid(stemBytes)
 }
 
 // ProveBatch generates proofs for multiple paths.
-func (s *Scheme) ProveBatch(comm key.Key, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
+func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.RLock()
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -214,9 +262,15 @@ func (s *Scheme) ProveBatch(comm key.Key, arcs arcset.View, paths []string) (map
 }
 
 // VerifyBatch verifies multiple proofs.
-func (s *Scheme) VerifyBatch(comm key.Key, proofs map[string]arcset.BatchProofEntry) (bool, error) {
+func (s *Scheme) VerifyBatch(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.RLock()
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -245,16 +299,22 @@ func (s *Scheme) VerifyBatch(comm key.Key, proofs map[string]arcset.BatchProofEn
 }
 
 // ProveAggregate generates an aggregated proof.
-func (s *Scheme) ProveAggregate(comm key.Key, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+func (s *Scheme) ProveAggregate(comm cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.RLock()
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	s.mu.RUnlock()
 
 	if !ok {
 		return nil, fmt.Errorf("commitment not found in cache")
 	}
 
-	targets := make([]key.Key, len(paths))
+	targets := make([]cid.Cid, len(paths))
 	proofData := make([]byte, 0, len(paths)*StemSize)
 
 	for i, path := range paths {
@@ -275,7 +335,7 @@ func (s *Scheme) ProveAggregate(comm key.Key, arcs arcset.View, paths []string) 
 }
 
 // VerifyAggregate verifies an aggregated proof.
-func (s *Scheme) VerifyAggregate(comm key.Key, aggProof *arcset.AggregatedProof) (bool, error) {
+func (s *Scheme) VerifyAggregate(comm cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
 	if aggProof == nil || len(aggProof.Paths) == 0 {
 		return false, fmt.Errorf("invalid aggregated proof")
 	}
@@ -284,8 +344,14 @@ func (s *Scheme) VerifyAggregate(comm key.Key, aggProof *arcset.AggregatedProof)
 		return false, fmt.Errorf("proof data size mismatch")
 	}
 
+	// Extract commitment bytes from MALT CID
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
 	s.mu.RLock()
-	entry, ok := s.cache[string(comm.Bytes())]
+	entry, ok := s.cache[string(commBytes)]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -322,7 +388,7 @@ func pathToVerkleStem(p string) verkle.Stem {
 }
 
 // extractSortedPathsValues extracts sorted paths and values from an ArcSetView.
-func extractSortedPathsValues(arcs arcset.View) ([]string, []key.Key) {
+func extractSortedPathsValues(arcs arcset.View) ([]string, []cid.Cid) {
 	var paths []string
 	iter := arcs.Iterate()
 	for {
@@ -333,7 +399,7 @@ func extractSortedPathsValues(arcs arcset.View) ([]string, []key.Key) {
 		paths = append(paths, path)
 	}
 
-	values := make([]key.Key, len(paths))
+	values := make([]cid.Cid, len(paths))
 	for i, path := range paths {
 		values[i], _ = arcs.Get(path)
 	}

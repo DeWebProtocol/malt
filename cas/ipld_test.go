@@ -5,10 +5,18 @@ import (
 
 	"github.com/dewebprotocol/malt/cas"
 	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/key"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 func TestIPLDParserRaw(t *testing.T) {
 	store := mock.NewCAS()
@@ -16,9 +24,9 @@ func TestIPLDParserRaw(t *testing.T) {
 
 	// Create raw data
 	data := []byte("hello world")
-	k, err := key.NewPayloadCID(data)
+	k, err := newPayloadCID(data)
 	if err != nil {
-		t.Fatalf("NewPayloadCID failed: %v", err)
+		t.Fatalf("newPayloadCID failed: %v", err)
 	}
 
 	// Parse
@@ -43,10 +51,9 @@ func TestIPLDParserDagJSON(t *testing.T) {
 	// Create key with DAG-JSON codec (0x0201)
 	mhash, _ := mh.Sum(jsonData, mh.SHA2_256, -1)
 	c := cid.NewCidV1(0x0201, mhash) // DAG-JSON codec
-	k := key.NewPayloadCIDFromCID(c)
 
 	// Parse
-	node, err := parser.ParseBlock(k, jsonData)
+	node, err := parser.ParseBlock(c, jsonData)
 	if err != nil {
 		t.Fatalf("ParseBlock failed: %v", err)
 	}
@@ -77,10 +84,9 @@ func TestIPLDParserDagJSONWithArray(t *testing.T) {
 
 	mhash, _ := mh.Sum(jsonData, mh.SHA2_256, -1)
 	c := cid.NewCidV1(0x0201, mhash) // DAG-JSON codec
-	k := key.NewPayloadCIDFromCID(c)
 
 	// Parse
-	node, err := parser.ParseBlock(k, jsonData)
+	node, err := parser.ParseBlock(c, jsonData)
 	if err != nil {
 		t.Fatalf("ParseBlock failed: %v", err)
 	}
@@ -101,10 +107,9 @@ func TestIPLDParserCBOR(t *testing.T) {
 	// Create key with CBOR codec (0x71)
 	mhash, _ := mh.Sum(cborData, mh.SHA2_256, -1)
 	c := cid.NewCidV1(0x71, mhash) // DAG-CBOR codec
-	k := key.NewPayloadCIDFromCID(c)
 
 	// Parse
-	node, err := parser.ParseBlock(k, cborData)
+	node, err := parser.ParseBlock(c, cborData)
 	if err != nil {
 		t.Fatalf("ParseBlock failed: %v", err)
 	}
@@ -124,10 +129,9 @@ func TestIPLDParserCBORArray(t *testing.T) {
 
 	mhash, _ := mh.Sum(cborData, mh.SHA2_256, -1)
 	c := cid.NewCidV1(0x71, mhash) // DAG-CBOR codec
-	k := key.NewPayloadCIDFromCID(c)
 
 	// Parse
-	node, err := parser.ParseBlock(k, cborData)
+	node, err := parser.ParseBlock(c, cborData)
 	if err != nil {
 		t.Fatalf("ParseBlock failed: %v", err)
 	}

@@ -4,9 +4,20 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 // === Basic Functionality Tests ===
 
@@ -17,8 +28,8 @@ func TestVerkleCommitment(t *testing.T) {
 	}
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
@@ -27,12 +38,12 @@ func TestVerkleCommitment(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	if root == nil {
-		t.Fatal("Root should not be nil")
+	if !root.Defined() {
+		t.Fatal("Root should be defined")
 	}
 
-	if root.Kind() != key.KeyKindStructureRoot {
-		t.Errorf("Expected StructureRoot, got %v", root.Kind())
+	if !codec.IsMaltCid(root) {
+		t.Errorf("Expected MALT commitment CID, got codec=%x", root.Prefix().Codec)
 	}
 
 	target, proof, err := v.Prove(root, arcs, "a")
@@ -65,7 +76,7 @@ func TestVerkleCommitmentUpdate(t *testing.T) {
 	}
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 
 	root, err := v.Commit(arcs)
@@ -73,7 +84,7 @@ func TestVerkleCommitmentUpdate(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	newRoot, err := v.Update(root, arcs, "link", k1, k2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -91,8 +102,8 @@ func TestVerkleBatchUpdate(t *testing.T) {
 	}
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
@@ -101,11 +112,11 @@ func TestVerkleBatchUpdate(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	k3, _ := key.NewPayloadCID([]byte("target3"))
-	k4, _ := key.NewPayloadCID([]byte("target4"))
+	k3, _ := newPayloadCID([]byte("target3"))
+	k4, _ := newPayloadCID([]byte("target4"))
 	updates := map[string]struct {
-		Old key.Key
-		New key.Key
+		Old cid.Cid
+		New cid.Cid
 	}{
 		"a": {Old: k1, New: k3},
 		"b": {Old: k2, New: k4},
@@ -127,8 +138,8 @@ func TestVerkleProveBatch(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
@@ -149,8 +160,8 @@ func TestVerkleVerifyBatch(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
@@ -173,8 +184,8 @@ func TestVerkleProveAggregate(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
@@ -203,8 +214,8 @@ func TestVerkleVerifyAggregate(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("a", k1)
 	arcs.Add("b", k2)
 
@@ -238,8 +249,8 @@ func TestVerkleEmptyArcSet(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	if root == nil {
-		t.Fatal("Root should not be nil for empty arc set")
+	if !root.Defined() {
+		t.Fatal("Root should be defined for empty arc set")
 	}
 }
 
@@ -247,7 +258,7 @@ func TestVerkleProveNonExistentPath(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
 	root, _ := v.Commit(arcs)
@@ -262,7 +273,7 @@ func TestVerkleProveAggregateEmptyPaths(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
 	root, _ := v.Commit(arcs)

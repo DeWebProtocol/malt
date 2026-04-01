@@ -10,7 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/types/kvstore"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // EAT is a versioned EAT implementation using a KVStore.
@@ -33,13 +33,13 @@ func NewEAT(store kvstore.KVStore) (*EAT, error) {
 // Key prefixes for different buckets.
 var (
 	prefixMeta = []byte("m:") // m:root -> index
-	prefixArcs = []byte("a:") // a:path -> [(index, key), ...]
+	prefixArcs = []byte("a:") // a:path -> [(index, cid), ...]
 	prefixIdx  = []byte("i:") // i:counter -> next index
 )
 
 // metaKey generates a key for the metadata bucket.
-func metaKey(k key.Key) []byte {
-	return append(prefixMeta, k.Bytes()...)
+func metaKey(c cid.Cid) []byte {
+	return append(prefixMeta, c.Bytes()...)
 }
 
 // arcsKey generates a key for the arcs bucket.
@@ -47,8 +47,8 @@ func arcsKey(path string) []byte {
 	return append(prefixArcs, []byte(path)...)
 }
 
-// Get retrieves the target key for (root, path).
-func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
+// Get retrieves the target CID for (root, path).
+func (e *EAT) Get(root cid.Cid, path string) (cid.Cid, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -56,13 +56,13 @@ func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
 	idxBytes, err := e.kv.Get(nil, metaKey(root))
 	if err != nil {
 		if err == kvstore.ErrNotFound {
-			return nil, eat.ErrNotFound
+			return cid.Cid{}, eat.ErrNotFound
 		}
-		return nil, fmt.Errorf("failed to get root index: %w", err)
+		return cid.Cid{}, fmt.Errorf("failed to get root index: %w", err)
 	}
 
 	if len(idxBytes) != 8 {
-		return nil, fmt.Errorf("invalid index value length: %d", len(idxBytes))
+		return cid.Cid{}, fmt.Errorf("invalid index value length: %d", len(idxBytes))
 	}
 	idx := binary.BigEndian.Uint64(idxBytes)
 
@@ -70,27 +70,27 @@ func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
 	historyBytes, err := e.kv.Get(nil, arcsKey(path))
 	if err != nil {
 		if err == kvstore.ErrNotFound {
-			return nil, eat.ErrNotFound
+			return cid.Cid{}, eat.ErrNotFound
 		}
-		return nil, fmt.Errorf("failed to get path history: %w", err)
+		return cid.Cid{}, fmt.Errorf("failed to get path history: %w", err)
 	}
 
 	history, err := decodeHistory(historyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode history: %w", err)
+		return cid.Cid{}, fmt.Errorf("failed to decode history: %w", err)
 	}
 
 	// Binary search: find largest index <= idx
 	entry := binarySearchHistory(history, idx)
 	if entry == nil {
-		return nil, eat.ErrNotFound
+		return cid.Cid{}, eat.ErrNotFound
 	}
 
-	return entry.key, nil
+	return entry.cid, nil
 }
 
 // Put stores an arc entry and updates metadata.
-func (e *EAT) Put(root key.Key, path string, target key.Key) error {
+func (e *EAT) Put(root cid.Cid, path string, target cid.Cid) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -126,7 +126,7 @@ func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 	}
 
 	// Append new entry
-	history = append(history, historyEntry{index: idx, key: target})
+	history = append(history, historyEntry{index: idx, cid: target})
 	sort.Slice(history, func(i, j int) bool {
 		return history[i].index < history[j].index
 	})
@@ -161,12 +161,12 @@ func (e *EAT) getNextIndex() uint64 {
 }
 
 // Delete removes an arc entry.
-func (e *EAT) Delete(root key.Key, path string) error {
+func (e *EAT) Delete(root cid.Cid, path string) error {
 	return fmt.Errorf("delete not supported in versioned EAT, use update with nil")
 }
 
 // View returns an ArcSetView for a specific root.
-func (e *EAT) View(root key.Key) arcset.View {
+func (e *EAT) View(root cid.Cid) arcset.View {
 	return &eatView{eat: e, root: root}
 }
 
@@ -178,14 +178,14 @@ func (e *EAT) Close() error {
 // historyEntry represents a single entry in the path history.
 type historyEntry struct {
 	index uint64
-	key   key.Key
+	cid   cid.Cid
 }
 
 // encodeHistory encodes a history slice to bytes.
 func encodeHistory(history []historyEntry) ([]byte, error) {
 	total := 4 // count
 	for _, e := range history {
-		total += 8 + 4 + len(e.key.Bytes()) + 1
+		total += 8 + 4 + len(e.cid.Bytes())
 	}
 
 	result := make([]byte, total)
@@ -196,15 +196,12 @@ func encodeHistory(history []historyEntry) ([]byte, error) {
 		binary.BigEndian.PutUint64(result[offset:offset+8], e.index)
 		offset += 8
 
-		keyBytes := e.key.Bytes()
-		binary.BigEndian.PutUint32(result[offset:offset+4], uint32(len(keyBytes)))
+		cidBytes := e.cid.Bytes()
+		binary.BigEndian.PutUint32(result[offset:offset+4], uint32(len(cidBytes)))
 		offset += 4
 
-		copy(result[offset:offset+len(keyBytes)], keyBytes)
-		offset += len(keyBytes)
-
-		result[offset] = byte(e.key.Kind())
-		offset += 1
+		copy(result[offset:offset+len(cidBytes)], cidBytes)
+		offset += len(cidBytes)
 	}
 
 	return result, nil
@@ -228,35 +225,23 @@ func decodeHistory(data []byte) ([]historyEntry, error) {
 		offset += 8
 
 		if len(data) < offset+4 {
-			return nil, fmt.Errorf("unexpected end of data at key length %d", i)
+			return nil, fmt.Errorf("unexpected end of data at cid length %d", i)
 		}
-		keyLen := binary.BigEndian.Uint32(data[offset : offset+4])
+		cidLen := binary.BigEndian.Uint32(data[offset : offset+4])
 		offset += 4
 
-		if len(data) < offset+int(keyLen)+1 {
-			return nil, fmt.Errorf("unexpected end of data at key %d", i)
+		if len(data) < offset+int(cidLen) {
+			return nil, fmt.Errorf("unexpected end of data at cid %d", i)
 		}
-		keyBytes := data[offset : offset+int(keyLen)]
-		offset += int(keyLen)
+		cidBytes := data[offset : offset+int(cidLen)]
+		offset += int(cidLen)
 
-		kind := key.KeyKind(data[offset])
-		offset += 1
-
-		var k key.Key
-		var err error
-		switch kind {
-		case key.KeyKindStructureRoot:
-			k = key.NewStructureRoot(keyBytes)
-		case key.KeyKindPayloadCID:
-			k, err = key.NewPayloadCIDFromBytes(keyBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode payload CID: %w", err)
-			}
-		default:
-			return nil, fmt.Errorf("unknown key kind: %d", kind)
+		c, err := cid.Cast(cidBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode CID: %w", err)
 		}
 
-		history = append(history, historyEntry{index: index, key: k})
+		history = append(history, historyEntry{index: index, cid: c})
 	}
 
 	return history, nil
@@ -282,17 +267,17 @@ func binarySearchHistory(history []historyEntry, target uint64) *historyEntry {
 // eatView implements ArcSetView for VersionedEAT.
 type eatView struct {
 	eat  *EAT
-	root key.Key
+	root cid.Cid
 	idx  uint64
 }
 
-// Get retrieves the target key for a path.
-func (v *eatView) Get(path string) (key.Key, bool) {
-	k, err := v.eat.Get(v.root, path)
+// Get retrieves the target CID for a path.
+func (v *eatView) Get(path string) (cid.Cid, bool) {
+	c, err := v.eat.Get(v.root, path)
 	if err != nil {
-		return nil, false
+		return cid.Cid{}, false
 	}
-	return k, true
+	return c, true
 }
 
 // Iterate returns an iterator over all arcs for the root.
@@ -308,8 +293,8 @@ func (v *eatView) Len() int {
 // emptyIterator is a placeholder iterator.
 type emptyIterator struct{}
 
-func (it *emptyIterator) Next() (string, key.Key, bool) {
-	return "", nil, false
+func (it *emptyIterator) Next() (string, cid.Cid, bool) {
+	return "", cid.Cid{}, false
 }
 
 func (it *emptyIterator) Err() error {

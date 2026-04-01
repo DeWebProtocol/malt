@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // ErrNotFound is returned when an arc is not found.
@@ -19,21 +19,21 @@ func IsNotFound(err error) bool {
 }
 
 // EAT (Explicit Arc Table) stores arc entries for fast lookup.
-// It maps (root, path) -> target key.
+// It maps (root, path) -> target CID.
 type EAT interface {
-	// Get retrieves the target key for (root, path).
+	// Get retrieves the target CID for (root, path).
 	// Returns ErrNotFound if not found.
-	Get(root key.Key, path string) (key.Key, error)
+	Get(root cid.Cid, path string) (cid.Cid, error)
 
 	// Put stores an arc entry.
-	Put(root key.Key, path string, target key.Key) error
+	Put(root cid.Cid, path string, target cid.Cid) error
 
 	// Delete removes an arc entry.
-	Delete(root key.Key, path string) error
+	Delete(root cid.Cid, path string) error
 
 	// View returns an ArcSetView for a specific root.
 	// This allows EAT to be used directly as an ArcSetView source.
-	View(root key.Key) arcset.View
+	View(root cid.Cid) arcset.View
 
 	// Close releases resources.
 	Close() error

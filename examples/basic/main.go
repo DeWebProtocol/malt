@@ -8,8 +8,18 @@ import (
 	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 func main() {
 	fmt.Println("=== MALT (Mutable structure LAyer on Top) Demo ===")
@@ -39,8 +49,8 @@ func runWithDefaults() {
 
 	// Create structure
 	arcs := arcset.NewMap()
-	target1, _ := key.NewPayloadCID([]byte("document.pdf"))
-	target2, _ := key.NewPayloadCID([]byte("image.png"))
+	target1, _ := newPayloadCID([]byte("document.pdf"))
+	target2, _ := newPayloadCID([]byte("image.png"))
 	arcs.Add("document", target1)
 	arcs.Add("image", target2)
 
@@ -82,7 +92,7 @@ func runWithOptions() {
 
 	// Create structure
 	arcs := arcset.NewMap()
-	target1, _ := key.NewPayloadCID([]byte("data.json"))
+	target1, _ := newPayloadCID([]byte("data.json"))
 	arcs.Add("data", target1)
 
 	structure, err := node.NewStructure(arcs)

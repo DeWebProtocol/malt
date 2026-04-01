@@ -8,8 +8,18 @@ import (
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 func TestStructureBasic(t *testing.T) {
 	// Create components
@@ -22,8 +32,8 @@ func TestStructureBasic(t *testing.T) {
 
 	// Create arc set
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Add("link1", k1)
 	arcs.Add("link2", k2)
 
@@ -34,8 +44,8 @@ func TestStructureBasic(t *testing.T) {
 	}
 
 	// Check root
-	if structure.Root() == nil {
-		t.Error("Root should not be nil")
+	if !structure.Root().Defined() {
+		t.Error("Root should be defined")
 	}
 
 	// Resolve link1
@@ -45,7 +55,7 @@ func TestStructureBasic(t *testing.T) {
 	}
 
 	if !resolved.Equals(k1) {
-		t.Error("Resolved key should equal k1")
+		t.Error("Resolved CID should equal k1")
 	}
 
 	if proof == nil || len(proof) == 0 {
@@ -74,7 +84,7 @@ func TestStructureUpdate(t *testing.T) {
 
 	// Create initial structure
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("link", k1)
 
 	structure, err := malt.NewStructure(arcs, e, s)
@@ -83,7 +93,7 @@ func TestStructureUpdate(t *testing.T) {
 	}
 
 	// Update arc
-	k2, _ := key.NewPayloadCID([]byte("target2"))
+	k2, _ := newPayloadCID([]byte("target2"))
 	newStructure, err := structure.Update("link", k2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)

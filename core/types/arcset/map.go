@@ -4,35 +4,35 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // Map provides a simple in-memory ArcSetView implementation.
 type Map struct {
 	mu   sync.RWMutex
-	arcs map[string]key.Key
+	arcs map[string]cid.Cid
 }
 
 // NewMap creates a new Map.
 func NewMap() *Map {
 	return &Map{
-		arcs: make(map[string]key.Key),
+		arcs: make(map[string]cid.Cid),
 	}
 }
 
 // Add adds an arc to the map.
-func (m *Map) Add(path string, k key.Key) {
+func (m *Map) Add(path string, c cid.Cid) {
 	m.mu.Lock()
-	m.arcs[path] = k
+	m.arcs[path] = c
 	m.mu.Unlock()
 }
 
-// Get retrieves the target key for a path.
-func (m *Map) Get(path string) (key.Key, bool) {
+// Get retrieves the target CID for a path.
+func (m *Map) Get(path string) (cid.Cid, bool) {
 	m.mu.RLock()
-	k, ok := m.arcs[path]
+	c, ok := m.arcs[path]
 	m.mu.RUnlock()
-	return k, ok
+	return c, ok
 }
 
 // Iterate returns an iterator.
@@ -65,14 +65,14 @@ type mapIterator struct {
 }
 
 // Next advances to the next arc.
-func (it *mapIterator) Next() (string, key.Key, bool) {
+func (it *mapIterator) Next() (string, cid.Cid, bool) {
 	it.idx++
 	if it.idx >= len(it.paths) {
-		return "", nil, false
+		return "", cid.Cid{}, false
 	}
 	path := it.paths[it.idx]
-	k, _ := it.m.Get(path)
-	return path, k, true
+	c, _ := it.m.Get(path)
+	return path, c, true
 }
 
 // Err returns any error.

@@ -7,55 +7,55 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // EAT is a non-versioned EAT implementation.
 // It stores arcs directly: (root, path) -> target.
 type EAT struct {
 	mu   sync.RWMutex
-	arcs map[string]map[string]key.Key // root -> path -> target
+	arcs map[string]map[string]cid.Cid // root -> path -> target
 }
 
 // NewEAT creates a new SimpleEAT.
 func NewEAT() *EAT {
 	return &EAT{
-		arcs: make(map[string]map[string]key.Key),
+		arcs: make(map[string]map[string]cid.Cid),
 	}
 }
 
 // rootKey generates a storage key for a root.
-func rootKey(k key.Key) string {
-	return k.String()
+func rootKey(c cid.Cid) string {
+	return c.String()
 }
 
-// Get retrieves the target key for (root, path).
-func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
+// Get retrieves the target CID for (root, path).
+func (e *EAT) Get(root cid.Cid, path string) (cid.Cid, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	rootStr := rootKey(root)
 	paths, ok := e.arcs[rootStr]
 	if !ok {
-		return nil, eat.ErrNotFound
+		return cid.Cid{}, eat.ErrNotFound
 	}
 
 	target, ok := paths[path]
 	if !ok {
-		return nil, eat.ErrNotFound
+		return cid.Cid{}, eat.ErrNotFound
 	}
 
 	return target, nil
 }
 
 // Put stores an arc entry.
-func (e *EAT) Put(root key.Key, path string, target key.Key) error {
+func (e *EAT) Put(root cid.Cid, path string, target cid.Cid) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	rootStr := rootKey(root)
 	if _, ok := e.arcs[rootStr]; !ok {
-		e.arcs[rootStr] = make(map[string]key.Key)
+		e.arcs[rootStr] = make(map[string]cid.Cid)
 	}
 
 	e.arcs[rootStr][path] = target
@@ -63,7 +63,7 @@ func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 }
 
 // Delete removes an arc entry.
-func (e *EAT) Delete(root key.Key, path string) error {
+func (e *EAT) Delete(root cid.Cid, path string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -82,7 +82,7 @@ func (e *EAT) Delete(root key.Key, path string) error {
 }
 
 // View returns an ArcSetView for a specific root.
-func (e *EAT) View(root key.Key) arcset.View {
+func (e *EAT) View(root cid.Cid) arcset.View {
 	return &eatView{eat: e, root: root}
 }
 
@@ -97,16 +97,16 @@ func (e *EAT) Close() error {
 // eatView implements ArcSetView for SimpleEAT.
 type eatView struct {
 	eat  *EAT
-	root key.Key
+	root cid.Cid
 }
 
-// Get retrieves the target key for a path.
-func (v *eatView) Get(path string) (key.Key, bool) {
-	k, err := v.eat.Get(v.root, path)
+// Get retrieves the target CID for a path.
+func (v *eatView) Get(path string) (cid.Cid, bool) {
+	c, err := v.eat.Get(v.root, path)
 	if err != nil {
-		return nil, false
+		return cid.Cid{}, false
 	}
-	return k, true
+	return c, true
 }
 
 // Iterate returns an iterator over all arcs for the root.
@@ -120,13 +120,13 @@ func (v *eatView) Iterate() arcset.Iterator {
 	// Copy paths to slice for iteration
 	var arcs []struct {
 		path string
-		key  key.Key
+		cid  cid.Cid
 	}
-	for p, k := range paths {
+	for p, c := range paths {
 		arcs = append(arcs, struct {
 			path string
-			key  key.Key
-		}{path: p, key: k})
+			cid  cid.Cid
+		}{path: p, cid: c})
 	}
 
 	// Sort by path
@@ -150,19 +150,19 @@ func (v *eatView) Len() int {
 type eatIterator struct {
 	arcs []struct {
 		path string
-		key  key.Key
+		cid  cid.Cid
 	}
 	idx int
 	err error
 }
 
 // Next advances to the next arc.
-func (it *eatIterator) Next() (string, key.Key, bool) {
+func (it *eatIterator) Next() (string, cid.Cid, bool) {
 	it.idx++
 	if it.idx >= len(it.arcs) {
-		return "", nil, false
+		return "", cid.Cid{}, false
 	}
-	return it.arcs[it.idx].path, it.arcs[it.idx].key, true
+	return it.arcs[it.idx].path, it.arcs[it.idx].cid, true
 }
 
 // Err returns any error encountered.

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/key"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -59,14 +58,7 @@ func NewIPLDParser(cas Client) *IPLDParser {
 }
 
 // ParseBlock parses a block and returns the IPLD node structure.
-func (p *IPLDParser) ParseBlock(k key.Key, data []byte) (*IPLDNode, error) {
-	if k.Kind() != key.KeyKindPayloadCID {
-		return nil, fmt.Errorf("expected PayloadCID, got %v", k.Kind())
-	}
-
-	// Get the CID from the key
-	payloadCID := k.(*key.PayloadCID)
-	c := payloadCID.CID()
+func (p *IPLDParser) ParseBlock(c cid.Cid, data []byte) (*IPLDNode, error) {
 	codec := IPLDCodec(c.Type())
 
 	switch codec {
@@ -212,15 +204,15 @@ func (p *IPLDParser) GetAllLinks(node *IPLDNode) []LinkInfo {
 }
 
 // FollowLink fetches a linked block and parses it.
-func (p *IPLDParser) FollowLink(k key.Key, linkName string) (*IPLDNode, error) {
+func (p *IPLDParser) FollowLink(c cid.Cid, linkName string) (*IPLDNode, error) {
 	// Get the block data
-	data, err := p.cas.Get(nil, k)
+	data, err := p.cas.Get(nil, c)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch block: %w", err)
 	}
 
 	// Parse the block
-	node, err := p.ParseBlock(k, data)
+	node, err := p.ParseBlock(c, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse block: %w", err)
 	}
@@ -231,16 +223,13 @@ func (p *IPLDParser) FollowLink(k key.Key, linkName string) (*IPLDNode, error) {
 		return nil, fmt.Errorf("link %s not found", linkName)
 	}
 
-	// Create key for target
-	targetKey := key.NewPayloadCIDFromCID(targetCID)
-
 	// Fetch and parse target
-	targetData, err := p.cas.Get(nil, targetKey)
+	targetData, err := p.cas.Get(nil, targetCID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch linked block: %w", err)
 	}
 
-	return p.ParseBlock(targetKey, targetData)
+	return p.ParseBlock(targetCID, targetData)
 }
 
 // Simple CBOR decoder

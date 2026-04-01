@@ -11,7 +11,8 @@ import (
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/config"
 	malt "github.com/dewebprotocol/malt/malt"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 var (
@@ -19,11 +20,20 @@ var (
 	cfgFile string
 )
 
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "malt",
 	Short: "MALT - Mutable structure LAyer on Top",
 	Long: `MALT (Mutable structure LAyer on Top) provides verifiable, evolvable
-structures on top of content-addressable storage.
+structures on top of content-addressed storage.
 
 It enables mutable references on immutable content-addressed data structures,
 supporting cryptographic proofs and efficient updates.`,
@@ -102,8 +112,8 @@ func runDemo(cmd *cobra.Command, args []string) {
 	fmt.Println()
 
 	// Create target CIDs
-	target1, _ := key.NewPayloadCID([]byte("target1"))
-	target2, _ := key.NewPayloadCID([]byte("target2"))
+	target1, _ := newPayloadCID([]byte("target1"))
+	target2, _ := newPayloadCID([]byte("target2"))
 
 	// Create arc set
 	arcs := arcset.NewMap()
@@ -133,7 +143,7 @@ func runDemo(cmd *cobra.Command, args []string) {
 	fmt.Printf("Resolved link1: %s (valid: %v)\n", resolved, valid)
 
 	// Update
-	newTarget, _ := key.NewPayloadCID([]byte("new_target"))
+	newTarget, _ := newPayloadCID([]byte("new_target"))
 	newStructure, err := structure.Update("link1", newTarget)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error updating: %v\n", err)

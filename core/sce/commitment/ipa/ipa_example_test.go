@@ -5,7 +5,6 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
-	"github.com/dewebprotocol/malt/key"
 )
 
 // ExampleNewScheme demonstrates basic usage of IPA commitment.
@@ -17,7 +16,7 @@ func ExampleNewScheme() {
 	}
 
 	arcs := arcset.NewMap()
-	target, _ := key.NewPayloadCID([]byte("data"))
+	target, _ := newPayloadCID([]byte("data"))
 	arcs.Add("key", target)
 
 	root, err := c.Commit(arcs)
@@ -26,7 +25,7 @@ func ExampleNewScheme() {
 		return
 	}
 
-	fmt.Printf("Committed: %v\n", root != nil)
+	fmt.Printf("Committed: %v\n", root.Defined())
 
 	// Output:
 	// Committed: true
@@ -37,7 +36,7 @@ func ExampleScheme_Prove() {
 	c, _ := ipa.NewScheme()
 
 	arcs := arcset.NewMap()
-	target, _ := key.NewPayloadCID([]byte("content"))
+	target, _ := newPayloadCID([]byte("content"))
 	arcs.Add("path", target)
 
 	root, _ := c.Commit(arcs)
@@ -61,12 +60,12 @@ func ExampleScheme_Update() {
 	c, _ := ipa.NewScheme()
 
 	arcs := arcset.NewMap()
-	oldTarget, _ := key.NewPayloadCID([]byte("old"))
+	oldTarget, _ := newPayloadCID([]byte("old"))
 	arcs.Add("data", oldTarget)
 
 	root, _ := c.Commit(arcs)
 
-	newTarget, _ := key.NewPayloadCID([]byte("new"))
+	newTarget, _ := newPayloadCID([]byte("new"))
 	newRoot, _ := c.Update(root, arcs, "data", oldTarget, newTarget)
 
 	fmt.Printf("Update succeeded: %v\n", !newRoot.Equals(root))
@@ -80,8 +79,8 @@ func ExampleScheme_ProveBatch() {
 	c, _ := ipa.NewScheme()
 
 	arcs := arcset.NewMap()
-	t1, _ := key.NewPayloadCID([]byte("data1"))
-	t2, _ := key.NewPayloadCID([]byte("data2"))
+	t1, _ := newPayloadCID([]byte("data1"))
+	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
 	arcs.Add("path2", t2)
 
@@ -103,8 +102,8 @@ func ExampleScheme_ProveAggregate() {
 	c, _ := ipa.NewScheme()
 
 	arcs := arcset.NewMap()
-	t1, _ := key.NewPayloadCID([]byte("data1"))
-	t2, _ := key.NewPayloadCID([]byte("data2"))
+	t1, _ := newPayloadCID([]byte("data1"))
+	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
 	arcs.Add("path2", t2)
 

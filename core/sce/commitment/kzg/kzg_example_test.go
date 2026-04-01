@@ -5,7 +5,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // ExampleNewScheme demonstrates basic usage of KZG commitment.
@@ -17,8 +17,8 @@ func ExampleNewScheme() {
 	}
 
 	arcs := arcset.NewMap()
-	target1, _ := key.NewPayloadCID([]byte("document.pdf"))
-	target2, _ := key.NewPayloadCID([]byte("image.png"))
+	target1, _ := newPayloadCID([]byte("document.pdf"))
+	target2, _ := newPayloadCID([]byte("image.png"))
 	arcs.Add("document", target1)
 	arcs.Add("image", target2)
 
@@ -28,7 +28,7 @@ func ExampleNewScheme() {
 		return
 	}
 
-	fmt.Printf("Committed: %v\n", root != nil)
+	fmt.Printf("Committed: %v\n", root.Defined())
 
 	// Output:
 	// Committed: true
@@ -39,7 +39,7 @@ func ExampleScheme_Prove() {
 	c, _ := kzg.NewScheme()
 
 	arcs := arcset.NewMap()
-	target, _ := key.NewPayloadCID([]byte("my-data"))
+	target, _ := newPayloadCID([]byte("my-data"))
 	arcs.Add("data", target)
 
 	root, _ := c.Commit(arcs)
@@ -67,13 +67,13 @@ func ExampleScheme_Update() {
 	c, _ := kzg.NewScheme()
 
 	arcs := arcset.NewMap()
-	oldTarget, _ := key.NewPayloadCID([]byte("version-1"))
+	oldTarget, _ := newPayloadCID([]byte("version-1"))
 	arcs.Add("file", oldTarget)
 
 	root, _ := c.Commit(arcs)
-	fmt.Printf("Initial root created: %v\n", root != nil)
+	fmt.Printf("Initial root created: %v\n", root.Defined())
 
-	newTarget, _ := key.NewPayloadCID([]byte("version-2"))
+	newTarget, _ := newPayloadCID([]byte("version-2"))
 	newRoot, err := c.Update(root, arcs, "file", oldTarget, newTarget)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -92,19 +92,19 @@ func ExampleScheme_BatchUpdate() {
 	c, _ := kzg.NewScheme()
 
 	arcs := arcset.NewMap()
-	target1, _ := key.NewPayloadCID([]byte("data-1"))
-	target2, _ := key.NewPayloadCID([]byte("data-2"))
+	target1, _ := newPayloadCID([]byte("data-1"))
+	target2, _ := newPayloadCID([]byte("data-2"))
 	arcs.Add("a", target1)
 	arcs.Add("b", target2)
 
 	root, _ := c.Commit(arcs)
 
-	newTarget1, _ := key.NewPayloadCID([]byte("updated-1"))
-	newTarget2, _ := key.NewPayloadCID([]byte("updated-2"))
+	newTarget1, _ := newPayloadCID([]byte("updated-1"))
+	newTarget2, _ := newPayloadCID([]byte("updated-2"))
 
 	updates := map[string]struct {
-		Old key.Key
-		New key.Key
+		Old cid.Cid
+		New cid.Cid
 	}{
 		"a": {Old: target1, New: newTarget1},
 		"b": {Old: target2, New: newTarget2},
@@ -122,8 +122,8 @@ func ExampleScheme_ProveBatch() {
 	c, _ := kzg.NewScheme()
 
 	arcs := arcset.NewMap()
-	t1, _ := key.NewPayloadCID([]byte("data1"))
-	t2, _ := key.NewPayloadCID([]byte("data2"))
+	t1, _ := newPayloadCID([]byte("data1"))
+	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
 	arcs.Add("path2", t2)
 
@@ -145,8 +145,8 @@ func ExampleScheme_ProveAggregate() {
 	c, _ := kzg.NewScheme()
 
 	arcs := arcset.NewMap()
-	t1, _ := key.NewPayloadCID([]byte("data1"))
-	t2, _ := key.NewPayloadCID([]byte("data2"))
+	t1, _ := newPayloadCID([]byte("data1"))
+	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Add("path1", t1)
 	arcs.Add("path2", t2)
 

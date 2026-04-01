@@ -1,20 +1,20 @@
 // Package arcset defines interfaces and types for arc sets.
 package arcset
 
-import "github.com/dewebprotocol/malt/key"
+import cid "github.com/ipfs/go-cid"
 
 // Proof represents a cryptographic proof.
 type Proof []byte
 
 // BatchProofEntry represents a single proof in a batch.
 type BatchProofEntry struct {
-	Target key.Key
+	Target cid.Cid
 	Proof  Proof
 }
 
 // AggregatedProof represents a proof for multiple values.
 type AggregatedProof struct {
 	Paths     []string
-	Targets   []key.Key
+	Targets   []cid.Cid
 	ProofData []byte
 }

@@ -1,6 +1,6 @@
-// Package unixfs implements the UnixFS (dag-pb) IPLD codec.
-// UnixFS is used for files and directories in IPFS.
-package unixfs
+// Package dagpb implements the dag-pb (Protocol Buffers) IPLD codec.
+// dag-pb is used by UnixFS and other protocols in IPFS.
+package dagpb
 
 import (
 	"bytes"
@@ -11,17 +11,17 @@ import (
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 )
 
-// Codec implements the UnixFS (dag-pb) codec.
+// Codec implements the dag-pb codec.
 type Codec struct{}
 
-// New creates a new UnixFS codec.
+// New creates a new dag-pb codec.
 func New() *Codec {
 	return &Codec{}
 }
 
-// Name returns "unixfs".
+// Name returns "dag-pb".
 func (c *Codec) Name() string {
-	return "unixfs"
+	return "dag-pb"
 }
 
 // Decode parses dag-pb bytes into an IPLD Node.

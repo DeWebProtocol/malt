@@ -10,8 +10,18 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 func TestExplicitResolverResolve(t *testing.T) {
 	// Create components
@@ -24,9 +34,9 @@ func TestExplicitResolverResolve(t *testing.T) {
 
 	// Create arc set with hierarchical paths
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
-	k2, _ := key.NewPayloadCID([]byte("target2"))
-	k3, _ := key.NewPayloadCID([]byte("target3"))
+	k1, _ := newPayloadCID([]byte("target1"))
+	k2, _ := newPayloadCID([]byte("target2"))
+	k3, _ := newPayloadCID([]byte("target3"))
 
 	arcs.Add("a", k1)
 	arcs.Add("a/b", k2)
@@ -55,7 +65,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 	tests := []struct {
 		path          string
 		expectedPath  string
-		expectedKey   key.Key
+		expectedKey   cid.Cid
 	}{
 		{"a", "a", k1},
 		{"a/b", "a/b", k2},
@@ -101,7 +111,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 
 	// Create arc set
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
 	// Create structure
@@ -144,7 +154,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 
 	// Create arc set
 	arcs := arcset.NewMap()
-	k1, _ := key.NewPayloadCID([]byte("target1"))
+	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("x/y/z", k1)
 
 	// Create structure

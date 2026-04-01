@@ -11,7 +11,8 @@ import (
 	"github.com/dewebprotocol/malt/cas"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 // Metrics collected during evaluation.
@@ -74,6 +75,15 @@ func NewBenchmarkRunner(cfg *BenchmarkConfig, e eat.EAT, s *sce.Engine, c cas.Cl
 	}
 }
 
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCID(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
+
 // RunAppendBenchmark tests append workload (adding new arcs).
 func (b *BenchmarkRunner) RunAppendBenchmark(ctx context.Context) (map[int]*Metrics, error) {
 	results := make(map[int]*Metrics)
@@ -99,12 +109,12 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	currentArcs := arcset.NewMap()
 
 	totalUpdateTime := time.Duration(0)
-	var root key.Key
+	var root cid.Cid
 
 	// Add arcs one by one (append pattern)
 	for i := range arcCount {
 		path := fmt.Sprintf("arc%d", i)
-		target, _ := key.NewPayloadCID([]byte(fmt.Sprintf("data%d", i)))
+		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
 
 		// Add to current arc set
 		currentArcs.Add(path, target)
@@ -191,11 +201,11 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 
 	// Create initial structure with all arcs
 	arcs := arcset.NewMap()
-	keys := make(map[string]key.Key)
+	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
 		path := fmt.Sprintf("arc%d", i)
-		target, _ := key.NewPayloadCID([]byte(fmt.Sprintf("data%d", i)))
+		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
 		arcs.Add(path, target)
 		keys[path] = target
 	}
@@ -230,7 +240,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		idx := r.Intn(arcCount)
 		path := paths[idx]
 
-		newKey, _ := key.NewPayloadCID([]byte(fmt.Sprintf("updated%d_%d", idx, round)))
+		newKey, _ := newPayloadCID([]byte(fmt.Sprintf("updated%d_%d", idx, round)))
 
 		// Update arc set
 		arcs.Add(path, newKey)
@@ -308,11 +318,11 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 
 	// Create initial structure
 	arcs := arcset.NewMap()
-	keys := make(map[string]key.Key)
+	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
 		path := fmt.Sprintf("arc%d", i)
-		target, _ := key.NewPayloadCID([]byte(fmt.Sprintf("data%d", i)))
+		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
 		arcs.Add(path, target)
 		keys[path] = target
 	}
@@ -351,7 +361,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		// Update arcs in bulk
 		for i := range bulkSize {
 			path := paths[i]
-			newKey, _ := key.NewPayloadCID([]byte(fmt.Sprintf("bulk%d_%d", i, round)))
+			newKey, _ := newPayloadCID([]byte(fmt.Sprintf("bulk%d_%d", i, round)))
 			arcs.Add(path, newKey)
 			keys[path] = newKey
 		}

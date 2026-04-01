@@ -7,8 +7,18 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCIDBench creates a CID from data for testing.
+func newPayloadCIDBench(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 func BenchmarkIPACommit(b *testing.B) {
 	c, _ := ipa.NewScheme()
@@ -94,9 +104,9 @@ func generateRandomIPAArcSet(n int) *arcset.Map {
 	return arcs
 }
 
-func generateRandomIPAKey() key.Key {
+func generateRandomIPAKey() cid.Cid {
 	data := make([]byte, 32)
 	rand.Read(data)
-	k, _ := key.NewPayloadCID(data)
+	k, _ := newPayloadCIDBench(data)
 	return k
 }

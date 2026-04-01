@@ -4,40 +4,43 @@ package commitment
 
 import (
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // Scheme defines the pure commitment interface.
 // Implementations are KZG, Verkle, IPA, etc.
 type Scheme interface {
 	// Commit generates a commitment to an arc set.
-	// Returns a commitment (as Key) that can be used for proving.
-	Commit(arcs arcset.View) (key.Key, error)
+	// Returns a CID with MALT-specific codec (e.g., malt-kzg, malt-verkle, malt-ipa).
+	Commit(arcs arcset.View) (cid.Cid, error)
 
 	// Prove generates a proof for a single path.
-	Prove(commitment key.Key, arcs arcset.View, path string) (key.Key, arcset.Proof, error)
+	// Returns the target CID and proof bytes.
+	Prove(commitment cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error)
 
 	// Verify verifies a proof.
-	Verify(commitment key.Key, path string, value key.Key, proof arcset.Proof) (bool, error)
+	Verify(commitment cid.Cid, path string, value cid.Cid, proof arcset.Proof) (bool, error)
 
 	// Update updates a single value in the commitment.
-	Update(commitment key.Key, arcs arcset.View, path string, oldValue, newValue key.Key) (key.Key, error)
+	// Returns the new commitment CID.
+	Update(commitment cid.Cid, arcs arcset.View, path string, oldValue, newValue cid.Cid) (cid.Cid, error)
 
 	// BatchUpdate updates multiple values.
-	BatchUpdate(commitment key.Key, arcs arcset.View, updates map[string]struct {
-		Old key.Key
-		New key.Key
-	}) (key.Key, error)
+	// Returns the new commitment CID.
+	BatchUpdate(commitment cid.Cid, arcs arcset.View, updates map[string]struct {
+		Old cid.Cid
+		New cid.Cid
+	}) (cid.Cid, error)
 
 	// ProveBatch generates proofs for multiple paths.
-	ProveBatch(commitment key.Key, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error)
+	ProveBatch(commitment cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error)
 
 	// VerifyBatch verifies multiple proofs.
-	VerifyBatch(commitment key.Key, proofs map[string]arcset.BatchProofEntry) (bool, error)
+	VerifyBatch(commitment cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error)
 
 	// ProveAggregate generates an aggregated proof.
-	ProveAggregate(commitment key.Key, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error)
+	ProveAggregate(commitment cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error)
 
 	// VerifyAggregate verifies an aggregated proof.
-	VerifyAggregate(commitment key.Key, aggProof *arcset.AggregatedProof) (bool, error)
+	VerifyAggregate(commitment cid.Cid, aggProof *arcset.AggregatedProof) (bool, error)
 }

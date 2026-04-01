@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt/cas"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
 )
 
 // Client implements cas.Client using IPFS HTTP gateway.
@@ -33,13 +33,9 @@ func NewClient(opts ...Option) *Client {
 }
 
 // Get retrieves a block from IPFS gateway.
-func (c *Client) Get(ctx context.Context, k key.Key) ([]byte, error) {
-	if k.Kind() != key.KeyKindPayloadCID {
-		return nil, fmt.Errorf("expected PayloadCID, got %v", k.Kind())
-	}
-
+func (c *Client) Get(ctx context.Context, cid cid.Cid) ([]byte, error) {
 	// Build gateway URL
-	url := fmt.Sprintf("%s/%s", c.opts.gatewayURL, k.String())
+	url := fmt.Sprintf("%s/%s", c.opts.gatewayURL, cid.String())
 
 	// Make HTTP request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -68,19 +64,15 @@ func (c *Client) Get(ctx context.Context, k key.Key) ([]byte, error) {
 
 // Put stores a block via IPFS (requires local IPFS node with API).
 // For gateway-only mode, this returns an error.
-func (c *Client) Put(ctx context.Context, data []byte) (key.Key, error) {
+func (c *Client) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	// Gateway doesn't support PUT operations
-	return nil, fmt.Errorf("PUT not supported via gateway-only mode")
+	return cid.Cid{}, fmt.Errorf("PUT not supported via gateway-only mode")
 }
 
 // Has checks if a block exists in IPFS.
-func (c *Client) Has(ctx context.Context, k key.Key) (bool, error) {
-	if k.Kind() != key.KeyKindPayloadCID {
-		return false, fmt.Errorf("expected PayloadCID, got %v", k.Kind())
-	}
-
+func (c *Client) Has(ctx context.Context, cid cid.Cid) (bool, error) {
 	// Try HEAD request to check existence
-	url := fmt.Sprintf("%s/%s", c.opts.gatewayURL, k.String())
+	url := fmt.Sprintf("%s/%s", c.opts.gatewayURL, cid.String())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {

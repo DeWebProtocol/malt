@@ -6,8 +6,18 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	"github.com/dewebprotocol/malt/key"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+// newPayloadCID creates a CID from data for testing.
+func newPayloadCIDBench(data []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	return cid.NewCidV1(cid.Raw, mhash), nil
+}
 
 func BenchmarkKZGCommit(b *testing.B) {
 	c, _ := kzg.NewScheme()
@@ -90,14 +100,14 @@ func generateRandomArcSet(n int) *arcset.Map {
 	arcs := arcset.NewMap()
 	for i := 0; i < n; i++ {
 		data := []byte{byte(i % 256), byte((i / 256) % 256), byte(i >> 16)}
-		k, _ := key.NewPayloadCID(data)
+		k, _ := newPayloadCIDBench(data)
 		arcs.Add(fmt.Sprintf("arc_%d", i), k)
 	}
 	return arcs
 }
 
-func generateRandomKey() key.Key {
+func generateRandomKey() cid.Cid {
 	data := []byte{0xAB, 0xCD, 0xEF}
-	k, _ := key.NewPayloadCID(data)
+	k, _ := newPayloadCIDBench(data)
 	return k
 }
