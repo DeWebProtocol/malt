@@ -69,27 +69,27 @@ type Resolver interface {
 ## Phases
 
 ### Phase 5: Create Evidence types
-Status: `pending`
+Status: `complete`
 
 - Create `core/types/evidence/evidence.go`
 - Define Evidence interface and implementations
-- Move arcset.Proof to evidence package
+- Similar to key.Key design pattern
 
 ### Phase 6: Define Resolver interface
-Status: `pending`
+Status: `complete`
 
 - Update `core/resolver/resolver.go` with interface
 - Create `core/resolver/explicit/` package
 - Move current implementation to explicit/
 
 ### Phase 7: Implement Implicit resolver
-Status: `pending`
+Status: `complete`
 
 - Create `core/resolver/implicit/`
 - Implement Merkle DAG resolution via CAS
 
 ### Phase 8: Update dependencies
-Status: `pending`
+Status: `complete`
 
 - Update gateway to use Resolver interface
 - Update Node to compose resolvers
