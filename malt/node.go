@@ -23,6 +23,7 @@ import (
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
+	"github.com/dewebprotocol/malt/gateway"
 )
 
 // Node is the main MALT runtime that holds all components.
@@ -37,6 +38,7 @@ type Node struct {
 	eat        eat.EAT
 	cas        cas.Client
 	resolver   *resolver.Resolver
+	gateway    *gateway.Gateway
 }
 
 // NewNode creates a new MALT node with the given options.
@@ -123,8 +125,11 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 	}
 
-	// Resolver
-	node.resolver = resolver.NewResolver(node.eat, node.sce, node.cas)
+	// Resolver (no CAS - single-step resolution only)
+	node.resolver = resolver.NewResolver(node.eat, node.sce)
+
+	// Gateway (with CAS - full path resolution)
+	node.gateway = gateway.NewGateway(node.resolver, node.cas)
 
 	return node, nil
 }
@@ -210,6 +215,11 @@ func (n *Node) CAS() cas.Client {
 // Resolver returns the resolver.
 func (n *Node) Resolver() *resolver.Resolver {
 	return n.resolver
+}
+
+// Gateway returns the gateway for full path resolution.
+func (n *Node) Gateway() *gateway.Gateway {
+	return n.gateway
 }
 
 // KVStore returns the underlying KVStore.

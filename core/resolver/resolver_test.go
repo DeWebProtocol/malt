@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/simple"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -12,7 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/key"
 )
 
-func TestResolverExplicitStep(t *testing.T) {
+func TestResolverResolveStep(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
 	scheme, err := kzg.NewScheme()
@@ -20,7 +19,6 @@ func TestResolverExplicitStep(t *testing.T) {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths
 	arcs := arcset.NewMap()
@@ -48,50 +46,45 @@ func TestResolverExplicitStep(t *testing.T) {
 		e.Put(root, path, target)
 	}
 
-	// Create resolver
-	r := resolver.NewResolver(e, s, c)
+	// Create resolver (no CAS needed for single-step resolution)
+	r := resolver.NewResolver(e, s)
 
 	// Test longest prefix matching
 	tests := []struct {
-		path     string
-		expected key.Key
+		path          string
+		expectedPath  string
+		expectedKey   key.Key
 	}{
-		{"a", k1},
-		{"a/b", k2},
-		{"a/b/c", k3},
-		{"a/b/c/d", k3}, // Should resolve to a/b/c (longest prefix)
-		{"a/b/x", k2},   // Should resolve to a/b
-		{"a/x", k1},     // Should resolve to a
+		{"a", "a", k1},
+		{"a/b", "a/b", k2},
+		{"a/b/c", "a/b/c", k3},
+		{"a/b/c/d", "a/b/c", k3}, // Should resolve to a/b/c (longest prefix)
+		{"a/b/x", "a/b", k2},     // Should resolve to a/b
+		{"a/x", "a", k1},         // Should resolve to a
 	}
 
 	for _, tt := range tests {
-		result, err := r.Resolve(root, tt.path)
+		matchedPath, target, proof, err := r.ResolveStep(root, tt.path)
 		if err != nil {
-			t.Errorf("Resolve(%s) failed: %v", tt.path, err)
+			t.Errorf("ResolveStep(%s) failed: %v", tt.path, err)
 			continue
 		}
 
-		if !result.Target.Equals(tt.expected) {
-			t.Errorf("Resolve(%s) = %v, want %v", tt.path, result.Target, tt.expected)
+		if matchedPath != tt.expectedPath {
+			t.Errorf("ResolveStep(%s) matchedPath = %s, want %s", tt.path, matchedPath, tt.expectedPath)
 		}
 
-		// Verify transcript
-		if len(result.Transcript.Steps) == 0 {
-			t.Errorf("Resolve(%s) should have at least one step", tt.path)
+		if !target.Equals(tt.expectedKey) {
+			t.Errorf("ResolveStep(%s) target = %v, want %v", tt.path, target, tt.expectedKey)
 		}
 
-		// Verify transcript
-		valid, err := r.VerifyTranscript(root, result.Transcript)
-		if err != nil {
-			t.Errorf("VerifyTranscript(%s) failed: %v", tt.path, err)
-		}
-		if !valid {
-			t.Errorf("VerifyTranscript(%s) should be valid", tt.path)
+		if len(proof) == 0 {
+			t.Errorf("ResolveStep(%s) should generate proof", tt.path)
 		}
 	}
 }
 
-func TestResolverImplicitStep(t *testing.T) {
+func TestResolverVerifyStep(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
 	scheme, err := kzg.NewScheme()
@@ -99,12 +92,11 @@ func TestResolverImplicitStep(t *testing.T) {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
 
-	// Create arc set pointing to a PayloadCID
+	// Create arc set
 	arcs := arcset.NewMap()
-	payloadCID, _ := key.NewPayloadCID([]byte("raw-block-data"))
-	arcs.Add("data", payloadCID)
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	arcs.Add("a", k1)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -112,28 +104,30 @@ func TestResolverImplicitStep(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	// Store arcs in EAT
-	e.Put(root, "data", payloadCID)
-
-	// Add block to mock CAS
-	c.AddBlock(payloadCID, []byte("raw-block-data"))
+	// Store in EAT
+	e.Put(root, "a", k1)
 
 	// Create resolver
-	r := resolver.NewResolver(e, s, c)
+	r := resolver.NewResolver(e, s)
 
-	// Resolve should stop at PayloadCID (implicit step not implemented yet)
-	result, err := r.Resolve(root, "data")
+	// Resolve step
+	matchedPath, target, proof, err := r.ResolveStep(root, "a/b/c")
 	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+		t.Fatalf("ResolveStep failed: %v", err)
 	}
 
-	// Should stop at PayloadCID since implicit traversal requires CAS
-	if result.Target.Kind() != key.KeyKindPayloadCID {
-		t.Error("Target should be PayloadCID")
+	// Verify step
+	valid, err := r.VerifyStep(root, matchedPath, target, proof)
+	if err != nil {
+		t.Fatalf("VerifyStep failed: %v", err)
+	}
+
+	if !valid {
+		t.Error("VerifyStep should return true")
 	}
 }
 
-func TestResolverTranscript(t *testing.T) {
+func TestResolverNoMatch(t *testing.T) {
 	// Create components
 	e := simple.NewEAT()
 	scheme, err := kzg.NewScheme()
@@ -141,15 +135,11 @@ func TestResolverTranscript(t *testing.T) {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
 
-	// Create arc set with nested structure
+	// Create arc set
 	arcs := arcset.NewMap()
-	innerCID, _ := key.NewPayloadCID([]byte("inner"))
-	outerCID, _ := key.NewPayloadCID([]byte("outer"))
-
-	arcs.Add("inner", innerCID)
-	arcs.Add("outer", outerCID)
+	k1, _ := key.NewPayloadCID([]byte("target1"))
+	arcs.Add("x/y/z", k1)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -157,37 +147,15 @@ func TestResolverTranscript(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	// Store arcs in EAT
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		e.Put(root, path, target)
-	}
+	// Store in EAT
+	e.Put(root, "x/y/z", k1)
 
 	// Create resolver
-	r := resolver.NewResolver(e, s, c)
+	r := resolver.NewResolver(e, s)
 
-	// Resolve and check transcript
-	result, err := r.Resolve(root, "inner")
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-
-	if len(result.Transcript.Steps) != 1 {
-		t.Errorf("Expected 1 step, got %d", len(result.Transcript.Steps))
-	}
-
-	step := result.Transcript.Steps[0]
-	if step.Kind != resolver.StepExplicit {
-		t.Error("Step should be explicit")
-	}
-	if step.Path != "inner" {
-		t.Errorf("Step path = %s, want inner", step.Path)
-	}
-	if !step.Target.Equals(innerCID) {
-		t.Error("Step target should match innerCID")
+	// Try to resolve non-matching path
+	_, _, _, err = r.ResolveStep(root, "a/b/c")
+	if err == nil {
+		t.Error("ResolveStep should fail for non-matching path")
 	}
 }
