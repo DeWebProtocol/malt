@@ -1,4 +1,4 @@
-// Package memory provides an in-memory implementation of kv.KVStore.
+// Package memory provides an in-memory implementation of kvstore.KVStore.
 package memory
 
 import (
@@ -8,7 +8,7 @@ import (
 	"github.com/dewebprotocol/malt/types/kvstore"
 )
 
-// KV is an in-memory implementation of kv.KVStore.
+// KV is an in-memory implementation of kvstore.KVStore.
 // Useful for testing and development.
 type KV struct {
 	mu   sync.RWMutex
@@ -29,7 +29,7 @@ func (m *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 
 	v, ok := m.data[string(key)]
 	if !ok {
-		return nil, kv.ErrNotFound
+		return nil, kvstore.ErrNotFound
 	}
 
 	// Return a copy to prevent mutation
@@ -72,7 +72,7 @@ func (m *KV) Has(ctx context.Context, key []byte) (bool, error) {
 }
 
 // NewIterator creates an iterator over keys.
-func (m *KV) NewIterator(ctx context.Context, start, end []byte) kv.Iterator {
+func (m *KV) NewIterator(ctx context.Context, start, end []byte) kvstore.Iterator {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -90,7 +90,7 @@ func (m *KV) NewIterator(ctx context.Context, start, end []byte) kv.Iterator {
 }
 
 // Batch returns a batch writer.
-func (m *KV) Batch() kv.Batch {
+func (m *KV) Batch() kvstore.Batch {
 	return &batch{kv: m, ops: make([]batchOp, 0)}
 }
 
@@ -102,7 +102,7 @@ func (m *KV) Close() error {
 	return nil
 }
 
-// iterator implements kv.Iterator.
+// iterator implements kvstore.Iterator.
 type iterator struct {
 	kv    *KV
 	keys  [][]byte
@@ -143,7 +143,7 @@ type batchOp struct {
 	value []byte
 }
 
-// batch implements kv.Batch.
+// batch implements kvstore.Batch.
 type batch struct {
 	kv  *KV
 	ops []batchOp
@@ -184,5 +184,5 @@ func (b *batch) Cancel() {
 	b.ops = nil
 }
 
-// Ensure KV implements kv.KVStore.
-var _ kv.KVStore = (*KV)(nil)
+// Ensure KV implements kvstore.KVStore.
+var _ kvstore.KVStore = (*KV)(nil)

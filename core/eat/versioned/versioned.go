@@ -18,11 +18,11 @@ import (
 // with metadata: root -> index.
 type EAT struct {
 	mu sync.RWMutex
-	kv kv.KVStore
+	kv kvstore.KVStore
 }
 
 // NewEAT creates a new VersionedEAT with the given KVStore.
-func NewEAT(store kv.KVStore) (*EAT, error) {
+func NewEAT(store kvstore.KVStore) (*EAT, error) {
 	if store == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
@@ -55,7 +55,7 @@ func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
 	// Get the index for this root
 	idxBytes, err := e.kv.Get(nil, metaKey(root))
 	if err != nil {
-		if err == kv.ErrNotFound {
+		if err == kvstore.ErrNotFound {
 			return nil, eat.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get root index: %w", err)
@@ -69,7 +69,7 @@ func (e *EAT) Get(root key.Key, path string) (key.Key, error) {
 	// Get the path history
 	historyBytes, err := e.kv.Get(nil, arcsKey(path))
 	if err != nil {
-		if err == kv.ErrNotFound {
+		if err == kvstore.ErrNotFound {
 			return nil, eat.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get path history: %w", err)
@@ -97,7 +97,7 @@ func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 	// Get or create index for this root
 	idxBytes, err := e.kv.Get(nil, metaKey(root))
 	var idx uint64
-	if err == kv.ErrNotFound {
+	if err == kvstore.ErrNotFound {
 		// New root, get next index
 		idx = e.getNextIndex()
 	} else if err != nil {
@@ -121,7 +121,7 @@ func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 		if err != nil {
 			return fmt.Errorf("failed to decode history: %w", err)
 		}
-	} else if err != kv.ErrNotFound {
+	} else if err != kvstore.ErrNotFound {
 		return fmt.Errorf("failed to get path history: %w", err)
 	}
 
@@ -142,7 +142,7 @@ func (e *EAT) Put(root key.Key, path string, target key.Key) error {
 // getNextIndex returns the next available index.
 func (e *EAT) getNextIndex() uint64 {
 	idxBytes, err := e.kv.Get(nil, prefixIdx)
-	if err == kv.ErrNotFound {
+	if err == kvstore.ErrNotFound {
 		// First index
 		idx := uint64(0)
 		idxBytes = make([]byte, 8)

@@ -32,7 +32,7 @@ type Node struct {
 	opts *options
 
 	// Core components
-	kv         kv.KVStore
+	kv         kvstore.KVStore
 	sce        *sce.Engine
 	eat        eat.EAT
 	cas        cas.Client
@@ -130,7 +130,7 @@ func NewNode(opts ...Option) (*Node, error) {
 }
 
 // initKVStore creates a KVStore from config.
-func (n *Node) initKVStore() (kv.KVStore, error) {
+func (n *Node) initKVStore() (kvstore.KVStore, error) {
 	switch n.cfg.KVStoreType {
 	case "memory":
 		return kvmemory.New(), nil
@@ -213,7 +213,7 @@ func (n *Node) Resolver() *resolver.Resolver {
 }
 
 // KVStore returns the underlying KVStore.
-func (n *Node) KVStore() kv.KVStore {
+func (n *Node) KVStore() kvstore.KVStore {
 	return n.kv
 }
 

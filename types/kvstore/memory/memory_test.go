@@ -43,7 +43,7 @@ func TestMemoryKV(t *testing.T) {
 	}
 
 	_, err = store.Get(ctx, []byte("key1"))
-	if err != kv.ErrNotFound {
+	if err != kvstore.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got %v", err)
 	}
 

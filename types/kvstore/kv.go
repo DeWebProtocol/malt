@@ -1,7 +1,7 @@
-// Package kv defines a key-value store interface for MALT.
+// Package kvstore defines a key-value store interface for MALT.
 // This allows dependency injection - the concrete implementation
-// (BadgerDB, in-memory, etc.) can be chosen at runtime.
-package kv
+// (BadgerDB, in-memory, filesystem, etc.) can be chosen at runtime.
+package kvstore
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-// Package badger provides a BadgerDB implementation of kv.KVStore.
+// Package badger provides a BadgerDB implementation of kvstore.KVStore.
 package badger
 
 import (
@@ -9,7 +9,7 @@ import (
 	"github.com/dewebprotocol/malt/types/kvstore"
 )
 
-// KV is a BadgerDB implementation of kv.KVStore.
+// KV is a BadgerDB implementation of kvstore.KVStore.
 type KV struct {
 	opts *options
 	db   *badger.DB
@@ -51,7 +51,7 @@ func (b *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 	})
 	if err != nil {
 		if err == badger.ErrKeyNotFound {
-			return nil, kv.ErrNotFound
+			return nil, kvstore.ErrNotFound
 		}
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (b *KV) Has(ctx context.Context, key []byte) (bool, error) {
 }
 
 // NewIterator creates an iterator over keys.
-func (b *KV) NewIterator(ctx context.Context, start, end []byte) kv.Iterator {
+func (b *KV) NewIterator(ctx context.Context, start, end []byte) kvstore.Iterator {
 	txn := b.db.NewTransaction(false)
 	opts := badger.DefaultIteratorOptions
 	it := txn.NewIterator(opts)
@@ -103,7 +103,7 @@ func (b *KV) NewIterator(ctx context.Context, start, end []byte) kv.Iterator {
 }
 
 // Batch returns a batch writer.
-func (b *KV) Batch() kv.Batch {
+func (b *KV) Batch() kvstore.Batch {
 	return &badgerBatch{db: b.db, wb: b.db.NewWriteBatch()}
 }
 
@@ -112,7 +112,7 @@ func (b *KV) Close() error {
 	return b.db.Close()
 }
 
-// badgerIterator implements kv.Iterator.
+// badgerIterator implements kvstore.Iterator.
 type badgerIterator struct {
 	txn   *badger.Txn
 	it    *badger.Iterator
@@ -170,7 +170,7 @@ func (it *badgerIterator) Close() {
 	it.txn.Discard()
 }
 
-// badgerBatch implements kv.Batch.
+// badgerBatch implements kvstore.Batch.
 type badgerBatch struct {
 	db *badger.DB
 	wb *badger.WriteBatch
@@ -192,5 +192,5 @@ func (b *badgerBatch) Cancel() {
 	b.wb.Cancel()
 }
 
-// Ensure KV implements kv.KVStore.
-var _ kv.KVStore = (*KV)(nil)
+// Ensure KV implements kvstore.KVStore.
+var _ kvstore.KVStore = (*KV)(nil)

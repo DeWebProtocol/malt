@@ -17,7 +17,7 @@ type options struct {
 	configFile string
 
 	// Pre-built components (override config-based creation)
-	kvStore    kv.KVStore
+	kvStore    kvstore.KVStore
 	commitment commitment.Scheme
 	eat        eat.EAT
 	cas        cas.Client
@@ -42,7 +42,7 @@ func WithConfig(cfg *config.Config) Option {
 }
 
 // WithKVStore sets a custom KVStore implementation.
-func WithKVStore(store kv.KVStore) Option {
+func WithKVStore(store kvstore.KVStore) Option {
 	return func(o *options) {
 		o.kvStore = store
 	}
