@@ -116,9 +116,9 @@ func runDemo(cmd *cobra.Command, args []string) {
 	target2, _ := newPayloadCID([]byte("target2"))
 
 	// Create arc set
-	arcs := memory.NewView()
-	arcs.Add("link1", target1)
-	arcs.Add("link2", target2)
+	arcs := memory.NewInMemoryArcSet()
+	arcs.Set("link1", target1)
+	arcs.Set("link2", target2)
 
 	// Create structure using node
 	structure, err := node.NewStructure(arcs)

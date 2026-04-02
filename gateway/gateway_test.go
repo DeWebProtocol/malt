@@ -26,7 +26,7 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 
 func TestGatewayExplicitOnly(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -35,14 +35,14 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths pointing to PayloadCIDs
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
 
-	arcs.Add("a", k1)
-	arcs.Add("a/b", k2)
-	arcs.Add("a/b/c", k3)
+	arcs.Set("a", k1)
+	arcs.Set("a/b", k2)
+	arcs.Set("a/b/c", k3)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -102,7 +102,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	// Test that longest prefix matching works
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -111,14 +111,14 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
 
-	arcs.Add("a", k1)
-	arcs.Add("a/b", k2)
-	arcs.Add("a/b/c", k3)
+	arcs.Set("a", k1)
+	arcs.Set("a/b", k2)
+	arcs.Set("a/b/c", k3)
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 
 func TestGatewayImplicitStep(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -163,9 +163,9 @@ func TestGatewayImplicitStep(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set pointing to a PayloadCID
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
-	arcs.Add("data", payloadCID)
+	arcs.Set("data", payloadCID)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -202,7 +202,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 
 func TestGatewayTranscript(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -211,12 +211,12 @@ func TestGatewayTranscript(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set with nested structure
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	innerCID, _ := newPayloadCID([]byte("inner"))
 	outerCID, _ := newPayloadCID([]byte("outer"))
 
-	arcs.Add("inner", innerCID)
-	arcs.Add("outer", outerCID)
+	arcs.Set("inner", innerCID)
+	arcs.Set("outer", outerCID)
 
 	// Create structure
 	root, err := s.Commit(arcs)

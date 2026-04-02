@@ -15,9 +15,9 @@ func ExampleNewScheme() {
 		return
 	}
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("data"))
-	arcs.Add("key", target)
+	arcs.Set("key", target)
 
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -35,9 +35,9 @@ func ExampleNewScheme() {
 func ExampleScheme_Prove() {
 	c, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("content"))
-	arcs.Add("path", target)
+	arcs.Set("path", target)
 
 	root, _ := c.Commit(arcs)
 
@@ -59,9 +59,9 @@ func ExampleScheme_Prove() {
 func ExampleScheme_Update() {
 	c, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	oldTarget, _ := newPayloadCID([]byte("old"))
-	arcs.Add("data", oldTarget)
+	arcs.Set("data", oldTarget)
 
 	root, _ := c.Commit(arcs)
 
@@ -78,11 +78,11 @@ func ExampleScheme_Update() {
 func ExampleScheme_ProveBatch() {
 	c, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Add("path1", t1)
-	arcs.Add("path2", t2)
+	arcs.Set("path1", t1)
+	arcs.Set("path2", t2)
 
 	root, _ := c.Commit(arcs)
 
@@ -101,11 +101,11 @@ func ExampleScheme_ProveBatch() {
 func ExampleScheme_ProveAggregate() {
 	c, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Add("path1", t1)
-	arcs.Add("path2", t2)
+	arcs.Set("path1", t1)
+	arcs.Set("path2", t2)
 
 	root, _ := c.Commit(arcs)
 

@@ -22,7 +22,7 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 
 func TestStructureBasic(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -30,11 +30,11 @@ func TestStructureBasic(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Add("link1", k1)
-	arcs.Add("link2", k2)
+	arcs.Set("link1", k1)
+	arcs.Set("link2", k2)
 
 	// Create structure
 	structure, err := malt.NewStructure(arcs, e, s)
@@ -74,7 +74,7 @@ func TestStructureBasic(t *testing.T) {
 
 func TestStructureUpdate(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -82,9 +82,9 @@ func TestStructureUpdate(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create initial structure
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Add("link", k1)
+	arcs.Set("link", k1)
 
 	structure, err := malt.NewStructure(arcs, e, s)
 	if err != nil {

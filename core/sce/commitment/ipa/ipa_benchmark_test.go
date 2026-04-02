@@ -96,10 +96,10 @@ func BenchmarkIPAUpdate(b *testing.B) {
 	}
 }
 
-func generateRandomIPAArcSet(n int) *memory.MemoryView {
-	arcs := memory.NewView()
+func generateRandomIPAArcSet(n int) *memory.InMemoryArcSet {
+	arcs := memory.NewInMemoryArcSet()
 	for i := 0; i < n; i++ {
-		arcs.Add(fmt.Sprintf("arc_%d", i), generateRandomIPAKey())
+		arcs.Set(fmt.Sprintf("arc_%d", i), generateRandomIPAKey())
 	}
 	return arcs
 }

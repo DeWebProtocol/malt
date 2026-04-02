@@ -96,12 +96,12 @@ func BenchmarkKZGUpdate(b *testing.B) {
 }
 
 // generateRandomArcSet creates an arc set with simple deterministic keys.
-func generateRandomArcSet(n int) *memory.MemoryView {
-	arcs := memory.NewView()
+func generateRandomArcSet(n int) *memory.InMemoryArcSet {
+	arcs := memory.NewInMemoryArcSet()
 	for i := 0; i < n; i++ {
 		data := []byte{byte(i % 256), byte((i / 256) % 256), byte(i >> 16)}
 		k, _ := newPayloadCIDBench(data)
-		arcs.Add(fmt.Sprintf("arc_%d", i), k)
+		arcs.Set(fmt.Sprintf("arc_%d", i), k)
 	}
 	return arcs
 }

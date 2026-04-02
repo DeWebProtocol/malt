@@ -24,7 +24,7 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 
 func TestExplicitResolverResolve(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -32,14 +32,14 @@ func TestExplicitResolverResolve(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set with hierarchical paths
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
 
-	arcs.Add("a", k1)
-	arcs.Add("a/b", k2)
-	arcs.Add("a/b/c", k3)
+	arcs.Set("a", k1)
+	arcs.Set("a/b", k2)
+	arcs.Set("a/b/c", k3)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -101,7 +101,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 
 func TestExplicitResolverVerify(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -109,9 +109,9 @@ func TestExplicitResolverVerify(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Add("a", k1)
+	arcs.Set("a", k1)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -144,7 +144,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 
 func TestExplicitResolverNoMatch(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -152,9 +152,9 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Add("x/y/z", k1)
+	arcs.Set("x/y/z", k1)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -177,7 +177,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 
 func TestResolverInterface(t *testing.T) {
 	// Verify explicit.Resolver implements resolver.Resolver
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 

@@ -16,11 +16,11 @@ func ExampleNewScheme() {
 		return
 	}
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
-	arcs.Add("document", target1)
-	arcs.Add("image", target2)
+	arcs.Set("document", target1)
+	arcs.Set("image", target2)
 
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -38,9 +38,9 @@ func ExampleNewScheme() {
 func ExampleScheme_Prove() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("my-data"))
-	arcs.Add("data", target)
+	arcs.Set("data", target)
 
 	root, _ := c.Commit(arcs)
 
@@ -66,9 +66,9 @@ func ExampleScheme_Prove() {
 func ExampleScheme_Update() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	oldTarget, _ := newPayloadCID([]byte("version-1"))
-	arcs.Add("file", oldTarget)
+	arcs.Set("file", oldTarget)
 
 	root, _ := c.Commit(arcs)
 	fmt.Printf("Initial root created: %v\n", root.Defined())
@@ -91,11 +91,11 @@ func ExampleScheme_Update() {
 func ExampleScheme_BatchUpdate() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target1, _ := newPayloadCID([]byte("data-1"))
 	target2, _ := newPayloadCID([]byte("data-2"))
-	arcs.Add("a", target1)
-	arcs.Add("b", target2)
+	arcs.Set("a", target1)
+	arcs.Set("b", target2)
 
 	root, _ := c.Commit(arcs)
 
@@ -121,11 +121,11 @@ func ExampleScheme_BatchUpdate() {
 func ExampleScheme_ProveBatch() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Add("path1", t1)
-	arcs.Add("path2", t2)
+	arcs.Set("path1", t1)
+	arcs.Set("path2", t2)
 
 	root, _ := c.Commit(arcs)
 
@@ -144,11 +144,11 @@ func ExampleScheme_ProveBatch() {
 func ExampleScheme_ProveAggregate() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Add("path1", t1)
-	arcs.Add("path2", t2)
+	arcs.Set("path1", t1)
+	arcs.Set("path2", t2)
 
 	root, _ := c.Commit(arcs)
 

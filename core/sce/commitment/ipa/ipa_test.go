@@ -28,11 +28,11 @@ func TestIPACommitment(t *testing.T) {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Add("a", k1)
-	arcs.Add("b", k2)
+	arcs.Set("a", k1)
+	arcs.Set("b", k2)
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -51,9 +51,9 @@ func TestIPACommitment(t *testing.T) {
 func TestIPAProveAndVerify(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("my-target"))
-	arcs.Add("my-arc", target)
+	arcs.Set("my-arc", target)
 
 	root, _ := s.Commit(arcs)
 
@@ -83,9 +83,9 @@ func TestIPAProveAndVerify(t *testing.T) {
 func TestIPAUpdate(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	oldTarget, _ := newPayloadCID([]byte("old"))
-	arcs.Add("link", oldTarget)
+	arcs.Set("link", oldTarget)
 
 	root, _ := s.Commit(arcs)
 
@@ -103,13 +103,13 @@ func TestIPAUpdate(t *testing.T) {
 func TestIPABatchUpdate(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
-	arcs.Add("a", k1)
-	arcs.Add("b", k2)
-	arcs.Add("c", k3)
+	arcs.Set("a", k1)
+	arcs.Set("b", k2)
+	arcs.Set("c", k3)
 
 	root, _ := s.Commit(arcs)
 
@@ -139,11 +139,11 @@ func TestIPABatchUpdate(t *testing.T) {
 func TestIPAProveBatch(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Add("a", k1)
-	arcs.Add("b", k2)
+	arcs.Set("a", k1)
+	arcs.Set("b", k2)
 
 	root, _ := s.Commit(arcs)
 
@@ -161,11 +161,11 @@ func TestIPAProveBatch(t *testing.T) {
 func TestIPAVerifyBatch(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Add("a", k1)
-	arcs.Add("b", k2)
+	arcs.Set("a", k1)
+	arcs.Set("b", k2)
 
 	root, _ := s.Commit(arcs)
 
@@ -185,11 +185,11 @@ func TestIPAVerifyBatch(t *testing.T) {
 func TestIPAProveAggregate(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Add("a", k1)
-	arcs.Add("b", k2)
+	arcs.Set("a", k1)
+	arcs.Set("b", k2)
 
 	root, _ := s.Commit(arcs)
 
@@ -211,11 +211,11 @@ func TestIPAProveAggregate(t *testing.T) {
 func TestIPAVerifyAggregate(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Add("a", k1)
-	arcs.Add("b", k2)
+	arcs.Set("a", k1)
+	arcs.Set("b", k2)
 
 	root, _ := s.Commit(arcs)
 
@@ -235,10 +235,10 @@ func TestIPAVerifyAggregate(t *testing.T) {
 func TestIPAProveBatchWithMultiplePaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	for j := 0; j < 10; j++ {
 		k, _ := newPayloadCID([]byte{byte(j)})
-		arcs.Add(fmt.Sprintf("item_%d", j), k)
+		arcs.Set(fmt.Sprintf("item_%d", j), k)
 	}
 
 	root, _ := s.Commit(arcs)
@@ -273,7 +273,7 @@ func TestIPACommitNilArcSet(t *testing.T) {
 func TestIPACommitEmptyArcSet(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Should handle empty arc set: %v", err)
@@ -287,9 +287,9 @@ func TestIPACommitEmptyArcSet(t *testing.T) {
 func TestIPAProveNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("data"))
-	arcs.Add("exists", target)
+	arcs.Set("exists", target)
 
 	root, _ := s.Commit(arcs)
 
@@ -302,9 +302,9 @@ func TestIPAProveNonExistentPath(t *testing.T) {
 func TestIPAProveWrongRootType(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("data"))
-	arcs.Add("a", target)
+	arcs.Set("a", target)
 
 	wrongRoot, _ := newPayloadCID([]byte("not-a-root"))
 
@@ -317,9 +317,9 @@ func TestIPAProveWrongRootType(t *testing.T) {
 func TestIPAUpdateNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target, _ := newPayloadCID([]byte("data"))
-	arcs.Add("a", target)
+	arcs.Set("a", target)
 
 	root, _ := s.Commit(arcs)
 
@@ -335,9 +335,9 @@ func TestIPAUpdateNonExistentPath(t *testing.T) {
 func TestIPAProveBatchEmptyPaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Add("a", k1)
+	arcs.Set("a", k1)
 
 	root, _ := s.Commit(arcs)
 
@@ -350,9 +350,9 @@ func TestIPAProveBatchEmptyPaths(t *testing.T) {
 func TestIPAProveAggregateEmptyPaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Add("a", k1)
+	arcs.Set("a", k1)
 
 	root, _ := s.Commit(arcs)
 
@@ -365,9 +365,9 @@ func TestIPAProveAggregateEmptyPaths(t *testing.T) {
 func TestIPAProveBatchNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Add("a", k1)
+	arcs.Set("a", k1)
 
 	root, _ := s.Commit(arcs)
 
@@ -382,11 +382,11 @@ func TestIPAProveBatchNonExistentPath(t *testing.T) {
 func TestIPALargeArcSet(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	for j := 0; j < 200; j++ {
 		data := []byte{byte(j % 256), byte((j / 256) % 256)}
 		target, _ := newPayloadCID(data)
-		arcs.Add(fmt.Sprintf("arc_%d", j), target)
+		arcs.Set(fmt.Sprintf("arc_%d", j), target)
 	}
 
 	root, err := s.Commit(arcs)
@@ -417,12 +417,12 @@ func TestIPALargeArcSet(t *testing.T) {
 func TestIPAArcSetExceedsLimit(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	// IPA has max 256 arcs
 	for j := 0; j < 300; j++ {
 		data := []byte{byte(j % 256)}
 		target, _ := newPayloadCID(data)
-		arcs.Add(fmt.Sprintf("arc_%d", j), target)
+		arcs.Set(fmt.Sprintf("arc_%d", j), target)
 	}
 
 	_, err := s.Commit(arcs)
@@ -434,14 +434,14 @@ func TestIPAArcSetExceedsLimit(t *testing.T) {
 func TestIPAMultipleCommits(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs1 := memory.NewView()
+	arcs1 := memory.NewInMemoryArcSet()
 	target1, _ := newPayloadCID([]byte("data1"))
-	arcs1.Add("a", target1)
+	arcs1.Set("a", target1)
 	root1, _ := s.Commit(arcs1)
 
-	arcs2 := memory.NewView()
+	arcs2 := memory.NewInMemoryArcSet()
 	target2, _ := newPayloadCID([]byte("data2"))
-	arcs2.Add("b", target2)
+	arcs2.Set("b", target2)
 	root2, _ := s.Commit(arcs2)
 
 	_, proof1, err := s.Prove(root1, arcs1, "a")

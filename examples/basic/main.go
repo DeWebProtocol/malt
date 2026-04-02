@@ -48,11 +48,11 @@ func runWithDefaults() {
 	fmt.Printf("Node initialized\n")
 
 	// Create structure
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
-	arcs.Add("document", target1)
-	arcs.Add("image", target2)
+	arcs.Set("document", target1)
+	arcs.Set("image", target2)
 
 	structure, err := node.NewStructure(arcs)
 	if err != nil {
@@ -91,9 +91,9 @@ func runWithOptions() {
 	fmt.Printf("Node initialized with custom components\n")
 
 	// Create structure
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	target1, _ := newPayloadCID([]byte("data.json"))
-	arcs.Add("data", target1)
+	arcs.Set("data", target1)
 
 	structure, err := node.NewStructure(arcs)
 	if err != nil {

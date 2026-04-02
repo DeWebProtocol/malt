@@ -106,7 +106,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Track current arc set
-	currentArcs := memory.NewView()
+	currentArcs := memory.NewInMemoryArcSet()
 
 	totalUpdateTime := time.Duration(0)
 	var root cid.Cid
@@ -117,7 +117,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
 
 		// Add to current arc set
-		currentArcs.Add(path, target)
+		currentArcs.Set(path, target)
 
 		// Commit current arc set
 		start := time.Now()
@@ -142,7 +142,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	// First commit is the initial one
 	firstStart := time.Now()
-	emptyArcs := memory.NewView()
+	emptyArcs := memory.NewInMemoryArcSet()
 	_, _ = b.sce.Commit(emptyArcs)
 	metrics.CommitTime = time.Since(firstStart)
 
@@ -200,13 +200,13 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure with all arcs
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
 		path := fmt.Sprintf("arc%d", i)
 		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
-		arcs.Add(path, target)
+		arcs.Set(path, target)
 		keys[path] = target
 	}
 
@@ -243,7 +243,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		newKey, _ := newPayloadCID([]byte(fmt.Sprintf("updated%d_%d", idx, round)))
 
 		// Update arc set
-		arcs.Add(path, newKey)
+		arcs.Set(path, newKey)
 
 		// Measure commit time (MockCommitment requires full commit)
 		start = time.Now()
@@ -317,13 +317,13 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure
-	arcs := memory.NewView()
+	arcs := memory.NewInMemoryArcSet()
 	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
 		path := fmt.Sprintf("arc%d", i)
 		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
-		arcs.Add(path, target)
+		arcs.Set(path, target)
 		keys[path] = target
 	}
 
@@ -362,7 +362,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		for i := range bulkSize {
 			path := paths[i]
 			newKey, _ := newPayloadCID([]byte(fmt.Sprintf("bulk%d_%d", i, round)))
-			arcs.Add(path, newKey)
+			arcs.Set(path, newKey)
 			keys[path] = newKey
 		}
 

@@ -13,7 +13,7 @@ import (
 
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -82,7 +82,7 @@ func TestBenchmarkRunner(t *testing.T) {
 }
 
 func BenchmarkAppend(b *testing.B) {
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
@@ -103,7 +103,7 @@ func BenchmarkAppend(b *testing.B) {
 }
 
 func BenchmarkRandom(b *testing.B) {
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
@@ -124,7 +124,7 @@ func BenchmarkRandom(b *testing.B) {
 }
 
 func BenchmarkBulk(b *testing.B) {
-	e := memory.NewEAT()
+	e := memory.NewBucketedInMemoryEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()

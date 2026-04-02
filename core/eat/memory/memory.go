@@ -1,4 +1,4 @@
-// Package memory provides in-memory EAT implementations.
+// Package memory provides in-memory implementations for EAT and arc sets.
 package memory
 
 import (
@@ -10,238 +10,184 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// MemoryView is a single-root in-memory arc set.
+// InMemoryArcSet is a single-graph arc set that stores only the latest version.
 // It implements arcset.View for use with SCE commitment operations.
-type MemoryView struct {
+type InMemoryArcSet struct {
 	mu   sync.RWMutex
 	arcs map[string]cid.Cid
 }
 
-// NewView creates a new MemoryView.
-func NewView() *MemoryView {
-	return &MemoryView{
+// NewInMemoryArcSet creates a new InMemoryArcSet.
+func NewInMemoryArcSet() *InMemoryArcSet {
+	return &InMemoryArcSet{
 		arcs: make(map[string]cid.Cid),
 	}
 }
 
-// Add adds an arc to the view.
-func (v *MemoryView) Add(path string, c cid.Cid) {
-	v.mu.Lock()
-	v.arcs[path] = c
-	v.mu.Unlock()
+// Set adds or updates an arc.
+func (a *InMemoryArcSet) Set(path string, target cid.Cid) {
+	a.mu.Lock()
+	a.arcs[path] = target
+	a.mu.Unlock()
 }
 
 // Get retrieves the target CID for a path.
-func (v *MemoryView) Get(path string) (cid.Cid, bool) {
-	v.mu.RLock()
-	c, ok := v.arcs[path]
-	v.mu.RUnlock()
+func (a *InMemoryArcSet) Get(path string) (cid.Cid, bool) {
+	a.mu.RLock()
+	c, ok := a.arcs[path]
+	a.mu.RUnlock()
 	return c, ok
 }
 
+// Delete removes an arc.
+func (a *InMemoryArcSet) Delete(path string) {
+	a.mu.Lock()
+	delete(a.arcs, path)
+	a.mu.Unlock()
+}
+
 // Iterate returns an iterator over all arcs.
-func (v *MemoryView) Iterate() arcset.Iterator {
-	v.mu.RLock()
-	paths := make([]string, 0, len(v.arcs))
-	for p := range v.arcs {
+// The iterator captures a snapshot of paths at creation time.
+func (a *InMemoryArcSet) Iterate() arcset.Iterator {
+	a.mu.RLock()
+	// Snapshot paths while holding lock
+	paths := make([]string, 0, len(a.arcs))
+	arcs := make(map[string]cid.Cid, len(a.arcs))
+	for p, c := range a.arcs {
 		paths = append(paths, p)
+		arcs[p] = c
 	}
-	v.mu.RUnlock()
+	a.mu.RUnlock()
 
 	sort.Strings(paths)
-	return &viewIterator{v: v, paths: paths, idx: -1}
+	return &arcSetIterator{arcs: arcs, paths: paths, idx: -1}
 }
 
 // Len returns the number of arcs.
-func (v *MemoryView) Len() int {
-	v.mu.RLock()
-	n := len(v.arcs)
-	v.mu.RUnlock()
+func (a *InMemoryArcSet) Len() int {
+	a.mu.RLock()
+	n := len(a.arcs)
+	a.mu.RUnlock()
 	return n
 }
 
-// viewIterator implements arcset.Iterator.
-type viewIterator struct {
-	v     *MemoryView
+// Clear removes all arcs.
+func (a *InMemoryArcSet) Clear() {
+	a.mu.Lock()
+	a.arcs = make(map[string]cid.Cid)
+	a.mu.Unlock()
+}
+
+// arcSetIterator implements arcset.Iterator with a snapshot.
+type arcSetIterator struct {
+	arcs  map[string]cid.Cid
 	paths []string
 	idx   int
 }
 
 // Next advances to the next arc.
-func (it *viewIterator) Next() (string, cid.Cid, bool) {
+func (it *arcSetIterator) Next() (string, cid.Cid, bool) {
 	it.idx++
 	if it.idx >= len(it.paths) {
 		return "", cid.Cid{}, false
 	}
 	path := it.paths[it.idx]
-	c, _ := it.v.Get(path)
-	return path, c, true
+	return path, it.arcs[path], true
 }
 
 // Err returns any error.
-func (it *viewIterator) Err() error {
+func (it *arcSetIterator) Err() error {
 	return nil
 }
 
-// Ensure MemoryView implements arcset.View.
-var _ arcset.View = (*MemoryView)(nil)
+// Ensure InMemoryArcSet implements arcset.View.
+var _ arcset.View = (*InMemoryArcSet)(nil)
 
-// MemoryEAT is a multi-root in-memory EAT implementation.
-// It stores arcs per root: (root, path) -> target.
-type MemoryEAT struct {
-	mu   sync.RWMutex
-	arcs map[string]map[string]cid.Cid // root -> path -> target
+// BucketedInMemoryEAT manages multiple InMemoryArcSet instances by bucket (graph) ID.
+// It implements eat.EAT for use as an in-memory EAT backend.
+type BucketedInMemoryEAT struct {
+	mu      sync.RWMutex
+	buckets map[string]*InMemoryArcSet // bucket key -> arc set
 }
 
-// NewEAT creates a new MemoryEAT.
-func NewEAT() *MemoryEAT {
-	return &MemoryEAT{
-		arcs: make(map[string]map[string]cid.Cid),
+// NewBucketedInMemoryEAT creates a new BucketedInMemoryEAT.
+func NewBucketedInMemoryEAT() *BucketedInMemoryEAT {
+	return &BucketedInMemoryEAT{
+		buckets: make(map[string]*InMemoryArcSet),
 	}
 }
 
-// rootKey generates a storage key for a root.
-func rootKey(c cid.Cid) string {
+// bucketKey generates a storage key for a root.
+func bucketKey(c cid.Cid) string {
 	return c.String()
 }
 
 // Get retrieves the target CID for (root, path).
-func (e *MemoryEAT) Get(root cid.Cid, path string) (cid.Cid, error) {
+func (e *BucketedInMemoryEAT) Get(root cid.Cid, path string) (cid.Cid, error) {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
+	bucket, ok := e.buckets[bucketKey(root)]
+	e.mu.RUnlock()
 
-	rootStr := rootKey(root)
-	paths, ok := e.arcs[rootStr]
 	if !ok {
 		return cid.Cid{}, eat.ErrNotFound
 	}
 
-	target, ok := paths[path]
+	target, ok := bucket.Get(path)
 	if !ok {
 		return cid.Cid{}, eat.ErrNotFound
 	}
-
 	return target, nil
 }
 
-// Put stores an arc entry.
-func (e *MemoryEAT) Put(root cid.Cid, path string, target cid.Cid) error {
+// Put stores an arc entry, creating the bucket if needed.
+func (e *BucketedInMemoryEAT) Put(root cid.Cid, path string, target cid.Cid) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	rootStr := rootKey(root)
-	if _, ok := e.arcs[rootStr]; !ok {
-		e.arcs[rootStr] = make(map[string]cid.Cid)
+	key := bucketKey(root)
+	bucket, ok := e.buckets[key]
+	if !ok {
+		bucket = NewInMemoryArcSet()
+		e.buckets[key] = bucket
 	}
+	e.mu.Unlock()
 
-	e.arcs[rootStr][path] = target
+	bucket.Set(path, target)
 	return nil
 }
 
 // Delete removes an arc entry.
-func (e *MemoryEAT) Delete(root cid.Cid, path string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *BucketedInMemoryEAT) Delete(root cid.Cid, path string) error {
+	e.mu.RLock()
+	bucket, ok := e.buckets[bucketKey(root)]
+	e.mu.RUnlock()
 
-	rootStr := rootKey(root)
-	paths, ok := e.arcs[rootStr]
 	if !ok {
 		return eat.ErrNotFound
 	}
 
-	if _, ok := paths[path]; !ok {
-		return eat.ErrNotFound
-	}
-
-	delete(paths, path)
+	bucket.Delete(path)
 	return nil
 }
 
-// View returns an ArcSetView for a specific root.
-func (e *MemoryEAT) View(root cid.Cid) arcset.View {
-	return &eatView{eat: e, root: root}
+// View returns an ArcSetView for a specific root (bucket).
+func (e *BucketedInMemoryEAT) View(root cid.Cid) arcset.View {
+	e.mu.RLock()
+	bucket, ok := e.buckets[bucketKey(root)]
+	e.mu.RUnlock()
+
+	if !ok {
+		// Return empty view for non-existent bucket
+		return NewInMemoryArcSet()
+	}
+	return bucket
 }
 
 // Close releases resources.
-func (e *MemoryEAT) Close() error {
+func (e *BucketedInMemoryEAT) Close() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.arcs = nil
+	e.buckets = nil
+	e.mu.Unlock()
 	return nil
 }
 
-// eatView implements arcset.View for MemoryEAT.
-type eatView struct {
-	eat  *MemoryEAT
-	root cid.Cid
-}
-
-// Get retrieves the target CID for a path.
-func (v *eatView) Get(path string) (cid.Cid, bool) {
-	c, err := v.eat.Get(v.root, path)
-	if err != nil {
-		return cid.Cid{}, false
-	}
-	return c, true
-}
-
-// Iterate returns an iterator over all arcs for the root.
-func (v *eatView) Iterate() arcset.Iterator {
-	v.eat.mu.RLock()
-	defer v.eat.mu.RUnlock()
-
-	rootStr := rootKey(v.root)
-	paths := v.eat.arcs[rootStr]
-
-	var arcs []struct {
-		path string
-		cid  cid.Cid
-	}
-	for p, c := range paths {
-		arcs = append(arcs, struct {
-			path string
-			cid  cid.Cid
-		}{path: p, cid: c})
-	}
-
-	sort.Slice(arcs, func(i, j int) bool {
-		return arcs[i].path < arcs[j].path
-	})
-
-	return &eatIterator{arcs: arcs, idx: -1}
-}
-
-// Len returns the number of arcs.
-func (v *eatView) Len() int {
-	v.eat.mu.RLock()
-	defer v.eat.mu.RUnlock()
-
-	rootStr := rootKey(v.root)
-	return len(v.eat.arcs[rootStr])
-}
-
-// eatIterator implements arcset.Iterator.
-type eatIterator struct {
-	arcs []struct {
-		path string
-		cid  cid.Cid
-	}
-	idx int
-}
-
-// Next advances to the next arc.
-func (it *eatIterator) Next() (string, cid.Cid, bool) {
-	it.idx++
-	if it.idx >= len(it.arcs) {
-		return "", cid.Cid{}, false
-	}
-	return it.arcs[it.idx].path, it.arcs[it.idx].cid, true
-}
-
-// Err returns any error.
-func (it *eatIterator) Err() error {
-	return nil
-}
-
-// Ensure MemoryEAT implements eat.EAT.
-var _ eat.EAT = (*MemoryEAT)(nil)
+// Ensure BucketedInMemoryEAT implements eat.EAT.
+var _ eat.EAT = (*BucketedInMemoryEAT)(nil)

@@ -173,7 +173,7 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 func (n *Node) initEAT() (eat.EAT, error) {
 	switch n.cfg.EATType {
 	case "simple", "memory":
-		return memory.NewEAT(), nil
+		return memory.NewBucketedInMemoryEAT(), nil
 	case "versioned":
 		return versioned.NewEAT(n.kv)
 	default:
