@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/core/eat/simple"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/eval"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -13,7 +13,7 @@ import (
 
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -82,7 +82,7 @@ func TestBenchmarkRunner(t *testing.T) {
 }
 
 func BenchmarkAppend(b *testing.B) {
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
@@ -103,7 +103,7 @@ func BenchmarkAppend(b *testing.B) {
 }
 
 func BenchmarkRandom(b *testing.B) {
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
@@ -124,7 +124,7 @@ func BenchmarkRandom(b *testing.B) {
 }
 
 func BenchmarkBulk(b *testing.B) {
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()

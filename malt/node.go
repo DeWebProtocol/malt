@@ -12,7 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/cas/ipfsgateway"
 	casmock "github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/eat/simple"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
 	"github.com/dewebprotocol/malt/core/types/kvstore"
 	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
@@ -172,8 +172,8 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 // initEAT creates an EAT from config.
 func (n *Node) initEAT() (eat.EAT, error) {
 	switch n.cfg.EATType {
-	case "simple":
-		return simple.NewEAT(), nil
+	case "simple", "memory":
+		return memory.NewEAT(), nil
 	case "versioned":
 		return versioned.NewEAT(n.kv)
 	default:

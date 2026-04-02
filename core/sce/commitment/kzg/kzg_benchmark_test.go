@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -96,8 +96,8 @@ func BenchmarkKZGUpdate(b *testing.B) {
 }
 
 // generateRandomArcSet creates an arc set with simple deterministic keys.
-func generateRandomArcSet(n int) *arcset.Map {
-	arcs := arcset.NewMap()
+func generateRandomArcSet(n int) *memory.MemoryView {
+	arcs := memory.NewView()
 	for i := 0; i < n; i++ {
 		data := []byte{byte(i % 256), byte((i / 256) % 256), byte(i >> 16)}
 		k, _ := newPayloadCIDBench(data)

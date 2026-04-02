@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
@@ -48,7 +48,7 @@ func runWithDefaults() {
 	fmt.Printf("Node initialized\n")
 
 	// Create structure
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
 	arcs.Add("document", target1)
@@ -91,7 +91,7 @@ func runWithOptions() {
 	fmt.Printf("Node initialized with custom components\n")
 
 	// Create structure
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	target1, _ := newPayloadCID([]byte("data.json"))
 	arcs.Add("data", target1)
 

@@ -3,14 +3,13 @@ package gateway_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/core/eat/simple"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/gateway"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -27,7 +26,7 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 
 func TestGatewayExplicitOnly(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -36,7 +35,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths pointing to PayloadCIDs
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -103,7 +102,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	// Test that longest prefix matching works
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -112,7 +111,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -155,7 +154,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 
 func TestGatewayImplicitStep(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -164,7 +163,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set pointing to a PayloadCID
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcs.Add("data", payloadCID)
 
@@ -203,7 +202,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 
 func TestGatewayTranscript(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -212,7 +211,7 @@ func TestGatewayTranscript(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set with nested structure
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	innerCID, _ := newPayloadCID([]byte("inner"))
 	outerCID, _ := newPayloadCID([]byte("outer"))
 

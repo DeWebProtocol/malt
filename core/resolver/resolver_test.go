@@ -3,13 +3,12 @@ package resolver_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/evidence"
-	"github.com/dewebprotocol/malt/core/eat/simple"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -25,7 +24,7 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 
 func TestExplicitResolverResolve(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -33,7 +32,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set with hierarchical paths
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -102,7 +101,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 
 func TestExplicitResolverVerify(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -110,7 +109,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("a", k1)
 
@@ -145,7 +144,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 
 func TestExplicitResolverNoMatch(t *testing.T) {
 	// Create components
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -153,7 +152,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Add("x/y/z", k1)
 
@@ -178,7 +177,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 
 func TestResolverInterface(t *testing.T) {
 	// Verify explicit.Resolver implements resolver.Resolver
-	e := simple.NewEAT()
+	e := memory.NewEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 

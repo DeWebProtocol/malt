@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -96,8 +96,8 @@ func BenchmarkIPAUpdate(b *testing.B) {
 	}
 }
 
-func generateRandomIPAArcSet(n int) *arcset.Map {
-	arcs := arcset.NewMap()
+func generateRandomIPAArcSet(n int) *memory.MemoryView {
+	arcs := memory.NewView()
 	for i := 0; i < n; i++ {
 		arcs.Add(fmt.Sprintf("arc_%d", i), generateRandomIPAKey())
 	}

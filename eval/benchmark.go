@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/cas"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -106,7 +106,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Track current arc set
-	currentArcs := arcset.NewMap()
+	currentArcs := memory.NewView()
 
 	totalUpdateTime := time.Duration(0)
 	var root cid.Cid
@@ -142,7 +142,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	// First commit is the initial one
 	firstStart := time.Now()
-	emptyArcs := arcset.NewMap()
+	emptyArcs := memory.NewView()
 	_, _ = b.sce.Commit(emptyArcs)
 	metrics.CommitTime = time.Since(firstStart)
 
@@ -200,7 +200,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure with all arcs
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
@@ -317,7 +317,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure
-	arcs := arcset.NewMap()
+	arcs := memory.NewView()
 	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
