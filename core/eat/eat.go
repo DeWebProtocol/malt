@@ -28,6 +28,11 @@ type EAT interface {
 	// Put stores an arc entry.
 	Put(root cid.Cid, path string, target cid.Cid) error
 
+	// PutBatch stores multiple arc entries for the same root in a single transaction.
+	// This is more efficient than calling Put multiple times as it only acquires
+	// the write lock once.
+	PutBatch(root cid.Cid, arcs map[string]cid.Cid) error
+
 	// Delete removes an arc entry.
 	Delete(root cid.Cid, path string) error
 

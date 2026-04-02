@@ -59,6 +59,29 @@ func (e *BucketedInMemoryEAT) Put(root cid.Cid, path string, target cid.Cid) err
 	return nil
 }
 
+// PutBatch stores multiple arc entries for the same root in a single transaction.
+// This is more efficient than calling Put multiple times.
+func (e *BucketedInMemoryEAT) PutBatch(root cid.Cid, arcs map[string]cid.Cid) error {
+	if len(arcs) == 0 {
+		return nil
+	}
+
+	e.mu.Lock()
+	key := bucketKey(root)
+	bucket, ok := e.buckets[key]
+	if !ok {
+		bucket = NewInMemoryArcSet()
+		e.buckets[key] = bucket
+	}
+	e.mu.Unlock()
+
+	// Set all arcs without reacquiring the bucket lock each time
+	for path, target := range arcs {
+		bucket.Set(path, target)
+	}
+	return nil
+}
+
 // Delete removes an arc entry.
 func (e *BucketedInMemoryEAT) Delete(root cid.Cid, path string) error {
 	e.mu.RLock()

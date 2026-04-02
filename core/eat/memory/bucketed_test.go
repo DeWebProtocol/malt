@@ -2,6 +2,8 @@ package memory
 
 import (
 	"testing"
+
+	cid "github.com/ipfs/go-cid"
 )
 
 // === BucketedInMemoryEAT Tests ===
@@ -169,5 +171,90 @@ func TestBucketedInMemoryEATMultipleBuckets(t *testing.T) {
 
 	if !got2.Equals(target2) {
 		t.Error("root2 should have target2")
+	}
+}
+
+func TestBucketedInMemoryEATPutBatch(t *testing.T) {
+	eat := NewBucketedInMemoryEAT()
+
+	root := newTestCID([]byte("root"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+	target3 := newTestCID([]byte("target3"))
+
+	// PutBatch with multiple arcs
+	arcs := map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+		"c": target3,
+	}
+
+	err := eat.PutBatch(root, arcs)
+	if err != nil {
+		t.Fatalf("PutBatch failed: %v", err)
+	}
+
+	// Verify all arcs were stored
+	if got, _ := eat.Get(root, "a"); !got.Equals(target1) {
+		t.Error("wrong value for 'a'")
+	}
+	if got, _ := eat.Get(root, "b"); !got.Equals(target2) {
+		t.Error("wrong value for 'b'")
+	}
+	if got, _ := eat.Get(root, "c"); !got.Equals(target3) {
+		t.Error("wrong value for 'c'")
+	}
+
+	// Verify Len via View
+	view := eat.View(root)
+	if view.Len() != 3 {
+		t.Errorf("expected Len 3, got %d", view.Len())
+	}
+}
+
+func TestBucketedInMemoryEATPutBatchEmpty(t *testing.T) {
+	eat := NewBucketedInMemoryEAT()
+	root := newTestCID([]byte("root"))
+
+	// Empty batch should succeed
+	err := eat.PutBatch(root, map[string]cid.Cid{})
+	if err != nil {
+		t.Fatalf("PutBatch with empty map should succeed: %v", err)
+	}
+}
+
+func TestBucketedInMemoryEATPutBatchOverwrite(t *testing.T) {
+	eat := NewBucketedInMemoryEAT()
+
+	root := newTestCID([]byte("root"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+
+	// First batch
+	eat.PutBatch(root, map[string]cid.Cid{
+		"a": target1,
+		"b": target1,
+	})
+
+	// Second batch with updates
+	eat.PutBatch(root, map[string]cid.Cid{
+		"a": target2, // overwrite
+		"c": target2, // new
+	})
+
+	// Verify
+	if got, _ := eat.Get(root, "a"); !got.Equals(target2) {
+		t.Error("'a' should be updated to target2")
+	}
+	if got, _ := eat.Get(root, "b"); !got.Equals(target1) {
+		t.Error("'b' should remain target1")
+	}
+	if got, _ := eat.Get(root, "c"); !got.Equals(target2) {
+		t.Error("'c' should be target2")
+	}
+
+	view := eat.View(root)
+	if view.Len() != 3 {
+		t.Errorf("expected Len 3, got %d", view.Len())
 	}
 }

@@ -139,6 +139,78 @@ func (e *EAT) Put(root cid.Cid, path string, target cid.Cid) error {
 	return e.kv.Put(nil, arcsKey(path), encoded)
 }
 
+// PutBatch stores multiple arc entries for the same root in a single transaction.
+// This is more efficient than calling Put multiple times as it only acquires
+// the write lock once and batches the history updates.
+func (e *EAT) PutBatch(root cid.Cid, arcs map[string]cid.Cid) error {
+	if len(arcs) == 0 {
+		return nil
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Get or create index for this root (shared across all arcs)
+	idxBytes, err := e.kv.Get(nil, metaKey(root))
+	var idx uint64
+	if err == kvstore.ErrNotFound {
+		// New root, get next index
+		idx = e.getNextIndex()
+	} else if err != nil {
+		return fmt.Errorf("failed to get root index: %w", err)
+	} else {
+		idx = binary.BigEndian.Uint64(idxBytes)
+	}
+
+	// Store root -> index mapping once
+	newIdxBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(newIdxBytes, idx)
+	if err := e.kv.Put(nil, metaKey(root), newIdxBytes); err != nil {
+		return fmt.Errorf("failed to store root index: %w", err)
+	}
+
+	// Sort paths for deterministic order
+	paths := make([]string, 0, len(arcs))
+	for p := range arcs {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	// Update history for each path
+	for _, path := range paths {
+		target := arcs[path]
+
+		// Get existing history
+		var history []historyEntry
+		historyBytes, err := e.kv.Get(nil, arcsKey(path))
+		if err == nil {
+			history, err = decodeHistory(historyBytes)
+			if err != nil {
+				return fmt.Errorf("failed to decode history for %s: %w", path, err)
+			}
+		} else if err != kvstore.ErrNotFound {
+			return fmt.Errorf("failed to get path history for %s: %w", path, err)
+		}
+
+		// Append new entry
+		history = append(history, historyEntry{index: idx, cid: target})
+		sort.Slice(history, func(i, j int) bool {
+			return history[i].index < history[j].index
+		})
+
+		// Store updated history
+		encoded, err := encodeHistory(history)
+		if err != nil {
+			return fmt.Errorf("failed to encode history for %s: %w", path, err)
+		}
+		if err := e.kv.Put(nil, arcsKey(path), encoded); err != nil {
+			return fmt.Errorf("failed to store history for %s: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
 // getNextIndex returns the next available index.
 func (e *EAT) getNextIndex() uint64 {
 	idxBytes, err := e.kv.Get(nil, prefixIdx)
