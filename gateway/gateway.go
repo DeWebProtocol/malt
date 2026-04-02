@@ -15,10 +15,18 @@ import (
 // Gateway handles hybrid resolution with prefix consumption.
 // It dispatches to different resolvers based on CID codec and continues
 // traversal until the path is consumed or resolution fails.
+//
+// Architecture:
+//   - MALT commitments (malt-kzg/malt-verkle/malt-ipa) → explicitResolver
+//   - All other CIDs (dag-pb, dag-cbor, raw, etc.) → implicitResolver
+//
+// The implicitResolver internally handles different data structures:
+//   - UnixFS: File/directory traversal
+//   - HAMT: Hash-based routing for dictionaries
+//   - Plain DAG: IPLD node traversal
 type Gateway struct {
 	explicitResolver resolver.Resolver
 	implicitResolver  resolver.Resolver
-	hamtResolver      resolver.Resolver
 }
 
 // NewGateway creates a new gateway with explicit and implicit resolvers.
@@ -26,16 +34,6 @@ func NewGateway(explicit, implicit resolver.Resolver) *Gateway {
 	return &Gateway{
 		explicitResolver: explicit,
 		implicitResolver:  implicit,
-		hamtResolver:      nil,
-	}
-}
-
-// NewGatewayWithHAMT creates a new gateway with all resolver types.
-func NewGatewayWithHAMT(explicit, implicit, hamt resolver.Resolver) *Gateway {
-	return &Gateway{
-		explicitResolver: explicit,
-		implicitResolver:  implicit,
-		hamtResolver:      hamt,
 	}
 }
 
@@ -87,8 +85,7 @@ func (g *Gateway) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		var err error
 
 		// Dispatch based on CID codec
-		switch {
-		case codec.IsMaltCid(currentCID):
+		if codec.IsMaltCid(currentCID) {
 			// Explicit step: use explicit resolver for longest-prefix match
 			if g.explicitResolver == nil {
 				return &ResolveResult{
@@ -97,13 +94,9 @@ func (g *Gateway) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 				}, nil
 			}
 			matchedPath, target, ev, err = g.explicitResolver.Resolve(currentCID, remainingPath)
-
-		case g.hamtResolver != nil && codec.IsHamtCid(currentCID):
-			// HAMT step: use HAMT resolver for hash-based routing
-			matchedPath, target, ev, err = g.hamtResolver.Resolve(currentCID, remainingPath)
-
-		default:
+		} else {
 			// Implicit step: use implicit resolver for DAG traversal
+			// The implicit resolver internally handles UnixFS, HAMT, and plain DAG structures
 			if g.implicitResolver == nil {
 				return &ResolveResult{
 					Target:     currentCID,
@@ -161,10 +154,10 @@ func (g *Gateway) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, 
 		switch step.Evidence.Kind() {
 		case evidence.EvidenceKindExplicit:
 			r = g.explicitResolver
-		case evidence.EvidenceKindImplicit:
+		case evidence.EvidenceKindImplicit, evidence.EvidenceKindHAMT:
+			// Both implicit and HAMT evidence are verified by implicit resolver
+			// (HAMT is detected and handled inside the implicit resolver)
 			r = g.implicitResolver
-		case evidence.EvidenceKindHAMT:
-			r = g.hamtResolver
 		default:
 			return false, fmt.Errorf("unknown evidence kind: %v", step.Evidence.Kind())
 		}

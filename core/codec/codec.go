@@ -22,15 +22,15 @@ const (
 	CodecMaltIPA = 0x300003
 )
 
-// HAMT multicodec constants
-// These codecs identify HAMT (Hash Array Mapped Trie) data structures.
-// TODO: Update with official multicodec values when available.
+// HAMT is NOT a separate codec - it uses dag-pb codec (0x70).
+// HAMT detection requires parsing the dag-pb block and examining
+// the Data field structure. These constants are for documentation only.
 const (
-	// CodecHamtV1 is the codec for HAMT version 1 (placeholder).
-	CodecHamtV1 = 0x300100
+	// HamtVersion1 indicates HAMT version 1 structure within a dag-pb block.
+	HamtVersion1 = 1
 
-	// CodecHamtV2 is the codec for HAMT version 2 with different hash.
-	CodecHamtV2 = 0x300110
+	// HamtVersion2 indicates HAMT version 2 structure within a dag-pb block.
+	HamtVersion2 = 2
 )
 
 // KZG commitment size constants
@@ -98,10 +98,11 @@ func IsMaltCid(c cid.Cid) bool {
 	return codec == CodecMaltKZG || codec == CodecMaltVerkle || codec == CodecMaltIPA
 }
 
-// IsHamtCid checks if a CID is a HAMT data structure CID.
+// IsHamtCid returns false - HAMT does not have a separate codec.
+// HAMT uses dag-pb codec and is detected by parsing the block structure.
+// Deprecated: Do not use - HAMT detection requires block analysis.
 func IsHamtCid(c cid.Cid) bool {
-	codec := c.Prefix().Codec
-	return codec == CodecHamtV1 || codec == CodecHamtV2
+	return false
 }
 
 // GetMaltCodec returns the MALT codec type for a CID.

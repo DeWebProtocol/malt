@@ -21,6 +21,9 @@ const (
 	DefaultMaxDepth = 256
 )
 
+// DefaultHashFunc is the default hash function (murmur3).
+var DefaultHashFunc = murmur3Hash
+
 // Config holds HAMT configuration.
 type Config struct {
 	// BitWidth is the number of bits used per level (default 5 → 32-way branching).

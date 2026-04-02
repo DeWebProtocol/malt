@@ -1,6 +1,11 @@
 // Package implicit implements the Resolver interface for Merkle-DAG traversal.
 // It fetches a single block from CAS, parses it using IPLD codecs, and finds the next link.
 // Multi-hop traversal is handled by the caller (e.g., Gateway).
+//
+// For dag-pb blocks, the resolver detects different data structures:
+//   - UnixFS: File/directory traversal
+//   - HAMT: Hash-based routing for dictionaries
+//   - Plain dag-pb: Normal link traversal
 package implicit
 
 import (
@@ -9,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt/cas"
+	"github.com/dewebprotocol/malt/core/resolver/hamt"
 	"github.com/dewebprotocol/malt/core/resolver/implicit/codec"
 	"github.com/dewebprotocol/malt/core/resolver/implicit/dagcbor"
 	"github.com/dewebprotocol/malt/core/resolver/implicit/dagjson"
@@ -21,8 +27,9 @@ import (
 // It parses one block and returns the first link found in the path.
 // Multi-hop traversal should be handled by the caller.
 type Resolver struct {
-	cas    cas.Client
-	codecs *codec.Registry
+	cas         cas.Client
+	codecs      *codec.Registry
+	hamtConfig  hamt.Config
 }
 
 // NewResolver creates a new implicit resolver with default codecs.
@@ -35,7 +42,19 @@ func NewResolver(c cas.Client) *Resolver {
 	return &Resolver{
 		cas:    c,
 		codecs: registry,
+		hamtConfig: hamt.Config{
+			BitWidth: hamt.DefaultBitWidth,
+			HashFunc: hamt.DefaultHashFunc,
+			MaxDepth: hamt.DefaultMaxDepth,
+		},
 	}
+}
+
+// NewResolverWithHAMTConfig creates a resolver with custom HAMT configuration.
+func NewResolverWithHAMTConfig(c cas.Client, cfg hamt.Config) *Resolver {
+	r := NewResolver(c)
+	r.hamtConfig = cfg
+	return r
 }
 
 // NewResolverWithCodecs creates a resolver with custom codecs.
@@ -94,6 +113,14 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	segments := splitPath(path)
 	if len(segments) == 0 {
 		return "", cid.Cid{}, evidence.NewImplicitEvidence(blockContent), nil
+	}
+
+	// For dag-pb blocks, check if it's a HAMT structure
+	if codecName == "dag-pb" {
+		hamtResult := r.tryHAMTResolution(root, blockContent, path)
+		if hamtResult.isHAMT {
+			return hamtResult.matchedPath, hamtResult.target, hamtResult.evidence, hamtResult.err
+		}
 	}
 
 	// Try to resolve the first segment
@@ -174,4 +201,57 @@ func splitPath(path string) []string {
 		return nil
 	}
 	return strings.Split(path, "/")
+}
+
+// hamtResult holds the result of HAMT detection and resolution.
+type hamtResult struct {
+	isHAMT      bool
+	matchedPath string
+	target      cid.Cid
+	evidence    evidence.Evidence
+	err         error
+}
+
+// tryHAMTResolution attempts to detect and resolve a HAMT structure.
+// HAMT nodes are dag-pb blocks where the Data field contains a dag-cbor
+// encoded map with "0" (bitfield) and "1" (entries) keys.
+func (r *Resolver) tryHAMTResolution(root cid.Cid, blockContent []byte, path string) hamtResult {
+	// Try to parse as HAMT node
+	_, err := hamt.ParseNode(blockContent)
+	if err != nil {
+		// Not a HAMT structure, continue with normal resolution
+		return hamtResult{isHAMT: false}
+	}
+
+	// Successfully parsed as HAMT - this is a HAMT node
+	if path == "" {
+		// Empty path returns the root with HAMT evidence
+		return hamtResult{
+			isHAMT:   true,
+			target:   root,
+			evidence: evidence.NewHAMTEvidence(blockContent),
+		}
+	}
+
+	// Create a HAMT resolver and resolve the key
+	hamtResolver := hamt.NewResolver(r.cas,
+		hamt.WithBitWidth(r.hamtConfig.BitWidth),
+		hamt.WithHashFunc(r.hamtConfig.HashFunc),
+		hamt.WithMaxDepth(r.hamtConfig.MaxDepth),
+	)
+
+	matchedPath, target, ev, err := hamtResolver.Resolve(root, path)
+	if err != nil {
+		return hamtResult{
+			isHAMT: true,
+			err:    err,
+		}
+	}
+
+	return hamtResult{
+		isHAMT:      true,
+		matchedPath: matchedPath,
+		target:      target,
+		evidence:    ev,
+	}
 }
