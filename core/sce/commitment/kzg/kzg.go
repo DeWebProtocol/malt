@@ -265,6 +265,10 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]
 
 // ProveBatch generates proofs for multiple paths.
 func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths is empty")
+	}
+
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -353,6 +357,10 @@ func (s *Scheme) VerifyBatch(comm cid.Cid, proofs map[string]arcset.BatchProofEn
 
 // ProveAggregate generates an aggregated proof.
 func (s *Scheme) ProveAggregate(comm cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths is empty")
+	}
+
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {

@@ -2,6 +2,7 @@
 package verkle
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"sync"
 
@@ -41,6 +42,10 @@ func NewScheme() (*Scheme, error) {
 
 // Commit generates a Verkle commitment.
 func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
+	if arcs == nil {
+		return cid.Cid{}, fmt.Errorf("arc set is nil")
+	}
+
 	paths, values := extractSortedPathsValues(arcs)
 
 	entry := &cacheEntry{
@@ -170,9 +175,8 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.View, path string, oldValue, n
 
 	entry.values[index] = newValue
 
-	// Recompute commitment bytes
-	newCommBytes := make([]byte, 32)
-	copy(newCommBytes, entry.pathToStem[entry.paths[0]])
+	// Recompute commitment bytes - hash values to make commitment change
+	newCommBytes := computeCommitmentFromValues(entry.paths, entry.values)
 
 	stemBytes := make([]byte, StemSize)
 	copy(stemBytes, newCommBytes[:StemSize])
@@ -210,11 +214,11 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]
 		entry.values[index] = update.New
 	}
 
-	commBytes = make([]byte, 32)
-	copy(commBytes, entry.pathToStem[entry.paths[0]])
+	// Recompute commitment bytes - hash values to make commitment change
+	newCommBytes := computeCommitmentFromValues(entry.paths, entry.values)
 
 	stemBytes := make([]byte, StemSize)
-	copy(stemBytes, commBytes[:StemSize])
+	copy(stemBytes, newCommBytes[:StemSize])
 
 	s.cache[string(stemBytes)] = entry
 
@@ -300,6 +304,10 @@ func (s *Scheme) VerifyBatch(comm cid.Cid, proofs map[string]arcset.BatchProofEn
 
 // ProveAggregate generates an aggregated proof.
 func (s *Scheme) ProveAggregate(comm cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("paths is empty")
+	}
+
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -385,6 +393,21 @@ func pathToVerkleStem(p string) verkle.Stem {
 		copy(stem, pathBytes)
 	}
 	return stem
+}
+
+// computeCommitmentFromValues computes a commitment that changes with values.
+// This hashes all paths and values together to create a unique commitment.
+func computeCommitmentFromValues(paths []string, values []cid.Cid) []byte {
+	h := sha256.New()
+	for _, path := range paths {
+		h.Write([]byte(path))
+	}
+	for _, value := range values {
+		if value.Defined() {
+			h.Write(value.Bytes())
+		}
+	}
+	return h.Sum(nil)
 }
 
 // extractSortedPathsValues extracts sorted paths and values from an ArcSetView.
