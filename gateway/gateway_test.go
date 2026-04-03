@@ -4,8 +4,9 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -26,27 +27,18 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 }
 
 // newTestEAT creates a new EAT for testing.
-func newTestEAT() *memory.EAT {
+func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := memory.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv, "test-graph")
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
 
-// collectArcs collects arcs from an InMemoryArcSet into a map.
-func collectArcs(arcs *memory.InMemoryArcSet) map[string]cid.Cid {
-	result := make(map[string]cid.Cid)
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		result[path] = target
-	}
-	return result
+// collectArcs collects arcs from an arcset.Map into a map.
+func collectArcs(arcs *arcset.Map) map[string]cid.Cid {
+	return arcs.AsMap()
 }
 
 func TestGatewayExplicitOnly(t *testing.T) {
@@ -60,7 +52,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set with hierarchical paths pointing to PayloadCIDs
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -129,7 +121,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -174,7 +166,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set pointing to a PayloadCID
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcs.Set("data", payloadCID)
 
@@ -222,7 +214,7 @@ func TestGatewayTranscript(t *testing.T) {
 	c := mock.NewCAS()
 
 	// Create arc set with nested structure
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	innerCID, _ := newPayloadCID([]byte("inner"))
 	outerCID, _ := newPayloadCID([]byte("outer"))
 

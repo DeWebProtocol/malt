@@ -3,7 +3,7 @@ package kzg_test
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	cid "github.com/ipfs/go-cid"
 )
@@ -16,7 +16,7 @@ func ExampleNewScheme() {
 		return
 	}
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
 	arcs.Set("document", target1)
@@ -38,7 +38,7 @@ func ExampleNewScheme() {
 func ExampleScheme_Prove() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	target, _ := newPayloadCID([]byte("my-data"))
 	arcs.Set("data", target)
 
@@ -66,7 +66,7 @@ func ExampleScheme_Prove() {
 func ExampleScheme_Update() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	oldTarget, _ := newPayloadCID([]byte("version-1"))
 	arcs.Set("file", oldTarget)
 
@@ -91,7 +91,7 @@ func ExampleScheme_Update() {
 func ExampleScheme_BatchUpdate() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	target1, _ := newPayloadCID([]byte("data-1"))
 	target2, _ := newPayloadCID([]byte("data-2"))
 	arcs.Set("a", target1)
@@ -121,7 +121,7 @@ func ExampleScheme_BatchUpdate() {
 func ExampleScheme_ProveBatch() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Set("path1", t1)
@@ -144,7 +144,7 @@ func ExampleScheme_ProveBatch() {
 func ExampleScheme_ProveAggregate() {
 	c, _ := kzg.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Set("path1", t1)

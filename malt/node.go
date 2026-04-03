@@ -12,7 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/cas/ipfsgateway"
 	casmock "github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
 	"github.com/dewebprotocol/malt/core/types/kvstore"
 	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
@@ -176,8 +176,8 @@ func (n *Node) initEAT() error {
 	graphId := "default" // Default graph ID
 
 	switch n.cfg.EATType {
-	case "simple", "memory":
-		e, err := memory.NewEAT(n.kv, graphId)
+	case "simple", "overwrite":
+		e, err := overwrite.NewEAT(n.kv, graphId)
 		if err != nil {
 			return err
 		}

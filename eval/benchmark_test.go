@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/eval"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -13,9 +13,9 @@ import (
 )
 
 // newTestEAT creates a new EAT for testing.
-func newTestEAT() *memory.EAT {
+func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := memory.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv, "test-graph")
 	if err != nil {
 		panic(err)
 	}

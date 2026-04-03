@@ -1,6 +1,6 @@
-// Package memory provides an in-memory EAT implementation.
+// Package overwrite provides an EAT implementation with overwrite semantics.
 // This EAT stores a single graph's arc set with overwrite semantics.
-package memory
+package overwrite
 
 import (
 	"context"

@@ -3,7 +3,7 @@ package verkle_test
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
 )
 
@@ -15,7 +15,7 @@ func ExampleNewScheme() {
 		return
 	}
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	target, _ := newPayloadCID([]byte("my-data"))
 	arcs.Set("data", target)
 
@@ -35,7 +35,7 @@ func ExampleNewScheme() {
 func ExampleScheme_Prove() {
 	c, _ := verkle.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	target, _ := newPayloadCID([]byte("content"))
 	arcs.Set("path", target)
 
@@ -59,7 +59,7 @@ func ExampleScheme_Prove() {
 func ExampleScheme_Update() {
 	c, _ := verkle.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	oldTarget, _ := newPayloadCID([]byte("v1"))
 	arcs.Set("item", oldTarget)
 
@@ -78,7 +78,7 @@ func ExampleScheme_Update() {
 func ExampleScheme_ProveBatch() {
 	c, _ := verkle.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Set("path1", t1)
@@ -101,7 +101,7 @@ func ExampleScheme_ProveBatch() {
 func ExampleScheme_ProveAggregate() {
 	c, _ := verkle.NewScheme()
 
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
 	arcs.Set("path1", t1)

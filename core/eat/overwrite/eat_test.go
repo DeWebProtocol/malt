@@ -1,17 +1,26 @@
-package memory
+package overwrite
 
 import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+func newTestCID(data []byte) cid.Cid {
+	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		panic(err)
+	}
+	return cid.NewCidV1(cid.Raw, mhash)
+}
 
 // === EAT Tests ===
 
 func TestEATNew(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 
 	// Valid creation
 	eat, err := NewEAT(kv, "test-graph")
@@ -36,7 +45,7 @@ func TestEATNew(t *testing.T) {
 }
 
 func TestEATUpdateAndGet(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "mygraph")
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
@@ -118,7 +127,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 }
 
 func TestEATDelete(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "delete-graph")
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
@@ -157,7 +166,7 @@ func TestEATDelete(t *testing.T) {
 }
 
 func TestEATView(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "view-graph")
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
@@ -195,7 +204,7 @@ func TestEATView(t *testing.T) {
 }
 
 func TestEATIterate(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "iter-graph")
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
@@ -252,7 +261,7 @@ func TestEATIterate(t *testing.T) {
 }
 
 func TestEATMultipleGraphs(t *testing.T) {
-	kv := memory.New() // Shared KVStore
+	kv := kvstore_memory.New() // Shared KVStore
 
 	eat1, err := NewEAT(kv, "graph1")
 	if err != nil {
@@ -299,7 +308,7 @@ func TestEATMultipleGraphs(t *testing.T) {
 }
 
 func TestEATClear(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "clear-graph")
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
@@ -323,7 +332,7 @@ func TestEATClear(t *testing.T) {
 }
 
 func TestEATBatchUpdate(t *testing.T) {
-	kv := memory.New()
+	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "batch-graph")
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)

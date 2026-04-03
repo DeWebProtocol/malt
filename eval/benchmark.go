@@ -7,10 +7,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/eat/memory"
 	"github.com/dewebprotocol/malt/cas"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -106,7 +106,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Track current arc set
-	currentArcs := memory.NewInMemoryArcSet()
+	currentArcs := arcset.NewMap()
 
 	totalUpdateTime := time.Duration(0)
 	var root cid.Cid
@@ -148,7 +148,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	// First commit is the initial one
 	firstStart := time.Now()
-	emptyArcs := memory.NewInMemoryArcSet()
+	emptyArcs := arcset.NewMap()
 	_, _ = b.sce.Commit(emptyArcs)
 	metrics.CommitTime = time.Since(firstStart)
 
@@ -206,7 +206,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure with all arcs
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
@@ -225,16 +225,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	}
 
 	// Collect arcs and store in EAT
-	arcsMap := make(map[string]cid.Cid)
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		arcsMap[path] = target
-	}
-	b.eat.Update(root, cid.Undef, arcsMap)
+	b.eat.Update(root, cid.Undef, arcs.AsMap())
 
 	// Perform random updates
 	totalUpdateTime := time.Duration(0)
@@ -261,17 +252,8 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 			return nil, fmt.Errorf("commit failed at round %d: %w", round, err)
 		}
 
-		// Collect arcs and store in EAT
-		arcsMap := make(map[string]cid.Cid)
-		iter := arcs.Iterate()
-		for {
-			p, t, ok := iter.Next()
-			if !ok {
-				break
-			}
-			arcsMap[p] = t
-		}
-		b.eat.Update(newRoot, root, arcsMap)
+		// Store in EAT
+		b.eat.Update(newRoot, root, arcs.AsMap())
 
 		root = newRoot
 		keys[path] = newKey
@@ -327,7 +309,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	metrics := &Metrics{ArcCount: arcCount}
 
 	// Create initial structure
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	keys := make(map[string]cid.Cid)
 
 	for i := range arcCount {
@@ -344,17 +326,8 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		return nil, fmt.Errorf("initial commit failed: %w", err)
 	}
 
-	// Collect arcs and store in EAT
-	arcsMap := make(map[string]cid.Cid)
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		arcsMap[path] = target
-	}
-	b.eat.Update(root, cid.Undef, arcsMap)
+	// Store in EAT
+	b.eat.Update(root, cid.Undef, arcs.AsMap())
 
 	// Bulk update: update 10% of arcs at once
 	bulkSize := max(1, arcCount/10)
@@ -387,17 +360,8 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 			return nil, fmt.Errorf("bulk commit failed: %w", err)
 		}
 
-		// Collect arcs and store in EAT
-		arcsMap := make(map[string]cid.Cid)
-		iter := arcs.Iterate()
-		for {
-			p, t, ok := iter.Next()
-			if !ok {
-				break
-			}
-			arcsMap[p] = t
-		}
-		b.eat.Update(newRoot, root, arcsMap)
+		// Store in EAT
+		b.eat.Update(newRoot, root, arcs.AsMap())
 
 		root = newRoot
 	}

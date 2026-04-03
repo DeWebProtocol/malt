@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -96,8 +96,8 @@ func BenchmarkVerkleUpdate(b *testing.B) {
 	}
 }
 
-func generateRandomVerkleArcSet(n int) *memory.InMemoryArcSet {
-	arcs := memory.NewInMemoryArcSet()
+func generateRandomVerkleArcSet(n int) *arcset.Map {
+	arcs := arcset.NewMap()
 	for i := 0; i < n; i++ {
 		arcs.Set(fmt.Sprintf("arc_%d", i), generateRandomVerkleKey())
 	}

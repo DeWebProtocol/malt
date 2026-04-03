@@ -3,8 +3,9 @@ package malt_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
@@ -22,9 +23,9 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 }
 
 // newTestEAT creates a new EAT for testing.
-func newTestEAT() *memory.EAT {
+func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := memory.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv, "test-graph")
 	if err != nil {
 		panic(err)
 	}
@@ -41,7 +42,7 @@ func TestStructureBasic(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	arcs.Set("link1", k1)
@@ -93,7 +94,7 @@ func TestStructureUpdate(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create initial structure
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Set("link", k1)
 

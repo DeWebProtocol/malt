@@ -3,8 +3,9 @@ package resolver_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/eat/memory"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -24,27 +25,18 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 }
 
 // newTestEAT creates a new EAT for testing.
-func newTestEAT() *memory.EAT {
+func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := memory.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv, "test-graph")
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
 
-// collectArcs collects arcs from an InMemoryArcSet into a map.
-func collectArcs(arcs *memory.InMemoryArcSet) map[string]cid.Cid {
-	result := make(map[string]cid.Cid)
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		result[path] = target
-	}
-	return result
+// collectArcs collects arcs from an arcset.Map into a map.
+func collectArcs(arcs *arcset.Map) map[string]cid.Cid {
+	return arcs.AsMap()
 }
 
 func TestExplicitResolverResolve(t *testing.T) {
@@ -57,7 +49,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set with hierarchical paths
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -127,7 +119,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Set("a", k1)
 
@@ -170,7 +162,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := memory.NewInMemoryArcSet()
+	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Set("x/y/z", k1)
 
