@@ -19,47 +19,49 @@ const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
 )
 
-// EAT is a single-graph versioned EAT implementation.
+// EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
 type EAT struct {
-	mu      sync.RWMutex
-	graphId string
-	kv      kvstore.KVStore
-	current cid.Cid // current/latest commitment root
+	mu       sync.RWMutex
+	kv       kvstore.KVStore
+	currents map[string]cid.Cid // bucketId -> current version
 }
 
-// NewEAT creates a new versioned EAT with the given KVStore and graphId.
-func NewEAT(kv kvstore.KVStore, graphId string) (*EAT, error) {
+// NewEAT creates a new versioned EAT with the given KVStore.
+func NewEAT(kv kvstore.KVStore) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
-	if graphId == "" {
-		return nil, fmt.Errorf("graphId is required")
-	}
 
 	return &EAT{
-		graphId: graphId,
-		kv:      kv,
+		kv:       kv,
+		currents: make(map[string]cid.Cid),
 	}, nil
 }
 
-// arcKey generates the storage key for a version and path.
-// Format: graphId:version:path
-func (e *EAT) arcKey(version cid.Cid, path string) []byte {
-	return []byte(e.graphId + ":" + version.String() + ":" + path)
+// arcKey generates the storage key for a bucket, version and path.
+// Format: bucketId:version:path
+func arcKey(bucketId string, version cid.Cid, path string) []byte {
+	return []byte(bucketId + ":" + version.String() + ":" + path)
 }
 
-// versionPrefix generates the prefix for all arcs of a specific version.
-// Format: graphId:version:
-func (e *EAT) versionPrefix(version cid.Cid) []byte {
-	return []byte(e.graphId + ":" + version.String() + ":")
+// versionPrefix generates the prefix for all arcs of a specific version in a bucket.
+// Format: bucketId:version:
+func versionPrefix(bucketId string, version cid.Cid) []byte {
+	return []byte(bucketId + ":" + version.String() + ":")
+}
+
+// bucketPrefix generates the prefix for all versions in a bucket.
+// Format: bucketId:
+func bucketPrefix(bucketId string) []byte {
+	return []byte(bucketId + ":")
 }
 
 // Get retrieves the target CID for a path at a specific version.
 // It walks the @previous chain starting from the given version until finding the arc.
 // Returns ErrNotFound if the path doesn't exist in any ancestor version,
 // or if a tombstone (cid.Undef) is found indicating the arc was deleted.
-func (e *EAT) Get(version cid.Cid, path string) (cid.Cid, error) {
+func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error) {
 	ctx := context.Background()
 
 	e.mu.RLock()
@@ -70,7 +72,7 @@ func (e *EAT) Get(version cid.Cid, path string) (cid.Cid, error) {
 
 	for i := 0; i < maxDepth; i++ {
 		// Try to get the arc at current version
-		key := e.arcKey(currentVersion, path)
+		key := arcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
 			// Found the arc entry
@@ -88,7 +90,7 @@ func (e *EAT) Get(version cid.Cid, path string) (cid.Cid, error) {
 		}
 
 		// Arc not found at this version, try parent via @previous
-		prevKey := e.arcKey(currentVersion, PreviousArc)
+		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -109,85 +111,12 @@ func (e *EAT) Get(version cid.Cid, path string) (cid.Cid, error) {
 	return cid.Cid{}, fmt.Errorf("version chain too deep (max %d)", maxDepth)
 }
 
-// GetLatest retrieves the target CID for a path at the current (latest) version.
-func (e *EAT) GetLatest(path string) (cid.Cid, error) {
-	e.mu.RLock()
-	current := e.current
-	e.mu.RUnlock()
-
-	if current == cid.Undef {
-		return cid.Cid{}, arcset.ErrNotFound
-	}
-
-	return e.Get(current, path)
-}
-
-// Set stores an arc entry at a specific version.
-// This is used when creating a new version with modified arcs.
-// The caller must ensure the version is properly linked via @previous.
-// If target is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
-func (e *EAT) Set(version cid.Cid, path string, target cid.Cid) error {
-	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	key := e.arcKey(version, path)
-
-	var val []byte
-	if target == cid.Undef {
-		val = []byte{} // tombstone
-	} else {
-		val = target.Bytes()
-	}
-
-	if err := e.kv.Put(ctx, key, val); err != nil {
-		return fmt.Errorf("failed to set arc: %w", err)
-	}
-
-	return nil
-}
-
-// SetBatch stores multiple arc entries at a specific version in a single transaction.
-// If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
-func (e *EAT) SetBatch(version cid.Cid, arcs map[string]cid.Cid) error {
-	if len(arcs) == 0 {
-		return nil
-	}
-
-	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	batch := e.kv.Batch()
-	for path, target := range arcs {
-		key := e.arcKey(version, path)
-		var val []byte
-		if target == cid.Undef {
-			val = []byte{} // tombstone
-		} else {
-			val = target.Bytes()
-		}
-		if err := batch.Put(key, val); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to add arc %s to batch: %w", path, err)
-		}
-	}
-
-	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit batch: %w", err)
-	}
-
-	return nil
-}
-
 // Update stores arcs at a new version and links it to the parent version.
 // The newRoot becomes the new version identifier, linked to parentRoot via @previous.
 // If parentRoot is cid.Undef, this creates the first version (no @previous).
 // If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
 // When Get() encounters a tombstone while walking the chain, it returns ErrNotFound.
-func (e *EAT) Update(newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
+func (e *EAT) Update(bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	ctx := context.Background()
 
 	e.mu.Lock()
@@ -197,7 +126,7 @@ func (e *EAT) Update(newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error
 
 	// Store all arcs for this version
 	for path, target := range arcs {
-		key := e.arcKey(newRoot, path)
+		key := arcKey(bucketId, newRoot, path)
 		if target == cid.Undef {
 			// Store tombstone (empty bytes) to mark deletion
 			if err := batch.Put(key, []byte{}); err != nil {
@@ -215,7 +144,7 @@ func (e *EAT) Update(newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error
 
 	// Link to parent via @previous (unless this is the first version)
 	if parentRoot != cid.Undef {
-		prevKey := e.arcKey(newRoot, PreviousArc)
+		prevKey := arcKey(bucketId, newRoot, PreviousArc)
 		prevVal := parentRoot.Bytes()
 		if err := batch.Put(prevKey, prevVal); err != nil {
 			batch.Cancel()
@@ -228,27 +157,35 @@ func (e *EAT) Update(newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error
 	}
 
 	// Update current to new version
-	e.current = newRoot
+	e.currents[bucketId] = newRoot
 
 	return nil
 }
 
-// Current returns the current (latest) commitment root.
-func (e *EAT) Current() cid.Cid {
+// Current returns the current (latest) commitment root for a bucket.
+func (e *EAT) Current(bucketId string) cid.Cid {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.current
+	return e.currents[bucketId]
+}
+
+// SetCurrent sets the current version for a bucket.
+// This is useful when loading state from persistent storage.
+func (e *EAT) SetCurrent(bucketId string, version cid.Cid) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.currents[bucketId] = version
 }
 
 // GetParent returns the parent version of a given version via @previous.
 // Returns cid.Undef if the version has no parent (first version).
-func (e *EAT) GetParent(version cid.Cid) (cid.Cid, error) {
+func (e *EAT) GetParent(bucketId string, version cid.Cid) (cid.Cid, error) {
 	ctx := context.Background()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	prevKey := e.arcKey(version, PreviousArc)
+	prevKey := arcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -260,30 +197,21 @@ func (e *EAT) GetParent(version cid.Cid) (cid.Cid, error) {
 	return cid.Cast(prevVal)
 }
 
-// View returns an ArcSetView for a specific version.
+// View returns an ArcSetView for a specific bucket and version.
 // The view walks the @previous chain for Get operations.
-func (e *EAT) View(version cid.Cid) arcset.View {
-	return &versionedView{eat: e, version: version}
-}
-
-// ViewLatest returns an ArcSetView for the current (latest) version.
-func (e *EAT) ViewLatest() arcset.View {
-	e.mu.RLock()
-	current := e.current
-	e.mu.RUnlock()
-
-	return &versionedView{eat: e, version: current}
+func (e *EAT) View(bucketId string, version cid.Cid) arcset.View {
+	return &versionedView{eat: e, bucketId: bucketId, version: version}
 }
 
 // Iterate returns an iterator over all arcs directly stored at a specific version.
 // Note: This only iterates arcs at that version, not including ancestors.
-func (e *EAT) Iterate(version cid.Cid) arcset.Iterator {
+func (e *EAT) Iterate(bucketId string, version cid.Cid) arcset.Iterator {
 	ctx := context.Background()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	prefix := e.versionPrefix(version)
+	prefix := versionPrefix(bucketId, version)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
 	return &versionedIterator{
@@ -293,28 +221,15 @@ func (e *EAT) Iterate(version cid.Cid) arcset.Iterator {
 	}
 }
 
-// IterateLatest returns an iterator over arcs at the current version.
-func (e *EAT) IterateLatest() arcset.Iterator {
-	e.mu.RLock()
-	current := e.current
-	e.mu.RUnlock()
-
-	if current == cid.Undef {
-		return &emptyIterator{}
-	}
-
-	return e.Iterate(current)
-}
-
 // Len returns the number of arcs directly stored at a specific version.
 // Note: This only counts arcs at that version, not including ancestors.
-func (e *EAT) Len(version cid.Cid) int {
+func (e *EAT) Len(bucketId string, version cid.Cid) int {
 	ctx := context.Background()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	prefix := e.versionPrefix(version)
+	prefix := versionPrefix(bucketId, version)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
@@ -334,7 +249,7 @@ func (e *EAT) Len(version cid.Cid) int {
 
 // TotalLen returns the total number of arcs visible at a version (including ancestors).
 // This walks the @previous chain and collects all unique paths.
-func (e *EAT) TotalLen(version cid.Cid) int {
+func (e *EAT) TotalLen(bucketId string, version cid.Cid) int {
 	ctx := context.Background()
 
 	e.mu.RLock()
@@ -345,7 +260,7 @@ func (e *EAT) TotalLen(version cid.Cid) int {
 	maxDepth := 1000
 
 	for i := 0; i < maxDepth; i++ {
-		prefix := e.versionPrefix(currentVersion)
+		prefix := versionPrefix(bucketId, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
 		for iter.Next() {
@@ -358,7 +273,7 @@ func (e *EAT) TotalLen(version cid.Cid) int {
 		iter.Close()
 
 		// Try to get parent
-		prevKey := e.arcKey(currentVersion, PreviousArc)
+		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break // No more ancestors
@@ -378,19 +293,14 @@ func (e *EAT) TotalLen(version cid.Cid) int {
 func (e *EAT) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.current = cid.Undef
+	e.currents = make(map[string]cid.Cid)
 	return nil
-}
-
-// GraphId returns the graph identifier.
-func (e *EAT) GraphId() string {
-	return e.graphId
 }
 
 // CopyOnWrite copies unchanged arcs from parent to a new version.
 // This shortens resolution paths by making all arcs available at the new version.
 // Use this when version history is long and resolution cost needs optimization.
-func (e *EAT) CopyOnWrite(newRoot cid.Cid, parentRoot cid.Cid, modifiedPaths map[string]bool) error {
+func (e *EAT) CopyOnWrite(bucketId string, newRoot, parentRoot cid.Cid, modifiedPaths map[string]bool) error {
 	ctx := context.Background()
 
 	e.mu.Lock()
@@ -402,7 +312,7 @@ func (e *EAT) CopyOnWrite(newRoot cid.Cid, parentRoot cid.Cid, modifiedPaths map
 	maxDepth := 1000
 
 	for i := 0; i < maxDepth; i++ {
-		prefix := e.versionPrefix(currentVersion)
+		prefix := versionPrefix(bucketId, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
 		for iter.Next() {
@@ -426,7 +336,7 @@ func (e *EAT) CopyOnWrite(newRoot cid.Cid, parentRoot cid.Cid, modifiedPaths map
 		iter.Close()
 
 		// Get parent version
-		prevKey := e.arcKey(currentVersion, PreviousArc)
+		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -446,7 +356,7 @@ func (e *EAT) CopyOnWrite(newRoot cid.Cid, parentRoot cid.Cid, modifiedPaths map
 
 	batch := e.kv.Batch()
 	for path, target := range arcsToCopy {
-		key := e.arcKey(newRoot, path)
+		key := arcKey(bucketId, newRoot, path)
 		val := target.Bytes()
 		if err := batch.Put(key, val); err != nil {
 			batch.Cancel()
@@ -463,12 +373,13 @@ func (e *EAT) CopyOnWrite(newRoot cid.Cid, parentRoot cid.Cid, modifiedPaths map
 
 // versionedView implements arcset.View for a specific version.
 type versionedView struct {
-	eat     *EAT
-	version cid.Cid
+	eat      *EAT
+	bucketId string
+	version  cid.Cid
 }
 
 func (v *versionedView) Get(path string) (cid.Cid, bool) {
-	c, err := v.eat.Get(v.version, path)
+	c, err := v.eat.Get(v.bucketId, v.version, path)
 	if err != nil {
 		return cid.Cid{}, false
 	}
@@ -478,14 +389,15 @@ func (v *versionedView) Get(path string) (cid.Cid, bool) {
 func (v *versionedView) Iterate() arcset.Iterator {
 	// For versioned view, we provide a flattened iterator that walks ancestors
 	return &flattenedIterator{
-		eat:     v.eat,
-		version: v.version,
-		seen:    make(map[string]bool),
+		eat:      v.eat,
+		bucketId: v.bucketId,
+		version:  v.version,
+		seen:     make(map[string]bool),
 	}
 }
 
 func (v *versionedView) Len() int {
-	return v.eat.TotalLen(v.version)
+	return v.eat.TotalLen(v.bucketId, v.version)
 }
 
 // versionedIterator implements arcset.Iterator for arcs at a single version.
@@ -524,6 +436,7 @@ func (it *versionedIterator) Err() error {
 // flattenedIterator walks the @previous chain to iterate all visible arcs.
 type flattenedIterator struct {
 	eat       *EAT
+	bucketId  string
 	version   cid.Cid
 	seen      map[string]bool
 	current   map[string]cid.Cid // arcs at current version being processed
@@ -563,7 +476,7 @@ func (it *flattenedIterator) Next() (string, cid.Cid, bool) {
 
 	// Load arcs at this version
 	it.current = make(map[string]cid.Cid)
-	prefix := it.eat.versionPrefix(nextVersion)
+	prefix := versionPrefix(it.bucketId, nextVersion)
 	iter := it.eat.kv.NewIterator(ctx, prefix, nil)
 
 	for iter.Next() {
@@ -599,15 +512,4 @@ func (it *flattenedIterator) Next() (string, cid.Cid, bool) {
 
 func (it *flattenedIterator) Err() error {
 	return it.err
-}
-
-// emptyIterator is an empty iterator.
-type emptyIterator struct{}
-
-func (it *emptyIterator) Next() (string, cid.Cid, bool) {
-	return "", cid.Cid{}, false
-}
-
-func (it *emptyIterator) Err() error {
-	return nil
 }

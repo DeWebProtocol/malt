@@ -29,12 +29,14 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 // newTestEAT creates a new EAT for testing.
 func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv)
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
+
+const testBucketId = "test-graph"
 
 // collectArcs collects arcs from an arcset.Map into a map.
 func collectArcs(arcs *arcset.Map) map[string]cid.Cid {
@@ -68,10 +70,10 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
 	// Create gateway
-	explicitR := explicit.NewResolver(e, s)
+	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := gateway.NewGateway(explicitR, implicitR)
 
@@ -135,9 +137,9 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
-	explicitR := explicit.NewResolver(e, s)
+	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := gateway.NewGateway(explicitR, implicitR)
 
@@ -177,13 +179,13 @@ func TestGatewayImplicitStep(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
 	// Add block to mock CAS
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
 
 	// Create gateway
-	explicitR := explicit.NewResolver(e, s)
+	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := gateway.NewGateway(explicitR, implicitR)
 
@@ -228,10 +230,10 @@ func TestGatewayTranscript(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
 	// Create gateway
-	explicitR := explicit.NewResolver(e, s)
+	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := gateway.NewGateway(explicitR, implicitR)
 

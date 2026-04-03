@@ -14,13 +14,14 @@ import (
 
 // Structure represents a MALT structure with explicit arcs.
 type Structure struct {
-	root cid.Cid
-	eat  eat.EAT
-	sce  *sce.Engine
+	root     cid.Cid
+	bucketId string
+	eat      eat.EAT
+	sce      *sce.Engine
 }
 
 // NewStructure creates a new structure from an arc set.
-func NewStructure(arcs arcset.View, e eat.EAT, s *sce.Engine) (*Structure, error) {
+func NewStructure(arcs arcset.View, bucketId string, e eat.EAT, s *sce.Engine) (*Structure, error) {
 	// Generate commitment
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -42,14 +43,15 @@ func NewStructure(arcs arcset.View, e eat.EAT, s *sce.Engine) (*Structure, error
 	}
 
 	// Store arcs in EAT using Update (first version, no old root)
-	if err := e.Update(root, cid.Undef, arcsMap); err != nil {
+	if err := e.Update(bucketId, root, cid.Undef, arcsMap); err != nil {
 		return nil, fmt.Errorf("failed to store arcs: %w", err)
 	}
 
 	return &Structure{
-		root: root,
-		eat:  e,
-		sce:  s,
+		root:     root,
+		bucketId: bucketId,
+		eat:      e,
+		sce:      s,
 	}, nil
 }
 
@@ -62,13 +64,13 @@ func (s *Structure) Root() cid.Cid {
 // Returns the target CID and a proof.
 func (s *Structure) Resolve(path string) (cid.Cid, arcset.Proof, error) {
 	// Get target from EAT
-	target, err := s.eat.Get(s.root, path)
+	target, err := s.eat.Get(s.bucketId, s.root, path)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to get arc: %w", err)
 	}
 
 	// Generate proof
-	view := s.eat.View(s.root)
+	view := s.eat.View(s.bucketId, s.root)
 	_, proof, err := s.sce.Prove(s.root, view, path)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
@@ -81,13 +83,13 @@ func (s *Structure) Resolve(path string) (cid.Cid, arcset.Proof, error) {
 // Returns a new Structure with the updated arc.
 func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 	// Get current value
-	oldKey, err := s.eat.Get(s.root, path)
+	oldKey, err := s.eat.Get(s.bucketId, s.root, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current value: %w", err)
 	}
 
 	// Update commitment
-	view := s.eat.View(s.root)
+	view := s.eat.View(s.bucketId, s.root)
 	newRoot, err := s.sce.Update(s.root, view, path, oldKey, newKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update commitment: %w", err)
@@ -95,14 +97,15 @@ func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 
 	// Update EAT
 	arcsMap := map[string]cid.Cid{path: newKey}
-	if err := s.eat.Update(newRoot, s.root, arcsMap); err != nil {
+	if err := s.eat.Update(s.bucketId, newRoot, s.root, arcsMap); err != nil {
 		return nil, fmt.Errorf("failed to update EAT: %w", err)
 	}
 
 	return &Structure{
-		root: newRoot,
-		eat:  s.eat,
-		sce:  s.sce,
+		root:     newRoot,
+		bucketId: s.bucketId,
+		eat:      s.eat,
+		sce:      s.sce,
 	}, nil
 }
 
@@ -113,5 +116,5 @@ func (s *Structure) Verify(path string, target cid.Cid, proof arcset.Proof) (boo
 
 // GetArcSet returns an ArcSetView for this structure.
 func (s *Structure) GetArcSet() arcset.View {
-	return s.eat.View(s.root)
+	return s.eat.View(s.bucketId, s.root)
 }

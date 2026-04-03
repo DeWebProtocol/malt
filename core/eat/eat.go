@@ -19,24 +19,29 @@ func IsNotFound(err error) bool {
 }
 
 // EAT (Explicit Arc Table) stores arc entries for fast lookup.
-// It maps (root, path) -> target CID.
+// It maps (bucketId, path) -> target CID.
+// bucketId provides namespace isolation for different graphs.
 // Both versioned and non-versioned implementations share this interface.
 type EAT interface {
-	// Get retrieves the target CID for (root, path).
-	// For versioned EAT, walks the @previous chain if needed.
+	// Get retrieves the target CID for (bucketId, root, path).
+	// bucketId is the namespace for the arc set.
+	// For overwrite EAT: root is optional (cid.Undef skips validation).
+	// For versioned EAT: root is the version to start the chain lookup.
 	// Returns ErrNotFound if not found.
-	Get(root cid.Cid, path string) (cid.Cid, error)
+	Get(bucketId string, root cid.Cid, path string) (cid.Cid, error)
 
 	// Update stores arc entries with a new commitment root.
-	// For non-versioned EAT: oldRoot mappings are deleted, data is overwritten.
+	// bucketId is the namespace for the arc set.
+	// For overwrite EAT: oldRoot mappings are invalidated, data is overwritten.
 	// For versioned EAT: newRoot is linked to parentRoot via @previous.
 	// Use cid.Undef for oldRoot/parentRoot for the first version.
 	// If a target CID is cid.Undef, the corresponding arc is deleted.
-	Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
+	Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
 
-	// View returns an ArcSetView for a specific root.
+	// View returns an ArcSetView for a specific bucket and root.
+	// bucketId is the namespace for the arc set.
 	// For versioned EAT, the view includes all ancestor arcs.
-	View(root cid.Cid) arcset.View
+	View(bucketId string, root cid.Cid) arcset.View
 
 	// Close releases resources.
 	Close() error
