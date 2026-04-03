@@ -2,7 +2,14 @@
 // An arc set is a collection of path -> CID mappings.
 package arcset
 
-import cid "github.com/ipfs/go-cid"
+import (
+	"errors"
+
+	cid "github.com/ipfs/go-cid"
+)
+
+// ErrNotFound is returned when an arc is not found.
+var ErrNotFound = errors.New("arc not found")
 
 // Iterator iterates over arcs in an arc set.
 type Iterator interface {

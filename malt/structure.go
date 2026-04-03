@@ -27,19 +27,23 @@ func NewStructure(arcs arcset.View, e eat.EAT, s *sce.Engine) (*Structure, error
 		return nil, fmt.Errorf("failed to commit: %w", err)
 	}
 
-	// Store arcs in EAT
+	// Collect arcs into a map
+	arcsMap := make(map[string]cid.Cid)
 	iter := arcs.Iterate()
 	for {
 		path, target, ok := iter.Next()
 		if !ok {
 			break
 		}
-		if err := e.Put(root, path, target); err != nil {
-			return nil, fmt.Errorf("failed to store arc: %w", err)
-		}
+		arcsMap[path] = target
 	}
 	if iter.Err() != nil {
 		return nil, fmt.Errorf("iteration error: %w", iter.Err())
+	}
+
+	// Store arcs in EAT using Update (first version, no old root)
+	if err := e.Update(root, cid.Undef, arcsMap); err != nil {
+		return nil, fmt.Errorf("failed to store arcs: %w", err)
 	}
 
 	return &Structure{
@@ -90,7 +94,8 @@ func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 	}
 
 	// Update EAT
-	if err := s.eat.Put(newRoot, path, newKey); err != nil {
+	arcsMap := map[string]cid.Cid{path: newKey}
+	if err := s.eat.Update(newRoot, s.root, arcsMap); err != nil {
 		return nil, fmt.Errorf("failed to update EAT: %w", err)
 	}
 

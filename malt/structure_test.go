@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/eat/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	malt "github.com/dewebprotocol/malt/malt"
@@ -20,9 +21,19 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, mhash), nil
 }
 
+// newTestEAT creates a new EAT for testing.
+func newTestEAT() *memory.EAT {
+	kv := kvstore_memory.New()
+	e, err := memory.NewEAT(kv, "test-graph")
+	if err != nil {
+		panic(err)
+	}
+	return e
+}
+
 func TestStructureBasic(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -74,7 +85,7 @@ func TestStructureBasic(t *testing.T) {
 
 func TestStructureUpdate(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -97,10 +108,6 @@ func TestStructureUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
-
-	// Note: SimpleEAT is not versioned, so the behavior depends on EAT implementation
-	// For SimpleEAT, the update creates a new root but the old root's EAT entry is not preserved
-	// This test verifies that the new structure works correctly
 
 	// New structure should resolve to new value
 	resolved, proof, err := newStructure.Resolve("link")

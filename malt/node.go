@@ -112,7 +112,7 @@ func NewNode(opts ...Option) (*Node, error) {
 	if options.eat != nil {
 		node.eat = options.eat
 	} else {
-		node.eat, err = node.initEAT()
+		err = node.initEAT()
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize EAT: %w", err)
 		}
@@ -170,14 +170,28 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 }
 
 // initEAT creates an EAT from config.
-func (n *Node) initEAT() (eat.EAT, error) {
+// Note: Single-graph EAT requires a graphId. Using "default" for now.
+// TODO: Support multi-graph management at a higher layer.
+func (n *Node) initEAT() error {
+	graphId := "default" // Default graph ID
+
 	switch n.cfg.EATType {
 	case "simple", "memory":
-		return memory.NewBucketedInMemoryEAT(), nil
+		e, err := memory.NewEAT(n.kv, graphId)
+		if err != nil {
+			return err
+		}
+		n.eat = e
+		return nil
 	case "versioned":
-		return versioned.NewEAT(n.kv)
+		e, err := versioned.NewEAT(n.kv, graphId)
+		if err != nil {
+			return err
+		}
+		n.eat = e
+		return nil
 	default:
-		return nil, fmt.Errorf("unknown eat type: %s", n.cfg.EATType)
+		return fmt.Errorf("unknown eat type: %s", n.cfg.EATType)
 	}
 }
 

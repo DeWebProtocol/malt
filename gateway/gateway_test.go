@@ -5,6 +5,7 @@ import (
 
 	"github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -24,9 +25,33 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, mhash), nil
 }
 
+// newTestEAT creates a new EAT for testing.
+func newTestEAT() *memory.EAT {
+	kv := kvstore_memory.New()
+	e, err := memory.NewEAT(kv, "test-graph")
+	if err != nil {
+		panic(err)
+	}
+	return e
+}
+
+// collectArcs collects arcs from an InMemoryArcSet into a map.
+func collectArcs(arcs *memory.InMemoryArcSet) map[string]cid.Cid {
+	result := make(map[string]cid.Cid)
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		result[path] = target
+	}
+	return result
+}
+
 func TestGatewayExplicitOnly(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -51,14 +76,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		e.Put(root, path, target)
-	}
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	// Create gateway
 	explicitR := explicit.NewResolver(e, s)
@@ -102,7 +120,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	// Test that longest prefix matching works
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -125,14 +143,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		e.Put(root, path, target)
-	}
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	explicitR := explicit.NewResolver(e, s)
 	implicitR := implicit.NewResolver(c)
@@ -154,7 +165,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 
 func TestGatewayImplicitStep(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -174,7 +185,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Put(root, "data", payloadCID)
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	// Add block to mock CAS
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
@@ -202,7 +213,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 
 func TestGatewayTranscript(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -225,14 +236,7 @@ func TestGatewayTranscript(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		e.Put(root, path, target)
-	}
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	// Create gateway
 	explicitR := explicit.NewResolver(e, s)

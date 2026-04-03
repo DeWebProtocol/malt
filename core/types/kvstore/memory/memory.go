@@ -3,10 +3,17 @@ package memory
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/dewebprotocol/malt/core/types/kvstore"
 )
+
+// hasPrefix checks if a byte slice has the given prefix.
+func hasPrefix(s, prefix []byte) bool {
+	return strings.HasPrefix(string(s), string(prefix))
+}
 
 // KV is an in-memory implementation of kvstore.KVStore.
 // Useful for testing and development.
@@ -79,8 +86,22 @@ func (m *KV) NewIterator(ctx context.Context, start, end []byte) kvstore.Iterato
 	// Collect all keys in range
 	var keys [][]byte
 	for k := range m.data {
-		keys = append(keys, []byte(k))
+		key := []byte(k)
+		// Filter by start (prefix) if specified
+		if start != nil && !hasPrefix(key, start) {
+			continue
+		}
+		// Filter by end (exclusive upper bound) if specified
+		if end != nil && string(key) >= string(end) {
+			continue
+		}
+		keys = append(keys, key)
 	}
+
+	// Sort keys for deterministic iteration
+	sort.Slice(keys, func(i, j int) bool {
+		return string(keys[i]) < string(keys[j])
+	})
 
 	return &iterator{
 		kv:    m,

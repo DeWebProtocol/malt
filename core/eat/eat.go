@@ -20,24 +20,21 @@ func IsNotFound(err error) bool {
 
 // EAT (Explicit Arc Table) stores arc entries for fast lookup.
 // It maps (root, path) -> target CID.
+// Both versioned and non-versioned implementations share this interface.
 type EAT interface {
 	// Get retrieves the target CID for (root, path).
+	// For versioned EAT, walks the @previous chain if needed.
 	// Returns ErrNotFound if not found.
 	Get(root cid.Cid, path string) (cid.Cid, error)
 
-	// Put stores an arc entry.
-	Put(root cid.Cid, path string, target cid.Cid) error
-
-	// PutBatch stores multiple arc entries for the same root in a single transaction.
-	// This is more efficient than calling Put multiple times as it only acquires
-	// the write lock once.
-	PutBatch(root cid.Cid, arcs map[string]cid.Cid) error
-
-	// Delete removes an arc entry.
-	Delete(root cid.Cid, path string) error
+	// Update stores arc entries with a new commitment root.
+	// For non-versioned EAT: oldRoot mappings are deleted, data is overwritten.
+	// For versioned EAT: newRoot is linked to parentRoot via @previous.
+	// Use cid.Undef for oldRoot/parentRoot for the first version.
+	Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
 
 	// View returns an ArcSetView for a specific root.
-	// This allows EAT to be used directly as an ArcSetView source.
+	// For versioned EAT, the view includes all ancestor arcs.
 	View(root cid.Cid) arcset.View
 
 	// Close releases resources.

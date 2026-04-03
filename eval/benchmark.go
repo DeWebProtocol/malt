@@ -127,14 +127,20 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 			return nil, fmt.Errorf("commit failed at arc %d: %w", i, err)
 		}
 
-		// Store ALL arcs in EAT for this new root
+		// Collect arcs into map for batch update
+		arcsMap := make(map[string]cid.Cid)
 		iter := currentArcs.Iterate()
 		for {
 			p, t, ok := iter.Next()
 			if !ok {
 				break
 			}
-			b.eat.Put(newRoot, p, t)
+			arcsMap[p] = t
+		}
+
+		// Store arcs in EAT using Update
+		if err := b.eat.Update(newRoot, root, arcsMap); err != nil {
+			return nil, fmt.Errorf("eat update failed at arc %d: %w", i, err)
 		}
 
 		root = newRoot
@@ -218,15 +224,17 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		return nil, fmt.Errorf("initial commit failed: %w", err)
 	}
 
-	// Store in EAT
+	// Collect arcs and store in EAT
+	arcsMap := make(map[string]cid.Cid)
 	iter := arcs.Iterate()
 	for {
 		path, target, ok := iter.Next()
 		if !ok {
 			break
 		}
-		b.eat.Put(root, path, target)
+		arcsMap[path] = target
 	}
+	b.eat.Update(root, cid.Undef, arcsMap)
 
 	// Perform random updates
 	totalUpdateTime := time.Duration(0)
@@ -253,15 +261,17 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 			return nil, fmt.Errorf("commit failed at round %d: %w", round, err)
 		}
 
-		// Store ALL arcs in EAT for this new root
+		// Collect arcs and store in EAT
+		arcsMap := make(map[string]cid.Cid)
 		iter := arcs.Iterate()
 		for {
 			p, t, ok := iter.Next()
 			if !ok {
 				break
 			}
-			b.eat.Put(newRoot, p, t)
+			arcsMap[p] = t
 		}
+		b.eat.Update(newRoot, root, arcsMap)
 
 		root = newRoot
 		keys[path] = newKey
@@ -334,14 +344,17 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		return nil, fmt.Errorf("initial commit failed: %w", err)
 	}
 
+	// Collect arcs and store in EAT
+	arcsMap := make(map[string]cid.Cid)
 	iter := arcs.Iterate()
 	for {
 		path, target, ok := iter.Next()
 		if !ok {
 			break
 		}
-		b.eat.Put(root, path, target)
+		arcsMap[path] = target
 	}
+	b.eat.Update(root, cid.Undef, arcsMap)
 
 	// Bulk update: update 10% of arcs at once
 	bulkSize := max(1, arcCount/10)
@@ -374,15 +387,17 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 			return nil, fmt.Errorf("bulk commit failed: %w", err)
 		}
 
-		// Store ALL arcs in EAT for this new root
+		// Collect arcs and store in EAT
+		arcsMap := make(map[string]cid.Cid)
 		iter := arcs.Iterate()
 		for {
 			p, t, ok := iter.Next()
 			if !ok {
 				break
 			}
-			b.eat.Put(newRoot, p, t)
+			arcsMap[p] = t
 		}
+		b.eat.Update(newRoot, root, arcsMap)
 
 		root = newRoot
 	}

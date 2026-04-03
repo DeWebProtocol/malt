@@ -6,14 +6,25 @@ import (
 
 	"github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/eval"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 )
 
+// newTestEAT creates a new EAT for testing.
+func newTestEAT() *memory.EAT {
+	kv := kvstore_memory.New()
+	e, err := memory.NewEAT(kv, "test-graph")
+	if err != nil {
+		panic(err)
+	}
+	return e
+}
+
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -82,7 +93,7 @@ func TestBenchmarkRunner(t *testing.T) {
 }
 
 func BenchmarkAppend(b *testing.B) {
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
@@ -103,7 +114,7 @@ func BenchmarkAppend(b *testing.B) {
 }
 
 func BenchmarkRandom(b *testing.B) {
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
@@ -124,7 +135,7 @@ func BenchmarkRandom(b *testing.B) {
 }
 
 func BenchmarkBulk(b *testing.B) {
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()

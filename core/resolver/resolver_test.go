@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/eat/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -22,9 +23,33 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, mhash), nil
 }
 
+// newTestEAT creates a new EAT for testing.
+func newTestEAT() *memory.EAT {
+	kv := kvstore_memory.New()
+	e, err := memory.NewEAT(kv, "test-graph")
+	if err != nil {
+		panic(err)
+	}
+	return e
+}
+
+// collectArcs collects arcs from an InMemoryArcSet into a map.
+func collectArcs(arcs *memory.InMemoryArcSet) map[string]cid.Cid {
+	result := make(map[string]cid.Cid)
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		result[path] = target
+	}
+	return result
+}
+
 func TestExplicitResolverResolve(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -48,14 +73,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		e.Put(root, path, target)
-	}
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s)
@@ -101,7 +119,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 
 func TestExplicitResolverVerify(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -120,7 +138,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Put(root, "a", k1)
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s)
@@ -144,7 +162,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 
 func TestExplicitResolverNoMatch(t *testing.T) {
 	// Create components
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -163,7 +181,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Put(root, "x/y/z", k1)
+	e.Update(root, cid.Undef, collectArcs(arcs))
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s)
@@ -177,7 +195,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 
 func TestResolverInterface(t *testing.T) {
 	// Verify explicit.Resolver implements resolver.Resolver
-	e := memory.NewBucketedInMemoryEAT()
+	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 
