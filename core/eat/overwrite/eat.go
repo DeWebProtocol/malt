@@ -1,5 +1,5 @@
 // Package overwrite provides an EAT implementation with overwrite semantics.
-// This EAT stores a single graph's arc set with overwrite semantics.
+// This EAT stores arc sets with bucket-based isolation and overwrite semantics.
 package overwrite
 
 import (
@@ -12,68 +12,91 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// EAT is a single-graph EAT with overwrite semantics.
-// It uses a fixed graphId for data storage, and maintains root->graphId mappings
-// to allow access via commitment roots.
-type EAT struct {
-	mu      sync.RWMutex
-	graphId string
-	kv      kvstore.KVStore
+// Option is a configuration option for EAT.
+type Option func(*EAT)
+
+// WithSnapshotView configures EAT to create snapshot views.
+// When enabled, View() returns a snapshot of the data at that point in time,
+// ensuring consistency even if the underlying data changes.
+func WithSnapshotView(snapshot bool) Option {
+	return func(e *EAT) {
+		e.snapshotView = snapshot
+	}
 }
 
-// NewEAT creates a new single-graph EAT with the given KVStore and graphId.
-// The graphId is a unique identifier used as the namespace for all arc entries.
-func NewEAT(kv kvstore.KVStore, graphId string) (*EAT, error) {
+// EAT is a stateless EAT with overwrite semantics.
+// It uses bucketId for namespace isolation, allowing multiple graphs
+// to share the same KVStore instance.
+type EAT struct {
+	mu           sync.RWMutex
+	kv           kvstore.KVStore
+	snapshotView bool // if true, View creates a snapshot instead of live view
+}
+
+// NewEAT creates a new EAT with the given KVStore.
+// Options can be provided to configure the EAT behavior.
+func NewEAT(kv kvstore.KVStore, opts ...Option) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
-	if graphId == "" {
-		return nil, fmt.Errorf("graphId is required")
+
+	e := &EAT{
+		kv: kv,
 	}
 
-	return &EAT{
-		graphId: graphId,
-		kv:      kv,
-	}, nil
+	for _, opt := range opts {
+		opt(e)
+	}
+
+	return e, nil
 }
 
-// arcKey generates the storage key for a path.
-// Format: graphId:path
-func (e *EAT) arcKey(path string) []byte {
-	return []byte(e.graphId + ":" + path)
+// arcKey generates the storage key for a path within a bucket.
+// Format: bucketId:path
+func arcKey(bucketId, path string) []byte {
+	return []byte(bucketId + ":" + path)
 }
 
-// rootKey generates the key for root->graphId mapping.
+// bucketPrefix generates the prefix for all arcs in a bucket.
+// Format: bucketId:
+func bucketPrefix(bucketId string) []byte {
+	return []byte(bucketId + ":")
+}
+
+// rootKey generates the key for root->bucketId mapping.
 // Format: root:{cid}
 func rootKey(root cid.Cid) []byte {
 	return []byte("root:" + root.String())
 }
 
-// Get retrieves the target CID for a path via a commitment root.
-// It first resolves root->graphId, then looks up the arc in that graph.
-func (e *EAT) Get(root cid.Cid, path string) (cid.Cid, error) {
+// Get retrieves the target CID for a path within a bucket.
+// If root is not cid.Undef, it validates that the root is the current active root.
+// If root is cid.Undef, validation is skipped.
+func (e *EAT) Get(bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 	ctx := context.Background()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// Resolve root -> graphId (verify the root is valid for this graph)
-	rootKeyBytes := rootKey(root)
-	graphIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
-	if err != nil {
-		if err == kvstore.ErrNotFound {
+	// Validate root if provided
+	if root != cid.Undef {
+		rootKeyBytes := rootKey(root)
+		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		if err != nil {
+			if err == kvstore.ErrNotFound {
+				return cid.Cid{}, arcset.ErrNotFound
+			}
+			return cid.Cid{}, fmt.Errorf("failed to resolve root: %w", err)
+		}
+
+		// Verify this root maps to the correct bucket
+		if string(bucketIdBytes) != bucketId {
 			return cid.Cid{}, arcset.ErrNotFound
 		}
-		return cid.Cid{}, fmt.Errorf("failed to resolve root: %w", err)
-	}
-
-	// Verify this root maps to our graphId
-	if string(graphIdBytes) != e.graphId {
-		return cid.Cid{}, arcset.ErrNotFound
 	}
 
 	// Get the arc
-	arcKeyBytes := e.arcKey(path)
+	arcKeyBytes := arcKey(bucketId, path)
 	val, err := e.kv.Get(ctx, arcKeyBytes)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -85,14 +108,11 @@ func (e *EAT) Get(root cid.Cid, path string) (cid.Cid, error) {
 	return cid.Cast(val)
 }
 
-// Update stores multiple arc entries with a new commitment root.
-// It removes the old root->graphId mapping to prevent access via stale roots.
-// If oldRoot is cid.Undef, this is the first update (no old mapping to remove).
-func (e *EAT) Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
-	if newRoot == cid.Undef {
-		return fmt.Errorf("newRoot cannot be Undef")
-	}
-
+// Update stores arc entries with a new commitment root.
+// If oldRoot is not cid.Undef, it invalidates the old root mapping.
+// If newRoot is not cid.Undef, it creates a new root->bucketId mapping.
+// If a target CID is cid.Undef, the corresponding arc is deleted.
+func (e *EAT) Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 	ctx := context.Background()
 
 	e.mu.Lock()
@@ -109,20 +129,31 @@ func (e *EAT) Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 		}
 	}
 
-	// Add new root mapping
-	newRootKey := rootKey(newRoot)
-	if err := batch.Put(newRootKey, []byte(e.graphId)); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("failed to add new root mapping: %w", err)
+	// Add new root mapping if provided
+	if newRoot != cid.Undef {
+		newRootKey := rootKey(newRoot)
+		if err := batch.Put(newRootKey, []byte(bucketId)); err != nil {
+			batch.Cancel()
+			return fmt.Errorf("failed to add new root mapping: %w", err)
+		}
 	}
 
-	// Store arcs
+	// Add/Update/Delete arcs
 	for path, target := range arcs {
-		key := e.arcKey(path)
-		val := target.Bytes()
-		if err := batch.Put(key, val); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to add arc to batch: %w", err)
+		key := arcKey(bucketId, path)
+		if target == cid.Undef {
+			// Delete the arc
+			if err := batch.Delete(key); err != nil {
+				batch.Cancel()
+				return fmt.Errorf("failed to delete arc %s: %w", path, err)
+			}
+		} else {
+			// Add/Update the arc
+			val := target.Bytes()
+			if err := batch.Put(key, val); err != nil {
+				batch.Cancel()
+				return fmt.Errorf("failed to put arc %s: %w", path, err)
+			}
 		}
 	}
 
@@ -133,72 +164,63 @@ func (e *EAT) Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 	return nil
 }
 
-// Delete removes an arc entry and updates the root.
-func (e *EAT) Delete(newRoot, oldRoot cid.Cid, path string) error {
+// View returns an ArcSetView for a specific bucket and root.
+// If root is not cid.Undef, it validates that the root is valid for the bucket.
+// If root is cid.Undef, validation is skipped.
+// If snapshotView is enabled, returns a snapshot of the data at this point in time.
+func (e *EAT) View(bucketId string, root cid.Cid) arcset.View {
 	ctx := context.Background()
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
-	batch := e.kv.Batch()
-
-	// Remove old root mapping
-	if oldRoot != cid.Undef {
-		oldRootKey := rootKey(oldRoot)
-		if err := batch.Delete(oldRootKey); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to delete old root mapping: %w", err)
+	// Validate root if provided
+	if root != cid.Undef {
+		rootKeyBytes := rootKey(root)
+		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		if err != nil || string(bucketIdBytes) != bucketId {
+			return &emptyView{}
 		}
 	}
 
-	// Add new root mapping
-	newRootKey := rootKey(newRoot)
-	if err := batch.Put(newRootKey, []byte(e.graphId)); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("failed to add new root mapping: %w", err)
+	if e.snapshotView {
+		// Create a snapshot by copying all arcs into memory
+		return e.createSnapshotView(bucketId)
 	}
 
-	// Delete the arc
-	arcKeyBytes := e.arcKey(path)
-	if err := batch.Delete(arcKeyBytes); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("failed to delete arc: %w", err)
-	}
-
-	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit delete: %w", err)
-	}
-
-	return nil
+	return &eatView{eat: e, bucketId: bucketId}
 }
 
-// View returns an ArcSetView for a specific root.
-// Returns an empty view if the root doesn't map to this graph.
-func (e *EAT) View(root cid.Cid) arcset.View {
+// createSnapshotView creates a snapshot view by copying all arcs into memory.
+func (e *EAT) createSnapshotView(bucketId string) arcset.View {
+	ctx := context.Background()
+	arcs := make(map[string]cid.Cid)
+
+	prefix := bucketPrefix(bucketId)
+	iter := e.kv.NewIterator(ctx, prefix, nil)
+	defer iter.Close()
+
+	for iter.Next() {
+		key := iter.Key()
+		path := string(key[len(prefix):])
+		val := iter.Value()
+		c, err := cid.Cast(val)
+		if err == nil {
+			arcs[path] = c
+		}
+	}
+
+	return arcset.NewMapFrom(arcs)
+}
+
+// Iterate returns an iterator over all arcs in a bucket.
+func (e *EAT) Iterate(bucketId string) arcset.Iterator {
 	ctx := context.Background()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// Verify root maps to this graph
-	rootKeyBytes := rootKey(root)
-	graphIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
-	if err != nil || string(graphIdBytes) != e.graphId {
-		return &emptyView{}
-	}
-
-	return &eatView{eat: e}
-}
-
-// Iterate returns an iterator over all arcs in this graph.
-// Note: This iterates all arcs regardless of root validation.
-func (e *EAT) Iterate() arcset.Iterator {
-	ctx := context.Background()
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	prefix := []byte(e.graphId + ":")
+	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
 	return &eatIterator{
@@ -207,14 +229,14 @@ func (e *EAT) Iterate() arcset.Iterator {
 	}
 }
 
-// Len returns the number of arcs in this graph.
-func (e *EAT) Len() int {
+// Len returns the number of arcs in a bucket.
+func (e *EAT) Len(bucketId string) int {
 	ctx := context.Background()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	prefix := []byte(e.graphId + ":")
+	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
@@ -226,18 +248,18 @@ func (e *EAT) Len() int {
 	return count
 }
 
-// Clear removes all arcs and root mappings for this graph.
-func (e *EAT) Clear() error {
+// Clear removes all arcs in a bucket.
+// Note: This does not remove root mappings.
+func (e *EAT) Clear(bucketId string) error {
 	ctx := context.Background()
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Collect all keys to delete (arcs and root mappings)
+	// Collect all keys to delete
 	var keys [][]byte
 
-	// Arc keys
-	prefix := []byte(e.graphId + ":")
+	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	for iter.Next() {
 		keys = append(keys, iter.Key())
@@ -265,19 +287,15 @@ func (e *EAT) Close() error {
 	return nil
 }
 
-// GraphId returns the graph identifier.
-func (e *EAT) GraphId() string {
-	return e.graphId
-}
-
 // eatView implements arcset.View for the EAT.
 type eatView struct {
-	eat *EAT
+	eat      *EAT
+	bucketId string
 }
 
 func (v *eatView) Get(path string) (cid.Cid, bool) {
 	ctx := context.Background()
-	val, err := v.eat.kv.Get(ctx, v.eat.arcKey(path))
+	val, err := v.eat.kv.Get(ctx, arcKey(v.bucketId, path))
 	if err != nil {
 		return cid.Cid{}, false
 	}
@@ -289,11 +307,11 @@ func (v *eatView) Get(path string) (cid.Cid, bool) {
 }
 
 func (v *eatView) Iterate() arcset.Iterator {
-	return v.eat.Iterate()
+	return v.eat.Iterate(v.bucketId)
 }
 
 func (v *eatView) Len() int {
-	return v.eat.Len()
+	return v.eat.Len(v.bucketId)
 }
 
 // eatIterator implements arcset.Iterator for the EAT.
@@ -308,7 +326,7 @@ func (it *eatIterator) Next() (string, cid.Cid, bool) {
 	}
 
 	key := it.iter.Key()
-	// Extract path from key: graphId:path -> path
+	// Extract path from key: bucketId:path -> path
 	path := string(key[len(it.prefix):])
 
 	val := it.iter.Value()

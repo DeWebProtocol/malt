@@ -15,15 +15,17 @@ import (
 
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
-	eat eat.EAT
-	sce *sce.Engine
+	eat      eat.EAT
+	sce      *sce.Engine
+	bucketId string
 }
 
 // NewResolver creates a new explicit arc resolver.
-func NewResolver(e eat.EAT, s *sce.Engine) *Resolver {
+func NewResolver(e eat.EAT, s *sce.Engine, bucketId string) *Resolver {
 	return &Resolver{
-		eat: e,
-		sce: s,
+		eat:      e,
+		sce:      s,
+		bucketId: bucketId,
 	}
 }
 
@@ -47,10 +49,10 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	for i := len(segments); i > 0; i-- {
 		candidatePath := strings.Join(segments[:i], "/")
 
-		target, err := r.eat.Get(root, candidatePath)
+		target, err := r.eat.Get(r.bucketId, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
-			view := r.eat.View(root)
+			view := r.eat.View(r.bucketId, root)
 			_, proof, err := r.sce.Prove(root, view, candidatePath)
 			if err != nil {
 				return "", cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
