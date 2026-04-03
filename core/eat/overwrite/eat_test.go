@@ -30,6 +30,9 @@ func TestEATNew(t *testing.T) {
 	if eat.GraphId() != "test-graph" {
 		t.Error("wrong graphId")
 	}
+	if eat.snapshotView {
+		t.Error("snapshotView should be false by default")
+	}
 
 	// Nil KVStore
 	_, err = NewEAT(nil, "test")
@@ -41,6 +44,24 @@ func TestEATNew(t *testing.T) {
 	_, err = NewEAT(kv, "")
 	if err == nil {
 		t.Error("expected error for empty graphId")
+	}
+
+	// With snapshot option
+	eatWithSnapshot, err := NewEAT(kv, "snapshot-graph", WithSnapshotView(true))
+	if err != nil {
+		t.Fatalf("NewEAT with option failed: %v", err)
+	}
+	if !eatWithSnapshot.snapshotView {
+		t.Error("snapshotView should be true when option is set")
+	}
+
+	// With snapshot option disabled explicitly
+	eatNoSnapshot, err := NewEAT(kv, "no-snapshot-graph", WithSnapshotView(false))
+	if err != nil {
+		t.Fatalf("NewEAT with option failed: %v", err)
+	}
+	if eatNoSnapshot.snapshotView {
+		t.Error("snapshotView should be false when option is false")
 	}
 }
 
@@ -202,6 +223,109 @@ func TestEATView(t *testing.T) {
 	emptyView := eat.View(invalidRoot)
 	if emptyView.Len() != 0 {
 		t.Error("invalid root should return empty view")
+	}
+}
+
+func TestEATSnapshotView(t *testing.T) {
+	kv := kvstore_memory.New()
+	// Create EAT with snapshot view enabled
+	eat, err := NewEAT(kv, "snapshot-graph", WithSnapshotView(true))
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+	target3 := newTestCID([]byte("target3"))
+
+	// Initial data
+	eat.Update(root1, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+	})
+
+	// Create snapshot view
+	view := eat.View(root1)
+
+	// Verify snapshot content
+	got, ok := view.Get("a")
+	if !ok {
+		t.Error("expected to find 'a'")
+	}
+	if !got.Equals(target1) {
+		t.Error("wrong value from snapshot")
+	}
+	if view.Len() != 2 {
+		t.Errorf("expected Len 2, got %d", view.Len())
+	}
+
+	// Update the EAT with new data
+	eat.Update(root2, root1, map[string]cid.Cid{
+		"a": target3, // modify
+		"c": target3, // add new
+	})
+
+	// Snapshot view should still have old data
+	got, ok = view.Get("a")
+	if !ok {
+		t.Error("expected to find 'a' in snapshot")
+	}
+	if !got.Equals(target1) {
+		t.Error("snapshot should have original value for 'a'")
+	}
+	if view.Len() != 2 {
+		t.Errorf("snapshot should still have Len 2, got %d", view.Len())
+	}
+
+	// 'c' should not exist in snapshot
+	_, ok = view.Get("c")
+	if ok {
+		t.Error("snapshot should not have 'c'")
+	}
+}
+
+func TestEATLiveView(t *testing.T) {
+	kv := kvstore_memory.New()
+	// Create EAT without snapshot (default behavior)
+	eat, err := NewEAT(kv, "live-graph")
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+	target3 := newTestCID([]byte("target3"))
+
+	// Initial data
+	eat.Update(root1, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+	})
+
+	// Create live view
+	view := eat.View(root1)
+
+	// Verify initial content
+	got, ok := view.Get("a")
+	if !ok || !got.Equals(target1) {
+		t.Error("wrong initial value")
+	}
+
+	// Update the EAT with new data
+	eat.Update(root2, root1, map[string]cid.Cid{
+		"a": target3, // modify
+		"c": target3, // add new
+	})
+
+	// Live view should reflect new data (because root1 is invalidated)
+	// Note: after Update, root1 is no longer valid, so Get should fail
+	_, err = eat.Get(root1, "a")
+	if err == nil {
+		t.Error("root1 should be invalidated after update")
 	}
 }
 

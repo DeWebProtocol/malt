@@ -12,18 +12,32 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+// Option is a configuration option for EAT.
+type Option func(*EAT)
+
+// WithSnapshotView configures EAT to create snapshot views.
+// When enabled, View() returns a snapshot of the data at that point in time,
+// ensuring consistency even if the underlying data changes.
+func WithSnapshotView(snapshot bool) Option {
+	return func(e *EAT) {
+		e.snapshotView = snapshot
+	}
+}
+
 // EAT is a single-graph EAT with overwrite semantics.
 // It uses a fixed graphId for data storage, and maintains root->graphId mappings
 // to allow access via commitment roots.
 type EAT struct {
-	mu      sync.RWMutex
-	graphId string
-	kv      kvstore.KVStore
+	mu           sync.RWMutex
+	graphId      string
+	kv           kvstore.KVStore
+	snapshotView bool // if true, View creates a snapshot instead of live view
 }
 
 // NewEAT creates a new single-graph EAT with the given KVStore and graphId.
 // The graphId is a unique identifier used as the namespace for all arc entries.
-func NewEAT(kv kvstore.KVStore, graphId string) (*EAT, error) {
+// Options can be provided to configure the EAT behavior.
+func NewEAT(kv kvstore.KVStore, graphId string, opts ...Option) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
@@ -31,10 +45,16 @@ func NewEAT(kv kvstore.KVStore, graphId string) (*EAT, error) {
 		return nil, fmt.Errorf("graphId is required")
 	}
 
-	return &EAT{
+	e := &EAT{
 		graphId: graphId,
 		kv:      kv,
-	}, nil
+	}
+
+	for _, opt := range opts {
+		opt(e)
+	}
+
+	return e, nil
 }
 
 // arcKey generates the storage key for a path.
@@ -145,6 +165,7 @@ func (e *EAT) Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 
 // View returns an ArcSetView for a specific root.
 // Returns an empty view if the root doesn't map to this graph.
+// If snapshotView is enabled, returns a snapshot of the data at this point in time.
 func (e *EAT) View(root cid.Cid) arcset.View {
 	ctx := context.Background()
 
@@ -158,7 +179,34 @@ func (e *EAT) View(root cid.Cid) arcset.View {
 		return &emptyView{}
 	}
 
+	if e.snapshotView {
+		// Create a snapshot by copying all arcs into memory
+		return e.createSnapshotView()
+	}
+
 	return &eatView{eat: e}
+}
+
+// createSnapshotView creates a snapshot view by copying all arcs into memory.
+func (e *EAT) createSnapshotView() arcset.View {
+	ctx := context.Background()
+	arcs := make(map[string]cid.Cid)
+
+	prefix := []byte(e.graphId + ":")
+	iter := e.kv.NewIterator(ctx, prefix, nil)
+	defer iter.Close()
+
+	for iter.Next() {
+		key := iter.Key()
+		path := string(key[len(prefix):])
+		val := iter.Value()
+		c, err := cid.Cast(val)
+		if err == nil {
+			arcs[path] = c
+		}
+	}
+
+	return arcset.NewMapFrom(arcs)
 }
 
 // Iterate returns an iterator over all arcs in this graph.
