@@ -126,7 +126,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 	}
 }
 
-func TestEATDelete(t *testing.T) {
+func TestEATDeleteViaUpdate(t *testing.T) {
 	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv, "delete-graph")
 	if err != nil {
@@ -143,10 +143,12 @@ func TestEATDelete(t *testing.T) {
 		"b": target,
 	})
 
-	// Delete 'a'
-	err = eat.Delete(root2, root1, "a")
+	// Delete 'a' using cid.Undef
+	err = eat.Update(root2, root1, map[string]cid.Cid{
+		"a": cid.Undef, // delete
+	})
 	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
+		t.Fatalf("Update with delete failed: %v", err)
 	}
 
 	// 'a' should be gone

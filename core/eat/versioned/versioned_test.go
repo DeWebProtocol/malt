@@ -551,3 +551,84 @@ func TestVersionedEATCopyOnWrite(t *testing.T) {
 		t.Error("c should be target3")
 	}
 }
+
+func TestVersionedEATDeleteViaUpdate(t *testing.T) {
+	kv := memory.New()
+	eat, err := NewEAT(kv, "delete-graph")
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	root3 := newTestCID([]byte("root3"))
+
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+
+	// v1: a, b
+	arcs1 := map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+	}
+	eat.Update(root1, cid.Undef, arcs1)
+
+	// v2: delete 'a' using cid.Undef (tombstone)
+	arcs2 := map[string]cid.Cid{
+		"a": cid.Undef, // tombstone - marks 'a' as deleted
+	}
+	eat.Update(root2, root1, arcs2)
+
+	// At root2, 'a' should not be found (tombstone stops the search)
+	_, err = eat.Get(root2, "a")
+	if err == nil {
+		t.Error("'a' should be deleted at root2")
+	}
+
+	// 'b' should still be accessible (from root1)
+	got, err := eat.Get(root2, "b")
+	if err != nil {
+		t.Fatalf("Get b at root2 failed: %v", err)
+	}
+	if !got.Equals(target2) {
+		t.Error("b at root2 should be target2")
+	}
+
+	// At root1, 'a' should still exist (tombstone is at root2, not root1)
+	got, err = eat.Get(root1, "a")
+	if err != nil {
+		t.Fatalf("Get a at root1 failed: %v", err)
+	}
+	if !got.Equals(target1) {
+		t.Error("a at root1 should be target1")
+	}
+
+	// v3: add 'c', tombstone for 'a' should still be effective
+	arcs3 := map[string]cid.Cid{
+		"c": target1,
+	}
+	eat.Update(root3, root2, arcs3)
+
+	// At root3, 'a' should still not be found
+	_, err = eat.Get(root3, "a")
+	if err == nil {
+		t.Error("'a' should be deleted at root3")
+	}
+
+	// 'b' and 'c' should work
+	got, err = eat.Get(root3, "b")
+	if err != nil {
+		t.Fatalf("Get b at root3 failed: %v", err)
+	}
+	if !got.Equals(target2) {
+		t.Error("b at root3 should be target2")
+	}
+
+	got, err = eat.Get(root3, "c")
+	if err != nil {
+		t.Fatalf("Get c at root3 failed: %v", err)
+	}
+	if !got.Equals(target1) {
+		t.Error("c at root3 should be target1")
+	}
+}

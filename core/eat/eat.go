@@ -31,6 +31,7 @@ type EAT interface {
 	// For non-versioned EAT: oldRoot mappings are deleted, data is overwritten.
 	// For versioned EAT: newRoot is linked to parentRoot via @previous.
 	// Use cid.Undef for oldRoot/parentRoot for the first version.
+	// If a target CID is cid.Undef, the corresponding arc is deleted.
 	Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
 
 	// View returns an ArcSetView for a specific root.

@@ -57,7 +57,8 @@ func (e *EAT) versionPrefix(version cid.Cid) []byte {
 
 // Get retrieves the target CID for a path at a specific version.
 // It walks the @previous chain starting from the given version until finding the arc.
-// Returns ErrNotFound if the path doesn't exist in any ancestor version.
+// Returns ErrNotFound if the path doesn't exist in any ancestor version,
+// or if a tombstone (cid.Undef) is found indicating the arc was deleted.
 func (e *EAT) Get(version cid.Cid, path string) (cid.Cid, error) {
 	ctx := context.Background()
 
@@ -72,7 +73,13 @@ func (e *EAT) Get(version cid.Cid, path string) (cid.Cid, error) {
 		key := e.arcKey(currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
-			// Found the arc
+			// Found the arc entry
+			// Check if it's a tombstone (empty bytes = cid.Undef)
+			if len(val) == 0 {
+				// Arc was deleted at this version
+				return cid.Cid{}, arcset.ErrNotFound
+			}
+			// Parse and return the CID
 			return cid.Cast(val)
 		}
 
@@ -118,6 +125,7 @@ func (e *EAT) GetLatest(path string) (cid.Cid, error) {
 // Set stores an arc entry at a specific version.
 // This is used when creating a new version with modified arcs.
 // The caller must ensure the version is properly linked via @previous.
+// If target is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
 func (e *EAT) Set(version cid.Cid, path string, target cid.Cid) error {
 	ctx := context.Background()
 
@@ -125,7 +133,13 @@ func (e *EAT) Set(version cid.Cid, path string, target cid.Cid) error {
 	defer e.mu.Unlock()
 
 	key := e.arcKey(version, path)
-	val := target.Bytes()
+
+	var val []byte
+	if target == cid.Undef {
+		val = []byte{} // tombstone
+	} else {
+		val = target.Bytes()
+	}
 
 	if err := e.kv.Put(ctx, key, val); err != nil {
 		return fmt.Errorf("failed to set arc: %w", err)
@@ -135,6 +149,7 @@ func (e *EAT) Set(version cid.Cid, path string, target cid.Cid) error {
 }
 
 // SetBatch stores multiple arc entries at a specific version in a single transaction.
+// If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
 func (e *EAT) SetBatch(version cid.Cid, arcs map[string]cid.Cid) error {
 	if len(arcs) == 0 {
 		return nil
@@ -148,10 +163,15 @@ func (e *EAT) SetBatch(version cid.Cid, arcs map[string]cid.Cid) error {
 	batch := e.kv.Batch()
 	for path, target := range arcs {
 		key := e.arcKey(version, path)
-		val := target.Bytes()
+		var val []byte
+		if target == cid.Undef {
+			val = []byte{} // tombstone
+		} else {
+			val = target.Bytes()
+		}
 		if err := batch.Put(key, val); err != nil {
 			batch.Cancel()
-			return fmt.Errorf("failed to add arc to batch: %w", err)
+			return fmt.Errorf("failed to add arc %s to batch: %w", path, err)
 		}
 	}
 
@@ -165,6 +185,8 @@ func (e *EAT) SetBatch(version cid.Cid, arcs map[string]cid.Cid) error {
 // Update stores arcs at a new version and links it to the parent version.
 // The newRoot becomes the new version identifier, linked to parentRoot via @previous.
 // If parentRoot is cid.Undef, this creates the first version (no @previous).
+// If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
+// When Get() encounters a tombstone while walking the chain, it returns ErrNotFound.
 func (e *EAT) Update(newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	ctx := context.Background()
 
@@ -176,10 +198,18 @@ func (e *EAT) Update(newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error
 	// Store all arcs for this version
 	for path, target := range arcs {
 		key := e.arcKey(newRoot, path)
-		val := target.Bytes()
-		if err := batch.Put(key, val); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to add arc to batch: %w", err)
+		if target == cid.Undef {
+			// Store tombstone (empty bytes) to mark deletion
+			if err := batch.Put(key, []byte{}); err != nil {
+				batch.Cancel()
+				return fmt.Errorf("failed to add tombstone for arc %s: %w", path, err)
+			}
+		} else {
+			val := target.Bytes()
+			if err := batch.Put(key, val); err != nil {
+				batch.Cancel()
+				return fmt.Errorf("failed to add arc %s to batch: %w", path, err)
+			}
 		}
 	}
 
@@ -342,24 +372,6 @@ func (e *EAT) TotalLen(version cid.Cid) int {
 	}
 
 	return len(seenPaths)
-}
-
-// Delete removes an arc entry at a specific version.
-// Note: In versioned EAT, delete typically means setting to a special "deleted" marker
-// or creating a new version without that arc. Direct deletion is rarely used.
-func (e *EAT) Delete(version cid.Cid, path string) error {
-	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	key := e.arcKey(version, path)
-
-	if err := e.kv.Delete(ctx, key); err != nil {
-		return fmt.Errorf("failed to delete arc: %w", err)
-	}
-
-	return nil
 }
 
 // Close releases resources.

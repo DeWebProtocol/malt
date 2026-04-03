@@ -88,6 +88,7 @@ func (e *EAT) Get(root cid.Cid, path string) (cid.Cid, error) {
 // Update stores multiple arc entries with a new commitment root.
 // It removes the old root->graphId mapping to prevent access via stale roots.
 // If oldRoot is cid.Undef, this is the first update (no old mapping to remove).
+// If a target CID is cid.Undef, the corresponding arc is deleted.
 func (e *EAT) Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 	if newRoot == cid.Undef {
 		return fmt.Errorf("newRoot cannot be Undef")
@@ -116,57 +117,27 @@ func (e *EAT) Update(newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 		return fmt.Errorf("failed to add new root mapping: %w", err)
 	}
 
-	// Store arcs
+	// Add/Update/Delete arcs
 	for path, target := range arcs {
 		key := e.arcKey(path)
-		val := target.Bytes()
-		if err := batch.Put(key, val); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to add arc to batch: %w", err)
+		if target == cid.Undef {
+			// Delete the arc
+			if err := batch.Delete(key); err != nil {
+				batch.Cancel()
+				return fmt.Errorf("failed to delete arc %s: %w", path, err)
+			}
+		} else {
+			// Add/Update the arc
+			val := target.Bytes()
+			if err := batch.Put(key, val); err != nil {
+				batch.Cancel()
+				return fmt.Errorf("failed to put arc %s: %w", path, err)
+			}
 		}
 	}
 
 	if err := batch.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit update: %w", err)
-	}
-
-	return nil
-}
-
-// Delete removes an arc entry and updates the root.
-func (e *EAT) Delete(newRoot, oldRoot cid.Cid, path string) error {
-	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	batch := e.kv.Batch()
-
-	// Remove old root mapping
-	if oldRoot != cid.Undef {
-		oldRootKey := rootKey(oldRoot)
-		if err := batch.Delete(oldRootKey); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to delete old root mapping: %w", err)
-		}
-	}
-
-	// Add new root mapping
-	newRootKey := rootKey(newRoot)
-	if err := batch.Put(newRootKey, []byte(e.graphId)); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("failed to add new root mapping: %w", err)
-	}
-
-	// Delete the arc
-	arcKeyBytes := e.arcKey(path)
-	if err := batch.Delete(arcKeyBytes); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("failed to delete arc: %w", err)
-	}
-
-	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit delete: %w", err)
 	}
 
 	return nil
