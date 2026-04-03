@@ -12,43 +12,20 @@ import (
 // MALT multicodec constants (Private Use Area: 0x300000-0x3FFFFF)
 // These codecs identify different commitment schemes in CID.
 const (
-	// CodecMaltKZG is the codec for KZG polynomial commitments (48 bytes).
-	CodecMaltKZG = 0x300001
+	CodecMaltKZG = 0x300001 // CodecMaltKZG is the codec for KZG polynomial commitments (48 bytes).
 
-	// CodecMaltVerkle is the codec for Verkle commitments (31 bytes stem).
-	CodecMaltVerkle = 0x300002
+	CodecMaltVerkle = 0x300002 // CodecMaltVerkle is the codec for Verkle commitments (31 bytes stem).
 
-	// CodecMaltIPA is the codec for Inner Product Argument commitments (32 bytes).
-	CodecMaltIPA = 0x300003
+	CodecMaltIPA = 0x300003 // CodecMaltIPA is the codec for Inner Product Argument commitments (32 bytes).
 )
 
-// HAMT is NOT a separate codec - it uses dag-pb codec (0x70).
-// HAMT detection requires parsing the dag-pb block and examining
-// the Data field structure. These constants are for documentation only.
+// Commitment size constants
 const (
-	// HamtVersion1 indicates HAMT version 1 structure within a dag-pb block.
-	HamtVersion1 = 1
+	KZGCommitmentSize = 48 // KZGCommitmentSize is the size of a KZG commitment in bytes (48 bytes).
 
-	// HamtVersion2 indicates HAMT version 2 structure within a dag-pb block.
-	HamtVersion2 = 2
-)
+	VerkleStemSize = 31 // VerkleStemSize is the size of a Verkle stem in bytes (31 bytes).
 
-// KZG commitment size constants
-const (
-	// KZGCommitmentSize is the size of a KZG commitment in bytes (48 bytes).
-	KZGCommitmentSize = 48
-)
-
-// Verkle commitment size constants
-const (
-	// VerkleStemSize is the size of a Verkle stem in bytes (31 bytes).
-	VerkleStemSize = 31
-)
-
-// IPA commitment size constants
-const (
-	// IPACommitmentSize is the size of an IPA commitment in bytes (32 bytes).
-	IPACommitmentSize = 32
+	IPACommitmentSize = 32 // IPACommitmentSize is the size of an IPA commitment in bytes (32 bytes).
 )
 
 // NewKZGCid creates a CID from KZG commitment bytes.
@@ -96,13 +73,6 @@ func newMaltCid(codec uint64, commitment []byte) (cid.Cid, error) {
 func IsMaltCid(c cid.Cid) bool {
 	codec := c.Prefix().Codec
 	return codec == CodecMaltKZG || codec == CodecMaltVerkle || codec == CodecMaltIPA
-}
-
-// IsHamtCid returns false - HAMT does not have a separate codec.
-// HAMT uses dag-pb codec and is detected by parsing the block structure.
-// Deprecated: Do not use - HAMT detection requires block analysis.
-func IsHamtCid(c cid.Cid) bool {
-	return false
 }
 
 // GetMaltCodec returns the MALT codec type for a CID.

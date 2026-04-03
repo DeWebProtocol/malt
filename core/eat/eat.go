@@ -4,14 +4,14 @@
 package eat
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
 // ErrNotFound is returned when an arc is not found.
-var ErrNotFound = fmt.Errorf("arc not found")
+var ErrNotFound = errors.New("arc not found")
 
 // IsNotFound checks if an error is ErrNotFound.
 func IsNotFound(err error) bool {
