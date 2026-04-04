@@ -13,6 +13,14 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+// Reserved arc paths for MALT structures
+const (
+	// PayloadArc is the reserved path that binds a structure root to its payload CID.
+	// When resolving a MALT object with an empty path, Gateway automatically redirects
+	// to this arc to materialize the payload.
+	PayloadArc = "@payload"
+)
+
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
 	eat      eat.EAT

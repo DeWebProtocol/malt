@@ -8,6 +8,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
@@ -133,6 +134,25 @@ func (g *Gateway) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		if remainingPath != "" && remainingPath[0] == '/' {
 			remainingPath = remainingPath[1:]
 		}
+	}
+
+	// When path is exhausted, check if current CID is a MALT commitment.
+	// If so, try to resolve @payload to materialize the object's content.
+	if codec.IsMaltCid(currentCID) && g.explicitResolver != nil {
+		_, target, ev, err := g.explicitResolver.Resolve(currentCID, explicit.PayloadArc)
+		if err == nil {
+			// Has @payload arc, record this step and return payload CID
+			transcript.Steps = append(transcript.Steps, StepEvidence{
+				Path:     explicit.PayloadArc,
+				Target:   target,
+				Evidence: ev,
+			})
+			return &ResolveResult{
+				Target:     target,
+				Transcript: transcript,
+			}, nil
+		}
+		// No @payload arc (structure-only node), fall through to return structure root
 	}
 
 	return &ResolveResult{
