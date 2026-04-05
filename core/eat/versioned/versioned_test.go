@@ -1,6 +1,7 @@
 package versioned
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
@@ -476,5 +477,154 @@ func TestVersionedEATCopyOnWrite(t *testing.T) {
 	}
 	if !got.Equals(target3) {
 		t.Error("c should be target3")
+	}
+}
+
+// === Benchmarks ===
+
+// setupVersionChain creates a chain of versions and returns the latest root
+func setupVersionChain(eat *EAT, bucketId string, chainLength int) cid.Cid {
+	var prevRoot cid.Cid
+	var latestRoot cid.Cid
+
+	for i := 0; i < chainLength; i++ {
+		root := newTestCID([]byte(fmt.Sprintf("root%d", i)))
+		arcs := map[string]cid.Cid{
+			fmt.Sprintf("v%d_arc", i): newTestCID([]byte(fmt.Sprintf("target%d", i))),
+		}
+		eat.Update(bucketId, root, prevRoot, arcs)
+		prevRoot = root
+		latestRoot = root
+	}
+	return latestRoot
+}
+
+func BenchmarkVersionedEATGet(b *testing.B) {
+	kv := memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	// Test different version chain lengths
+	chainLengths := []int{1, 10, 50, 100}
+	for _, length := range chainLengths {
+		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
+			latestRoot := setupVersionChain(eat, bucketId, length)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				// Query an arc that exists at the first version (requires full chain walk)
+				eat.Get(bucketId, latestRoot, "v0_arc")
+			}
+		})
+	}
+}
+
+func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
+	kv := memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	// Test Get performance for arc at latest version (no chain walk needed)
+	chainLengths := []int{1, 10, 50, 100}
+	for _, length := range chainLengths {
+		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
+			latestRoot := setupVersionChain(eat, bucketId, length)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				// Query an arc at the latest version (direct lookup)
+				eat.Get(bucketId, latestRoot, fmt.Sprintf("v%d_arc", length-1))
+			}
+		})
+	}
+}
+
+func BenchmarkVersionedEATUpdate(b *testing.B) {
+	kv := memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	batchSizes := []int{1, 10, 100}
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("batch_%d", size), func(b *testing.B) {
+			// Initial setup
+			initialRoot := newTestCID([]byte("initial"))
+			initialArcs := map[string]cid.Cid{
+				"a": newTestCID([]byte("init")),
+			}
+			eat.Update(bucketId, initialRoot, cid.Undef, initialArcs)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				newRoot := newTestCID([]byte(fmt.Sprintf("root%d", i)))
+				arcs := make(map[string]cid.Cid)
+				for j := 0; j < size; j++ {
+					arcs[fmt.Sprintf("arc%d", j)] = newTestCID([]byte(fmt.Sprintf("val%d_%d", i, j)))
+				}
+				eat.Update(bucketId, newRoot, initialRoot, arcs)
+			}
+		})
+	}
+}
+
+func BenchmarkVersionedEATView(b *testing.B) {
+	kv := memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	chainLengths := []int{1, 10, 20}
+	for _, length := range chainLengths {
+		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
+			latestRoot := setupVersionChain(eat, bucketId, length)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				view := eat.View(bucketId, latestRoot)
+				view.Get("v0_arc")
+			}
+		})
+	}
+}
+
+func BenchmarkVersionedEATViewIterate(b *testing.B) {
+	kv := memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	chainLengths := []int{1, 10, 20}
+	for _, length := range chainLengths {
+		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
+			latestRoot := setupVersionChain(eat, bucketId, length)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				view := eat.View(bucketId, latestRoot)
+				iter := view.Iterate()
+				for {
+					_, _, ok := iter.Next()
+					if !ok {
+						break
+					}
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkVersionedEATGetParent(b *testing.B) {
+	kv := memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	chainLengths := []int{10, 50, 100}
+	for _, length := range chainLengths {
+		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
+			latestRoot := setupVersionChain(eat, bucketId, length)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				eat.GetParent(bucketId, latestRoot)
+			}
+		})
 	}
 }

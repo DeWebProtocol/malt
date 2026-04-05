@@ -450,3 +450,135 @@ func TestEATBatchUpdate(t *testing.T) {
 		t.Error("arc50 should have new value")
 	}
 }
+
+// === Benchmarks ===
+
+func BenchmarkOverwriteEATGet(b *testing.B) {
+	kv := kvstore_memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+	root := newTestCID([]byte("root"))
+
+	// Setup: create arcs
+	arcCounts := []int{10, 100, 1000}
+	for _, count := range arcCounts {
+		b.Run(fmt.Sprintf("arcs_%d", count), func(b *testing.B) {
+			arcs := make(map[string]cid.Cid)
+			for i := 0; i < count; i++ {
+				path := fmt.Sprintf("arc%d", i)
+				arcs[path] = newTestCID([]byte(path))
+			}
+			eat.Update(bucketId, root, cid.Undef, arcs)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				path := fmt.Sprintf("arc%d", i%count)
+				eat.Get(bucketId, root, path)
+			}
+		})
+	}
+}
+
+func BenchmarkOverwriteEATUpdate(b *testing.B) {
+	kv := kvstore_memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+
+	batchSizes := []int{1, 10, 100, 1000}
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("batch_%d", size), func(b *testing.B) {
+			arcs := make(map[string]cid.Cid)
+			for i := 0; i < size; i++ {
+				path := fmt.Sprintf("arc%d", i)
+				arcs[path] = newTestCID([]byte(path))
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				root := newTestCID([]byte(fmt.Sprintf("root%d", i)))
+				eat.Update(bucketId, root, cid.Undef, arcs)
+			}
+		})
+	}
+}
+
+func BenchmarkOverwriteEATView(b *testing.B) {
+	kv := kvstore_memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+	root := newTestCID([]byte("root"))
+
+	arcCounts := []int{10, 100, 1000}
+	for _, count := range arcCounts {
+		b.Run(fmt.Sprintf("arcs_%d", count), func(b *testing.B) {
+			arcs := make(map[string]cid.Cid)
+			for i := 0; i < count; i++ {
+				path := fmt.Sprintf("arc%d", i)
+				arcs[path] = newTestCID([]byte(path))
+			}
+			eat.Update(bucketId, root, cid.Undef, arcs)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				view := eat.View(bucketId, root)
+				view.Get("arc0")
+			}
+		})
+	}
+}
+
+func BenchmarkOverwriteEATViewIterate(b *testing.B) {
+	kv := kvstore_memory.New()
+	eat, _ := NewEAT(kv)
+	bucketId := "bench-graph"
+	root := newTestCID([]byte("root"))
+
+	arcCounts := []int{10, 100, 1000}
+	for _, count := range arcCounts {
+		b.Run(fmt.Sprintf("arcs_%d", count), func(b *testing.B) {
+			arcs := make(map[string]cid.Cid)
+			for i := 0; i < count; i++ {
+				path := fmt.Sprintf("arc%d", i)
+				arcs[path] = newTestCID([]byte(path))
+			}
+			eat.Update(bucketId, root, cid.Undef, arcs)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				view := eat.View(bucketId, root)
+				iter := view.Iterate()
+				for {
+					_, _, ok := iter.Next()
+					if !ok {
+						break
+					}
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkOverwriteEATSnapshotView(b *testing.B) {
+	kv := kvstore_memory.New()
+	eat, _ := NewEAT(kv, WithSnapshotView(true))
+	bucketId := "bench-graph"
+	root := newTestCID([]byte("root"))
+
+	arcCounts := []int{10, 100, 1000}
+	for _, count := range arcCounts {
+		b.Run(fmt.Sprintf("arcs_%d", count), func(b *testing.B) {
+			arcs := make(map[string]cid.Cid)
+			for i := 0; i < count; i++ {
+				path := fmt.Sprintf("arc%d", i)
+				arcs[path] = newTestCID([]byte(path))
+			}
+			eat.Update(bucketId, root, cid.Undef, arcs)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				view := eat.View(bucketId, root)
+				view.Get("arc0")
+			}
+		})
+	}
+}
