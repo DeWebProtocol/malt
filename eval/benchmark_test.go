@@ -6,7 +6,7 @@ import (
 
 	"github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/eval"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"

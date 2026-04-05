@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/kvstore"
+	"github.com/dewebprotocol/malt/core/kvstore"
 	cid "github.com/ipfs/go-cid"
 )
 

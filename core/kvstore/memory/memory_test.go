@@ -1,21 +1,18 @@
-package badger
+package memory
 
 import (
 	"context"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/kvstore"
+	"github.com/dewebprotocol/malt/core/kvstore"
 )
 
-func TestBadgerKV(t *testing.T) {
-	store, err := New(WithInMemory(true))
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+func TestMemoryKV(t *testing.T) {
+	store := New()
 	ctx := context.Background()
 
 	// Test Put and Get
-	err = store.Put(ctx, []byte("key1"), []byte("value1"))
+	err := store.Put(ctx, []byte("key1"), []byte("value1"))
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
@@ -56,6 +53,10 @@ func TestBadgerKV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Batch.Put failed: %v", err)
 	}
+	err = batch.Put([]byte("key3"), []byte("value3"))
+	if err != nil {
+		t.Fatalf("Batch.Put failed: %v", err)
+	}
 	err = batch.Commit(ctx)
 	if err != nil {
 		t.Fatalf("Batch.Commit failed: %v", err)
@@ -66,25 +67,6 @@ func TestBadgerKV(t *testing.T) {
 		t.Errorf("Expected 'value2', got '%s', err=%v", val, err)
 	}
 
-	// Close
-	err = store.Close()
-	if err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-}
-
-func TestBadgerKVIterator(t *testing.T) {
-	store, err := New(WithInMemory(true))
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
-	ctx := context.Background()
-
-	// Add some keys
-	store.Put(ctx, []byte("key1"), []byte("value1"))
-	store.Put(ctx, []byte("key2"), []byte("value2"))
-	store.Put(ctx, []byte("key3"), []byte("value3"))
-
 	// Test iterator
 	iter := store.NewIterator(ctx, nil, nil)
 	count := 0
@@ -94,21 +76,14 @@ func TestBadgerKVIterator(t *testing.T) {
 	if iter.Err() != nil {
 		t.Errorf("Iterator error: %v", iter.Err())
 	}
-	if count != 3 {
-		t.Errorf("Expected 3 keys, got %d", count)
-	}
-	iter.Close()
-
-	// Test range iterator
-	iter = store.NewIterator(ctx, []byte("key1"), []byte("key3"))
-	count = 0
-	for iter.Next() {
-		count++
-	}
 	if count != 2 {
-		t.Errorf("Expected 2 keys in range [key1, key3), got %d", count)
+		t.Errorf("Expected 2 keys, got %d", count)
 	}
 	iter.Close()
 
-	store.Close()
+	// Close
+	err = store.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
 }

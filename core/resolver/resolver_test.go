@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
