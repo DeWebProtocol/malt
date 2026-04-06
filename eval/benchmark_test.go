@@ -6,7 +6,7 @@ import (
 
 	"github.com/dewebprotocol/malt/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/eval"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -15,12 +15,14 @@ import (
 // newTestEAT creates a new EAT for testing.
 func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv)
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
+
+const testBucketId = "test-graph"
 
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
@@ -39,7 +41,7 @@ func TestBenchmarkRunner(t *testing.T) {
 		RandomSeed:   42,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
 
 	ctx := context.Background()
 
@@ -104,7 +106,7 @@ func BenchmarkAppend(b *testing.B) {
 		RandomSeed:   42,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -125,7 +127,7 @@ func BenchmarkRandom(b *testing.B) {
 		RandomSeed:   42,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -146,7 +148,7 @@ func BenchmarkBulk(b *testing.B) {
 		RandomSeed:   42,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
 	ctx := context.Background()
 
 	b.ResetTimer()

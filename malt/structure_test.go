@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -25,12 +25,14 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 // newTestEAT creates a new EAT for testing.
 func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv)
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
+
+const testBucketId = "test-graph"
 
 func TestStructureBasic(t *testing.T) {
 	// Create components
@@ -49,7 +51,7 @@ func TestStructureBasic(t *testing.T) {
 	arcs.Set("link2", k2)
 
 	// Create structure
-	structure, err := malt.NewStructure(arcs, e, s)
+	structure, err := malt.NewStructure(arcs, testBucketId, e, s)
 	if err != nil {
 		t.Fatalf("NewStructure failed: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestStructureUpdate(t *testing.T) {
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs.Set("link", k1)
 
-	structure, err := malt.NewStructure(arcs, e, s)
+	structure, err := malt.NewStructure(arcs, testBucketId, e, s)
 	if err != nil {
 		t.Fatalf("NewStructure failed: %v", err)
 	}

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	kvstore_memory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
@@ -27,12 +27,14 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 // newTestEAT creates a new EAT for testing.
 func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(kv, "test-graph")
+	e, err := overwrite.NewEAT(kv)
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
+
+const testBucketId = "test-graph"
 
 // collectArcs collects arcs from an arcset.Map into a map.
 func collectArcs(arcs *arcset.Map) map[string]cid.Cid {
@@ -65,10 +67,10 @@ func TestExplicitResolverResolve(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
 	// Create explicit resolver
-	r := explicit.NewResolver(e, s)
+	r := explicit.NewResolver(e, s, testBucketId)
 
 	// Test longest prefix matching
 	tests := []struct {
@@ -130,10 +132,10 @@ func TestExplicitResolverVerify(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
 	// Create explicit resolver
-	r := explicit.NewResolver(e, s)
+	r := explicit.NewResolver(e, s, testBucketId)
 
 	// Resolve step
 	matchedPath, target, ev, err := r.Resolve(root, "a/b/c")
@@ -173,10 +175,10 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Update(root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
 
 	// Create explicit resolver
-	r := explicit.NewResolver(e, s)
+	r := explicit.NewResolver(e, s, testBucketId)
 
 	// Try to resolve non-matching path
 	_, _, _, err = r.Resolve(root, "a/b/c")
@@ -191,7 +193,7 @@ func TestResolverInterface(t *testing.T) {
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 
-	var r resolver.Resolver = explicit.NewResolver(e, s)
+	var r resolver.Resolver = explicit.NewResolver(e, s, testBucketId)
 	if r == nil {
 		t.Error("explicit.Resolver should implement resolver.Resolver")
 	}

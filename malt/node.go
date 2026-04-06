@@ -14,9 +14,9 @@ import (
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
-	"github.com/dewebprotocol/malt/core/types/kvstore"
-	"github.com/dewebprotocol/malt/core/types/kvstore/badger"
-	kvmemory "github.com/dewebprotocol/malt/core/types/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/core/kvstore/badger"
+	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/implicit"
@@ -39,6 +39,7 @@ type Node struct {
 	sce             *sce.Engine
 	eat             eat.EAT
 	cas             cas.Client
+	bucketId        string            // default bucket for operations
 	explicitResolver resolver.Resolver
 	implicitResolver resolver.Resolver
 	gateway         *gateway.Gateway
@@ -118,6 +119,9 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 	}
 
+	// Set default bucket ID
+	node.bucketId = "default"
+
 	// CAS
 	if options.cas != nil {
 		node.cas = options.cas
@@ -129,7 +133,7 @@ func NewNode(opts ...Option) (*Node, error) {
 	}
 
 	// Explicit resolver (MALT arcs)
-	node.explicitResolver = explicit.NewResolver(node.eat, node.sce)
+	node.explicitResolver = explicit.NewResolver(node.eat, node.sce, node.bucketId)
 
 	// Implicit resolver (Merkle DAG via CAS)
 	node.implicitResolver = implicit.NewResolver(node.cas)
@@ -170,21 +174,17 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 }
 
 // initEAT creates an EAT from config.
-// Note: Single-graph EAT requires a graphId. Using "default" for now.
-// TODO: Support multi-graph management at a higher layer.
 func (n *Node) initEAT() error {
-	graphId := "default" // Default graph ID
-
 	switch n.cfg.EATType {
 	case "simple", "overwrite":
-		e, err := overwrite.NewEAT(n.kv, graphId)
+		e, err := overwrite.NewEAT(n.kv)
 		if err != nil {
 			return err
 		}
 		n.eat = e
 		return nil
 	case "versioned":
-		e, err := versioned.NewEAT(n.kv, graphId)
+		e, err := versioned.NewEAT(n.kv)
 		if err != nil {
 			return err
 		}
@@ -254,7 +254,7 @@ func (n *Node) Config() *config.Config {
 
 // NewStructure creates a new structure from an arc set.
 func (n *Node) NewStructure(arcs arcset.View) (*Structure, error) {
-	return NewStructure(arcs, n.eat, n.sce)
+	return NewStructure(arcs, n.bucketId, n.eat, n.sce)
 }
 
 // Close releases all resources.

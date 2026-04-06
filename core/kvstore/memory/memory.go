@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dewebprotocol/malt/core/types/kvstore"
+	"github.com/dewebprotocol/malt/core/kvstore"
 )
 
 // hasPrefix checks if a byte slice has the given prefix.
