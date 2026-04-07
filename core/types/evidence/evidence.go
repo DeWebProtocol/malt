@@ -4,6 +4,7 @@
 package evidence
 
 import (
+	"bytes"
 	"fmt"
 )
 
@@ -64,15 +65,7 @@ func (e *ExplicitEvidence) Equals(other Evidence) bool {
 	if !ok {
 		return false
 	}
-	if len(e.proof) != len(o.proof) {
-		return false
-	}
-	for i := range e.proof {
-		if e.proof[i] != o.proof[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(e.proof, o.proof)
 }
 
 // Kind returns EvidenceKindExplicit.
@@ -109,15 +102,7 @@ func (e *ImplicitEvidence) Equals(other Evidence) bool {
 	if !ok {
 		return false
 	}
-	if len(e.blockContent) != len(o.blockContent) {
-		return false
-	}
-	for i := range e.blockContent {
-		if e.blockContent[i] != o.blockContent[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(e.blockContent, o.blockContent)
 }
 
 // Kind returns EvidenceKindImplicit.
@@ -154,15 +139,7 @@ func (e *HAMTEvidence) Equals(other Evidence) bool {
 	if !ok {
 		return false
 	}
-	if len(e.proof) != len(o.proof) {
-		return false
-	}
-	for i := range e.proof {
-		if e.proof[i] != o.proof[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(e.proof, o.proof)
 }
 
 // Kind returns EvidenceKindHAMT.

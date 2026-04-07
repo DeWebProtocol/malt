@@ -4,6 +4,7 @@ package arcset
 
 import (
 	"errors"
+	"slices"
 
 	cid "github.com/ipfs/go-cid"
 )
@@ -103,13 +104,7 @@ func getSortedKeys(m map[string]cid.Cid) []string {
 		keys = append(keys, k)
 	}
 	// Sort for deterministic iteration
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			if keys[i] > keys[j] {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
-		}
-	}
+	slices.Sort(keys)
 	return keys
 }
 

@@ -21,15 +21,16 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/implicit/dagpb"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
+	multihash "github.com/multiformats/go-multihash"
 )
 
 // Resolver resolves a single implicit Merkle-DAG link via CAS.
 // It parses one block and returns the first link found in the path.
 // Multi-hop traversal should be handled by the caller.
 type Resolver struct {
-	cas         cas.Client
-	codecs      *codec.Registry
-	hamtConfig  hamt.Config
+	cas        cas.Client
+	codecs     *codec.Registry
+	hamtConfig hamt.Config
 }
 
 // NewResolver creates a new implicit resolver with default codecs.
@@ -142,6 +143,9 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 }
 
 // Verify verifies the evidence for an implicit step.
+// It performs two checks:
+//  1. Verifies that the block content in evidence hashes to the root CID
+//  2. Verifies that the path resolves to the target CID within the block
 func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error) {
 	if ev == nil {
 		return false, fmt.Errorf("evidence is nil")
@@ -152,25 +156,80 @@ func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence
 		return false, fmt.Errorf("expected ImplicitEvidence, got %T", ev)
 	}
 
-	// Verify block content hash matches the CID
 	blockContent := implicitEv.Bytes()
-	// For implicit resolution, we need to compute the CID from the block content
-	// This depends on the codec and multihash used
-	// For simplicity, we just check if the root equals the CID of the block
-	// In practice, we would need to compute the CID properly
-	computedCID, err := cid.Cast(blockContent)
+
+	// Step 1: Verify block content hash matches root CID
+	if !verifyBlockHash(root, blockContent) {
+		return false, nil
+	}
+
+	// Step 2: Verify path -> target mapping within the block
+	return r.verifyPathMapping(root, blockContent, path, target)
+}
+
+// verifyBlockHash verifies that the block content hashes to the given CID.
+func verifyBlockHash(root cid.Cid, blockContent []byte) bool {
+	prefix := root.Prefix()
+
+	// Compute multihash of block content using the same hash function
+	mhash, err := multihash.Sum(blockContent, prefix.MhType, prefix.MhLength)
 	if err != nil {
-		// The block content is not a CID, so we need to compute it properly
-		// For now, we just return true if the evidence exists
-		return true, nil
+		return false
 	}
 
-	// Check if the root matches
-	if root.Equals(computedCID) {
-		return true, nil
+	// Build CID with same codec and compare
+	computedCID := cid.NewCidV1(prefix.Codec, mhash)
+	return root.Equals(computedCID)
+}
+
+// verifyPathMapping verifies that path resolves to target within the block.
+func (r *Resolver) verifyPathMapping(root cid.Cid, blockContent []byte, path string, target cid.Cid) (bool, error) {
+	// Empty path means no traversal, target should equal root
+	if path == "" {
+		return root.Equals(target), nil
 	}
 
-	return true, nil
+	// Get codec for this CID
+	codecName := codecFromCID(root)
+	codecImpl, err := r.codecs.Get(codecName)
+	if err != nil {
+		// Unknown codec, cannot verify path mapping
+		return false, fmt.Errorf("unknown codec %s, cannot verify path mapping", codecName)
+	}
+
+	// Parse the block
+	node, err := codecImpl.Decode(blockContent)
+	if err != nil {
+		return false, fmt.Errorf("failed to decode block: %w", err)
+	}
+
+	// For dag-pb blocks, check if it's a HAMT structure
+	if codecName == "dag-pb" {
+		if r.isHAMTBlock(blockContent) {
+			// HAMT verification requires HAMTEvidence, not ImplicitEvidence
+			// Cannot verify HAMT path mapping with ImplicitEvidence alone
+			return false, fmt.Errorf("HAMT structure requires HAMTEvidence for verification")
+		}
+	}
+
+	// Resolve the path within the block
+	segments := splitPath(path)
+	if len(segments) == 0 {
+		return root.Equals(target), nil
+	}
+
+	resolvedCID, _, err := codec.ResolveLink(node, segments)
+	if err != nil {
+		return false, nil
+	}
+
+	return resolvedCID.Equals(target), nil
+}
+
+// isHAMTBlock checks if a block is a HAMT structure.
+func (r *Resolver) isHAMTBlock(blockContent []byte) bool {
+	_, err := hamt.ParseNode(blockContent)
+	return err == nil
 }
 
 // codecFromCID returns the codec name from a CID.
