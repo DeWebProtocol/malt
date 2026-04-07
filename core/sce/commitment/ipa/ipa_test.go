@@ -129,7 +129,7 @@ func TestIPABatchUpdate(t *testing.T) {
 
 // === Aggregation Proof Tests ===
 
-func TestIPAProveBatch(t *testing.T) {
+func TestIPABatchProve(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -139,9 +139,9 @@ func TestIPAProveBatch(t *testing.T) {
 	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	proofs, err := s.ProveBatch(root, arcs, paths)
+	proofs, err := s.BatchProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveBatch failed: %v", err)
+		t.Fatalf("BatchProve failed: %v", err)
 	}
 
 	if len(proofs) != 2 {
@@ -149,7 +149,7 @@ func TestIPAProveBatch(t *testing.T) {
 	}
 }
 
-func TestIPAVerifyBatch(t *testing.T) {
+func TestIPABatchVerify(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -159,11 +159,11 @@ func TestIPAVerifyBatch(t *testing.T) {
 	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	proofs, _ := s.ProveBatch(root, arcs, paths)
+	proofs, _ := s.BatchProve(root, arcs, paths)
 
-	valid, err := s.VerifyBatch(root, proofs)
+	valid, err := s.BatchVerify(root, proofs)
 	if err != nil {
-		t.Fatalf("VerifyBatch failed: %v", err)
+		t.Fatalf("BatchVerify failed: %v", err)
 	}
 
 	if !valid {
@@ -171,7 +171,7 @@ func TestIPAVerifyBatch(t *testing.T) {
 	}
 }
 
-func TestIPAProveAggregate(t *testing.T) {
+func TestIPAAggregateProve(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -181,9 +181,9 @@ func TestIPAProveAggregate(t *testing.T) {
 	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, err := s.ProveAggregate(root, arcs, paths)
+	aggProof, err := s.AggregateProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveAggregate failed: %v", err)
+		t.Fatalf("AggregateProve failed: %v", err)
 	}
 
 	if len(aggProof.Paths) != 2 {
@@ -195,7 +195,7 @@ func TestIPAProveAggregate(t *testing.T) {
 	}
 }
 
-func TestIPAVerifyAggregate(t *testing.T) {
+func TestIPAAggregateVerify(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -205,11 +205,11 @@ func TestIPAVerifyAggregate(t *testing.T) {
 	root, _ := s.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, _ := s.ProveAggregate(root, arcs, paths)
+	aggProof, _ := s.AggregateProve(root, arcs, paths)
 
-	valid, err := s.VerifyAggregate(root, aggProof)
+	valid, err := s.AggregateVerify(root, aggProof)
 	if err != nil {
-		t.Fatalf("VerifyAggregate failed: %v", err)
+		t.Fatalf("AggregateVerify failed: %v", err)
 	}
 
 	if !valid {
@@ -217,7 +217,7 @@ func TestIPAVerifyAggregate(t *testing.T) {
 	}
 }
 
-func TestIPAProveBatchWithMultiplePaths(t *testing.T) {
+func TestIPABatchProveWithMultiplePaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	arcsMap := make(map[string]cid.Cid)
@@ -230,16 +230,16 @@ func TestIPAProveBatchWithMultiplePaths(t *testing.T) {
 	root, _ := s.Commit(arcs)
 
 	paths := []string{"item_0", "item_5", "item_9"}
-	proofs, err := s.ProveBatch(root, arcs, paths)
+	proofs, err := s.BatchProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveBatch failed: %v", err)
+		t.Fatalf("BatchProve failed: %v", err)
 	}
 
 	if len(proofs) != 3 {
 		t.Errorf("Expected 3 proofs, got %d", len(proofs))
 	}
 
-	valid, _ := s.VerifyBatch(root, proofs)
+	valid, _ := s.BatchVerify(root, proofs)
 	if !valid {
 		t.Error("Batch proofs should be valid")
 	}
@@ -315,7 +315,7 @@ func TestIPAUpdateNonExistentPath(t *testing.T) {
 	}
 }
 
-func TestIPAProveBatchEmptyPaths(t *testing.T) {
+func TestIPABatchProveEmptyPaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -323,13 +323,13 @@ func TestIPAProveBatchEmptyPaths(t *testing.T) {
 
 	root, _ := s.Commit(arcs)
 
-	_, err := s.ProveBatch(root, arcs, []string{})
+	_, err := s.BatchProve(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}
 }
 
-func TestIPAProveAggregateEmptyPaths(t *testing.T) {
+func TestIPAAggregateProveEmptyPaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -337,13 +337,13 @@ func TestIPAProveAggregateEmptyPaths(t *testing.T) {
 
 	root, _ := s.Commit(arcs)
 
-	_, err := s.ProveAggregate(root, arcs, []string{})
+	_, err := s.AggregateProve(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}
 }
 
-func TestIPAProveBatchNonExistentPath(t *testing.T) {
+func TestIPABatchProveNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -351,7 +351,7 @@ func TestIPAProveBatchNonExistentPath(t *testing.T) {
 
 	root, _ := s.Commit(arcs)
 
-	_, err := s.ProveBatch(root, arcs, []string{"nonexistent"})
+	_, err := s.BatchProve(root, arcs, []string{"nonexistent"})
 	if err == nil {
 		t.Error("Should error on non-existent path")
 	}

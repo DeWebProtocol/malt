@@ -32,15 +32,15 @@ type Scheme interface {
 		New cid.Cid
 	}) (cid.Cid, error)
 
-	// ProveBatch generates proofs for multiple paths.
-	ProveBatch(commitment cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error)
+	// BatchProve generates proofs for multiple paths.
+	BatchProve(commitment cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error)
 
-	// VerifyBatch verifies multiple proofs.
-	VerifyBatch(commitment cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error)
+	// BatchVerify verifies multiple proofs.
+	BatchVerify(commitment cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error)
 
-	// ProveAggregate generates an aggregated proof.
-	ProveAggregate(commitment cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error)
+	// AggregateProve generates an aggregated proof.
+	AggregateProve(commitment cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error)
 
-	// VerifyAggregate verifies an aggregated proof.
-	VerifyAggregate(commitment cid.Cid, aggProof *arcset.AggregatedProof) (bool, error)
+	// AggregateVerify verifies an aggregated proof.
+	AggregateVerify(commitment cid.Cid, aggProof *arcset.AggregatedProof) (bool, error)
 }

@@ -129,7 +129,7 @@ func TestVerkleBatchUpdate(t *testing.T) {
 
 // === Aggregation Proof Tests ===
 
-func TestVerkleProveBatch(t *testing.T) {
+func TestVerkleBatchProve(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -139,9 +139,9 @@ func TestVerkleProveBatch(t *testing.T) {
 	root, _ := v.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	proofs, err := v.ProveBatch(root, arcs, paths)
+	proofs, err := v.BatchProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveBatch failed: %v", err)
+		t.Fatalf("BatchProve failed: %v", err)
 	}
 
 	if len(proofs) != 2 {
@@ -149,7 +149,7 @@ func TestVerkleProveBatch(t *testing.T) {
 	}
 }
 
-func TestVerkleVerifyBatch(t *testing.T) {
+func TestVerkleBatchVerify(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -159,11 +159,11 @@ func TestVerkleVerifyBatch(t *testing.T) {
 	root, _ := v.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	proofs, _ := v.ProveBatch(root, arcs, paths)
+	proofs, _ := v.BatchProve(root, arcs, paths)
 
-	valid, err := v.VerifyBatch(root, proofs)
+	valid, err := v.BatchVerify(root, proofs)
 	if err != nil {
-		t.Fatalf("VerifyBatch failed: %v", err)
+		t.Fatalf("BatchVerify failed: %v", err)
 	}
 
 	if !valid {
@@ -171,7 +171,7 @@ func TestVerkleVerifyBatch(t *testing.T) {
 	}
 }
 
-func TestVerkleProveAggregate(t *testing.T) {
+func TestVerkleAggregateProve(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -181,9 +181,9 @@ func TestVerkleProveAggregate(t *testing.T) {
 	root, _ := v.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, err := v.ProveAggregate(root, arcs, paths)
+	aggProof, err := v.AggregateProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveAggregate failed: %v", err)
+		t.Fatalf("AggregateProve failed: %v", err)
 	}
 
 	if len(aggProof.Paths) != 2 {
@@ -199,7 +199,7 @@ func TestVerkleProveAggregate(t *testing.T) {
 	}
 }
 
-func TestVerkleVerifyAggregate(t *testing.T) {
+func TestVerkleAggregateVerify(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -209,11 +209,11 @@ func TestVerkleVerifyAggregate(t *testing.T) {
 	root, _ := v.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, _ := v.ProveAggregate(root, arcs, paths)
+	aggProof, _ := v.AggregateProve(root, arcs, paths)
 
-	valid, err := v.VerifyAggregate(root, aggProof)
+	valid, err := v.AggregateVerify(root, aggProof)
 	if err != nil {
-		t.Fatalf("VerifyAggregate failed: %v", err)
+		t.Fatalf("AggregateVerify failed: %v", err)
 	}
 
 	if !valid {
@@ -255,7 +255,7 @@ func TestVerkleProveNonExistentPath(t *testing.T) {
 	}
 }
 
-func TestVerkleProveAggregateEmptyPaths(t *testing.T) {
+func TestVerkleAggregateProveEmptyPaths(t *testing.T) {
 	v, _ := verkle.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -263,7 +263,7 @@ func TestVerkleProveAggregateEmptyPaths(t *testing.T) {
 
 	root, _ := v.Commit(arcs)
 
-	_, err := v.ProveAggregate(root, arcs, []string{})
+	_, err := v.AggregateProve(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}

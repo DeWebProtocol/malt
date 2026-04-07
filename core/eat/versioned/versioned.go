@@ -100,6 +100,76 @@ func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error
 	return cid.Cid{}, fmt.Errorf("version chain too deep (max %d)", maxDepth)
 }
 
+// BatchGet retrieves multiple target CIDs in a single operation.
+// Returns a map of path -> CID for paths that were found.
+// Paths not found or deleted (tombstone) are omitted from the result map.
+// This is more efficient than multiple Get calls as it traverses the version chain once.
+func (e *EAT) BatchGet(bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
+	ctx := context.Background()
+
+	// Track which paths we still need to find
+	remaining := make(map[string]bool)
+	for _, path := range paths {
+		remaining[path] = true
+	}
+
+	results := make(map[string]cid.Cid)
+	tombstones := make(map[string]bool) // Paths marked as deleted
+
+	currentVersion := version
+	maxDepth := 1000
+
+	for len(remaining) > 0 && maxDepth > 0 {
+		maxDepth--
+
+		// Check each remaining path at current version
+		for path := range remaining {
+			if tombstones[path] {
+				continue // Already marked as deleted
+			}
+
+			key := arcKey(bucketId, currentVersion, path)
+			val, err := e.kv.Get(ctx, key)
+			if err == nil {
+				// Found the arc
+				if len(val) == 0 {
+					// Tombstone - mark as deleted
+					tombstones[path] = true
+				} else if c, err := cid.Cast(val); err == nil {
+					results[path] = c
+				}
+				delete(remaining, path)
+			} else if err != kvstore.ErrNotFound {
+				return nil, fmt.Errorf("failed to get arc %s: %w", path, err)
+			}
+		}
+
+		// Remove tombstoned paths from remaining
+		for path := range tombstones {
+			delete(remaining, path)
+		}
+
+		if len(remaining) == 0 {
+			break
+		}
+
+		// Move to parent version
+		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevVal, err := e.kv.Get(ctx, prevKey)
+		if err != nil {
+			break // No parent, remaining paths not found
+		}
+
+		parentVersion, err := cid.Cast(prevVal)
+		if err != nil {
+			break
+		}
+		currentVersion = parentVersion
+	}
+
+	return results, nil
+}
+
 // Update stores arcs at a new version and links it to the parent version.
 // The newRoot becomes the new version identifier, linked to parentRoot via @previous.
 // If parentRoot is cid.Undef, this creates the first version (no @previous).
@@ -240,81 +310,6 @@ func (e *EAT) Iterate(bucketId string, version cid.Cid) arcset.Iterator {
 
 // Close releases resources.
 func (e *EAT) Close() error {
-	return nil
-}
-
-// CopyOnWrite copies unchanged arcs from parent to a new version.
-// This shortens resolution paths by making all arcs available at the new version.
-// Use this when version history is long and resolution cost needs optimization.
-func (e *EAT) CopyOnWrite(bucketId string, newRoot, parentRoot cid.Cid, modifiedPaths map[string]bool) error {
-	ctx := context.Background()
-
-	// Collect all arcs from ancestors that weren't modified
-	arcsToCopy := make(map[string]cid.Cid)
-	currentVersion := parentRoot
-	maxDepth := 1000
-
-	for i := 0; i < maxDepth; i++ {
-		prefix := versionPrefix(bucketId, currentVersion)
-		iter := e.kv.NewIterator(ctx, prefix, nil)
-
-		for iter.Next() {
-			key := iter.Key()
-			path := string(key[len(prefix):])
-
-			// Skip @previous and modified paths
-			if path == PreviousArc || modifiedPaths[path] {
-				continue
-			}
-
-			// If we haven't seen this path, add it
-			if _, seen := arcsToCopy[path]; !seen {
-				val := iter.Value()
-				// Skip tombstones
-				if len(val) == 0 {
-					continue
-				}
-				c, err := cid.Cast(val)
-				if err == nil {
-					arcsToCopy[path] = c
-				}
-			}
-		}
-		iter.Close()
-
-		// Get parent version
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
-		prevVal, err := e.kv.Get(ctx, prevKey)
-		if err != nil {
-			break
-		}
-
-		parentVersion, err := cid.Cast(prevVal)
-		if err != nil {
-			break
-		}
-		currentVersion = parentVersion
-	}
-
-	// Copy arcs to new version
-	if len(arcsToCopy) == 0 {
-		return nil
-	}
-
-	batch := e.kv.Batch()
-	for path, target := range arcsToCopy {
-		key := arcKey(bucketId, newRoot, path)
-		val := target.Bytes()
-		if err := batch.Put(key, val); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to copy arc: %w", err)
-		}
-	}
-
-	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit copied arcs: %w", err)
-	}
-
 	return nil
 }
 

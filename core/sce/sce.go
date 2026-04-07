@@ -197,8 +197,8 @@ func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.View, updates map[string]
 	return newComm, nil
 }
 
-// ProveBatch generates proofs for multiple paths.
-func (e *Engine) ProveBatch(root cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
+// BatchProve generates proofs for multiple paths.
+func (e *Engine) BatchProve(root cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(root)
 	if err != nil {
@@ -224,16 +224,16 @@ func (e *Engine) ProveBatch(root cid.Cid, arcs arcset.View, paths []string) (map
 		}
 	}
 
-	return e.scheme.ProveBatch(root, arcs, paths)
+	return e.scheme.BatchProve(root, arcs, paths)
 }
 
-// VerifyBatch verifies multiple proofs.
-func (e *Engine) VerifyBatch(root cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
-	return e.scheme.VerifyBatch(root, proofs)
+// BatchVerify verifies multiple proofs.
+func (e *Engine) BatchVerify(root cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
+	return e.scheme.BatchVerify(root, proofs)
 }
 
-// ProveAggregate generates an aggregated proof.
-func (e *Engine) ProveAggregate(root cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+// AggregateProve generates an aggregated proof.
+func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(root)
 	if err != nil {
@@ -259,12 +259,12 @@ func (e *Engine) ProveAggregate(root cid.Cid, arcs arcset.View, paths []string) 
 		}
 	}
 
-	return e.scheme.ProveAggregate(root, arcs, paths)
+	return e.scheme.AggregateProve(root, arcs, paths)
 }
 
-// VerifyAggregate verifies an aggregated proof.
-func (e *Engine) VerifyAggregate(root cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
-	return e.scheme.VerifyAggregate(root, aggProof)
+// AggregateVerify verifies an aggregated proof.
+func (e *Engine) AggregateVerify(root cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
+	return e.scheme.AggregateVerify(root, aggProof)
 }
 
 // extractArcs extracts sorted paths, values, and pathToIndex from ArcSetView.

@@ -156,7 +156,7 @@ func TestKZGBatchUpdate(t *testing.T) {
 
 // === Aggregation Proof Tests ===
 
-func TestKZGProveBatch(t *testing.T) {
+func TestKZGBatchProve(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -167,9 +167,9 @@ func TestKZGProveBatch(t *testing.T) {
 	root, _ := k.Commit(arcs)
 
 	paths := []string{"a", "b", "c"}
-	proofs, err := k.ProveBatch(root, arcs, paths)
+	proofs, err := k.BatchProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveBatch failed: %v", err)
+		t.Fatalf("BatchProve failed: %v", err)
 	}
 
 	if len(proofs) != 3 {
@@ -189,7 +189,7 @@ func TestKZGProveBatch(t *testing.T) {
 	}
 }
 
-func TestKZGVerifyBatch(t *testing.T) {
+func TestKZGBatchVerify(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -200,11 +200,11 @@ func TestKZGVerifyBatch(t *testing.T) {
 	root, _ := k.Commit(arcs)
 
 	paths := []string{"a", "b", "c"}
-	proofs, _ := k.ProveBatch(root, arcs, paths)
+	proofs, _ := k.BatchProve(root, arcs, paths)
 
-	valid, err := k.VerifyBatch(root, proofs)
+	valid, err := k.BatchVerify(root, proofs)
 	if err != nil {
-		t.Fatalf("VerifyBatch failed: %v", err)
+		t.Fatalf("BatchVerify failed: %v", err)
 	}
 
 	if !valid {
@@ -212,7 +212,7 @@ func TestKZGVerifyBatch(t *testing.T) {
 	}
 }
 
-func TestKZGVerifyBatchWithInvalidProof(t *testing.T) {
+func TestKZGBatchVerifyWithInvalidProof(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -232,13 +232,13 @@ func TestKZGVerifyBatchWithInvalidProof(t *testing.T) {
 		},
 	}
 
-	valid, _ := k.VerifyBatch(root, proofs)
+	valid, _ := k.BatchVerify(root, proofs)
 	if valid {
 		t.Error("Invalid batch proof should not be valid")
 	}
 }
 
-func TestKZGProveAggregate(t *testing.T) {
+func TestKZGAggregateProve(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -248,9 +248,9 @@ func TestKZGProveAggregate(t *testing.T) {
 	root, _ := k.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, err := k.ProveAggregate(root, arcs, paths)
+	aggProof, err := k.AggregateProve(root, arcs, paths)
 	if err != nil {
-		t.Fatalf("ProveAggregate failed: %v", err)
+		t.Fatalf("AggregateProve failed: %v", err)
 	}
 
 	if len(aggProof.Paths) != 2 {
@@ -266,7 +266,7 @@ func TestKZGProveAggregate(t *testing.T) {
 	}
 }
 
-func TestKZGVerifyAggregate(t *testing.T) {
+func TestKZGAggregateVerify(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -276,11 +276,11 @@ func TestKZGVerifyAggregate(t *testing.T) {
 	root, _ := k.Commit(arcs)
 
 	paths := []string{"a", "b"}
-	aggProof, _ := k.ProveAggregate(root, arcs, paths)
+	aggProof, _ := k.AggregateProve(root, arcs, paths)
 
-	valid, err := k.VerifyAggregate(root, aggProof)
+	valid, err := k.AggregateVerify(root, aggProof)
 	if err != nil {
-		t.Fatalf("VerifyAggregate failed: %v", err)
+		t.Fatalf("AggregateVerify failed: %v", err)
 	}
 
 	if !valid {
@@ -374,7 +374,7 @@ func TestKZGUpdateNonExistentPath(t *testing.T) {
 	}
 }
 
-func TestKZGProveBatchEmptyPaths(t *testing.T) {
+func TestKZGBatchProveEmptyPaths(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -382,13 +382,13 @@ func TestKZGProveBatchEmptyPaths(t *testing.T) {
 
 	root, _ := k.Commit(arcs)
 
-	_, err := k.ProveBatch(root, arcs, []string{})
+	_, err := k.BatchProve(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}
 }
 
-func TestKZGProveAggregateEmptyPaths(t *testing.T) {
+func TestKZGAggregateProveEmptyPaths(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -396,13 +396,13 @@ func TestKZGProveAggregateEmptyPaths(t *testing.T) {
 
 	root, _ := k.Commit(arcs)
 
-	_, err := k.ProveAggregate(root, arcs, []string{})
+	_, err := k.AggregateProve(root, arcs, []string{})
 	if err == nil {
 		t.Error("Should error on empty paths")
 	}
 }
 
-func TestKZGProveBatchNonExistentPath(t *testing.T) {
+func TestKZGBatchProveNonExistentPath(t *testing.T) {
 	k, _ := kzg.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -410,7 +410,7 @@ func TestKZGProveBatchNonExistentPath(t *testing.T) {
 
 	root, _ := k.Commit(arcs)
 
-	_, err := k.ProveBatch(root, arcs, []string{"nonexistent"})
+	_, err := k.BatchProve(root, arcs, []string{"nonexistent"})
 	if err == nil {
 		t.Error("Should error on non-existent path")
 	}

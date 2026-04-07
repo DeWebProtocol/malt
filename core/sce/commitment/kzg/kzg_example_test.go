@@ -111,8 +111,8 @@ func ExampleScheme_BatchUpdate() {
 	// Batch updated: true
 }
 
-// ExampleScheme_ProveBatch demonstrates batch proof generation.
-func ExampleScheme_ProveBatch() {
+// ExampleScheme_BatchProve demonstrates Batch proof generation.
+func ExampleScheme_BatchProve() {
 	c, _ := kzg.NewScheme()
 
 	t1, _ := newPayloadCID([]byte("data1"))
@@ -121,10 +121,10 @@ func ExampleScheme_ProveBatch() {
 
 	root, _ := c.Commit(arcs)
 
-	proofs, _ := c.ProveBatch(root, arcs, []string{"path1", "path2"})
+	proofs, _ := c.BatchProve(root, arcs, []string{"path1", "path2"})
 	fmt.Printf("Generated %d proofs\n", len(proofs))
 
-	valid, _ := c.VerifyBatch(root, proofs)
+	valid, _ := c.BatchVerify(root, proofs)
 	fmt.Printf("Batch valid: %v\n", valid)
 
 	// Output:
@@ -132,8 +132,8 @@ func ExampleScheme_ProveBatch() {
 	// Batch valid: true
 }
 
-// ExampleScheme_ProveAggregate demonstrates aggregated proof generation.
-func ExampleScheme_ProveAggregate() {
+// ExampleScheme_AggregateProve demonstrates aggregated proof generation.
+func ExampleScheme_AggregateProve() {
 	c, _ := kzg.NewScheme()
 
 	t1, _ := newPayloadCID([]byte("data1"))
@@ -142,11 +142,11 @@ func ExampleScheme_ProveAggregate() {
 
 	root, _ := c.Commit(arcs)
 
-	aggProof, _ := c.ProveAggregate(root, arcs, []string{"path1", "path2"})
+	aggProof, _ := c.AggregateProve(root, arcs, []string{"path1", "path2"})
 	fmt.Printf("Aggregated proof for %d paths\n", len(aggProof.Paths))
 	fmt.Printf("Proof data size: %d bytes\n", len(aggProof.ProofData))
 
-	valid, _ := c.VerifyAggregate(root, aggProof)
+	valid, _ := c.AggregateVerify(root, aggProof)
 	fmt.Printf("Aggregate valid: %v\n", valid)
 
 	// Output:

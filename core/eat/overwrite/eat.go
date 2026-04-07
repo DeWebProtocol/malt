@@ -87,6 +87,48 @@ func (e *EAT) Get(bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 	return cid.Cast(val)
 }
 
+// BatchGet retrieves multiple target CIDs in a single operation.
+// Returns a map of path -> CID for paths that were found.
+// Paths not found are omitted from the result map.
+func (e *EAT) BatchGet(bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error) {
+	ctx := context.Background()
+
+	// Validate root if provided
+	if root != cid.Undef {
+		rootKeyBytes := rootKey(root)
+		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		if err != nil {
+			if err == kvstore.ErrNotFound {
+				return nil, arcset.ErrNotFound
+			}
+			return nil, fmt.Errorf("failed to resolve root: %w", err)
+		}
+
+		// Verify this root maps to the correct bucket
+		if string(bucketIdBytes) != bucketId {
+			return nil, arcset.ErrNotFound
+		}
+	}
+
+	results := make(map[string]cid.Cid)
+	for _, path := range paths {
+		arcKeyBytes := arcKey(bucketId, path)
+		val, err := e.kv.Get(ctx, arcKeyBytes)
+		if err != nil {
+			if err == kvstore.ErrNotFound {
+				continue // Skip not found
+			}
+			return nil, fmt.Errorf("failed to get arc %s: %w", path, err)
+		}
+
+		if c, err := cid.Cast(val); err == nil {
+			results[path] = c
+		}
+	}
+
+	return results, nil
+}
+
 // Update stores arc entries with a new commitment root.
 // If oldRoot is not cid.Undef, it invalidates the old root mapping.
 // If newRoot is not cid.Undef, it creates a new root->bucketId mapping.

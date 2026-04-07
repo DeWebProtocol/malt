@@ -30,6 +30,11 @@ type EAT interface {
 	// Returns ErrNotFound if not found.
 	Get(bucketId string, root cid.Cid, path string) (cid.Cid, error)
 
+	// BatchGet retrieves multiple target CIDs in a single operation.
+	// Returns a map of path -> CID for paths that were found.
+	// Paths not found are omitted from the result map (no error).
+	BatchGet(bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error)
+
 	// Update stores arc entries with a new commitment root.
 	// bucketId is the namespace for the arc set.
 	// For overwrite EAT: oldRoot mappings are invalidated, data is overwritten.

@@ -282,8 +282,8 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]
 	return codec.NewIPACid(commBytes)
 }
 
-// ProveBatch generates proofs for multiple paths.
-func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
+// BatchProve generates proofs for multiple paths.
+func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths is empty")
 	}
@@ -339,8 +339,8 @@ func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map
 	return results, nil
 }
 
-// VerifyBatch verifies multiple proofs.
-func (s *Scheme) VerifyBatch(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
+// BatchVerify verifies multiple proofs.
+func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -387,8 +387,8 @@ func (s *Scheme) VerifyBatch(comm cid.Cid, proofs map[string]arcset.BatchProofEn
 	return true, nil
 }
 
-// ProveAggregate generates an aggregated proof.
-func (s *Scheme) ProveAggregate(comm cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+// AggregateProve generates an aggregated proof.
+func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths is empty")
 	}
@@ -451,8 +451,8 @@ func (s *Scheme) ProveAggregate(comm cid.Cid, arcs arcset.View, paths []string) 
 	}, nil
 }
 
-// VerifyAggregate verifies an aggregated proof.
-func (s *Scheme) VerifyAggregate(comm cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
+// AggregateVerify verifies an aggregated proof.
+func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
 	if aggProof == nil || len(aggProof.Paths) == 0 {
 		return false, fmt.Errorf("invalid aggregated proof")
 	}
