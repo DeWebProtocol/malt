@@ -19,6 +19,10 @@ type Iterator interface {
 
 	// Err returns any error encountered during iteration.
 	Err() error
+
+	// Close releases iterator resources.
+	// Must be called when iteration is complete.
+	Close()
 }
 
 // View provides a read-only view of an arc set.
@@ -114,6 +118,10 @@ func (it *mapIterator) Next() (string, cid.Cid, bool) {
 
 func (it *mapIterator) Err() error {
 	return nil
+}
+
+func (it *mapIterator) Close() {
+	// No resources to release
 }
 
 // Ensure Map implements View.

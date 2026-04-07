@@ -328,6 +328,10 @@ func (it *eatIterator) Err() error {
 	return it.iter.Err()
 }
 
+func (it *eatIterator) Close() {
+	it.iter.Close()
+}
+
 // emptyView is an empty view.
 type emptyView struct{}
 
@@ -352,4 +356,8 @@ func (it *emptyIterator) Next() (string, cid.Cid, bool) {
 
 func (it *emptyIterator) Err() error {
 	return nil
+}
+
+func (it *emptyIterator) Close() {
+	// No resources to release
 }

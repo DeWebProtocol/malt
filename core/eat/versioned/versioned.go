@@ -392,6 +392,10 @@ func (it *versionedIterator) Err() error {
 	return it.iter.Err()
 }
 
+func (it *versionedIterator) Close() {
+	it.iter.Close()
+}
+
 // flattenedIterator walks the @previous chain to iterate all visible arcs.
 type flattenedIterator struct {
 	eat       *EAT
@@ -471,4 +475,9 @@ func (it *flattenedIterator) Next() (string, cid.Cid, bool) {
 
 func (it *flattenedIterator) Err() error {
 	return it.err
+}
+
+func (it *flattenedIterator) Close() {
+	// flattenedIterator creates internal iterators that are closed within Next()
+	// No persistent resources to release
 }
