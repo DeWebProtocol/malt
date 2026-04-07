@@ -4,9 +4,9 @@ package main
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	malt "github.com/dewebprotocol/malt/malt"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -48,11 +48,12 @@ func runWithDefaults() {
 	fmt.Printf("Node initialized\n")
 
 	// Create structure
-	arcs := arcset.NewMap()
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
-	arcs.Set("document", target1)
-	arcs.Set("image", target2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+		"document": target1,
+		"image":    target2,
+	})
 
 	structure, err := node.NewStructure(arcs)
 	if err != nil {
@@ -91,9 +92,8 @@ func runWithOptions() {
 	fmt.Printf("Node initialized with custom components\n")
 
 	// Create structure
-	arcs := arcset.NewMap()
 	target1, _ := newPayloadCID([]byte("data.json"))
-	arcs.Set("data", target1)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"data": target1})
 
 	structure, err := node.NewStructure(arcs)
 	if err != nil {

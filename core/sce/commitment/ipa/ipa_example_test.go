@@ -5,6 +5,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
+	cid "github.com/ipfs/go-cid"
 )
 
 // ExampleNewScheme demonstrates basic usage of IPA commitment.
@@ -15,9 +16,8 @@ func ExampleNewScheme() {
 		return
 	}
 
-	arcs := arcset.NewMap()
 	target, _ := newPayloadCID([]byte("data"))
-	arcs.Set("key", target)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"key": target})
 
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -35,9 +35,8 @@ func ExampleNewScheme() {
 func ExampleScheme_Prove() {
 	c, _ := ipa.NewScheme()
 
-	arcs := arcset.NewMap()
 	target, _ := newPayloadCID([]byte("content"))
-	arcs.Set("path", target)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path": target})
 
 	root, _ := c.Commit(arcs)
 
@@ -59,9 +58,8 @@ func ExampleScheme_Prove() {
 func ExampleScheme_Update() {
 	c, _ := ipa.NewScheme()
 
-	arcs := arcset.NewMap()
 	oldTarget, _ := newPayloadCID([]byte("old"))
-	arcs.Set("data", oldTarget)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"data": oldTarget})
 
 	root, _ := c.Commit(arcs)
 
@@ -78,11 +76,9 @@ func ExampleScheme_Update() {
 func ExampleScheme_ProveBatch() {
 	c, _ := ipa.NewScheme()
 
-	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Set("path1", t1)
-	arcs.Set("path2", t2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 
@@ -101,11 +97,9 @@ func ExampleScheme_ProveBatch() {
 func ExampleScheme_ProveAggregate() {
 	c, _ := ipa.NewScheme()
 
-	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Set("path1", t1)
-	arcs.Set("path2", t2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 

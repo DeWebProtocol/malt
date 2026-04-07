@@ -97,13 +97,13 @@ func BenchmarkKZGUpdate(b *testing.B) {
 
 // generateRandomArcSet creates an arc set with simple deterministic keys.
 func generateRandomArcSet(n int) *arcset.Map {
-	arcs := arcset.NewMap()
+	arcsMap := make(map[string]cid.Cid)
 	for i := 0; i < n; i++ {
 		data := []byte{byte(i % 256), byte((i / 256) % 256), byte(i >> 16)}
 		k, _ := newPayloadCIDBench(data)
-		arcs.Set(fmt.Sprintf("arc_%d", i), k)
+		arcsMap[fmt.Sprintf("arc_%d", i)] = k
 	}
-	return arcs
+	return arcset.NewMapFrom(arcsMap)
 }
 
 func generateRandomKey() cid.Cid {

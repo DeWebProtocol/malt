@@ -16,11 +16,9 @@ func ExampleNewScheme() {
 		return
 	}
 
-	arcs := arcset.NewMap()
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
-	arcs.Set("document", target1)
-	arcs.Set("image", target2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"document": target1, "image": target2})
 
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -38,9 +36,8 @@ func ExampleNewScheme() {
 func ExampleScheme_Prove() {
 	c, _ := kzg.NewScheme()
 
-	arcs := arcset.NewMap()
 	target, _ := newPayloadCID([]byte("my-data"))
-	arcs.Set("data", target)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"data": target})
 
 	root, _ := c.Commit(arcs)
 
@@ -66,9 +63,8 @@ func ExampleScheme_Prove() {
 func ExampleScheme_Update() {
 	c, _ := kzg.NewScheme()
 
-	arcs := arcset.NewMap()
 	oldTarget, _ := newPayloadCID([]byte("version-1"))
-	arcs.Set("file", oldTarget)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"file": oldTarget})
 
 	root, _ := c.Commit(arcs)
 	fmt.Printf("Initial root created: %v\n", root.Defined())
@@ -91,11 +87,9 @@ func ExampleScheme_Update() {
 func ExampleScheme_BatchUpdate() {
 	c, _ := kzg.NewScheme()
 
-	arcs := arcset.NewMap()
 	target1, _ := newPayloadCID([]byte("data-1"))
 	target2, _ := newPayloadCID([]byte("data-2"))
-	arcs.Set("a", target1)
-	arcs.Set("b", target2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": target1, "b": target2})
 
 	root, _ := c.Commit(arcs)
 
@@ -121,11 +115,9 @@ func ExampleScheme_BatchUpdate() {
 func ExampleScheme_ProveBatch() {
 	c, _ := kzg.NewScheme()
 
-	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Set("path1", t1)
-	arcs.Set("path2", t2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 
@@ -144,11 +136,9 @@ func ExampleScheme_ProveBatch() {
 func ExampleScheme_ProveAggregate() {
 	c, _ := kzg.NewScheme()
 
-	arcs := arcset.NewMap()
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs.Set("path1", t1)
-	arcs.Set("path2", t2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 

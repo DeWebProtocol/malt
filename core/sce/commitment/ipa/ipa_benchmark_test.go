@@ -97,11 +97,11 @@ func BenchmarkIPAUpdate(b *testing.B) {
 }
 
 func generateRandomIPAArcSet(n int) *arcset.Map {
-	arcs := arcset.NewMap()
+	arcsMap := make(map[string]cid.Cid)
 	for i := 0; i < n; i++ {
-		arcs.Set(fmt.Sprintf("arc_%d", i), generateRandomIPAKey())
+		arcsMap[fmt.Sprintf("arc_%d", i)] = generateRandomIPAKey()
 	}
-	return arcs
+	return arcset.NewMapFrom(arcsMap)
 }
 
 func generateRandomIPAKey() cid.Cid {

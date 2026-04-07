@@ -36,11 +36,6 @@ func newTestEAT() *overwrite.EAT {
 
 const testBucketId = "test-graph"
 
-// collectArcs collects arcs from an arcset.Map into a map.
-func collectArcs(arcs *arcset.Map) map[string]cid.Cid {
-	return arcs.AsMap()
-}
-
 func TestExplicitResolverResolve(t *testing.T) {
 	// Create components
 	e := newTestEAT()
@@ -51,14 +46,16 @@ func TestExplicitResolverResolve(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set with hierarchical paths
-	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
 
-	arcs.Set("a", k1)
-	arcs.Set("a/b", k2)
-	arcs.Set("a/b/c", k3)
+	arcsMap := map[string]cid.Cid{
+		"a":     k1,
+		"a/b":   k2,
+		"a/b/c": k3,
+	}
+	arcs := arcset.NewMapFrom(arcsMap)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -67,16 +64,16 @@ func TestExplicitResolverResolve(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, arcsMap)
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s, testBucketId)
 
 	// Test longest prefix matching
 	tests := []struct {
-		path          string
-		expectedPath  string
-		expectedKey   cid.Cid
+		path         string
+		expectedPath string
+		expectedKey  cid.Cid
 	}{
 		{"a", "a", k1},
 		{"a/b", "a/b", k2},
@@ -121,9 +118,9 @@ func TestExplicitResolverVerify(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Set("a", k1)
+	arcsMap := map[string]cid.Cid{"a": k1}
+	arcs := arcset.NewMapFrom(arcsMap)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -132,7 +129,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, arcsMap)
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s, testBucketId)
@@ -164,9 +161,9 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Set("x/y/z", k1)
+	arcsMap := map[string]cid.Cid{"x/y/z": k1}
+	arcs := arcset.NewMapFrom(arcsMap)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -175,7 +172,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Update(testBucketId, root, cid.Undef, collectArcs(arcs))
+	e.Update(testBucketId, root, cid.Undef, arcsMap)
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s, testBucketId)

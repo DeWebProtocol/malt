@@ -5,9 +5,9 @@ import (
 
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	malt "github.com/dewebprotocol/malt/malt"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -44,11 +44,12 @@ func TestStructureBasic(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create arc set
-	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs.Set("link1", k1)
-	arcs.Set("link2", k2)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+		"link1": k1,
+		"link2": k2,
+	})
 
 	// Create structure
 	structure, err := malt.NewStructure(arcs, testBucketId, e, s)
@@ -96,9 +97,8 @@ func TestStructureUpdate(t *testing.T) {
 	s := sce.NewEngine(scheme)
 
 	// Create initial structure
-	arcs := arcset.NewMap()
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs.Set("link", k1)
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{"link": k1})
 
 	structure, err := malt.NewStructure(arcs, testBucketId, e, s)
 	if err != nil {

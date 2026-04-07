@@ -97,11 +97,11 @@ func BenchmarkVerkleUpdate(b *testing.B) {
 }
 
 func generateRandomVerkleArcSet(n int) *arcset.Map {
-	arcs := arcset.NewMap()
+	arcsMap := make(map[string]cid.Cid)
 	for i := 0; i < n; i++ {
-		arcs.Set(fmt.Sprintf("arc_%d", i), generateRandomVerkleKey())
+		arcsMap[fmt.Sprintf("arc_%d", i)] = generateRandomVerkleKey()
 	}
-	return arcs
+	return arcset.NewMapFrom(arcsMap)
 }
 
 func generateRandomVerkleKey() cid.Cid {

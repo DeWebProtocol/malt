@@ -44,30 +44,22 @@ type Snapshot interface {
 // Deprecated: Use Snapshot instead.
 type View = Snapshot
 
-// Map is a simple implementation of View backed by a map.
-// It is not thread-safe and intended for building temporary arc sets.
+// Map is an immutable snapshot backed by a map.
+// It is safe for concurrent read access.
+// Do not modify the underlying map after creation.
 type Map struct {
 	arcs map[string]cid.Cid
 }
 
-// NewMap creates a new Map.
+// NewMap creates an empty Map.
 func NewMap() *Map {
 	return &Map{arcs: make(map[string]cid.Cid)}
 }
 
-// NewMapFrom creates a new Map from an existing map.
+// NewMapFrom creates a Map from an existing map.
+// The map is used directly without copying; caller should not modify it afterwards.
 func NewMapFrom(arcs map[string]cid.Cid) *Map {
 	return &Map{arcs: arcs}
-}
-
-// Set adds or updates an arc.
-func (m *Map) Set(path string, target cid.Cid) {
-	m.arcs[path] = target
-}
-
-// Delete removes an arc.
-func (m *Map) Delete(path string) {
-	delete(m.arcs, path)
 }
 
 // Get retrieves the target CID for a path.
@@ -84,11 +76,6 @@ func (m *Map) Iterate() Iterator {
 // Len returns the number of arcs.
 func (m *Map) Len() int {
 	return len(m.arcs)
-}
-
-// AsMap returns the underlying map.
-func (m *Map) AsMap() map[string]cid.Cid {
-	return m.arcs
 }
 
 // mapIterator implements Iterator for Map.
