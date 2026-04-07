@@ -62,7 +62,7 @@ func (s *Structure) Root() cid.Cid {
 
 // Resolve resolves a path from the structure root.
 // Returns the target CID and a proof.
-func (s *Structure) Resolve(path string) (cid.Cid, arcset.Proof, error) {
+func (s *Structure) Resolve(path string) (cid.Cid, []byte, error) {
 	// Get target from EAT
 	target, err := s.eat.Get(s.bucketId, s.root, path)
 	if err != nil {
@@ -110,7 +110,7 @@ func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 }
 
 // Verify verifies a proof for an arc.
-func (s *Structure) Verify(path string, target cid.Cid, proof arcset.Proof) (bool, error) {
+func (s *Structure) Verify(path string, target cid.Cid, proof []byte) (bool, error) {
 	return s.sce.Verify(s.root, path, target, proof)
 }
 

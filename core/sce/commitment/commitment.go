@@ -16,10 +16,10 @@ type Scheme interface {
 
 	// Prove generates a proof for a single path.
 	// Returns the target CID and proof bytes.
-	Prove(commitment cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error)
+	Prove(commitment cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error)
 
 	// Verify verifies a proof.
-	Verify(commitment cid.Cid, path string, value cid.Cid, proof arcset.Proof) (bool, error)
+	Verify(commitment cid.Cid, path string, value cid.Cid, proof []byte) (bool, error)
 
 	// Update updates a single value in the commitment.
 	// Returns the new commitment CID.

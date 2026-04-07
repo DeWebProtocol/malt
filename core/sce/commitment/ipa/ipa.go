@@ -94,7 +94,7 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 }
 
 // Prove generates an IPA proof.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -134,11 +134,11 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, ar
 		return cid.Cid{}, nil, fmt.Errorf("failed to serialize proof: %w", err)
 	}
 
-	return aux.values[proveIndex], arcset.Proof(proofBytes), nil
+	return aux.values[proveIndex], proofBytes, nil
 }
 
 // Verify verifies an IPA proof.
-func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof arcset.Proof) (bool, error) {
+func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -332,7 +332,7 @@ func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map
 
 		results[path] = arcset.BatchProofEntry{
 			Target: aux.values[index],
-			Proof:  arcset.Proof(proofBytes),
+			Proof:  proofBytes,
 		}
 	}
 
@@ -497,7 +497,7 @@ func (s *Scheme) VerifyAggregate(comm cid.Cid, aggProof *arcset.AggregatedProof)
 		proofBytes := aggProof.ProofData[offset : offset+proofLen]
 		offset += proofLen
 
-		ipaProof, err := s.deserializeProof(arcset.Proof(proofBytes))
+		ipaProof, err := s.deserializeProof(proofBytes)
 		if err != nil {
 			return false, fmt.Errorf("failed to deserialize proof %d: %w", i, err)
 		}
@@ -542,7 +542,7 @@ func (s *Scheme) serializeProof(proof *ipa.IPAProof) ([]byte, error) {
 	return result, nil
 }
 
-func (s *Scheme) deserializeProof(data arcset.Proof) (*ipa.IPAProof, error) {
+func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("proof data too short")
 	}

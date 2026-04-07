@@ -88,7 +88,7 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 }
 
 // Prove generates a Verkle proof.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -114,11 +114,11 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, ar
 	proofBytes = append(proofBytes, stem...)
 	proofBytes = append(proofBytes, entry.values[index].Bytes()...)
 
-	return entry.values[index], arcset.Proof(proofBytes), nil
+	return entry.values[index], proofBytes, nil
 }
 
 // Verify verifies a Verkle proof.
-func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof arcset.Proof) (bool, error) {
+func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
 	if len(proof) < StemSize {
 		return false, nil
 	}
@@ -258,7 +258,7 @@ func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map
 
 		results[path] = arcset.BatchProofEntry{
 			Target: entry.values[index],
-			Proof:  arcset.Proof(proofBytes),
+			Proof:  proofBytes,
 		}
 	}
 

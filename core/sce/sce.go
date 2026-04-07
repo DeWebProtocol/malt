@@ -77,7 +77,7 @@ func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
 }
 
 // Prove generates a proof for an arc.
-func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error) {
+func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(root)
 	if err != nil {
@@ -106,7 +106,7 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, ar
 }
 
 // Verify verifies a proof.
-func (e *Engine) Verify(root cid.Cid, path string, target cid.Cid, proof arcset.Proof) (bool, error) {
+func (e *Engine) Verify(root cid.Cid, path string, target cid.Cid, proof []byte) (bool, error) {
 	return e.scheme.Verify(root, path, target, proof)
 }
 

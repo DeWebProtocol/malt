@@ -90,7 +90,7 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 }
 
 // Prove generates a KZG proof for a value at the given path.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, arcset.Proof, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -125,11 +125,11 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, ar
 	proofBytes = append(proofBytes, claimedValue[:]...)
 	proofBytes = append(proofBytes, byte(proveIndex>>24), byte(proveIndex>>16), byte(proveIndex>>8), byte(proveIndex))
 
-	return entry.values[proveIndex], arcset.Proof(proofBytes), nil
+	return entry.values[proveIndex], proofBytes, nil
 }
 
 // Verify verifies a KZG proof.
-func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof arcset.Proof) (bool, error) {
+func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
 	if len(proof) < ProofSize {
 		return false, fmt.Errorf("proof too short: %d", len(proof))
 	}
@@ -304,7 +304,7 @@ func (s *Scheme) ProveBatch(comm cid.Cid, arcs arcset.View, paths []string) (map
 
 		results[path] = arcset.BatchProofEntry{
 			Target: entry.values[index],
-			Proof:  arcset.Proof(proofBytes),
+			Proof:  proofBytes,
 		}
 	}
 

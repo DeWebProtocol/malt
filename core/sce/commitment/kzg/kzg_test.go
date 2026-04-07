@@ -228,7 +228,7 @@ func TestKZGVerifyBatchWithInvalidProof(t *testing.T) {
 	proofs := map[string]arcset.BatchProofEntry{
 		"a": {
 			Target: k1,
-			Proof:  arcset.Proof(invalidProof),
+			Proof:  invalidProof,
 		},
 	}
 

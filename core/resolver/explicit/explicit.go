@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce"
@@ -84,9 +83,7 @@ func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence
 		return false, fmt.Errorf("expected ExplicitEvidence, got %T", ev)
 	}
 
-	// Convert evidence bytes back to arcset.Proof for SCE
-	proof := arcset.Proof(explicitEv.Bytes())
-	return r.sce.Verify(root, path, target, proof)
+	return r.sce.Verify(root, path, target, explicitEv.Bytes())
 }
 
 // splitPath splits a path into segments.
