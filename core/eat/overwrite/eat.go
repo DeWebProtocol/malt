@@ -16,43 +16,21 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Option is a configuration option for EAT.
-type Option func(*EAT)
-
-// WithSnapshotView configures EAT to create snapshot views.
-// When enabled, View() returns a snapshot of the data at that point in time,
-// ensuring consistency even if the underlying data changes.
-func WithSnapshotView(snapshot bool) Option {
-	return func(e *EAT) {
-		e.snapshotView = snapshot
-	}
-}
-
 // EAT is a stateless EAT with overwrite semantics.
 // It uses bucketId for namespace isolation, allowing multiple graphs
 // to share the same KVStore instance.
 // All operations are atomic via KVStore batch operations.
 type EAT struct {
-	kv           kvstore.KVStore
-	snapshotView bool // if true, View creates a snapshot instead of live view
+	kv kvstore.KVStore
 }
 
 // NewEAT creates a new EAT with the given KVStore.
-// Options can be provided to configure the EAT behavior.
-func NewEAT(kv kvstore.KVStore, opts ...Option) (*EAT, error) {
+func NewEAT(kv kvstore.KVStore) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
 
-	e := &EAT{
-		kv: kv,
-	}
-
-	for _, opt := range opts {
-		opt(e)
-	}
-
-	return e, nil
+	return &EAT{kv: kv}, nil
 }
 
 // arcKey generates the storage key for a path within a bucket.
@@ -162,11 +140,10 @@ func (e *EAT) Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]
 	return nil
 }
 
-// View returns an ArcSetView for a specific bucket and root.
+// Snapshot returns an immutable snapshot of all arcs in the bucket.
 // If root is not cid.Undef, it validates that the root is valid for the bucket.
 // If root is cid.Undef, validation is skipped.
-// If snapshotView is enabled, returns a snapshot of the data at this point in time.
-func (e *EAT) View(bucketId string, root cid.Cid) arcset.View {
+func (e *EAT) Snapshot(bucketId string, root cid.Cid) arcset.Snapshot {
 	ctx := context.Background()
 
 	// Validate root if provided
@@ -174,23 +151,12 @@ func (e *EAT) View(bucketId string, root cid.Cid) arcset.View {
 		rootKeyBytes := rootKey(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
-			return &emptyView{}
+			return arcset.NewMap() // Return empty snapshot for invalid root
 		}
 	}
 
-	if e.snapshotView {
-		// Create a snapshot by copying all arcs into memory
-		return e.createSnapshotView(bucketId)
-	}
-
-	return &eatView{eat: e, bucketId: bucketId}
-}
-
-// createSnapshotView creates a snapshot view by copying all arcs into memory.
-func (e *EAT) createSnapshotView(bucketId string) arcset.View {
-	ctx := context.Background()
+	// Load all arcs into memory
 	arcs := make(map[string]cid.Cid)
-
 	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
@@ -199,8 +165,7 @@ func (e *EAT) createSnapshotView(bucketId string) arcset.View {
 		key := iter.Key()
 		path := string(key[len(prefix):])
 		val := iter.Value()
-		c, err := cid.Cast(val)
-		if err == nil {
+		if c, err := cid.Cast(val); err == nil {
 			arcs[path] = c
 		}
 	}
@@ -208,9 +173,21 @@ func (e *EAT) createSnapshotView(bucketId string) arcset.View {
 	return arcset.NewMapFrom(arcs)
 }
 
-// Iterate returns an iterator over all arcs in a bucket.
-func (e *EAT) Iterate(bucketId string) arcset.Iterator {
+// Iterate returns a streaming iterator over all arcs in the bucket.
+// If root is not cid.Undef, it validates that the root is valid for the bucket.
+// If root is cid.Undef, validation is skipped.
+// Caller must call Close() on the iterator when done.
+func (e *EAT) Iterate(bucketId string, root cid.Cid) arcset.Iterator {
 	ctx := context.Background()
+
+	// Validate root if provided
+	if root != cid.Undef {
+		rootKeyBytes := rootKey(root)
+		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		if err != nil || string(bucketIdBytes) != bucketId {
+			return &emptyIterator{}
+		}
+	}
 
 	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
@@ -219,22 +196,6 @@ func (e *EAT) Iterate(bucketId string) arcset.Iterator {
 		iter:   iter,
 		prefix: prefix,
 	}
-}
-
-// Len returns the number of arcs in a bucket.
-func (e *EAT) Len(bucketId string) int {
-	ctx := context.Background()
-
-	prefix := bucketPrefix(bucketId)
-	iter := e.kv.NewIterator(ctx, prefix, nil)
-	defer iter.Close()
-
-	count := 0
-	for iter.Next() {
-		count++
-	}
-
-	return count
 }
 
 // Clear removes all arcs in a bucket.
@@ -273,33 +234,6 @@ func (e *EAT) Close() error {
 	return nil
 }
 
-// eatView implements arcset.View for the EAT.
-type eatView struct {
-	eat      *EAT
-	bucketId string
-}
-
-func (v *eatView) Get(path string) (cid.Cid, bool) {
-	ctx := context.Background()
-	val, err := v.eat.kv.Get(ctx, arcKey(v.bucketId, path))
-	if err != nil {
-		return cid.Cid{}, false
-	}
-	c, err := cid.Cast(val)
-	if err != nil {
-		return cid.Cid{}, false
-	}
-	return c, true
-}
-
-func (v *eatView) Iterate() arcset.Iterator {
-	return v.eat.Iterate(v.bucketId)
-}
-
-func (v *eatView) Len() int {
-	return v.eat.Len(v.bucketId)
-}
-
 // eatIterator implements arcset.Iterator for the EAT.
 type eatIterator struct {
 	iter   kvstore.Iterator
@@ -307,21 +241,22 @@ type eatIterator struct {
 }
 
 func (it *eatIterator) Next() (string, cid.Cid, bool) {
-	if !it.iter.Next() {
-		return "", cid.Cid{}, false
+	for {
+		if !it.iter.Next() {
+			return "", cid.Cid{}, false
+		}
+
+		key := it.iter.Key()
+		path := string(key[len(it.prefix):])
+
+		val := it.iter.Value()
+		c, err := cid.Cast(val)
+		if err != nil {
+			continue // Skip invalid entries
+		}
+
+		return path, c, true
 	}
-
-	key := it.iter.Key()
-	// Extract path from key: bucketId:path -> path
-	path := string(key[len(it.prefix):])
-
-	val := it.iter.Value()
-	c, err := cid.Cast(val)
-	if err != nil {
-		return it.Next() // Skip invalid entries
-	}
-
-	return path, c, true
 }
 
 func (it *eatIterator) Err() error {
@@ -332,22 +267,7 @@ func (it *eatIterator) Close() {
 	it.iter.Close()
 }
 
-// emptyView is an empty view.
-type emptyView struct{}
-
-func (v *emptyView) Get(path string) (cid.Cid, bool) {
-	return cid.Cid{}, false
-}
-
-func (v *emptyView) Iterate() arcset.Iterator {
-	return &emptyIterator{}
-}
-
-func (v *emptyView) Len() int {
-	return 0
-}
-
-// emptyIterator is an empty iterator.
+// emptyIterator is an empty iterator for invalid root cases.
 type emptyIterator struct{}
 
 func (it *emptyIterator) Next() (string, cid.Cid, bool) {

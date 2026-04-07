@@ -228,14 +228,14 @@ func TestVersionedEATGetParent(t *testing.T) {
 	}
 }
 
-func TestVersionedEATView(t *testing.T) {
+func TestVersionedEATSnapshot(t *testing.T) {
 	kv := memory.New()
 	eat, err := NewEAT(kv)
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
-	bucketId := "view-graph"
+	bucketId := "snapshot-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
 
@@ -252,28 +252,28 @@ func TestVersionedEATView(t *testing.T) {
 	}
 	eat.Update(bucketId, root2, root1, arcs2)
 
-	// View at root2
-	view := eat.View(bucketId, root2)
+	// Snapshot at root2
+	snapshot := eat.Snapshot(bucketId, root2)
 
-	got, ok := view.Get("a")
+	got, ok := snapshot.Get("a")
 	if !ok {
-		t.Error("expected to find 'a' at root2 view")
+		t.Error("expected to find 'a' at root2 snapshot")
 	}
 	if !got.Equals(target1) {
 		t.Error("wrong value for 'a'")
 	}
 
-	got, ok = view.Get("b")
+	got, ok = snapshot.Get("b")
 	if !ok {
-		t.Error("expected to find 'b' at root2 view")
+		t.Error("expected to find 'b' at root2 snapshot")
 	}
 	if !got.Equals(target2) {
 		t.Error("wrong value for 'b'")
 	}
 
-	// TotalLen
-	if view.Len() != 2 {
-		t.Errorf("expected Len 2, got %d", view.Len())
+	// Len
+	if snapshot.Len() != 2 {
+		t.Errorf("expected Len 2, got %d", snapshot.Len())
 	}
 }
 
@@ -443,10 +443,10 @@ func TestVersionedEATCopyOnWrite(t *testing.T) {
 		t.Fatalf("CopyOnWrite v3 failed: %v", err)
 	}
 
-	// Now Len at root3 should include all copied arcs
-	len3 := eat.Len(bucketId, root3)
-	if len3 < 3 {
-		t.Errorf("expected at least 3 arcs after COW, got %d", len3)
+	// Now Snapshot().Len() at root3 should include all copied arcs
+	snapshot := eat.Snapshot(bucketId, root3)
+	if snapshot.Len() < 3 {
+		t.Errorf("expected at least 3 arcs after COW, got %d", snapshot.Len())
 	}
 
 	// Resolution should still work
@@ -562,7 +562,7 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 	}
 }
 
-func BenchmarkVersionedEATView(b *testing.B) {
+func BenchmarkVersionedEATSnapshot(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
 	bucketId := "bench-graph"
@@ -574,14 +574,14 @@ func BenchmarkVersionedEATView(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				view := eat.View(bucketId, latestRoot)
-				view.Get("v0_arc")
+				snapshot := eat.Snapshot(bucketId, latestRoot)
+				snapshot.Get("v0_arc")
 			}
 		})
 	}
 }
 
-func BenchmarkVersionedEATViewIterate(b *testing.B) {
+func BenchmarkVersionedEATIterate(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
 	bucketId := "bench-graph"
@@ -593,14 +593,14 @@ func BenchmarkVersionedEATViewIterate(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				view := eat.View(bucketId, latestRoot)
-				iter := view.Iterate()
+				iter := eat.Iterate(bucketId, latestRoot)
 				for {
 					_, _, ok := iter.Next()
 					if !ok {
 						break
 					}
 				}
+				iter.Close()
 			}
 		})
 	}

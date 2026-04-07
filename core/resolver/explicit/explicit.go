@@ -60,8 +60,8 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 		target, err := r.eat.Get(r.bucketId, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
-			view := r.eat.View(r.bucketId, root)
-			_, proof, err := r.sce.Prove(root, view, candidatePath)
+			snapshot := r.eat.Snapshot(r.bucketId, root)
+			_, proof, err := r.sce.Prove(root, snapshot, candidatePath)
 			if err != nil {
 				return "", cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
 			}

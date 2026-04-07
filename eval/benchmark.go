@@ -159,8 +159,8 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation for a random arc
 	testPath := fmt.Sprintf("arc%d", r.Intn(arcCount))
 	start := time.Now()
-	view := b.eat.View(b.bucketId, root)
-	_, proof, err := b.sce.Prove(root, view, testPath)
+	snapshot := b.eat.Snapshot(b.bucketId, root)
+	_, proof, err := b.sce.Prove(root, snapshot, testPath)
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("prove failed for %s: %w", testPath, err)
@@ -266,8 +266,8 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	view := b.eat.View(b.bucketId, root)
-	_, proof, err := b.sce.Prove(root, view, testPath)
+	snapshot := b.eat.Snapshot(b.bucketId, root)
+	_, proof, err := b.sce.Prove(root, snapshot, testPath)
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("prove failed: %w", err)
@@ -373,8 +373,8 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	// Measure proof
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	view := b.eat.View(b.bucketId, root)
-	_, proof, err := b.sce.Prove(root, view, testPath)
+	snapshot := b.eat.Snapshot(b.bucketId, root)
+	_, proof, err := b.sce.Prove(root, snapshot, testPath)
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("prove failed: %w", err)

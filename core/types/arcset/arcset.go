@@ -25,8 +25,10 @@ type Iterator interface {
 	Close()
 }
 
-// View provides a read-only view of an arc set.
-type View interface {
+// Snapshot provides an immutable snapshot of an arc set.
+// It preloads all data into memory, suitable for random access
+// and multiple iterations.
+type Snapshot interface {
 	// Get retrieves the target CID for a path.
 	Get(path string) (cid.Cid, bool)
 
@@ -36,6 +38,10 @@ type View interface {
 	// Len returns the number of arcs.
 	Len() int
 }
+
+// View is an alias for Snapshot for backward compatibility.
+// Deprecated: Use Snapshot instead.
+type View = Snapshot
 
 // Map is a simple implementation of View backed by a map.
 // It is not thread-safe and intended for building temporary arc sets.
@@ -124,5 +130,5 @@ func (it *mapIterator) Close() {
 	// No resources to release
 }
 
-// Ensure Map implements View.
-var _ View = (*Map)(nil)
+// Ensure Map implements Snapshot.
+var _ Snapshot = (*Map)(nil)

@@ -27,32 +27,14 @@ func TestEATNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
-	if eat.snapshotView {
-		t.Error("snapshotView should be false by default")
+	if eat == nil {
+		t.Error("eat should not be nil")
 	}
 
 	// Nil KVStore
 	_, err = NewEAT(nil)
 	if err == nil {
 		t.Error("expected error for nil KVStore")
-	}
-
-	// With snapshot option
-	eatWithSnapshot, err := NewEAT(kv, WithSnapshotView(true))
-	if err != nil {
-		t.Fatalf("NewEAT with option failed: %v", err)
-	}
-	if !eatWithSnapshot.snapshotView {
-		t.Error("snapshotView should be true when option is set")
-	}
-
-	// With snapshot option disabled explicitly
-	eatNoSnapshot, err := NewEAT(kv, WithSnapshotView(false))
-	if err != nil {
-		t.Fatalf("NewEAT with option failed: %v", err)
-	}
-	if eatNoSnapshot.snapshotView {
-		t.Error("snapshotView should be false when option is false")
 	}
 }
 
@@ -214,14 +196,14 @@ func TestEATDeleteViaUpdate(t *testing.T) {
 	}
 }
 
-func TestEATView(t *testing.T) {
+func TestEATSnapshot(t *testing.T) {
 	kv := kvstore_memory.New()
 	eat, err := NewEAT(kv)
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
-	bucketId := "view-graph"
+	bucketId := "snapshot-graph"
 	root := newTestCID([]byte("root"))
 	target1 := newTestCID([]byte("target1"))
 	target2 := newTestCID([]byte("target2"))
@@ -231,86 +213,59 @@ func TestEATView(t *testing.T) {
 		"b": target2,
 	})
 
-	view := eat.View(bucketId, root)
+	snapshot := eat.Snapshot(bucketId, root)
 
-	got, ok := view.Get("a")
-	if !ok {
-		t.Error("expected to find 'a'")
-	}
-	if !got.Equals(target1) {
-		t.Error("wrong value from view")
-	}
-
-	if view.Len() != 2 {
-		t.Errorf("expected Len 2, got %d", view.Len())
-	}
-
-	// View with invalid root should return empty view
-	invalidRoot := newTestCID([]byte("invalid"))
-	emptyView := eat.View(bucketId, invalidRoot)
-	if emptyView.Len() != 0 {
-		t.Error("invalid root should return empty view")
-	}
-}
-
-func TestEATSnapshotView(t *testing.T) {
-	kv := kvstore_memory.New()
-	// Create EAT with snapshot view enabled
-	eat, err := NewEAT(kv, WithSnapshotView(true))
-	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
-	}
-
-	bucketId := "snapshot-graph"
-	root1 := newTestCID([]byte("root1"))
-	root2 := newTestCID([]byte("root2"))
-	target1 := newTestCID([]byte("target1"))
-	target2 := newTestCID([]byte("target2"))
-	target3 := newTestCID([]byte("target3"))
-
-	// Initial data
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
-		"a": target1,
-		"b": target2,
-	})
-
-	// Create snapshot view
-	view := eat.View(bucketId, root1)
-
-	// Verify snapshot content
-	got, ok := view.Get("a")
+	got, ok := snapshot.Get("a")
 	if !ok {
 		t.Error("expected to find 'a'")
 	}
 	if !got.Equals(target1) {
 		t.Error("wrong value from snapshot")
 	}
-	if view.Len() != 2 {
-		t.Errorf("expected Len 2, got %d", view.Len())
+
+	if snapshot.Len() != 2 {
+		t.Errorf("expected Len 2, got %d", snapshot.Len())
 	}
 
-	// Update the EAT with new data
-	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
-		"a": target3, // modify
-		"c": target3, // add new
+	// Snapshot with invalid root should return empty snapshot
+	invalidRoot := newTestCID([]byte("invalid"))
+	emptySnapshot := eat.Snapshot(bucketId, invalidRoot)
+	if emptySnapshot.Len() != 0 {
+		t.Error("invalid root should return empty snapshot")
+	}
+}
+
+func TestEATIterate(t *testing.T) {
+	kv := kvstore_memory.New()
+	eat, err := NewEAT(kv)
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	bucketId := "iterate-graph"
+	root := newTestCID([]byte("root"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+
+	eat.Update(bucketId, root, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
 	})
 
-	// Snapshot view should still have old data
-	got, ok = view.Get("a")
-	if !ok {
-		t.Error("expected to find 'a' in snapshot")
-	}
-	if !got.Equals(target1) {
-		t.Error("snapshot should have original value for 'a'")
-	}
-	if view.Len() != 2 {
-		t.Errorf("snapshot should still have Len 2, got %d", view.Len())
+	iter := eat.Iterate(bucketId, root)
+	defer iter.Close()
+
+	count := 0
+	for {
+		_, _, ok := iter.Next()
+		if !ok {
+			break
+		}
+		count++
 	}
 
-	// 'c' should not exist in snapshot
-	_, ok = view.Get("c")
-	if ok {
-		t.Error("snapshot should not have 'c'")
+	if count != 2 {
+		t.Errorf("expected 2 arcs, got %d", count)
 	}
 }
 
@@ -347,12 +302,12 @@ func TestEATMultipleBuckets(t *testing.T) {
 		t.Error("bucket2 should have target2")
 	}
 
-	// Len should be per-bucket
-	if eat.Len("bucket1") != 1 {
-		t.Error("bucket1.Len should be 1")
+	// Snapshot should be per-bucket
+	if eat.Snapshot("bucket1", root1).Len() != 1 {
+		t.Error("bucket1.Snapshot.Len should be 1")
 	}
-	if eat.Len("bucket2") != 1 {
-		t.Error("bucket2.Len should be 1")
+	if eat.Snapshot("bucket2", root2).Len() != 1 {
+		t.Error("bucket2.Snapshot.Len should be 1")
 	}
 }
 
@@ -376,8 +331,11 @@ func TestEATClear(t *testing.T) {
 		t.Fatalf("Clear failed: %v", err)
 	}
 
-	if eat.Len(bucketId) != 0 {
-		t.Error("expected empty after clear")
+	// After clear, the bucket should be empty (snapshot returns empty)
+	// Note: Clear only clears arc data, not root mappings, so we check without root validation
+	snapshot := eat.Snapshot(bucketId, cid.Undef)
+	if snapshot.Len() != 0 {
+		t.Errorf("expected empty after clear, got %d", snapshot.Len())
 	}
 }
 
@@ -404,8 +362,8 @@ func TestEATBatchUpdate(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	if eat.Len(bucketId) != 100 {
-		t.Errorf("expected 100 arcs, got %d", eat.Len(bucketId))
+	if eat.Snapshot(bucketId, root1).Len() != 100 {
+		t.Errorf("expected 100 arcs, got %d", eat.Snapshot(bucketId, root1).Len())
 	}
 
 	// Second batch (partial overwrite)
@@ -421,8 +379,8 @@ func TestEATBatchUpdate(t *testing.T) {
 	}
 
 	// Should have 150 arcs (0-149)
-	if eat.Len(bucketId) != 150 {
-		t.Errorf("expected 150 arcs after second update, got %d", eat.Len(bucketId))
+	if eat.Snapshot(bucketId, root2).Len() != 150 {
+		t.Errorf("expected 150 arcs after second update, got %d", eat.Snapshot(bucketId, root2).Len())
 	}
 
 	// Verify old root doesn't work
@@ -502,7 +460,7 @@ func BenchmarkOverwriteEATUpdate(b *testing.B) {
 	}
 }
 
-func BenchmarkOverwriteEATView(b *testing.B) {
+func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 	kv := kvstore_memory.New()
 	eat, _ := NewEAT(kv)
 	bucketId := "bench-graph"
@@ -520,14 +478,14 @@ func BenchmarkOverwriteEATView(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				view := eat.View(bucketId, root)
-				view.Get("arc0")
+				snapshot := eat.Snapshot(bucketId, root)
+				snapshot.Get("arc0")
 			}
 		})
 	}
 }
 
-func BenchmarkOverwriteEATViewIterate(b *testing.B) {
+func BenchmarkOverwriteEATIterate(b *testing.B) {
 	kv := kvstore_memory.New()
 	eat, _ := NewEAT(kv)
 	bucketId := "bench-graph"
@@ -545,40 +503,16 @@ func BenchmarkOverwriteEATViewIterate(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				view := eat.View(bucketId, root)
-				iter := view.Iterate()
+				iter := eat.Iterate(bucketId, root)
 				for {
 					_, _, ok := iter.Next()
 					if !ok {
 						break
 					}
 				}
+				iter.Close()
 			}
 		})
 	}
 }
 
-func BenchmarkOverwriteEATSnapshotView(b *testing.B) {
-	kv := kvstore_memory.New()
-	eat, _ := NewEAT(kv, WithSnapshotView(true))
-	bucketId := "bench-graph"
-	root := newTestCID([]byte("root"))
-
-	arcCounts := []int{10, 100, 1000}
-	for _, count := range arcCounts {
-		b.Run(fmt.Sprintf("arcs_%d", count), func(b *testing.B) {
-			arcs := make(map[string]cid.Cid)
-			for i := 0; i < count; i++ {
-				path := fmt.Sprintf("arc%d", i)
-				arcs[path] = newTestCID([]byte(path))
-			}
-			eat.Update(bucketId, root, cid.Undef, arcs)
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				view := eat.View(bucketId, root)
-				view.Get("arc0")
-			}
-		})
-	}
-}

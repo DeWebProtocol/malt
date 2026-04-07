@@ -38,10 +38,17 @@ type EAT interface {
 	// If a target CID is cid.Undef, the corresponding arc is deleted.
 	Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
 
-	// View returns an ArcSetView for a specific bucket and root.
-	// bucketId is the namespace for the arc set.
-	// For versioned EAT, the view includes all ancestor arcs.
-	View(bucketId string, root cid.Cid) arcset.View
+	// Snapshot returns an immutable snapshot of all arcs for a given root.
+	// The snapshot preloads all data into memory, suitable for random access.
+	// For overwrite EAT: root is optional (cid.Undef skips validation).
+	// For versioned EAT: includes all ancestor arcs via @previous chain.
+	Snapshot(bucketId string, root cid.Cid) arcset.Snapshot
+
+	// Iterate returns a streaming iterator over arcs for a given root.
+	// For overwrite EAT: root is optional (cid.Undef skips validation).
+	// For versioned EAT: root is the version to iterate (walks @previous chain).
+	// Caller must call Close() on the iterator when done.
+	Iterate(bucketId string, root cid.Cid) arcset.Iterator
 
 	// Close releases resources.
 	Close() error

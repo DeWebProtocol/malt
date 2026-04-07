@@ -21,7 +21,7 @@ type Structure struct {
 }
 
 // NewStructure creates a new structure from an arc set.
-func NewStructure(arcs arcset.View, bucketId string, e eat.EAT, s *sce.Engine) (*Structure, error) {
+func NewStructure(arcs arcset.Snapshot, bucketId string, e eat.EAT, s *sce.Engine) (*Structure, error) {
 	// Generate commitment
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -70,8 +70,8 @@ func (s *Structure) Resolve(path string) (cid.Cid, arcset.Proof, error) {
 	}
 
 	// Generate proof
-	view := s.eat.View(s.bucketId, s.root)
-	_, proof, err := s.sce.Prove(s.root, view, path)
+	snapshot := s.eat.Snapshot(s.bucketId, s.root)
+	_, proof, err := s.sce.Prove(s.root, snapshot, path)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
 	}
@@ -89,8 +89,8 @@ func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 	}
 
 	// Update commitment
-	view := s.eat.View(s.bucketId, s.root)
-	newRoot, err := s.sce.Update(s.root, view, path, oldKey, newKey)
+	snapshot := s.eat.Snapshot(s.bucketId, s.root)
+	newRoot, err := s.sce.Update(s.root, snapshot, path, oldKey, newKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update commitment: %w", err)
 	}
@@ -114,7 +114,7 @@ func (s *Structure) Verify(path string, target cid.Cid, proof arcset.Proof) (boo
 	return s.sce.Verify(s.root, path, target, proof)
 }
 
-// GetArcSet returns an ArcSetView for this structure.
-func (s *Structure) GetArcSet() arcset.View {
-	return s.eat.View(s.bucketId, s.root)
+// GetArcSet returns a Snapshot for this structure.
+func (s *Structure) GetArcSet() arcset.Snapshot {
+	return s.eat.Snapshot(s.bucketId, s.root)
 }
