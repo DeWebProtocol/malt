@@ -198,36 +198,6 @@ func (e *EAT) Iterate(bucketId string, root cid.Cid) arcset.Iterator {
 	}
 }
 
-// Clear removes all arcs in a bucket.
-// Note: This does not remove root mappings.
-func (e *EAT) Clear(bucketId string) error {
-	ctx := context.Background()
-
-	// Collect all keys to delete
-	var keys [][]byte
-
-	prefix := bucketPrefix(bucketId)
-	iter := e.kv.NewIterator(ctx, prefix, nil)
-	for iter.Next() {
-		keys = append(keys, iter.Key())
-	}
-	iter.Close()
-
-	// Delete in batch
-	batch := e.kv.Batch()
-	for _, key := range keys {
-		if err := batch.Delete(key); err != nil {
-			batch.Cancel()
-			return fmt.Errorf("failed to add delete to batch: %w", err)
-		}
-	}
-
-	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to clear: %w", err)
-	}
-
-	return nil
-}
 
 // Close releases resources.
 func (e *EAT) Close() error {

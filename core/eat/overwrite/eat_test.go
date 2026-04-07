@@ -311,33 +311,6 @@ func TestEATMultipleBuckets(t *testing.T) {
 	}
 }
 
-func TestEATClear(t *testing.T) {
-	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
-	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
-	}
-
-	bucketId := "clear-graph"
-	root := newTestCID([]byte("root"))
-	target := newTestCID([]byte("target"))
-	eat.Update(bucketId, root, cid.Undef, map[string]cid.Cid{
-		"a": target,
-		"b": target,
-	})
-
-	err = eat.Clear(bucketId)
-	if err != nil {
-		t.Fatalf("Clear failed: %v", err)
-	}
-
-	// After clear, the bucket should be empty (snapshot returns empty)
-	// Note: Clear only clears arc data, not root mappings, so we check without root validation
-	snapshot := eat.Snapshot(bucketId, cid.Undef)
-	if snapshot.Len() != 0 {
-		t.Errorf("expected empty after clear, got %d", snapshot.Len())
-	}
-}
 
 func TestEATBatchUpdate(t *testing.T) {
 	kv := kvstore_memory.New()
