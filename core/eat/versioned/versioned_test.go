@@ -277,6 +277,287 @@ func TestVersionedEATSnapshot(t *testing.T) {
 	}
 }
 
+func TestVersionedEATBatchGet(t *testing.T) {
+	kv := memory.New()
+	eat, err := NewEAT(kv)
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	bucketId := "batchget-graph"
+	root1 := newTestCID([]byte("root1"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+	target3 := newTestCID([]byte("target3"))
+
+	// Setup arcs at root1
+	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+		"c": target3,
+	})
+
+	// Test: all paths found
+	results, err := eat.BatchGet(bucketId, root1, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("BatchGet failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results))
+	}
+	if !results["a"].Equals(target1) {
+		t.Error("wrong value for 'a'")
+	}
+	if !results["b"].Equals(target2) {
+		t.Error("wrong value for 'b'")
+	}
+	if !results["c"].Equals(target3) {
+		t.Error("wrong value for 'c'")
+	}
+
+	// Test: some paths not found
+	results, err = eat.BatchGet(bucketId, root1, []string{"a", "notexist", "b"})
+	if err != nil {
+		t.Fatalf("BatchGet with missing paths failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results (missing path omitted), got %d", len(results))
+	}
+
+	// Test: empty paths
+	results, err = eat.BatchGet(bucketId, root1, []string{})
+	if err != nil {
+		t.Fatalf("BatchGet with empty paths failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for empty paths, got %d", len(results))
+	}
+
+	// Test: all paths not found
+	results, err = eat.BatchGet(bucketId, root1, []string{"x", "y", "z"})
+	if err != nil {
+		t.Fatalf("BatchGet with all missing paths failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestVersionedEATBatchGetVersionChain(t *testing.T) {
+	kv := memory.New()
+	eat, err := NewEAT(kv)
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	bucketId := "batchget-chain-graph"
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	root3 := newTestCID([]byte("root3"))
+
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+	target3 := newTestCID([]byte("target3"))
+	target4 := newTestCID([]byte("target4"))
+
+	// v1: a, b
+	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+	})
+
+	// v2: c (new), a overridden
+	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+		"a": target3,
+		"c": target3,
+	})
+
+	// v3: d (new)
+	eat.Update(bucketId, root3, root2, map[string]cid.Cid{
+		"d": target4,
+	})
+
+	// BatchGet at root3 should find all paths
+	results, err := eat.BatchGet(bucketId, root3, []string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatalf("BatchGet root3 failed: %v", err)
+	}
+	if len(results) != 4 {
+		t.Errorf("expected 4 results, got %d", len(results))
+	}
+
+	// a should be target3 (overridden at v2)
+	if !results["a"].Equals(target3) {
+		t.Error("'a' should be target3 (overridden)")
+	}
+
+	// b should be target2 (from v1)
+	if !results["b"].Equals(target2) {
+		t.Error("'b' should be target2 (from v1)")
+	}
+
+	// c should be target3 (from v2)
+	if !results["c"].Equals(target3) {
+		t.Error("'c' should be target3 (from v2)")
+	}
+
+	// d should be target4 (from v3)
+	if !results["d"].Equals(target4) {
+		t.Error("'d' should be target4 (from v3)")
+	}
+
+	// BatchGet at root2 should not find 'd'
+	results, err = eat.BatchGet(bucketId, root2, []string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatalf("BatchGet root2 failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 results at root2, got %d", len(results))
+	}
+	if results["d"] != cid.Undef {
+		t.Error("'d' should not be found at root2")
+	}
+
+	// BatchGet at root1 should find original 'a'
+	results, err = eat.BatchGet(bucketId, root1, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("BatchGet root1 failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results at root1, got %d", len(results))
+	}
+	if !results["a"].Equals(target1) {
+		t.Error("'a' at root1 should be target1 (original)")
+	}
+	if !results["b"].Equals(target2) {
+		t.Error("'b' at root1 should be target2")
+	}
+	if results["c"] != cid.Undef {
+		t.Error("'c' should not be found at root1")
+	}
+}
+
+func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
+	kv := memory.New()
+	eat, err := NewEAT(kv)
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	bucketId := "batchget-tombstone-graph"
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	root3 := newTestCID([]byte("root3"))
+
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+	target3 := newTestCID([]byte("target3"))
+
+	// v1: a, b, c
+	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target2,
+		"c": target3,
+	})
+
+	// v2: delete 'a' (tombstone), add 'd'
+	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+		"a": cid.Undef, // tombstone
+		"d": target3,
+	})
+
+	// v3: delete 'b' (tombstone)
+	eat.Update(bucketId, root3, root2, map[string]cid.Cid{
+		"b": cid.Undef, // tombstone
+	})
+
+	// BatchGet at root3: a and b deleted, c and d exist
+	results, err := eat.BatchGet(bucketId, root3, []string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatalf("BatchGet root3 failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results (a,b deleted), got %d", len(results))
+	}
+	if results["a"] != cid.Undef {
+		t.Error("'a' should be deleted (tombstone)")
+	}
+	if results["b"] != cid.Undef {
+		t.Error("'b' should be deleted (tombstone)")
+	}
+	if !results["c"].Equals(target3) {
+		t.Error("'c' should still exist")
+	}
+	if !results["d"].Equals(target3) {
+		t.Error("'d' should exist")
+	}
+
+	// BatchGet at root2: only 'a' deleted
+	results, err = eat.BatchGet(bucketId, root2, []string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatalf("BatchGet root2 failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 results at root2, got %d", len(results))
+	}
+	if results["a"] != cid.Undef {
+		t.Error("'a' should be deleted at root2")
+	}
+	if !results["b"].Equals(target2) {
+		t.Error("'b' should still exist at root2")
+	}
+
+	// BatchGet at root1: all exist
+	results, err = eat.BatchGet(bucketId, root1, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("BatchGet root1 failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 results at root1, got %d", len(results))
+	}
+	if !results["a"].Equals(target1) {
+		t.Error("'a' should exist at root1")
+	}
+}
+
+func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
+	kv := memory.New()
+	eat, err := NewEAT(kv)
+	if err != nil {
+		t.Fatalf("NewEAT failed: %v", err)
+	}
+
+	root1a := newTestCID([]byte("root1a"))
+	root1b := newTestCID([]byte("root1b"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+
+	// Different buckets
+	eat.Update("bucket1", root1a, cid.Undef, map[string]cid.Cid{
+		"a": target1,
+		"b": target1,
+	})
+	eat.Update("bucket2", root1b, cid.Undef, map[string]cid.Cid{
+		"a": target2,
+		"b": target2,
+	})
+
+	// BatchGet in different buckets should be independent
+	results1, _ := eat.BatchGet("bucket1", root1a, []string{"a", "b"})
+	results2, _ := eat.BatchGet("bucket2", root1b, []string{"a", "b"})
+
+	if len(results1) != 2 || len(results2) != 2 {
+		t.Error("expected 2 results in each bucket")
+	}
+
+	if !results1["a"].Equals(target1) {
+		t.Error("bucket1 should have target1")
+	}
+	if !results2["a"].Equals(target2) {
+		t.Error("bucket2 should have target2")
+	}
+}
+
 func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	kv := memory.New()
 	eat, err := NewEAT(kv)
