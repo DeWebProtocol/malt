@@ -1,16 +1,20 @@
 // Package versioned provides a versioned EAT implementation using a KVStore.
 // Each version stores only modified arcs plus a @previous arc pointing to the parent version.
 // Resolution walks the @previous chain to find arc entries.
+//
+// Concurrency: This implementation is inherently concurrency-safe because each update
+// creates a new version with its own namespace (bucketId:version:path). Multiple concurrent
+// writers operate on different versions without conflict. For production deployments,
+// concurrency control should be handled at the interface layer if needed.
 package versioned
 
 import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -22,9 +26,7 @@ const (
 // EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
 type EAT struct {
-	mu       sync.RWMutex
-	kv       kvstore.KVStore
-	currents map[string]cid.Cid // bucketId -> current version
+	kv kvstore.KVStore
 }
 
 // NewEAT creates a new versioned EAT with the given KVStore.
@@ -34,8 +36,7 @@ func NewEAT(kv kvstore.KVStore) (*EAT, error) {
 	}
 
 	return &EAT{
-		kv:       kv,
-		currents: make(map[string]cid.Cid),
+		kv: kv,
 	}, nil
 }
 
@@ -64,13 +65,10 @@ func bucketPrefix(bucketId string) []byte {
 func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error) {
 	ctx := context.Background()
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	currentVersion := version
 	maxDepth := 1000 // Prevent infinite loops
 
-	for i := 0; i < maxDepth; i++ {
+	for range maxDepth {
 		// Try to get the arc at current version
 		key := arcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
@@ -119,9 +117,6 @@ func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error
 func (e *EAT) Update(bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	ctx := context.Background()
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	batch := e.kv.Batch()
 
 	// Store all arcs for this version
@@ -156,34 +151,13 @@ func (e *EAT) Update(bucketId string, newRoot, parentRoot cid.Cid, arcs map[stri
 		return fmt.Errorf("failed to commit version: %w", err)
 	}
 
-	// Update current to new version
-	e.currents[bucketId] = newRoot
-
 	return nil
-}
-
-// Current returns the current (latest) commitment root for a bucket.
-func (e *EAT) Current(bucketId string) cid.Cid {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.currents[bucketId]
-}
-
-// SetCurrent sets the current version for a bucket.
-// This is useful when loading state from persistent storage.
-func (e *EAT) SetCurrent(bucketId string, version cid.Cid) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.currents[bucketId] = version
 }
 
 // GetParent returns the parent version of a given version via @previous.
 // Returns cid.Undef if the version has no parent (first version).
 func (e *EAT) GetParent(bucketId string, version cid.Cid) (cid.Cid, error) {
 	ctx := context.Background()
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
 
 	prevKey := arcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
@@ -208,9 +182,6 @@ func (e *EAT) View(bucketId string, version cid.Cid) arcset.View {
 func (e *EAT) Iterate(bucketId string, version cid.Cid) arcset.Iterator {
 	ctx := context.Background()
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	prefix := versionPrefix(bucketId, version)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
@@ -225,9 +196,6 @@ func (e *EAT) Iterate(bucketId string, version cid.Cid) arcset.Iterator {
 // Note: This only counts arcs at that version, not including ancestors.
 func (e *EAT) Len(bucketId string, version cid.Cid) int {
 	ctx := context.Background()
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
 
 	prefix := versionPrefix(bucketId, version)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
@@ -251,9 +219,6 @@ func (e *EAT) Len(bucketId string, version cid.Cid) int {
 // This walks the @previous chain and collects all unique paths.
 func (e *EAT) TotalLen(bucketId string, version cid.Cid) int {
 	ctx := context.Background()
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
 
 	seenPaths := make(map[string]bool)
 	currentVersion := version
@@ -291,9 +256,6 @@ func (e *EAT) TotalLen(bucketId string, version cid.Cid) int {
 
 // Close releases resources.
 func (e *EAT) Close() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.currents = make(map[string]cid.Cid)
 	return nil
 }
 
@@ -302,9 +264,6 @@ func (e *EAT) Close() error {
 // Use this when version history is long and resolution cost needs optimization.
 func (e *EAT) CopyOnWrite(bucketId string, newRoot, parentRoot cid.Cid, modifiedPaths map[string]bool) error {
 	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	// Collect all arcs from ancestors that weren't modified
 	arcsToCopy := make(map[string]cid.Cid)

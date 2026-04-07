@@ -60,11 +60,6 @@ func TestVersionedEATUpdate(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	// Verify current
-	if !eat.Current(bucketId).Equals(root1) {
-		t.Error("current should be root1")
-	}
-
 	// Get at root1
 	got, err := eat.Get(bucketId, root1, "a")
 	if err != nil {

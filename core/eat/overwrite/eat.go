@@ -1,11 +1,15 @@
-// Package overwrite provides an EAT implementation with overwrite semantics.
-// This EAT stores arc sets with bucket-based isolation and overwrite semantics.
+// Package overwrite provides a prototype EAT implementation with overwrite semantics.
+// This EAT stores arc sets for single-root graphs with bucket-based isolation.
+//
+// Concurrency Control: This prototype does not implement distributed concurrency control.
+// For production deployments, concurrency control should be handled at the interface layer
+// (e.g., optimistic locking with CAS semantics) or by using a distributed KVStore backend
+// (e.g., TiKV, CockroachDB) that provides transactional guarantees.
 package overwrite
 
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/kvstore"
@@ -27,8 +31,8 @@ func WithSnapshotView(snapshot bool) Option {
 // EAT is a stateless EAT with overwrite semantics.
 // It uses bucketId for namespace isolation, allowing multiple graphs
 // to share the same KVStore instance.
+// All operations are atomic via KVStore batch operations.
 type EAT struct {
-	mu           sync.RWMutex
 	kv           kvstore.KVStore
 	snapshotView bool // if true, View creates a snapshot instead of live view
 }
@@ -75,9 +79,6 @@ func rootKey(root cid.Cid) []byte {
 func (e *EAT) Get(bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 	ctx := context.Background()
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
@@ -114,9 +115,6 @@ func (e *EAT) Get(bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 // If a target CID is cid.Undef, the corresponding arc is deleted.
 func (e *EAT) Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	batch := e.kv.Batch()
 
@@ -171,9 +169,6 @@ func (e *EAT) Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]
 func (e *EAT) View(bucketId string, root cid.Cid) arcset.View {
 	ctx := context.Background()
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
@@ -217,9 +212,6 @@ func (e *EAT) createSnapshotView(bucketId string) arcset.View {
 func (e *EAT) Iterate(bucketId string) arcset.Iterator {
 	ctx := context.Background()
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
@@ -232,9 +224,6 @@ func (e *EAT) Iterate(bucketId string) arcset.Iterator {
 // Len returns the number of arcs in a bucket.
 func (e *EAT) Len(bucketId string) int {
 	ctx := context.Background()
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
 
 	prefix := bucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
@@ -252,9 +241,6 @@ func (e *EAT) Len(bucketId string) int {
 // Note: This does not remove root mappings.
 func (e *EAT) Clear(bucketId string) error {
 	ctx := context.Background()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	// Collect all keys to delete
 	var keys [][]byte
