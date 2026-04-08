@@ -110,17 +110,25 @@ func (e *EAT) BatchGet(bucketId string, root cid.Cid, paths []string) (map[strin
 		}
 	}
 
-	results := make(map[string]cid.Cid)
-	for _, path := range paths {
-		arcKeyBytes := arcKey(bucketId, path)
-		val, err := e.kv.Get(ctx, arcKeyBytes)
-		if err != nil {
-			if err == kvstore.ErrNotFound {
-				continue // Skip not found
-			}
-			return nil, fmt.Errorf("failed to get arc %s: %w", path, err)
-		}
+	// Build keys for batch get
+	keys := make([][]byte, len(paths))
+	pathToKey := make(map[string]string, len(paths)) // maps path -> key string for result mapping
+	for i, path := range paths {
+		key := arcKey(bucketId, path)
+		keys[i] = key
+		pathToKey[string(key)] = path
+	}
 
+	// Use KVStore BatchGet for efficient bulk retrieval
+	kvResults, err := e.kv.BatchGet(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get arcs: %w", err)
+	}
+
+	// Convert results to CID map
+	results := make(map[string]cid.Cid)
+	for keyStr, val := range kvResults {
+		path := pathToKey[keyStr]
 		if c, err := cid.Cast(val); err == nil {
 			results[path] = c
 		}

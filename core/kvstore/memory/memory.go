@@ -45,6 +45,24 @@ func (m *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 	return result, nil
 }
 
+// BatchGet retrieves multiple values by keys.
+func (m *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	results := make(map[string][]byte)
+	for _, key := range keys {
+		v, ok := m.data[string(key)]
+		if ok {
+			// Return a copy to prevent mutation
+			result := make([]byte, len(v))
+			copy(result, v)
+			results[string(key)] = result
+		}
+	}
+	return results, nil
+}
+
 // Put stores a key-value pair.
 func (m *KV) Put(ctx context.Context, key, value []byte) error {
 	m.mu.Lock()

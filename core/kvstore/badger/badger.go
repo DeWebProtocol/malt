@@ -4,9 +4,10 @@ package badger
 import (
 	"context"
 	"fmt"
+	"sort"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dgraph-io/badger/v4"
 )
 
 // KV is a BadgerDB implementation of kvstore.KVStore.
@@ -56,6 +57,44 @@ func (b *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// BatchGet retrieves multiple values by keys.
+// Uses a single transaction with sorted keys for efficient sequential IO.
+func (b *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	if len(keys) == 0 {
+		return map[string][]byte{}, nil
+	}
+
+	// Sort keys for sequential traversal (better IO performance on LSM-tree)
+	sortedKeys := make([][]byte, len(keys))
+	copy(sortedKeys, keys)
+	sort.Slice(sortedKeys, func(i, j int) bool {
+		return string(sortedKeys[i]) < string(sortedKeys[j])
+	})
+
+	results := make(map[string][]byte)
+	err := b.db.View(func(txn *badger.Txn) error {
+		for _, key := range sortedKeys {
+			item, err := txn.Get(key)
+			if err != nil {
+				if err == badger.ErrKeyNotFound {
+					continue // Skip not found keys
+				}
+				return err
+			}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			results[string(key)] = val
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // Put stores a key-value pair.

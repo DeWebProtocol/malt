@@ -18,6 +18,13 @@ type KVStore interface {
 	// Returns ErrNotFound if the key doesn't exist.
 	Get(ctx context.Context, key []byte) ([]byte, error)
 
+	// BatchGet retrieves multiple values by keys in a single operation.
+	// Returns a map of key (as string) -> value for keys that were found.
+	// Keys not found are omitted from the result map (no error returned).
+	// Implementations should optimize for batch access (e.g., sorted traversal,
+	// parallel lookup, or native multi-get APIs).
+	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+
 	// Put stores a key-value pair.
 	Put(ctx context.Context, key, value []byte) error
 

@@ -103,7 +103,7 @@ func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error
 // BatchGet retrieves multiple target CIDs in a single operation.
 // Returns a map of path -> CID for paths that were found.
 // Paths not found or deleted (tombstone) are omitted from the result map.
-// This is more efficient than multiple Get calls as it traverses the version chain once.
+// Uses KVStore.BatchGet for efficient bulk retrieval at each version in the chain.
 func (e *EAT) BatchGet(bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
 	ctx := context.Background()
 
@@ -122,26 +122,38 @@ func (e *EAT) BatchGet(bucketId string, version cid.Cid, paths []string) (map[st
 	for len(remaining) > 0 && maxDepth > 0 {
 		maxDepth--
 
-		// Check each remaining path at current version
+		// Build keys for all remaining paths at current version
+		keys := make([][]byte, 0, len(remaining))
+		pathForKey := make(map[string]string)
 		for path := range remaining {
 			if tombstones[path] {
-				continue // Already marked as deleted
+				continue
 			}
-
 			key := arcKey(bucketId, currentVersion, path)
-			val, err := e.kv.Get(ctx, key)
-			if err == nil {
-				// Found the arc
-				if len(val) == 0 {
-					// Tombstone - mark as deleted
-					tombstones[path] = true
-				} else if c, err := cid.Cast(val); err == nil {
-					results[path] = c
-				}
-				delete(remaining, path)
-			} else if err != kvstore.ErrNotFound {
-				return nil, fmt.Errorf("failed to get arc %s: %w", path, err)
+			keys = append(keys, key)
+			pathForKey[string(key)] = path
+		}
+
+		if len(keys) == 0 {
+			break
+		}
+
+		// Batch get all remaining paths at this version
+		kvResults, err := e.kv.BatchGet(ctx, keys)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch get arcs: %w", err)
+		}
+
+		// Process results
+		for keyStr, val := range kvResults {
+			path := pathForKey[keyStr]
+			if len(val) == 0 {
+				// Tombstone - mark as deleted
+				tombstones[path] = true
+			} else if c, err := cid.Cast(val); err == nil {
+				results[path] = c
 			}
+			delete(remaining, path)
 		}
 
 		// Remove tombstoned paths from remaining

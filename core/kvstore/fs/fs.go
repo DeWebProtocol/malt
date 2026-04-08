@@ -70,6 +70,26 @@ func (k *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 	return data, nil
 }
 
+// BatchGet retrieves multiple values by keys.
+func (k *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	results := make(map[string][]byte)
+	for _, key := range keys {
+		path := k.keyToPath(key)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // Skip not found keys
+			}
+			return nil, err
+		}
+		results[string(key)] = data
+	}
+	return results, nil
+}
+
 // Put stores a key-value pair.
 func (k *KV) Put(ctx context.Context, key, value []byte) error {
 	k.mu.Lock()
