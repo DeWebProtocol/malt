@@ -1,6 +1,7 @@
 package gateway_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dewebprotocol/malt/cas/mock"
@@ -48,6 +49,8 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
+	ctx := context.Background()
+
 	// Create arc set with hierarchical paths pointing to PayloadCIDs
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
@@ -67,7 +70,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	// Create gateway
 	explicitR := explicit.NewResolver(e, s, testBucketId)
@@ -119,6 +122,8 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
+	ctx := context.Background()
+
 	// Create arc set
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
@@ -136,7 +141,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)
@@ -166,6 +171,8 @@ func TestGatewayImplicitStep(t *testing.T) {
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
+	ctx := context.Background()
+
 	// Create arc set pointing to a PayloadCID
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcsMap := map[string]cid.Cid{"data": payloadCID}
@@ -178,7 +185,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	// Add block to mock CAS
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
@@ -214,6 +221,8 @@ func TestGatewayTranscript(t *testing.T) {
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
+	ctx := context.Background()
+
 	// Create arc set with nested structure
 	innerCID, _ := newPayloadCID([]byte("inner"))
 	outerCID, _ := newPayloadCID([]byte("outer"))
@@ -231,7 +240,7 @@ func TestGatewayTranscript(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	// Create gateway
 	explicitR := explicit.NewResolver(e, s, testBucketId)
@@ -270,6 +279,8 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
+	ctx := context.Background()
+
 	// Create arc set with @payload pointing to a payload CID
 	payloadCID, _ := newPayloadCID([]byte("payload-data"))
 	arcsMap := map[string]cid.Cid{
@@ -284,7 +295,7 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)
@@ -330,6 +341,8 @@ func TestGatewayStructureOnlyNode(t *testing.T) {
 	s := sce.NewEngine(scheme)
 	c := mock.NewCAS()
 
+	ctx := context.Background()
+
 	// Create arc set WITHOUT @payload (structure-only node)
 	targetCID, _ := newPayloadCID([]byte("target-data"))
 	arcsMap := map[string]cid.Cid{"link": targetCID}
@@ -341,7 +354,7 @@ func TestGatewayStructureOnlyNode(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	explicitR := explicit.NewResolver(e, s, testBucketId)
 	implicitR := implicit.NewResolver(c)

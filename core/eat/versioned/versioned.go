@@ -53,13 +53,16 @@ func versionPrefix(bucketId string, version cid.Cid) []byte {
 // It walks the @previous chain starting from the given version until finding the arc.
 // Returns ErrNotFound if the path doesn't exist in any ancestor version,
 // or if a tombstone (cid.Undef) is found indicating the arc was deleted.
-func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error) {
-	ctx := context.Background()
-
+func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path string) (cid.Cid, error) {
 	currentVersion := version
 	maxDepth := 1000 // Prevent infinite loops
 
 	for range maxDepth {
+		// Check context cancellation
+		if ctx.Err() != nil {
+			return cid.Cid{}, ctx.Err()
+		}
+
 		// Try to get the arc at current version
 		key := arcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
@@ -104,9 +107,7 @@ func (e *EAT) Get(bucketId string, version cid.Cid, path string) (cid.Cid, error
 // Returns a map of path -> CID for paths that were found.
 // Paths not found or deleted (tombstone) are omitted from the result map.
 // Uses KVStore.BatchGet for efficient bulk retrieval at each version in the chain.
-func (e *EAT) BatchGet(bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
-	ctx := context.Background()
-
+func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
 	// Track which paths we still need to find
 	remaining := make(map[string]bool)
 	for _, path := range paths {
@@ -121,6 +122,11 @@ func (e *EAT) BatchGet(bucketId string, version cid.Cid, paths []string) (map[st
 
 	for len(remaining) > 0 && maxDepth > 0 {
 		maxDepth--
+
+		// Check context cancellation
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 
 		// Build keys for all remaining paths at current version
 		keys := make([][]byte, 0, len(remaining))
@@ -187,9 +193,7 @@ func (e *EAT) BatchGet(bucketId string, version cid.Cid, paths []string) (map[st
 // If parentRoot is cid.Undef, this creates the first version (no @previous).
 // If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
 // When Get() encounters a tombstone while walking the chain, it returns ErrNotFound.
-func (e *EAT) Update(bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
-	ctx := context.Background()
-
+func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	batch := e.kv.Batch()
 
 	// Store all arcs for this version
@@ -229,9 +233,7 @@ func (e *EAT) Update(bucketId string, newRoot, parentRoot cid.Cid, arcs map[stri
 
 // GetParent returns the parent version of a given version via @previous.
 // Returns cid.Undef if the version has no parent (first version).
-func (e *EAT) GetParent(bucketId string, version cid.Cid) (cid.Cid, error) {
-	ctx := context.Background()
-
+func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
 	prevKey := arcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
@@ -246,21 +248,27 @@ func (e *EAT) GetParent(bucketId string, version cid.Cid) (cid.Cid, error) {
 
 // Snapshot returns an immutable snapshot of all arcs visible at the given version.
 // This includes all arcs from the version and its ancestors via @previous chain.
-func (e *EAT) Snapshot(bucketId string, version cid.Cid) arcset.Snapshot {
-	arcs := e.collectFlattenedArcs(bucketId, version)
-	return arcset.NewMapFrom(arcs)
+func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.Snapshot, error) {
+	arcs, err := e.collectFlattenedArcs(ctx, bucketId, version)
+	if err != nil {
+		return nil, err
+	}
+	return arcset.NewMapFrom(arcs), nil
 }
 
 // collectFlattenedArcs collects all arcs visible at a version (including ancestors).
-func (e *EAT) collectFlattenedArcs(bucketId string, version cid.Cid) map[string]cid.Cid {
-	ctx := context.Background()
-
+func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version cid.Cid) (map[string]cid.Cid, error) {
 	arcs := make(map[string]cid.Cid)
 	seen := make(map[string]bool)
 	currentVersion := version
 	maxDepth := 1000
 
 	for i := 0; i < maxDepth; i++ {
+		// Check context cancellation
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		prefix := versionPrefix(bucketId, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
@@ -288,6 +296,10 @@ func (e *EAT) collectFlattenedArcs(bucketId string, version cid.Cid) map[string]
 				seen[path] = true
 			}
 		}
+		if err := iter.Err(); err != nil {
+			iter.Close()
+			return nil, fmt.Errorf("iterator error: %w", err)
+		}
 		iter.Close()
 
 		// Get parent version
@@ -304,15 +316,16 @@ func (e *EAT) collectFlattenedArcs(bucketId string, version cid.Cid) map[string]
 		currentVersion = parentVersion
 	}
 
-	return arcs
+	return arcs, nil
 }
 
 // Iterate returns a streaming iterator over all arcs visible at the given version.
 // This walks the @previous chain to yield arcs from the version and its ancestors.
 // Caller must call Close() on the iterator when done.
-func (e *EAT) Iterate(bucketId string, version cid.Cid) arcset.Iterator {
+func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arcset.Iterator {
 	return &chainIterator{
 		eat:            e,
+		ctx:            ctx,
 		bucketId:       bucketId,
 		currentVersion: version,
 		seen:           make(map[string]bool),
@@ -328,6 +341,7 @@ func (e *EAT) Close() error {
 // chainIterator walks the @previous chain to iterate all visible arcs.
 type chainIterator struct {
 	eat            *EAT
+	ctx            context.Context
 	bucketId       string
 	currentVersion cid.Cid
 	seen           map[string]bool
@@ -343,6 +357,12 @@ type chainIterator struct {
 }
 
 func (it *chainIterator) Next() (string, cid.Cid, bool) {
+	// Check context cancellation
+	if it.ctx.Err() != nil {
+		it.err = it.ctx.Err()
+		return "", cid.Cid{}, false
+	}
+
 	// Try to yield from current batch
 	for it.keyIndex < len(it.currentKeys) {
 		path := it.currentKeys[it.keyIndex]
@@ -363,9 +383,8 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 	it.maxDepth--
 
 	// Load arcs from current version
-	ctx := context.Background()
 	prefix := versionPrefix(it.bucketId, it.currentVersion)
-	iter := it.eat.kv.NewIterator(ctx, prefix, nil)
+	iter := it.eat.kv.NewIterator(it.ctx, prefix, nil)
 
 	it.currentBatch = make(map[string]cid.Cid)
 	var nextVersion cid.Cid
@@ -396,6 +415,9 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 		if c, err := cid.Cast(val); err == nil {
 			it.currentBatch[path] = c
 		}
+	}
+	if err := iter.Err(); err != nil {
+		it.err = err
 	}
 	iter.Close()
 

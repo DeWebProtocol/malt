@@ -1,6 +1,7 @@
 package overwrite
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -45,6 +46,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "mygraph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -56,13 +58,13 @@ func TestEATUpdateAndGet(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = eat.Update(bucketId, root1, cid.Undef, arcs1)
+	err = eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
 	// Get via root1
-	got, err := eat.Get(bucketId, root1, "a")
+	got, err := eat.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -70,7 +72,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 		t.Error("wrong value for 'a'")
 	}
 
-	got, err = eat.Get(bucketId, root1, "b")
+	got, err = eat.Get(ctx, bucketId, root1, "b")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -84,13 +86,13 @@ func TestEATUpdateAndGet(t *testing.T) {
 		"a": target3, // overwrite
 		"c": target3, // new
 	}
-	err = eat.Update(bucketId, root2, root1, arcs2)
+	err = eat.Update(ctx, bucketId, root2, root1, arcs2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
 	// Get via root2 should work
-	got, err = eat.Get(bucketId, root2, "a")
+	got, err = eat.Get(ctx, bucketId, root2, "a")
 	if err != nil {
 		t.Fatalf("Get via root2 failed: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 		t.Error("wrong value for 'a' via root2")
 	}
 
-	got, err = eat.Get(bucketId, root2, "b")
+	got, err = eat.Get(ctx, bucketId, root2, "b")
 	if err != nil {
 		t.Fatalf("Get b via root2 failed: %v", err)
 	}
@@ -106,7 +108,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 		t.Error("'b' should still be target2")
 	}
 
-	got, err = eat.Get(bucketId, root2, "c")
+	got, err = eat.Get(ctx, bucketId, root2, "c")
 	if err != nil {
 		t.Fatalf("Get c via root2 failed: %v", err)
 	}
@@ -115,7 +117,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 	}
 
 	// Old root1 should no longer work
-	_, err = eat.Get(bucketId, root1, "a")
+	_, err = eat.Get(ctx, bucketId, root1, "a")
 	if err == nil {
 		t.Error("old root should no longer work after update")
 	}
@@ -128,15 +130,16 @@ func TestEATGetWithoutRoot(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "test-bucket"
 	root := newTestCID([]byte("root"))
 	target := newTestCID([]byte("target"))
 
 	// Store arc
-	eat.Update(bucketId, root, cid.Undef, map[string]cid.Cid{"a": target})
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"a": target})
 
 	// Get with root validation
-	got, err := eat.Get(bucketId, root, "a")
+	got, err := eat.Get(ctx, bucketId, root, "a")
 	if err != nil {
 		t.Fatalf("Get with root failed: %v", err)
 	}
@@ -145,7 +148,7 @@ func TestEATGetWithoutRoot(t *testing.T) {
 	}
 
 	// Get without root validation (root = cid.Undef)
-	got, err = eat.Get(bucketId, cid.Undef, "a")
+	got, err = eat.Get(ctx, bucketId, cid.Undef, "a")
 	if err != nil {
 		t.Fatalf("Get without root failed: %v", err)
 	}
@@ -161,19 +164,20 @@ func TestEATDeleteViaUpdate(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "delete-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
 	target := newTestCID([]byte("target"))
 
 	// Setup
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target,
 		"b": target,
 	})
 
 	// Delete 'a' using cid.Undef
-	err = eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+	err = eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": cid.Undef, // delete
 	})
 	if err != nil {
@@ -181,13 +185,13 @@ func TestEATDeleteViaUpdate(t *testing.T) {
 	}
 
 	// 'a' should be gone
-	_, err = eat.Get(bucketId, root2, "a")
+	_, err = eat.Get(ctx, bucketId, root2, "a")
 	if err == nil {
 		t.Error("'a' should be deleted")
 	}
 
 	// 'b' should still exist
-	got, err := eat.Get(bucketId, root2, "b")
+	got, err := eat.Get(ctx, bucketId, root2, "b")
 	if err != nil {
 		t.Fatalf("Get b failed: %v", err)
 	}
@@ -203,17 +207,21 @@ func TestEATSnapshot(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "snapshot-graph"
 	root := newTestCID([]byte("root"))
 	target1 := newTestCID([]byte("target1"))
 	target2 := newTestCID([]byte("target2"))
 
-	eat.Update(bucketId, root, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 	})
 
-	snapshot := eat.Snapshot(bucketId, root)
+	snapshot, err := eat.Snapshot(ctx, bucketId, root)
+	if err != nil {
+		t.Fatalf("Snapshot failed: %v", err)
+	}
 
 	got, ok := snapshot.Get("a")
 	if !ok {
@@ -229,7 +237,10 @@ func TestEATSnapshot(t *testing.T) {
 
 	// Snapshot with invalid root should return empty snapshot
 	invalidRoot := newTestCID([]byte("invalid"))
-	emptySnapshot := eat.Snapshot(bucketId, invalidRoot)
+	emptySnapshot, err := eat.Snapshot(ctx, bucketId, invalidRoot)
+	if err != nil {
+		t.Fatalf("Snapshot with invalid root should not error: %v", err)
+	}
 	if emptySnapshot.Len() != 0 {
 		t.Error("invalid root should return empty snapshot")
 	}
@@ -242,17 +253,18 @@ func TestEATIterate(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "iterate-graph"
 	root := newTestCID([]byte("root"))
 	target1 := newTestCID([]byte("target1"))
 	target2 := newTestCID([]byte("target2"))
 
-	eat.Update(bucketId, root, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 	})
 
-	iter := eat.Iterate(bucketId, root)
+	iter := eat.Iterate(ctx, bucketId, root)
 	defer iter.Close()
 
 	count := 0
@@ -277,18 +289,19 @@ func TestEATMultipleBuckets(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
 	target1 := newTestCID([]byte("target1"))
 	target2 := newTestCID([]byte("target2"))
 
 	// Same path, different buckets
-	eat.Update("bucket1", root1, cid.Undef, map[string]cid.Cid{"key": target1})
-	eat.Update("bucket2", root2, cid.Undef, map[string]cid.Cid{"key": target2})
+	eat.Update(ctx, "bucket1", root1, cid.Undef, map[string]cid.Cid{"key": target1})
+	eat.Update(ctx, "bucket2", root2, cid.Undef, map[string]cid.Cid{"key": target2})
 
 	// Should be independent
-	got1, _ := eat.Get("bucket1", root1, "key")
-	got2, _ := eat.Get("bucket2", root2, "key")
+	got1, _ := eat.Get(ctx, "bucket1", root1, "key")
+	got2, _ := eat.Get(ctx, "bucket2", root2, "key")
 
 	if got1.Equals(got2) {
 		t.Error("different buckets should have independent values")
@@ -303,10 +316,18 @@ func TestEATMultipleBuckets(t *testing.T) {
 	}
 
 	// Snapshot should be per-bucket
-	if eat.Snapshot("bucket1", root1).Len() != 1 {
+	snapshot1, err := eat.Snapshot(ctx, "bucket1", root1)
+	if err != nil {
+		t.Fatalf("Snapshot bucket1 failed: %v", err)
+	}
+	if snapshot1.Len() != 1 {
 		t.Error("bucket1.Snapshot.Len should be 1")
 	}
-	if eat.Snapshot("bucket2", root2).Len() != 1 {
+	snapshot2, err := eat.Snapshot(ctx, "bucket2", root2)
+	if err != nil {
+		t.Fatalf("Snapshot bucket2 failed: %v", err)
+	}
+	if snapshot2.Len() != 1 {
 		t.Error("bucket2.Snapshot.Len should be 1")
 	}
 }
@@ -319,6 +340,7 @@ func TestEATBatchGet(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batchget-graph"
 	root := newTestCID([]byte("root"))
 	target1 := newTestCID([]byte("target1"))
@@ -326,14 +348,14 @@ func TestEATBatchGet(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// Setup arcs
-	eat.Update(bucketId, root, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
 	})
 
 	// Test: all paths found
-	results, err := eat.BatchGet(bucketId, root, []string{"a", "b", "c"})
+	results, err := eat.BatchGet(ctx, bucketId, root, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet failed: %v", err)
 	}
@@ -351,7 +373,7 @@ func TestEATBatchGet(t *testing.T) {
 	}
 
 	// Test: some paths not found
-	results, err = eat.BatchGet(bucketId, root, []string{"a", "notexist", "b"})
+	results, err = eat.BatchGet(ctx, bucketId, root, []string{"a", "notexist", "b"})
 	if err != nil {
 		t.Fatalf("BatchGet with missing paths failed: %v", err)
 	}
@@ -363,7 +385,7 @@ func TestEATBatchGet(t *testing.T) {
 	}
 
 	// Test: empty paths
-	results, err = eat.BatchGet(bucketId, root, []string{})
+	results, err = eat.BatchGet(ctx, bucketId, root, []string{})
 	if err != nil {
 		t.Fatalf("BatchGet with empty paths failed: %v", err)
 	}
@@ -372,7 +394,7 @@ func TestEATBatchGet(t *testing.T) {
 	}
 
 	// Test: all paths not found
-	results, err = eat.BatchGet(bucketId, root, []string{"x", "y", "z"})
+	results, err = eat.BatchGet(ctx, bucketId, root, []string{"x", "y", "z"})
 	if err != nil {
 		t.Fatalf("BatchGet with all missing paths failed: %v", err)
 	}
@@ -381,7 +403,7 @@ func TestEATBatchGet(t *testing.T) {
 	}
 
 	// Test: without root validation
-	results, err = eat.BatchGet(bucketId, cid.Undef, []string{"a", "b"})
+	results, err = eat.BatchGet(ctx, bucketId, cid.Undef, []string{"a", "b"})
 	if err != nil {
 		t.Fatalf("BatchGet without root failed: %v", err)
 	}
@@ -391,7 +413,7 @@ func TestEATBatchGet(t *testing.T) {
 
 	// Test: invalid root
 	invalidRoot := newTestCID([]byte("invalid"))
-	results, err = eat.BatchGet(bucketId, invalidRoot, []string{"a", "b"})
+	results, err = eat.BatchGet(ctx, bucketId, invalidRoot, []string{"a", "b"})
 	if err == nil {
 		t.Error("expected error for invalid root")
 	}
@@ -404,6 +426,7 @@ func TestEATBatchGetAfterUpdate(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batchget-update-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -412,19 +435,19 @@ func TestEATBatchGetAfterUpdate(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// First version
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 	})
 
 	// Second version (overwrites 'a', adds 'c')
-	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": target3,
 		"c": target3,
 	})
 
 	// BatchGet with root2 should see updated values
-	results, err := eat.BatchGet(bucketId, root2, []string{"a", "b", "c"})
+	results, err := eat.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -442,7 +465,7 @@ func TestEATBatchGetAfterUpdate(t *testing.T) {
 	}
 
 	// BatchGet with old root1 should fail
-	results, err = eat.BatchGet(bucketId, root1, []string{"a"})
+	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a"})
 	if err == nil {
 		t.Error("old root should not work after update")
 	}
@@ -455,26 +478,27 @@ func TestEATBatchGetAfterDelete(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batchget-delete-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
 	target := newTestCID([]byte("target"))
 
 	// Setup
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target,
 		"b": target,
 		"c": target,
 	})
 
 	// Delete 'a' and 'b'
-	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": cid.Undef,
 		"b": cid.Undef,
 	})
 
 	// BatchGet should only return 'c'
-	results, err := eat.BatchGet(bucketId, root2, []string{"a", "b", "c"})
+	results, err := eat.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet after delete failed: %v", err)
 	}
@@ -494,6 +518,7 @@ func TestEATBatchUpdate(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batch-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -505,13 +530,17 @@ func TestEATBatchUpdate(t *testing.T) {
 		arcs1[path] = newTestCID([]byte(path))
 	}
 
-	err = eat.Update(bucketId, root1, cid.Undef, arcs1)
+	err = eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	if eat.Snapshot(bucketId, root1).Len() != 100 {
-		t.Errorf("expected 100 arcs, got %d", eat.Snapshot(bucketId, root1).Len())
+	snapshot1, err := eat.Snapshot(ctx, bucketId, root1)
+	if err != nil {
+		t.Fatalf("Snapshot root1 failed: %v", err)
+	}
+	if snapshot1.Len() != 100 {
+		t.Errorf("expected 100 arcs, got %d", snapshot1.Len())
 	}
 
 	// Second batch (partial overwrite)
@@ -521,24 +550,28 @@ func TestEATBatchUpdate(t *testing.T) {
 		arcs2[path] = newTestCID([]byte("new_" + path))
 	}
 
-	err = eat.Update(bucketId, root2, root1, arcs2)
+	err = eat.Update(ctx, bucketId, root2, root1, arcs2)
 	if err != nil {
 		t.Fatalf("Update 2 failed: %v", err)
 	}
 
 	// Should have 150 arcs (0-149)
-	if eat.Snapshot(bucketId, root2).Len() != 150 {
-		t.Errorf("expected 150 arcs after second update, got %d", eat.Snapshot(bucketId, root2).Len())
+	snapshot2, err := eat.Snapshot(ctx, bucketId, root2)
+	if err != nil {
+		t.Fatalf("Snapshot root2 failed: %v", err)
+	}
+	if snapshot2.Len() != 150 {
+		t.Errorf("expected 150 arcs after second update, got %d", snapshot2.Len())
 	}
 
 	// Verify old root doesn't work
-	_, err = eat.Get(bucketId, root1, "arc0")
+	_, err = eat.Get(ctx, bucketId, root1, "arc0")
 	if err == nil {
 		t.Error("old root should not work")
 	}
 
 	// Verify new root works
-	got, err := eat.Get(bucketId, root2, "arc0")
+	got, err := eat.Get(ctx, bucketId, root2, "arc0")
 	if err != nil {
 		t.Fatalf("Get arc0 via root2 failed: %v", err)
 	}
@@ -548,7 +581,7 @@ func TestEATBatchUpdate(t *testing.T) {
 	}
 
 	// arc50 should have new value
-	got, err = eat.Get(bucketId, root2, "arc50")
+	got, err = eat.Get(ctx, bucketId, root2, "arc50")
 	if err != nil {
 		t.Fatalf("Get arc50 via root2 failed: %v", err)
 	}
@@ -562,6 +595,7 @@ func TestEATBatchUpdate(t *testing.T) {
 func BenchmarkOverwriteEATGet(b *testing.B) {
 	kv := kvstore_memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 	root := newTestCID([]byte("root"))
 
@@ -574,12 +608,12 @@ func BenchmarkOverwriteEATGet(b *testing.B) {
 				path := fmt.Sprintf("arc%d", i)
 				arcs[path] = newTestCID([]byte(path))
 			}
-			eat.Update(bucketId, root, cid.Undef, arcs)
+			eat.Update(ctx, bucketId, root, cid.Undef, arcs)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				path := fmt.Sprintf("arc%d", i%count)
-				eat.Get(bucketId, root, path)
+				eat.Get(ctx, bucketId, root, path)
 			}
 		})
 	}
@@ -588,6 +622,7 @@ func BenchmarkOverwriteEATGet(b *testing.B) {
 func BenchmarkOverwriteEATUpdate(b *testing.B) {
 	kv := kvstore_memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	batchSizes := []int{1, 10, 100, 1000}
@@ -602,7 +637,7 @@ func BenchmarkOverwriteEATUpdate(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				root := newTestCID([]byte(fmt.Sprintf("root%d", i)))
-				eat.Update(bucketId, root, cid.Undef, arcs)
+				eat.Update(ctx, bucketId, root, cid.Undef, arcs)
 			}
 		})
 	}
@@ -611,6 +646,7 @@ func BenchmarkOverwriteEATUpdate(b *testing.B) {
 func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 	kv := kvstore_memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 	root := newTestCID([]byte("root"))
 
@@ -622,11 +658,11 @@ func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 				path := fmt.Sprintf("arc%d", i)
 				arcs[path] = newTestCID([]byte(path))
 			}
-			eat.Update(bucketId, root, cid.Undef, arcs)
+			eat.Update(ctx, bucketId, root, cid.Undef, arcs)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				snapshot := eat.Snapshot(bucketId, root)
+				snapshot, _ := eat.Snapshot(ctx, bucketId, root)
 				snapshot.Get("arc0")
 			}
 		})
@@ -636,6 +672,7 @@ func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 func BenchmarkOverwriteEATIterate(b *testing.B) {
 	kv := kvstore_memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 	root := newTestCID([]byte("root"))
 
@@ -647,11 +684,11 @@ func BenchmarkOverwriteEATIterate(b *testing.B) {
 				path := fmt.Sprintf("arc%d", i)
 				arcs[path] = newTestCID([]byte(path))
 			}
-			eat.Update(bucketId, root, cid.Undef, arcs)
+			eat.Update(ctx, bucketId, root, cid.Undef, arcs)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				iter := eat.Iterate(bucketId, root)
+				iter := eat.Iterate(ctx, bucketId, root)
 				for {
 					_, _, ok := iter.Next()
 					if !ok {

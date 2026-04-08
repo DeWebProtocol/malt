@@ -11,8 +11,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -54,9 +54,7 @@ func rootKey(root cid.Cid) []byte {
 // Get retrieves the target CID for a path within a bucket.
 // If root is not cid.Undef, it validates that the root is the current active root.
 // If root is cid.Undef, validation is skipped.
-func (e *EAT) Get(bucketId string, root cid.Cid, path string) (cid.Cid, error) {
-	ctx := context.Background()
-
+func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
@@ -90,9 +88,7 @@ func (e *EAT) Get(bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 // BatchGet retrieves multiple target CIDs in a single operation.
 // Returns a map of path -> CID for paths that were found.
 // Paths not found are omitted from the result map.
-func (e *EAT) BatchGet(bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error) {
-	ctx := context.Background()
-
+func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error) {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
@@ -141,9 +137,7 @@ func (e *EAT) BatchGet(bucketId string, root cid.Cid, paths []string) (map[strin
 // If oldRoot is not cid.Undef, it invalidates the old root mapping.
 // If newRoot is not cid.Undef, it creates a new root->bucketId mapping.
 // If a target CID is cid.Undef, the corresponding arc is deleted.
-func (e *EAT) Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
-	ctx := context.Background()
-
+func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
 	batch := e.kv.Batch()
 
 	// Remove old root mapping if exists
@@ -193,15 +187,13 @@ func (e *EAT) Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]
 // Snapshot returns an immutable snapshot of all arcs in the bucket.
 // If root is not cid.Undef, it validates that the root is valid for the bucket.
 // If root is cid.Undef, validation is skipped.
-func (e *EAT) Snapshot(bucketId string, root cid.Cid) arcset.Snapshot {
-	ctx := context.Background()
-
+func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error) {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
-			return arcset.NewMap() // Return empty snapshot for invalid root
+			return arcset.NewMap(), nil // Return empty snapshot for invalid root
 		}
 	}
 
@@ -220,16 +212,18 @@ func (e *EAT) Snapshot(bucketId string, root cid.Cid) arcset.Snapshot {
 		}
 	}
 
-	return arcset.NewMapFrom(arcs)
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("iterator error: %w", err)
+	}
+
+	return arcset.NewMapFrom(arcs), nil
 }
 
 // Iterate returns a streaming iterator over all arcs in the bucket.
 // If root is not cid.Undef, it validates that the root is valid for the bucket.
 // If root is cid.Undef, validation is skipped.
 // Caller must call Close() on the iterator when done.
-func (e *EAT) Iterate(bucketId string, root cid.Cid) arcset.Iterator {
-	ctx := context.Background()
-
+func (e *EAT) Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset.Iterator {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
@@ -247,7 +241,6 @@ func (e *EAT) Iterate(bucketId string, root cid.Cid) arcset.Iterator {
 		prefix: prefix,
 	}
 }
-
 
 // Close releases resources.
 func (e *EAT) Close() error {

@@ -4,6 +4,7 @@
 package eat
 
 import (
+	"context"
 	"errors"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -28,12 +29,12 @@ type EAT interface {
 	// For overwrite EAT: root is optional (cid.Undef skips validation).
 	// For versioned EAT: root is the version to start the chain lookup.
 	// Returns ErrNotFound if not found.
-	Get(bucketId string, root cid.Cid, path string) (cid.Cid, error)
+	Get(ctx context.Context, bucketId string, root cid.Cid, path string) (cid.Cid, error)
 
 	// BatchGet retrieves multiple target CIDs in a single operation.
 	// Returns a map of path -> CID for paths that were found.
 	// Paths not found are omitted from the result map (no error).
-	BatchGet(bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error)
+	BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error)
 
 	// Update stores arc entries with a new commitment root.
 	// bucketId is the namespace for the arc set.
@@ -41,19 +42,19 @@ type EAT interface {
 	// For versioned EAT: newRoot is linked to parentRoot via @previous.
 	// Use cid.Undef for oldRoot/parentRoot for the first version.
 	// If a target CID is cid.Undef, the corresponding arc is deleted.
-	Update(bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
+	Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error
 
 	// Snapshot returns an immutable snapshot of all arcs for a given root.
 	// The snapshot preloads all data into memory, suitable for random access.
 	// For overwrite EAT: root is optional (cid.Undef skips validation).
 	// For versioned EAT: includes all ancestor arcs via @previous chain.
-	Snapshot(bucketId string, root cid.Cid) arcset.Snapshot
+	Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error)
 
 	// Iterate returns a streaming iterator over arcs for a given root.
 	// For overwrite EAT: root is optional (cid.Undef skips validation).
 	// For versioned EAT: root is the version to iterate (walks @previous chain).
 	// Caller must call Close() on the iterator when done.
-	Iterate(bucketId string, root cid.Cid) arcset.Iterator
+	Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset.Iterator
 
 	// Close releases resources.
 	Close() error

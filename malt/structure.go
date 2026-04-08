@@ -4,6 +4,7 @@
 package malt
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -22,6 +23,8 @@ type Structure struct {
 
 // NewStructure creates a new structure from an arc set.
 func NewStructure(arcs arcset.Snapshot, bucketId string, e eat.EAT, s *sce.Engine) (*Structure, error) {
+	ctx := context.Background()
+
 	// Generate commitment
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -43,7 +46,7 @@ func NewStructure(arcs arcset.Snapshot, bucketId string, e eat.EAT, s *sce.Engin
 	}
 
 	// Store arcs in EAT using Update (first version, no old root)
-	if err := e.Update(bucketId, root, cid.Undef, arcsMap); err != nil {
+	if err := e.Update(ctx, bucketId, root, cid.Undef, arcsMap); err != nil {
 		return nil, fmt.Errorf("failed to store arcs: %w", err)
 	}
 
@@ -63,14 +66,19 @@ func (s *Structure) Root() cid.Cid {
 // Resolve resolves a path from the structure root.
 // Returns the target CID and a proof.
 func (s *Structure) Resolve(path string) (cid.Cid, []byte, error) {
+	ctx := context.Background()
+
 	// Get target from EAT
-	target, err := s.eat.Get(s.bucketId, s.root, path)
+	target, err := s.eat.Get(ctx, s.bucketId, s.root, path)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to get arc: %w", err)
 	}
 
 	// Generate proof
-	snapshot := s.eat.Snapshot(s.bucketId, s.root)
+	snapshot, err := s.eat.Snapshot(ctx, s.bucketId, s.root)
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to get snapshot: %w", err)
+	}
 	_, proof, err := s.sce.Prove(s.root, snapshot, path)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
@@ -82,14 +90,19 @@ func (s *Structure) Resolve(path string) (cid.Cid, []byte, error) {
 // Update updates an arc in the structure.
 // Returns a new Structure with the updated arc.
 func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
+	ctx := context.Background()
+
 	// Get current value
-	oldKey, err := s.eat.Get(s.bucketId, s.root, path)
+	oldKey, err := s.eat.Get(ctx, s.bucketId, s.root, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current value: %w", err)
 	}
 
 	// Update commitment
-	snapshot := s.eat.Snapshot(s.bucketId, s.root)
+	snapshot, err := s.eat.Snapshot(ctx, s.bucketId, s.root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get snapshot: %w", err)
+	}
 	newRoot, err := s.sce.Update(s.root, snapshot, path, oldKey, newKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update commitment: %w", err)
@@ -97,7 +110,7 @@ func (s *Structure) Update(path string, newKey cid.Cid) (*Structure, error) {
 
 	// Update EAT
 	arcsMap := map[string]cid.Cid{path: newKey}
-	if err := s.eat.Update(s.bucketId, newRoot, s.root, arcsMap); err != nil {
+	if err := s.eat.Update(ctx, s.bucketId, newRoot, s.root, arcsMap); err != nil {
 		return nil, fmt.Errorf("failed to update EAT: %w", err)
 	}
 
@@ -115,6 +128,7 @@ func (s *Structure) Verify(path string, target cid.Cid, proof []byte) (bool, err
 }
 
 // GetArcSet returns a Snapshot for this structure.
-func (s *Structure) GetArcSet() arcset.Snapshot {
-	return s.eat.Snapshot(s.bucketId, s.root)
+func (s *Structure) GetArcSet() (arcset.Snapshot, error) {
+	ctx := context.Background()
+	return s.eat.Snapshot(ctx, s.bucketId, s.root)
 }

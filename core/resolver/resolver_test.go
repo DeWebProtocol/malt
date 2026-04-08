@@ -1,6 +1,7 @@
 package resolver_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
@@ -45,6 +46,8 @@ func TestExplicitResolverResolve(t *testing.T) {
 	}
 	s := sce.NewEngine(scheme)
 
+	ctx := context.Background()
+
 	// Create arc set with hierarchical paths
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
@@ -64,7 +67,7 @@ func TestExplicitResolverResolve(t *testing.T) {
 	}
 
 	// Store arcs in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s, testBucketId)
@@ -117,6 +120,8 @@ func TestExplicitResolverVerify(t *testing.T) {
 	}
 	s := sce.NewEngine(scheme)
 
+	ctx := context.Background()
+
 	// Create arc set
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcsMap := map[string]cid.Cid{"a": k1}
@@ -129,7 +134,7 @@ func TestExplicitResolverVerify(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s, testBucketId)
@@ -160,6 +165,8 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	}
 	s := sce.NewEngine(scheme)
 
+	ctx := context.Background()
+
 	// Create arc set
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcsMap := map[string]cid.Cid{"x/y/z": k1}
@@ -172,7 +179,7 @@ func TestExplicitResolverNoMatch(t *testing.T) {
 	}
 
 	// Store in EAT
-	e.Update(testBucketId, root, cid.Undef, arcsMap)
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
 
 	// Create explicit resolver
 	r := explicit.NewResolver(e, s, testBucketId)

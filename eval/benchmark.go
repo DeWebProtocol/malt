@@ -132,7 +132,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 		}
 
 		// Store arcs in EAT using Update
-		if err := b.eat.Update(b.bucketId, newRoot, root, currentArcsMap); err != nil {
+		if err := b.eat.Update(ctx, b.bucketId, newRoot, root, currentArcsMap); err != nil {
 			return nil, fmt.Errorf("eat update failed at arc %d: %w", i, err)
 		}
 
@@ -150,7 +150,10 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation for a random arc
 	testPath := fmt.Sprintf("arc%d", r.Intn(arcCount))
 	start := time.Now()
-	snapshot := b.eat.Snapshot(b.bucketId, root)
+	snapshot, err := b.eat.Snapshot(ctx, b.bucketId, root)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot failed: %w", err)
+	}
 	_, proof, err := b.sce.Prove(root, snapshot, testPath)
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
@@ -160,7 +163,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics.RootSize = len(root.Bytes())
 
 	// Measure verification
-	target, _ := b.eat.Get(b.bucketId, root, testPath)
+	target, _ := b.eat.Get(ctx, b.bucketId, root, testPath)
 	start = time.Now()
 	valid, err := b.sce.Verify(root, testPath, target, proof)
 	metrics.VerifyTime = time.Since(start)
@@ -220,7 +223,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	}
 
 	// Store in EAT
-	b.eat.Update(b.bucketId, root, cid.Undef, arcsMap)
+	b.eat.Update(ctx, b.bucketId, root, cid.Undef, arcsMap)
 
 	// Perform random updates
 	totalUpdateTime := time.Duration(0)
@@ -249,7 +252,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		}
 
 		// Store in EAT
-		b.eat.Update(b.bucketId, newRoot, root, arcsMap)
+		b.eat.Update(ctx, b.bucketId, newRoot, root, arcsMap)
 
 		root = newRoot
 		keys[path] = newKey
@@ -260,7 +263,10 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	snapshot := b.eat.Snapshot(b.bucketId, root)
+	snapshot, err := b.eat.Snapshot(ctx, b.bucketId, root)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot failed: %w", err)
+	}
 	_, proof, err := b.sce.Prove(root, snapshot, testPath)
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
@@ -325,7 +331,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	}
 
 	// Store in EAT
-	b.eat.Update(b.bucketId, root, cid.Undef, arcsMap)
+	b.eat.Update(ctx, b.bucketId, root, cid.Undef, arcsMap)
 
 	// Bulk update: update 10% of arcs at once
 	bulkSize := max(1, arcCount/10)
@@ -361,7 +367,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		}
 
 		// Store in EAT
-		b.eat.Update(b.bucketId, newRoot, root, arcsMap)
+		b.eat.Update(ctx, b.bucketId, newRoot, root, arcsMap)
 
 		root = newRoot
 	}
@@ -371,7 +377,10 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	// Measure proof
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	snapshot := b.eat.Snapshot(b.bucketId, root)
+	snapshot, err := b.eat.Snapshot(ctx, b.bucketId, root)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot failed: %w", err)
+	}
 	_, proof, err := b.sce.Prove(root, snapshot, testPath)
 	metrics.ProveTime = time.Since(start)
 	if err != nil {

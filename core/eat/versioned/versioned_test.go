@@ -1,6 +1,7 @@
 package versioned
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -45,6 +46,7 @@ func TestVersionedEATUpdate(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "versioned-graph"
 	root1 := newTestCID([]byte("root1"))
 	target1 := newTestCID([]byte("target1"))
@@ -55,13 +57,13 @@ func TestVersionedEATUpdate(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = eat.Update(bucketId, root1, cid.Undef, arcs1)
+	err = eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
 	// Get at root1
-	got, err := eat.Get(bucketId, root1, "a")
+	got, err := eat.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestVersionedEATUpdate(t *testing.T) {
 		t.Error("wrong value for 'a'")
 	}
 
-	got, err = eat.Get(bucketId, root1, "b")
+	got, err = eat.Get(ctx, bucketId, root1, "b")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -85,6 +87,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "chain-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -99,7 +102,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = eat.Update(bucketId, root1, cid.Undef, arcs1)
+	err = eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 	if err != nil {
 		t.Fatalf("Update v1 failed: %v", err)
 	}
@@ -108,7 +111,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	arcs2 := map[string]cid.Cid{
 		"a": target3,
 	}
-	err = eat.Update(bucketId, root2, root1, arcs2)
+	err = eat.Update(ctx, bucketId, root2, root1, arcs2)
 	if err != nil {
 		t.Fatalf("Update v2 failed: %v", err)
 	}
@@ -117,7 +120,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	arcs3 := map[string]cid.Cid{
 		"c": target3,
 	}
-	err = eat.Update(bucketId, root3, root2, arcs3)
+	err = eat.Update(ctx, bucketId, root3, root2, arcs3)
 	if err != nil {
 		t.Fatalf("Update v3 failed: %v", err)
 	}
@@ -125,7 +128,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	// Test resolution at root3
 
 	// a should resolve to target3 (overridden at v2)
-	got, err := eat.Get(bucketId, root3, "a")
+	got, err := eat.Get(ctx, bucketId, root3, "a")
 	if err != nil {
 		t.Fatalf("Get a at root3 failed: %v", err)
 	}
@@ -134,7 +137,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// b should resolve to target2 (from v1)
-	got, err = eat.Get(bucketId, root3, "b")
+	got, err = eat.Get(ctx, bucketId, root3, "b")
 	if err != nil {
 		t.Fatalf("Get b at root3 failed: %v", err)
 	}
@@ -143,7 +146,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// c should resolve to target3 (new at v3)
-	got, err = eat.Get(bucketId, root3, "c")
+	got, err = eat.Get(ctx, bucketId, root3, "c")
 	if err != nil {
 		t.Fatalf("Get c at root3 failed: %v", err)
 	}
@@ -154,7 +157,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	// Test resolution at root2
 
 	// a at root2 should be target3
-	got, err = eat.Get(bucketId, root2, "a")
+	got, err = eat.Get(ctx, bucketId, root2, "a")
 	if err != nil {
 		t.Fatalf("Get a at root2 failed: %v", err)
 	}
@@ -163,7 +166,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// b at root2 should be target2
-	got, err = eat.Get(bucketId, root2, "b")
+	got, err = eat.Get(ctx, bucketId, root2, "b")
 	if err != nil {
 		t.Fatalf("Get b at root2 failed: %v", err)
 	}
@@ -172,14 +175,14 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// c at root2 should not exist
-	_, err = eat.Get(bucketId, root2, "c")
+	_, err = eat.Get(ctx, bucketId, root2, "c")
 	if err == nil {
 		t.Error("c at root2 should not exist")
 	}
 
 	// Test resolution at root1
 
-	got, err = eat.Get(bucketId, root1, "a")
+	got, err = eat.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get a at root1 failed: %v", err)
 	}
@@ -195,6 +198,7 @@ func TestVersionedEATGetParent(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "parent-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -202,15 +206,15 @@ func TestVersionedEATGetParent(t *testing.T) {
 	arcs1 := map[string]cid.Cid{
 		"a": newTestCID([]byte("target1")),
 	}
-	eat.Update(bucketId, root1, cid.Undef, arcs1)
+	eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 
 	arcs2 := map[string]cid.Cid{
 		"b": newTestCID([]byte("target2")),
 	}
-	eat.Update(bucketId, root2, root1, arcs2)
+	eat.Update(ctx, bucketId, root2, root1, arcs2)
 
 	// GetParent
-	parent, err := eat.GetParent(bucketId, root2)
+	parent, err := eat.GetParent(ctx, bucketId, root2)
 	if err != nil {
 		t.Fatalf("GetParent failed: %v", err)
 	}
@@ -219,7 +223,7 @@ func TestVersionedEATGetParent(t *testing.T) {
 	}
 
 	// First version has no parent
-	parent, err = eat.GetParent(bucketId, root1)
+	parent, err = eat.GetParent(ctx, bucketId, root1)
 	if err != nil {
 		t.Fatalf("GetParent root1 failed: %v", err)
 	}
@@ -235,6 +239,7 @@ func TestVersionedEATSnapshot(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "snapshot-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -245,15 +250,18 @@ func TestVersionedEATSnapshot(t *testing.T) {
 	arcs1 := map[string]cid.Cid{
 		"a": target1,
 	}
-	eat.Update(bucketId, root1, cid.Undef, arcs1)
+	eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 
 	arcs2 := map[string]cid.Cid{
 		"b": target2,
 	}
-	eat.Update(bucketId, root2, root1, arcs2)
+	eat.Update(ctx, bucketId, root2, root1, arcs2)
 
 	// Snapshot at root2
-	snapshot := eat.Snapshot(bucketId, root2)
+	snapshot, err := eat.Snapshot(ctx, bucketId, root2)
+	if err != nil {
+		t.Fatalf("Snapshot failed: %v", err)
+	}
 
 	got, ok := snapshot.Get("a")
 	if !ok {
@@ -284,6 +292,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batchget-graph"
 	root1 := newTestCID([]byte("root1"))
 	target1 := newTestCID([]byte("target1"))
@@ -291,14 +300,14 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// Setup arcs at root1
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
 	})
 
 	// Test: all paths found
-	results, err := eat.BatchGet(bucketId, root1, []string{"a", "b", "c"})
+	results, err := eat.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet failed: %v", err)
 	}
@@ -316,7 +325,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 
 	// Test: some paths not found
-	results, err = eat.BatchGet(bucketId, root1, []string{"a", "notexist", "b"})
+	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a", "notexist", "b"})
 	if err != nil {
 		t.Fatalf("BatchGet with missing paths failed: %v", err)
 	}
@@ -325,7 +334,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 
 	// Test: empty paths
-	results, err = eat.BatchGet(bucketId, root1, []string{})
+	results, err = eat.BatchGet(ctx, bucketId, root1, []string{})
 	if err != nil {
 		t.Fatalf("BatchGet with empty paths failed: %v", err)
 	}
@@ -334,7 +343,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 
 	// Test: all paths not found
-	results, err = eat.BatchGet(bucketId, root1, []string{"x", "y", "z"})
+	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"x", "y", "z"})
 	if err != nil {
 		t.Fatalf("BatchGet with all missing paths failed: %v", err)
 	}
@@ -350,6 +359,7 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batchget-chain-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -361,24 +371,24 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	target4 := newTestCID([]byte("target4"))
 
 	// v1: a, b
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 	})
 
 	// v2: c (new), a overridden
-	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": target3,
 		"c": target3,
 	})
 
 	// v3: d (new)
-	eat.Update(bucketId, root3, root2, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
 		"d": target4,
 	})
 
 	// BatchGet at root3 should find all paths
-	results, err := eat.BatchGet(bucketId, root3, []string{"a", "b", "c", "d"})
+	results, err := eat.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root3 failed: %v", err)
 	}
@@ -407,7 +417,7 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	}
 
 	// BatchGet at root2 should not find 'd'
-	results, err = eat.BatchGet(bucketId, root2, []string{"a", "b", "c", "d"})
+	results, err = eat.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -419,7 +429,7 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	}
 
 	// BatchGet at root1 should find original 'a'
-	results, err = eat.BatchGet(bucketId, root1, []string{"a", "b", "c"})
+	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet root1 failed: %v", err)
 	}
@@ -444,6 +454,7 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "batchget-tombstone-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -454,25 +465,25 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// v1: a, b, c
-	eat.Update(bucketId, root1, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
 	})
 
 	// v2: delete 'a' (tombstone), add 'd'
-	eat.Update(bucketId, root2, root1, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": cid.Undef, // tombstone
 		"d": target3,
 	})
 
 	// v3: delete 'b' (tombstone)
-	eat.Update(bucketId, root3, root2, map[string]cid.Cid{
+	eat.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
 		"b": cid.Undef, // tombstone
 	})
 
 	// BatchGet at root3: a and b deleted, c and d exist
-	results, err := eat.BatchGet(bucketId, root3, []string{"a", "b", "c", "d"})
+	results, err := eat.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root3 failed: %v", err)
 	}
@@ -493,7 +504,7 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	}
 
 	// BatchGet at root2: only 'a' deleted
-	results, err = eat.BatchGet(bucketId, root2, []string{"a", "b", "c", "d"})
+	results, err = eat.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -508,7 +519,7 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	}
 
 	// BatchGet at root1: all exist
-	results, err = eat.BatchGet(bucketId, root1, []string{"a", "b", "c"})
+	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet root1 failed: %v", err)
 	}
@@ -527,24 +538,25 @@ func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	root1a := newTestCID([]byte("root1a"))
 	root1b := newTestCID([]byte("root1b"))
 	target1 := newTestCID([]byte("target1"))
 	target2 := newTestCID([]byte("target2"))
 
 	// Different buckets
-	eat.Update("bucket1", root1a, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target1,
 	})
-	eat.Update("bucket2", root1b, cid.Undef, map[string]cid.Cid{
+	eat.Update(ctx, "bucket2", root1b, cid.Undef, map[string]cid.Cid{
 		"a": target2,
 		"b": target2,
 	})
 
 	// BatchGet in different buckets should be independent
-	results1, _ := eat.BatchGet("bucket1", root1a, []string{"a", "b"})
-	results2, _ := eat.BatchGet("bucket2", root1b, []string{"a", "b"})
+	results1, _ := eat.BatchGet(ctx, "bucket1", root1a, []string{"a", "b"})
+	results2, _ := eat.BatchGet(ctx, "bucket2", root1b, []string{"a", "b"})
 
 	if len(results1) != 2 || len(results2) != 2 {
 		t.Error("expected 2 results in each bucket")
@@ -565,6 +577,7 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	bucketId := "delete-graph"
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
@@ -578,22 +591,22 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	eat.Update(bucketId, root1, cid.Undef, arcs1)
+	eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 
 	// v2: delete 'a' using cid.Undef (tombstone)
 	arcs2 := map[string]cid.Cid{
 		"a": cid.Undef, // tombstone - marks 'a' as deleted
 	}
-	eat.Update(bucketId, root2, root1, arcs2)
+	eat.Update(ctx, bucketId, root2, root1, arcs2)
 
 	// At root2, 'a' should not be found (tombstone stops the search)
-	_, err = eat.Get(bucketId, root2, "a")
+	_, err = eat.Get(ctx, bucketId, root2, "a")
 	if err == nil {
 		t.Error("'a' should be deleted at root2")
 	}
 
 	// 'b' should still be accessible (from root1)
-	got, err := eat.Get(bucketId, root2, "b")
+	got, err := eat.Get(ctx, bucketId, root2, "b")
 	if err != nil {
 		t.Fatalf("Get b at root2 failed: %v", err)
 	}
@@ -602,7 +615,7 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	}
 
 	// At root1, 'a' should still exist (tombstone is at root2, not root1)
-	got, err = eat.Get(bucketId, root1, "a")
+	got, err = eat.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get a at root1 failed: %v", err)
 	}
@@ -614,16 +627,16 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	arcs3 := map[string]cid.Cid{
 		"c": target1,
 	}
-	eat.Update(bucketId, root3, root2, arcs3)
+	eat.Update(ctx, bucketId, root3, root2, arcs3)
 
 	// At root3, 'a' should still not be found
-	_, err = eat.Get(bucketId, root3, "a")
+	_, err = eat.Get(ctx, bucketId, root3, "a")
 	if err == nil {
 		t.Error("'a' should be deleted at root3")
 	}
 
 	// 'b' and 'c' should work
-	got, err = eat.Get(bucketId, root3, "b")
+	got, err = eat.Get(ctx, bucketId, root3, "b")
 	if err != nil {
 		t.Fatalf("Get b at root3 failed: %v", err)
 	}
@@ -631,7 +644,7 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 		t.Error("b at root3 should be target2")
 	}
 
-	got, err = eat.Get(bucketId, root3, "c")
+	got, err = eat.Get(ctx, bucketId, root3, "c")
 	if err != nil {
 		t.Fatalf("Get c at root3 failed: %v", err)
 	}
@@ -648,6 +661,7 @@ func TestVersionedEATMultipleBuckets(t *testing.T) {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
 
+	ctx := context.Background()
 	root1a := newTestCID([]byte("root1a"))
 	root2a := newTestCID([]byte("root2a"))
 
@@ -655,12 +669,12 @@ func TestVersionedEATMultipleBuckets(t *testing.T) {
 	target2 := newTestCID([]byte("target2"))
 
 	// Create versions in different buckets
-	eat.Update("bucket1", root1a, cid.Undef, map[string]cid.Cid{"a": target1})
-	eat.Update("bucket2", root2a, cid.Undef, map[string]cid.Cid{"a": target2})
+	eat.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{"a": target1})
+	eat.Update(ctx, "bucket2", root2a, cid.Undef, map[string]cid.Cid{"a": target2})
 
 	// Should be independent
-	got1, _ := eat.Get("bucket1", root1a, "a")
-	got2, _ := eat.Get("bucket2", root2a, "a")
+	got1, _ := eat.Get(ctx, "bucket1", root1a, "a")
+	got2, _ := eat.Get(ctx, "bucket2", root2a, "a")
 
 	if got1.Equals(got2) {
 		t.Error("different buckets should have independent values")
@@ -678,7 +692,7 @@ func TestVersionedEATMultipleBuckets(t *testing.T) {
 // === Benchmarks ===
 
 // setupVersionChain creates a chain of versions and returns the latest root
-func setupVersionChain(eat *EAT, bucketId string, chainLength int) cid.Cid {
+func setupVersionChain(ctx context.Context, eat *EAT, bucketId string, chainLength int) cid.Cid {
 	var prevRoot cid.Cid
 	var latestRoot cid.Cid
 
@@ -687,7 +701,7 @@ func setupVersionChain(eat *EAT, bucketId string, chainLength int) cid.Cid {
 		arcs := map[string]cid.Cid{
 			fmt.Sprintf("v%d_arc", i): newTestCID([]byte(fmt.Sprintf("target%d", i))),
 		}
-		eat.Update(bucketId, root, prevRoot, arcs)
+		eat.Update(ctx, bucketId, root, prevRoot, arcs)
 		prevRoot = root
 		latestRoot = root
 	}
@@ -697,18 +711,19 @@ func setupVersionChain(eat *EAT, bucketId string, chainLength int) cid.Cid {
 func BenchmarkVersionedEATGet(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	// Test different version chain lengths
 	chainLengths := []int{1, 10, 50, 100}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Query an arc that exists at the first version (requires full chain walk)
-				eat.Get(bucketId, latestRoot, "v0_arc")
+				eat.Get(ctx, bucketId, latestRoot, "v0_arc")
 			}
 		})
 	}
@@ -717,18 +732,19 @@ func BenchmarkVersionedEATGet(b *testing.B) {
 func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	// Test Get performance for arc at latest version (no chain walk needed)
 	chainLengths := []int{1, 10, 50, 100}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Query an arc at the latest version (direct lookup)
-				eat.Get(bucketId, latestRoot, fmt.Sprintf("v%d_arc", length-1))
+				eat.Get(ctx, bucketId, latestRoot, fmt.Sprintf("v%d_arc", length-1))
 			}
 		})
 	}
@@ -737,6 +753,7 @@ func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
 func BenchmarkVersionedEATUpdate(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	batchSizes := []int{1, 10, 100}
@@ -747,7 +764,7 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 			initialArcs := map[string]cid.Cid{
 				"a": newTestCID([]byte("init")),
 			}
-			eat.Update(bucketId, initialRoot, cid.Undef, initialArcs)
+			eat.Update(ctx, bucketId, initialRoot, cid.Undef, initialArcs)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -756,7 +773,7 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 				for j := 0; j < size; j++ {
 					arcs[fmt.Sprintf("arc%d", j)] = newTestCID([]byte(fmt.Sprintf("val%d_%d", i, j)))
 				}
-				eat.Update(bucketId, newRoot, initialRoot, arcs)
+				eat.Update(ctx, bucketId, newRoot, initialRoot, arcs)
 			}
 		})
 	}
@@ -765,16 +782,17 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 func BenchmarkVersionedEATSnapshot(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	chainLengths := []int{1, 10, 20}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				snapshot := eat.Snapshot(bucketId, latestRoot)
+				snapshot, _ := eat.Snapshot(ctx, bucketId, latestRoot)
 				snapshot.Get("v0_arc")
 			}
 		})
@@ -784,16 +802,17 @@ func BenchmarkVersionedEATSnapshot(b *testing.B) {
 func BenchmarkVersionedEATIterate(b *testing.B) {
 	kv := memory.New()
 	eat, _ := NewEAT(kv)
+	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	chainLengths := []int{1, 10, 20}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				iter := eat.Iterate(bucketId, latestRoot)
+				iter := eat.Iterate(ctx, bucketId, latestRoot)
 				for {
 					_, _, ok := iter.Next()
 					if !ok {
@@ -814,11 +833,12 @@ func BenchmarkVersionedEATGetParent(b *testing.B) {
 	chainLengths := []int{10, 50, 100}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(eat, bucketId, length)
+			ctx := context.Background()
+			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				eat.GetParent(bucketId, latestRoot)
+				eat.GetParent(ctx, bucketId, latestRoot)
 			}
 		})
 	}

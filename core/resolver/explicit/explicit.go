@@ -3,6 +3,7 @@
 package explicit
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -49,6 +50,8 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 		return "", cid.Cid{}, nil, fmt.Errorf("path is empty")
 	}
 
+	ctx := context.Background()
+
 	// Try to find the longest matching prefix
 	segments := splitPath(path)
 
@@ -56,10 +59,13 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	for i := len(segments); i > 0; i-- {
 		candidatePath := strings.Join(segments[:i], "/")
 
-		target, err := r.eat.Get(r.bucketId, root, candidatePath)
+		target, err := r.eat.Get(ctx, r.bucketId, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
-			snapshot := r.eat.Snapshot(r.bucketId, root)
+			snapshot, err := r.eat.Snapshot(ctx, r.bucketId, root)
+			if err != nil {
+				return "", cid.Cid{}, nil, fmt.Errorf("failed to get snapshot: %w", err)
+			}
 			_, proof, err := r.sce.Prove(root, snapshot, candidatePath)
 			if err != nil {
 				return "", cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
