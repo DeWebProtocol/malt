@@ -6,12 +6,14 @@ package fs
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -70,22 +72,47 @@ func (k *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 	return data, nil
 }
 
-// BatchGet retrieves multiple values by keys.
+// BatchGet retrieves multiple values by keys using parallel file reads.
+// Uses errgroup for concurrent I/O with a limit of 8 parallel reads.
+// File not found errors are skipped; other errors (permission, I/O) stop the operation.
 func (k *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 
+	if len(keys) == 0 {
+		return map[string][]byte{}, nil
+	}
+
 	results := make(map[string][]byte)
+	resultsMu := sync.Mutex{}
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(8) // Limit concurrent file reads
+
 	for _, key := range keys {
-		path := k.keyToPath(key)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue // Skip not found keys
-			}
-			return nil, err
+		if ctx.Err() != nil {
+			break // Context cancelled, stop submitting tasks
 		}
-		results[string(key)] = data
+		key := key // capture for goroutine
+		g.Go(func() error {
+			path := k.keyToPath(key)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil // File not found, skip
+				}
+				// Other errors (permission, I/O, etc.) stop the operation
+				return fmt.Errorf("failed to read key %s: %w", string(key), err)
+			}
+			resultsMu.Lock()
+			results[string(key)] = data
+			resultsMu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 	return results, nil
 }
