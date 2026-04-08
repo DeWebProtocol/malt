@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/logger"
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -62,9 +64,15 @@ func (b *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 // BatchGet retrieves multiple values by keys.
 // Uses a single transaction with sorted keys for efficient sequential IO.
 func (b *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	start := time.Now()
+
 	if len(keys) == 0 {
 		return map[string][]byte{}, nil
 	}
+
+	logger.Debug("KV.BatchGet started",
+		logger.String("backend", "badger"),
+		logger.Int("key_count", len(keys)))
 
 	// Sort keys for sequential traversal (better IO performance on LSM-tree)
 	sortedKeys := make([][]byte, len(keys))
@@ -74,6 +82,8 @@ func (b *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, er
 	})
 
 	results := make(map[string][]byte)
+	foundCount := 0
+
 	err := b.db.View(func(txn *badger.Txn) error {
 		for _, key := range sortedKeys {
 			item, err := txn.Get(key)
@@ -81,6 +91,9 @@ func (b *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, er
 				if err == badger.ErrKeyNotFound {
 					continue // Skip not found keys
 				}
+				logger.Error("KV.BatchGet transaction error",
+					logger.String("backend", "badger"),
+					logger.Err(err))
 				return err
 			}
 			val, err := item.ValueCopy(nil)
@@ -88,12 +101,23 @@ func (b *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, er
 				return err
 			}
 			results[string(key)] = val
+			foundCount++
 		}
 		return nil
 	})
 	if err != nil {
+		logger.Error("KV.BatchGet failed",
+			logger.String("backend", "badger"),
+			logger.Err(err))
 		return nil, err
 	}
+
+	logger.Debug("KV.BatchGet completed",
+		logger.String("backend", "badger"),
+		logger.Int("key_count", len(keys)),
+		logger.Int("found_count", foundCount),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
 	return results, nil
 }
 

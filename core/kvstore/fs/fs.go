@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/logger"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -76,15 +78,22 @@ func (k *KV) Get(ctx context.Context, key []byte) ([]byte, error) {
 // Uses errgroup for concurrent I/O with a limit of 8 parallel reads.
 // File not found errors are skipped; other errors (permission, I/O) stop the operation.
 func (k *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	k.mu.RLock()
-	defer k.mu.RUnlock()
+	start := time.Now()
 
 	if len(keys) == 0 {
 		return map[string][]byte{}, nil
 	}
 
+	logger.Debug("KV.BatchGet started",
+		logger.String("backend", "fs"),
+		logger.Int("key_count", len(keys)))
+
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
 	results := make(map[string][]byte)
 	resultsMu := sync.Mutex{}
+	foundCount := 0
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(8) // Limit concurrent file reads
@@ -102,18 +111,33 @@ func (k *KV) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, er
 					return nil // File not found, skip
 				}
 				// Other errors (permission, I/O, etc.) stop the operation
+				logger.Error("KV.BatchGet read error",
+					logger.String("backend", "fs"),
+					logger.String("key", string(key)),
+					logger.Err(err))
 				return fmt.Errorf("failed to read key %s: %w", string(key), err)
 			}
 			resultsMu.Lock()
 			results[string(key)] = data
+			foundCount++
 			resultsMu.Unlock()
 			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
+		logger.Error("KV.BatchGet failed",
+			logger.String("backend", "fs"),
+			logger.Err(err))
 		return nil, err
 	}
+
+	logger.Debug("KV.BatchGet completed",
+		logger.String("backend", "fs"),
+		logger.Int("key_count", len(keys)),
+		logger.Int("found_count", foundCount),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
 	return results, nil
 }
 

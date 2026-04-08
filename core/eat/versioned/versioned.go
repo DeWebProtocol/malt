@@ -11,9 +11,11 @@ package versioned
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/logger"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -54,12 +56,25 @@ func versionPrefix(bucketId string, version cid.Cid) []byte {
 // Returns ErrNotFound if the path doesn't exist in any ancestor version,
 // or if a tombstone (cid.Undef) is found indicating the arc was deleted.
 func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path string) (cid.Cid, error) {
+	start := time.Now()
 	currentVersion := version
 	maxDepth := 1000 // Prevent infinite loops
+	depth := 0
+
+	logger.Debug("EAT.Get started",
+		logger.String("bucket", bucketId),
+		logger.String("version", version.String()),
+		logger.String("path", path))
 
 	for range maxDepth {
+		depth++
 		// Check context cancellation
 		if ctx.Err() != nil {
+			logger.Warn("EAT.Get cancelled",
+				logger.String("bucket", bucketId),
+				logger.String("path", path),
+				logger.Int("depth", depth),
+				logger.Err(ctx.Err()))
 			return cid.Cid{}, ctx.Err()
 		}
 
@@ -71,13 +86,30 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 			// Check if it's a tombstone (empty bytes = cid.Undef)
 			if len(val) == 0 {
 				// Arc was deleted at this version
+				logger.Debug("EAT.Get found tombstone",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.Int("depth", depth))
 				return cid.Cid{}, arcset.ErrNotFound
 			}
 			// Parse and return the CID
-			return cid.Cast(val)
+			result, err := cid.Cast(val)
+			if err == nil {
+				logger.Debug("EAT.Get success",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.String("target", result.String()),
+					logger.Int("depth", depth),
+					logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+			}
+			return result, err
 		}
 
 		if err != kvstore.ErrNotFound {
+			logger.Error("EAT.Get kv error",
+				logger.String("bucket", bucketId),
+				logger.String("path", path),
+				logger.Err(err))
 			return cid.Cid{}, fmt.Errorf("failed to get arc: %w", err)
 		}
 
@@ -87,6 +119,10 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		if err != nil {
 			if err == kvstore.ErrNotFound {
 				// No parent, arc doesn't exist
+				logger.Debug("EAT.Get not found (no parent)",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.Int("depth", depth))
 				return cid.Cid{}, arcset.ErrNotFound
 			}
 			return cid.Cid{}, fmt.Errorf("failed to get @previous: %w", err)
@@ -95,11 +131,19 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		// Move to parent version
 		parentVersion, err := cid.Cast(prevVal)
 		if err != nil {
+			logger.Error("EAT.Get invalid @previous CID",
+				logger.String("bucket", bucketId),
+				logger.String("path", path),
+				logger.Err(err))
 			return cid.Cid{}, fmt.Errorf("invalid @previous CID: %w", err)
 		}
 		currentVersion = parentVersion
 	}
 
+	logger.Warn("EAT.Get exceeded max depth",
+		logger.String("bucket", bucketId),
+		logger.String("path", path),
+		logger.Int("maxDepth", maxDepth))
 	return cid.Cid{}, fmt.Errorf("version chain too deep (max %d)", maxDepth)
 }
 
@@ -108,6 +152,13 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 // Paths not found or deleted (tombstone) are omitted from the result map.
 // Uses KVStore.BatchGet for efficient bulk retrieval at each version in the chain.
 func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
+	start := time.Now()
+
+	logger.Debug("EAT.BatchGet started",
+		logger.String("bucket", bucketId),
+		logger.String("version", version.String()),
+		logger.Int("path_count", len(paths)))
+
 	// Track which paths we still need to find
 	remaining := make(map[string]bool)
 	for _, path := range paths {
@@ -119,12 +170,18 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 
 	currentVersion := version
 	maxDepth := 1000
+	depth := 0
 
 	for len(remaining) > 0 && maxDepth > 0 {
 		maxDepth--
+		depth++
 
 		// Check context cancellation
 		if ctx.Err() != nil {
+			logger.Warn("EAT.BatchGet cancelled",
+				logger.String("bucket", bucketId),
+				logger.Int("depth", depth),
+				logger.Err(ctx.Err()))
 			return nil, ctx.Err()
 		}
 
@@ -147,6 +204,10 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 		// Batch get all remaining paths at this version
 		kvResults, err := e.kv.BatchGet(ctx, keys)
 		if err != nil {
+			logger.Error("EAT.BatchGet kv error",
+				logger.String("bucket", bucketId),
+				logger.Int("depth", depth),
+				logger.Err(err))
 			return nil, fmt.Errorf("failed to batch get arcs: %w", err)
 		}
 
@@ -185,6 +246,12 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 		currentVersion = parentVersion
 	}
 
+	logger.Debug("EAT.BatchGet completed",
+		logger.String("bucket", bucketId),
+		logger.Int("found_count", len(results)),
+		logger.Int("depth", depth),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
 	return results, nil
 }
 
@@ -194,21 +261,41 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 // If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
 // When Get() encounters a tombstone while walking the chain, it returns ErrNotFound.
 func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
+	start := time.Now()
+
+	logger.Info("EAT.Update started",
+		logger.String("bucket", bucketId),
+		logger.String("new_root", newRoot.String()),
+		logger.String("parent_root", parentRoot.String()),
+		logger.Int("arc_count", len(arcs)))
+
 	batch := e.kv.Batch()
+
+	// Count tombstones for logging
+	tombstoneCount := 0
 
 	// Store all arcs for this version
 	for path, target := range arcs {
 		key := arcKey(bucketId, newRoot, path)
 		if target == cid.Undef {
+			tombstoneCount++
 			// Store tombstone (empty bytes) to mark deletion
 			if err := batch.Put(key, []byte{}); err != nil {
 				batch.Cancel()
+				logger.Error("EAT.Update failed to add tombstone",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.Err(err))
 				return fmt.Errorf("failed to add tombstone for arc %s: %w", path, err)
 			}
 		} else {
 			val := target.Bytes()
 			if err := batch.Put(key, val); err != nil {
 				batch.Cancel()
+				logger.Error("EAT.Update failed to add arc",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.Err(err))
 				return fmt.Errorf("failed to add arc %s to batch: %w", path, err)
 			}
 		}
@@ -220,13 +307,27 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 		prevVal := parentRoot.Bytes()
 		if err := batch.Put(prevKey, prevVal); err != nil {
 			batch.Cancel()
+			logger.Error("EAT.Update failed to add @previous",
+				logger.String("bucket", bucketId),
+				logger.Err(err))
 			return fmt.Errorf("failed to add @previous to batch: %w", err)
 		}
 	}
 
 	if err := batch.Commit(ctx); err != nil {
+		logger.Error("EAT.Update commit failed",
+			logger.String("bucket", bucketId),
+			logger.Err(err))
 		return fmt.Errorf("failed to commit version: %w", err)
 	}
+
+	logger.Info("EAT.Update completed",
+		logger.String("bucket", bucketId),
+		logger.String("new_root", newRoot.String()),
+		logger.Int("arc_count", len(arcs)),
+		logger.Int("tombstone_count", tombstoneCount),
+		logger.Bool("has_parent", parentRoot != cid.Undef),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
 	return nil
 }
@@ -249,10 +350,27 @@ func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (
 // Snapshot returns an immutable snapshot of all arcs visible at the given version.
 // This includes all arcs from the version and its ancestors via @previous chain.
 func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.Snapshot, error) {
+	start := time.Now()
+
+	logger.Debug("EAT.Snapshot started",
+		logger.String("bucket", bucketId),
+		logger.String("version", version.String()))
+
 	arcs, err := e.collectFlattenedArcs(ctx, bucketId, version)
 	if err != nil {
+		logger.Error("EAT.Snapshot failed",
+			logger.String("bucket", bucketId),
+			logger.String("version", version.String()),
+			logger.Err(err))
 		return nil, err
 	}
+
+	logger.Debug("EAT.Snapshot completed",
+		logger.String("bucket", bucketId),
+		logger.String("version", version.String()),
+		logger.Int("arc_count", len(arcs)),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
 	return arcset.NewMapFrom(arcs), nil
 }
 
@@ -266,6 +384,9 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 	for i := 0; i < maxDepth; i++ {
 		// Check context cancellation
 		if ctx.Err() != nil {
+			logger.Warn("EAT.collectFlattenedArcs cancelled",
+				logger.String("bucket", bucketId),
+				logger.Int("depth", i))
 			return nil, ctx.Err()
 		}
 
@@ -298,6 +419,9 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 		}
 		if err := iter.Err(); err != nil {
 			iter.Close()
+			logger.Error("EAT.collectFlattenedArcs iterator error",
+				logger.String("bucket", bucketId),
+				logger.Err(err))
 			return nil, fmt.Errorf("iterator error: %w", err)
 		}
 		iter.Close()

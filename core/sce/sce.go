@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
+	"github.com/dewebprotocol/malt/logger"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -43,25 +45,36 @@ func (e *Engine) Scheme() commitment.Scheme {
 
 // Commit generates a commitment to an arc set.
 func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
+	start := time.Now()
+
+	logger.Debug("SCE.Commit started")
+
 	if arcs == nil {
+		logger.Error("SCE.Commit nil arc set")
 		return cid.Cid{}, fmt.Errorf("arc set is nil")
 	}
 
 	// Delegate to commitment scheme
 	comm, err := e.scheme.Commit(arcs)
 	if err != nil {
+		logger.Error("SCE.Commit scheme failed",
+			logger.Err(err))
 		return cid.Cid{}, err
 	}
 
 	// Extract and store session data
 	paths, values, pathToIndex, err := extractArcs(arcs)
 	if err != nil {
+		logger.Error("SCE.Commit extract arcs failed",
+			logger.Err(err))
 		return cid.Cid{}, err
 	}
 
 	// Extract commitment bytes for session key
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
+		logger.Error("SCE.Commit extract commitment failed",
+			logger.Err(err))
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
@@ -73,14 +86,28 @@ func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
 	}
 	e.mu.Unlock()
 
+	logger.Info("SCE.Commit completed",
+		logger.String("root", comm.String()),
+		logger.Int("arc_count", len(paths)),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
 	return comm, nil
 }
 
 // Prove generates a proof for an arc.
 func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
+	start := time.Now()
+
+	logger.Debug("SCE.Prove started",
+		logger.String("root", root.String()),
+		logger.String("path", path))
+
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(root)
 	if err != nil {
+		logger.Error("SCE.Prove extract commitment failed",
+			logger.String("root", root.String()),
+			logger.Err(err))
 		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
@@ -89,32 +116,88 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []
 	e.mu.RUnlock()
 
 	if !ok {
+		logger.Warn("SCE.Prove session not found",
+			logger.String("root", root.String()))
 		return cid.Cid{}, nil, fmt.Errorf("commitment session not found")
 	}
 
 	_, ok = arcs.Get(path)
 	if !ok {
+		logger.Error("SCE.Prove path not found in arc set",
+			logger.String("root", root.String()),
+			logger.String("path", path))
 		return cid.Cid{}, nil, fmt.Errorf("path %s not found in arc set", path)
 	}
 
 	_, ok = sess.pathToIndex[path]
 	if !ok {
+		logger.Error("SCE.Prove path not found in session",
+			logger.String("root", root.String()),
+			logger.String("path", path))
 		return cid.Cid{}, nil, fmt.Errorf("path %s not found in session", path)
 	}
 
-	return e.scheme.Prove(root, arcs, path)
+	target, proof, err := e.scheme.Prove(root, arcs, path)
+	if err != nil {
+		logger.Error("SCE.Prove scheme failed",
+			logger.String("root", root.String()),
+			logger.String("path", path),
+			logger.Err(err))
+		return cid.Cid{}, nil, err
+	}
+
+	logger.Debug("SCE.Prove completed",
+		logger.String("root", root.String()),
+		logger.String("path", path),
+		logger.Int("proof_size", len(proof)),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
+	return target, proof, nil
 }
 
 // Verify verifies a proof.
 func (e *Engine) Verify(root cid.Cid, path string, target cid.Cid, proof []byte) (bool, error) {
-	return e.scheme.Verify(root, path, target, proof)
+	start := time.Now()
+
+	logger.Debug("SCE.Verify started",
+		logger.String("root", root.String()),
+		logger.String("path", path),
+		logger.Int("proof_size", len(proof)))
+
+	valid, err := e.scheme.Verify(root, path, target, proof)
+	if err != nil {
+		logger.Error("SCE.Verify failed",
+			logger.String("root", root.String()),
+			logger.String("path", path),
+			logger.Err(err))
+		return false, err
+	}
+
+	logger.Debug("SCE.Verify completed",
+		logger.String("root", root.String()),
+		logger.String("path", path),
+		logger.Bool("valid", valid),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
+	return valid, nil
 }
 
 // Update updates an arc.
 func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, newKey cid.Cid) (cid.Cid, error) {
+	start := time.Now()
+
+	logger.Debug("SCE.Update started",
+		logger.String("root", root.String()),
+		logger.String("path", path),
+		logger.String("old_key", oldKey.String()),
+		logger.String("new_key", newKey.String()))
+
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(root)
 	if err != nil {
+		logger.Error("SCE.Update extract commitment failed",
+			logger.String("root", root.String()),
+			logger.Err(err))
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
@@ -123,22 +206,33 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 
 	sess, ok := e.sessions[string(commBytes)]
 	if !ok {
+		logger.Warn("SCE.Update session not found",
+			logger.String("root", root.String()))
 		return cid.Cid{}, fmt.Errorf("commitment session not found")
 	}
 
 	_, ok = sess.pathToIndex[path]
 	if !ok {
+		logger.Error("SCE.Update path not found in session",
+			logger.String("root", root.String()),
+			logger.String("path", path))
 		return cid.Cid{}, fmt.Errorf("path %s not found in session", path)
 	}
 
 	newComm, err := e.scheme.Update(root, arcs, path, oldKey, newKey)
 	if err != nil {
+		logger.Error("SCE.Update scheme failed",
+			logger.String("root", root.String()),
+			logger.String("path", path),
+			logger.Err(err))
 		return cid.Cid{}, err
 	}
 
 	// Extract new commitment bytes for session key
 	newCommBytes, err := codec.ExtractCommitment(newComm)
 	if err != nil {
+		logger.Error("SCE.Update extract new commitment failed",
+			logger.Err(err))
 		return cid.Cid{}, fmt.Errorf("failed to extract new commitment: %w", err)
 	}
 
@@ -146,6 +240,12 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 	index := sess.pathToIndex[path]
 	sess.values[index] = newKey
 	e.sessions[string(newCommBytes)] = sess
+
+	logger.Info("SCE.Update completed",
+		logger.String("old_root", root.String()),
+		logger.String("new_root", newComm.String()),
+		logger.String("path", path),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
 	return newComm, nil
 }

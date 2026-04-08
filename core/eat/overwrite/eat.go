@@ -10,9 +10,11 @@ package overwrite
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/logger"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -55,19 +57,37 @@ func rootKey(root cid.Cid) []byte {
 // If root is not cid.Undef, it validates that the root is the current active root.
 // If root is cid.Undef, validation is skipped.
 func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path string) (cid.Cid, error) {
+	start := time.Now()
+
+	logger.Debug("EAT.Get started",
+		logger.String("bucket", bucketId),
+		logger.String("root", root.String()),
+		logger.String("path", path))
+
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
+				logger.Debug("EAT.Get root not found",
+					logger.String("bucket", bucketId),
+					logger.String("root", root.String()))
 				return cid.Cid{}, arcset.ErrNotFound
 			}
+			logger.Error("EAT.Get failed to resolve root",
+				logger.String("bucket", bucketId),
+				logger.String("root", root.String()),
+				logger.Err(err))
 			return cid.Cid{}, fmt.Errorf("failed to resolve root: %w", err)
 		}
 
 		// Verify this root maps to the correct bucket
 		if string(bucketIdBytes) != bucketId {
+			logger.Debug("EAT.Get root bucket mismatch",
+				logger.String("bucket", bucketId),
+				logger.String("root", root.String()),
+				logger.String("expected_bucket", string(bucketIdBytes)))
 			return cid.Cid{}, arcset.ErrNotFound
 		}
 	}
@@ -77,31 +97,62 @@ func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path strin
 	val, err := e.kv.Get(ctx, arcKeyBytes)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
+			logger.Debug("EAT.Get arc not found",
+				logger.String("bucket", bucketId),
+				logger.String("path", path))
 			return cid.Cid{}, arcset.ErrNotFound
 		}
+		logger.Error("EAT.Get failed to get arc",
+			logger.String("bucket", bucketId),
+			logger.String("path", path),
+			logger.Err(err))
 		return cid.Cid{}, fmt.Errorf("failed to get arc: %w", err)
 	}
 
-	return cid.Cast(val)
+	result, err := cid.Cast(val)
+	if err == nil {
+		logger.Debug("EAT.Get success",
+			logger.String("bucket", bucketId),
+			logger.String("path", path),
+			logger.String("target", result.String()),
+			logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+	}
+	return result, err
 }
 
 // BatchGet retrieves multiple target CIDs in a single operation.
 // Returns a map of path -> CID for paths that were found.
 // Paths not found are omitted from the result map.
 func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error) {
+	start := time.Now()
+
+	logger.Debug("EAT.BatchGet started",
+		logger.String("bucket", bucketId),
+		logger.String("root", root.String()),
+		logger.Int("path_count", len(paths)))
+
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := rootKey(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
+				logger.Debug("EAT.BatchGet root not found",
+					logger.String("bucket", bucketId),
+					logger.String("root", root.String()))
 				return nil, arcset.ErrNotFound
 			}
+			logger.Error("EAT.BatchGet failed to resolve root",
+				logger.String("bucket", bucketId),
+				logger.Err(err))
 			return nil, fmt.Errorf("failed to resolve root: %w", err)
 		}
 
 		// Verify this root maps to the correct bucket
 		if string(bucketIdBytes) != bucketId {
+			logger.Debug("EAT.BatchGet root bucket mismatch",
+				logger.String("bucket", bucketId),
+				logger.String("expected_bucket", string(bucketIdBytes)))
 			return nil, arcset.ErrNotFound
 		}
 	}
@@ -118,6 +169,9 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 	// Use KVStore BatchGet for efficient bulk retrieval
 	kvResults, err := e.kv.BatchGet(ctx, keys)
 	if err != nil {
+		logger.Error("EAT.BatchGet kv error",
+			logger.String("bucket", bucketId),
+			logger.Err(err))
 		return nil, fmt.Errorf("failed to batch get arcs: %w", err)
 	}
 
@@ -130,6 +184,12 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 		}
 	}
 
+	logger.Debug("EAT.BatchGet completed",
+		logger.String("bucket", bucketId),
+		logger.Int("requested_count", len(paths)),
+		logger.Int("found_count", len(results)),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
+
 	return results, nil
 }
 
@@ -138,6 +198,14 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 // If newRoot is not cid.Undef, it creates a new root->bucketId mapping.
 // If a target CID is cid.Undef, the corresponding arc is deleted.
 func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
+	start := time.Now()
+
+	logger.Info("EAT.Update started",
+		logger.String("bucket", bucketId),
+		logger.String("new_root", newRoot.String()),
+		logger.String("old_root", oldRoot.String()),
+		logger.Int("arc_count", len(arcs)))
+
 	batch := e.kv.Batch()
 
 	// Remove old root mapping if exists
@@ -145,6 +213,10 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 		oldRootKey := rootKey(oldRoot)
 		if err := batch.Delete(oldRootKey); err != nil {
 			batch.Cancel()
+			logger.Error("EAT.Update failed to delete old root",
+				logger.String("bucket", bucketId),
+				logger.String("old_root", oldRoot.String()),
+				logger.Err(err))
 			return fmt.Errorf("failed to delete old root mapping: %w", err)
 		}
 	}
@@ -154,17 +226,29 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 		newRootKey := rootKey(newRoot)
 		if err := batch.Put(newRootKey, []byte(bucketId)); err != nil {
 			batch.Cancel()
+			logger.Error("EAT.Update failed to add new root",
+				logger.String("bucket", bucketId),
+				logger.String("new_root", newRoot.String()),
+				logger.Err(err))
 			return fmt.Errorf("failed to add new root mapping: %w", err)
 		}
 	}
+
+	// Count deletions for logging
+	deleteCount := 0
 
 	// Add/Update/Delete arcs
 	for path, target := range arcs {
 		key := arcKey(bucketId, path)
 		if target == cid.Undef {
+			deleteCount++
 			// Delete the arc
 			if err := batch.Delete(key); err != nil {
 				batch.Cancel()
+				logger.Error("EAT.Update failed to delete arc",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.Err(err))
 				return fmt.Errorf("failed to delete arc %s: %w", path, err)
 			}
 		} else {
@@ -172,14 +256,29 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 			val := target.Bytes()
 			if err := batch.Put(key, val); err != nil {
 				batch.Cancel()
+				logger.Error("EAT.Update failed to put arc",
+					logger.String("bucket", bucketId),
+					logger.String("path", path),
+					logger.Err(err))
 				return fmt.Errorf("failed to put arc %s: %w", path, err)
 			}
 		}
 	}
 
 	if err := batch.Commit(ctx); err != nil {
+		logger.Error("EAT.Update commit failed",
+			logger.String("bucket", bucketId),
+			logger.Err(err))
 		return fmt.Errorf("failed to commit update: %w", err)
 	}
+
+	logger.Info("EAT.Update completed",
+		logger.String("bucket", bucketId),
+		logger.String("new_root", newRoot.String()),
+		logger.Int("arc_count", len(arcs)),
+		logger.Int("delete_count", deleteCount),
+		logger.Bool("invalidated_old_root", oldRoot != cid.Undef),
+		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
 	return nil
 }
