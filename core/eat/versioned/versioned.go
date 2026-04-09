@@ -2,17 +2,22 @@
 // Each version stores only modified arcs plus a @previous arc pointing to the parent version.
 // Resolution walks the @previous chain to find arc entries.
 //
+// Bloom Filter: Each version stores a bloom filter as @bloom arc, containing all paths
+// visible at that version (including ancestors). This enables fast negative lookups.
+//
 // Concurrency: This implementation is inherently concurrency-safe because each update
-// creates a new version with its own namespace (bucketId:version:path). Multiple concurrent
-// writers operate on different versions without conflict. For production deployments,
-// concurrency control should be handled at the interface layer if needed.
+// creates a new version with its own namespace (bucketId:version:path).
 package versioned
 
 import (
 	"context"
+	"encoding/gob"
 	"fmt"
+	"bytes"
+	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/logger"
@@ -22,21 +27,60 @@ import (
 // Reserved arc paths
 const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
+	BloomArc    = "@bloom"    // Serialized bloom filter for this version
+)
+
+// Default bloom filter parameters.
+const (
+	DefaultExpectedItems     = 10000
+	DefaultFalsePositiveRate = 0.01
 )
 
 // EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
 type EAT struct {
 	kv kvstore.KVStore
+
+	// Bloom filter cache (bucketId:version -> bloom)
+	bloomCache sync.Map // string -> *cachedBloom
+	newBloom   func() bloom.BloomFilter
 }
 
-// NewEAT creates a new versioned EAT with the given KVStore.
+// cachedBloom holds a cached bloom filter.
+type cachedBloom struct {
+	filter bloom.BloomFilter
+	mu     sync.RWMutex
+}
+
+// NewEAT creates a new versioned EAT with the given KVStore and default bloom parameters.
 func NewEAT(kv kvstore.KVStore) (*EAT, error) {
+	return NewEATWithBloomParams(kv, DefaultExpectedItems, DefaultFalsePositiveRate)
+}
+
+// NewEATWithBloomParams creates a new versioned EAT with custom bloom filter parameters.
+func NewEATWithBloomParams(kv kvstore.KVStore, expectedItems int, falsePositiveRate float64) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
 
-	return &EAT{kv: kv}, nil
+	return &EAT{
+		kv: kv,
+		newBloom: func() bloom.BloomFilter {
+			return bloom.NewStandardBloom(expectedItems, falsePositiveRate)
+		},
+	}, nil
+}
+
+// NewEATWithoutBloom creates a new versioned EAT without bloom filter optimization.
+func NewEATWithoutBloom(kv kvstore.KVStore) (*EAT, error) {
+	if kv == nil {
+		return nil, fmt.Errorf("KVStore is required")
+	}
+
+	return &EAT{
+		kv:      kv,
+		newBloom: nil, // disabled
+	}, nil
 }
 
 // arcKey generates the storage key for a bucket, version and path.
@@ -51,14 +95,217 @@ func versionPrefix(bucketId string, version cid.Cid) []byte {
 	return []byte(bucketId + ":" + version.String() + ":")
 }
 
+// bloomCacheKey generates the cache key for a bloom filter.
+func bloomCacheKey(bucketId string, version cid.Cid) string {
+	return bucketId + ":" + version.String()
+}
+
+// MightContain checks if a path might exist at the given version using bloom filter.
+// Returns false if the path definitely doesn't exist.
+// Returns true if the path might exist (need to call Get to verify).
+func (e *EAT) MightContain(ctx context.Context, bucketId string, version cid.Cid, path string) bool {
+	if e.newBloom == nil {
+		return true // Bloom disabled
+	}
+
+	cb := e.loadBloom(ctx, bucketId, version)
+	if cb == nil {
+		return true // No bloom available
+	}
+
+	cb.mu.RLock()
+	result := cb.filter.Test([]byte(path))
+	cb.mu.RUnlock()
+
+	return result
+}
+
+// MightContainBatch checks multiple paths at once using bloom filter.
+func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, version cid.Cid, paths []string) map[string]bool {
+	result := make(map[string]bool, len(paths))
+
+	if e.newBloom == nil {
+		for _, p := range paths {
+			result[p] = true
+		}
+		return result
+	}
+
+	cb := e.loadBloom(ctx, bucketId, version)
+	if cb == nil {
+		for _, p := range paths {
+			result[p] = true
+		}
+		return result
+	}
+
+	cb.mu.RLock()
+	for _, p := range paths {
+		result[p] = cb.filter.Test([]byte(p))
+	}
+	cb.mu.RUnlock()
+
+	return result
+}
+
+// loadBloom loads the bloom filter for a version, from cache or @bloom arc.
+func (e *EAT) loadBloom(ctx context.Context, bucketId string, version cid.Cid) *cachedBloom {
+	cacheKey := bloomCacheKey(bucketId, version)
+
+	// Check cache first
+	if val, ok := e.bloomCache.Load(cacheKey); ok {
+		return val.(*cachedBloom)
+	}
+
+	// Try to load from @bloom arc
+	key := arcKey(bucketId, version, BloomArc)
+	val, err := e.kv.Get(ctx, key)
+	if err != nil {
+		// No @bloom arc, return nil
+		return nil
+	}
+
+	// Deserialize bloom filter
+	filter, err := deserializeBloom(val)
+	if err != nil {
+		logger.Warn("EAT.loadBloom failed to deserialize",
+			logger.String("bucket", bucketId),
+			logger.String("version", version.String()),
+			logger.Err(err))
+		return nil
+	}
+
+	// Cache it
+	cb := &cachedBloom{filter: filter}
+	e.bloomCache.Store(cacheKey, cb)
+
+	return cb
+}
+
+// serializeBloom serializes a bloom filter to bytes.
+func serializeBloom(filter bloom.BloomFilter) ([]byte, error) {
+	// For StandardBloom, we serialize the bitset
+	sf, ok := filter.(*bloom.StandardBloom)
+	if !ok {
+		return nil, fmt.Errorf("unsupported bloom filter type")
+	}
+
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+
+	// Encode bloom parameters
+	if err := enc.Encode(sf.K()); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(sf.M()); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(sf.Bitset()); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// deserializeBloom deserializes a bloom filter from bytes.
+func deserializeBloom(data []byte) (*bloom.StandardBloom, error) {
+	buf := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buf)
+
+	var k, m uint
+	var bitsetBytes []byte
+
+	if err := dec.Decode(&k); err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(&m); err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(&bitsetBytes); err != nil {
+		return nil, err
+	}
+
+	return bloom.NewStandardBloomFromData(k, m, bitsetBytes)
+}
+
+// collectPaths collects all visible paths at a version (including ancestors).
+func (e *EAT) collectPaths(ctx context.Context, bucketId string, version cid.Cid) ([]string, error) {
+	paths := make([]string, 0)
+	seen := make(map[string]bool)
+	currentVersion := version
+	maxDepth := 1000
+
+	for i := 0; i < maxDepth; i++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		prefix := versionPrefix(bucketId, currentVersion)
+		iter := e.kv.NewIterator(ctx, prefix, nil)
+
+		for iter.Next() {
+			key := iter.Key()
+			path := string(key[len(prefix):])
+
+			// Skip reserved arcs
+			if path == PreviousArc || path == BloomArc {
+				continue
+			}
+
+			if seen[path] {
+				continue
+			}
+
+			// Check for tombstone
+			val := iter.Value()
+			if len(val) == 0 {
+				seen[path] = true
+				continue
+			}
+
+			paths = append(paths, path)
+			seen[path] = true
+		}
+
+		if err := iter.Err(); err != nil {
+			iter.Close()
+			return nil, fmt.Errorf("iterator error: %w", err)
+		}
+		iter.Close()
+
+		// Get parent version
+		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevVal, err := e.kv.Get(ctx, prevKey)
+		if err != nil {
+			break
+		}
+
+		parentVersion, err := cid.Cast(prevVal)
+		if err != nil {
+			break
+		}
+		currentVersion = parentVersion
+	}
+
+	return paths, nil
+}
+
 // Get retrieves the target CID for a path at a specific version.
-// It walks the @previous chain starting from the given version until finding the arc.
-// Returns ErrNotFound if the path doesn't exist in any ancestor version,
-// or if a tombstone (cid.Undef) is found indicating the arc was deleted.
+// First checks bloom filter, then walks the @previous chain.
 func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path string) (cid.Cid, error) {
 	start := time.Now()
+
+	// Quick bloom filter check
+	if !e.MightContain(ctx, bucketId, version, path) {
+		logger.Debug("EAT.Get bloom negative",
+			logger.String("bucket", bucketId),
+			logger.String("version", version.String()),
+			logger.String("path", path))
+		return cid.Cid{}, arcset.ErrNotFound
+	}
+
 	currentVersion := version
-	maxDepth := 1000 // Prevent infinite loops
+	maxDepth := 1000
 	depth := 0
 
 	logger.Debug("EAT.Get started",
@@ -68,7 +315,6 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 
 	for range maxDepth {
 		depth++
-		// Check context cancellation
 		if ctx.Err() != nil {
 			logger.Warn("EAT.Get cancelled",
 				logger.String("bucket", bucketId),
@@ -82,17 +328,13 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		key := arcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
-			// Found the arc entry
-			// Check if it's a tombstone (empty bytes = cid.Undef)
 			if len(val) == 0 {
-				// Arc was deleted at this version
 				logger.Debug("EAT.Get found tombstone",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
 					logger.Int("depth", depth))
 				return cid.Cid{}, arcset.ErrNotFound
 			}
-			// Parse and return the CID
 			result, err := cid.Cast(val)
 			if err == nil {
 				logger.Debug("EAT.Get success",
@@ -113,12 +355,11 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 			return cid.Cid{}, fmt.Errorf("failed to get arc: %w", err)
 		}
 
-		// Arc not found at this version, try parent via @previous
+		// Arc not found at this version, try parent
 		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
-				// No parent, arc doesn't exist
 				logger.Debug("EAT.Get not found (no parent)",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
@@ -128,7 +369,6 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 			return cid.Cid{}, fmt.Errorf("failed to get @previous: %w", err)
 		}
 
-		// Move to parent version
 		parentVersion, err := cid.Cast(prevVal)
 		if err != nil {
 			logger.Error("EAT.Get invalid @previous CID",
@@ -148,25 +388,35 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 }
 
 // BatchGet retrieves multiple target CIDs in a single operation.
-// Returns a map of path -> CID for paths that were found.
-// Paths not found or deleted (tombstone) are omitted from the result map.
-// Uses KVStore.BatchGet for efficient bulk retrieval at each version in the chain.
 func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
 	start := time.Now()
+
+	// Filter paths using bloom filter
+	mightExist := e.MightContainBatch(ctx, bucketId, version, paths)
+	filteredPaths := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if mightExist[p] {
+			filteredPaths = append(filteredPaths, p)
+		}
+	}
+
+	if len(filteredPaths) == 0 {
+		return map[string]cid.Cid{}, nil
+	}
 
 	logger.Debug("EAT.BatchGet started",
 		logger.String("bucket", bucketId),
 		logger.String("version", version.String()),
-		logger.Int("path_count", len(paths)))
+		logger.Int("path_count", len(paths)),
+		logger.Int("filtered_count", len(filteredPaths)))
 
-	// Track which paths we still need to find
 	remaining := make(map[string]bool)
-	for _, path := range paths {
+	for _, path := range filteredPaths {
 		remaining[path] = true
 	}
 
 	results := make(map[string]cid.Cid)
-	tombstones := make(map[string]bool) // Paths marked as deleted
+	tombstones := make(map[string]bool)
 
 	currentVersion := version
 	maxDepth := 1000
@@ -176,7 +426,6 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 		maxDepth--
 		depth++
 
-		// Check context cancellation
 		if ctx.Err() != nil {
 			logger.Warn("EAT.BatchGet cancelled",
 				logger.String("bucket", bucketId),
@@ -185,7 +434,6 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			return nil, ctx.Err()
 		}
 
-		// Build keys for all remaining paths at current version
 		keys := make([][]byte, 0, len(remaining))
 		pathForKey := make(map[string]string)
 		for path := range remaining {
@@ -201,7 +449,6 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			break
 		}
 
-		// Batch get all remaining paths at this version
 		kvResults, err := e.kv.BatchGet(ctx, keys)
 		if err != nil {
 			logger.Error("EAT.BatchGet kv error",
@@ -211,11 +458,9 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			return nil, fmt.Errorf("failed to batch get arcs: %w", err)
 		}
 
-		// Process results
 		for keyStr, val := range kvResults {
 			path := pathForKey[keyStr]
 			if len(val) == 0 {
-				// Tombstone - mark as deleted
 				tombstones[path] = true
 			} else if c, err := cid.Cast(val); err == nil {
 				results[path] = c
@@ -223,7 +468,6 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			delete(remaining, path)
 		}
 
-		// Remove tombstoned paths from remaining
 		for path := range tombstones {
 			delete(remaining, path)
 		}
@@ -232,11 +476,10 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			break
 		}
 
-		// Move to parent version
 		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
-			break // No parent, remaining paths not found
+			break
 		}
 
 		parentVersion, err := cid.Cast(prevVal)
@@ -255,11 +498,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 	return results, nil
 }
 
-// Update stores arcs at a new version and links it to the parent version.
-// The newRoot becomes the new version identifier, linked to parentRoot via @previous.
-// If parentRoot is cid.Undef, this creates the first version (no @previous).
-// If a target CID is cid.Undef, a tombstone (empty bytes) is stored to indicate deletion.
-// When Get() encounters a tombstone while walking the chain, it returns ErrNotFound.
+// Update stores arcs at a new version and builds the bloom filter.
 func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	start := time.Now()
 
@@ -271,7 +510,6 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	batch := e.kv.Batch()
 
-	// Count tombstones for logging
 	tombstoneCount := 0
 
 	// Store all arcs for this version
@@ -279,7 +517,6 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 		key := arcKey(bucketId, newRoot, path)
 		if target == cid.Undef {
 			tombstoneCount++
-			// Store tombstone (empty bytes) to mark deletion
 			if err := batch.Put(key, []byte{}); err != nil {
 				batch.Cancel()
 				logger.Error("EAT.Update failed to add tombstone",
@@ -301,7 +538,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 		}
 	}
 
-	// Link to parent via @previous (unless this is the first version)
+	// Link to parent via @previous
 	if parentRoot != cid.Undef {
 		prevKey := arcKey(bucketId, newRoot, PreviousArc)
 		prevVal := parentRoot.Bytes()
@@ -314,11 +551,22 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 		}
 	}
 
+	// Commit first so bloom collection can see the data
 	if err := batch.Commit(ctx); err != nil {
 		logger.Error("EAT.Update commit failed",
 			logger.String("bucket", bucketId),
 			logger.Err(err))
 		return fmt.Errorf("failed to commit version: %w", err)
+	}
+
+	// Build and store bloom filter after commit
+	if e.newBloom != nil {
+		if err := e.buildAndStoreBloomAfterCommit(ctx, bucketId, newRoot); err != nil {
+			logger.Warn("EAT.Update failed to build bloom (non-fatal)",
+				logger.String("bucket", bucketId),
+				logger.Err(err))
+			// Non-fatal: bloom is optional optimization
+		}
 	}
 
 	logger.Info("EAT.Update completed",
@@ -332,14 +580,50 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 	return nil
 }
 
+// buildAndStoreBloomAfterCommit builds and stores bloom after the batch is committed.
+func (e *EAT) buildAndStoreBloomAfterCommit(ctx context.Context, bucketId string, version cid.Cid) error {
+	// Collect all visible paths at this version
+	paths, err := e.collectPaths(ctx, bucketId, version)
+	if err != nil {
+		return err
+	}
+
+	// Build bloom filter
+	filter := e.newBloom()
+	for _, path := range paths {
+		filter.Add([]byte(path))
+	}
+
+	// Serialize and store
+	data, err := serializeBloom(filter)
+	if err != nil {
+		return fmt.Errorf("failed to serialize bloom: %w", err)
+	}
+
+	key := arcKey(bucketId, version, BloomArc)
+	if err := e.kv.Put(ctx, key, data); err != nil {
+		return fmt.Errorf("failed to store @bloom: %w", err)
+	}
+
+	// Cache the bloom
+	cb := &cachedBloom{filter: filter}
+	e.bloomCache.Store(bloomCacheKey(bucketId, version), cb)
+
+	logger.Debug("EAT.buildAndStoreBloomAfterCommit completed",
+		logger.String("bucket", bucketId),
+		logger.String("version", version.String()),
+		logger.Int("path_count", len(paths)))
+
+	return nil
+}
+
 // GetParent returns the parent version of a given version via @previous.
-// Returns cid.Undef if the version has no parent (first version).
 func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
 	prevKey := arcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
-			return cid.Undef, nil // No parent
+			return cid.Undef, nil
 		}
 		return cid.Cid{}, fmt.Errorf("failed to get @previous: %w", err)
 	}
@@ -348,7 +632,6 @@ func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (
 }
 
 // Snapshot returns an immutable snapshot of all arcs visible at the given version.
-// This includes all arcs from the version and its ancestors via @previous chain.
 func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.Snapshot, error) {
 	start := time.Now()
 
@@ -382,7 +665,6 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 	maxDepth := 1000
 
 	for i := 0; i < maxDepth; i++ {
-		// Check context cancellation
 		if ctx.Err() != nil {
 			logger.Warn("EAT.collectFlattenedArcs cancelled",
 				logger.String("bucket", bucketId),
@@ -397,7 +679,7 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 			key := iter.Key()
 			path := string(key[len(prefix):])
 
-			if path == PreviousArc {
+			if path == PreviousArc || path == BloomArc {
 				continue
 			}
 
@@ -406,9 +688,8 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 			}
 
 			val := iter.Value()
-			// Check for tombstone
 			if len(val) == 0 {
-				seen[path] = true // Mark as deleted
+				seen[path] = true
 				continue
 			}
 
@@ -426,7 +707,6 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 		}
 		iter.Close()
 
-		// Get parent version
 		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
@@ -444,8 +724,6 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 }
 
 // Iterate returns a streaming iterator over all arcs visible at the given version.
-// This walks the @previous chain to yield arcs from the version and its ancestors.
-// Caller must call Close() on the iterator when done.
 func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arcset.Iterator {
 	return &chainIterator{
 		eat:            e,
@@ -459,6 +737,10 @@ func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arc
 
 // Close releases resources.
 func (e *EAT) Close() error {
+	e.bloomCache.Range(func(key, value interface{}) bool {
+		e.bloomCache.Delete(key)
+		return true
+	})
 	return nil
 }
 
@@ -471,23 +753,19 @@ type chainIterator struct {
 	seen           map[string]bool
 	maxDepth       int
 
-	// Current batch of arcs being yielded
 	currentBatch map[string]cid.Cid
 	currentKeys  []string
 	keyIndex     int
 
-	// Error state
 	err error
 }
 
 func (it *chainIterator) Next() (string, cid.Cid, bool) {
-	// Check context cancellation
 	if it.ctx.Err() != nil {
 		it.err = it.ctx.Err()
 		return "", cid.Cid{}, false
 	}
 
-	// Try to yield from current batch
 	for it.keyIndex < len(it.currentKeys) {
 		path := it.currentKeys[it.keyIndex]
 		it.keyIndex++
@@ -499,14 +777,12 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 		return path, it.currentBatch[path], true
 	}
 
-	// Need to load next version
 	if it.currentVersion == cid.Undef || it.maxDepth <= 0 {
 		return "", cid.Cid{}, false
 	}
 
 	it.maxDepth--
 
-	// Load arcs from current version
 	prefix := versionPrefix(it.bucketId, it.currentVersion)
 	iter := it.eat.kv.NewIterator(it.ctx, prefix, nil)
 
@@ -525,14 +801,17 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 			continue
 		}
 
+		if path == BloomArc {
+			continue
+		}
+
 		if it.seen[path] {
 			continue
 		}
 
 		val := iter.Value()
-		// Handle tombstone
 		if len(val) == 0 {
-			it.seen[path] = true // Mark as deleted
+			it.seen[path] = true
 			continue
 		}
 
@@ -545,17 +824,14 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 	}
 	iter.Close()
 
-	// Prepare keys for iteration
 	it.currentKeys = make([]string, 0, len(it.currentBatch))
 	for p := range it.currentBatch {
 		it.currentKeys = append(it.currentKeys, p)
 	}
 	it.keyIndex = 0
 
-	// Move to parent version
 	it.currentVersion = nextVersion
 
-	// Try again with new batch
 	return it.Next()
 }
 
@@ -563,7 +839,4 @@ func (it *chainIterator) Err() error {
 	return it.err
 }
 
-func (it *chainIterator) Close() {
-	// No persistent resources to release
-	// Each iteration creates and closes its own kvstore.Iterator
-}
+func (it *chainIterator) Close() {}
