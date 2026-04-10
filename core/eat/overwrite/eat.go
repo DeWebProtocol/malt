@@ -20,8 +20,6 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Default cache size for bloom filters.
-const DefaultCacheSize = 100
 
 // EAT is an EAT with overwrite semantics.
 // It uses bucketId for namespace isolation, allowing multiple graphs
@@ -53,21 +51,6 @@ func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EA
 	}, nil
 }
 
-// NewEATWithBloomParams creates a new EAT with bloom filter enabled.
-// Deprecated: Use NewEATWithBloomCache instead.
-func NewEATWithBloomParams(kv kvstore.KVStore, expectedItems int, falsePositiveRate float64) (*EAT, error) {
-	if kv == nil {
-		return nil, fmt.Errorf("KVStore is required")
-	}
-	cfg := &bloom.BucketConfig{
-		ExpectedItems:     expectedItems,
-		FalsePositiveRate: falsePositiveRate,
-	}
-	return &EAT{
-		kv:         kv,
-		bloomCache: bloom.NewBloomCacheWithConfig(kv, DefaultCacheSize, cfg),
-	}, nil
-}
 
 // arcKey generates the storage key for a path within a bucket.
 // Format: bucketId:path

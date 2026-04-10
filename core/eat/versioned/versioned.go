@@ -25,8 +25,6 @@ const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
 )
 
-// Default cache size for bloom filters.
-const DefaultCacheSize = 100
 
 // EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
@@ -57,26 +55,6 @@ func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EA
 	}, nil
 }
 
-// NewEATWithConfig creates a new versioned EAT with custom bloom configuration.
-// Deprecated: Use NewEATWithBloomCache instead.
-func NewEATWithConfig(kv kvstore.KVStore, defaultConfig *bloom.BucketConfig, cacheSize int) (*EAT, error) {
-	if kv == nil {
-		return nil, fmt.Errorf("KVStore is required")
-	}
-	if cacheSize <= 0 {
-		cacheSize = DefaultCacheSize
-	}
-	return &EAT{
-		kv:         kv,
-		bloomCache: bloom.NewBloomCacheWithConfig(kv, cacheSize, defaultConfig),
-	}, nil
-}
-
-// NewEATWithoutBloom creates a new versioned EAT without bloom filter optimization.
-// Deprecated: Use NewEAT instead.
-func NewEATWithoutBloom(kv kvstore.KVStore) (*EAT, error) {
-	return NewEAT(kv)
-}
 
 // arcKey generates the storage key for a bucket, version and path.
 // Format: bucketId:version:path
