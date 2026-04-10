@@ -40,6 +40,7 @@ func TestBenchmarkRunner(t *testing.T) {
 		UpdateRounds: 10,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
+		EATType:      eval.EATOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
@@ -177,6 +178,85 @@ func TestNewScheme(t *testing.T) {
 	}
 }
 
+func TestAllEATTypes(t *testing.T) {
+	for _, eatType := range eval.AllEATTypes() {
+		tc, err := eval.NewTestComponentsWithEAT(eval.BackendKZG, eatType, "test-bucket")
+		if err != nil {
+			t.Fatalf("NewTestComponentsWithEAT(kzg, %s) failed: %v", eatType, err)
+		}
+		if tc.EAT == nil {
+			t.Errorf("EAT is nil for %s", eatType)
+		}
+		if tc.SCE == nil {
+			t.Errorf("SCE is nil for %s", eatType)
+		}
+	}
+
+	_, err := eval.NewEAT("invalid", nil)
+	if err == nil {
+		t.Error("NewEAT should fail for invalid EAT type")
+	}
+}
+
+func TestEvalRunner(t *testing.T) {
+	ctx := context.Background()
+	cfg := &eval.EvalConfig{
+		ArcCounts:    []int{10},
+		UpdateRounds: 5,
+		RandomSeed:   42,
+		Backends:     []eval.BackendType{eval.BackendKZG},
+		EATTypes:     []eval.EATType{eval.EATOverwrite},
+		Workloads:    []string{"append"},
+	}
+
+	runner := eval.NewEvalRunner(cfg, "test-eval-bucket")
+	results, err := runner.RunAll(ctx)
+	if err != nil {
+		t.Fatalf("RunAll failed: %v", err)
+	}
+
+	m, ok := results[eval.BackendKZG][eval.EATOverwrite]["append"]
+	if !ok {
+		t.Fatal("Missing results for kzg/overwrite/append")
+	}
+	if len(m) != 1 {
+		t.Errorf("Expected 1 arc count, got %d", len(m))
+	}
+	for ac, metrics := range m {
+		if metrics.ArcCount != ac {
+			t.Errorf("ArcCount mismatch: got %d, want %d", metrics.ArcCount, ac)
+		}
+		if metrics.Backend != eval.BackendKZG {
+			t.Errorf("Backend mismatch: got %q", metrics.Backend)
+		}
+		if metrics.EATType != eval.EATOverwrite {
+			t.Errorf("EATType mismatch: got %q", metrics.EATType)
+		}
+		if metrics.EndToEndLatency <= 0 {
+			t.Errorf("EndToEndLatency should be positive: %v", metrics.EndToEndLatency)
+		}
+	}
+}
+
+func TestEvalRunner_DefaultConfig(t *testing.T) {
+	// Test that default config doesn't crash (use small counts)
+	cfg := eval.DefaultEvalConfig()
+	cfg.ArcCounts = []int{5}
+	cfg.UpdateRounds = 2
+	cfg.Backends = []eval.BackendType{eval.BackendKZG}
+	cfg.EATTypes = []eval.EATType{eval.EATOverwrite}
+	cfg.Workloads = []string{"append"}
+
+	runner := eval.NewEvalRunner(cfg, "test-default")
+	ctx := context.Background()
+	results, err := runner.RunAll(ctx)
+	if err != nil {
+		t.Fatalf("RunAll with default config failed: %v", err)
+	}
+
+	eval.PrintFullResults(results)
+}
+
 func BenchmarkAppend(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
@@ -188,6 +268,7 @@ func BenchmarkAppend(b *testing.B) {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
+		EATType:      eval.EATOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
@@ -210,6 +291,7 @@ func BenchmarkRandom(b *testing.B) {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
+		EATType:      eval.EATOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
@@ -232,6 +314,7 @@ func BenchmarkBulk(b *testing.B) {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
+		EATType:      eval.EATOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
