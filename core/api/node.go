@@ -1,12 +1,11 @@
-// Package malt provides the application-level API for MALT.
+// Package api provides the application-level API for MALT.
 // MALT (Mutable structure LAyer on Top) provides verifiable, evolvable
 // structures on top of content-addressed storage.
-package malt
+package api
 
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/cas/ipfsgateway"
@@ -26,23 +25,24 @@ import (
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 )
 
 // Node is the main MALT runtime that holds all components.
 // It is the entry point for the MALT system.
 type Node struct {
-	cfg *config.Config
+	cfg  *config.Config
 	opts *options
 
 	// Core components
-	kv              kvstore.KVStore
-	sce             *sce.Engine
-	eat             eat.EAT
-	cas             cas.Client
-	bucketId        string            // default bucket for operations
-	explicitStep    step.Step
-	implicitStep    step.Step
-	resolver        *resolver.Resolver
+	kv           kvstore.KVStore
+	sce          *sce.Engine
+	eat          eat.EAT
+	cas          cas.Client
+	bucketId     string // default bucket for operations
+	explicitStep step.Step
+	implicitStep step.Step
+	resolver     *resolver.Resolver
 }
 
 // NewNode creates a new MALT node with the given options.
@@ -50,15 +50,15 @@ type Node struct {
 // Example usage:
 //
 //	// Simple: use defaults
-//	node, _ := malt.NewNode()
+//	node, _ := api.NewNode()
 //
 //	// From config file
-//	node, _ := malt.NewNode(malt.WithConfigFile("malt.json"))
+//	node, _ := api.NewNode(api.WithConfigFile("malt.json"))
 //
 //	// Custom components
-//	node, _ := malt.NewNode(
-//	    malt.WithKVStore(badger.New(badger.WithPath("./data"))),
-//	    malt.WithCommitment(kzg.NewCommitment()),
+//	node, _ := api.NewNode(
+//	    api.WithKVStore(badger.New(badger.WithPath("./data"))),
+//	    api.WithCommitment(kzg.NewCommitment()),
 //	)
 func NewNode(opts ...Option) (*Node, error) {
 	options := defaultOptions()

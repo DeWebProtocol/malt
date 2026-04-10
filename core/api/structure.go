@@ -1,15 +1,15 @@
-// Package malt provides the application-level API for MALT.
+// Package api provides the application-level API for MALT.
 // MALT (Mutable structure LAyer on Top) provides verifiable, evolvable
 // structures on top of content-addressed storage.
-package malt
+package api
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 

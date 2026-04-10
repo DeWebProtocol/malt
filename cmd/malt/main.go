@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/config"
-	malt "github.com/dewebprotocol/malt/malt"
+	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -92,14 +92,14 @@ func initConfig() {
 
 func runDemo(cmd *cobra.Command, args []string) {
 	// Build node options
-	var nodeOpts []malt.Option
+	var nodeOpts []api.Option
 
 	if cfgFile != "" {
-		nodeOpts = append(nodeOpts, malt.WithConfigFile(cfgFile))
+		nodeOpts = append(nodeOpts, api.WithConfigFile(cfgFile))
 	}
 
 	// Create node
-	node, err := malt.NewNode(nodeOpts...)
+	node, err := api.NewNode(nodeOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating node: %v\n", err)
 		os.Exit(1)

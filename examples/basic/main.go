@@ -4,10 +4,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	malt "github.com/dewebprotocol/malt/malt"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -39,7 +39,7 @@ func main() {
 
 func runWithDefaults() {
 	// Create node with defaults
-	node, err := malt.NewNode()
+	node, err := api.NewNode()
 	if err != nil {
 		panic(err)
 	}
@@ -80,9 +80,9 @@ func runWithOptions() {
 	}
 
 	// Create node with custom components
-	node, err := malt.NewNode(
-		malt.WithKVStore(kvStore),
-		malt.WithCommitment(scheme),
+	node, err := api.NewNode(
+		api.WithKVStore(kvStore),
+		api.WithCommitment(scheme),
 	)
 	if err != nil {
 		panic(err)

@@ -1,14 +1,14 @@
-package malt_test
+package api_test
 
 import (
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	malt "github.com/dewebprotocol/malt/malt"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -52,7 +52,7 @@ func TestStructureBasic(t *testing.T) {
 	})
 
 	// Create structure
-	structure, err := malt.NewStructure(arcs, testBucketId, e, s)
+	structure, err := api.NewStructure(arcs, testBucketId, e, s)
 	if err != nil {
 		t.Fatalf("NewStructure failed: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestStructureUpdate(t *testing.T) {
 	k1, _ := newPayloadCID([]byte("target1"))
 	arcs := arcset.NewMapFrom(map[string]cid.Cid{"link": k1})
 
-	structure, err := malt.NewStructure(arcs, testBucketId, e, s)
+	structure, err := api.NewStructure(arcs, testBucketId, e, s)
 	if err != nil {
 		t.Fatalf("NewStructure failed: %v", err)
 	}

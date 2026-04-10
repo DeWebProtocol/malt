@@ -1,5 +1,5 @@
-// Package malt provides functional options for Node configuration.
-package malt
+// Package api provides functional options for Node configuration.
+package api
 
 import (
 	"github.com/dewebprotocol/malt/config"

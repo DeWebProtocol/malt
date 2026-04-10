@@ -170,23 +170,81 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `chore`
 
 ```
 malt/
+├── cmd/
+│   ├── malt/
+│   │   └── main.go                  # CLI tool
+│   └── gateway/
+│       └── main.go                  # HTTP Gateway
+├── config/
+│   └── config.go                    # Configuration
 ├── core/
+│   ├── api/
+│   │   ├── node.go                  # MALT Node (entry point)
+│   │   ├── options.go               # Functional options
+│   │   ├── structure.go             # Structure API
+│   │   └── structure_test.go        # Unit tests
+│   ├── cas/
+│   │   ├── cas.go                   # CAS interface
+│   │   ├── ipld.go                  # IPLD utilities
+│   │   ├── mock/
+│   │   │   └── mock.go              # Mock CAS impl
+│   │   └── ipfsgateway/
+│   │       └── ipfsgateway.go       # IPFS Gateway CAS impl
 │   ├── eat/
+│   │   ├── eat.go                   # EAT interface
 │   │   ├── bloom/
-│   │   │   ├── bloom.go              # Interface
-│   │   │   ├── standard.go           # StandardBloom impl
-│   │   │   ├── cache.go              # BloomCache impl
-│   │   │   ├── bloom_test.go         # Unit tests
-│   │   │   └ bloom_benchmark_test.go # Benchmark tests
+│   │   │   ├── bloom.go             # Bloom filter interface
+│   │   │   ├── standard.go          # StandardBloom impl
+│   │   │   ├── cache.go             # BloomCache impl
+│   │   │   ├── bloom_test.go        # Unit tests
+│   │   │   └── bloom_benchmark_test.go  # Benchmark tests
 │   │   ├── overwrite/
-│   │   │   ├── eat.go                # Overwrite EAT impl
-│   │   │   ├── eat_test.go           # Unit tests
-│   │   ├── versioned/
-│   │   │   ├── versioned.go          # Versioned EAT impl
-│   │   │   ├── versioned_test.go     # Unit tests
+│   │   │   ├── eat.go               # Overwrite EAT impl
+│   │   │   └── eat_test.go          # Unit tests
+│   │   └── versioned/
+│   │       ├── versioned.go         # Versioned EAT impl
+│   │       └── versioned_test.go    # Unit tests
 │   ├── kvstore/
-│   │   ├── kv.go                     # Interface
+│   │   ├── kv.go                    # KVStore interface
 │   │   ├── memory/
-│   │   │   ├── memory.go             # In-memory impl
-│   │   │   ├── memory_test.go        # Unit tests
+│   │   │   └── memory.go            # In-memory impl
+│   │   ├── badger/
+│   │   │   └── badger.go            # BadgerDB impl
+│   │   └── fs/
+│   │       └── fs.go                # Filesystem impl
+│   ├── resolver/
+│   │   ├── resolver.go              # Hybrid Resolver
+│   │   ├── resolver_test.go         # Unit tests
+│   │   └── step/
+│   │       ├── step.go              # Step interface
+│   │       ├── explicit/
+│   │       │   └── explicit.go      # MALT explicit step
+│   │       ├── implicit/
+│   │       │   └── implicit.go      # Merkle DAG implicit step
+│   │       └── hamt/
+│   │           └── hamt.go          # HAMT step
+│   ├── sce/
+│   │   ├── sce.go                   # SCE Engine
+│   │   └── commitment/
+│   │       ├── commitment.go        # Commitment interface
+│   │       ├── kzg/
+│   │       │   └── kzg.go           # KZG commitment
+│   │       ├── verkle/
+│   │       │   └── verkle.go        # Verkle commitment
+│   │       └── ipa/
+│   │           └── ipa.go           # IPA commitment
+│   ├── codec/
+│   │   └── codec.go                 # MALT CID codecs
+│   └── types/
+│       ├── arcset/
+│       │   └── arcset.go            # Arc set types
+│       └── evidence/
+│           └── evidence.go          # Evidence types
+├── eval/
+│   └── benchmark.go                 # Evaluation benchmarks
+├── examples/
+│   └── basic/
+│       └── main.go                  # Basic usage example
+└── logger/
+    └── logger.go                    # Logging utilities
 ```
