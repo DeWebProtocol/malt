@@ -4,6 +4,7 @@ package eval
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -102,6 +103,11 @@ type Metrics struct {
 	UpdateTime      time.Duration
 	EATLookupTime   time.Duration // time for EAT Get/Snapshot
 	EndToEndLatency time.Duration // full resolve: EAT + Prove + Verify
+
+	// Per-round timing (for workloads with multiple rounds)
+	UpdateTimes  []time.Duration // individual update times
+	ProveTimes   []time.Duration // individual prove times (for distribution)
+	VerifyTimes  []time.Duration // individual verify times
 
 	// Size metrics
 	ProofSize int // bytes per proof
@@ -354,6 +360,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 
 	// Perform random updates
 	totalUpdateTime := time.Duration(0)
+	metrics.UpdateTimes = make([]time.Duration, 0, b.config.UpdateRounds)
 	paths := make([]string, 0, arcCount)
 	for i := range arcCount {
 		paths = append(paths, fmt.Sprintf("arc%d", i))
@@ -373,7 +380,9 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		// Measure commit time (MockCommitment requires full commit)
 		start = time.Now()
 		newRoot, err := b.sce.Commit(arcs)
-		totalUpdateTime += time.Since(start)
+		roundTime := time.Since(start)
+		totalUpdateTime += roundTime
+		metrics.UpdateTimes = append(metrics.UpdateTimes, roundTime)
 		if err != nil {
 			return nil, fmt.Errorf("commit failed at round %d: %w", round, err)
 		}
@@ -469,6 +478,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	bulkSize := max(1, arcCount/10)
 
 	totalUpdateTime := time.Duration(0)
+	metrics.UpdateTimes = make([]time.Duration, 0, b.config.UpdateRounds)
 	paths := make([]string, 0, arcCount)
 	for i := range arcCount {
 		paths = append(paths, fmt.Sprintf("arc%d", i))
@@ -493,7 +503,9 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		// Commit updated arc set
 		start = time.Now()
 		newRoot, err := b.sce.Commit(arcs)
-		totalUpdateTime += time.Since(start)
+		roundTime := time.Since(start)
+		totalUpdateTime += roundTime
+		metrics.UpdateTimes = append(metrics.UpdateTimes, roundTime)
 		if err != nil {
 			return nil, fmt.Errorf("bulk commit failed: %w", err)
 		}
@@ -865,4 +877,276 @@ func PrintFullResults(allResults map[BackendType]map[EATType]map[string]map[int]
 			}
 		}
 	}
+}
+
+// DurationStats holds summary statistics for a set of durations.
+type DurationStats struct {
+	Avg    time.Duration `json:"avg_ms"`
+	Min    time.Duration `json:"min_ms"`
+	Max    time.Duration `json:"max_ms"`
+	StdDev time.Duration `json:"stddev_ms"`
+	Median time.Duration `json:"median_ms"`
+	P95    time.Duration `json:"p95_ms"`
+}
+
+// computeStats computes summary statistics from a slice of durations.
+func computeStats(durations []time.Duration) DurationStats {
+	if len(durations) == 0 {
+		return DurationStats{}
+	}
+
+	n := len(durations)
+	var sum time.Duration
+	for _, d := range durations {
+		sum += d
+	}
+	avg := sum / time.Duration(n)
+
+	// Min, max
+	minVal, maxVal := durations[0], durations[0]
+	for _, d := range durations {
+		if d < minVal {
+			minVal = d
+		}
+		if d > maxVal {
+			maxVal = d
+		}
+	}
+
+	// Std dev
+	varSum := int64(0)
+	for _, d := range durations {
+		diff := d.Nanoseconds() - avg.Nanoseconds()
+		varSum += diff * diff
+	}
+	stddev := time.Duration(int64(float64(varSum) / float64(n)))
+
+	// Sort for median and percentiles
+	sorted := make([]time.Duration, n)
+	copy(sorted, durations)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	median := sorted[n/2]
+	p95Idx := int(float64(n) * 0.95)
+	if p95Idx >= n {
+		p95Idx = n - 1
+	}
+
+	return DurationStats{
+		Avg:    avg,
+		Min:    minVal,
+		Max:    maxVal,
+		StdDev: stddev,
+		Median: median,
+		P95:    sorted[p95Idx],
+	}
+}
+
+// MetricsSummary holds the summary statistics for all timing metrics.
+type MetricsSummary struct {
+	Backend     BackendType   `json:"backend"`
+	EATType     EATType       `json:"eat_type"`
+	ArcCount    int           `json:"arc_count"`
+	Workload    string        `json:"workload"`
+	Commit      DurationStats `json:"commit"`
+	Update      DurationStats `json:"update"`
+	EATLookup   DurationStats `json:"eat_lookup"`
+	Prove       DurationStats `json:"prove"`
+	Verify      DurationStats `json:"verify"`
+	EndToEnd    DurationStats `json:"end_to_end"`
+	ProofSize   int           `json:"proof_size"`
+	RootSize    int           `json:"root_size"`
+	RewriteAmp  float64       `json:"rewrite_amp"`
+}
+
+// ComputeSummaryStats computes summary statistics from metrics.
+func ComputeSummaryStats(m *Metrics) *MetricsSummary {
+	s := &MetricsSummary{
+		Backend:    m.Backend,
+		EATType:    m.EATType,
+		ArcCount:   m.ArcCount,
+		ProofSize:  m.ProofSize,
+		RootSize:   m.RootSize,
+		RewriteAmp: m.RewriteAmp,
+	}
+
+	if len(m.UpdateTimes) > 0 {
+		s.Update = computeStats(m.UpdateTimes)
+	}
+	if len(m.ProveTimes) > 0 {
+		s.Prove = computeStats(m.ProveTimes)
+	}
+	if len(m.VerifyTimes) > 0 {
+		s.Verify = computeStats(m.VerifyTimes)
+	}
+
+	// Single-point metrics (commit, prove, verify, lookup, end-to-end from final proof)
+	s.Commit = DurationStats{Avg: m.CommitTime, Min: m.CommitTime, Max: m.CommitTime}
+	s.EATLookup = DurationStats{Avg: m.EATLookupTime, Min: m.EATLookupTime, Max: m.EATLookupTime}
+	s.Prove.Avg = max(s.Prove.Avg, m.ProveTime)
+	s.Prove.Min = min(s.Prove.Min, m.ProveTime)
+	s.Prove.Max = max(s.Prove.Max, m.ProveTime)
+	s.Verify.Avg = max(s.Verify.Avg, m.VerifyTime)
+	s.Verify.Min = min(s.Verify.Min, m.VerifyTime)
+	s.Verify.Max = max(s.Verify.Max, m.VerifyTime)
+	s.EndToEnd = DurationStats{Avg: m.EndToEndLatency, Min: m.EndToEndLatency, Max: m.EndToEndLatency}
+
+	return s
+}
+
+// ExportJSON writes all results to a JSON file.
+func ExportJSON(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics, path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	defer f.Close()
+
+	type resultEntry struct {
+		Backend  BackendType     `json:"backend"`
+		EATType  EATType         `json:"eat_type"`
+		Workload string          `json:"workload"`
+		ArcCount int             `json:"arc_count"`
+		Metrics  *MetricsSummary `json:"metrics"`
+	}
+
+	var results []resultEntry
+	for backend, eatMap := range allResults {
+		for eatType, workMap := range eatMap {
+			for workload, arcMap := range workMap {
+				for arcCount, m := range arcMap {
+					results = append(results, resultEntry{
+						Backend:  backend,
+						EATType:  eatType,
+						Workload: workload,
+						ArcCount: arcCount,
+						Metrics:  ComputeSummaryStats(m),
+					})
+				}
+			}
+		}
+	}
+
+	// Sort for consistent output
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Backend != results[j].Backend {
+			return results[i].Backend < results[j].Backend
+		}
+		if results[i].EATType != results[j].EATType {
+			return results[i].EATType < results[j].EATType
+		}
+		if results[i].Workload != results[j].Workload {
+			return results[i].Workload < results[j].Workload
+		}
+		return results[i].ArcCount < results[j].ArcCount
+	})
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	return enc.Encode(results)
+}
+
+// PrintSummaryStats prints summary statistics in a compact table.
+func PrintSummaryStats(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics) {
+	fmt.Println("\n=== Summary Statistics (Update Time Distribution) ===")
+	fmt.Println("Backend  | EATType    | Workload | ArcCount | Avg(ms) | P95(ms) | Median(ms) | Min(ms) | Max(ms)")
+	fmt.Println("---------|------------|----------|----------|---------|---------|------------|---------|--------")
+
+	type entry struct {
+		backend  BackendType
+		eatType  EATType
+		workload string
+		arcCount int
+		stats    DurationStats
+	}
+	var entries []entry
+
+	for _, backend := range AllBackends() {
+		eatMap, ok := allResults[backend]
+		if !ok {
+			continue
+		}
+		for _, eatType := range AllEATTypes() {
+			workMap, ok := eatMap[eatType]
+			if !ok {
+				continue
+			}
+			for workload, arcMap := range workMap {
+				for arcCount, m := range arcMap {
+					if len(m.UpdateTimes) > 0 {
+						entries = append(entries, entry{
+							backend:  backend,
+							eatType:  eatType,
+							workload: workload,
+							arcCount: arcCount,
+							stats:    computeStats(m.UpdateTimes),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].backend != entries[j].backend {
+			return entries[i].backend < entries[j].backend
+		}
+		if entries[i].workload != entries[j].workload {
+			return entries[i].workload < entries[j].workload
+		}
+		return entries[i].arcCount < entries[j].arcCount
+	})
+
+	for _, e := range entries {
+		fmt.Printf("%-8s | %-10s | %-8s | %8d | %7.2f | %7.2f | %10.2f | %7.2f | %6.2f\n",
+			e.backend, e.eatType, e.workload, e.arcCount,
+			float64(e.stats.Avg.Milliseconds()),
+			float64(e.stats.P95.Milliseconds()),
+			float64(e.stats.Median.Milliseconds()),
+			float64(e.stats.Min.Milliseconds()),
+			float64(e.stats.Max.Milliseconds()))
+	}
+}
+
+// GenerateLatexTable generates a LaTeX table for the paper.
+func GenerateLatexTable(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics, workload string) string {
+	var sb strings.Builder
+	sb.WriteString("\\begin{table}[htbp]\n")
+	sb.WriteString("\\centering\n")
+	sb.WriteString("\\caption{MALT " + workload + " benchmark results}\n")
+	sb.WriteString("\\label{tab:" + workload + "}\n")
+	sb.WriteString("\\begin{tabular}{lrrrrrr}\n")
+	sb.WriteString("\\toprule\n")
+	sb.WriteString("Backend & EAT & Arcs & Update (ms) & Prove (ms) & Verify (ms) & Proof Size (B) \\\\\n")
+	sb.WriteString("\\midrule\n")
+
+	for _, backend := range AllBackends() {
+		eatMap, ok := allResults[backend]
+		if !ok {
+			continue
+		}
+		for _, eatType := range AllEATTypes() {
+			workMap, ok := eatMap[eatType]
+			if !ok {
+				continue
+			}
+			results, ok := workMap[workload]
+			if !ok {
+				continue
+			}
+			for arcCount, m := range results {
+				sb.WriteString(fmt.Sprintf("%s & %s & %d & %.2f & %.2f & %.2f & %d \\\\\n",
+					backend, eatType, arcCount,
+					float64(m.UpdateTime.Microseconds())/1000.0,
+					float64(m.ProveTime.Microseconds())/1000.0,
+					float64(m.VerifyTime.Microseconds())/1000.0,
+					m.ProofSize))
+			}
+		}
+	}
+
+	sb.WriteString("\\bottomrule\n")
+	sb.WriteString("\\end{tabular}\n")
+	sb.WriteString("\\end{table}\n")
+	return sb.String()
 }

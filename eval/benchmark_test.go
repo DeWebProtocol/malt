@@ -2,7 +2,11 @@ package eval_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
@@ -255,6 +259,130 @@ func TestEvalRunner_DefaultConfig(t *testing.T) {
 	}
 
 	eval.PrintFullResults(results)
+}
+
+func TestComputeSummaryStats(t *testing.T) {
+	m := &eval.Metrics{
+		Backend:     eval.BackendKZG,
+		EATType:     eval.EATOverwrite,
+		ArcCount:    100,
+		CommitTime:  10 * time.Millisecond,
+		ProveTime:   80 * time.Millisecond,
+		VerifyTime:  2 * time.Millisecond,
+		EndToEndLatency: 100 * time.Millisecond,
+		ProofSize:   84,
+		RootSize:    55,
+		RewriteAmp:  1.0,
+		UpdateTimes: []time.Duration{
+			5 * time.Millisecond,
+			7 * time.Millisecond,
+			6 * time.Millisecond,
+			8 * time.Millisecond,
+			10 * time.Millisecond,
+		},
+	}
+
+	s := eval.ComputeSummaryStats(m)
+	if s.Backend != eval.BackendKZG {
+		t.Errorf("Backend mismatch: got %q", s.Backend)
+	}
+	if s.ArcCount != 100 {
+		t.Errorf("ArcCount mismatch: got %d", s.ArcCount)
+	}
+	if s.Update.Min != 5*time.Millisecond {
+		t.Errorf("Update min mismatch: got %v, want 5ms", s.Update.Min)
+	}
+	if s.Update.Max != 10*time.Millisecond {
+		t.Errorf("Update max mismatch: got %v, want 10ms", s.Update.Max)
+	}
+}
+
+func TestExportJSON(t *testing.T) {
+	ctx := context.Background()
+	cfg := &eval.EvalConfig{
+		ArcCounts:    []int{10},
+		UpdateRounds: 5,
+		RandomSeed:   42,
+		Backends:     []eval.BackendType{eval.BackendKZG},
+		EATTypes:     []eval.EATType{eval.EATOverwrite},
+		Workloads:    []string{"append"},
+	}
+
+	runner := eval.NewEvalRunner(cfg, "test-json")
+	results, err := runner.RunAll(ctx)
+	if err != nil {
+		t.Fatalf("RunAll failed: %v", err)
+	}
+
+	// Write JSON to temp file
+	tmpFile := t.TempDir() + "/results.json"
+	err = eval.ExportJSON(results, tmpFile)
+	if err != nil {
+		t.Fatalf("ExportJSON failed: %v", err)
+	}
+
+	// Verify file was created
+	f, err := os.Open(tmpFile)
+	if err != nil {
+		t.Fatalf("Cannot open JSON file: %v", err)
+	}
+	defer f.Close()
+
+	var parsed []struct {
+		Backend  eval.BackendType       `json:"backend"`
+		EATType  eval.EATType           `json:"eat_type"`
+		Workload string                 `json:"workload"`
+		ArcCount int                    `json:"arc_count"`
+		Metrics  *eval.MetricsSummary   `json:"metrics"`
+	}
+	if err := json.NewDecoder(f).Decode(&parsed); err != nil {
+		t.Fatalf("Cannot parse JSON file: %v", err)
+	}
+
+	if len(parsed) != 1 {
+		t.Errorf("Expected 1 result, got %d", len(parsed))
+	}
+	if parsed[0].Backend != eval.BackendKZG {
+		t.Errorf("Backend mismatch: got %q", parsed[0].Backend)
+	}
+	if parsed[0].Metrics.ProofSize <= 0 {
+		t.Errorf("ProofSize should be positive: %d", parsed[0].Metrics.ProofSize)
+	}
+}
+
+func TestGenerateLatexTable(t *testing.T) {
+	ctx := context.Background()
+	cfg := &eval.EvalConfig{
+		ArcCounts:    []int{10},
+		UpdateRounds: 5,
+		RandomSeed:   42,
+		Backends:     []eval.BackendType{eval.BackendKZG},
+		EATTypes:     []eval.EATType{eval.EATOverwrite},
+		Workloads:    []string{"append"},
+	}
+
+	runner := eval.NewEvalRunner(cfg, "test-latex")
+	results, err := runner.RunAll(ctx)
+	if err != nil {
+		t.Fatalf("RunAll failed: %v", err)
+	}
+
+	latex := eval.GenerateLatexTable(results, "append")
+	if latex == "" {
+		t.Fatal("GenerateLatexTable returned empty string")
+	}
+	if !strings.Contains(latex, "\\begin{table}") {
+		t.Error("LaTeX table missing \\begin{table}")
+	}
+	if !strings.Contains(latex, "\\begin{tabular}") {
+		t.Error("LaTeX table missing \\begin{tabular}")
+	}
+	if !strings.Contains(latex, "kzg") {
+		t.Error("LaTeX table missing backend 'kzg'")
+	}
+	if !strings.Contains(latex, "84") {
+		t.Error("LaTeX table missing proof size")
+	}
 }
 
 func BenchmarkAppend(b *testing.B) {
