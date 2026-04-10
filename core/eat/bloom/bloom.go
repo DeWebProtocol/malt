@@ -6,6 +6,8 @@
 //   - False positive: If Test returns true, the item might be in the set
 package bloom
 
+import "encoding"
+
 // BloomFilter is an interface for bloom filter operations.
 type BloomFilter interface {
 	// Add adds an item to the bloom filter.
@@ -21,6 +23,18 @@ type BloomFilter interface {
 
 	// Size returns the number of items added.
 	Size() uint64
+
+	// M returns the size of the bitset.
+	M() uint
+
+	// K returns the number of hash functions.
+	K() uint
+
+	// MarshalBinary serializes the bloom filter to bytes.
+	encoding.BinaryMarshaler
+
+	// UnmarshalBinary deserializes the bloom filter from bytes.
+	encoding.BinaryUnmarshaler
 }
 
 // Default bloom filter parameters.
@@ -28,3 +42,17 @@ const (
 	DefaultExpectedItems     = 10000
 	DefaultFalsePositiveRate = 0.01
 )
+
+// BucketConfig holds per-bucket bloom filter configuration.
+type BucketConfig struct {
+	ExpectedItems     int
+	FalsePositiveRate float64
+}
+
+// DefaultBucketConfig returns the default bucket configuration.
+func DefaultBucketConfig() *BucketConfig {
+	return &BucketConfig{
+		ExpectedItems:     DefaultExpectedItems,
+		FalsePositiveRate: DefaultFalsePositiveRate,
+	}
+}

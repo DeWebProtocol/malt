@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
@@ -58,4 +59,12 @@ type EAT interface {
 
 	// Close releases resources.
 	Close() error
+}
+
+// BucketCreator is an optional interface for EAT implementations
+// that support creating buckets with custom bloom filter configuration.
+type BucketCreator interface {
+	// CreateBucket creates a new bucket with custom bloom configuration.
+	// If cfg is nil, default configuration is used.
+	CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error
 }

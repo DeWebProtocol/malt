@@ -2,8 +2,8 @@
 // Each version stores only modified arcs plus a @previous arc pointing to the parent version.
 // Resolution walks the @previous chain to find arc entries.
 //
-// Bloom Filter: Each version stores a bloom filter as @bloom arc, containing all paths
-// visible at that version (including ancestors). This enables fast negative lookups.
+// Bloom Filter: Each bucket has a persistent bloom filter stored separately.
+// The bloom filter is cached in memory for fast negative lookups.
 //
 // Concurrency: This implementation is inherently concurrency-safe because each update
 // creates a new version with its own namespace (bucketId:version:path).
@@ -11,9 +11,7 @@ package versioned
 
 import (
 	"context"
-	"encoding/gob"
 	"fmt"
-	"bytes"
 	"sync"
 	"time"
 
@@ -27,13 +25,13 @@ import (
 // Reserved arc paths
 const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
-	BloomArc    = "@bloom"    // Serialized bloom filter for this version
 )
 
 // Default bloom filter parameters.
 const (
 	DefaultExpectedItems     = 10000
 	DefaultFalsePositiveRate = 0.01
+	DefaultCacheSize         = 100
 )
 
 // EAT is a versioned EAT implementation with bucket-based isolation.
@@ -41,33 +39,42 @@ const (
 type EAT struct {
 	kv kvstore.KVStore
 
-	// Bloom filter cache (bucketId:version -> bloom)
-	bloomCache sync.Map // string -> *cachedBloom
-	newBloom   func() bloom.BloomFilter
-}
+	// Bloom filter configuration per bucket
+	bucketConfigs sync.Map // bucketId -> *bloom.BucketConfig
 
-// cachedBloom holds a cached bloom filter.
-type cachedBloom struct {
-	filter bloom.BloomFilter
-	mu     sync.RWMutex
+	// Bloom filter cache
+	bloomCache *bloom.Cache
+
+	// Default bloom config for new buckets
+	defaultConfig *bloom.BucketConfig
+
+	// Bloom cache size
+	cacheSize int
 }
 
 // NewEAT creates a new versioned EAT with the given KVStore and default bloom parameters.
 func NewEAT(kv kvstore.KVStore) (*EAT, error) {
-	return NewEATWithBloomParams(kv, DefaultExpectedItems, DefaultFalsePositiveRate)
+	return NewEATWithConfig(kv, bloom.DefaultBucketConfig(), DefaultCacheSize)
 }
 
-// NewEATWithBloomParams creates a new versioned EAT with custom bloom filter parameters.
-func NewEATWithBloomParams(kv kvstore.KVStore, expectedItems int, falsePositiveRate float64) (*EAT, error) {
+// NewEATWithConfig creates a new versioned EAT with custom bloom configuration.
+func NewEATWithConfig(kv kvstore.KVStore, defaultConfig *bloom.BucketConfig, cacheSize int) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
 
+	if defaultConfig == nil {
+		defaultConfig = bloom.DefaultBucketConfig()
+	}
+	if cacheSize <= 0 {
+		cacheSize = DefaultCacheSize
+	}
+
 	return &EAT{
-		kv: kv,
-		newBloom: func() bloom.BloomFilter {
-			return bloom.NewStandardBloom(expectedItems, falsePositiveRate)
-		},
+		kv:            kv,
+		bloomCache:    bloom.NewCache(cacheSize),
+		defaultConfig: defaultConfig,
+		cacheSize:     cacheSize,
 	}, nil
 }
 
@@ -78,8 +85,10 @@ func NewEATWithoutBloom(kv kvstore.KVStore) (*EAT, error) {
 	}
 
 	return &EAT{
-		kv:      kv,
-		newBloom: nil, // disabled
+		kv:            kv,
+		bloomCache:    nil, // disabled
+		defaultConfig: nil,
+		cacheSize:     0,
 	}, nil
 }
 
@@ -95,199 +104,134 @@ func versionPrefix(bucketId string, version cid.Cid) []byte {
 	return []byte(bucketId + ":" + version.String() + ":")
 }
 
-// bloomCacheKey generates the cache key for a bloom filter.
-func bloomCacheKey(bucketId string, version cid.Cid) string {
-	return bucketId + ":" + version.String()
+// bucketBloomKey generates the key for a bucket's bloom filter.
+// Format: bloom:bucketId
+func bucketBloomKey(bucketId string) []byte {
+	return []byte("bloom:" + bucketId)
 }
 
-// MightContain checks if a path might exist at the given version using bloom filter.
-// Returns false if the path definitely doesn't exist.
-// Returns true if the path might exist (need to call Get to verify).
-func (e *EAT) MightContain(ctx context.Context, bucketId string, version cid.Cid, path string) bool {
-	if e.newBloom == nil {
-		return true // Bloom disabled
+// CreateBucket creates a new bucket with custom bloom configuration.
+func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
+	if cfg == nil {
+		cfg = e.defaultConfig
 	}
 
-	cb := e.loadBloom(ctx, bucketId, version)
-	if cb == nil {
-		return true // No bloom available
-	}
+	e.bucketConfigs.Store(bucketId, cfg)
 
-	cb.mu.RLock()
-	result := cb.filter.Test([]byte(path))
-	cb.mu.RUnlock()
-
-	return result
+	// Initialize empty bloom filter
+	filter := bloom.NewStandardBloom(cfg.ExpectedItems, cfg.FalsePositiveRate)
+	return e.saveBucketBloom(ctx, bucketId, filter)
 }
 
-// MightContainBatch checks multiple paths at once using bloom filter.
-func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, version cid.Cid, paths []string) map[string]bool {
-	result := make(map[string]bool, len(paths))
-
-	if e.newBloom == nil {
-		for _, p := range paths {
-			result[p] = true
-		}
-		return result
+// GetBucketConfig returns the bloom configuration for a bucket.
+func (e *EAT) GetBucketConfig(bucketId string) *bloom.BucketConfig {
+	if val, ok := e.bucketConfigs.Load(bucketId); ok {
+		return val.(*bloom.BucketConfig)
 	}
-
-	cb := e.loadBloom(ctx, bucketId, version)
-	if cb == nil {
-		for _, p := range paths {
-			result[p] = true
-		}
-		return result
-	}
-
-	cb.mu.RLock()
-	for _, p := range paths {
-		result[p] = cb.filter.Test([]byte(p))
-	}
-	cb.mu.RUnlock()
-
-	return result
+	return e.defaultConfig
 }
 
-// loadBloom loads the bloom filter for a version, from cache or @bloom arc.
-func (e *EAT) loadBloom(ctx context.Context, bucketId string, version cid.Cid) *cachedBloom {
-	cacheKey := bloomCacheKey(bucketId, version)
+// getBucketBloom loads or creates a bloom filter for a bucket.
+func (e *EAT) getBucketBloom(ctx context.Context, bucketId string) (*bloom.StandardBloom, error) {
+	if e.bloomCache == nil {
+		return nil, nil // Bloom disabled
+	}
 
 	// Check cache first
-	if val, ok := e.bloomCache.Load(cacheKey); ok {
-		return val.(*cachedBloom)
+	if cached := e.bloomCache.Get(bucketId); cached != nil {
+		return cached.(*bloom.StandardBloom), nil
 	}
 
-	// Try to load from @bloom arc
-	key := arcKey(bucketId, version, BloomArc)
-	val, err := e.kv.Get(ctx, key)
+	// Load from KVStore
+	key := bucketBloomKey(bucketId)
+	data, err := e.kv.Get(ctx, key)
+	if err == kvstore.ErrNotFound {
+		// Create new bloom filter
+		cfg := e.GetBucketConfig(bucketId)
+		filter := bloom.NewStandardBloom(cfg.ExpectedItems, cfg.FalsePositiveRate)
+		e.bloomCache.Set(bucketId, filter)
+		return filter, nil
+	}
 	if err != nil {
-		// No @bloom arc, return nil
-		return nil
+		return nil, fmt.Errorf("failed to load bloom filter: %w", err)
 	}
 
-	// Deserialize bloom filter
-	filter, err := deserializeBloom(val)
-	if err != nil {
-		logger.Warn("EAT.loadBloom failed to deserialize",
-			logger.String("bucket", bucketId),
-			logger.String("version", version.String()),
-			logger.Err(err))
-		return nil
+	// Deserialize
+	filter := &bloom.StandardBloom{}
+	if err := filter.UnmarshalBinary(data); err != nil {
+		return nil, fmt.Errorf("failed to deserialize bloom filter: %w", err)
 	}
 
 	// Cache it
-	cb := &cachedBloom{filter: filter}
-	e.bloomCache.Store(cacheKey, cb)
+	e.bloomCache.Set(bucketId, filter)
 
-	return cb
+	return filter, nil
 }
 
-// serializeBloom serializes a bloom filter to bytes.
-func serializeBloom(filter bloom.BloomFilter) ([]byte, error) {
-	// For StandardBloom, we serialize the bitset
-	sf, ok := filter.(*bloom.StandardBloom)
-	if !ok {
-		return nil, fmt.Errorf("unsupported bloom filter type")
+// saveBucketBloom persists a bloom filter to KVStore and cache.
+func (e *EAT) saveBucketBloom(ctx context.Context, bucketId string, filter *bloom.StandardBloom) error {
+	if e.bloomCache == nil {
+		return nil // Bloom disabled
 	}
 
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-
-	// Encode bloom parameters
-	if err := enc.Encode(sf.K()); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(sf.M()); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(sf.Bitset()); err != nil {
-		return nil, err
+	// Serialize
+	data, err := filter.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("failed to serialize bloom filter: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	// Persist to KVStore
+	key := bucketBloomKey(bucketId)
+	if err := e.kv.Put(ctx, key, data); err != nil {
+		return fmt.Errorf("failed to persist bloom filter: %w", err)
+	}
+
+	// Update cache
+	e.bloomCache.Set(bucketId, filter)
+
+	return nil
 }
 
-// deserializeBloom deserializes a bloom filter from bytes.
-func deserializeBloom(data []byte) (*bloom.StandardBloom, error) {
-	buf := bytes.NewBuffer(data)
-	dec := gob.NewDecoder(buf)
-
-	var k, m uint
-	var bitsetBytes []byte
-
-	if err := dec.Decode(&k); err != nil {
-		return nil, err
-	}
-	if err := dec.Decode(&m); err != nil {
-		return nil, err
-	}
-	if err := dec.Decode(&bitsetBytes); err != nil {
-		return nil, err
+// MightContain checks if a path might exist in a bucket using bloom filter.
+// Returns false if the path definitely doesn't exist.
+// Returns true if the path might exist (need to call Get to verify).
+func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bool {
+	if e.bloomCache == nil {
+		return true // Bloom disabled
 	}
 
-	return bloom.NewStandardBloomFromData(k, m, bitsetBytes)
+	filter, err := e.getBucketBloom(ctx, bucketId)
+	if err != nil || filter == nil {
+		return true // No bloom available
+	}
+
+	return filter.Test([]byte(path))
 }
 
-// collectPaths collects all visible paths at a version (including ancestors).
-func (e *EAT) collectPaths(ctx context.Context, bucketId string, version cid.Cid) ([]string, error) {
-	paths := make([]string, 0)
-	seen := make(map[string]bool)
-	currentVersion := version
-	maxDepth := 1000
+// MightContainBatch checks multiple paths at once using bloom filter.
+func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
+	result := make(map[string]bool, len(paths))
 
-	for i := 0; i < maxDepth; i++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	if e.bloomCache == nil {
+		for _, p := range paths {
+			result[p] = true
 		}
-
-		prefix := versionPrefix(bucketId, currentVersion)
-		iter := e.kv.NewIterator(ctx, prefix, nil)
-
-		for iter.Next() {
-			key := iter.Key()
-			path := string(key[len(prefix):])
-
-			// Skip reserved arcs
-			if path == PreviousArc || path == BloomArc {
-				continue
-			}
-
-			if seen[path] {
-				continue
-			}
-
-			// Check for tombstone
-			val := iter.Value()
-			if len(val) == 0 {
-				seen[path] = true
-				continue
-			}
-
-			paths = append(paths, path)
-			seen[path] = true
-		}
-
-		if err := iter.Err(); err != nil {
-			iter.Close()
-			return nil, fmt.Errorf("iterator error: %w", err)
-		}
-		iter.Close()
-
-		// Get parent version
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
-		prevVal, err := e.kv.Get(ctx, prevKey)
-		if err != nil {
-			break
-		}
-
-		parentVersion, err := cid.Cast(prevVal)
-		if err != nil {
-			break
-		}
-		currentVersion = parentVersion
+		return result
 	}
 
-	return paths, nil
+	filter, err := e.getBucketBloom(ctx, bucketId)
+	if err != nil || filter == nil {
+		for _, p := range paths {
+			result[p] = true
+		}
+		return result
+	}
+
+	for _, p := range paths {
+		result[p] = filter.Test([]byte(p))
+	}
+
+	return result
 }
 
 // Get retrieves the target CID for a path at a specific version.
@@ -296,7 +240,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 	start := time.Now()
 
 	// Quick bloom filter check
-	if !e.MightContain(ctx, bucketId, version, path) {
+	if !e.MightContain(ctx, bucketId, path) {
 		logger.Debug("EAT.Get bloom negative",
 			logger.String("bucket", bucketId),
 			logger.String("version", version.String()),
@@ -392,7 +336,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 	start := time.Now()
 
 	// Filter paths using bloom filter
-	mightExist := e.MightContainBatch(ctx, bucketId, version, paths)
+	mightExist := e.MightContainBatch(ctx, bucketId, paths)
 	filteredPaths := make([]string, 0, len(paths))
 	for _, p := range paths {
 		if mightExist[p] {
@@ -498,7 +442,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 	return results, nil
 }
 
-// Update stores arcs at a new version and builds the bloom filter.
+// Update stores arcs at a new version and updates the bucket bloom filter.
 func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	start := time.Now()
 
@@ -551,7 +495,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 		}
 	}
 
-	// Commit first so bloom collection can see the data
+	// Commit the batch
 	if err := batch.Commit(ctx); err != nil {
 		logger.Error("EAT.Update commit failed",
 			logger.String("bucket", bucketId),
@@ -559,10 +503,10 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 		return fmt.Errorf("failed to commit version: %w", err)
 	}
 
-	// Build and store bloom filter after commit
-	if e.newBloom != nil {
-		if err := e.buildAndStoreBloomAfterCommit(ctx, bucketId, newRoot); err != nil {
-			logger.Warn("EAT.Update failed to build bloom (non-fatal)",
+	// Update bucket bloom filter
+	if e.bloomCache != nil {
+		if err := e.updateBucketBloom(ctx, bucketId, arcs); err != nil {
+			logger.Warn("EAT.Update failed to update bloom (non-fatal)",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
 			// Non-fatal: bloom is optional optimization
@@ -580,41 +524,26 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 	return nil
 }
 
-// buildAndStoreBloomAfterCommit builds and stores bloom after the batch is committed.
-func (e *EAT) buildAndStoreBloomAfterCommit(ctx context.Context, bucketId string, version cid.Cid) error {
-	// Collect all visible paths at this version
-	paths, err := e.collectPaths(ctx, bucketId, version)
+// updateBucketBloom updates the bucket bloom filter with new arcs.
+func (e *EAT) updateBucketBloom(ctx context.Context, bucketId string, arcs map[string]cid.Cid) error {
+	// Get or create bloom filter
+	filter, err := e.getBucketBloom(ctx, bucketId)
 	if err != nil {
 		return err
 	}
-
-	// Build bloom filter
-	filter := e.newBloom()
-	for _, path := range paths {
-		filter.Add([]byte(path))
+	if filter == nil {
+		return nil
 	}
 
-	// Serialize and store
-	data, err := serializeBloom(filter)
-	if err != nil {
-		return fmt.Errorf("failed to serialize bloom: %w", err)
+	// Add new arcs to bloom (skip tombstones)
+	for path, target := range arcs {
+		if target != cid.Undef {
+			filter.Add([]byte(path))
+		}
 	}
 
-	key := arcKey(bucketId, version, BloomArc)
-	if err := e.kv.Put(ctx, key, data); err != nil {
-		return fmt.Errorf("failed to store @bloom: %w", err)
-	}
-
-	// Cache the bloom
-	cb := &cachedBloom{filter: filter}
-	e.bloomCache.Store(bloomCacheKey(bucketId, version), cb)
-
-	logger.Debug("EAT.buildAndStoreBloomAfterCommit completed",
-		logger.String("bucket", bucketId),
-		logger.String("version", version.String()),
-		logger.Int("path_count", len(paths)))
-
-	return nil
+	// Persist updated bloom
+	return e.saveBucketBloom(ctx, bucketId, filter)
 }
 
 // GetParent returns the parent version of a given version via @previous.
@@ -679,7 +608,7 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 			key := iter.Key()
 			path := string(key[len(prefix):])
 
-			if path == PreviousArc || path == BloomArc {
+			if path == PreviousArc {
 				continue
 			}
 
@@ -737,10 +666,9 @@ func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arc
 
 // Close releases resources.
 func (e *EAT) Close() error {
-	e.bloomCache.Range(func(key, value interface{}) bool {
-		e.bloomCache.Delete(key)
-		return true
-	})
+	if e.bloomCache != nil {
+		e.bloomCache.Clear()
+	}
 	return nil
 }
 
@@ -798,10 +726,6 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 			if c, err := cid.Cast(val); err == nil {
 				nextVersion = c
 			}
-			continue
-		}
-
-		if path == BloomArc {
 			continue
 		}
 

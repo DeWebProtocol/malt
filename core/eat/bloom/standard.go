@@ -157,3 +157,61 @@ func (b *StandardBloom) EstimatedFalsePositiveRate() float64 {
 func (b *StandardBloom) Capacity() uint64 {
 	return uint64(float64(b.m) * math.Log(2) / float64(b.k))
 }
+
+// MarshalBinary implements encoding.BinaryMarshaler.
+// Format: [k:4][m:4][bitsetLen:4][bitset:...]
+func (b *StandardBloom) MarshalBinary() ([]byte, error) {
+	bitsetBytes := b.Bitset()
+	if bitsetBytes == nil {
+		return nil, nil
+	}
+
+	// 4 bytes for k, 4 bytes for m, 4 bytes for bitset length, then bitset
+	result := make([]byte, 12+len(bitsetBytes))
+	result[0] = byte(b.k >> 24)
+	result[1] = byte(b.k >> 16)
+	result[2] = byte(b.k >> 8)
+	result[3] = byte(b.k)
+	result[4] = byte(b.m >> 24)
+	result[5] = byte(b.m >> 16)
+	result[6] = byte(b.m >> 8)
+	result[7] = byte(b.m)
+	result[8] = byte(len(bitsetBytes) >> 24)
+	result[9] = byte(len(bitsetBytes) >> 16)
+	result[10] = byte(len(bitsetBytes) >> 8)
+	result[11] = byte(len(bitsetBytes))
+	copy(result[12:], bitsetBytes)
+
+	return result, nil
+}
+
+// UnmarshalBinary implements encoding.BinaryUnmarshaler.
+func (b *StandardBloom) UnmarshalBinary(data []byte) error {
+	if len(data) < 12 {
+		return nil
+	}
+
+	k := uint(data[0])<<24 | uint(data[1])<<16 | uint(data[2])<<8 | uint(data[3])
+	m := uint(data[4])<<24 | uint(data[5])<<16 | uint(data[6])<<8 | uint(data[7])
+	bitsetLen := int(data[8])<<24 | int(data[9])<<16 | int(data[10])<<8 | int(data[11])
+
+	if len(data) < 12+bitsetLen {
+		return nil
+	}
+
+	bitsetBytes := data[12 : 12+bitsetLen]
+	bs := bitset.New(m)
+	buf := bytes.NewBuffer(bitsetBytes)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(bs); err != nil {
+		return err
+	}
+
+	b.bitset = bs
+	b.k = k
+	b.m = m
+	b.n = 0
+	b.hashSeed = 0
+
+	return nil
+}
