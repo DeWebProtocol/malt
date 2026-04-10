@@ -1,0 +1,4 @@
+workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
+append,ipa,versioned,200,0,1,691129,28237,4070,723437,548,39,1.0000
+append,ipa,versioned,50,0,0,9884,27346,3945,41177,548,39,1.0000
+append,ipa,versioned,100,0,0,73862,27669,4079,105611,548,39,1.0000

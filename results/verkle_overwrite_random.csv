@@ -1,0 +1,4 @@
+workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
+random,verkle,overwrite,50,0,0,128,2,1,132,67,38,1.0000
+random,verkle,overwrite,100,0,0,119,3,1,124,67,38,1.0000
+random,verkle,overwrite,200,0,0,117,2,1,122,67,38,1.0000

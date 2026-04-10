@@ -1,0 +1,4 @@
+workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
+random,verkle,bloom,50,0,0,110317,4,1,110324,67,38,1.0000
+random,verkle,bloom,100,0,0,110511,5,1,110518,67,38,1.0000
+random,verkle,bloom,200,0,0,107958,5,1,107965,67,38,1.0000

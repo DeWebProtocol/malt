@@ -1,0 +1,4 @@
+workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
+bulk,kzg,bloom,200,10,10,6342038,77744,1801,6421584,84,55,20.0000
+bulk,kzg,bloom,50,7,7,2146501,77989,1827,2226318,84,55,5.0000
+bulk,kzg,bloom,100,8,8,3304671,77245,1842,3383759,84,55,10.0000

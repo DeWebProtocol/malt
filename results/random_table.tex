@@ -1,0 +1,38 @@
+\begin{table}[htbp]
+\centering
+\caption{MALT random benchmark results}
+\label{tab:random}
+\begin{tabular}{lrrrrrr}
+\toprule
+Backend & EAT & Arcs & Update (ms) & Prove (ms) & Verify (ms) & Proof Size (B) \\
+\midrule
+kzg & overwrite & 50 & 7.73 & 77.17 & 1.81 & 84 \\
+kzg & overwrite & 100 & 8.49 & 78.06 & 1.80 & 84 \\
+kzg & overwrite & 200 & 10.76 & 79.61 & 1.83 & 84 \\
+kzg & versioned & 50 & 7.60 & 77.13 & 1.80 & 84 \\
+kzg & versioned & 100 & 8.39 & 77.72 & 1.81 & 84 \\
+kzg & versioned & 200 & 10.54 & 77.65 & 1.80 & 84 \\
+kzg & bloom & 50 & 7.20 & 77.32 & 1.85 & 84 \\
+kzg & bloom & 100 & 8.37 & 77.34 & 1.80 & 84 \\
+kzg & bloom & 200 & 10.55 & 117.98 & 1.81 & 84 \\
+verkle & overwrite & 50 & 0.03 & 0.00 & 0.00 & 67 \\
+verkle & overwrite & 100 & 0.06 & 0.00 & 0.00 & 67 \\
+verkle & overwrite & 200 & 0.12 & 0.00 & 0.00 & 67 \\
+verkle & versioned & 50 & 0.04 & 0.00 & 0.00 & 67 \\
+verkle & versioned & 100 & 0.08 & 0.01 & 0.00 & 67 \\
+verkle & versioned & 200 & 0.17 & 0.00 & 0.00 & 67 \\
+verkle & bloom & 50 & 0.04 & 0.00 & 0.00 & 67 \\
+verkle & bloom & 100 & 0.09 & 0.01 & 0.00 & 67 \\
+verkle & bloom & 200 & 0.18 & 0.01 & 0.00 & 67 \\
+ipa & overwrite & 200 & 2.74 & 27.39 & 3.82 & 548 \\
+ipa & overwrite & 50 & 0.63 & 27.40 & 3.61 & 548 \\
+ipa & overwrite & 100 & 1.31 & 27.58 & 3.71 & 548 \\
+ipa & versioned & 50 & 0.61 & 27.21 & 4.07 & 548 \\
+ipa & versioned & 100 & 1.30 & 27.75 & 4.08 & 548 \\
+ipa & versioned & 200 & 2.64 & 28.24 & 4.26 & 548 \\
+ipa & bloom & 50 & 0.63 & 27.41 & 4.42 & 548 \\
+ipa & bloom & 100 & 1.30 & 28.25 & 4.42 & 548 \\
+ipa & bloom & 200 & 2.69 & 28.60 & 4.11 & 548 \\
+\bottomrule
+\end{tabular}
+\end{table}

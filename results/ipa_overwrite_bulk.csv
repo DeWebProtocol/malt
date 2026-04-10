@@ -1,0 +1,4 @@
+workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
+bulk,ipa,overwrite,50,0,0,204,26704,3774,30683,548,39,5.0000
+bulk,ipa,overwrite,100,1,1,126,27159,4276,31562,548,39,10.0000
+bulk,ipa,overwrite,200,3,2,122,28066,3956,32146,548,39,20.0000
