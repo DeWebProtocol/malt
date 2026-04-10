@@ -15,9 +15,17 @@ import (
 // ErrNotFound is returned when an arc is not found.
 var ErrNotFound = errors.New("arc not found")
 
-// IsNotFound checks if an error is ErrNotFound.
+// IsNotFound checks if an error is ErrNotFound or arcset.ErrNotFound.
+// EAT implementations may return either sentinel.
 func IsNotFound(err error) bool {
-	return err == ErrNotFound
+	if err == ErrNotFound {
+		return true
+	}
+	// Also check arcset.ErrNotFound for compatibility
+	if err != nil && err.Error() == "arc not found" {
+		return true
+	}
+	return false
 }
 
 // EAT (Explicit Arc Table) stores arc entries for fast lookup.

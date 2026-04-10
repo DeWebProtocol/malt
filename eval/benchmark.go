@@ -5,18 +5,57 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/sce/commitment"
+	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
+	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
+// BackendType selects the commitment scheme.
+type BackendType string
+
+const (
+	BackendKZG    BackendType = "kzg"
+	BackendVerkle BackendType = "verkle"
+	BackendIPA    BackendType = "ipa"
+)
+
+// AllBackends returns all available backend types.
+func AllBackends() []BackendType {
+	return []BackendType{BackendKZG, BackendVerkle, BackendIPA}
+}
+
+// NewScheme creates a commitment.Scheme for the given backend type.
+func NewScheme(b BackendType) (commitment.Scheme, error) {
+	switch b {
+	case BackendKZG:
+		return kzg.NewScheme()
+	case BackendVerkle:
+		return verkle.NewScheme()
+	case BackendIPA:
+		return ipa.NewScheme()
+	default:
+		return nil, fmt.Errorf("unknown backend type: %s", b)
+	}
+}
+
 // Metrics collected during evaluation.
 type Metrics struct {
+	// Backend used
+	Backend BackendType
+
 	// Operation timing
 	CommitTime  time.Duration
 	ProveTime   time.Duration
@@ -42,6 +81,9 @@ type BenchmarkConfig struct {
 
 	// RandomSeed for reproducibility
 	RandomSeed int64
+
+	// Backend selects the commitment scheme (default: kzg).
+	Backend BackendType
 }
 
 // DefaultBenchmarkConfig returns default benchmark configuration.
@@ -50,6 +92,7 @@ func DefaultBenchmarkConfig() *BenchmarkConfig {
 		ArcCounts:    []int{100, 1000, 10000, 100000},
 		UpdateRounds: 100,
 		RandomSeed:   42,
+		Backend:      BackendKZG,
 	}
 }
 
@@ -74,6 +117,35 @@ func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e eat.EAT, s *sce
 		sce:      s,
 		cas:      c,
 	}
+}
+
+// TestComponents holds the components needed for benchmarking.
+type TestComponents struct {
+	EAT      eat.EAT
+	SCE      *sce.Engine
+	CAS      cas.Client
+	BucketID string
+}
+
+// NewTestComponents creates a fresh set of benchmark components for the given backend.
+func NewTestComponents(backend BackendType, bucketID string) (*TestComponents, error) {
+	scheme, err := NewScheme(backend)
+	if err != nil {
+		return nil, fmt.Errorf("new scheme: %w", err)
+	}
+	kv := kvstore_memory.New()
+	e, err := overwrite.NewEAT(kv)
+	if err != nil {
+		return nil, fmt.Errorf("new EAT: %w", err)
+	}
+	s := sce.NewEngine(scheme)
+	c := mock.NewCAS()
+	return &TestComponents{
+		EAT:      e,
+		SCE:      s,
+		CAS:      c,
+		BucketID: bucketID,
+	}, nil
 }
 
 // newPayloadCID creates a CID from data for testing.
@@ -104,7 +176,7 @@ func (b *BenchmarkRunner) RunAppendBenchmark(ctx context.Context) (map[int]*Metr
 func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (*Metrics, error) {
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
 
-	metrics := &Metrics{ArcCount: arcCount}
+	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend}
 
 	// Track current arc set
 	currentArcsMap := make(map[string]cid.Cid)
@@ -199,7 +271,7 @@ func (b *BenchmarkRunner) RunRandomBenchmark(ctx context.Context) (map[int]*Metr
 func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (*Metrics, error) {
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
 
-	metrics := &Metrics{ArcCount: arcCount}
+	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend}
 
 	// Create initial structure with all arcs
 	arcsMap := make(map[string]cid.Cid)
@@ -308,7 +380,7 @@ func (b *BenchmarkRunner) RunBulkBenchmark(ctx context.Context) (map[int]*Metric
 func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*Metrics, error) {
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
 
-	metrics := &Metrics{ArcCount: arcCount}
+	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend}
 
 	// Create initial structure
 	arcsMap := make(map[string]cid.Cid)
@@ -405,17 +477,103 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 // PrintResults prints benchmark results in a formatted table.
 func PrintResults(results map[int]*Metrics, workload string) {
 	fmt.Printf("\n=== %s Benchmark Results ===\n", workload)
-	fmt.Println("ArcCount | Commit(ms) | Update(ms) | Prove(ms) | Verify(ms) | ProofSize | RewriteAmp")
-	fmt.Println("---------|------------|------------|-----------|------------|-----------|------------")
+	fmt.Println("Backend  | ArcCount | Commit(ms) | Update(ms) | Prove(ms) | Verify(ms) | ProofSize | RewriteAmp")
+	fmt.Println("---------|----------|------------|------------|-----------|------------|-----------|------------")
 
-	for arcCount, m := range results {
-		fmt.Printf("%8d | %10.2f | %10.2f | %9.2f | %10.2f | %9d | %10.2f\n",
-			arcCount,
-			float64(m.CommitTime.Milliseconds()),
-			float64(m.UpdateTime.Milliseconds()),
-			float64(m.ProveTime.Milliseconds()),
-			float64(m.VerifyTime.Milliseconds()),
-			m.ProofSize,
-			m.RewriteAmp)
+	// Sort by arcCount for consistent output
+	type entry struct {
+		arcCount int
+		m        *Metrics
+	}
+	entries := make([]entry, 0, len(results))
+	for ac, m := range results {
+		entries = append(entries, entry{ac, m})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].arcCount < entries[j].arcCount
+	})
+
+	for _, e := range entries {
+		fmt.Printf("%-8s | %8d | %10.2f | %10.2f | %9.2f | %10.2f | %9d | %10.2f\n",
+			e.m.Backend,
+			e.arcCount,
+			float64(e.m.CommitTime.Milliseconds()),
+			float64(e.m.UpdateTime.Milliseconds()),
+			float64(e.m.ProveTime.Milliseconds()),
+			float64(e.m.VerifyTime.Milliseconds()),
+			e.m.ProofSize,
+			e.m.RewriteAmp)
+	}
+}
+
+// RunAllBackends runs all benchmarks across all backends.
+// Returns results grouped by backend: map[BackendType]map[ArcCount]*Metrics.
+func (b *BenchmarkRunner) RunAllBackends(ctx context.Context, workload string) (map[BackendType]map[int]*Metrics, error) {
+	allResults := make(map[BackendType]map[int]*Metrics)
+
+	for _, backend := range AllBackends() {
+		tc, err := NewTestComponents(backend, b.bucketId)
+		if err != nil {
+			return nil, fmt.Errorf("create components for %s: %w", backend, err)
+		}
+
+		cfg := *b.config
+		cfg.Backend = backend
+		runner := NewBenchmarkRunner(&cfg, tc.BucketID, tc.EAT, tc.SCE, tc.CAS)
+
+		var results map[int]*Metrics
+		switch workload {
+		case "append":
+			results, err = runner.RunAppendBenchmark(ctx)
+		case "random":
+			results, err = runner.RunRandomBenchmark(ctx)
+		case "bulk":
+			results, err = runner.RunBulkBenchmark(ctx)
+		default:
+			return nil, fmt.Errorf("unknown workload: %s", workload)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s benchmark for %s: %w", workload, backend, err)
+		}
+		allResults[backend] = results
+	}
+	return allResults, nil
+}
+
+// PrintBackendComparison prints multi-backend comparison results.
+func PrintBackendComparison(allResults map[BackendType]map[int]*Metrics, workload string) {
+	fmt.Printf("\n=== %s Benchmark: Backend Comparison ===\n", workload)
+	fmt.Println("Backend  | ArcCount | Commit(ms) | Update(ms) | Prove(ms) | Verify(ms) | ProofSize | RewriteAmp")
+	fmt.Println("---------|----------|------------|------------|-----------|------------|-----------|------------")
+
+	for _, backend := range AllBackends() {
+		results, ok := allResults[backend]
+		if !ok {
+			continue
+		}
+		// Sort by arcCount
+		type entry struct {
+			arcCount int
+			m        *Metrics
+		}
+		entries := make([]entry, 0, len(results))
+		for ac, m := range results {
+			entries = append(entries, entry{ac, m})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].arcCount < entries[j].arcCount
+		})
+
+		for _, e := range entries {
+			fmt.Printf("%-8s | %8d | %10.2f | %10.2f | %9.2f | %10.2f | %9d | %10.2f\n",
+				e.m.Backend,
+				e.arcCount,
+				float64(e.m.CommitTime.Milliseconds()),
+				float64(e.m.UpdateTime.Milliseconds()),
+				float64(e.m.ProveTime.Milliseconds()),
+				float64(e.m.VerifyTime.Milliseconds()),
+				e.m.ProofSize,
+				e.m.RewriteAmp)
+		}
 	}
 }

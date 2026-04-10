@@ -1,18 +1,20 @@
 // Package main provides an HTTP Gateway for MALT.
-// It exposes MALT resolution capabilities via HTTP endpoints.
+// It exposes MALT resolution, graph management, and write-side operations via HTTP endpoints.
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
-	cid "github.com/ipfs/go-cid"
+	"github.com/dewebprotocol/malt/gateway"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -32,9 +34,15 @@ func main() {
 		Long: `HTTP Gateway for MALT (Mutable structure LAyer on Top).
 
 Provides HTTP endpoints for:
-- Resolving paths from MALT structure roots
-- Verifying resolution transcripts
-- Health checks`,
+- Graph management (POST /graph, GET /graph/{id}, DELETE /graph/{id}, GET /graphs)
+- Hybrid resolution (GET /resolve/{root}/{path}, POST /resolve)
+- Proof queries (GET /proof/{root}/{path})
+- Arc queries (GET /arc/{root}/{path}, GET /snapshot/{root})
+- Content fetch (GET /content/{cid})
+- Write operations (POST /update/{root}/{path}, POST /update/batch/{root})
+- Structure creation (POST /structure)
+- Verification (POST /verify)
+- Health check (GET /health)`,
 		Version: Version,
 		Run:     runGateway,
 	}
@@ -61,207 +69,38 @@ func runGateway(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Failed to create MALT node: %v", err)
 	}
-	defer node.Close()
+
+	// Create adapter for the gateway
+	adapter := gateway.NewNodeAdapter(node)
+	defer adapter.Close()
 
 	log.Printf("MALT Gateway v%s starting...", Version)
-	log.Printf("Configuration: %s", node.Config())
+	log.Printf("Configuration: %s", adapter.Config())
 
-	// Create HTTP handlers
-	h := &handlers{node: node}
+	// Create gateway server
+	srv := gateway.NewServer(adapter, listen)
 
-	// Setup routes
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", h.health)
-	mux.HandleFunc("/resolve/", h.resolve)
-	mux.HandleFunc("/verify", h.verify)
+	// Handle graceful shutdown
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	// Start server
-	log.Printf("Listening on %s", listen)
-	if err := http.ListenAndServe(listen, mux); err != nil {
-		log.Fatalf("Server failed: %v", err)
-	}
-}
-
-// handlers holds HTTP handlers for the gateway.
-type handlers struct {
-	node *api.Node
-}
-
-// health handles GET /health
-func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
-	resp := map[string]interface{}{
-		"status":  "ok",
-		"version": Version,
-	}
-	h.writeJSON(w, http.StatusOK, resp)
-}
-
-// resolveRequest is the request body for /resolve
-type resolveRequest struct {
-	Root string `json:"root"`
-	Path string `json:"path"`
-}
-
-// resolveResponse is the response for /resolve
-type resolveResponse struct {
-	Target     string                 `json:"target"`
-	Transcript []stepEvidenceResponse `json:"transcript"`
-}
-
-// stepEvidenceResponse is the JSON representation of a step evidence
-type stepEvidenceResponse struct {
-	Path     string `json:"path"`
-	Target   string `json:"target"`
-	Evidence []byte `json:"evidence"`
-}
-
-// resolve handles POST /resolve and GET /resolve/{cid}/{path}
-func (h *handlers) resolve(w http.ResponseWriter, r *http.Request) {
-	var rootCid cid.Cid
-	var path string
-
-	if r.Method == http.MethodGet {
-		// GET /resolve/{cid}/{path}
-		// Path format: /resolve/{cid}/{path...}
-		urlPath := strings.TrimPrefix(r.URL.Path, "/resolve/")
-		parts := strings.SplitN(urlPath, "/", 2)
-		if len(parts) < 1 || parts[0] == "" {
-			h.writeError(w, http.StatusBadRequest, "missing CID in path")
-			return
+	// Start server in goroutine
+	go func() {
+		log.Printf("Listening on %s", listen)
+		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
 		}
+	}()
 
-		var err error
-		rootCid, err = cid.Decode(parts[0])
-		if err != nil {
-			h.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid CID: %v", err))
-			return
-		}
+	// Wait for shutdown signal
+	<-stop
+	log.Println("Shutting down...")
 
-		if len(parts) > 1 {
-			path = parts[1]
-		}
-	} else if r.Method == http.MethodPost {
-		// POST /resolve with JSON body
-		var req resolveRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-			return
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-		var err error
-		rootCid, err = cid.Decode(req.Root)
-		if err != nil {
-			h.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid CID: %v", err))
-			return
-		}
-		path = req.Path
-	} else {
-		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Shutdown error: %v", err)
 	}
-
-	// Resolve
-	result, err := h.node.HybridResolver().Resolve(rootCid, path)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, fmt.Sprintf("resolution failed: %v", err))
-		return
-	}
-
-	// Build response
-	resp := resolveResponse{
-		Target:     result.Target.String(),
-		Transcript: make([]stepEvidenceResponse, len(result.Transcript.Steps)),
-	}
-
-	for i, step := range result.Transcript.Steps {
-		resp.Transcript[i] = stepEvidenceResponse{
-			Path:     step.Path,
-			Target:   step.Target.String(),
-			Evidence: step.Evidence.Bytes(),
-		}
-	}
-
-	h.writeJSON(w, http.StatusOK, resp)
-}
-
-// verifyRequest is the request body for /verify
-type verifyRequest struct {
-	Root       string                `json:"root"`
-	Transcript []stepEvidenceRequest `json:"transcript"`
-}
-
-// stepEvidenceRequest is the JSON representation of a step evidence for verification
-type stepEvidenceRequest struct {
-	Path     string `json:"path"`
-	Target   string `json:"target"`
-	Evidence []byte `json:"evidence"`
-	Kind     string `json:"kind"` // "explicit", "implicit", or "hamt"
-}
-
-// verifyResponse is the response for /verify
-type verifyResponse struct {
-	Valid bool `json:"valid"`
-}
-
-// verify handles POST /verify
-func (h *handlers) verify(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	var req verifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-
-	rootCid, err := cid.Decode(req.Root)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid CID: %v", err))
-		return
-	}
-
-	// Build transcript from request
-	// Note: This is a simplified verification that checks the transcript structure
-	// In a full implementation, you would reconstruct the Evidence objects
-
-	// For now, we just verify that the transcript is well-formed
-	// and that the root CID is valid
-	valid := rootCid.Defined()
-	for _, step := range req.Transcript {
-		if step.Path == "" {
-			valid = false
-			break
-		}
-		_, err := cid.Decode(step.Target)
-		if err != nil {
-			valid = false
-			break
-		}
-		if len(step.Evidence) == 0 {
-			valid = false
-			break
-		}
-	}
-
-	resp := verifyResponse{Valid: valid}
-	h.writeJSON(w, http.StatusOK, resp)
-}
-
-// writeJSON writes a JSON response
-func (h *handlers) writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
-// errorResponse is an error response
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
-// writeError writes an error response
-func (h *handlers) writeError(w http.ResponseWriter, status int, message string) {
-	h.writeJSON(w, status, errorResponse{Error: message})
+	log.Println("Gateway stopped")
 }
