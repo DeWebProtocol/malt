@@ -33,6 +33,5 @@ go.work.sum
 
 # Built binaries
 /malt
-/gateway
 /cmd/malt/malt
 /cmd/gateway/gateway

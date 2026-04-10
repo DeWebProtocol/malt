@@ -13,6 +13,7 @@ import (
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
+	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
@@ -31,14 +32,15 @@ import (
 // Node is the main MALT runtime that holds all components.
 // It is the entry point for the MALT system.
 type Node struct {
-	cfg  *config.Config
-	opts *options
+	cfg    *config.Config
+	opts   *options
 
 	// Core components
 	kv           kvstore.KVStore
 	sce          *sce.Engine
 	eat          eat.EAT
 	cas          cas.Client
+	graphManager *graph.Manager
 	bucketId     string // default bucket for operations
 	explicitStep step.Step
 	implicitStep step.Step
@@ -118,6 +120,9 @@ func NewNode(opts ...Option) (*Node, error) {
 			return nil, fmt.Errorf("failed to initialize EAT: %w", err)
 		}
 	}
+
+	// Graph Manager
+	node.graphManager = graph.NewManager(graph.NewStore(node.kv))
 
 	// Set default bucket ID
 	node.bucketId = "default"
@@ -230,6 +235,11 @@ func (n *Node) EAT() eat.EAT {
 // CAS returns the CAS client.
 func (n *Node) CAS() cas.Client {
 	return n.cas
+}
+
+// GraphManager returns the graph lifecycle manager.
+func (n *Node) GraphManager() *graph.Manager {
+	return n.graphManager
 }
 
 // Resolver returns the explicit step executor for MALT arcs.
