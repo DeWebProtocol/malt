@@ -1,8 +1,7 @@
 // Package overwrite provides an EAT implementation with overwrite semantics.
 // This EAT stores arc sets for single-root graphs with bucket-based isolation.
 //
-// Bloom Filter: Each bucket has a persistent bloom filter stored separately.
-// The bloom filter is cached in memory for fast negative lookups.
+// Bloom Filter: Uses BloomCache component for fast negative lookups.
 //
 // Concurrency Control: This implementation uses mutex for bloom filter synchronization.
 // For production deployments, consider using a distributed KVStore backend
@@ -12,7 +11,6 @@ package overwrite
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/eat/bloom"
@@ -22,73 +20,52 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Default bloom filter parameters.
-const (
-	DefaultExpectedItems     = 10000
-	DefaultFalsePositiveRate = 0.01
-	DefaultCacheSize         = 100
-)
+// Default cache size for bloom filters.
+const DefaultCacheSize = 100
 
-// EAT is an EAT with overwrite semantics and bucket-based bloom filters.
+// EAT is an EAT with overwrite semantics.
 // It uses bucketId for namespace isolation, allowing multiple graphs
 // to share the same KVStore instance.
 type EAT struct {
-	kv kvstore.KVStore
-
-	// Bloom filter configuration per bucket
-	bucketConfigs sync.Map // bucketId -> *bloom.BucketConfig
-
-	// Bloom filter cache
-	bloomCache *bloom.Cache
-
-	// Default bloom config for new buckets
-	defaultConfig *bloom.BucketConfig
+	kv         kvstore.KVStore
+	bloomCache *bloom.BloomCache // Optional, can be nil
 }
 
-// NewEAT creates a new EAT with the given KVStore and default bloom parameters.
+// NewEAT creates a new EAT with the given KVStore.
+// Bloom filter is disabled by default.
 func NewEAT(kv kvstore.KVStore) (*EAT, error) {
-	return NewEATWithConfig(kv, bloom.DefaultBucketConfig(), DefaultCacheSize)
-}
-
-// NewEATWithConfig creates a new EAT with custom bloom configuration.
-func NewEATWithConfig(kv kvstore.KVStore, defaultConfig *bloom.BucketConfig, cacheSize int) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
-
-	if defaultConfig == nil {
-		defaultConfig = bloom.DefaultBucketConfig()
-	}
-	if cacheSize <= 0 {
-		cacheSize = DefaultCacheSize
-	}
-
 	return &EAT{
-		kv:            kv,
-		bloomCache:    bloom.NewCache(cacheSize),
-		defaultConfig: defaultConfig,
+		kv: kv,
 	}, nil
 }
 
-// NewEATWithBloomParams creates a new EAT with custom bloom filter parameters.
-// Deprecated: Use NewEATWithConfig instead.
-func NewEATWithBloomParams(kv kvstore.KVStore, expectedItems int, falsePositiveRate float64) (*EAT, error) {
-	return NewEATWithConfig(kv, &bloom.BucketConfig{
-		ExpectedItems:     expectedItems,
-		FalsePositiveRate: falsePositiveRate,
-	}, DefaultCacheSize)
-}
-
-// NewEATWithoutBloom creates a new EAT without bloom filter optimization.
-func NewEATWithoutBloom(kv kvstore.KVStore) (*EAT, error) {
+// NewEATWithBloomCache creates a new EAT with BloomCache for fast negative lookups.
+func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EAT, error) {
 	if kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
-
 	return &EAT{
-		kv:            kv,
-		bloomCache:    nil, // disabled
-		defaultConfig: nil,
+		kv:         kv,
+		bloomCache: bloomCache,
+	}, nil
+}
+
+// NewEATWithBloomParams creates a new EAT with bloom filter enabled.
+// Deprecated: Use NewEATWithBloomCache instead.
+func NewEATWithBloomParams(kv kvstore.KVStore, expectedItems int, falsePositiveRate float64) (*EAT, error) {
+	if kv == nil {
+		return nil, fmt.Errorf("KVStore is required")
+	}
+	cfg := &bloom.BucketConfig{
+		ExpectedItems:     expectedItems,
+		FalsePositiveRate: falsePositiveRate,
+	}
+	return &EAT{
+		kv:         kv,
+		bloomCache: bloom.NewBloomCacheWithConfig(kv, DefaultCacheSize, cfg),
 	}, nil
 }
 
@@ -110,92 +87,12 @@ func rootKey(root cid.Cid) []byte {
 	return []byte("root:" + root.String())
 }
 
-// bucketBloomKey generates the key for a bucket's bloom filter.
-// Format: bloom:bucketId
-func bucketBloomKey(bucketId string) []byte {
-	return []byte("bloom:" + bucketId)
-}
-
 // CreateBucket creates a new bucket with custom bloom configuration.
 func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
-	if cfg == nil {
-		cfg = e.defaultConfig
-	}
-
-	e.bucketConfigs.Store(bucketId, cfg)
-
-	// Initialize empty bloom filter
-	filter := bloom.NewStandardBloom(cfg.ExpectedItems, cfg.FalsePositiveRate)
-	return e.saveBucketBloom(ctx, bucketId, filter)
-}
-
-// GetBucketConfig returns the bloom configuration for a bucket.
-func (e *EAT) GetBucketConfig(bucketId string) *bloom.BucketConfig {
-	if val, ok := e.bucketConfigs.Load(bucketId); ok {
-		return val.(*bloom.BucketConfig)
-	}
-	return e.defaultConfig
-}
-
-// getBucketBloom loads or creates a bloom filter for a bucket.
-func (e *EAT) getBucketBloom(ctx context.Context, bucketId string) (*bloom.StandardBloom, error) {
 	if e.bloomCache == nil {
-		return nil, nil // Bloom disabled
+		return fmt.Errorf("bloom cache not configured")
 	}
-
-	// Check cache first
-	if cached := e.bloomCache.Get(bucketId); cached != nil {
-		return cached.(*bloom.StandardBloom), nil
-	}
-
-	// Load from KVStore
-	key := bucketBloomKey(bucketId)
-	data, err := e.kv.Get(ctx, key)
-	if err == kvstore.ErrNotFound {
-		// Create new bloom filter
-		cfg := e.GetBucketConfig(bucketId)
-		filter := bloom.NewStandardBloom(cfg.ExpectedItems, cfg.FalsePositiveRate)
-		e.bloomCache.Set(bucketId, filter)
-		return filter, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to load bloom filter: %w", err)
-	}
-
-	// Deserialize
-	filter := &bloom.StandardBloom{}
-	if err := filter.UnmarshalBinary(data); err != nil {
-		return nil, fmt.Errorf("failed to deserialize bloom filter: %w", err)
-	}
-
-	// Cache it
-	e.bloomCache.Set(bucketId, filter)
-
-	return filter, nil
-}
-
-// saveBucketBloom persists a bloom filter to KVStore and cache.
-func (e *EAT) saveBucketBloom(ctx context.Context, bucketId string, filter *bloom.StandardBloom) error {
-	if e.bloomCache == nil {
-		return nil // Bloom disabled
-	}
-
-	// Serialize
-	data, err := filter.MarshalBinary()
-	if err != nil {
-		return fmt.Errorf("failed to serialize bloom filter: %w", err)
-	}
-
-	// Persist to KVStore
-	key := bucketBloomKey(bucketId)
-	if err := e.kv.Put(ctx, key, data); err != nil {
-		return fmt.Errorf("failed to persist bloom filter: %w", err)
-	}
-
-	// Update cache
-	e.bloomCache.Set(bucketId, filter)
-
-	return nil
+	return e.bloomCache.CreateBucket(ctx, bucketId, cfg)
 }
 
 // MightContain checks if a path might exist in the bucket using bloom filter.
@@ -203,15 +100,13 @@ func (e *EAT) saveBucketBloom(ctx context.Context, bucketId string, filter *bloo
 // Returns true if the path might exist (need to call Get to verify).
 func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bool {
 	if e.bloomCache == nil {
-		return true // Bloom disabled, conservatively return true
+		return true // Bloom disabled
 	}
-
-	filter, err := e.getBucketBloom(ctx, bucketId)
-	if err != nil || filter == nil {
-		return true // No bloom for this bucket, conservatively return true
+	result, err := e.bloomCache.MightContain(ctx, bucketId, path)
+	if err != nil {
+		return true // On error, conservatively return true
 	}
-
-	return filter.Test([]byte(path))
+	return result
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
@@ -225,19 +120,15 @@ func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []st
 		return result
 	}
 
-	filter, err := e.getBucketBloom(ctx, bucketId)
-	if err != nil || filter == nil {
+	batchResult, err := e.bloomCache.MightContainBatch(ctx, bucketId, paths)
+	if err != nil {
 		for _, p := range paths {
 			result[p] = true
 		}
 		return result
 	}
 
-	for _, p := range paths {
-		result[p] = filter.Test([]byte(p))
-	}
-
-	return result
+	return batchResult
 }
 
 // Get retrieves the target CID for a path within a bucket.
@@ -481,7 +372,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Update bucket bloom filter after successful commit
 	if e.bloomCache != nil && len(addedPaths) > 0 {
-		if err := e.updateBucketBloom(ctx, bucketId, addedPaths); err != nil {
+		if err := e.bloomCache.Add(ctx, bucketId, addedPaths); err != nil {
 			logger.Warn("EAT.Update failed to update bloom (non-fatal)",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
@@ -498,26 +389,6 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
 	return nil
-}
-
-// updateBucketBloom updates the bucket bloom filter with new paths.
-func (e *EAT) updateBucketBloom(ctx context.Context, bucketId string, addedPaths []string) error {
-	// Get or create bloom filter
-	filter, err := e.getBucketBloom(ctx, bucketId)
-	if err != nil {
-		return err
-	}
-	if filter == nil {
-		return nil
-	}
-
-	// Add new paths to bloom
-	for _, path := range addedPaths {
-		filter.Add([]byte(path))
-	}
-
-	// Persist updated bloom
-	return e.saveBucketBloom(ctx, bucketId, filter)
 }
 
 // Snapshot returns an immutable snapshot of all arcs in the bucket.

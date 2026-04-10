@@ -42,17 +42,3 @@ const (
 	DefaultExpectedItems     = 10000
 	DefaultFalsePositiveRate = 0.01
 )
-
-// BucketConfig holds per-bucket bloom filter configuration.
-type BucketConfig struct {
-	ExpectedItems     int
-	FalsePositiveRate float64
-}
-
-// DefaultBucketConfig returns the default bucket configuration.
-func DefaultBucketConfig() *BucketConfig {
-	return &BucketConfig{
-		ExpectedItems:     DefaultExpectedItems,
-		FalsePositiveRate: DefaultFalsePositiveRate,
-	}
-}
