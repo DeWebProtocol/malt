@@ -1,4 +1,4 @@
-// Package hamt implements the Resolver interface for HAMT (Hash Array Mapped Trie).
+// Package hamt implements the Step interface for HAMT (Hash Array Mapped Trie).
 // HAMT is an efficient dictionary data structure used in IPFS/IPLD for large-scale
 // key-value stores with O(log n) lookup complexity.
 package hamt
@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/cas"
+	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
@@ -61,7 +61,7 @@ func WithMaxDepth(d int) Option {
 	}
 }
 
-// Resolver implements resolver.Resolver for HAMT data structures.
+// Resolver implements step.Step for HAMT data structures.
 type Resolver struct {
 	cas    cas.Client
 	config Config

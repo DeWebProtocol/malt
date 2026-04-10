@@ -3,8 +3,8 @@ package cas_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/cas"
-	"github.com/dewebprotocol/malt/cas/mock"
+	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )

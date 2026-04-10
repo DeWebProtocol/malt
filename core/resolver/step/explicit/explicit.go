@@ -1,4 +1,4 @@
-// Package explicit implements the Resolver interface for MALT explicit arcs.
+// Package explicit implements the Step interface for MALT explicit arcs.
 // It uses longest-prefix matching in EAT and generates cryptographic proof via SCE.
 package explicit
 

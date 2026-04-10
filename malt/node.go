@@ -8,9 +8,9 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/cas"
-	"github.com/dewebprotocol/malt/cas/ipfsgateway"
-	casmock "github.com/dewebprotocol/malt/cas/mock"
+	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/cas/ipfsgateway"
+	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
@@ -18,14 +18,14 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/resolver/explicit"
-	"github.com/dewebprotocol/malt/core/resolver/implicit"
+	"github.com/dewebprotocol/malt/core/resolver/step"
+	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
-	"github.com/dewebprotocol/malt/gateway"
 )
 
 // Node is the main MALT runtime that holds all components.
@@ -40,9 +40,9 @@ type Node struct {
 	eat             eat.EAT
 	cas             cas.Client
 	bucketId        string            // default bucket for operations
-	explicitResolver resolver.Resolver
-	implicitResolver resolver.Resolver
-	gateway         *gateway.Gateway
+	explicitStep    step.Step
+	implicitStep    step.Step
+	resolver        *resolver.Resolver
 }
 
 // NewNode creates a new MALT node with the given options.
@@ -132,14 +132,14 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 	}
 
-	// Explicit resolver (MALT arcs)
-	node.explicitResolver = explicit.NewResolver(node.eat, node.sce, node.bucketId)
+	// Explicit step executor (MALT arcs)
+	node.explicitStep = explicit.NewResolver(node.eat, node.sce, node.bucketId)
 
-	// Implicit resolver (Merkle DAG via CAS)
-	node.implicitResolver = implicit.NewResolver(node.cas)
+	// Implicit step executor (Merkle DAG via CAS)
+	node.implicitStep = implicit.NewResolver(node.cas)
 
-	// Gateway (full path resolution)
-	node.gateway = gateway.NewGateway(node.explicitResolver, node.implicitResolver)
+	// Resolver (full path resolution)
+	node.resolver = resolver.NewResolver(node.explicitStep, node.implicitStep)
 
 	return node, nil
 }
@@ -232,14 +232,14 @@ func (n *Node) CAS() cas.Client {
 	return n.cas
 }
 
-// Resolver returns the explicit resolver for MALT arcs.
-func (n *Node) Resolver() resolver.Resolver {
-	return n.explicitResolver
+// Resolver returns the explicit step executor for MALT arcs.
+func (n *Node) Resolver() step.Step {
+	return n.explicitStep
 }
 
-// Gateway returns the gateway for full path resolution.
-func (n *Node) Gateway() *gateway.Gateway {
-	return n.gateway
+// HybridResolver returns the hybrid resolver for full path resolution.
+func (n *Node) HybridResolver() *resolver.Resolver {
+	return n.resolver
 }
 
 // KVStore returns the underlying KVStore.

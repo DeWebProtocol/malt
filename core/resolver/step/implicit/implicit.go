@@ -1,6 +1,6 @@
-// Package implicit implements the Resolver interface for Merkle-DAG traversal.
+// Package implicit implements the Step interface for Merkle-DAG traversal.
 // It fetches a single block from CAS, parses it using IPLD codecs, and finds the next link.
-// Multi-hop traversal is handled by the caller (e.g., Gateway).
+// Multi-hop traversal is handled by the caller (e.g., Resolver).
 //
 // For dag-pb blocks, the resolver detects different data structures:
 //   - UnixFS: File/directory traversal
@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dewebprotocol/malt/cas"
-	"github.com/dewebprotocol/malt/core/resolver/hamt"
-	"github.com/dewebprotocol/malt/core/resolver/implicit/codec"
-	"github.com/dewebprotocol/malt/core/resolver/implicit/dagcbor"
-	"github.com/dewebprotocol/malt/core/resolver/implicit/dagjson"
-	"github.com/dewebprotocol/malt/core/resolver/implicit/dagpb"
+	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/resolver/step/hamt"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit/codec"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagcbor"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagjson"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagpb"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	multihash "github.com/multiformats/go-multihash"

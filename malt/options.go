@@ -3,7 +3,7 @@ package malt
 
 import (
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/cas"
+	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/sce/commitment"

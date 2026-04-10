@@ -3,8 +3,8 @@ package hamt_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/cas/mock"
-	"github.com/dewebprotocol/malt/core/resolver/hamt"
+	"github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/resolver/step/hamt"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
