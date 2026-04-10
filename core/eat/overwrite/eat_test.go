@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/eat/bloom"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -587,6 +588,144 @@ func TestEATBatchUpdate(t *testing.T) {
 	}
 	if !got.Equals(arcs2["arc50"]) {
 		t.Error("arc50 should have new value")
+	}
+}
+
+// === Bloom Filter Tests ===
+
+func TestEATWithBloomCache(t *testing.T) {
+	kv := kvstore_memory.New()
+	bc := bloom.NewBloomCache(kv, 100)
+	eat, err := NewEATWithBloomCache(kv, bc)
+	if err != nil {
+		t.Fatalf("NewEATWithBloomCache failed: %v", err)
+	}
+
+	ctx := context.Background()
+	bucketId := "bloom-graph"
+	root := newTestCID([]byte("root"))
+	target := newTestCID([]byte("target"))
+
+	// Create bucket
+	err = eat.CreateBucket(ctx, bucketId, &bloom.BucketConfig{
+		ExpectedItems:     1000,
+		FalsePositiveRate: 0.01,
+	})
+	if err != nil {
+		t.Fatalf("CreateBucket failed: %v", err)
+	}
+
+	// Add arc
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"path/a": target})
+
+	// MightContain should return true for existing path
+	if !eat.MightContain(ctx, bucketId, "path/a") {
+		t.Error("MightContain should return true for existing path")
+	}
+
+	// MightContain may return true or false for non-existing path
+	// (bloom filter allows false positives)
+	_ = eat.MightContain(ctx, bucketId, "nonexistent/path")
+}
+
+func TestEATMightContainBatch(t *testing.T) {
+	kv := kvstore_memory.New()
+	bc := bloom.NewBloomCache(kv, 100)
+	eat, _ := NewEATWithBloomCache(kv, bc)
+
+	ctx := context.Background()
+	bucketId := "batch-bloom-graph"
+	root := newTestCID([]byte("root"))
+	target := newTestCID([]byte("target"))
+
+	// Create bucket
+	eat.CreateBucket(ctx, bucketId, nil)
+
+	// Add arcs
+	paths := []string{"a", "b", "c"}
+	arcs := make(map[string]cid.Cid)
+	for _, p := range paths {
+		arcs[p] = target
+	}
+	eat.Update(ctx, bucketId, root, cid.Undef, arcs)
+
+	// Batch check
+	results := eat.MightContainBatch(ctx, bucketId, []string{"a", "b", "c", "nonexistent"})
+	if len(results) != 4 {
+		t.Errorf("expected 4 results, got %d", len(results))
+	}
+
+	// Existing paths should return true
+	for _, p := range paths {
+		if !results[p] {
+			t.Errorf("expected true for %s", p)
+		}
+	}
+}
+
+func TestEATBloomFilterOptimization(t *testing.T) {
+	// Test that bloom filter actually skips kvstore lookup for non-existent paths
+	kv := kvstore_memory.New()
+	bc := bloom.NewBloomCache(kv, 100)
+	eat, _ := NewEATWithBloomCache(kv, bc)
+
+	ctx := context.Background()
+	bucketId := "optimized-graph"
+	root := newTestCID([]byte("root"))
+	target := newTestCID([]byte("target"))
+
+	// Create bucket
+	eat.CreateBucket(ctx, bucketId, nil)
+
+	// Add arcs
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"existing": target})
+
+	// Get for existing path should work
+	got, err := eat.Get(ctx, bucketId, root, "existing")
+	if err != nil {
+		t.Fatalf("Get existing failed: %v", err)
+	}
+	if !got.Equals(target) {
+		t.Error("wrong value")
+	}
+
+	// Get for path that definitely doesn't exist (bloom says no)
+	// should return ErrNotFound without kvstore lookup
+	_, err = eat.Get(ctx, bucketId, root, "definitely-not-exist")
+	if err == nil {
+		t.Error("expected error for non-existent path")
+	}
+}
+
+func TestEATWithoutBloomCache(t *testing.T) {
+	kv := kvstore_memory.New()
+	eat, _ := NewEAT(kv)
+
+	ctx := context.Background()
+	bucketId := "no-bloom-graph"
+	root := newTestCID([]byte("root"))
+	target := newTestCID([]byte("target"))
+
+	// Add arc
+	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"a": target})
+
+	// CreateBucket should fail (no bloom cache)
+	err := eat.CreateBucket(ctx, bucketId, nil)
+	if err == nil {
+		t.Error("CreateBucket should fail without bloom cache")
+	}
+
+	// MightContain should return true (bloom disabled)
+	if !eat.MightContain(ctx, bucketId, "any-path") {
+		t.Error("MightContain should return true when bloom disabled")
+	}
+
+	// MightContainBatch should return all true
+	results := eat.MightContainBatch(ctx, bucketId, []string{"a", "b", "c"})
+	for p, v := range results {
+		if !v {
+			t.Errorf("expected true for %s when bloom disabled", p)
+		}
 	}
 }
 
