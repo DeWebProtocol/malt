@@ -17,6 +17,7 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
@@ -29,7 +30,7 @@ import (
 	"github.com/dewebprotocol/malt/core/types/arcset"
 )
 
-// Node is the main MALT runtime that holds all components.
+// Node is the application-level MALT node that holds all components.
 // It is the entry point for the MALT system.
 type Node struct {
 	cfg    *config.Config
@@ -41,6 +42,7 @@ type Node struct {
 	eat          eat.EAT
 	cas          cas.Client
 	graphManager *graph.Manager
+	lineageMgr   *lineage.Manager
 	bucketId     string // default bucket for operations
 	explicitStep step.Step
 	implicitStep step.Step
@@ -240,6 +242,17 @@ func (n *Node) CAS() cas.Client {
 // GraphManager returns the graph lifecycle manager.
 func (n *Node) GraphManager() *graph.Manager {
 	return n.graphManager
+}
+
+// LineageManager returns the lineage manager for version tracking.
+// It is lazily initialized on first access.
+func (n *Node) LineageManager() *lineage.Manager {
+	if n.lineageMgr == nil {
+		kv := lineage.NewKVStoreAdapter(n.kv)
+		store := lineage.NewStore(kv)
+		n.lineageMgr = lineage.NewManager(store)
+	}
+	return n.lineageMgr
 }
 
 // Resolver returns the explicit step executor for MALT arcs.

@@ -7,6 +7,7 @@ import (
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/graph"
+	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
@@ -333,7 +334,18 @@ func (wi *writerAdapterInternal) CreateStructure(ctx context.Context, bucketId s
 
 // buildWriter constructs a writer.Writer from a MALT node.
 func buildWriter(node *api.Node) *writer.Writer {
-	return writer.NewWriter(node.SCE(), node.EAT(), nil)
+	rec := buildLineageRecorder(node)
+	return writer.NewWriter(node.SCE(), node.EAT(), rec)
+}
+
+// buildLineageRecorder creates a lineage recorder adapter if the node
+// has a lineage manager configured.
+func buildLineageRecorder(node *api.Node) writer.LineageRecorder {
+	lm := node.LineageManager()
+	if lm == nil {
+		return nil
+	}
+	return lineage.NewRecorderAdapter(lm, nil)
 }
 
 // buildSnapshot converts a map[string]cid.Cid to an arcset.Snapshot.
