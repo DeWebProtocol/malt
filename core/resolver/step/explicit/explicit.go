@@ -10,6 +10,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/eat"
+	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/logger"
 	cid "github.com/ipfs/go-cid"
@@ -149,18 +150,5 @@ func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence
 
 // splitPath splits a path into segments.
 func splitPath(path string) []string {
-	if path == "" {
-		return nil
-	}
-
-	// Remove leading slash
-	if path[0] == '/' {
-		path = path[1:]
-	}
-
-	if path == "" {
-		return nil
-	}
-
-	return strings.Split(path, "/")
+	return step.SplitPath(path)
 }

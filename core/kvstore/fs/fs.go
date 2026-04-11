@@ -313,7 +313,11 @@ func (it *fsIterator) Value() []byte {
 	if it.index < 0 || it.index >= len(it.keys) {
 		return nil
 	}
-	v, _ := it.kv.Get(context.Background(), it.keys[it.index])
+	v, err := it.kv.Get(context.Background(), it.keys[it.index])
+	if err != nil {
+		it.err = err
+		return nil
+	}
 	return v
 }
 

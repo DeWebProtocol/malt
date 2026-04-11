@@ -79,21 +79,17 @@ type Snapshot struct {
 
 // Exporter exports graph snapshots from a source KVStore.
 type Exporter struct {
-	kv  kvstore.KVStore
-	ctx context.Context
+	kv kvstore.KVStore
 }
 
 // NewExporter creates a new Exporter backed by the given KVStore.
-func NewExporter(kv kvstore.KVStore, ctx context.Context) *Exporter {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return &Exporter{kv: kv, ctx: ctx}
+func NewExporter(kv kvstore.KVStore) *Exporter {
+	return &Exporter{kv: kv}
 }
 
 // Export exports the complete state of a graph as a Snapshot.
 // It extracts all EAT entries, lineage records, and graph metadata.
-func (e *Exporter) Export(g *graph.Graph) (*Snapshot, error) {
+func (e *Exporter) Export(ctx context.Context, g *graph.Graph) (*Snapshot, error) {
 	snap := &Snapshot{
 		Version:        SnapshotVersion,
 		GraphID:        g.ID,
@@ -110,13 +106,13 @@ func (e *Exporter) Export(g *graph.Graph) (*Snapshot, error) {
 	// Export EAT entries for this graph's bucket
 	// EAT keys use bucketId as namespace prefix
 	eatPrefix := []byte(g.ID + EATKeySep)
-	e.exportKeys(eatPrefix, snap.EATEntries)
+	e.exportKeys(ctx, eatPrefix, snap.EATEntries)
 
 	// Export lineage records
-	e.exportKeys([]byte(LineagePrefix), snap.LineageEntries)
+	e.exportKeys(ctx, []byte(LineagePrefix), snap.LineageEntries)
 
 	// Export COW shortcuts
-	e.exportKeys([]byte(LineagePrefix+"cow/"), snap.COWEntries)
+	e.exportKeys(ctx, []byte(LineagePrefix+"cow/"), snap.COWEntries)
 
 	// Compute checksum
 	if err := snap.computeChecksum(); err != nil {
@@ -127,8 +123,8 @@ func (e *Exporter) Export(g *graph.Graph) (*Snapshot, error) {
 }
 
 // ExportAll exports snapshots for all active and frozen graphs.
-func (e *Exporter) ExportAll(store *graph.Store) ([]*Snapshot, error) {
-	graphs, err := store.List(e.ctx)
+func (e *Exporter) ExportAll(ctx context.Context, store *graph.Store) ([]*Snapshot, error) {
+	graphs, err := store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list graphs: %w", err)
 	}
@@ -138,7 +134,7 @@ func (e *Exporter) ExportAll(store *graph.Store) ([]*Snapshot, error) {
 		if g.IsDeleted() {
 			continue
 		}
-		snap, err := e.Export(g)
+		snap, err := e.Export(ctx, g)
 		if err != nil {
 			return nil, fmt.Errorf("export graph %s: %w", g.ID, err)
 		}
@@ -149,8 +145,8 @@ func (e *Exporter) ExportAll(store *graph.Store) ([]*Snapshot, error) {
 }
 
 // exportKeys extracts all keys with the given prefix and copies their values to dst.
-func (e *Exporter) exportKeys(prefix []byte, dst map[string][]byte) {
-	iter := e.kv.NewIterator(e.ctx, prefix, nil)
+func (e *Exporter) exportKeys(ctx context.Context, prefix []byte, dst map[string][]byte) {
+	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
 	for iter.Next() {
@@ -206,22 +202,18 @@ func Unmarshal(data []byte) (*Snapshot, error) {
 
 // Importer imports graph snapshots into a target KVStore.
 type Importer struct {
-	kv  kvstore.KVStore
-	ctx context.Context
+	kv kvstore.KVStore
 }
 
 // NewImporter creates a new Importer backed by the given KVStore.
-func NewImporter(kv kvstore.KVStore, ctx context.Context) *Importer {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return &Importer{kv: kv, ctx: ctx}
+func NewImporter(kv kvstore.KVStore) *Importer {
+	return &Importer{kv: kv}
 }
 
 // Import imports a snapshot into the target KVStore.
 // It writes all EAT entries, lineage records, and graph metadata.
 // Returns the number of entries imported.
-func (imp *Importer) Import(snap *Snapshot) (int, error) {
+func (imp *Importer) Import(ctx context.Context, snap *Snapshot) (int, error) {
 	// Verify checksum before importing
 	if err := verifyChecksum(snap); err != nil {
 		return 0, fmt.Errorf("snapshot integrity check failed: %w", err)
@@ -231,7 +223,7 @@ func (imp *Importer) Import(snap *Snapshot) (int, error) {
 
 	// Import EAT entries
 	for key, value := range snap.EATEntries {
-		if err := imp.kv.Put(imp.ctx, []byte(key), value); err != nil {
+		if err := imp.kv.Put(ctx, []byte(key), value); err != nil {
 			return count, fmt.Errorf("import EAT entry %s: %w", key, err)
 		}
 		count++
@@ -239,7 +231,7 @@ func (imp *Importer) Import(snap *Snapshot) (int, error) {
 
 	// Import lineage entries
 	for key, value := range snap.LineageEntries {
-		if err := imp.kv.Put(imp.ctx, []byte(key), value); err != nil {
+		if err := imp.kv.Put(ctx, []byte(key), value); err != nil {
 			return count, fmt.Errorf("import lineage entry %s: %w", key, err)
 		}
 		count++
@@ -247,7 +239,7 @@ func (imp *Importer) Import(snap *Snapshot) (int, error) {
 
 	// Import COW entries
 	for key, value := range snap.COWEntries {
-		if err := imp.kv.Put(imp.ctx, []byte(key), value); err != nil {
+		if err := imp.kv.Put(ctx, []byte(key), value); err != nil {
 			return count, fmt.Errorf("import COW entry %s: %w", key, err)
 		}
 		count++
@@ -280,12 +272,12 @@ func (imp *Importer) Import(snap *Snapshot) (int, error) {
 		return count, fmt.Errorf("marshal graph: %w", err)
 	}
 
-	if err := imp.kv.Put(imp.ctx, []byte(GraphMetaPrefix+g.ID), graphData); err != nil {
+	if err := imp.kv.Put(ctx, []byte(GraphMetaPrefix+g.ID), graphData); err != nil {
 		return count, fmt.Errorf("import graph metadata: %w", err)
 	}
 	count++
 
-	if err := imp.kv.Put(imp.ctx, []byte(GraphIndexPrefix+g.ID), []byte(string(g.State))); err != nil {
+	if err := imp.kv.Put(ctx, []byte(GraphIndexPrefix+g.ID), []byte(string(g.State))); err != nil {
 		return count, fmt.Errorf("import graph index: %w", err)
 	}
 	count++

@@ -5,6 +5,7 @@ package bloom
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"math"
 
 	"github.com/bits-and-blooms/bitset"
@@ -188,7 +189,7 @@ func (b *StandardBloom) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary implements encoding.BinaryUnmarshaler.
 func (b *StandardBloom) UnmarshalBinary(data []byte) error {
 	if len(data) < 12 {
-		return nil
+		return fmt.Errorf("corrupted data: too short for header (%d bytes)", len(data))
 	}
 
 	k := uint(data[0])<<24 | uint(data[1])<<16 | uint(data[2])<<8 | uint(data[3])
@@ -196,7 +197,7 @@ func (b *StandardBloom) UnmarshalBinary(data []byte) error {
 	bitsetLen := int(data[8])<<24 | int(data[9])<<16 | int(data[10])<<8 | int(data[11])
 
 	if len(data) < 12+bitsetLen {
-		return nil
+		return fmt.Errorf("corrupted data: bitset length %d exceeds available data %d", bitsetLen, len(data)-12)
 	}
 
 	bitsetBytes := data[12 : 12+bitsetLen]

@@ -13,6 +13,9 @@ import (
 // Logger is the global logger instance.
 var Logger *zap.SugaredLogger
 
+// atomicLevel holds the current log level and allows dynamic changes.
+var atomicLevel zap.AtomicLevel
+
 // Level represents log severity level.
 type Level = zapcore.Level
 
@@ -116,10 +119,12 @@ func Init(cfg Config) error {
 		}
 	}
 
+	atomicLevel = zap.NewAtomicLevelAt(cfg.Level)
+
 	core := zapcore.NewCore(
 		encoder,
 		zapcore.NewMultiWriteSyncer(writeSyncers...),
-		cfg.Level,
+		atomicLevel,
 	)
 
 	// Add error core if specified
@@ -150,10 +155,7 @@ func InitProduction() error {
 
 // SetLevel changes the log level dynamically.
 func SetLevel(level Level) {
-	if Logger != nil {
-		// Note: zap doesn't support dynamic level changes easily
-		// This is a limitation; for dynamic levels, use zap.NewAtomicLevel()
-	}
+	atomicLevel.SetLevel(level)
 }
 
 // Debug logs a debug message.

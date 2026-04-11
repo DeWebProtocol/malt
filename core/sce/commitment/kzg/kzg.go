@@ -53,7 +53,7 @@ func NewScheme() (*Scheme, error) {
 
 // Commit generates a KZG commitment for the given arc set.
 func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
-	paths, values := extractSortedPathsValues(arcs)
+	paths, values := commitment.ExtractSortedPathsValues(arcs)
 
 	if len(paths) > MaxValues {
 		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(paths), MaxValues)
@@ -165,7 +165,7 @@ func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) 
 	// Verify KZG proof
 	err = s.context.VerifyKZGProof(kzgComm, inputPoint, claimedValue, kzgProof)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("KZG proof verification failed: %w", err)
 	}
 
 	// Verify the path matches
@@ -471,27 +471,6 @@ func indexToKZGScalar(index int) gokzg4844.Scalar {
 	var scalar gokzg4844.Scalar
 	scalar[31] = byte(index)
 	return scalar
-}
-
-// extractSortedPathsValues extracts sorted paths and values from an ArcSetView.
-func extractSortedPathsValues(arcs arcset.View) ([]string, []cid.Cid) {
-	var paths []string
-	iter := arcs.Iterate()
-	for {
-		path, _, ok := iter.Next()
-		if !ok {
-			break
-		}
-		paths = append(paths, path)
-	}
-	// paths are already sorted by iterator
-
-	values := make([]cid.Cid, len(paths))
-	for i, path := range paths {
-		values[i], _ = arcs.Get(path)
-	}
-
-	return paths, values
 }
 
 // findPathIndex finds the index of a path in the paths slice.

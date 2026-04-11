@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/resolver/step/hamt"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit/codec"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagcbor"
@@ -250,16 +251,7 @@ func codecFromCID(c cid.Cid) string {
 
 // splitPath splits a path into segments.
 func splitPath(path string) []string {
-	if path == "" {
-		return nil
-	}
-	if path[0] == '/' {
-		path = path[1:]
-	}
-	if path == "" {
-		return nil
-	}
-	return strings.Split(path, "/")
+	return step.SplitPath(path)
 }
 
 // hamtResult holds the result of HAMT detection and resolution.

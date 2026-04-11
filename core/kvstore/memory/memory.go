@@ -2,9 +2,9 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
@@ -12,7 +12,7 @@ import (
 
 // hasPrefix checks if a byte slice has the given prefix.
 func hasPrefix(s, prefix []byte) bool {
-	return strings.HasPrefix(string(s), string(prefix))
+	return bytes.HasPrefix(s, prefix)
 }
 
 // KV is an in-memory implementation of kvstore.KVStore.
@@ -165,7 +165,11 @@ func (it *iterator) Value() []byte {
 	if it.index < 0 || it.index >= len(it.keys) {
 		return nil
 	}
-	v, _ := it.kv.Get(context.Background(), it.keys[it.index])
+	v, err := it.kv.Get(context.Background(), it.keys[it.index])
+	if err != nil {
+		it.err = err
+		return nil
+	}
 	return v
 }
 

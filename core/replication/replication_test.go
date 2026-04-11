@@ -65,8 +65,8 @@ func TestExporter_Export(t *testing.T) {
 	kv := kvmemory.New()
 	g := setupTestGraph(t, kv, ctx, "test-graph-1")
 
-	exporter := NewExporter(kv, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(kv)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -110,8 +110,8 @@ func TestExporter_ExportAll(t *testing.T) {
 	store.Update(ctx, g1)
 	store.Update(ctx, g2)
 
-	exporter := NewExporter(kv, ctx)
-	snaps, err := exporter.ExportAll(store)
+	exporter := NewExporter(kv)
+	snaps, err := exporter.ExportAll(ctx, store)
 	if err != nil {
 		t.Fatalf("export all: %v", err)
 	}
@@ -128,16 +128,16 @@ func TestImporter_Import(t *testing.T) {
 	g := setupTestGraph(t, srcKV, ctx, "import-test")
 
 	// Export from source
-	exporter := NewExporter(srcKV, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(srcKV)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
 	// Import to target
 	tgtKV := kvmemory.New()
-	importer := NewImporter(tgtKV, ctx)
-	count, err := importer.Import(snap)
+	importer := NewImporter(tgtKV)
+	count, err := importer.Import(ctx, snap)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -173,8 +173,8 @@ func TestSnapshot_MarshalUnmarshal(t *testing.T) {
 	kv := kvmemory.New()
 	g := setupTestGraph(t, kv, ctx, "marshal-test")
 
-	exporter := NewExporter(kv, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(kv)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -205,8 +205,8 @@ func TestSnapshot_VerifyChecksum(t *testing.T) {
 	kv := kvmemory.New()
 	g := setupTestGraph(t, kv, ctx, "checksum-test")
 
-	exporter := NewExporter(kv, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(kv)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -228,15 +228,15 @@ func TestSnapshot_ImportBadChecksum(t *testing.T) {
 	kv := kvmemory.New()
 	g := setupTestGraph(t, kv, ctx, "bad-checksum-test")
 
-	exporter := NewExporter(kv, ctx)
-	snap, _ := exporter.Export(g)
+	exporter := NewExporter(kv)
+	snap, _ := exporter.Export(ctx, g)
 
 	// Tamper with checksum
 	snap.Checksum = "deadbeef"
 
 	tgtKV := kvmemory.New()
-	importer := NewImporter(tgtKV, ctx)
-	_, err := importer.Import(snap)
+	importer := NewImporter(tgtKV)
+	_, err := importer.Import(ctx, snap)
 	if err == nil {
 		t.Error("expected error for invalid checksum")
 	}
@@ -252,8 +252,8 @@ func TestSyncer_Diff(t *testing.T) {
 	// Empty target
 	tgtKV := kvmemory.New()
 
-	syncer := NewSyncer(srcKV, tgtKV, ctx)
-	diff, err := syncer.Diff()
+	syncer := NewSyncer(srcKV, tgtKV)
+	diff, err := syncer.Diff(ctx)
 	if err != nil {
 		t.Fatalf("diff: %v", err)
 	}
@@ -276,8 +276,8 @@ func TestSyncer_Sync(t *testing.T) {
 	// Empty target
 	tgtKV := kvmemory.New()
 
-	syncer := NewSyncer(srcKV, tgtKV, ctx)
-	result, err := syncer.Sync()
+	syncer := NewSyncer(srcKV, tgtKV)
+	result, err := syncer.Sync(ctx)
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestSyncer_Sync(t *testing.T) {
 	}
 
 	// Verify target now has the data
-	diff, err := syncer.Diff()
+	diff, err := syncer.Diff(ctx)
 	if err != nil {
 		t.Fatalf("diff after sync: %v", err)
 	}
@@ -311,8 +311,8 @@ func TestSyncer_DiffWithExtraInTarget(t *testing.T) {
 	// Only target has this key
 	tgtKV.Put(ctx, []byte("lineage/tgt-only"), []byte("tgt"))
 
-	syncer := NewSyncer(srcKV, tgtKV, ctx)
-	diff, err := syncer.Diff()
+	syncer := NewSyncer(srcKV, tgtKV)
+	diff, err := syncer.Diff(ctx)
 	if err != nil {
 		t.Fatalf("diff: %v", err)
 	}
@@ -355,8 +355,8 @@ func TestExporter_EmptyGraph(t *testing.T) {
 	mgr := graph.NewManager(store)
 	g, _ := mgr.CreateGraph(ctx, "empty-graph", "kzg", "overwrite")
 
-	exporter := NewExporter(kv, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(kv)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export empty graph: %v", err)
 	}
@@ -377,16 +377,16 @@ func TestSyncer_SyncIdempotent(t *testing.T) {
 
 	tgtKV := kvmemory.New()
 
-	syncer := NewSyncer(srcKV, tgtKV, ctx)
+	syncer := NewSyncer(srcKV, tgtKV)
 
 	// First sync
-	result1, err := syncer.Sync()
+	result1, err := syncer.Sync(ctx)
 	if err != nil {
 		t.Fatalf("first sync: %v", err)
 	}
 
 	// Second sync should import nothing
-	result2, err := syncer.Sync()
+	result2, err := syncer.Sync(ctx)
 	if err != nil {
 		t.Fatalf("second sync: %v", err)
 	}
@@ -404,8 +404,8 @@ func TestSnapshot_FileRoundTrip(t *testing.T) {
 	kv := kvmemory.New()
 	g := setupTestGraph(t, kv, ctx, "file-test")
 
-	exporter := NewExporter(kv, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(kv)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -445,8 +445,8 @@ func TestBadgerPersistence(t *testing.T) {
 	g := setupTestGraph(t, srcKV, ctx, "badger-test")
 
 	// Export from memory source
-	exporter := NewExporter(srcKV, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(srcKV)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -456,8 +456,8 @@ func TestBadgerPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create badger: %v", err)
 	}
-	importer := NewImporter(tgtKV, ctx)
-	count, err := importer.Import(snap)
+	importer := NewImporter(tgtKV)
+	count, err := importer.Import(ctx, snap)
 	if err != nil {
 		t.Fatalf("import to badger: %v", err)
 	}

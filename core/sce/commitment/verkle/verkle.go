@@ -46,7 +46,7 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 		return cid.Cid{}, fmt.Errorf("arc set is nil")
 	}
 
-	paths, values := extractSortedPathsValues(arcs)
+	paths, values := commitment.ExtractSortedPathsValues(arcs)
 
 	entry := &cacheEntry{
 		paths:       paths,
@@ -408,26 +408,6 @@ func computeCommitmentFromValues(paths []string, values []cid.Cid) []byte {
 		}
 	}
 	return h.Sum(nil)
-}
-
-// extractSortedPathsValues extracts sorted paths and values from an ArcSetView.
-func extractSortedPathsValues(arcs arcset.View) ([]string, []cid.Cid) {
-	var paths []string
-	iter := arcs.Iterate()
-	for {
-		path, _, ok := iter.Next()
-		if !ok {
-			break
-		}
-		paths = append(paths, path)
-	}
-
-	values := make([]cid.Cid, len(paths))
-	for i, path := range paths {
-		values[i], _ = arcs.Get(path)
-	}
-
-	return paths, values
 }
 
 // Ensure Scheme implements commitment.Scheme.

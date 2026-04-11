@@ -53,8 +53,8 @@ func runReplicationExport(cmd *cobra.Command, args []string) error {
 	}
 
 	kv := node.KVStore()
-	exporter := replication.NewExporter(kv, ctx)
-	snap, err := exporter.Export(g)
+	exporter := replication.NewExporter(kv)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		return fmt.Errorf("export graph: %w", err)
 	}
@@ -104,8 +104,8 @@ func runReplicationImport(cmd *cobra.Command, args []string) error {
 	}
 
 	kv := node.KVStore()
-	importer := replication.NewImporter(kv, cmd.Context())
-	count, err := importer.Import(snap)
+	importer := replication.NewImporter(kv)
+	count, err := importer.Import(cmd.Context(), snap)
 	if err != nil {
 		return fmt.Errorf("import snapshot: %w", err)
 	}
@@ -163,8 +163,8 @@ func runReplicationSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sync using source KV and target KV directly
-	syncer := replication.NewSyncer(srcNode.KVStore(), targetKV, ctx)
-	result, err := syncer.Sync()
+	syncer := replication.NewSyncer(srcNode.KVStore(), targetKV)
+	result, err := syncer.Sync(ctx)
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
@@ -206,8 +206,8 @@ func runReplicationDiff(cmd *cobra.Command, args []string) error {
 	}
 	defer otherKV.Close()
 
-	syncer := replication.NewSyncer(srcNode.KVStore(), otherKV, ctx)
-	diff, err := syncer.Diff()
+	syncer := replication.NewSyncer(srcNode.KVStore(), otherKV)
+	diff, err := syncer.Diff(ctx)
 	if err != nil {
 		return fmt.Errorf("diff: %w", err)
 	}
@@ -253,7 +253,7 @@ func runReplicationExportAll(cmd *cobra.Command, args []string) error {
 	defer node.Close()
 
 	kv := node.KVStore()
-	exporter := replication.NewExporter(kv, cmd.Context())
+	exporter := replication.NewExporter(kv)
 
 	store := graph.NewStore(kv)
 	graphs, err := store.List(cmd.Context())
@@ -271,7 +271,7 @@ func runReplicationExportAll(cmd *cobra.Command, args []string) error {
 		if g.IsDeleted() {
 			continue
 		}
-		snap, err := exporter.Export(g)
+		snap, err := exporter.Export(cmd.Context(), g)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to export %s: %v\n", g.ID, err)
 			continue

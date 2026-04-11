@@ -353,42 +353,6 @@ func (s *Server) handleUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUpdateSingle handles POST /update/{root}
-// Request body: {"path": "<path>", "target": "<cid>"}
-func (s *Server) handleUpdateSingle(w http.ResponseWriter, r *http.Request) {
-	if enableCORS(w, r) {
-		return
-	}
-
-	rootStr := r.PathValue("root")
-
-	var req UpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeBadRequest(w, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-
-	if req.Path == "" {
-		writeBadRequest(w, "path is required")
-		return
-	}
-
-	result, err := s.node.Writer().UpdateArc(context.Background(), "default", rootStr, req.Path, req.Target)
-	if err != nil {
-		writeServerError(w, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, WriteUpdateResponse{
-		OldRoot:   result.OldRoot,
-		NewRoot:   result.NewRoot,
-		Path:      result.Path,
-		OldTarget: result.OldTarget,
-		NewTarget: result.NewTarget,
-		Op:        result.Op,
-	})
-}
-
 // handleBatchUpdate handles POST /update/batch/{root}
 func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
@@ -459,8 +423,13 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 	// Update graph metadata if a graph was specified
 	if req.GraphID != "" {
 		g, err := s.gm.GetGraph(context.Background(), graphID)
-		if err == nil {
-			_, _ = s.gm.UpdateGraph(context.Background(), graphID, decodeCIDOr(rootStr), len(req.Arcs))
+		if err != nil {
+			// Log the error but don't fail the response — structure was still created
+			_ = fmt.Errorf("failed to get graph %q: %w", graphID, err)
+		} else {
+			if _, err := s.gm.UpdateGraph(context.Background(), graphID, decodeCIDOr(rootStr), len(req.Arcs)); err != nil {
+				_ = fmt.Errorf("failed to update graph %q: %w", graphID, err)
+			}
 			_ = g // mark used
 		}
 	}

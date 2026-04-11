@@ -329,9 +329,9 @@ func (m *Manager) UpdateGraph(ctx context.Context, id string, root cid.Cid, arcC
 // Frozen graphs cannot be updated but can still be read.
 func (m *Manager) FreezeGraph(ctx context.Context, id string) error {
 	m.mu.Lock()
-	g, ok := m.graphs[id]
-	m.mu.Unlock()
+	defer m.mu.Unlock()
 
+	g, ok := m.graphs[id]
 	if !ok {
 		var err error
 		g, err = m.store.Get(ctx, id)
@@ -351,9 +351,7 @@ func (m *Manager) FreezeGraph(ctx context.Context, id string) error {
 		return err
 	}
 
-	m.mu.Lock()
 	m.graphs[id] = g
-	m.mu.Unlock()
 
 	return nil
 }

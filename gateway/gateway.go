@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/graph"
@@ -275,14 +274,6 @@ func encodeBase64(b []byte) string {
 // decodeBase64 decodes a base64 string to bytes.
 func decodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
-}
-
-// trimPathPrefix removes the given prefix from the URL path.
-func trimPathPrefix(urlPath, prefix string) string {
-	if strings.HasPrefix(urlPath, prefix) {
-		return strings.TrimPrefix(urlPath, prefix)
-	}
-	return ""
 }
 
 // enableCORS adds CORS headers to responses.

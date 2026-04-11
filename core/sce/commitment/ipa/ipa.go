@@ -56,7 +56,7 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 		return cid.Cid{}, fmt.Errorf("arc set is nil")
 	}
 
-	paths, values := extractSortedPathsValues(arcs)
+	paths, values := commitment.ExtractSortedPathsValues(arcs)
 
 	if len(paths) > MaxValues {
 		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(paths), MaxValues)
@@ -583,26 +583,6 @@ func cidToFieldElement(c cid.Cid) fr.Element {
 	h := sha256.Sum256(bytes)
 	result.SetBytes(h[:])
 	return result
-}
-
-// extractSortedPathsValues extracts sorted paths and values from an ArcSetView.
-func extractSortedPathsValues(arcs arcset.View) ([]string, []cid.Cid) {
-	var paths []string
-	iter := arcs.Iterate()
-	for {
-		path, _, ok := iter.Next()
-		if !ok {
-			break
-		}
-		paths = append(paths, path)
-	}
-
-	values := make([]cid.Cid, len(paths))
-	for i, path := range paths {
-		values[i], _ = arcs.Get(path)
-	}
-
-	return paths, values
 }
 
 // Ensure Scheme implements commitment.Scheme.

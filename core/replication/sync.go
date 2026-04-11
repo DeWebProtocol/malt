@@ -18,15 +18,11 @@ import (
 type Syncer struct {
 	sourceKV kvstore.KVStore
 	targetKV kvstore.KVStore
-	ctx      context.Context
 }
 
 // NewSyncer creates a Syncer that compares source against target.
-func NewSyncer(sourceKV, targetKV kvstore.KVStore, ctx context.Context) *Syncer {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return &Syncer{sourceKV: sourceKV, targetKV: targetKV, ctx: ctx}
+func NewSyncer(sourceKV, targetKV kvstore.KVStore) *Syncer {
+	return &Syncer{sourceKV: sourceKV, targetKV: targetKV}
 }
 
 // DiffResult describes the differences between source and target.
@@ -43,7 +39,7 @@ type DiffResult struct {
 
 // Diff compares all MALT-relevant keys between source and target.
 // Returns a DiffResult describing the differences.
-func (s *Syncer) Diff() (*DiffResult, error) {
+func (s *Syncer) Diff(ctx context.Context) (*DiffResult, error) {
 	diff := &DiffResult{
 		MissingInTarget: []string{},
 		ExtraInTarget:   []string{},
@@ -60,10 +56,10 @@ func (s *Syncer) Diff() (*DiffResult, error) {
 
 	for _, prefix := range prefixes {
 		// Find keys in source
-		sourceKeys := s.collectKeys(prefix)
+		sourceKeys := s.collectKeys(ctx, prefix)
 
 		for key := range sourceKeys {
-			hasTarget, err := s.targetKV.Has(s.ctx, []byte(key))
+			hasTarget, err := s.targetKV.Has(ctx, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("check target key %s: %w", key, err)
 			}
@@ -74,11 +70,11 @@ func (s *Syncer) Diff() (*DiffResult, error) {
 			}
 
 			// Both have this key, compare values
-			srcVal, err := s.sourceKV.Get(s.ctx, []byte(key))
+			srcVal, err := s.sourceKV.Get(ctx, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("get source key %s: %w", key, err)
 			}
-			tgtVal, err := s.targetKV.Get(s.ctx, []byte(key))
+			tgtVal, err := s.targetKV.Get(ctx, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("get target key %s: %w", key, err)
 			}
@@ -89,9 +85,9 @@ func (s *Syncer) Diff() (*DiffResult, error) {
 		}
 
 		// Find keys only in target
-		targetKeys := s.collectTargetKeys(prefix)
+		targetKeys := s.collectTargetKeys(ctx, prefix)
 		for key := range targetKeys {
-			hasSource, err := s.sourceKV.Has(s.ctx, []byte(key))
+			hasSource, err := s.sourceKV.Has(ctx, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("check source key %s: %w", key, err)
 			}
@@ -114,7 +110,7 @@ type SyncResult struct {
 	// Imported is the number of entries imported to target.
 	Imported int
 
-	// MissingInTarget lists keys that were imported.
+	// ImportedKeys lists keys that were imported.
 	ImportedKeys []string
 
 	// Skipped is the number of keys that already matched.
@@ -124,8 +120,8 @@ type SyncResult struct {
 // Sync reconciles source state into target.
 // It imports all missing and mismatched keys from source to target.
 // Extra keys in target are left untouched (they may be from other graphs).
-func (s *Syncer) Sync() (*SyncResult, error) {
-	diff, err := s.Diff()
+func (s *Syncer) Sync(ctx context.Context) (*SyncResult, error) {
+	diff, err := s.Diff(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("diff: %w", err)
 	}
@@ -136,11 +132,11 @@ func (s *Syncer) Sync() (*SyncResult, error) {
 
 	// Import missing keys
 	for _, key := range diff.MissingInTarget {
-		val, err := s.sourceKV.Get(s.ctx, []byte(key))
+		val, err := s.sourceKV.Get(ctx, []byte(key))
 		if err != nil {
 			return result, fmt.Errorf("get source key %s: %w", key, err)
 		}
-		if err := s.targetKV.Put(s.ctx, []byte(key), val); err != nil {
+		if err := s.targetKV.Put(ctx, []byte(key), val); err != nil {
 			return result, fmt.Errorf("put target key %s: %w", key, err)
 		}
 		result.Imported++
@@ -149,11 +145,11 @@ func (s *Syncer) Sync() (*SyncResult, error) {
 
 	// Overwrite mismatched keys
 	for _, key := range diff.Mismatched {
-		val, err := s.sourceKV.Get(s.ctx, []byte(key))
+		val, err := s.sourceKV.Get(ctx, []byte(key))
 		if err != nil {
 			return result, fmt.Errorf("get source key %s: %w", key, err)
 		}
-		if err := s.targetKV.Put(s.ctx, []byte(key), val); err != nil {
+		if err := s.targetKV.Put(ctx, []byte(key), val); err != nil {
 			return result, fmt.Errorf("put target key %s: %w", key, err)
 		}
 		result.Imported++
@@ -168,18 +164,14 @@ func (s *Syncer) Sync() (*SyncResult, error) {
 // SyncGraphs exports a graph from source store and imports to target store.
 // This is a convenience function that combines Export + Import.
 func SyncGraphs(sourceKV, targetKV kvstore.KVStore, g *graph.Graph, ctx context.Context) (int, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	exporter := NewExporter(sourceKV, ctx)
-	snap, err := exporter.Export(g)
+	exporter := NewExporter(sourceKV)
+	snap, err := exporter.Export(ctx, g)
 	if err != nil {
 		return 0, fmt.Errorf("export: %w", err)
 	}
 
-	importer := NewImporter(targetKV, ctx)
-	count, err := importer.Import(snap)
+	importer := NewImporter(targetKV)
+	count, err := importer.Import(ctx, snap)
 	if err != nil {
 		return count, fmt.Errorf("import: %w", err)
 	}
@@ -188,9 +180,9 @@ func SyncGraphs(sourceKV, targetKV kvstore.KVStore, g *graph.Graph, ctx context.
 }
 
 // collectKeys returns all keys with the given prefix from source KVStore.
-func (s *Syncer) collectKeys(prefix []byte) map[string]struct{} {
+func (s *Syncer) collectKeys(ctx context.Context, prefix []byte) map[string]struct{} {
 	keys := make(map[string]struct{})
-	iter := s.sourceKV.NewIterator(s.ctx, prefix, nil)
+	iter := s.sourceKV.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
 	for iter.Next() {
@@ -200,9 +192,9 @@ func (s *Syncer) collectKeys(prefix []byte) map[string]struct{} {
 }
 
 // collectTargetKeys returns all keys with the given prefix from target KVStore.
-func (s *Syncer) collectTargetKeys(prefix []byte) map[string]struct{} {
+func (s *Syncer) collectTargetKeys(ctx context.Context, prefix []byte) map[string]struct{} {
 	keys := make(map[string]struct{})
-	iter := s.targetKV.NewIterator(s.ctx, prefix, nil)
+	iter := s.targetKV.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
 	for iter.Next() {

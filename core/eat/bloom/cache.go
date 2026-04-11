@@ -202,7 +202,9 @@ func (bc *BloomCache) CreateBucket(ctx context.Context, bucketId string, cfg *Bu
 	}
 
 	// Check if bucket already exists
-	if meta, _ := bc.GetBucketMeta(ctx, bucketId); meta != nil {
+	if meta, err := bc.GetBucketMeta(ctx, bucketId); err != nil {
+		return fmt.Errorf("failed to check bucket existence: %w", err)
+	} else if meta != nil {
 		return fmt.Errorf("bucket %s already exists", bucketId)
 	}
 
