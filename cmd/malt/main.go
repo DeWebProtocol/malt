@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -36,7 +35,16 @@ var rootCmd = &cobra.Command{
 structures on top of content-addressed storage.
 
 It enables mutable references on immutable content-addressed data structures,
-supporting cryptographic proofs and efficient updates.`,
+supporting cryptographic proofs and efficient updates.
+
+Commands:
+  graph       Manage graphs (create, delete, list, freeze)
+  resolve     Resolve paths through MALT structures
+  update      Update arcs in structures
+  prove       Generate proofs for path resolution
+  verify      Verify resolution transcripts
+  benchmark   Run quick benchmarks
+  eval        Run comprehensive evaluation`,
 	Version: Version,
 }
 
@@ -74,19 +82,10 @@ func init() {
 }
 
 func main() {
-	cobra.OnInitialize(initConfig)
+	cobra.OnInitialize(loadConfig)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-}
-
-func initConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
-	}
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}
 }
 
