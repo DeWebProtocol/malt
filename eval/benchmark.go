@@ -63,12 +63,12 @@ func AllEATTypes() []EATType {
 func NewEAT(t EATType, kv kvstore.KVStore) (eat.EAT, error) {
 	switch t {
 	case EATOverwrite:
-		return overwrite.NewEAT(kv)
+		return overwrite.NewEAT(overwrite.WithKVStore(kv))
 	case EATVersioned:
-		return versioned.NewEAT(kv)
+		return versioned.NewEAT(versioned.WithKVStore(kv))
 	case EATBloom:
 		bloomCache := bloom.NewBloomCache(kv, 16*1024*1024) // 16MB default
-		return versioned.NewEATWithBloomCache(kv, bloomCache)
+		return versioned.NewEAT(versioned.WithKVStore(kv), versioned.WithBloomCache(bloomCache))
 	default:
 		return nil, fmt.Errorf("unknown EAT type: %s", t)
 	}

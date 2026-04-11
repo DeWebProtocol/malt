@@ -23,7 +23,7 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, *sce.Engine, *kvg) {
 	kv := kvmemory.New()
 
 	// Overwrite EAT
-	e, err := overwrite.NewEAT(kv)
+	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("failed to create EAT: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestWriter_GetSnapshot(t *testing.T) {
 func TestWriter_LineageRecorder(t *testing.T) {
 	// Memory KVStore
 	kv := kvmemory.New()
-	e, _ := overwrite.NewEAT(kv)
+	e, _ := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
 	rec := &mockLineageRecorder{}

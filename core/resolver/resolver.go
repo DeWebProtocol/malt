@@ -72,7 +72,7 @@ type StepEvidence struct {
 //   - The target cannot be resolved further
 func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 	if !root.Defined() {
-		return nil, fmt.Errorf("root is not defined")
+		return nil, ErrUndefinedRoot
 	}
 
 	transcript := &Transcript{Steps: make([]StepEvidence, 0)}
@@ -108,7 +108,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("resolution failed: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrResolutionFailed, err)
 		}
 
 		// If no path was matched, we can't continue
@@ -164,7 +164,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 // VerifyTranscript verifies all steps in a transcript.
 func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, error) {
 	if transcript == nil {
-		return false, fmt.Errorf("transcript is nil")
+		return false, ErrTranscriptNil
 	}
 
 	currentRoot := root
@@ -179,11 +179,11 @@ func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool,
 			// (HAMT is detected and handled inside the implicit step)
 			s = r.implicitStep
 		default:
-			return false, fmt.Errorf("unknown evidence kind: %v", stepEv.Evidence.Kind())
+			return false, fmt.Errorf("%w: %v", ErrUnknownEvidenceKind, stepEv.Evidence.Kind())
 		}
 
 		if s == nil {
-			return false, fmt.Errorf("step executor not available for evidence kind: %v", stepEv.Evidence.Kind())
+			return false, fmt.Errorf("%w for evidence kind: %v", ErrStepExecutorNotAvailable, stepEv.Evidence.Kind())
 		}
 
 		valid, err := s.Verify(currentRoot, stepEv.Path, stepEv.Target, stepEv.Evidence)

@@ -184,14 +184,14 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 func (n *Node) initEAT() error {
 	switch n.cfg.EATType {
 	case "simple", "overwrite":
-		e, err := overwrite.NewEAT(n.kv)
+		e, err := overwrite.NewEAT(overwrite.WithKVStore(n.kv))
 		if err != nil {
 			return err
 		}
 		n.eat = e
 		return nil
 	case "versioned":
-		e, err := versioned.NewEAT(n.kv)
+		e, err := versioned.NewEAT(versioned.WithKVStore(n.kv))
 		if err != nil {
 			return err
 		}

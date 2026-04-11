@@ -30,7 +30,7 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 // newTestEAT creates a new EAT for testing.
 func newTestEAT() *overwrite.EAT {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(kv)
+	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	if err != nil {
 		panic(err)
 	}

@@ -25,7 +25,7 @@ func TestEATNew(t *testing.T) {
 	kv := kvstore_memory.New()
 
 	// Valid creation
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestEATNew(t *testing.T) {
 	}
 
 	// Nil KVStore
-	_, err = NewEAT(nil)
+	_, err = NewEAT()
 	if err == nil {
 		t.Error("expected error for nil KVStore")
 	}
@@ -42,7 +42,7 @@ func TestEATNew(t *testing.T) {
 
 func TestEATUpdateAndGet(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestEATUpdateAndGet(t *testing.T) {
 
 func TestEATGetWithoutRoot(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestEATGetWithoutRoot(t *testing.T) {
 
 func TestEATDeleteViaUpdate(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestEATDeleteViaUpdate(t *testing.T) {
 
 func TestEATSnapshot(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestEATSnapshot(t *testing.T) {
 
 func TestEATIterate(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestEATIterate(t *testing.T) {
 func TestEATMultipleBuckets(t *testing.T) {
 	kv := kvstore_memory.New() // Shared KVStore
 
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestEATMultipleBuckets(t *testing.T) {
 
 func TestEATBatchGet(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestEATBatchGet(t *testing.T) {
 
 func TestEATBatchGetAfterUpdate(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestEATBatchGetAfterUpdate(t *testing.T) {
 
 func TestEATBatchGetAfterDelete(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestEATBatchGetAfterDelete(t *testing.T) {
 
 func TestEATBatchUpdate(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -699,7 +699,7 @@ func TestEATBloomFilterOptimization(t *testing.T) {
 
 func TestEATWithoutBloomCache(t *testing.T) {
 	kv := kvstore_memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 
 	ctx := context.Background()
 	bucketId := "no-bloom-graph"
@@ -733,7 +733,7 @@ func TestEATWithoutBloomCache(t *testing.T) {
 
 func BenchmarkOverwriteEATGet(b *testing.B) {
 	kv := kvstore_memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 	root := newTestCID([]byte("root"))
@@ -760,7 +760,7 @@ func BenchmarkOverwriteEATGet(b *testing.B) {
 
 func BenchmarkOverwriteEATUpdate(b *testing.B) {
 	kv := kvstore_memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -784,7 +784,7 @@ func BenchmarkOverwriteEATUpdate(b *testing.B) {
 
 func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 	kv := kvstore_memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 	root := newTestCID([]byte("root"))
@@ -810,7 +810,7 @@ func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 
 func BenchmarkOverwriteEATIterate(b *testing.B) {
 	kv := kvstore_memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 	root := newTestCID([]byte("root"))

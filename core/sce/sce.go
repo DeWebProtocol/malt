@@ -51,7 +51,7 @@ func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
 
 	if arcs == nil {
 		logger.Error("SCE.Commit nil arc set")
-		return cid.Cid{}, fmt.Errorf("arc set is nil")
+		return cid.Cid{}, ErrNilArcSet
 	}
 
 	// Delegate to commitment scheme
@@ -118,7 +118,7 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []
 	if !ok {
 		logger.Warn("SCE.Prove session not found",
 			logger.String("root", root.String()))
-		return cid.Cid{}, nil, fmt.Errorf("commitment session not found")
+		return cid.Cid{}, nil, ErrSessionNotFound
 	}
 
 	_, ok = arcs.Get(path)
@@ -126,7 +126,7 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []
 		logger.Error("SCE.Prove path not found in arc set",
 			logger.String("root", root.String()),
 			logger.String("path", path))
-		return cid.Cid{}, nil, fmt.Errorf("path %s not found in arc set", path)
+		return cid.Cid{}, nil, ErrPathNotFound
 	}
 
 	_, ok = sess.pathToIndex[path]
@@ -134,7 +134,7 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []
 		logger.Error("SCE.Prove path not found in session",
 			logger.String("root", root.String()),
 			logger.String("path", path))
-		return cid.Cid{}, nil, fmt.Errorf("path %s not found in session", path)
+		return cid.Cid{}, nil, ErrPathNotFound
 	}
 
 	target, proof, err := e.scheme.Prove(root, arcs, path)
@@ -208,7 +208,7 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 	if !ok {
 		logger.Warn("SCE.Update session not found",
 			logger.String("root", root.String()))
-		return cid.Cid{}, fmt.Errorf("commitment session not found")
+		return cid.Cid{}, ErrSessionNotFound
 	}
 
 	_, ok = sess.pathToIndex[path]
@@ -216,7 +216,7 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 		logger.Error("SCE.Update path not found in session",
 			logger.String("root", root.String()),
 			logger.String("path", path))
-		return cid.Cid{}, fmt.Errorf("path %s not found in session", path)
+		return cid.Cid{}, ErrPathNotFound
 	}
 
 	newComm, err := e.scheme.Update(root, arcs, path, oldKey, newKey)
@@ -266,13 +266,13 @@ func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.View, updates map[string]
 
 	sess, ok := e.sessions[string(commBytes)]
 	if !ok {
-		return cid.Cid{}, fmt.Errorf("commitment session not found")
+		return cid.Cid{}, ErrSessionNotFound
 	}
 
 	// Validate all paths exist
 	for path := range updates {
 		if _, ok := sess.pathToIndex[path]; !ok {
-			return cid.Cid{}, fmt.Errorf("path %s not found in session", path)
+			return cid.Cid{}, ErrPathNotFound
 		}
 	}
 
@@ -306,7 +306,7 @@ func (e *Engine) BatchProve(root cid.Cid, arcs arcset.View, paths []string) (map
 	}
 
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("paths cannot be empty")
+		return nil, fmt.Errorf("paths must not be empty")
 	}
 
 	e.mu.RLock()
@@ -314,13 +314,13 @@ func (e *Engine) BatchProve(root cid.Cid, arcs arcset.View, paths []string) (map
 	e.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("commitment session not found")
+		return nil, ErrSessionNotFound
 	}
 
 	// Validate all paths exist
 	for _, path := range paths {
 		if _, ok := sess.pathToIndex[path]; !ok {
-			return nil, fmt.Errorf("path %s not found in session", path)
+			return nil, ErrPathNotFound
 		}
 	}
 
@@ -341,7 +341,7 @@ func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.View, paths []string) 
 	}
 
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("paths cannot be empty")
+		return nil, fmt.Errorf("paths must not be empty")
 	}
 
 	e.mu.RLock()
@@ -349,13 +349,13 @@ func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.View, paths []string) 
 	e.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("commitment session not found")
+		return nil, ErrSessionNotFound
 	}
 
 	// Validate all paths exist
 	for _, path := range paths {
 		if _, ok := sess.pathToIndex[path]; !ok {
-			return nil, fmt.Errorf("path %s not found in session", path)
+			return nil, ErrPathNotFound
 		}
 	}
 

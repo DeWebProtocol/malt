@@ -29,26 +29,38 @@ type EAT struct {
 	bloomCache *bloom.BloomCache // Optional, can be nil
 }
 
-// NewEAT creates a new EAT with the given KVStore.
-// Bloom filter is disabled by default.
-func NewEAT(kv kvstore.KVStore) (*EAT, error) {
-	if kv == nil {
+// NewEAT creates a new EAT with the given KVStore and optional configuration.
+// Bloom filter is disabled by default; use WithBloomCache to enable it.
+//
+// Example usage:
+//
+//	// Simple: use defaults
+//	eat, _ := overwrite.NewEAT(overwrite.WithKVStore(kv))
+//
+//	// With bloom cache
+//	eat, _ := overwrite.NewEAT(
+//	    overwrite.WithKVStore(kv),
+//	    overwrite.WithBloomCache(bloomCache),
+//	)
+func NewEAT(opts ...Option) (*EAT, error) {
+	o := defaultOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	if o.kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
 	return &EAT{
-		kv: kv,
+		kv:         o.kv,
+		bloomCache: o.bloomCache,
 	}, nil
 }
 
 // NewEATWithBloomCache creates a new EAT with BloomCache for fast negative lookups.
+// Deprecated: Use NewEAT with WithBloomCache option instead.
 func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EAT, error) {
-	if kv == nil {
-		return nil, fmt.Errorf("KVStore is required")
-	}
-	return &EAT{
-		kv:         kv,
-		bloomCache: bloomCache,
-	}, nil
+	return NewEAT(WithKVStore(kv), WithBloomCache(bloomCache))
 }
 
 

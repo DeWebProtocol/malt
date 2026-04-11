@@ -25,7 +25,7 @@ func TestVersionedEATNew(t *testing.T) {
 	kv := memory.New()
 
 	// Valid creation
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestVersionedEATNew(t *testing.T) {
 	}
 
 	// Nil KVStore
-	_, err = NewEAT(nil)
+	_, err = NewEAT()
 	if err == nil {
 		t.Error("expected error for nil KVStore")
 	}
@@ -42,7 +42,7 @@ func TestVersionedEATNew(t *testing.T) {
 
 func TestVersionedEATUpdate(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestVersionedEATUpdate(t *testing.T) {
 
 func TestVersionedEATVersionChain(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 
 func TestVersionedEATGetParent(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestVersionedEATGetParent(t *testing.T) {
 
 func TestVersionedEATSnapshot(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestVersionedEATSnapshot(t *testing.T) {
 
 func TestVersionedEATBatchGet(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 
 func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 
 func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 
 func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
 
 func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 func TestVersionedEATMultipleBuckets(t *testing.T) {
 	kv := memory.New() // Shared KVStore
 
-	eat, err := NewEAT(kv)
+	eat, err := NewEAT(WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("NewEAT failed: %v", err)
 	}
@@ -824,7 +824,7 @@ func TestVersionedEATBloomUpdateOnUpdate(t *testing.T) {
 
 func TestVersionedEATWithoutBloomCache(t *testing.T) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 
 	ctx := context.Background()
 	bucketId := "no-bloom-graph"
@@ -875,7 +875,7 @@ func setupVersionChain(ctx context.Context, eat *EAT, bucketId string, chainLeng
 
 func BenchmarkVersionedEATGet(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -896,7 +896,7 @@ func BenchmarkVersionedEATGet(b *testing.B) {
 
 func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -917,7 +917,7 @@ func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
 
 func BenchmarkVersionedEATUpdate(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -946,7 +946,7 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 
 func BenchmarkVersionedEATSnapshot(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -966,7 +966,7 @@ func BenchmarkVersionedEATSnapshot(b *testing.B) {
 
 func BenchmarkVersionedEATIterate(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -992,7 +992,7 @@ func BenchmarkVersionedEATIterate(b *testing.B) {
 
 func BenchmarkVersionedEATGetParent(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(kv)
+	eat, _ := NewEAT(WithKVStore(kv))
 	bucketId := "bench-graph"
 
 	chainLengths := []int{10, 50, 100}
