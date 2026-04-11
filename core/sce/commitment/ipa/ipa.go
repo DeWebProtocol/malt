@@ -20,6 +20,9 @@ import (
 const (
 	// MaxValues is the maximum number of values per commitment.
 	MaxValues = 256
+	// MaxAuxEntries is the maximum number of cached commitments.
+	// When exceeded, the oldest entries are evicted.
+	MaxAuxEntries = 1024
 )
 
 // Scheme implements commitment.Scheme using Inner Product Arguments.
@@ -28,6 +31,7 @@ type Scheme struct {
 
 	mu       sync.RWMutex
 	auxStore map[string]*auxData
+	order    []string // tracks insertion order for LRU eviction
 }
 
 type auxData struct {
@@ -47,6 +51,7 @@ func NewScheme() (*Scheme, error) {
 	return &Scheme{
 		ipaConfig: ipaConfig,
 		auxStore:  make(map[string]*auxData),
+		order:     make([]string, 0, MaxAuxEntries),
 	}, nil
 }
 
@@ -81,12 +86,14 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 
 	commBytes := comm.Bytes()
 	s.mu.Lock()
+	s.evictLocked()
 	s.auxStore[string(commBytes[:])] = &auxData{
 		vector:      vector,
 		paths:       paths,
 		values:      values,
 		pathToIndex: pathToIndex,
 	}
+	s.order = append(s.order, string(commBytes[:]))
 	s.mu.Unlock()
 
 	// Create MALT CID from commitment bytes
@@ -223,7 +230,9 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.View, path string, oldValue, n
 
 	aux.vector[updateIndex] = newElement
 	aux.values[updateIndex] = newValue
+	s.evictLocked()
 	s.auxStore[string(result[:])] = aux
+	s.order = append(s.order, string(result[:]))
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewIPACid(result[:])
@@ -276,7 +285,9 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]
 		aux.values[index] = update.New
 	}
 
+	s.evictLocked()
 	s.auxStore[string(commBytes)] = aux
+	s.order = append(s.order, string(commBytes))
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewIPACid(commBytes)
@@ -575,6 +586,21 @@ func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, error) {
 	proof.A_scalar.SetBytesLE(data[offset : offset+32])
 
 	return proof, nil
+}
+
+// evictLocked removes the oldest half of the cache when capacity is exceeded.
+// Must be called with s.mu held.
+func (s *Scheme) evictLocked() {
+	if len(s.auxStore) < MaxAuxEntries {
+		return
+	}
+	// Evict oldest half
+	evictCount := MaxAuxEntries / 2
+	for i := 0; i < evictCount && len(s.order) > 0; i++ {
+		key := s.order[0]
+		s.order = s.order[1:]
+		delete(s.auxStore, key)
+	}
 }
 
 func cidToFieldElement(c cid.Cid) fr.Element {

@@ -154,8 +154,8 @@ func (b *StandardBloom) EstimatedFalsePositiveRate() float64 {
 	return math.Pow(1-math.Exp(-k*n/m), k)
 }
 
-// Capacity returns the expected capacity.
-func (b *StandardBloom) Capacity() uint64 {
+// OptimalItemCount returns the expected optimal number of items for this bloom filter.
+func (b *StandardBloom) OptimalItemCount() uint64 {
 	return uint64(float64(b.m) * math.Log(2) / float64(b.k))
 }
 

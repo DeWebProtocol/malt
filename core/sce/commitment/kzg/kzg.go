@@ -22,6 +22,9 @@ const (
 	MaxValues = 4096
 	// ProofSize is the size of a KZG proof in bytes.
 	ProofSize = 84
+	// MaxCacheEntries is the maximum number of cached commitments.
+	// When exceeded, the oldest entries are evicted.
+	MaxCacheEntries = 1024
 )
 
 // Scheme implements commitment.Scheme using KZG polynomial commitments.
@@ -30,6 +33,7 @@ type Scheme struct {
 
 	mu    sync.RWMutex
 	cache map[string]*cacheEntry
+	order []string // tracks insertion order for LRU eviction
 }
 
 type cacheEntry struct {
@@ -48,6 +52,7 @@ func NewScheme() (*Scheme, error) {
 	return &Scheme{
 		context: context,
 		cache:   make(map[string]*cacheEntry),
+		order:   make([]string, 0, MaxCacheEntries),
 	}, nil
 }
 
@@ -78,11 +83,13 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 	// Cache the entry
 	commBytes := comm[:]
 	s.mu.Lock()
+	s.evictLocked()
 	s.cache[string(commBytes)] = &cacheEntry{
 		blob:   blob,
 		paths:  paths,
 		values: values,
 	}
+	s.order = append(s.order, string(commBytes))
 	s.mu.Unlock()
 
 	// Create MALT CID from commitment bytes
@@ -212,7 +219,9 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.View, path string, oldValue, n
 	}
 
 	newCommBytes := newComm[:]
+	s.evictLocked()
 	s.cache[string(newCommBytes)] = entry
+	s.order = append(s.order, string(newCommBytes))
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewKZGCid(newCommBytes)
@@ -257,7 +266,9 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]
 	}
 
 	newCommBytes := newComm[:]
+	s.evictLocked()
 	s.cache[string(newCommBytes)] = entry
+	s.order = append(s.order, string(newCommBytes))
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewKZGCid(newCommBytes)
@@ -489,6 +500,21 @@ func findPathIndex(paths []string, path string) (int, bool) {
 		}
 	}
 	return -1, false
+}
+
+// evictLocked removes the oldest half of the cache when capacity is exceeded.
+// Must be called with s.mu held.
+func (s *Scheme) evictLocked() {
+	if len(s.cache) < MaxCacheEntries {
+		return
+	}
+	// Evict oldest half
+	evictCount := MaxCacheEntries / 2
+	for i := 0; i < evictCount && len(s.order) > 0; i++ {
+		key := s.order[0]
+		s.order = s.order[1:]
+		delete(s.cache, key)
+	}
 }
 
 // Ensure Scheme implements commitment.Scheme.
