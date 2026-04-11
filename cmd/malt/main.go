@@ -44,7 +44,8 @@ Commands:
   prove       Generate proofs for path resolution
   verify      Verify resolution transcripts
   benchmark   Run quick benchmarks
-  eval        Run comprehensive evaluation`,
+  eval        Run comprehensive evaluation
+  sidecar     Run as a sidecar alongside IPFS daemon`,
 	Version: Version,
 }
 
