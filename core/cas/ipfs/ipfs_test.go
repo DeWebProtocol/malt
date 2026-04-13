@@ -1,4 +1,4 @@
-package ipfslocal
+package ipfs
 
 import (
 	"context"

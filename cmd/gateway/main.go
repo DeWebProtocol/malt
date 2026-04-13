@@ -14,7 +14,7 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
-	"github.com/dewebprotocol/malt/core/cas/ipfslocal"
+	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	"github.com/dewebprotocol/malt/gateway"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -78,7 +78,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 	// If --ipfs-api is specified, use local IPFS daemon as CAS (full read+write)
 	if ipfsAPI != "" {
-		casClient := ipfslocal.NewClient("http://" + ipfsAPI)
+		casClient := ipfs.NewClient("http://" + ipfsAPI)
 		nodeOpts = append(nodeOpts, api.WithCAS(casClient))
 		log.Printf("Using local IPFS daemon as CAS: %s", ipfsAPI)
 	}

@@ -1,10 +1,6 @@
-// Package ipfslocal provides a CAS client that communicates with a local
-// IPFS daemon via its API. Unlike the HTTP gateway client, this supports
-// both read and write operations.
-//
-// The local IPFS daemon API is typically available at localhost:5001.
-// This is the CAS backend used by the gateway when --ipfs-api is specified.
-package ipfslocal
+// Package ipfs provides a CAS client that communicates with a local
+// IPFS daemon via its API, supporting both read and write operations.
+package ipfs
 
 import (
 	"bytes"
@@ -14,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/cas"
 	cid "github.com/ipfs/go-cid"
@@ -25,12 +22,39 @@ type Client struct {
 	client *http.Client
 }
 
-// NewClient creates a new IPFS local daemon client.
+// Option configures an IPFS client.
+type Option func(*options)
+
+type options struct {
+	timeout time.Duration
+}
+
+func defaultOptions() *options {
+	return &options{
+		timeout: 30 * time.Second,
+	}
+}
+
+// WithTimeout sets the HTTP request timeout.
+func WithTimeout(timeout time.Duration) Option {
+	return func(o *options) {
+		o.timeout = timeout
+	}
+}
+
+// NewClient creates a new IPFS daemon API client.
 // apiURL is the IPFS API endpoint, e.g. "http://localhost:5001".
-func NewClient(apiURL string) *Client {
+func NewClient(apiURL string, opts ...Option) *Client {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &Client{
 		apiURL: apiURL,
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout: options.timeout,
+		},
 	}
 }
 
@@ -64,8 +88,6 @@ func (c *Client) Get(ctx context.Context, cID cid.Cid) ([]byte, error) {
 
 // Put stores a block to the local IPFS node.
 func (c *Client) Put(ctx context.Context, data []byte) (cid.Cid, error) {
-	// Use /api/v0/block/put to store raw data
-	// First put the block, then get its CID
 	url := fmt.Sprintf("%s/api/v0/block/put", c.apiURL)
 
 	body := &bytes.Buffer{}
@@ -116,7 +138,6 @@ func (c *Client) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 
 // Has checks if a block exists in the local IPFS node.
 func (c *Client) Has(ctx context.Context, cID cid.Cid) (bool, error) {
-	// Use /api/v0/block/stat to check existence
 	url := fmt.Sprintf("%s/api/v0/block/stat?arg=%s", c.apiURL, cID.String())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
@@ -126,7 +147,6 @@ func (c *Client) Has(ctx context.Context, cID cid.Cid) (bool, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		// Network error - IPFS daemon might not be running
 		return false, fmt.Errorf("failed to check block: %w", err)
 	}
 	defer resp.Body.Close()

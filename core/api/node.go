@@ -8,7 +8,7 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/cas/ipfsgateway"
+	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
@@ -209,9 +209,9 @@ func (n *Node) initCAS() (cas.Client, error) {
 		return casmock.NewCAS(), nil
 	case "ipfs-gateway":
 		timeout, _ := n.cfg.CASTimeout()
-		return ipfsgateway.NewClient(
-			ipfsgateway.WithGatewayURL(n.cfg.CAS.GatewayURL),
-			ipfsgateway.WithTimeout(timeout),
+		return ipfs.NewClient(
+			n.cfg.CAS.GatewayURL,
+			ipfs.WithTimeout(timeout),
 		), nil
 	default:
 		return nil, fmt.Errorf("unknown cas type: %s", n.cfg.CASType)
