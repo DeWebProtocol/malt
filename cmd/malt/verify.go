@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/spf13/cobra"
 )
@@ -71,7 +71,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing transcript: %w", err)
 	}
 
-	steps := make([]resolver.StepEvidence, len(input.Steps))
+	steps := make([]interfaces.StepEvidence, len(input.Steps))
 	for i, step := range input.Steps {
 		targetCid, err := parseCID(step.Target)
 		if err != nil {
@@ -95,14 +95,14 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("step %d: unknown evidence kind %q", i, step.Kind)
 		}
 
-		steps[i] = resolver.StepEvidence{
+		steps[i] = interfaces.StepEvidence{
 			Path:     step.Path,
 			Target:   targetCid,
 			Evidence: ev,
 		}
 	}
 
-	transcript := &resolver.Transcript{Steps: steps}
+	transcript := &interfaces.Transcript{Steps: steps}
 	valid, err := node.HybridResolver().VerifyTranscript(rootCid, transcript)
 	if err != nil {
 		return fmt.Errorf("verification failed: %w", err)

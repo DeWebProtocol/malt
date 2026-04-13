@@ -7,8 +7,8 @@ import (
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/graph"
+	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/lineage"
-	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/writer"
@@ -105,7 +105,7 @@ func (na *NodeAdapter) VerifyTranscript(rootStr string, transcript *Transcript) 
 	}
 
 	// Reconstruct the resolver's Transcript type
-	steps := make([]resolver.StepEvidence, len(transcript.Steps))
+	steps := make([]interfaces.StepEvidence, len(transcript.Steps))
 	for i, step := range transcript.Steps {
 		targetCid, err := decodeCID(step.Target)
 		if err != nil {
@@ -124,14 +124,14 @@ func (na *NodeAdapter) VerifyTranscript(rootStr string, transcript *Transcript) 
 			return false, fmt.Errorf("unknown evidence kind: %s", step.Kind)
 		}
 
-		steps[i] = resolver.StepEvidence{
+		steps[i] = interfaces.StepEvidence{
 			Path:     step.Path,
 			Target:   targetCid,
 			Evidence: ev,
 		}
 	}
 
-	resolverTranscript := &resolver.Transcript{Steps: steps}
+	resolverTranscript := &interfaces.Transcript{Steps: steps}
 	return na.node.HybridResolver().VerifyTranscript(rootCid, resolverTranscript)
 }
 

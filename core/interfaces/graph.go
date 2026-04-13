@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -35,7 +36,7 @@ type StepEvidence struct {
 	Target cid.Cid
 
 	// Evidence is the cryptographic evidence for this step
-	Evidence interface{} // evidence.Evidence from core/types/evidence
+	Evidence evidence.Evidence
 }
 
 // AggregatedProof represents a batch proof for multiple paths.
@@ -65,15 +66,8 @@ func (p *AggregatedProof) Size() int {
 	return len(p.ProofData)
 }
 
-// Graph is the core interface for MALT graph operations.
-// Design principle: stateless - root is always passed as parameter.
-// This allows multiple graph versions to be handled without concurrency control.
-//
-// The Graph interface combines:
-// - Resolution: traversing paths via explicit/implicit arcs
-// - Update: modifying arcs and generating new commitments
-// - Verification: proving and verifying arc membership
-type Graph interface {
+// GraphResolver is the read-only interface for MALT graph resolution.
+type GraphResolver interface {
 	// Resolve resolves a path from a root CID, returning the target and proof.
 	// The resolution follows explicit arcs (MALT) and implicit arcs (Merkle DAG).
 	// Returns the resolved CID and a proof that can be verified.
@@ -84,6 +78,15 @@ type Graph interface {
 	// This is more efficient than individual Resolve calls.
 	BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *AggregatedProof, error)
 
+	// Verify verifies a proof against a root and expected target.
+	Verify(ctx context.Context, root cid.Cid, proof Proof, expectedTarget cid.Cid) (bool, error)
+
+	// BatchVerify verifies an aggregated proof against a root.
+	BatchVerify(ctx context.Context, root cid.Cid, aggProof *AggregatedProof) (bool, error)
+}
+
+// GraphWriter is the write-side interface for MALT graph mutations.
+type GraphWriter interface {
 	// Update updates arcs under a root, returning the new root and deltas.
 	// Arcs to delete should have cid.Undef as target.
 	// The new root is a new commitment to the updated arc set.
@@ -93,12 +96,6 @@ type Graph interface {
 	// Kept for API consistency.
 	BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *UpdateDelta, error)
 
-	// Verify verifies a proof against a root and expected target.
-	Verify(ctx context.Context, root cid.Cid, proof Proof, expectedTarget cid.Cid) (bool, error)
-
-	// BatchVerify verifies an aggregated proof against a root.
-	BatchVerify(ctx context.Context, root cid.Cid, aggProof *AggregatedProof) (bool, error)
-
 	// Snapshot returns an immutable view of the arc set under a root.
 	// This is used to generate new commitments or for state export.
 	Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error)
@@ -106,6 +103,12 @@ type Graph interface {
 	// Commit generates a new commitment from a snapshot.
 	// Returns the new root CID.
 	Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error)
+}
+
+// Graph is the full interface combining resolution and mutation.
+type Graph interface {
+	GraphResolver
+	GraphWriter
 }
 
 // UpdateDelta records the changes from an update operation.

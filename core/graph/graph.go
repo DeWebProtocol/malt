@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/interfaces"
-	"github.com/dewebprotocol/malt/core/graph/resolver"
+	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
@@ -19,7 +19,7 @@ type Graph struct {
 	arcStore     interfaces.ArcStore
 	contentStore interfaces.ContentStore
 	backend      interfaces.CommitmentBackend
-	resolver     resolver.Resolver
+	resolver     *resolver.Resolver
 }
 
 // NewGraph creates a new stateless Graph with the given components.
@@ -27,7 +27,7 @@ func NewGraph(
 	arcStore interfaces.ArcStore,
 	contentStore interfaces.ContentStore,
 	backend interfaces.CommitmentBackend,
-	resolver resolver.Resolver,
+	resolver *resolver.Resolver,
 ) *Graph {
 	return &Graph{
 		arcStore:     arcStore,
@@ -43,7 +43,7 @@ func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
 
-	result, err := g.resolver.Resolve(ctx, root, path)
+	result, err := g.resolver.Resolve(root, path)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("resolution failed: %w", err)
 	}
@@ -76,7 +76,7 @@ func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) 
 	// Resolve each path individually (can be optimized later)
 	results := make(map[string]cid.Cid)
 	for _, path := range paths {
-		result, err := g.resolver.Resolve(ctx, root, path)
+		result, err := g.resolver.Resolve(root, path)
 		if err != nil {
 			// Skip failed resolutions
 			continue

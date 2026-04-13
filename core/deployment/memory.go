@@ -8,7 +8,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/graph/resolver"
+	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/store/arc"
 	"github.com/dewebprotocol/malt/core/store/content"
 	"github.com/dewebprotocol/malt/core/commitment"
@@ -65,7 +65,7 @@ func (d *MemoryDeployment) CreateGraph() (interfaces.Graph, error) {
 	}
 
 	// Create resolver (empty for now, will be configured later)
-	hybridResolver := resolver.NewHybridResolver(nil, nil)
+	hybridResolver := resolver.NewResolver(nil, nil)
 
 	// Create Graph
 	d.graph = graph.NewGraph(
