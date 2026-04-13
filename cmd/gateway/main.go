@@ -22,9 +22,10 @@ import (
 
 var (
 	Version = "dev"
-	cfgFile string
-	listen  string
-	ipfsAPI string
+	cfgFile  string
+	listen   string
+	ipfsAPI  string
+	mockLatency string
 )
 
 func main() {
@@ -46,13 +47,16 @@ Provides HTTP endpoints for:
 - Verification (POST /verify)
 - Health check (GET /health)
 
-By default, the gateway uses a mock CAS for testing. Use --ipfs-api to connect
-to a local IPFS daemon for full read+write CAS access (the former "sidecar" mode).
+By default, the gateway uses a mock CAS with ProbeLab-based latency (~2s Get, ~1.4s Put).
+Use --ipfs-api to connect to a local IPFS daemon for full read+write CAS access.
+Use --mock-latency to override mock CAS latency for fast or stress testing.
 
 Examples:
-  malt-gateway                          # mock CAS, :8080
+  malt-gateway                          # mock CAS (ProbeLab defaults), :8080
   malt-gateway --ipfs-api :5001         # local IPFS daemon, :8080
-  malt-gateway --ipfs-api :5001 -l :9090  # local IPFS, custom port`,
+  malt-gateway --ipfs-api :5001 -l :9090  # local IPFS, custom port
+  malt-gateway --mock-latency 100ms     # fast mock CAS for testing
+  malt-gateway --mock-latency 5s        # stress test with high latency`,
 		Version: Version,
 		Run:     runGateway,
 	}
@@ -60,8 +64,10 @@ Examples:
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
 	rootCmd.PersistentFlags().StringVarP(&listen, "listen", "l", ":8080", "listen address")
 	rootCmd.PersistentFlags().StringVar(&ipfsAPI, "ipfs-api", "", "Local IPFS daemon API URL (enables full read+write CAS)")
+	rootCmd.PersistentFlags().StringVar(&mockLatency, "mock-latency", "", "Mock CAS uniform latency (e.g. \"100ms\", \"1s\") — overrides ProbeLab defaults")
 
 	viper.BindPFlag("listen", rootCmd.PersistentFlags().Lookup("listen"))
+	viper.BindPFlag("cas.mock_latency", rootCmd.PersistentFlags().Lookup("mock-latency"))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

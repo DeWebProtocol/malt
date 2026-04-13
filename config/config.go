@@ -32,8 +32,9 @@ type CommitmentConfig struct {
 }
 
 type CASConfig struct {
-	GatewayURL string `mapstructure:"gateway_url"`
-	Timeout    string `mapstructure:"timeout"`
+	GatewayURL  string `mapstructure:"gateway_url"`
+	Timeout     string `mapstructure:"timeout"`
+	MockLatency string `mapstructure:"mock_latency"` // mock CAS uniform latency (e.g. "100ms")
 }
 
 type LoggingConfig struct {
@@ -99,6 +100,15 @@ func LoadFromFile(path string) (*Config, error) {
 // CASTimeout parses and returns the CAS timeout.
 func (c *Config) CASTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.CAS.Timeout)
+}
+
+// CASMockLatency parses and returns the mock CAS latency.
+// Returns 0 if not set, letting the mock use its internal defaults.
+func (c *Config) CASMockLatency() (time.Duration, error) {
+	if c.CAS.MockLatency == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(c.CAS.MockLatency)
 }
 
 // String returns a string representation of the config.

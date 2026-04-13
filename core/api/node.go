@@ -206,7 +206,19 @@ func (n *Node) initEAT() error {
 func (n *Node) initCAS() (cas.Client, error) {
 	switch n.cfg.CASType {
 	case "mock":
-		return casmock.NewCAS(), nil
+		var opts []casmock.Option
+		if n.cfg.CAS.MockLatency != "" {
+			d, err := n.cfg.CASMockLatency()
+			if err != nil {
+				return nil, fmt.Errorf("invalid mock_latency: %w", err)
+			}
+			opts = append(opts,
+				casmock.WithGetLatency(d),
+				casmock.WithPutLatency(d),
+				casmock.WithHasLatency(d),
+			)
+		}
+		return casmock.NewCAS(opts...), nil
 	case "ipfs-gateway":
 		timeout, _ := n.cfg.CASTimeout()
 		return ipfs.NewClient(
