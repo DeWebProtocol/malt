@@ -9,7 +9,7 @@ import (
 
 // Deployment is the factory for creating Graph instances.
 // It injects the storage backends and commitment scheme,
-// allowing different deployment configurations (memory, IPFS, sidecar).
+// allowing different deployment configurations (e.g., memory, IPFS).
 //
 // Design principle: Deployment is the composition root.
 // It wires up all dependencies and creates the Graph.
@@ -31,7 +31,7 @@ type Deployment interface {
 	// The root is a commitment to an empty arc set.
 	InitializeGraph(ctx context.Context) (cid.Cid, error)
 
-	// Name returns the deployment name (e.g., "memory", "ipfs", "sidecar").
+	// Name returns the deployment name (e.g., "memory", "ipfs").
 	Name() string
 
 	// Close releases all resources.

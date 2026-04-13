@@ -3,7 +3,7 @@
 // both read and write operations.
 //
 // The local IPFS daemon API is typically available at localhost:5001.
-// This is the CAS backend used by the sidecar deployment mode.
+// This is the CAS backend used by the gateway when --ipfs-api is specified.
 package ipfslocal
 
 import (

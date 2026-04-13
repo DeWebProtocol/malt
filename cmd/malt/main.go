@@ -45,7 +45,6 @@ Commands:
   verify      Verify resolution transcripts
   benchmark   Run quick benchmarks
   eval        Run comprehensive evaluation
-  sidecar     Run as a sidecar alongside IPFS daemon
   replication Export, import, and sync graph snapshots`,
 	Version: Version,
 }

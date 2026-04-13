@@ -14,6 +14,7 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/cas/ipfslocal"
 	"github.com/dewebprotocol/malt/gateway"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -23,6 +24,7 @@ var (
 	Version = "dev"
 	cfgFile string
 	listen  string
+	ipfsAPI string
 )
 
 func main() {
@@ -42,13 +44,22 @@ Provides HTTP endpoints for:
 - Write operations (POST /update/{root}/{path}, POST /update/batch/{root})
 - Structure creation (POST /structure)
 - Verification (POST /verify)
-- Health check (GET /health)`,
+- Health check (GET /health)
+
+By default, the gateway uses a mock CAS for testing. Use --ipfs-api to connect
+to a local IPFS daemon for full read+write CAS access (the former "sidecar" mode).
+
+Examples:
+  malt-gateway                          # mock CAS, :8080
+  malt-gateway --ipfs-api :5001         # local IPFS daemon, :8080
+  malt-gateway --ipfs-api :5001 -l :9090  # local IPFS, custom port`,
 		Version: Version,
 		Run:     runGateway,
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
 	rootCmd.PersistentFlags().StringVarP(&listen, "listen", "l", ":8080", "listen address")
+	rootCmd.PersistentFlags().StringVar(&ipfsAPI, "ipfs-api", "", "Local IPFS daemon API URL (enables full read+write CAS)")
 
 	viper.BindPFlag("listen", rootCmd.PersistentFlags().Lookup("listen"))
 
@@ -59,10 +70,17 @@ Provides HTTP endpoints for:
 }
 
 func runGateway(cmd *cobra.Command, args []string) {
-	// Create MALT node
+	// Build MALT node options
 	var nodeOpts []api.Option
 	if cfgFile != "" {
 		nodeOpts = append(nodeOpts, api.WithConfigFile(cfgFile))
+	}
+
+	// If --ipfs-api is specified, use local IPFS daemon as CAS (full read+write)
+	if ipfsAPI != "" {
+		casClient := ipfslocal.NewClient("http://" + ipfsAPI)
+		nodeOpts = append(nodeOpts, api.WithCAS(casClient))
+		log.Printf("Using local IPFS daemon as CAS: %s", ipfsAPI)
 	}
 
 	node, err := api.NewNode(nodeOpts...)
