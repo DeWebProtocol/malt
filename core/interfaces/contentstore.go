@@ -5,8 +5,18 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 
 	cid "github.com/ipfs/go-cid"
+)
+
+// Common errors for store interfaces.
+var (
+	// ErrNotFound is returned when a key/CID is not found.
+	ErrNotFound = errors.New("not found")
+
+	// ErrStoreClosed is returned when operating on a closed store.
+	ErrStoreClosed = errors.New("store is closed")
 )
 
 // ContentStore provides content-addressable storage for data blocks.
