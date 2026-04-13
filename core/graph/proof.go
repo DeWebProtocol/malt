@@ -1,5 +1,6 @@
-// Package graphv2 provides the stateless Graph implementation.
-package graphv2
+// Package graph provides graph lifecycle management for MALT.
+// This file contains the TranscriptProof type for verification.
+package graph
 
 import (
 	"fmt"

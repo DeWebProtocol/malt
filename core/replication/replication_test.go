@@ -20,7 +20,7 @@ func makeCID(n int) cid.Cid {
 	return cid.NewCidV1(cid.Raw, h)
 }
 
-func setupTestGraph(t *testing.T, kv kvstore.KVStore, ctx context.Context, id string) *graph.Graph {
+func setupTestGraph(t *testing.T, kv kvstore.KVStore, ctx context.Context, id string) *graph.GraphMeta {
 	t.Helper()
 	store := graph.NewStore(kv)
 	mgr := graph.NewManager(store)

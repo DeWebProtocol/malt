@@ -1,384 +1,235 @@
-// Package graph provides graph lifecycle management for MALT.
-// A graph represents a scoped collection of arcs authenticated by structure commitments.
-// Each graph has metadata (root CID, arc count, creation time) and a lifecycle state.
+// Package graph provides the stateless Graph implementation.
+// This is the core MALT abstraction for resolution, update, and verification.
 package graph
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"sync"
-	"time"
 
-	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/core/interfaces"
+	"github.com/dewebprotocol/malt/core/graph/resolver"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
-// Graph state constants.
-const (
-	StateActive   GraphState = "active"
-	StateFrozen   GraphState = "frozen"
-	StateDeleted  GraphState = "deleted"
-)
-
-// GraphState represents the lifecycle state of a graph.
-type GraphState string
-
-// Sentinel errors.
-var (
-	ErrNotFound      = errors.New("graph not found")
-	ErrAlreadyExists = errors.New("graph already exists")
-	ErrDeleted       = errors.New("graph is deleted")
-	ErrFrozen        = errors.New("graph is frozen")
-	ErrInvalidState  = errors.New("invalid graph state")
-)
-
-// Graph represents a MALT graph with metadata.
+// Graph implements the stateless Graph interface.
+// It combines resolution (via Resolver), update (via ArcStore + Commitment),
+// and verification (via CommitmentBackend).
 type Graph struct {
-	ID          string     `json:"id"`
-	Root        cid.Cid    `json:"root"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ArcCount    int        `json:"arc_count"`
-	Backend     string     `json:"backend"`
-	EATType     string     `json:"eat_type"`
-	State       GraphState `json:"state"`
+	arcStore     interfaces.ArcStore
+	contentStore interfaces.ContentStore
+	backend      interfaces.CommitmentBackend
+	resolver     resolver.Resolver
 }
 
-// IsActive returns true if the graph is in active state.
-func (g *Graph) IsActive() bool {
-	return g.State == StateActive
+// NewGraph creates a new stateless Graph with the given components.
+func NewGraph(
+	arcStore interfaces.ArcStore,
+	contentStore interfaces.ContentStore,
+	backend interfaces.CommitmentBackend,
+	resolver resolver.Resolver,
+) *Graph {
+	return &Graph{
+		arcStore:     arcStore,
+		contentStore: contentStore,
+		backend:      backend,
+		resolver:     resolver,
+	}
 }
 
-// IsFrozen returns true if the graph is frozen.
-func (g *Graph) IsFrozen() bool {
-	return g.State == StateFrozen
-}
+// Resolve resolves a path from a root CID, returning the target and proof.
+func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, interfaces.Proof, error) {
+	if !root.Defined() {
+		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
+	}
 
-// IsDeleted returns true if the graph is deleted.
-func (g *Graph) IsDeleted() bool {
-	return g.State == StateDeleted
-}
-
-// UpdateRoot updates the root CID and arc count, recording the update time.
-func (g *Graph) UpdateRoot(root cid.Cid, arcCount int) {
-	g.Root = root
-	g.ArcCount = arcCount
-	g.UpdatedAt = time.Now()
-}
-
-// graphKey returns the KVStore key for a graph by ID.
-func graphKey(id string) []byte {
-	return []byte("graph/meta/" + id)
-}
-
-// graphIndexKey returns the KVStore key for the graph index entry.
-func graphIndexKey(id string) []byte {
-	return []byte("graph/index/" + id)
-}
-
-// graphIndexPrefix is the prefix for all graph index entries.
-var graphIndexPrefix = []byte("graph/index/")
-
-// Store persists and retrieves graph metadata.
-type Store struct {
-	kv kvstore.KVStore
-}
-
-// NewStore creates a new graph metadata store backed by a KVStore.
-func NewStore(kv kvstore.KVStore) *Store {
-	return &Store{kv: kv}
-}
-
-// Create persists a new graph entry.
-func (s *Store) Create(ctx context.Context, g *Graph) error {
-	exists, err := s.kv.Has(ctx, graphKey(g.ID))
+	result, err := g.resolver.Resolve(ctx, root, path)
 	if err != nil {
-		return fmt.Errorf("check existence: %w", err)
-	}
-	if exists {
-		return ErrAlreadyExists
+		return cid.Cid{}, nil, fmt.Errorf("resolution failed: %w", err)
 	}
 
-	data, err := json.Marshal(g)
-	if err != nil {
-		return fmt.Errorf("marshal graph: %w", err)
+	// Convert transcript to Proof
+	// The resolver provides verification capability
+	proof := &TranscriptProof{
+		transcript: result.Transcript,
 	}
 
-	batch := s.kv.Batch()
-	if err := batch.Put(graphKey(g.ID), data); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("put graph: %w", err)
-	}
-	if err := batch.Put(graphIndexKey(g.ID), []byte(g.State)); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("put index: %w", err)
-	}
-	return batch.Commit(ctx)
+	return result.Target, proof, nil
 }
 
-// Get retrieves a graph by ID.
-func (s *Store) Get(ctx context.Context, id string) (*Graph, error) {
-	data, err := s.kv.Get(ctx, graphKey(id))
+// BatchResolve resolves multiple paths from a root CID.
+func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *interfaces.AggregatedProof, error) {
+	if !root.Defined() {
+		return nil, nil, fmt.Errorf("root must be defined")
+	}
+
+	if len(paths) == 0 {
+		return nil, nil, fmt.Errorf("paths must not be empty")
+	}
+
+	// Get snapshot for commitment operations
+	snapshot, err := g.arcStore.Snapshot(ctx, root)
 	if err != nil {
-		if errors.Is(err, kvstore.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("get graph: %w", err)
+		return nil, nil, fmt.Errorf("failed to get snapshot: %w", err)
 	}
 
-	var g Graph
-	if err := json.Unmarshal(data, &g); err != nil {
-		return nil, fmt.Errorf("unmarshal graph: %w", err)
-	}
-	return &g, nil
-}
-
-// Update persists updated graph metadata.
-func (s *Store) Update(ctx context.Context, g *Graph) error {
-	// Verify it exists
-	exists, err := s.kv.Has(ctx, graphKey(g.ID))
-	if err != nil {
-		return fmt.Errorf("check existence: %w", err)
-	}
-	if !exists {
-		return ErrNotFound
-	}
-
-	data, err := json.Marshal(g)
-	if err != nil {
-		return fmt.Errorf("marshal graph: %w", err)
-	}
-
-	batch := s.kv.Batch()
-	if err := batch.Put(graphKey(g.ID), data); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("put graph: %w", err)
-	}
-	if err := batch.Put(graphIndexKey(g.ID), []byte(g.State)); err != nil {
-		batch.Cancel()
-		return fmt.Errorf("put index: %w", err)
-	}
-	return batch.Commit(ctx)
-}
-
-// Delete removes a graph entry (soft delete: sets state to deleted).
-func (s *Store) Delete(ctx context.Context, id string) error {
-	g, err := s.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if g.IsDeleted() {
-		return ErrDeleted
-	}
-
-	g.State = StateDeleted
-	g.UpdatedAt = time.Now()
-	return s.Update(ctx, g)
-}
-
-// List returns all non-deleted graphs.
-func (s *Store) List(ctx context.Context) ([]*Graph, error) {
-	iter := s.kv.NewIterator(ctx, graphIndexPrefix, nil)
-	defer iter.Close()
-
-	var graphs []*Graph
-	for iter.Next() {
-		key := string(iter.Key())
-		// Extract ID from "graph/index/<id>"
-		id := key[len("graph/index/"):]
-		if id == "" {
+	// Resolve each path individually (can be optimized later)
+	results := make(map[string]cid.Cid)
+	for _, path := range paths {
+		result, err := g.resolver.Resolve(ctx, root, path)
+		if err != nil {
+			// Skip failed resolutions
 			continue
 		}
-
-		g, err := s.Get(ctx, id)
-		if err != nil {
-			continue // skip errors in individual reads
-		}
-		if g.IsDeleted() {
-			continue
-		}
-		graphs = append(graphs, g)
-	}
-	if err := iter.Err(); err != nil {
-		return nil, fmt.Errorf("iterate: %w", err)
-	}
-	return graphs, nil
-}
-
-// Manager manages graph lifecycle: creation, access, state transitions.
-// It coordinates graph metadata with EAT/SCE buckets.
-type Manager struct {
-	store   *Store
-	mu      sync.RWMutex
-	graphs  map[string]*Graph // in-memory cache
-}
-
-// NewManager creates a new graph manager.
-func NewManager(store *Store) *Manager {
-	return &Manager{
-		store:  store,
-		graphs: make(map[string]*Graph),
-	}
-}
-
-// CreateGraph creates a new graph with the given ID and initial parameters.
-// The graph starts in the "active" state with an undefined root.
-func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, eatType string) (*Graph, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check in-memory cache first
-	if _, ok := m.graphs[id]; ok {
-		return nil, ErrAlreadyExists
+		results[path] = result.Target
 	}
 
-	// Check persistent store
-	_, err := m.store.Get(ctx, id)
-	if err == nil {
-		return nil, ErrAlreadyExists
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return nil, fmt.Errorf("check graph existence: %w", err)
-	}
-
-	now := time.Now()
-	g := &Graph{
-		ID:        id,
-		Root:      cid.Undef,
-		CreatedAt: now,
-		UpdatedAt: now,
-		ArcCount:  0,
-		Backend:   backend,
-		EATType:   eatType,
-		State:     StateActive,
-	}
-
-	if err := m.store.Create(ctx, g); err != nil {
-		return nil, err
-	}
-
-	m.graphs[id] = g
-	return g, nil
-}
-
-// GetGraph retrieves a graph by ID.
-// Returns ErrNotFound if the graph doesn't exist, ErrDeleted if it's deleted.
-func (m *Manager) GetGraph(ctx context.Context, id string) (*Graph, error) {
-	m.mu.RLock()
-	if g, ok := m.graphs[id]; ok {
-		m.mu.RUnlock()
-		if g.IsDeleted() {
-			return nil, ErrDeleted
-		}
-		return g, nil
-	}
-	m.mu.RUnlock()
-
-	g, err := m.store.Get(ctx, id)
+	// Generate aggregated proof
+	aggProof, err := g.backend.AggregateProve(root, snapshot, paths)
 	if err != nil {
-		return nil, err
-	}
-	if g.IsDeleted() {
-		return nil, ErrDeleted
+		// If aggregated proof fails, return individual results without proof
+		return results, nil, nil
 	}
 
-	// Cache it
-	m.mu.Lock()
-	m.graphs[id] = g
-	m.mu.Unlock()
+	// Wrap aggregated proof
+	wrappedProof := &interfaces.AggregatedProof{
+		Commitment: root,
+		Results:    results,
+		ProofData:  aggProof.ProofData,
+		Backend:    g.backend.Name(),
+	}
 
-	return g, nil
+	return results, wrappedProof, nil
 }
 
-// UpdateGraph updates a graph's root and arc count after a mutation.
-// Only active graphs can be updated.
-func (m *Manager) UpdateGraph(ctx context.Context, id string, root cid.Cid, arcCount int) (*Graph, error) {
-	m.mu.Lock()
-	g, ok := m.graphs[id]
-	m.mu.Unlock()
-
-	if !ok {
-		var err error
-		g, err = m.store.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		m.mu.Lock()
-		m.graphs[id] = g
-		m.mu.Unlock()
+// Update updates arcs under a root, returning the new root and deltas.
+func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+	if !root.Defined() {
+		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
 
-	if !g.IsActive() {
-		if g.IsFrozen() {
-			return nil, ErrFrozen
-		}
-		return nil, ErrDeleted
-	}
-
-	g.UpdateRoot(root, arcCount)
-
-	if err := m.store.Update(ctx, g); err != nil {
-		return nil, err
-	}
-	return g, nil
-}
-
-// FreezeGraph transitions a graph to the "frozen" state.
-// Frozen graphs cannot be updated but can still be read.
-func (m *Manager) FreezeGraph(ctx context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	g, ok := m.graphs[id]
-	if !ok {
-		var err error
-		g, err = m.store.Get(ctx, id)
-		if err != nil {
-			return err
-		}
-	}
-
-	if !g.IsActive() {
-		return fmt.Errorf("cannot freeze: graph is %s: %w", g.State, ErrInvalidState)
-	}
-
-	g.State = StateFrozen
-	g.UpdatedAt = time.Now()
-
-	if err := m.store.Update(ctx, g); err != nil {
-		return err
-	}
-
-	m.graphs[id] = g
-
-	return nil
-}
-
-// DeleteGraph soft-deletes a graph (sets state to "deleted").
-func (m *Manager) DeleteGraph(ctx context.Context, id string) error {
-	m.mu.Lock()
-	delete(m.graphs, id)
-	m.mu.Unlock()
-
-	return m.store.Delete(ctx, id)
-}
-
-// ListGraphs returns all active and frozen graphs.
-func (m *Manager) ListGraphs(ctx context.Context) ([]*Graph, error) {
-	return m.store.List(ctx)
-}
-
-// RequireActive returns ErrFrozen or ErrDeleted if the graph is not active.
-// This is a convenience helper for write-side validation.
-func (m *Manager) RequireActive(ctx context.Context, id string) (*Graph, error) {
-	g, err := m.GetGraph(ctx, id)
+	// Get current snapshot
+	snapshot, err := g.arcStore.Snapshot(ctx, root)
 	if err != nil {
-		return nil, err
+		return cid.Cid{}, nil, fmt.Errorf("failed to get snapshot: %w", err)
 	}
-	if !g.IsActive() {
-		return nil, fmt.Errorf("graph %q is %s: %w", id, g.State, ErrInvalidState)
+
+	// Prepare update delta
+	delta := &interfaces.UpdateDelta{
+		OldRoot:              root,
+		Added:                []string{},
+		Updated:              []string{},
+		Deleted:              []string{},
+		RewriteAmplification: 1.0, // MALT always has rewrite amp = 1
 	}
-	return g, nil
+
+	// Prepare batch update for backend
+	updates := make(map[string]struct {
+		Old cid.Cid
+		New cid.Cid
+	})
+
+	for path, newTarget := range arcs {
+		oldTarget, exists := snapshot.Get(path)
+
+		if newTarget == cid.Undef {
+			// Delete operation
+			if exists {
+				delta.Deleted = append(delta.Deleted, path)
+				updates[path] = struct {
+					Old cid.Cid
+					New cid.Cid
+				}{Old: oldTarget, New: cid.Undef}
+			}
+		} else if !exists {
+			// Add operation
+			delta.Added = append(delta.Added, path)
+			updates[path] = struct {
+				Old cid.Cid
+				New cid.Cid
+			}{Old: cid.Undef, New: newTarget}
+		} else if oldTarget != newTarget {
+			// Update operation
+			delta.Updated = append(delta.Updated, path)
+			updates[path] = struct {
+				Old cid.Cid
+				New cid.Cid
+			}{Old: oldTarget, New: newTarget}
+		}
+	}
+
+	// Apply updates to arc store first (will be under new root)
+	// Generate new commitment
+	newRoot, err := g.backend.BatchUpdate(root, snapshot, updates)
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to update commitment: %w", err)
+	}
+
+	// Store arcs under new root
+	if err := g.arcStore.BatchPut(ctx, newRoot, arcs); err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to store arcs: %w", err)
+	}
+
+	delta.NewRoot = newRoot
+	return newRoot, delta, nil
 }
+
+// BatchUpdate is a synonym for Update (Update already supports batch).
+func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+	return g.Update(ctx, root, arcs)
+}
+
+// Verify verifies a proof against a root and expected target.
+func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof interfaces.Proof, expectedTarget cid.Cid) (bool, error) {
+	if !root.Defined() {
+		return false, fmt.Errorf("root must be defined")
+	}
+
+	return proof.Verify(root, expectedTarget)
+}
+
+// BatchVerify verifies an aggregated proof against a root.
+func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfaces.AggregatedProof) (bool, error) {
+	if !root.Defined() {
+		return false, fmt.Errorf("root must be defined")
+	}
+
+	if aggProof == nil {
+		return false, fmt.Errorf("proof must not be nil")
+	}
+
+	// Convert to arcset.AggregatedProof for backend
+	backendProof := &arcset.AggregatedProof{
+		Paths:   make([]string, 0, len(aggProof.Results)),
+		Targets: make([]cid.Cid, 0, len(aggProof.Results)),
+		ProofData: aggProof.ProofData,
+	}
+
+	for path, target := range aggProof.Results {
+		backendProof.Paths = append(backendProof.Paths, path)
+		backendProof.Targets = append(backendProof.Targets, target)
+	}
+
+	return g.backend.AggregateVerify(root, backendProof)
+}
+
+// Snapshot returns an immutable view of the arc set under a root.
+func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
+	if !root.Defined() {
+		return nil, fmt.Errorf("root must be defined")
+	}
+
+	return g.arcStore.Snapshot(ctx, root)
+}
+
+// Commit generates a new commitment from a snapshot.
+func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error) {
+	if snapshot == nil {
+		return cid.Cid{}, fmt.Errorf("snapshot must not be nil")
+	}
+
+	return g.backend.Commit(snapshot)
+}
+
+// Ensure Graph implements interfaces.Graph.
+var _ interfaces.Graph = (*Graph)(nil)

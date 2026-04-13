@@ -440,7 +440,7 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 }
 
 // graphResponseFromGraph converts a core graph.Graph to a gateway Graph response.
-func graphResponseFromGraph(g *graph.Graph) *Graph {
+func graphResponseFromGraph(g *graph.GraphMeta) *Graph {
 	return &Graph{
 		ID:          g.ID,
 		Root:        g.Root.String(),
@@ -452,7 +452,7 @@ func graphResponseFromGraph(g *graph.Graph) *Graph {
 }
 
 // graphToGraph converts a core graph.Graph to a gateway Graph.
-func graphToGateway(g *graph.Graph) *Graph {
+func graphToGateway(g *graph.GraphMeta) *Graph {
 	return graphResponseFromGraph(g)
 }
 

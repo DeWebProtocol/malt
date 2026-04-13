@@ -1,4 +1,5 @@
 // Package resolver provides resolution logic for Graph.
+// Resolver combines explicit (MALT) and implicit (Merkle DAG) steps.
 package resolver
 
 import (

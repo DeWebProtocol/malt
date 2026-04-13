@@ -29,7 +29,7 @@ func TestStoreCreateAndGet(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore()
 
-	g := &Graph{
+	g := &GraphMeta{
 		ID:     "test-graph",
 		Root:   newTestCID([]byte("root1")),
 		State:  StateActive,
@@ -58,7 +58,7 @@ func TestStoreCreateDuplicate(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore()
 
-	g := &Graph{ID: "dup", State: StateActive}
+	g := &GraphMeta{ID: "dup", State: StateActive}
 	if err := s.Create(ctx, g); err != nil {
 		t.Fatalf("first Create failed: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestStoreDelete(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore()
 
-	g := &Graph{ID: "to-delete", State: StateActive}
+	g := &GraphMeta{ID: "to-delete", State: StateActive}
 	if err := s.Create(ctx, g); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -109,9 +109,9 @@ func TestStoreList(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore()
 
-	s.Create(ctx, &Graph{ID: "g1", State: StateActive})
-	s.Create(ctx, &Graph{ID: "g2", State: StateFrozen})
-	s.Create(ctx, &Graph{ID: "g3", State: StateDeleted})
+	s.Create(ctx, &GraphMeta{ID: "g1", State: StateActive})
+	s.Create(ctx, &GraphMeta{ID: "g2", State: StateFrozen})
+	s.Create(ctx, &GraphMeta{ID: "g3", State: StateDeleted})
 
 	graphs, err := s.List(ctx)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestStoreUpdate(t *testing.T) {
 	s := newTestStore()
 
 	root := newTestCID([]byte("root1"))
-	g := &Graph{ID: "update-test", Root: root, State: StateActive, ArcCount: 1}
+	g := &GraphMeta{ID: "update-test", Root: root, State: StateActive, ArcCount: 1}
 	if err := s.Create(ctx, g); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestManagerRequireActive(t *testing.T) {
 }
 
 func TestGraphStateTransitions(t *testing.T) {
-	g := &Graph{ID: "state-test", State: StateActive}
+	g := &GraphMeta{ID: "state-test", State: StateActive}
 
 	// Active -> Frozen
 	g.State = StateFrozen
@@ -346,7 +346,7 @@ func TestGraphUpdateRoot(t *testing.T) {
 	root1 := newTestCID([]byte("root1"))
 	root2 := newTestCID([]byte("root2"))
 
-	g := &Graph{ID: "update-root", Root: root1, ArcCount: 1}
+	g := &GraphMeta{ID: "update-root", Root: root1, ArcCount: 1}
 
 	g.UpdateRoot(root2, 5)
 

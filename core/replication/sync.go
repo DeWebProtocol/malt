@@ -163,7 +163,7 @@ func (s *Syncer) Sync(ctx context.Context) (*SyncResult, error) {
 
 // SyncGraphs exports a graph from source store and imports to target store.
 // This is a convenience function that combines Export + Import.
-func SyncGraphs(sourceKV, targetKV kvstore.KVStore, g *graph.Graph, ctx context.Context) (int, error) {
+func SyncGraphs(sourceKV, targetKV kvstore.KVStore, g *graph.GraphMeta, ctx context.Context) (int, error) {
 	exporter := NewExporter(sourceKV)
 	snap, err := exporter.Export(ctx, g)
 	if err != nil {

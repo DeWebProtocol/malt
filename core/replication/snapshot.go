@@ -89,7 +89,7 @@ func NewExporter(kv kvstore.KVStore) *Exporter {
 
 // Export exports the complete state of a graph as a Snapshot.
 // It extracts all EAT entries, lineage records, and graph metadata.
-func (e *Exporter) Export(ctx context.Context, g *graph.Graph) (*Snapshot, error) {
+func (e *Exporter) Export(ctx context.Context, g *graph.GraphMeta) (*Snapshot, error) {
 	snap := &Snapshot{
 		Version:        SnapshotVersion,
 		GraphID:        g.ID,
@@ -256,7 +256,7 @@ func (imp *Importer) Import(ctx context.Context, snap *Snapshot) (int, error) {
 		}
 	}
 
-	g := &graph.Graph{
+	g := &graph.GraphMeta{
 		ID:        snap.GraphID,
 		Root:      rootCID,
 		ArcCount:  snap.ArcCount,
