@@ -6,14 +6,20 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/interfaces"
+	commitpkg "github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/eat"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/graph"
+	"github.com/dewebprotocol/malt/core/interfaces"
+	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
+	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/sce/commitment"
+	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/store/arc"
 	"github.com/dewebprotocol/malt/core/store/content"
-	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/kvstore"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
@@ -21,11 +27,14 @@ import (
 // MemoryDeployment creates Graph with in-memory storage.
 // Useful for testing and development.
 type MemoryDeployment struct {
-	kv          kvstore.KVStore
-	arcStore    interfaces.ArcStore
+	kv           kvstore.KVStore
+	eat          eat.EAT
+	sce          *sce.Engine
+	resolver     *resolver.Resolver
+	arcStore     interfaces.ArcStore
 	contentStore interfaces.ContentStore
-	backend     interfaces.CommitmentBackend
-	graph       interfaces.Graph
+	backend      interfaces.CommitmentBackend
+	graph        interfaces.Graph
 }
 
 // NewMemoryDeployment creates a new memory-based deployment.
@@ -39,41 +48,66 @@ func NewMemoryDeploymentWithBackend(kv kvstore.KVStore, backend interfaces.Commi
 		kv: kv,
 	}
 
-	// Create storage implementations
-	d.arcStore = arc.NewEATArcStore(kv)
-	d.contentStore = content.NewKVStoreContentStore(kv)
+	// Create EAT
+	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	if err != nil {
+		return nil
+	}
+	d.eat = e
 
-	// Create commitment backend if not provided
+	// Create SCE
+	var scheme commitment.Scheme
 	if backend != nil {
 		d.backend = backend
+		// Extract scheme from backend if needed, use KZG as fallback
+		kzgScheme, err := kzg.NewScheme()
+		if err == nil {
+			scheme = kzgScheme
+		}
 	} else {
-		// Use KZG as default backend
 		kzgScheme, err := kzg.NewScheme()
 		if err != nil {
 			return nil
 		}
-		d.backend = commitment.NewSchemeBackend(kzgScheme, "kzg")
+		scheme = kzgScheme
+		d.backend = commitpkg.NewSchemeBackend(kzgScheme, "kzg")
 	}
+	d.sce = sce.NewEngine(scheme)
+
+	// Create storage implementations (for Deployment interface compliance)
+	// Note: Graph no longer uses these directly — it delegates to resolver (EAT) and writer (SCE+EAT).
+	// These are retained for interface compliance and standalone access.
+	d.arcStore = arc.NewEATArcStore(kv)
+	d.contentStore = content.NewKVStoreContentStore(kv)
 
 	return d
 }
 
-// CreateGraph creates a new Graph instance.
+// CreateGraph creates a new Graph instance with resolver and writer.
 func (d *MemoryDeployment) CreateGraph() (interfaces.Graph, error) {
 	if d.graph != nil {
 		return d.graph, nil
 	}
 
-	// Create resolver (empty for now, will be configured later)
-	hybridResolver := resolver.NewResolver(nil, nil)
+	// Create explicit step (EAT-based arc resolution)
+	explicitStep := explicit.NewResolver(d.eat, d.sce, "default")
 
-	// Create Graph
-	d.graph = graph.NewGraph(
-		d.arcStore,
-		d.contentStore,
-		d.backend,
-		hybridResolver,
-	)
+	// Create implicit step (CAS-based Merkle DAG traversal)
+	implicitStep := implicit.NewResolver(nil) // No CAS in memory deployment
+
+	// Create hybrid resolver
+	d.resolver = resolver.NewResolver(explicitStep, implicitStep)
+
+	// Create resolver adapter (read side)
+	readAdapter := graph.NewResolverAdapter(d.resolver)
+
+	// Create writer adapter (write side)
+	writeAdapter := graph.NewWriterAdapter(d.sce, d.eat, graph.WriteAdapterOptions{
+		BucketId: "default",
+	})
+
+	// Compose Graph from resolver + writer
+	d.graph = graph.NewGraph(readAdapter, writeAdapter)
 
 	return d.graph, nil
 }
@@ -91,6 +125,21 @@ func (d *MemoryDeployment) ContentStore() interfaces.ContentStore {
 // CommitmentBackend returns the CommitmentBackend used by this deployment.
 func (d *MemoryDeployment) CommitmentBackend() interfaces.CommitmentBackend {
 	return d.backend
+}
+
+// EAT returns the EAT used by this deployment.
+func (d *MemoryDeployment) EAT() eat.EAT {
+	return d.eat
+}
+
+// SCE returns the SCE engine used by this deployment.
+func (d *MemoryDeployment) SCE() *sce.Engine {
+	return d.sce
+}
+
+// Resolver returns the hybrid resolver.
+func (d *MemoryDeployment) Resolver() *resolver.Resolver {
+	return d.resolver
 }
 
 // InitializeGraph creates a new empty graph and returns its initial root.
@@ -116,11 +165,20 @@ func (d *MemoryDeployment) Name() string {
 func (d *MemoryDeployment) Close() error {
 	var errs []error
 
-	if err := d.arcStore.Close(); err != nil {
-		errs = append(errs, err)
+	if d.eat != nil {
+		if err := d.eat.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if err := d.contentStore.Close(); err != nil {
-		errs = append(errs, err)
+	if d.arcStore != nil {
+		if err := d.arcStore.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if d.contentStore != nil {
+		if err := d.contentStore.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if err := d.kv.Close(); err != nil {
 		errs = append(errs, err)
