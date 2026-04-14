@@ -7,12 +7,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Deployment is the factory for creating Graph instances.
-// It injects the storage backends and commitment scheme,
-// allowing different deployment configurations (e.g., memory, IPFS).
-//
-// Design principle: Deployment is the composition root.
-// It wires up all dependencies and creates the Graph.
+// Deployment is an optional composition-root abstraction used by some helper
+// code and demos. It is not the primary MALT abstraction.
 type Deployment interface {
 	// CreateGraph creates a new Graph instance with this deployment's configuration.
 	// The returned Graph uses the injected ArcStore, ContentStore, and CommitmentBackend.

@@ -30,7 +30,10 @@ func init() {
 var resolveCmd = &cobra.Command{
 	Use:   "resolve <root> [path]",
 	Short: "Resolve a path through a MALT structure",
-	Long: `Perform hybrid resolution starting from the given root CID.
+	Long: `Resolve a path starting from a MALT structure root or ordinary CID.
+Native explicit-arc resolution is the primary path. Ordinary IPLD traversal is
+used when resolution crosses into interoperable legacy CID space.
+
 If no path is given, resolves to the structure root or payload.
 
 Examples:

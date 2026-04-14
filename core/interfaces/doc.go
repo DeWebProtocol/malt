@@ -1,50 +1,13 @@
-// Package interfaces defines core MALT interfaces.
+// Package interfaces defines the shared interfaces used by the MALT codebase.
 //
-// # MALT Architecture Overview
+// The architectural center of MALT is the graph-scoped explicit structure layer:
 //
-// MALT (Mutable Abstraction Layer on Trie) provides a compatibility-preserving
-// structure layer for content-addressed storage. The architecture is organized
-// into three layers:
+//   - Graph provides the main read and write operations over structure roots.
+//   - Proof and Transcript model verifiable resolution results.
+//   - UpdateDelta records localized structural change.
 //
-// ## 1. Storage Layer
-//
-// Storage backends are injectable interfaces:
-//
-//   - ContentStore: content-addressable storage (CID → data)
-//   - ArcStore: explicit arc storage (root, path → CID)
-//   - (KVStore is the underlying interface, defined in kvstore package)
-//
-// ## 2. Commitment Layer
-//
-// CommitmentBackend provides cryptographic operations:
-//
-//   - Commit: generate commitment from arc set
-//   - Prove/Verify: single-path proofs
-//   - BatchProve/BatchVerify: multi-path proofs
-//   - AggregateProve/AggregateVerify: aggregated proofs
-//
-// ## 3. Graph Layer
-//
-// Graph is the stateless core abstraction:
-//
-//   - Resolve(root, path) → (target, proof)
-//   - BatchResolve(root, paths) → (targets, aggregatedProof)
-//   - Update(root, arcs) → (newRoot, delta)
-//   - Snapshot(root) → arc set view
-//   - Commit(view) → root CID
-//
-// ## Deployment
-//
-// Deployment is the composition factory:
-//
-//   deployment := NewMemoryDeployment(kvStore)
-//   graph := deployment.CreateGraph()
-//   root := deployment.InitializeGraph(ctx)
-//
-// ## Design Principles
-//
-// 1. Stateless Graph: root always passed as parameter
-// 2. Storage injection: backends injected by Deployment
-// 3. Rewrite amplification = 1.0: localized updates
-// 4. Batch operations: efficient bulk operations
+// Other interfaces in this package exist to support concrete implementations,
+// adapters, and optional deployment/tooling code. They should not be read as a
+// claim that generic storage injection or deployment factories are the primary
+// abstraction of MALT itself.
 package interfaces

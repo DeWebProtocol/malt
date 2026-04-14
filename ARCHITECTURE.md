@@ -2,262 +2,262 @@
 
 ## Overview
 
-MALT (Mutable Abstraction Layer over Trie) provides a compatibility-preserving structure layer for content-addressed storage (CAS). It replaces Merkle DAG implicit arcs with explicitly committed arcs, turning ancestor-dependent structural rewrite into localized, verifiable structure maintenance.
+MALT is a graph-scoped authenticated structure layer over immutable content-addressed storage.
 
----
+Its core design is:
 
-## Directory Structure
+- payload remains ordinary content-addressed data
+- structure is made explicit as arcs
+- a structure root commits those arcs independently from payload
+- structural change advances the structure root without recursively rewriting unrelated payload
+
+MALT roots are encoded as CID-compatible identifiers, so MALT-native structures and ordinary IPLD/CAS objects can reference each other. That interoperability matters, but it is not the conceptual center of the system.
+
+This document is implementation-oriented. For the shorter system overview, see [`README.md`](./README.md).
+
+## Architectural Center
+
+The codebase should be read around six first-class concepts:
+
+- `Graph`
+  - the scoped unit of structure
+  - provides the main read and write entry points
+- `EAT`
+  - graph-scoped explicit arc materialization and lookup state
+- `SCE`
+  - stateless commitment/proof engine over caller-supplied arc views
+- `Writer`
+  - advances structure roots through localized arc updates
+- `Resolver`
+  - resolves structure from a root and returns a transcript
+- `Lineage`
+  - optional version metadata for ancestry and history operations
+
+Everything else in the repository should be interpreted relative to that core.
+
+## Code Layout
 
 ```
 malt/
 ├── cmd/
-│   ├── gateway/main.go          # HTTP Gateway entry point (REST API)
-│   └── malt/                    # CLI tool (resolve, prove, verify, graph...)
-├── config/                      # Config loading (Viper: file/env/flags)
-├── logger/                      # Structured logging
-├── core/                        # Core library
-│   ├── api/                     # Application-level Node entry
-│   ├── cas/                     # Content-addressable storage
-│   ├── codec/                   # CID codec detection
-│   ├── commitment/              # CommitmentBackend adapter
-│   ├── deployment/              # Deployment factory (composition root)
-│   ├── eat/                     # Explicit Arc Table
-│   ├── graph/                   # Graph (resolver + writer composition)
-│   ├── interfaces/              # Interface definitions
-│   ├── kvstore/                 # KV storage (memory, badger, fs)
-│   ├── lineage/                 # Version lineage tracking
-│   ├── replication/             # Graph snapshot export/import/sync
-│   ├── resolver/                # Hybrid resolver
-│   ├── sce/                     # Structure Commitment Engine
-│   ├── store/                   # ArcStore + ContentStore adapters
-│   ├── types/                   # Type definitions (arcset, evidence)
-│   └── writer/                  # Write-side API
-├── gateway/                     # HTTP gateway implementation
-└── integration/                 # Integration tests
+│   ├── gateway/main.go
+│   └── malt/
+├── config/
+├── gateway/
+├── core/
+│   ├── api/          # Node: top-level component wiring
+│   ├── cas/          # CAS clients and adapters
+│   ├── codec/        # MALT CID codecs and CID utilities
+│   ├── eat/          # Explicit Arc Table implementations
+│   ├── graph/        # Graph metadata and per-graph composition
+│   ├── kvstore/      # KV backends
+│   ├── lineage/      # Version lineage metadata
+│   ├── replication/  # Secondary snapshot/sync tooling
+│   ├── resolver/     # Resolution loop and step executors
+│   ├── sce/          # Structure commitment engine
+│   ├── types/        # Arc sets, evidence, proof-related types
+│   └── writer/       # Write-side structure update flow
+├── eval/
+└── integration/
 ```
 
----
+## Component Responsibilities
 
-## Core Components
+### Structure Roots and Payload
 
-### Layer 1: Interfaces (`core/interfaces/`)
+- Payload blocks remain ordinary CAS/IPLD objects.
+- Structure is represented as explicit arcs of the form `path -> target`.
+- `SCE` commits an arc set into a structure root.
+- A structure root is CID-compatible, but semantically it denotes committed structure rather than raw payload.
 
-Four core interfaces define the MALT architecture:
+### Graph-Scoped Structure State
 
-| Interface | Responsibility |
-|-----------|---------------|
-| `CommitmentBackend` | Cryptographic commitments (Commit/Prove/Verify/Update/BatchProve) |
-| `ArcStore` | Arc persistence at KVStore level (path → target mapping) |
-| `ContentStore` | Content-addressable storage (Get/Put/Has/Batch by CID) |
-| `Graph` | Full graph = `GraphResolver` (read) + `GraphWriter` (write) |
-| `Deployment` | Composition root — wires dependencies, creates Graph |
+The main operational state of MALT lives in the graph-scoped explicit arc representation.
 
-### Layer 2: Cryptographic Layer (`core/sce/` + `core/commitment/`)
+`EAT` provides:
 
-```
-Commitment.Scheme (pure cryptography)
-├── kzg.NewScheme()       → Polynomial commitment (malt-kzg codec)
-├── verkle.NewScheme()    → Verkle tree (malt-verkle codec)
-└── ipa.NewScheme()       → Inner product argument (malt-ipa codec)
+- point lookup of explicit arcs
+- snapshots of the committed arc set for a root
+- optional version-aware retrieval
 
-SCE.Engine (Structure Commitment Engine)
-├── Manages session cache (commitment bytes → arc paths/values)
-├── Wraps Scheme + arc set management
-└── Provides Commit/Prove/Verify/Update/BatchUpdate/AggregateProve
-```
+Current implementations:
 
-### Layer 3: Data Layer (`core/eat/` + `core/kvstore/` + `core/cas/`)
+- `overwrite`
+  - bucket-scoped current-view storage
+- `versioned`
+  - delta-per-version storage linked by `@previous`
 
-```
-EAT (Explicit Arc Table)
-├── overwrite.EAT  → KVStore-backed, direct overwrite storage
-└── versioned.EAT  → Versioned storage via @previous chain
+### Stateless Commitment Engine
 
-KVStore
-├── memory.KV    → In-memory (testing)
-├── badger.KV    → BadgerDB (persistent)
-└── fs.KV        → Filesystem (persistent)
+`SCE` is the cryptographic engine of MALT.
 
-CAS (Content-Addressable Storage)
-├── mock.CAS     → KVStore-backed, simulates IPFS latency
-│                 Defaults: Get=2.1s, Put=1.4s, Has=100ms (ProbeLab)
-│                 Override via --mock-latency flag
-└── ipfs.Client  → Local IPFS daemon API (POST /api/v0/block/*)
-```
+It is best understood as stateless with respect to authoritative graph state:
 
-### Layer 4: Resolution Layer (`core/resolver/`)
+- it computes `Commit`, `Prove`, `Verify`, and `Update`
+- it operates over inputs supplied by the caller
+- any internal cache is an optimization, not semantic system state
 
-```
-step.Step (single-step resolution interface)
-├── explicit.Resolver  → MALT explicit arcs, longest-prefix EAT match + SCE proof
-├── implicit.Resolver  → Merkle-DAG implicit arcs via CAS + IPLD codecs
-│                       Auto-detects: UnixFS / HAMT / Plain DAG
-└── hamt.Resolver      → HAMT-specific resolution
+Backends currently implemented:
 
-resolver.Resolver (hybrid resolver)
-├── Dispatches to explicitStep or implicitStep based on CID codec
-├── Loop-consumes path segments until exhausted
-├── Returns ResolveResult { Target, Transcript }
-└── Transcript contains StepEvidence{Path, Target, Evidence} for each step
-```
+- KZG
+- Verkle
+- IPA
 
-### Layer 5: Graph Layer (`core/graph/`)
+### Localized Write Path
 
-```
-graph.Graph = composition of:
-    resolver: interfaces.GraphResolver  (ReadAdapter wrapping resolver.Resolver)
-    writer:   interfaces.GraphWriter    (WriteAdapter wrapping SCE + EAT)
+The write path is implemented by `writer.Writer`.
 
-Manager  → Graph lifecycle (create/query/freeze/delete)
-Store    → Graph metadata persistence (graph/meta/, graph/index/)
-```
+For an arc update, the code follows this shape:
 
-**Design decision**: Graph no longer holds SCE/EAT/CAS directly. It routes to resolver and writer, which own those dependencies.
+1. read the current binding from `EAT`
+2. obtain the arc-set view or snapshot
+3. ask `SCE` to commit or update the structure root
+4. write the resulting arc state back through `EAT`
+5. optionally record lineage metadata
 
-### Layer 6: Write API (`core/writer/`)
+This is the main operational realization of MALT's locality claim.
 
-```
-writer.Writer
-├── UpdateArc(ctx, bucketId, root, path, newTarget)
-│    → Insert/replace/delete a single arc
-├── BatchUpdateArcs(ctx, bucketId, root, updates)
-└── CreateStructure(ctx, bucketId, arcs)
-    → Generate new commitment + write to EAT + record lineage
-```
+### Resolution and Verification
 
----
+`resolver.Resolver` runs the read loop and returns:
 
-## Entry Points
+- the resolved target
+- a transcript of step evidence
 
-### A. HTTP Gateway Startup
+There are two step kinds:
 
-```
-cmd/gateway/main.go
-  → config.Init() + flag parsing (--ipfs-api, --mock-latency, --listen)
-  → api.NewNode(opts...)
-      ├── initKVStore()             # memory / badger
-      ├── initCommitmentScheme()    # kzg / verkle / ipa
-      ├── initEAT()                 # overwrite / versioned
-      ├── initCAS()                 # mock / ipfs (with mock-latency)
-      └── Build explicitStep, implicitStep, resolver
-  → gateway.NewNodeAdapter(node)
-  → gateway.NewServer(adapter, ":8080")
-  → srv.Start()
-```
+- explicit step
+  - uses `EAT` lookup and `SCE` proof generation
+- implicit compatibility step
+  - traverses ordinary IPLD/Merkle objects through CAS
 
-**REST Endpoints:**
+The explicit step is the native MALT path.
+The implicit step exists for compatibility when traversal crosses into legacy CID space.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/graph` | Create a new graph |
-| `GET` | `/graph/{id}` | Get graph by ID |
-| `DELETE` | `/graph/{id}` | Soft-delete graph |
-| `GET` | `/graphs` | List all graphs |
-| `GET` | `/resolve/{root}/{path}` | Hybrid path resolution |
-| `POST` | `/resolve` | Resolve with POST body |
-| `GET` | `/proof/{root}/{path}` | Generate proof for path |
-| `GET` | `/arc/{root}/{path}` | Query arc target |
-| `GET` | `/snapshot/{root}` | Get arc set snapshot |
-| `GET` | `/content/{cid}` | Fetch raw block from CAS |
-| `POST` | `/update/{root}/{path}` | Update single arc |
-| `POST` | `/update/batch/{root}` | Batch update arcs |
-| `POST` | `/structure` | Create new structure |
-| `POST` | `/verify` | Verify a resolution transcript |
-| `GET` | `/health` | Health check |
+Clients verify the returned transcript locally:
 
-### B. Path Resolution (Read)
+- explicit steps verify against the structure root
+- implicit steps verify by block hash and in-block path mapping
 
-```
-GET /resolve/{root}/{path}
-  → NodeAdapter.HybridResolve(root, path)
-  → Node.HybridResolver().Resolve(rootCid, path)
-  → resolver.Resolver.Resolve (loop):
-      ├── codec.IsMaltCid? → explicit.Resolver.Resolve
-      │     ├── EAT.Get(bucketId, root, candidatePath)  # longest prefix
-      │     ├── EAT.Snapshot + SCE.Prove                # crypto proof
-      │     └── Returns ExplicitEvidence
-      │
-      └── → implicit.Resolver.Resolve
-            ├── CAS.Get(root)                           # fetch block
-            ├── Detect codec (dag-pb / dag-cbor / dag-json / raw)
-            ├── If dag-pb → detect HAMT → hamt.Resolver
-            │     Otherwise → codec.ResolveLink (IPLD decode)
-            └── Returns ImplicitEvidence
-  → Returns { Target, Transcript }
-```
+## Main Runtime Objects
 
-### C. Arc Update (Write)
+### `api.Node`
 
-```
-POST /update/{root}/{path}
-  → WriteAdapter.UpdateArc(ctx, bucketId, root, path, target)
-  → writer.Writer.UpdateArc
-      ├── EAT.Get(bucketId, root, path)           # get old value
-      ├── EAT.Snapshot(bucketId, root)            # arc set snapshot
-      ├── SCE.Update(root, snapshot, path, old, new)  # update commitment
-      ├── EAT.Update(bucketId, newRoot, oldRoot, {path: new})  # update EAT
-      └── LineageRecorder.Record(ctx, newRoot, oldRoot)        # record lineage
-  → Returns { OldRoot, NewRoot, Op: insert|replace|delete }
-```
+`api.Node` is the top-level wiring point for shared infrastructure:
 
----
+- KV store
+- EAT implementation
+- CAS client
+- graph manager
+- optional lineage manager
 
-## Deployment Architecture
+It is not itself the graph abstraction. It constructs per-graph instances.
 
-### MemoryDeployment (`core/deployment/`)
+### `graph.Graph`
 
-```
-MemoryDeployment (for testing and dev)
-├── memory.KV
-├── overwrite.EAT
-├── KZG Scheme → SCE
-└── Graph(ReadAdapter + WriteAdapter)
-```
+`Graph` is the main scoped MALT unit.
 
-### Node (api)
+Important property:
 
-`api.Node` is the application-level entry point. It uses functional options to compose components:
+- the graph is stateless with respect to the current root
+- the root is always passed as an argument to read and write operations
 
-```go
-api.NewNode(
-    api.WithKVStore(...),
-    api.WithCommitment(...),
-    api.WithEAT(...),
-    api.WithCAS(...),
-    api.WithConfigFile("malt.json"),
-)
-```
+This keeps structure evolution explicit and avoids embedding mutable "current root" state inside the graph object.
 
----
+### `lineage`
 
-## Auxiliary Components
+`lineage` is an auxiliary metadata layer that tracks root ancestry.
 
-| Component | Location | Function |
-|-----------|----------|----------|
-| `lineage` | `core/lineage/` | Version lineage (root → parent chain), independent index |
-| `replication` | `core/replication/` | Graph snapshot Export/Import/Sync for node replication |
-| `codec` | `core/codec/` | CID codec detection (`IsMaltCid`, `GetMaltCodec`) |
-| `evidence` | `core/types/` | Evidence types: `ExplicitEvidence`, `ImplicitEvidence`, `HAMTEvidence` |
-| `arcset` | `core/types/` | Arc set abstractions: `View`, `Snapshot`, `Iterator`, `Map` |
+It is useful for:
 
----
+- history queries
+- version navigation
+- future version-management optimizations
+
+It is not part of the cryptographic trust base.
+
+## Code-Level Flow
+
+### Commit / Update Flow
+
+The main write-side code path is:
+
+1. `graph.Graph` receives a root-scoped update request
+2. `writer.Writer` reads the current arc binding from `EAT`
+3. `writer.Writer` obtains a snapshot or view of the current arc set
+4. `SCE` computes a new structure root from the supplied inputs
+5. `EAT` is updated to reflect the resulting structure state
+6. optional lineage metadata is recorded
+
+This flow is the implementation-level realization of localized structural evolution.
+
+### Resolve / Verify Flow
+
+The main read-side code path is:
+
+1. `resolver.Resolver` starts from a root and remaining path
+2. if the current identifier is a MALT structure root, it uses the explicit step executor
+3. if the current identifier is an ordinary CID, it uses the compatibility step executor
+4. each step appends evidence to the transcript
+5. the client verifies the transcript step by step
+
+The explicit step is the native MALT mechanism.
+The implicit step is the interoperability path.
+
+## Interoperability
+
+MALT supports mixed traversal because structure roots are CID-compatible and can coexist with ordinary IPLD/CAS objects.
+
+This means:
+
+- MALT roots can point to payload CIDs
+- payload objects can in principle link onward through ordinary IPLD semantics
+- the resolver can dispatch between native explicit traversal and compatibility traversal
+
+This is an interoperability property of the runtime model, not the primary definition of MALT.
+
+## Secondary Surfaces
+
+The following parts of the repository are useful but should be treated as secondary to the core architecture:
+
+- `gateway/`
+  - HTTP adapter and operational entry point
+- `core/replication/`
+  - snapshot and synchronization tooling
+- `eval/`
+  - benchmark and measurement scaffolding
+- deployment/helper abstractions
+  - engineering support code rather than the center of the design
+
+## Implemented Variants
+
+### EAT
+
+- `overwrite`
+  - bucket-scoped current-view storage
+- `versioned`
+  - delta-per-version storage linked by `@previous`
+
+### Commitment Backends
+
+- KZG
+- Verkle
+- IPA
 
 ## Verification Model
 
-MALT uses **node-relative compositional verification**:
+MALT uses transcript-based compositional verification.
 
-1. The resolver (untrusted) produces a `Transcript` recording each step's evidence
-2. The client independently verifies each step using:
-   - **Explicit steps**: SCE.Verify with the cryptographic proof
-   - **Implicit steps**: Block hash verification + path mapping within the block
-3. The full path is valid iff every step in the transcript verifies
+1. An untrusted resolver performs resolution.
+2. It returns a transcript containing evidence for each step.
+3. The client verifies each step locally.
+4. The overall resolution is valid only if every step verifies.
 
-This decouples resolution from verification, enabling:
-- Untrusted resolvers (any node can perform resolution)
-- Client-side verification without re-executing resolution
-- Proof aggregation for batch verification
+This decouples execution from trust:
 
----
+- resolvers can be untrusted
+- lookup/index state can be operational rather than authoritative
+- correctness remains cryptographic
 
 ## CAS Configuration
 

@@ -72,7 +72,8 @@ func (na *NodeAdapter) Writer() (*WriteAdapter, error) {
 	return na.wr, nil
 }
 
-// HybridResolve performs hybrid path resolution.
+// HybridResolve performs path resolution across MALT-native and interoperable
+// IPLD/CAS steps when needed.
 func (na *NodeAdapter) HybridResolve(rootStr string, path string) (*ResolveResult, error) {
 	g, err := na.EnsureGraph()
 	if err != nil {

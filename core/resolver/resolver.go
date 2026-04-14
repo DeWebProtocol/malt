@@ -1,6 +1,7 @@
-// Package resolver implements hybrid resolution with prefix consumption.
-// It handles the full resolution loop, combining explicit MALT arcs
-// with implicit Merkle-DAG traversal via CAS.
+// Package resolver implements the MALT resolution loop with prefix consumption.
+// Native explicit-arc resolution is the primary path. Ordinary Merkle/IPLD
+// traversal is used as an interoperability path when resolution crosses into
+// legacy CID space.
 package resolver
 
 import (
@@ -14,9 +15,9 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Resolver handles hybrid resolution with prefix consumption.
-// It dispatches to different step executors based on CID codec and continues
-// traversal until the path is consumed or resolution fails.
+// Resolver handles resolution with prefix consumption. It dispatches to
+// different step executors based on CID codec and continues traversal until the
+// path is consumed or resolution fails.
 //
 // Architecture:
 //   - MALT commitments (malt-kzg/malt-verkle/malt-ipa) → explicitStep
@@ -31,7 +32,7 @@ type Resolver struct {
 	implicitStep  step.Step
 }
 
-// NewResolver creates a new hybrid resolver with explicit and implicit step executors.
+// NewResolver creates a new resolver with explicit and implicit step executors.
 func NewResolver(explicit, implicit step.Step) *Resolver {
 	return &Resolver{
 		explicitStep: explicit,
