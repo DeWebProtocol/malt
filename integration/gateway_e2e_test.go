@@ -199,6 +199,114 @@ func TestGatewayE2E_UpdateAndResolve(t *testing.T) {
 	}
 }
 
+func TestGatewayE2E_ManagedGraphHeadLifecycle(t *testing.T) {
+	_, handler := newTestGateway(t)
+
+	w := doRequest(t, handler, "POST", "/graph", map[string]string{
+		"id": "managed-e2e",
+	})
+	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
+		t.Fatalf("graph create failed: %d %s", w.Code, w.Body.String())
+	}
+
+	arcs := map[string]string{
+		"name": fakeGatewayCID("alice-managed").String(),
+		"age":  fakeGatewayCID("31").String(),
+	}
+	w = doRequest(t, handler, "POST", "/graph/managed-e2e/structure", map[string]any{
+		"arcs": arcs,
+	})
+	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
+		t.Fatalf("graph structure create failed: %d %s", w.Code, w.Body.String())
+	}
+
+	var createResp struct {
+		Root string `json:"root"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("parse create response: %v", err)
+	}
+	if createResp.Root == "" {
+		t.Fatal("empty root in create response")
+	}
+
+	w = doRequest(t, handler, "GET", "/graph/managed-e2e", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("graph get failed: %d %s", w.Code, w.Body.String())
+	}
+	var graphResp struct {
+		Graph struct {
+			Root     string `json:"root"`
+			ArcCount int    `json:"arc_count"`
+		} `json:"graph"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &graphResp); err != nil {
+		t.Fatalf("parse graph response: %v", err)
+	}
+	if graphResp.Graph.Root != createResp.Root {
+		t.Fatalf("graph head = %s, want %s", graphResp.Graph.Root, createResp.Root)
+	}
+	if graphResp.Graph.ArcCount != 2 {
+		t.Fatalf("arc count = %d, want 2", graphResp.Graph.ArcCount)
+	}
+
+	w = doRequest(t, handler, "GET", "/graph/managed-e2e/resolve/name", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("graph resolve failed: %d %s", w.Code, w.Body.String())
+	}
+	var resolveResp struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resolveResp); err != nil {
+		t.Fatalf("parse resolve response: %v", err)
+	}
+	if resolveResp.Target != arcs["name"] {
+		t.Fatalf("resolve target = %s, want %s", resolveResp.Target, arcs["name"])
+	}
+
+	newName := fakeGatewayCID("bob-managed").String()
+	w = doRequest(t, handler, "POST", "/graph/managed-e2e/update/name", map[string]string{
+		"target": newName,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("graph update failed: %d %s", w.Code, w.Body.String())
+	}
+	var updateResp struct {
+		NewRoot string `json:"new_root"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &updateResp); err != nil {
+		t.Fatalf("parse update response: %v", err)
+	}
+	if updateResp.NewRoot == "" || updateResp.NewRoot == createResp.Root {
+		t.Fatalf("unexpected new_root %q", updateResp.NewRoot)
+	}
+
+	w = doRequest(t, handler, "GET", "/graph/managed-e2e", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("graph get after update failed: %d %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &graphResp); err != nil {
+		t.Fatalf("parse graph response: %v", err)
+	}
+	if graphResp.Graph.Root != updateResp.NewRoot {
+		t.Fatalf("graph head = %s, want %s", graphResp.Graph.Root, updateResp.NewRoot)
+	}
+	if graphResp.Graph.ArcCount != 2 {
+		t.Fatalf("arc count = %d, want 2", graphResp.Graph.ArcCount)
+	}
+
+	w = doRequest(t, handler, "GET", "/graph/managed-e2e/resolve/name", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("graph resolve after update failed: %d %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resolveResp); err != nil {
+		t.Fatalf("parse resolve response: %v", err)
+	}
+	if resolveResp.Target != newName {
+		t.Fatalf("resolve target = %s, want %s", resolveResp.Target, newName)
+	}
+}
+
 // ===== Gateway E2E: Health Check =====
 
 func TestGatewayE2E_Health(t *testing.T) {

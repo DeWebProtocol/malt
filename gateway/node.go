@@ -17,10 +17,10 @@ import (
 // NodeAdapter adapts api.Node to the gateway's needs.
 // It provides a thin layer between the HTTP handlers and the MALT core.
 type NodeAdapter struct {
-	node *api.Node
-	gm   *graph.Manager
-	g    *graph.Graph // default graph for operations
-	wr   *WriteAdapter
+	node    *api.Node
+	gm      *graph.Manager
+	graphs  map[string]*graph.Graph
+	writers map[string]*WriteAdapter
 }
 
 const defaultGatewayGraphID = "default"
@@ -35,8 +35,10 @@ type WriteAdapter struct {
 // NewNodeAdapter creates a new adapter for the given MALT node.
 func NewNodeAdapter(node *api.Node) *NodeAdapter {
 	return &NodeAdapter{
-		node: node,
-		gm:   node.GraphManager(),
+		node:    node,
+		gm:      node.GraphManager(),
+		graphs:  make(map[string]*graph.Graph),
+		writers: make(map[string]*WriteAdapter),
 	}
 }
 
@@ -47,37 +49,55 @@ func (na *NodeAdapter) GraphManager() *graph.Manager {
 
 // EnsureGraph returns the default graph, creating it if needed.
 func (na *NodeAdapter) EnsureGraph() (*graph.Graph, error) {
-	if na.g != nil {
-		return na.g, nil
+	return na.graph(defaultGatewayGraphID, true)
+}
+
+// ManagedGraph opens a managed graph by ID and caches the runtime instance.
+func (na *NodeAdapter) ManagedGraph(graphID string) (*graph.Graph, error) {
+	return na.graph(graphID, false)
+}
+
+func (na *NodeAdapter) graph(graphID string, allowDefaultFallback bool) (*graph.Graph, error) {
+	if g, ok := na.graphs[graphID]; ok {
+		return g, nil
 	}
-	g, err := na.node.OpenGraph(context.Background(), defaultGatewayGraphID)
+
+	g, err := na.node.OpenGraph(context.Background(), graphID)
 	if err != nil {
-		if err != graph.ErrNotFound {
+		if !(allowDefaultFallback && graphID == defaultGatewayGraphID && err == graph.ErrNotFound) {
 			return nil, err
 		}
-		g, err = na.node.NewGraph(defaultGatewayGraphID)
+		g, err = na.node.NewGraph(graphID)
 		if err != nil {
 			return nil, err
 		}
 	}
-	na.g = g
+	na.graphs[graphID] = g
 	return g, nil
 }
 
 // Writer returns the write adapter.
 func (na *NodeAdapter) Writer() (*WriteAdapter, error) {
-	if na.wr == nil {
-		g, err := na.EnsureGraph()
-		if err != nil {
-			return nil, err
-		}
-		na.wr = &WriteAdapter{
-			g:        g,
-			writer:   g.Writer(),
-			bucketId: g.BucketId(),
-		}
+	return na.WriterForGraph(defaultGatewayGraphID)
+}
+
+// WriterForGraph returns a write adapter for the given graph ID.
+func (na *NodeAdapter) WriterForGraph(graphID string) (*WriteAdapter, error) {
+	if wr, ok := na.writers[graphID]; ok {
+		return wr, nil
 	}
-	return na.wr, nil
+
+	g, err := na.graph(graphID, graphID == defaultGatewayGraphID)
+	if err != nil {
+		return nil, err
+	}
+	wr := &WriteAdapter{
+		g:        g,
+		writer:   g.Writer(),
+		bucketId: g.BucketId(),
+	}
+	na.writers[graphID] = wr
+	return wr, nil
 }
 
 // HybridResolve performs path resolution across MALT-native and interoperable

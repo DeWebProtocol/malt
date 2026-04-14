@@ -83,6 +83,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /graph/{id}", s.handleGraphGet)
 	mux.HandleFunc("DELETE /graph/{id}", s.handleGraphDelete)
 	mux.HandleFunc("GET /graphs", s.handleGraphList)
+	mux.HandleFunc("GET /graph/{id}/resolve", s.handleGraphResolve)
+	mux.HandleFunc("GET /graph/{id}/resolve/{path...}", s.handleGraphResolveWithPath)
+	mux.HandleFunc("GET /graph/{id}/proof/{path...}", s.handleGraphProof)
+	mux.HandleFunc("GET /graph/{id}/arc/{path...}", s.handleGraphArc)
+	mux.HandleFunc("GET /graph/{id}/snapshot", s.handleGraphSnapshot)
+	mux.HandleFunc("POST /graph/{id}/update/{path}", s.handleGraphUpdateWithPath)
+	mux.HandleFunc("POST /graph/{id}/update/batch", s.handleGraphBatchUpdate)
+	mux.HandleFunc("POST /graph/{id}/structure", s.handleGraphCreateStructure)
 
 	// Resolution (read-side)
 	mux.HandleFunc("GET /resolve/{root}", s.handleResolve)
@@ -170,8 +178,8 @@ type CreateStructureRequest struct {
 
 // VerifyRequest is the POST body for /verify.
 type VerifyRequest struct {
-	Root       string                  `json:"root"`
-	Transcript []VerifyStepRequest     `json:"transcript"`
+	Root       string              `json:"root"`
+	Transcript []VerifyStepRequest `json:"transcript"`
 }
 
 // VerifyStepRequest is a single step in verification.
@@ -199,8 +207,8 @@ type WriteUpdateResponse struct {
 
 // WriteBatchResponse is the response for batch update.
 type WriteBatchResponse struct {
-	OldRoot string                      `json:"old_root"`
-	NewRoot string                      `json:"new_root"`
+	OldRoot string                          `json:"old_root"`
+	NewRoot string                          `json:"new_root"`
 	PerArc  map[string]*WriteUpdateResponse `json:"per_arc"`
 }
 
@@ -297,7 +305,7 @@ func enableCORS(w http.ResponseWriter, r *http.Request) bool {
 
 // ResolveResult contains the result of a resolution operation (internal).
 type ResolveResult struct {
-	Target     string     `json:"target"`
+	Target     string      `json:"target"`
 	Transcript *Transcript `json:"transcript"`
 }
 
@@ -326,7 +334,7 @@ type WriteUpdateResult struct {
 
 // WriteBatchResult contains the result of a batch update (internal).
 type WriteBatchResult struct {
-	OldRoot string                      `json:"old_root"`
-	NewRoot string                      `json:"new_root"`
+	OldRoot string                        `json:"old_root"`
+	NewRoot string                        `json:"new_root"`
 	PerArc  map[string]*WriteUpdateResult `json:"per_arc"`
 }
