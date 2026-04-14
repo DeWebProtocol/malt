@@ -8,7 +8,6 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/types/evidence"
@@ -46,7 +45,7 @@ type ResolveResult struct {
 	Target cid.Cid
 
 	// Transcript contains the evidence for each step
-	Transcript *interfaces.Transcript
+	Transcript *Transcript
 }
 
 // Resolve resolves a path from a root CID.
@@ -60,7 +59,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		return nil, ErrUndefinedRoot
 	}
 
-	transcript := &interfaces.Transcript{Steps: make([]interfaces.StepEvidence, 0)}
+	transcript := &Transcript{Steps: make([]StepEvidence, 0)}
 	currentCID := root
 	remainingPath := path
 
@@ -105,7 +104,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		}
 
 		// Record step
-		transcript.Steps = append(transcript.Steps, interfaces.StepEvidence{
+		transcript.Steps = append(transcript.Steps, StepEvidence{
 			Path:     matchedPath,
 			Target:   target,
 			Evidence: ev,
@@ -127,7 +126,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		_, target, ev, err := r.explicitStep.Resolve(currentCID, explicit.PayloadArc)
 		if err == nil {
 			// Has @payload arc, record this step and return payload CID
-			transcript.Steps = append(transcript.Steps, interfaces.StepEvidence{
+			transcript.Steps = append(transcript.Steps, StepEvidence{
 				Path:     explicit.PayloadArc,
 				Target:   target,
 				Evidence: ev,
@@ -147,7 +146,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 }
 
 // VerifyTranscript verifies all steps in a transcript.
-func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *interfaces.Transcript) (bool, error) {
+func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, error) {
 	if transcript == nil {
 		return false, ErrTranscriptNil
 	}

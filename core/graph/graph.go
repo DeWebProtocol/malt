@@ -8,7 +8,6 @@ import (
 
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
@@ -123,10 +122,8 @@ func (g *Graph) Writer() *writer.Writer {
 	return g.wr
 }
 
-// ---- interfaces.Graph implementation ----
-
-// Resolve implements GraphResolver.Resolve.
-func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, interfaces.Proof, error) {
+// Resolve resolves a path from a root and returns the target plus a proof.
+func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, Proof, error) {
 	if !root.Defined() {
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
@@ -137,8 +134,8 @@ func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid
 	return result.Target, NewTranscriptProof(result.Transcript), nil
 }
 
-// BatchResolve implements GraphResolver.BatchResolve.
-func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *interfaces.AggregatedProof, error) {
+// BatchResolve resolves multiple paths from a root.
+func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *AggregatedProof, error) {
 	if !root.Defined() {
 		return nil, nil, fmt.Errorf("root must be defined")
 	}
@@ -153,16 +150,16 @@ func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) 
 	return results, nil, nil
 }
 
-// Verify implements GraphResolver.Verify.
-func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof interfaces.Proof, expectedTarget cid.Cid) (bool, error) {
+// Verify verifies a proof against a root and expected target.
+func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof Proof, expectedTarget cid.Cid) (bool, error) {
 	if !root.Defined() {
 		return false, fmt.Errorf("root must be defined")
 	}
 	return proof.Verify(root, expectedTarget)
 }
 
-// BatchVerify implements GraphResolver.BatchVerify.
-func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfaces.AggregatedProof) (bool, error) {
+// BatchVerify verifies an aggregated proof against a root.
+func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *AggregatedProof) (bool, error) {
 	if !root.Defined() {
 		return false, fmt.Errorf("root must be defined")
 	}
@@ -172,8 +169,8 @@ func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfa
 	return aggProof.Verify()
 }
 
-// Update implements GraphWriter.Update.
-func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+// Update applies a batch of arc updates under a root.
+func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *UpdateDelta, error) {
 	if !root.Defined() {
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
@@ -181,7 +178,7 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("batch update failed: %w", err)
 	}
-	delta := &interfaces.UpdateDelta{
+	delta := &UpdateDelta{
 		OldRoot:              result.OldRoot,
 		NewRoot:              result.NewRoot,
 		RewriteAmplification: 1.0,
@@ -199,8 +196,8 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	return result.NewRoot, delta, nil
 }
 
-// BatchUpdate implements GraphWriter.BatchUpdate.
-func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+// BatchUpdate is a synonym for Update.
+func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *UpdateDelta, error) {
 	return g.Update(ctx, root, arcs)
 }
 
@@ -241,6 +238,3 @@ func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, erro
 	}
 	return root, nil
 }
-
-// Ensure Graph implements interfaces.Graph.
-var _ interfaces.Graph = (*Graph)(nil)

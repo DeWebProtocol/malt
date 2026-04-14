@@ -226,8 +226,6 @@ The following parts of the repository are useful but should be treated as second
   - snapshot and synchronization tooling
 - `eval/`
   - benchmark and measurement scaffolding
-- deployment/helper abstractions
-  - engineering support code rather than the center of the design
 
 ## Implemented Variants
 

@@ -5,24 +5,24 @@ package graph
 import (
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/interfaces"
+	"github.com/dewebprotocol/malt/core/resolver"
 	cid "github.com/ipfs/go-cid"
 )
 
 // TranscriptProof implements Proof interface using transcript evidence.
 type TranscriptProof struct {
-	transcript *interfaces.Transcript
+	transcript *resolver.Transcript
 }
 
 // NewTranscriptProof creates a new Proof from a transcript.
-func NewTranscriptProof(transcript *interfaces.Transcript) *TranscriptProof {
+func NewTranscriptProof(transcript *resolver.Transcript) *TranscriptProof {
 	return &TranscriptProof{
 		transcript: transcript,
 	}
 }
 
 // Transcript returns the step-by-step evidence.
-func (p *TranscriptProof) Transcript() *interfaces.Transcript {
+func (p *TranscriptProof) Transcript() *resolver.Transcript {
 	return p.transcript
 }
 
@@ -60,4 +60,4 @@ func (p *TranscriptProof) Size() int {
 }
 
 // Ensure TranscriptProof implements Proof.
-var _ interfaces.Proof = (*TranscriptProof)(nil)
+var _ Proof = (*TranscriptProof)(nil)
