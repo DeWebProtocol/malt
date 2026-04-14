@@ -10,8 +10,7 @@ import (
 // Deployment is an optional composition-root abstraction used by some helper
 // code and demos. It is not the primary MALT abstraction.
 type Deployment interface {
-	// CreateGraph creates a new Graph instance with this deployment's configuration.
-	// The returned Graph uses the injected ArcStore, ContentStore, and CommitmentBackend.
+	// CreateGraph creates a Graph instance through this compatibility deployment.
 	CreateGraph() (Graph, error)
 
 	// ArcStore returns the ArcStore used by this deployment.

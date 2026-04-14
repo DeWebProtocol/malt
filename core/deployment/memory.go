@@ -1,5 +1,6 @@
-// Package deployment provides Deployment factory implementations.
-// Deployment is the composition root for MALT components.
+// Package deployment provides optional helper composition roots retained for
+// demos, tests, and compatibility-oriented code. These types are not the
+// primary architectural center of MALT.
 package deployment
 
 import (
@@ -22,8 +23,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// MemoryDeployment creates Graph with in-memory storage.
-// Useful for testing and development.
+// MemoryDeployment wires an in-memory graph environment for helper code that
+// still uses the Deployment compatibility abstraction.
 type MemoryDeployment struct {
 	kv           kvstore.KVStore
 	eat          eat.EAT
@@ -35,12 +36,13 @@ type MemoryDeployment struct {
 	graph        interfaces.Graph
 }
 
-// NewMemoryDeployment creates a new memory-based deployment.
+// NewMemoryDeployment creates a new memory-backed compatibility deployment.
 func NewMemoryDeployment(kv kvstore.KVStore) *MemoryDeployment {
 	return NewMemoryDeploymentWithBackend(kv, nil)
 }
 
-// NewMemoryDeploymentWithBackend creates a new memory deployment with specific backend.
+// NewMemoryDeploymentWithBackend creates a memory-backed compatibility
+// deployment with an explicit backend adapter.
 func NewMemoryDeploymentWithBackend(kv kvstore.KVStore, backend interfaces.CommitmentBackend) *MemoryDeployment {
 	d := &MemoryDeployment{
 		kv: kv,
@@ -72,16 +74,16 @@ func NewMemoryDeploymentWithBackend(kv kvstore.KVStore, backend interfaces.Commi
 	}
 	d.sce = sce.NewEngine(scheme)
 
-	// Create storage implementations (for Deployment interface compliance)
-	// Note: Graph no longer uses these directly — it delegates to resolver (EAT) and writer (SCE+EAT).
-	// These are retained for interface compliance and standalone access.
+	// Retain legacy storage adapters for Deployment interface compatibility.
+	// The canonical graph path does not use these adapters directly.
 	d.arcStore = arc.NewEATArcStore(kv)
 	d.contentStore = content.NewKVStoreContentStore(kv)
 
 	return d
 }
 
-// CreateGraph creates a new Graph instance with its own per-graph components.
+// CreateGraph creates a Graph using the canonical graph-scoped path while
+// satisfying the legacy Deployment interface.
 func (d *MemoryDeployment) CreateGraph() (interfaces.Graph, error) {
 	if d.graph != nil {
 		return d.graph, nil
@@ -98,32 +100,32 @@ func (d *MemoryDeployment) CreateGraph() (interfaces.Graph, error) {
 	return d.graph, nil
 }
 
-// ArcStore returns the ArcStore used by this deployment.
+// ArcStore returns the compatibility ArcStore adapter exposed by this deployment.
 func (d *MemoryDeployment) ArcStore() interfaces.ArcStore {
 	return d.arcStore
 }
 
-// ContentStore returns the ContentStore used by this deployment.
+// ContentStore returns the compatibility ContentStore adapter exposed by this deployment.
 func (d *MemoryDeployment) ContentStore() interfaces.ContentStore {
 	return d.contentStore
 }
 
-// CommitmentBackend returns the CommitmentBackend used by this deployment.
+// CommitmentBackend returns the compatibility backend adapter used by this deployment.
 func (d *MemoryDeployment) CommitmentBackend() interfaces.CommitmentBackend {
 	return d.backend
 }
 
-// EAT returns the EAT used by this deployment.
+// EAT returns the EAT used by the canonical graph path in this deployment.
 func (d *MemoryDeployment) EAT() eat.EAT {
 	return d.eat
 }
 
-// SCE returns the SCE engine used by this deployment.
+// SCE returns the SCE engine used by the canonical graph path in this deployment.
 func (d *MemoryDeployment) SCE() *sce.Engine {
 	return d.sce
 }
 
-// Resolver returns the hybrid resolver.
+// Resolver returns the interoperability-aware resolver used by this deployment.
 func (d *MemoryDeployment) Resolver() *resolver.Resolver {
 	return d.resolver
 }

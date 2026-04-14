@@ -1,4 +1,5 @@
-// Package content provides ContentStore implementations.
+// Package content provides compatibility adapters for the optional
+// ContentStore interface.
 package content
 
 import (
@@ -10,14 +11,15 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// CASContentStore wraps a CAS client to implement ContentStore.
+// CASContentStore wraps a CAS client to implement the ContentStore
+// compatibility interface.
 type CASContentStore struct {
 	cas    cas.Client
 	mu     sync.RWMutex
 	closed bool
 }
 
-// NewCASContentStore creates a new ContentStore wrapping a CAS client.
+// NewCASContentStore creates a compatibility ContentStore around a CAS client.
 func NewCASContentStore(cas cas.Client) *CASContentStore {
 	return &CASContentStore{
 		cas: cas,

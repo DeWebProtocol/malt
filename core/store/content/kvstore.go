@@ -1,4 +1,5 @@
-// Package content provides ContentStore implementations.
+// Package content provides compatibility adapters for the optional
+// ContentStore interface.
 package content
 
 import (
@@ -11,15 +12,15 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-// KVStoreContentStore implements ContentStore using KVStore.
-// CID bytes are used as keys, data bytes as values.
+// KVStoreContentStore implements the ContentStore compatibility interface
+// using KVStore. CID bytes are used as keys, data bytes as values.
 type KVStoreContentStore struct {
 	kv     kvstore.KVStore
 	mu     sync.RWMutex
 	closed bool
 }
 
-// NewKVStoreContentStore creates a new ContentStore backed by KVStore.
+// NewKVStoreContentStore creates a compatibility ContentStore backed by KVStore.
 func NewKVStoreContentStore(kv kvstore.KVStore) *KVStoreContentStore {
 	return &KVStoreContentStore{
 		kv: kv,

@@ -1,4 +1,4 @@
-// Package interfaces defines the core interfaces for MALT architecture.
+// Package interfaces defines the shared interfaces used by the MALT codebase.
 package interfaces
 
 import (
@@ -57,7 +57,7 @@ type AggregatedProof struct {
 
 // Verify verifies the aggregated proof against the commitment.
 func (p *AggregatedProof) Verify() (bool, error) {
-	// This is a placeholder - actual verification is done by CommitmentBackend
+	// Aggregated verification is not currently implemented in this adapter layer.
 	return false, nil
 }
 
@@ -69,7 +69,8 @@ func (p *AggregatedProof) Size() int {
 // GraphResolver is the read-only interface for MALT graph resolution.
 type GraphResolver interface {
 	// Resolve resolves a path from a root CID, returning the target and proof.
-	// The resolution follows explicit arcs (MALT) and implicit arcs (Merkle DAG).
+	// Native explicit-arc resolution is the primary path. Ordinary CID traversal
+	// is used when resolution crosses into interoperable legacy IPLD/Merkle space.
 	// Returns the resolved CID and a proof that can be verified.
 	Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, Proof, error)
 

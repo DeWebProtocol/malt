@@ -1,4 +1,5 @@
-// Package commitment provides CommitmentBackend implementations.
+// Package commitment provides adapter implementations for the optional
+// CommitmentBackend compatibility interface.
 package commitment
 
 import (
@@ -8,13 +9,14 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// SchemeBackend wraps a commitment.Scheme to implement CommitmentBackend.
+// SchemeBackend wraps a commitment.Scheme to implement the optional
+// CommitmentBackend adapter interface.
 type SchemeBackend struct {
 	scheme commitment.Scheme
 	name   string
 }
 
-// NewSchemeBackend creates a new CommitmentBackend wrapping a scheme.
+// NewSchemeBackend creates a compatibility adapter around a commitment scheme.
 func NewSchemeBackend(scheme commitment.Scheme, name string) *SchemeBackend {
 	return &SchemeBackend{
 		scheme: scheme,

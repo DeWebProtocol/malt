@@ -1,4 +1,5 @@
-// Package resolver implements hybrid resolution with prefix consumption.
+// Package resolver implements path resolution with prefix consumption across
+// native MALT structure roots and interoperable legacy CIDs.
 
 package resolver
 

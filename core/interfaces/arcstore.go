@@ -1,4 +1,4 @@
-// Package interfaces defines the core interfaces for MALT architecture.
+// Package interfaces defines the shared interfaces used by the MALT codebase.
 package interfaces
 
 import (
@@ -8,12 +8,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// ArcStore provides storage for explicit arcs (path → CID mappings).
-// Arcs are scoped by a root CID, allowing multiple graph versions
-// to coexist in the same store.
-//
-// Design principle: root is always passed as parameter (stateless).
-// The store may use bucket-based isolation internally (like EAT).
+// ArcStore is an optional compatibility abstraction for storing explicit arcs
+// under a root-scoped interface. The canonical MALT path uses EAT directly.
 type ArcStore interface {
 	// Get retrieves the target CID for a path under a given root.
 	// Returns arcset.ErrNotFound if the path doesn't exist.

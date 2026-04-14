@@ -1,6 +1,5 @@
-// Package graph provides the per-graph unit for MALT.
-// Graph combines read (Resolver) and write (Writer) capabilities,
-// each with its own SCE instance, resolver, and writer.
+// Package graph provides the graph-scoped unit for MALT. Graph combines read
+// (Resolver) and write (Writer) capabilities around explicit arc state.
 package graph
 
 import (
@@ -81,7 +80,8 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 	// Create per-graph implicit resolver
 	implicitStep := implicit.NewResolver(cas)
 
-	// Create per-graph hybrid resolver
+	// Create per-graph resolver with explicit native resolution and optional
+	// interoperability steps for legacy CID traversal.
 	res := resolver.NewResolver(explicitStep, implicitStep)
 
 	// Create per-graph writer
@@ -113,7 +113,7 @@ func (g *Graph) SCE() *sce.Engine {
 	return g.sce
 }
 
-// Resolver returns the per-graph hybrid resolver.
+// Resolver returns the per-graph resolver.
 func (g *Graph) Resolver() *resolver.Resolver {
 	return g.resolver
 }

@@ -1,6 +1,4 @@
-// Package interfaces defines the core interfaces for MALT architecture.
-// These interfaces provide abstraction layers for dependency injection and
-// allow different deployment configurations.
+// Package interfaces defines the shared interfaces used by the MALT codebase.
 package interfaces
 
 import (
@@ -19,9 +17,8 @@ var (
 	ErrStoreClosed = errors.New("store is closed")
 )
 
-// ContentStore provides content-addressable storage for data blocks.
-// This is the interface for storing and retrieving data by CID.
-// Implementations may use CAS directly, or wrap KVStore with CID-based keys.
+// ContentStore is an optional compatibility abstraction for storing and
+// retrieving data by CID. The canonical MALT path uses CAS clients directly.
 type ContentStore interface {
 	// Get retrieves data by its CID.
 	// Returns error if the CID is not found.

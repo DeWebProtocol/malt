@@ -1,4 +1,5 @@
-// Package arc provides ArcStore implementations.
+// Package arc provides compatibility adapters for the legacy ArcStore
+// abstraction. The canonical MALT path uses EAT directly.
 package arc
 
 import (
@@ -12,11 +13,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// EATArcStore implements ArcStore using KVStore with bucket-based isolation.
-// This is the refactored version of EAT (Explicit Arc Table).
-//
-// Design: root CID is used as bucket identifier for isolation.
-// Each root has its own namespace in the KVStore.
+// EATArcStore exposes root-scoped explicit arc storage through the optional
+// ArcStore interface. It is a compatibility view over KV-backed arc state.
 type EATArcStore struct {
 	kv     kvstore.KVStore
 	mu     sync.RWMutex
@@ -26,7 +24,7 @@ type EATArcStore struct {
 	rootToBucket map[string]string
 }
 
-// NewEATArcStore creates a new ArcStore backed by KVStore.
+// NewEATArcStore creates a compatibility ArcStore backed by KVStore.
 func NewEATArcStore(kv kvstore.KVStore) *EATArcStore {
 	return &EATArcStore{
 		kv:           kv,

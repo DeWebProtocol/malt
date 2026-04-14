@@ -1,4 +1,4 @@
-// Package interfaces defines the core interfaces for MALT architecture.
+// Package interfaces defines the shared interfaces used by the MALT codebase.
 package interfaces
 
 import (
@@ -6,11 +6,9 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// CommitmentBackend provides cryptographic commitment operations.
-// This is the interface for structure commitment schemes (KZG, Verkle, IPA, Merkle).
-//
-// Design principle: operations are stateless where possible.
-// The backend may maintain internal state for commitment caching.
+// CommitmentBackend is an optional compatibility interface for cryptographic
+// commitment operations. The canonical MALT path uses commitment schemes
+// through SCE rather than through this adapter.
 type CommitmentBackend interface {
 	// Commit generates a commitment to an arc set.
 	// Returns a CID with MALT-specific codec (e.g., malt-kzg, malt-verkle).
