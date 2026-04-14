@@ -1,42 +1,140 @@
-// Package graph provides the unified Graph interface for MALT.
-// Graph combines read (GraphResolver) and write (GraphWriter) capabilities,
-// delegating to the resolver and writer packages respectively.
+// Package graph provides the per-graph unit for MALT.
+// Graph combines read (Resolver) and write (Writer) capabilities,
+// each with its own SCE instance, resolver, and writer.
 package graph
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/writer"
 	cid "github.com/ipfs/go-cid"
 )
 
-// Graph implements interfaces.Graph by composing a read-side resolver
-// and a write-side writer. It does not directly depend on SCE, EAT,
-// ArcStore, or ContentStore — those are owned by the resolver and writer.
-type Graph struct {
-	resolver interfaces.GraphResolver
-	writer   interfaces.GraphWriter
+// LineageRecorder is an optional interface for recording structure root lineage.
+type LineageRecorder interface {
+	Record(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid) error
 }
 
-// NewGraph creates a Graph from resolver and writer implementations.
-func NewGraph(resolver interfaces.GraphResolver, writer interfaces.GraphWriter) *Graph {
-	return &Graph{
-		resolver: resolver,
-		writer:   writer,
-	}
+// Graph is a per-graph unit combining resolver (read) and writer (write).
+// It is stateless: the root CID is always passed as a parameter, never held internally.
+type Graph struct {
+	id              string
+	bucketId        string
+	sce             *sce.Engine
+	resolver        *resolver.Resolver
+	wr              *writer.Writer
+	eat             eat.EAT
+	lineageRecorder LineageRecorder
 }
+
+// NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
+//
+// Parameters:
+//   - id: unique graph identifier
+//   - eat: shared EAT (namespace by bucketId) — from Node
+//   - cas: shared CAS client — from Node (nil for testing/mocks)
+//   - opts: functional options (WithCommitmentScheme, WithBucketId, etc.)
+func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, error) {
+	o := defaultOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	// Default bucketId = graph id
+	bucketId := o.BucketId
+	if bucketId == "" {
+		bucketId = id
+	}
+
+	// Default commitment scheme: Verkle
+	scheme := o.Scheme
+	if scheme == nil {
+		s, err := verkle.NewScheme()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create default Verkle scheme: %w", err)
+		}
+		scheme = s
+	}
+
+	// SCE cache size: use config value or default
+	cacheSize := o.SCECacheSize
+	if cacheSize <= 0 {
+		cacheSize = sce.DefaultCacheSize
+	}
+
+	// Create per-graph SCE
+	sceEngine := sce.NewEngine(scheme, sce.WithCacheSize(cacheSize))
+
+	// Create per-graph explicit resolver
+	explicitStep := explicit.NewResolver(eat, sceEngine, bucketId)
+
+	// Create per-graph implicit resolver
+	implicitStep := implicit.NewResolver(cas)
+
+	// Create per-graph hybrid resolver
+	res := resolver.NewResolver(explicitStep, implicitStep)
+
+	// Create per-graph writer
+	wr := writer.NewWriter(sceEngine, eat, o.LineageRecorder)
+
+	return &Graph{
+		id:              id,
+		bucketId:        bucketId,
+		sce:             sceEngine,
+		resolver:        res,
+		wr:              wr,
+		eat:             eat,
+		lineageRecorder: o.LineageRecorder,
+	}, nil
+}
+
+// ID returns the graph identifier.
+func (g *Graph) ID() string {
+	return g.id
+}
+
+// BucketId returns the EAT bucket namespace for this graph.
+func (g *Graph) BucketId() string {
+	return g.bucketId
+}
+
+// SCE returns the per-graph SCE engine.
+func (g *Graph) SCE() *sce.Engine {
+	return g.sce
+}
+
+// Resolver returns the per-graph hybrid resolver.
+func (g *Graph) Resolver() *resolver.Resolver {
+	return g.resolver
+}
+
+// Writer returns the per-graph writer.
+func (g *Graph) Writer() *writer.Writer {
+	return g.wr
+}
+
+// ---- interfaces.Graph implementation ----
 
 // Resolve implements GraphResolver.Resolve.
 func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, interfaces.Proof, error) {
 	if !root.Defined() {
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
-	return g.resolver.Resolve(ctx, root, path)
+	result, err := g.resolver.Resolve(root, path)
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("resolution failed: %w", err)
+	}
+	return result.Target, NewTranscriptProof(result.Transcript), nil
 }
 
 // BatchResolve implements GraphResolver.BatchResolve.
@@ -44,81 +142,9 @@ func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) 
 	if !root.Defined() {
 		return nil, nil, fmt.Errorf("root must be defined")
 	}
-	return g.resolver.BatchResolve(ctx, root, paths)
-}
-
-// Verify implements GraphResolver.Verify.
-func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof interfaces.Proof, expectedTarget cid.Cid) (bool, error) {
-	if !root.Defined() {
-		return false, fmt.Errorf("root must be defined")
-	}
-	return g.resolver.Verify(ctx, root, proof, expectedTarget)
-}
-
-// BatchVerify implements GraphResolver.BatchVerify.
-func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfaces.AggregatedProof) (bool, error) {
-	if !root.Defined() {
-		return false, fmt.Errorf("root must be defined")
-	}
-	return g.resolver.BatchVerify(ctx, root, aggProof)
-}
-
-// Update implements GraphWriter.Update.
-func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
-	if !root.Defined() {
-		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
-	}
-	return g.writer.Update(ctx, root, arcs)
-}
-
-// BatchUpdate implements GraphWriter.BatchUpdate.
-func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
-	if !root.Defined() {
-		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
-	}
-	return g.writer.BatchUpdate(ctx, root, arcs)
-}
-
-// Snapshot implements GraphWriter.Snapshot.
-func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
-	if !root.Defined() {
-		return nil, fmt.Errorf("root must be defined")
-	}
-	return g.writer.Snapshot(ctx, root)
-}
-
-// Commit implements GraphWriter.Commit.
-func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error) {
-	return g.writer.Commit(ctx, snapshot)
-}
-
-// Ensure Graph implements interfaces.Graph.
-var _ interfaces.Graph = (*Graph)(nil)
-
-// ---- Adapters ----
-
-// NewResolverAdapter creates a GraphResolver adapter from a core resolver.Resolver.
-func NewResolverAdapter(res *resolver.Resolver) interfaces.GraphResolver {
-	return &ReadAdapter{resolver: res}
-}
-
-// ReadAdapter adapts *resolver.Resolver to interfaces.GraphResolver.
-type ReadAdapter struct {
-	resolver *resolver.Resolver
-}
-
-func (a *ReadAdapter) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, interfaces.Proof, error) {
-	result, err := a.resolver.Resolve(root, path)
-	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("resolution failed: %w", err)
-	}
-	return result.Target, NewTranscriptProof(result.Transcript), nil
-}
-
-func (a *ReadAdapter) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *interfaces.AggregatedProof, error) {
 	results := make(map[string]cid.Cid)
 	for _, p := range paths {
-		result, err := a.resolver.Resolve(root, p)
+		result, err := g.resolver.Resolve(root, p)
 		if err != nil {
 			continue
 		}
@@ -127,57 +153,34 @@ func (a *ReadAdapter) BatchResolve(ctx context.Context, root cid.Cid, paths []st
 	return results, nil, nil
 }
 
-func (a *ReadAdapter) Verify(ctx context.Context, root cid.Cid, proof interfaces.Proof, expectedTarget cid.Cid) (bool, error) {
+// Verify implements GraphResolver.Verify.
+func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof interfaces.Proof, expectedTarget cid.Cid) (bool, error) {
+	if !root.Defined() {
+		return false, fmt.Errorf("root must be defined")
+	}
 	return proof.Verify(root, expectedTarget)
 }
 
-func (a *ReadAdapter) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfaces.AggregatedProof) (bool, error) {
+// BatchVerify implements GraphResolver.BatchVerify.
+func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfaces.AggregatedProof) (bool, error) {
+	if !root.Defined() {
+		return false, fmt.Errorf("root must be defined")
+	}
 	if aggProof == nil {
 		return false, fmt.Errorf("proof must not be nil")
 	}
 	return aggProof.Verify()
 }
 
-// LineageRecorder is an optional interface for recording structure root lineage.
-type LineageRecorder interface {
-	Record(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid) error
-}
-
-// WriteAdapterOptions configures a WriteAdapter.
-type WriteAdapterOptions struct {
-	BucketId       string
-	LineageRecorder LineageRecorder
-}
-
-// NewWriterAdapter creates a GraphWriter adapter from SCE, EAT, and optional lineage recorder.
-func NewWriterAdapter(sce *sce.Engine, eat eat.EAT, opts WriteAdapterOptions) interfaces.GraphWriter {
-	if opts.BucketId == "" {
-		opts.BucketId = "default"
+// Update implements GraphWriter.Update.
+func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+	if !root.Defined() {
+		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
-	return &WriteAdapter{
-		sce:            sce,
-		eat:            eat,
-		bucketId:       opts.BucketId,
-		lineageRecorder: opts.LineageRecorder,
-	}
-}
-
-// WriteAdapter adapts *writer.Writer (via its raw deps) to interfaces.GraphWriter.
-type WriteAdapter struct {
-	sce             *sce.Engine
-	eat             eat.EAT
-	bucketId        string
-	lineageRecorder LineageRecorder
-}
-
-func (a *WriteAdapter) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
-	w := newWriterInternal(a.sce, a.eat, a.lineageRecorder)
-
-	result, err := w.BatchUpdateArcs(ctx, a.bucketId, root, arcs)
+	result, err := g.wr.BatchUpdateArcs(ctx, g.bucketId, root, arcs)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("batch update failed: %w", err)
 	}
-
 	delta := &interfaces.UpdateDelta{
 		OldRoot:              result.OldRoot,
 		NewRoot:              result.NewRoot,
@@ -185,27 +188,33 @@ func (a *WriteAdapter) Update(ctx context.Context, root cid.Cid, arcs map[string
 	}
 	for _, r := range result.PerArc {
 		switch r.Op {
-		case 0: // ArcInsert
+		case writer.ArcInsert:
 			delta.Added = append(delta.Added, r.Path)
-		case 1: // ArcReplace
+		case writer.ArcReplace:
 			delta.Updated = append(delta.Updated, r.Path)
-		case 2: // ArcDelete
+		case writer.ArcDelete:
 			delta.Deleted = append(delta.Deleted, r.Path)
 		}
 	}
 	return result.NewRoot, delta, nil
 }
 
-func (a *WriteAdapter) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
-	return a.Update(ctx, root, arcs)
+// BatchUpdate implements GraphWriter.BatchUpdate.
+func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+	return g.Update(ctx, root, arcs)
 }
 
-func (a *WriteAdapter) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
-	return a.eat.Snapshot(ctx, a.bucketId, root)
+// Snapshot implements GraphWriter.Snapshot.
+func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
+	if !root.Defined() {
+		return nil, fmt.Errorf("root must be defined")
+	}
+	return g.wr.GetSnapshot(ctx, g.bucketId, root)
 }
 
-func (a *WriteAdapter) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error) {
-	root, err := a.sce.Commit(snapshot)
+// Commit implements GraphWriter.Commit.
+func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error) {
+	root, err := g.sce.Commit(snapshot)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("SCE commit failed: %w", err)
 	}
@@ -222,178 +231,16 @@ func (a *WriteAdapter) Commit(ctx context.Context, snapshot arcset.View) (cid.Ci
 	if iter.Err() != nil {
 		return cid.Undef, iter.Err()
 	}
-	if err := a.eat.Update(ctx, a.bucketId, root, cid.Undef, arcsMap); err != nil {
+	if err := g.eat.Update(ctx, g.bucketId, root, cid.Undef, arcsMap); err != nil {
 		return cid.Undef, fmt.Errorf("EAT update failed: %w", err)
 	}
-	if a.lineageRecorder != nil {
-		if err := a.lineageRecorder.Record(ctx, a.bucketId, root, cid.Undef); err != nil {
+	if g.lineageRecorder != nil {
+		if err := g.lineageRecorder.Record(ctx, g.bucketId, root, cid.Undef); err != nil {
 			return cid.Undef, fmt.Errorf("lineage record failed: %w", err)
 		}
 	}
 	return root, nil
 }
 
-// newWriterInternal creates a *writer.Writer from raw deps without importing the writer package.
-// This avoids a circular import — the adapter uses writer's logic directly.
-func newWriterInternal(sce *sce.Engine, eat eat.EAT, rec LineageRecorder) *internalWriter {
-	return &internalWriter{
-		sce: sce,
-		eat: eat,
-		rec: rec,
-	}
-}
-
-// internalWriter is a minimal copy of the write logic to avoid package import cycles.
-// It implements the unified arc update procedure from Sec 4.5.
-type internalWriter struct {
-	sce *sce.Engine
-	eat eat.EAT
-	rec LineageRecorder
-}
-
-type arcOp uint8
-
-const (
-	arcInsert arcOp = iota
-	arcReplace
-	arcDelete
-)
-
-func (w *internalWriter) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.Cid, updates map[string]cid.Cid) (*batchResult, error) {
-	if !root.Defined() {
-		return nil, fmt.Errorf("invalid structure root")
-	}
-	if len(updates) == 0 {
-		return nil, fmt.Errorf("updates must not be empty")
-	}
-
-	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
-	if err != nil {
-		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
-	}
-
-	perArc := make(map[string]arcResult, len(updates))
-	sceUpdates := make(map[string]struct {
-		Old cid.Cid
-		New cid.Cid
-	}, len(updates))
-	needsRecommit := false
-
-	for path, newTarget := range updates {
-		oldTarget, err := w.eat.Get(ctx, bucketId, root, path)
-		if err != nil && !eatIsNotFound(err) {
-			return nil, fmt.Errorf("EAT.Get failed for %s: %w", path, err)
-		}
-
-		isInsert := !oldTarget.Defined() && newTarget.Defined()
-		isDelete := oldTarget.Defined() && !newTarget.Defined()
-
-		if isInsert || isDelete {
-			needsRecommit = true
-		}
-
-		var op arcOp
-		if isInsert {
-			op = arcInsert
-		} else if oldTarget.Defined() && newTarget.Defined() {
-			op = arcReplace
-		} else if isDelete {
-			op = arcDelete
-		}
-
-		sceUpdates[path] = struct {
-			Old cid.Cid
-			New cid.Cid
-		}{Old: oldTarget, New: newTarget}
-
-		perArc[path] = arcResult{
-			OldRoot:   root,
-			OldTarget: oldTarget,
-			NewTarget: newTarget,
-			Op:        op,
-			Path:      path,
-		}
-	}
-
-	var newRoot cid.Cid
-
-	if needsRecommit {
-		arcsMap := make(map[string]cid.Cid)
-		iter := snapshot.Iterate()
-		for {
-			p, t, ok := iter.Next()
-			if !ok {
-				break
-			}
-			arcsMap[p] = t
-		}
-		if iter.Err() != nil {
-			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
-		}
-
-		for path, newTarget := range updates {
-			if newTarget.Defined() {
-				arcsMap[path] = newTarget
-			} else {
-				delete(arcsMap, path)
-			}
-		}
-
-		newRoot, err = w.sce.Commit(arcset.NewMapFrom(arcsMap))
-		if err != nil {
-			return nil, fmt.Errorf("SCE.Commit failed for batch: %w", err)
-		}
-	} else {
-		newRoot, err = w.sce.BatchUpdate(root, snapshot, sceUpdates)
-		if err != nil {
-			return nil, fmt.Errorf("SCE.BatchUpdate failed: %w", err)
-		}
-	}
-
-	if err := w.eat.Update(ctx, bucketId, newRoot, root, updates); err != nil {
-		return nil, fmt.Errorf("EAT.Update failed: %w", err)
-	}
-
-	if w.rec != nil {
-		if err := w.rec.Record(ctx, bucketId, newRoot, root); err != nil {
-			return nil, fmt.Errorf("LineageRecorder.Record failed: %w", err)
-		}
-	}
-
-	for path := range perArc {
-		r := perArc[path]
-		r.NewRoot = newRoot
-		perArc[path] = r
-	}
-
-	return &batchResult{
-		OldRoot: root,
-		NewRoot: newRoot,
-		PerArc:  perArc,
-	}, nil
-}
-
-func eatIsNotFound(err error) bool {
-	if err == eat.ErrNotFound {
-		return true
-	}
-	if err != nil && err.Error() == "arc not found" {
-		return true
-	}
-	return false
-}
-
-type arcResult struct {
-	OldRoot   cid.Cid
-	NewRoot   cid.Cid
-	Path      string
-	OldTarget cid.Cid
-	NewTarget cid.Cid
-	Op        arcOp
-}
-
-type batchResult struct {
-	OldRoot cid.Cid
-	NewRoot cid.Cid
-	PerArc  map[string]arcResult
-}
+// Ensure Graph implements interfaces.Graph.
+var _ interfaces.Graph = (*Graph)(nil)

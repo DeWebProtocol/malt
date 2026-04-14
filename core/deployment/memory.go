@@ -13,8 +13,6 @@ import (
 	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -83,32 +81,20 @@ func NewMemoryDeploymentWithBackend(kv kvstore.KVStore, backend interfaces.Commi
 	return d
 }
 
-// CreateGraph creates a new Graph instance with resolver and writer.
+// CreateGraph creates a new Graph instance with its own per-graph components.
 func (d *MemoryDeployment) CreateGraph() (interfaces.Graph, error) {
 	if d.graph != nil {
 		return d.graph, nil
 	}
 
-	// Create explicit step (EAT-based arc resolution)
-	explicitStep := explicit.NewResolver(d.eat, d.sce, "default")
+	g, err := graph.NewGraph("memory", d.eat, nil, // No CAS in memory
+		graph.WithBucketId("default"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create graph: %w", err)
+	}
 
-	// Create implicit step (CAS-based Merkle DAG traversal)
-	implicitStep := implicit.NewResolver(nil) // No CAS in memory deployment
-
-	// Create hybrid resolver
-	d.resolver = resolver.NewResolver(explicitStep, implicitStep)
-
-	// Create resolver adapter (read side)
-	readAdapter := graph.NewResolverAdapter(d.resolver)
-
-	// Create writer adapter (write side)
-	writeAdapter := graph.NewWriterAdapter(d.sce, d.eat, graph.WriteAdapterOptions{
-		BucketId: "default",
-	})
-
-	// Compose Graph from resolver + writer
-	d.graph = graph.NewGraph(readAdapter, writeAdapter)
-
+	d.graph = g
 	return d.graph, nil
 }
 

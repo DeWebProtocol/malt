@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/config"
@@ -18,35 +19,26 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/lineage"
-	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/resolver/step"
-	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	cid "github.com/ipfs/go-cid"
 )
 
-// Node is the application-level MALT node that holds all components.
-// It is the entry point for the MALT system.
+// Node is the stateless MALT node that holds shared infrastructure.
+// It is the entry point for the MALT system and a factory for per-graph instances.
 type Node struct {
 	cfg    *config.Config
 	opts   *options
 
-	// Core components
+	// Shared components (namespace by bucketId)
 	kv           kvstore.KVStore
-	sce          *sce.Engine
 	eat          eat.EAT
 	cas          cas.Client
 	graphManager *graph.Manager
 	lineageMgr   *lineage.Manager
-	bucketId     string // default bucket for operations
-	explicitStep step.Step
-	implicitStep step.Step
-	resolver     *resolver.Resolver
 }
 
 // NewNode creates a new MALT node with the given options.
@@ -62,7 +54,6 @@ type Node struct {
 //	// Custom components
 //	node, _ := api.NewNode(
 //	    api.WithKVStore(badger.New(badger.WithPath("./data"))),
-//	    api.WithCommitment(kzg.NewCommitment()),
 //	)
 func NewNode(opts ...Option) (*Node, error) {
 	options := defaultOptions()
@@ -82,7 +73,7 @@ func NewNode(opts ...Option) (*Node, error) {
 	} else {
 		// Use empty config with defaults
 		node.cfg = &config.Config{
-			CommitmentType: "kzg",
+			CommitmentType: "verkle", // Changed default to verkle
 			KVStoreType:    "memory",
 			EATType:        "simple",
 			CASType:        "mock",
@@ -102,17 +93,6 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 	}
 
-	// Commitment
-	if options.commitment != nil {
-		node.sce = sce.NewEngine(options.commitment)
-	} else {
-		scheme, err := node.initCommitmentScheme()
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize commitment scheme: %w", err)
-		}
-		node.sce = sce.NewEngine(scheme)
-	}
-
 	// EAT
 	if options.eat != nil {
 		node.eat = options.eat
@@ -126,9 +106,6 @@ func NewNode(opts ...Option) (*Node, error) {
 	// Graph Manager
 	node.graphManager = graph.NewManager(graph.NewStore(node.kv))
 
-	// Set default bucket ID
-	node.bucketId = "default"
-
 	// CAS
 	if options.cas != nil {
 		node.cas = options.cas
@@ -138,15 +115,6 @@ func NewNode(opts ...Option) (*Node, error) {
 			return nil, fmt.Errorf("failed to initialize CAS: %w", err)
 		}
 	}
-
-	// Explicit step executor (MALT arcs)
-	node.explicitStep = explicit.NewResolver(node.eat, node.sce, node.bucketId)
-
-	// Implicit step executor (Merkle DAG via CAS)
-	node.implicitStep = implicit.NewResolver(node.cas)
-
-	// Resolver (full path resolution)
-	node.resolver = resolver.NewResolver(node.explicitStep, node.implicitStep)
 
 	return node, nil
 }
@@ -230,18 +198,72 @@ func (n *Node) initCAS() (cas.Client, error) {
 	}
 }
 
-// SCE returns the SCE engine.
-func (n *Node) SCE() *sce.Engine {
-	return n.sce
+// NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
+//
+// Parameters:
+//   - id: unique graph identifier
+//   - opts: functional options (graph.WithCommitmentScheme, graph.WithBucketId, etc.)
+//
+// The Node auto-injects shared infrastructure (EAT, CAS) and optional lineage recording.
+func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
+	o := &graph.Options{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	// Default commitment scheme from config if not specified
+	scheme := o.Scheme
+	if scheme == nil {
+		var err error
+		scheme, err = n.initCommitmentScheme()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create commitment scheme: %w", err)
+		}
+	}
+
+	// SCE cache size from config if not specified
+	cacheSize := o.SCECacheSize
+	if cacheSize <= 0 {
+		cacheSize = sce.DefaultCacheSize
+	}
+
+	// Build graph options
+	graphOpts := []graph.Option{
+		graph.WithCommitmentScheme(scheme),
+		graph.WithSCECacheSize(cacheSize),
+	}
+
+	// Auto-inject lineage recorder if manager is available
+	if lm := n.LineageManager(); lm != nil {
+		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
+	}
+
+	// Apply user options (they can override)
+	graphOpts = append(graphOpts, opts...)
+
+	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
 }
 
-// Commitment returns the underlying commitment scheme.
+// lineageRecorderAdapter adapts lineage.Manager to graph.LineageRecorder.
+type lineageRecorderAdapter struct {
+	mgr *lineage.Manager
+}
+
+func (a *lineageRecorderAdapter) Record(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid) error {
+	// bucketId is ignored — lineage tracks by root CID
+	return a.mgr.Record(ctx, newRoot, oldRoot, 0)
+}
+
+// Commitment returns the default commitment scheme type from config.
 func (n *Node) Commitment() commitment.Scheme {
-	// Return the underlying scheme from the engine
-	return n.sce.Scheme()
+	scheme, err := n.initCommitmentScheme()
+	if err != nil {
+		return nil
+	}
+	return scheme
 }
 
-// EAT returns the EAT.
+// EAT returns the shared EAT.
 func (n *Node) EAT() eat.EAT {
 	return n.eat
 }
@@ -267,16 +289,6 @@ func (n *Node) LineageManager() *lineage.Manager {
 	return n.lineageMgr
 }
 
-// Resolver returns the explicit step executor for MALT arcs.
-func (n *Node) Resolver() step.Step {
-	return n.explicitStep
-}
-
-// HybridResolver returns the hybrid resolver for full path resolution.
-func (n *Node) HybridResolver() *resolver.Resolver {
-	return n.resolver
-}
-
 // KVStore returns the underlying KVStore.
 func (n *Node) KVStore() kvstore.KVStore {
 	return n.kv
@@ -285,11 +297,6 @@ func (n *Node) KVStore() kvstore.KVStore {
 // Config returns the node configuration.
 func (n *Node) Config() *config.Config {
 	return n.cfg
-}
-
-// NewStructure creates a new structure from an arc set.
-func (n *Node) NewStructure(arcs arcset.View) (*Structure, error) {
-	return NewStructure(arcs, n.bucketId, n.eat, n.sce)
 }
 
 // Close releases all resources.

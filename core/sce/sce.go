@@ -5,7 +5,6 @@ package sce
 import (
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/codec"
@@ -19,9 +18,7 @@ import (
 // It manages arc sets and delegates cryptographic operations to commitment schemes.
 type Engine struct {
 	scheme commitment.Scheme
-
-	mu       sync.RWMutex
-	sessions map[string]*session // commitment bytes -> session
+	cache  *lruCache
 }
 
 type session struct {
@@ -30,11 +27,15 @@ type session struct {
 	pathToIndex  map[string]int
 }
 
-// NewEngine creates a new SCE with the given commitment scheme.
-func NewEngine(scheme commitment.Scheme) *Engine {
+// NewEngine creates a new SCE with the given commitment scheme and optional cache configuration.
+func NewEngine(scheme commitment.Scheme, opts ...CacheOption) *Engine {
+	cfg := defaultCacheConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
 	return &Engine{
-		scheme:   scheme,
-		sessions: make(map[string]*session),
+		scheme: scheme,
+		cache:  newLRUCache(cfg.maxSize),
 	}
 }
 
@@ -78,13 +79,11 @@ func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	e.mu.Lock()
-	e.sessions[string(commBytes)] = &session{
+	e.cache.Put(string(commBytes), &session{
 		paths:       paths,
 		values:      values,
 		pathToIndex: pathToIndex,
-	}
-	e.mu.Unlock()
+	})
 
 	logger.Info("SCE.Commit completed",
 		logger.String("root", comm.String()),
@@ -111,9 +110,7 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []
 		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	e.mu.RLock()
-	sess, ok := e.sessions[string(commBytes)]
-	e.mu.RUnlock()
+	sess, ok := e.cache.Get(string(commBytes))
 
 	if !ok {
 		logger.Warn("SCE.Prove session not found",
@@ -201,10 +198,7 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	sess, ok := e.sessions[string(commBytes)]
+	sess, ok := e.cache.Get(string(commBytes))
 	if !ok {
 		logger.Warn("SCE.Update session not found",
 			logger.String("root", root.String()))
@@ -239,7 +233,7 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 	// Update session
 	index := sess.pathToIndex[path]
 	sess.values[index] = newKey
-	e.sessions[string(newCommBytes)] = sess
+	e.cache.Put(string(newCommBytes), sess)
 
 	logger.Info("SCE.Update completed",
 		logger.String("old_root", root.String()),
@@ -261,10 +255,7 @@ func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.View, updates map[string]
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	sess, ok := e.sessions[string(commBytes)]
+	sess, ok := e.cache.Get(string(commBytes))
 	if !ok {
 		return cid.Cid{}, ErrSessionNotFound
 	}
@@ -292,7 +283,7 @@ func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.View, updates map[string]
 		index := sess.pathToIndex[path]
 		sess.values[index] = update.New
 	}
-	e.sessions[string(newCommBytes)] = sess
+	e.cache.Put(string(newCommBytes), sess)
 
 	return newComm, nil
 }
@@ -309,9 +300,7 @@ func (e *Engine) BatchProve(root cid.Cid, arcs arcset.View, paths []string) (map
 		return nil, fmt.Errorf("paths must not be empty")
 	}
 
-	e.mu.RLock()
-	sess, ok := e.sessions[string(commBytes)]
-	e.mu.RUnlock()
+	sess, ok := e.cache.Get(string(commBytes))
 
 	if !ok {
 		return nil, ErrSessionNotFound
@@ -344,9 +333,7 @@ func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.View, paths []string) 
 		return nil, fmt.Errorf("paths must not be empty")
 	}
 
-	e.mu.RLock()
-	sess, ok := e.sessions[string(commBytes)]
-	e.mu.RUnlock()
+	sess, ok := e.cache.Get(string(commBytes))
 
 	if !ok {
 		return nil, ErrSessionNotFound
