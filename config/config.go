@@ -46,7 +46,7 @@ type LoggingConfig struct {
 func Init() {
 	viper.SetDefault("commitment_type", "kzg")
 	viper.SetDefault("kvstore_type", "memory")
-	viper.SetDefault("eat_type", "simple")
+	viper.SetDefault("eat_type", "versioned")
 	viper.SetDefault("cas_type", "mock")
 	viper.SetDefault("kvstore.path", "./data/malt.db")
 	viper.SetDefault("kvstore.in_memory", true)

@@ -71,11 +71,11 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 		node.cfg = cfg
 	} else {
-		// Use empty config with defaults
+		// Use in-process defaults consistent with config.Init().
 		node.cfg = &config.Config{
-			CommitmentType: "verkle", // Changed default to verkle
+			CommitmentType: "kzg",
 			KVStoreType:    "memory",
-			EATType:        "simple",
+			EATType:        "versioned",
 			CASType:        "mock",
 		}
 	}
