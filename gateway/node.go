@@ -23,6 +23,8 @@ type NodeAdapter struct {
 	wr   *WriteAdapter
 }
 
+const defaultGatewayGraphID = "default"
+
 // WriteAdapter wraps writer.Writer and provides string-based API.
 type WriteAdapter struct {
 	g        *graph.Graph
@@ -48,7 +50,7 @@ func (na *NodeAdapter) EnsureGraph() (*graph.Graph, error) {
 	if na.g != nil {
 		return na.g, nil
 	}
-	g, err := na.node.NewGraph("gateway-default")
+	g, err := na.node.NewGraph(defaultGatewayGraphID)
 	if err != nil {
 		return nil, err
 	}

@@ -52,8 +52,8 @@ func (s *Server) handleGraphCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create graph (uses the node's default backend and EAT type)
-	g, err := s.gm.CreateGraph(context.Background(), req.ID, "kzg", "overwrite")
+	cfg := s.node.node.Config()
+	g, err := s.gm.CreateGraph(context.Background(), req.ID, cfg.CommitmentType, cfg.EATType)
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("failed to create graph: %v", err))
 		return
@@ -268,7 +268,7 @@ func (s *Server) handleArc(w http.ResponseWriter, r *http.Request) {
 	rootStr := r.PathValue("root")
 	path := r.PathValue("path")
 
-	target, err := s.node.GetArc("default", rootStr, path)
+	target, err := s.node.GetArc(defaultGatewayGraphID, rootStr, path)
 	if err != nil {
 		writeNotFound(w, fmt.Sprintf("arc %q not found: %v", path, err))
 		return
@@ -287,7 +287,7 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rootStr := r.PathValue("root")
-	arcs, err := s.node.GetArcSetSnapshot("default", rootStr)
+	arcs, err := s.node.GetArcSetSnapshot(defaultGatewayGraphID, rootStr)
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("failed to get snapshot: %v", err))
 		return
@@ -342,7 +342,7 @@ func (s *Server) handleUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, err.Error())
 		return
 	}
-	result, err := wa.UpdateArc(context.Background(), "default", rootStr, path, req.Target)
+	result, err := wa.UpdateArc(context.Background(), defaultGatewayGraphID, rootStr, path, req.Target)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
@@ -377,7 +377,7 @@ func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, err.Error())
 		return
 	}
-	result, err := wa.BatchUpdateArcs(context.Background(), "default", rootStr, req.Updates)
+	result, err := wa.BatchUpdateArcs(context.Background(), defaultGatewayGraphID, rootStr, req.Updates)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
@@ -421,7 +421,7 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 
 	graphID := req.GraphID
 	if graphID == "" {
-		graphID = "default"
+		graphID = defaultGatewayGraphID
 	}
 
 	wa, err := s.node.Writer()

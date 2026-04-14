@@ -12,14 +12,14 @@ import (
 // Config holds raw configuration values loaded from file/env/flags.
 // Components use their own Options pattern for configuration.
 type Config struct {
-	CommitmentType string                `mapstructure:"commitment_type"`
-	KVStoreType    string                `mapstructure:"kvstore_type"`
-	EATType        string                `mapstructure:"eat_type"`
-	CASType        string                `mapstructure:"cas_type"`
-	KVStore        KVStoreConfig         `mapstructure:"kvstore"`
-	Commitment     CommitmentConfig      `mapstructure:"commitment"`
-	CAS            CASConfig             `mapstructure:"cas"`
-	Logging        LoggingConfig         `mapstructure:"logging"`
+	CommitmentType string           `mapstructure:"commitment_type"`
+	KVStoreType    string           `mapstructure:"kvstore_type"`
+	EATType        string           `mapstructure:"eat_type"`
+	CASType        string           `mapstructure:"cas_type"`
+	KVStore        KVStoreConfig    `mapstructure:"kvstore"`
+	Commitment     CommitmentConfig `mapstructure:"commitment"`
+	CAS            CASConfig        `mapstructure:"cas"`
+	Logging        LoggingConfig    `mapstructure:"logging"`
 }
 
 type KVStoreConfig struct {

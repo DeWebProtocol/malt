@@ -30,8 +30,8 @@ import (
 // Node is the stateless MALT node that holds shared infrastructure.
 // It is the entry point for the MALT system and a factory for per-graph instances.
 type Node struct {
-	cfg    *config.Config
-	opts   *options
+	cfg  *config.Config
+	opts *options
 
 	// Shared components (namespace by bucketId)
 	kv           kvstore.KVStore
