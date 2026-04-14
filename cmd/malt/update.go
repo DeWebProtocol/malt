@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/writer"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
@@ -29,8 +28,8 @@ Examples:
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	node := mustNode()
-	defer node.Close()
+	g := mustGraph()
+	defer cleanupNode()
 
 	rootCid, err := parseCID(args[0])
 	if err != nil {
@@ -47,10 +46,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	w := writer.NewWriter(node.SCE(), node.EAT(), nil)
+	w := g.Writer()
 	ctx := context.Background()
 
-	result, err := w.UpdateArc(ctx, "default", rootCid, path, newTarget)
+	result, err := w.UpdateArc(ctx, g.BucketId(), rootCid, path, newTarget)
 	if err != nil {
 		return fmt.Errorf("update failed: %w", err)
 	}
@@ -81,8 +80,8 @@ Examples:
 }
 
 func runBatchUpdate(cmd *cobra.Command, args []string) error {
-	node := mustNode()
-	defer node.Close()
+	g := mustGraph()
+	defer cleanupNode()
 
 	rootCid, err := parseCID(args[0])
 	if err != nil {
@@ -115,10 +114,10 @@ func runBatchUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	w := writer.NewWriter(node.SCE(), node.EAT(), nil)
+	w := g.Writer()
 	ctx := context.Background()
 
-	result, err := w.BatchUpdateArcs(ctx, "default", rootCid, updates)
+	result, err := w.BatchUpdateArcs(ctx, g.BucketId(), rootCid, updates)
 	if err != nil {
 		return fmt.Errorf("batch update failed: %w", err)
 	}
@@ -141,8 +140,8 @@ Examples:
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
-	node := mustNode()
-	defer node.Close()
+	g := mustGraph()
+	defer cleanupNode()
 
 	arcs := make(map[string]cid.Cid)
 	for _, pair := range args {
@@ -166,11 +165,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		arcs[path] = t
 	}
 
-	w := writer.NewWriter(node.SCE(), node.EAT(), nil)
+	w := g.Writer()
 	ctx := context.Background()
 	snapshot := arcset.NewMapFrom(arcs)
 
-	rootCid, err := w.CreateStructure(ctx, "default", snapshot)
+	rootCid, err := w.CreateStructure(ctx, g.BucketId(), snapshot)
 	if err != nil {
 		return fmt.Errorf("create structure failed: %w", err)
 	}

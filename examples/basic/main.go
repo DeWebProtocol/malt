@@ -2,10 +2,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
+	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
@@ -47,20 +49,27 @@ func runWithDefaults() {
 
 	fmt.Printf("Node initialized\n")
 
+	// Create graph
+	g, err := node.NewGraph("demo-graph")
+	if err != nil {
+		panic(err)
+	}
+	ctx := context.Background()
+
 	// Create structure
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	snapshot := arcset.NewMapFrom(map[string]cid.Cid{
 		"document": target1,
 		"image":    target2,
 	})
 
-	structure, err := node.NewStructure(arcs)
+	root, err := g.Commit(ctx, snapshot)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Created structure: %s\n", structure.Root())
+	fmt.Printf("Created structure: %s\n", root)
 	fmt.Printf("  - document -> %s\n", target1)
 	fmt.Printf("  - image -> %s\n", target2)
 }
@@ -82,7 +91,6 @@ func runWithOptions() {
 	// Create node with custom components
 	node, err := api.NewNode(
 		api.WithKVStore(kvStore),
-		api.WithCommitment(scheme),
 	)
 	if err != nil {
 		panic(err)
@@ -91,24 +99,32 @@ func runWithOptions() {
 
 	fmt.Printf("Node initialized with custom components\n")
 
+	// Create graph with custom commitment scheme
+	g, err := node.NewGraph("demo-graph", graph.WithCommitmentScheme(scheme))
+	if err != nil {
+		panic(err)
+	}
+	ctx := context.Background()
+
 	// Create structure
 	target1, _ := newPayloadCID([]byte("data.json"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"data": target1})
+	snapshot := arcset.NewMapFrom(map[string]cid.Cid{"data": target1})
 
-	structure, err := node.NewStructure(arcs)
+	root, err := g.Commit(ctx, snapshot)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Created structure: %s\n", structure.Root())
+	fmt.Printf("Created structure: %s\n", root)
 	fmt.Printf("  - data -> %s\n", target1)
 
 	// Resolve and verify
-	resolved, proof, err := structure.Resolve("data")
+	result, err := g.Resolver().Resolve(root, "data")
 	if err != nil {
 		panic(err)
 	}
 
-	valid, _ := structure.Verify("data", resolved, proof)
-	fmt.Printf("Resolved 'data': %s (valid: %v)\n", resolved, valid)
+	proof := graph.NewTranscriptProof(result.Transcript)
+	valid, _ := g.Verify(ctx, root, proof, result.Target)
+	fmt.Printf("Resolved 'data': %s (valid: %v)\n", result.Target, valid)
 }

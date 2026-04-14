@@ -2,11 +2,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -106,6 +108,14 @@ func runDemo(cmd *cobra.Command, args []string) {
 	}
 	defer node.Close()
 
+	// Create graph
+	g, err := node.NewGraph("demo")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating graph: %v\n", err)
+		os.Exit(1)
+	}
+	ctx := context.Background()
+
 	fmt.Println("=== MALT Demo ===")
 	fmt.Println()
 	fmt.Printf("Configuration: %s\n", node.Config())
@@ -115,44 +125,48 @@ func runDemo(cmd *cobra.Command, args []string) {
 	target1, _ := newPayloadCID([]byte("target1"))
 	target2, _ := newPayloadCID([]byte("target2"))
 
-	// Create arc set
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	// Create structure using graph.Commit
+	snapshot := arcset.NewMapFrom(map[string]cid.Cid{
 		"link1": target1,
 		"link2": target2,
 	})
 
-	// Create structure using node
-	structure, err := node.NewStructure(arcs)
+	root, err := g.Commit(ctx, snapshot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating structure: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Created structure: %s\n", structure.Root())
+	fmt.Printf("Created structure: %s\n", root)
 	fmt.Printf("  link1 -> %s\n", target1)
 	fmt.Printf("  link2 -> %s\n", target2)
 	fmt.Println()
 
 	// Resolve
-	resolved, proof, err := structure.Resolve("link1")
+	result, err := g.Resolver().Resolve(root, "link1")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving: %v\n", err)
 		os.Exit(1)
 	}
 
-	valid, _ := structure.Verify("link1", resolved, proof)
+	resolved := result.Target
+	proof := graph.NewTranscriptProof(result.Transcript)
+	valid, _ := g.Verify(ctx, root, proof, resolved)
 	fmt.Printf("Resolved link1: %s (valid: %v)\n", resolved, valid)
 
 	// Update
 	newTarget, _ := newPayloadCID([]byte("new_target"))
-	newStructure, err := structure.Update("link1", newTarget)
+	newRoot, delta, err := g.Update(ctx, root, map[string]cid.Cid{
+		"link1": newTarget,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error updating: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Updated link1 -> %s\n", newTarget)
-	fmt.Printf("New root: %s\n", newStructure.Root())
+	fmt.Printf("New root: %s\n", newRoot)
+	fmt.Printf("Changes: added=%v updated=%v deleted=%v\n", delta.Added, delta.Updated, delta.Deleted)
 
 	fmt.Println()
 	fmt.Println("=== Demo Complete ===")

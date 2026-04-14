@@ -6,8 +6,15 @@ import (
 	"os"
 
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/graph"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/viper"
+)
+
+// defaultNode and defaultGraph are lazily initialized and reused across commands.
+var (
+	defaultNode  *api.Node
+	defaultGraph *graph.Graph
 )
 
 // makeNode creates and configures a MALT node from CLI flags.
@@ -26,13 +33,38 @@ func makeNode() (*api.Node, error) {
 }
 
 // mustNode creates a node or exits with an error.
+// It reuses a cached defaultNode if available.
 func mustNode() *api.Node {
-	node, err := makeNode()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if defaultNode == nil {
+		var err error
+		defaultNode, err = makeNode()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
-	return node
+	return defaultNode
+}
+
+// mustGraph returns the default graph, creating it via mustNode if needed.
+func mustGraph() *graph.Graph {
+	if defaultGraph == nil {
+		node := mustNode()
+		var err error
+		defaultGraph, err = node.NewGraph("default")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating graph: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	return defaultGraph
+}
+
+// cleanupNode closes the default node if it was created.
+func cleanupNode() {
+	if defaultNode != nil {
+		_ = defaultNode.Close()
+	}
 }
 
 // parseCID parses a CID string or returns an error.

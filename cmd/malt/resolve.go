@@ -42,8 +42,8 @@ Examples:
 }
 
 func runResolve(cmd *cobra.Command, args []string) error {
-	node := mustNode()
-	defer node.Close()
+	g := mustGraph()
+	defer cleanupNode()
 
 	rootStr := args[0]
 	path := ""
@@ -56,7 +56,7 @@ func runResolve(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := node.HybridResolver().Resolve(rootCid, path)
+	result, err := g.Resolver().Resolve(rootCid, path)
 	if err != nil {
 		return fmt.Errorf("resolution failed: %w", err)
 	}

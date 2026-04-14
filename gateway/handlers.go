@@ -337,7 +337,12 @@ func (s *Server) handleUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.node.Writer().UpdateArc(context.Background(), "default", rootStr, path, req.Target)
+	wa, err := s.node.Writer()
+	if err != nil {
+		writeServerError(w, err.Error())
+		return
+	}
+	result, err := wa.UpdateArc(context.Background(), "default", rootStr, path, req.Target)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
@@ -367,7 +372,12 @@ func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.node.Writer().BatchUpdateArcs(context.Background(), "default", rootStr, req.Updates)
+	wa, err := s.node.Writer()
+	if err != nil {
+		writeServerError(w, err.Error())
+		return
+	}
+	result, err := wa.BatchUpdateArcs(context.Background(), "default", rootStr, req.Updates)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
@@ -414,7 +424,12 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 		graphID = "default"
 	}
 
-	rootStr, err := s.node.Writer().CreateStructure(context.Background(), graphID, req.Arcs)
+	wa, err := s.node.Writer()
+	if err != nil {
+		writeServerError(w, err.Error())
+		return
+	}
+	rootStr, err := wa.CreateStructure(context.Background(), graphID, req.Arcs)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return

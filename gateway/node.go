@@ -8,7 +8,6 @@ import (
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/interfaces"
-	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/writer"
@@ -20,19 +19,15 @@ import (
 type NodeAdapter struct {
 	node *api.Node
 	gm   *graph.Manager
+	g    *graph.Graph // default graph for operations
 	wr   *WriteAdapter
 }
 
 // WriteAdapter wraps writer.Writer and provides string-based API.
 type WriteAdapter struct {
-	writer   *writerAdapterInternal
+	g        *graph.Graph
+	writer   *writer.Writer
 	bucketId string
-}
-
-// writerAdapterInternal adapts the writer package to string-based API.
-type writerAdapterInternal struct {
-	// Uses the Node's SCE, EAT directly
-	node *api.Node
 }
 
 // NewNodeAdapter creates a new adapter for the given MALT node.
@@ -48,25 +43,48 @@ func (na *NodeAdapter) GraphManager() *graph.Manager {
 	return na.gm
 }
 
+// EnsureGraph returns the default graph, creating it if needed.
+func (na *NodeAdapter) EnsureGraph() (*graph.Graph, error) {
+	if na.g != nil {
+		return na.g, nil
+	}
+	g, err := na.node.NewGraph("gateway-default")
+	if err != nil {
+		return nil, err
+	}
+	na.g = g
+	return g, nil
+}
+
 // Writer returns the write adapter.
-func (na *NodeAdapter) Writer() *WriteAdapter {
+func (na *NodeAdapter) Writer() (*WriteAdapter, error) {
 	if na.wr == nil {
+		g, err := na.EnsureGraph()
+		if err != nil {
+			return nil, err
+		}
 		na.wr = &WriteAdapter{
-			writer:   &writerAdapterInternal{node: na.node},
-			bucketId: "default",
+			g:        g,
+			writer:   g.Writer(),
+			bucketId: g.BucketId(),
 		}
 	}
-	return na.wr
+	return na.wr, nil
 }
 
 // HybridResolve performs hybrid path resolution.
 func (na *NodeAdapter) HybridResolve(rootStr string, path string) (*ResolveResult, error) {
+	g, err := na.EnsureGraph()
+	if err != nil {
+		return nil, err
+	}
+
 	rootCid, err := decodeCID(rootStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid root CID: %w", err)
 	}
 
-	result, err := na.node.HybridResolver().Resolve(rootCid, path)
+	result, err := g.Resolver().Resolve(rootCid, path)
 	if err != nil {
 		return nil, fmt.Errorf("resolution failed: %w", err)
 	}
@@ -99,6 +117,11 @@ func (na *NodeAdapter) HybridResolve(rootStr string, path string) (*ResolveResul
 
 // VerifyTranscript verifies a resolution transcript.
 func (na *NodeAdapter) VerifyTranscript(rootStr string, transcript *Transcript) (bool, error) {
+	g, err := na.EnsureGraph()
+	if err != nil {
+		return false, err
+	}
+
 	rootCid, err := decodeCID(rootStr)
 	if err != nil {
 		return false, fmt.Errorf("invalid root CID: %w", err)
@@ -132,7 +155,7 @@ func (na *NodeAdapter) VerifyTranscript(rootStr string, transcript *Transcript) 
 	}
 
 	resolverTranscript := &interfaces.Transcript{Steps: steps}
-	return na.node.HybridResolver().VerifyTranscript(rootCid, resolverTranscript)
+	return g.Resolver().VerifyTranscript(rootCid, resolverTranscript)
 }
 
 // GetArc retrieves an arc target for a given bucket, root, and path.
@@ -220,9 +243,19 @@ func (wa *WriteAdapter) UpdateArc(ctx context.Context, bucketId string, rootStr 
 		}
 	}
 
-	// Use the Writer module if available, otherwise fall back to manual update
-	w := wa.writer
-	return w.UpdateArc(ctx, bucketId, rootCid, path, newTarget)
+	result, err := wa.writer.UpdateArc(ctx, bucketId, rootCid, path, newTarget)
+	if err != nil {
+		return nil, err
+	}
+
+	return &WriteUpdateResult{
+		OldRoot:   result.OldRoot.String(),
+		NewRoot:   result.NewRoot.String(),
+		Path:      result.Path,
+		OldTarget: result.OldTarget.String(),
+		NewTarget: result.NewTarget.String(),
+		Op:        result.Op.String(),
+	}, nil
 }
 
 // BatchUpdateArcs updates multiple arcs.
@@ -245,56 +278,7 @@ func (wa *WriteAdapter) BatchUpdateArcs(ctx context.Context, bucketId string, ro
 		}
 	}
 
-	w := wa.writer
-	return w.BatchUpdateArcs(ctx, bucketId, rootCid, cidUpdates)
-}
-
-// CreateStructure creates a new structure from arcs.
-func (wa *WriteAdapter) CreateStructure(ctx context.Context, bucketId string, arcs map[string]string) (string, error) {
-	arcsMap := make(map[string]cid.Cid)
-	for path, targetStr := range arcs {
-		t, err := decodeCID(targetStr)
-		if err != nil {
-			return "", fmt.Errorf("invalid target CID for %s: %w", path, err)
-		}
-		arcsMap[path] = t
-	}
-
-	w := wa.writer
-	rootCid, err := w.CreateStructure(ctx, bucketId, arcsMap)
-	if err != nil {
-		return "", err
-	}
-	return rootCid.String(), nil
-}
-
-// writeAdapterInternal methods.
-
-// UpdateArc performs a single arc update using the Writer module.
-func (wi *writerAdapterInternal) UpdateArc(ctx context.Context, bucketId string, rootCid cid.Cid, path string, newTarget cid.Cid) (*WriteUpdateResult, error) {
-	// Build the write-side API from Node components
-	w := buildWriter(wi.node)
-
-	result, err := w.UpdateArc(ctx, bucketId, rootCid, path, newTarget)
-	if err != nil {
-		return nil, err
-	}
-
-	return &WriteUpdateResult{
-		OldRoot:   result.OldRoot.String(),
-		NewRoot:   result.NewRoot.String(),
-		Path:      result.Path,
-		OldTarget: result.OldTarget.String(),
-		NewTarget: result.NewTarget.String(),
-		Op:        result.Op.String(),
-	}, nil
-}
-
-// BatchUpdateArcs performs a batch arc update.
-func (wi *writerAdapterInternal) BatchUpdateArcs(ctx context.Context, bucketId string, rootCid cid.Cid, updates map[string]cid.Cid) (*WriteBatchResult, error) {
-	w := buildWriter(wi.node)
-
-	result, err := w.BatchUpdateArcs(ctx, bucketId, rootCid, updates)
+	result, err := wa.writer.BatchUpdateArcs(ctx, bucketId, rootCid, cidUpdates)
 	if err != nil {
 		return nil, err
 	}
@@ -318,34 +302,23 @@ func (wi *writerAdapterInternal) BatchUpdateArcs(ctx context.Context, bucketId s
 	}, nil
 }
 
-// CreateStructure creates a new structure.
-func (wi *writerAdapterInternal) CreateStructure(ctx context.Context, bucketId string, arcs map[string]cid.Cid) (cid.Cid, error) {
-	w := buildWriter(wi.node)
+// CreateStructure creates a new structure from arcs.
+func (wa *WriteAdapter) CreateStructure(ctx context.Context, bucketId string, arcs map[string]string) (string, error) {
+	arcsMap := make(map[string]cid.Cid)
+	for path, targetStr := range arcs {
+		t, err := decodeCID(targetStr)
+		if err != nil {
+			return "", fmt.Errorf("invalid target CID for %s: %w", path, err)
+		}
+		arcsMap[path] = t
+	}
 
-	// Convert map to arcset.Snapshot
-	snapshot := buildSnapshot(arcs)
-	rootCid, err := w.CreateStructure(ctx, bucketId, snapshot)
+	snapshot := arcset.NewMapFrom(arcsMap)
+	rootCid, err := wa.writer.CreateStructure(ctx, bucketId, snapshot)
 	if err != nil {
-		return cid.Undef, err
+		return "", err
 	}
-
-	return rootCid, nil
-}
-
-// buildWriter constructs a writer.Writer from a MALT node.
-func buildWriter(node *api.Node) *writer.Writer {
-	rec := buildLineageRecorder(node)
-	return writer.NewWriter(node.SCE(), node.EAT(), rec)
-}
-
-// buildLineageRecorder creates a lineage recorder adapter if the node
-// has a lineage manager configured.
-func buildLineageRecorder(node *api.Node) writer.LineageRecorder {
-	lm := node.LineageManager()
-	if lm == nil {
-		return nil
-	}
-	return lineage.NewRecorderAdapter(lm, nil)
+	return rootCid.String(), nil
 }
 
 // buildSnapshot converts a map[string]cid.Cid to an arcset.Snapshot.

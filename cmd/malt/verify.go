@@ -48,8 +48,8 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	node := mustNode()
-	defer node.Close()
+	g := mustGraph()
+	defer cleanupNode()
 
 	rootCid, err := parseCID(args[0])
 	if err != nil {
@@ -103,7 +103,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 
 	transcript := &interfaces.Transcript{Steps: steps}
-	valid, err := node.HybridResolver().VerifyTranscript(rootCid, transcript)
+	valid, err := g.Resolver().VerifyTranscript(rootCid, transcript)
 	if err != nil {
 		return fmt.Errorf("verification failed: %w", err)
 	}

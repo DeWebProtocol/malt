@@ -24,8 +24,8 @@ Examples:
 }
 
 func runProve(cmd *cobra.Command, args []string) error {
-	node := mustNode()
-	defer node.Close()
+	g := mustGraph()
+	defer cleanupNode()
 
 	rootCid, err := parseCID(args[0])
 	if err != nil {
@@ -33,7 +33,7 @@ func runProve(cmd *cobra.Command, args []string) error {
 	}
 	path := args[1]
 
-	result, err := node.HybridResolver().Resolve(rootCid, path)
+	result, err := g.Resolver().Resolve(rootCid, path)
 	if err != nil {
 		return fmt.Errorf("resolution failed: %w", err)
 	}
