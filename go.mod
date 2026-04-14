@@ -3,6 +3,7 @@ module github.com/dewebprotocol/malt
 go 1.24.6
 
 require (
+	github.com/bits-and-blooms/bitset v1.7.0
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c
 	github.com/crate-crypto/go-kzg-4844 v1.1.0
 	github.com/dgraph-io/badger/v4 v4.2.0
@@ -19,7 +20,6 @@ require (
 )
 
 require (
-	github.com/bits-and-blooms/bitset v1.7.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/consensys/bavard v0.1.13 // indirect
 	github.com/consensys/gnark-crypto v0.13.0 // indirect
