@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,7 +52,10 @@ func mustGraph() *graph.Graph {
 	if defaultGraph == nil {
 		node := mustNode()
 		var err error
-		defaultGraph, err = node.NewGraph("default")
+		defaultGraph, err = node.OpenGraph(context.Background(), "default")
+		if err == graph.ErrNotFound {
+			defaultGraph, err = node.NewGraph("default")
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating graph: %v\n", err)
 			os.Exit(1)

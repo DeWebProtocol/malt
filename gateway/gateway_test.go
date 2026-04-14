@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/codec"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -66,6 +68,54 @@ func TestServer_GraphCreate(t *testing.T) {
 
 	if graphResp.Graph.ID != "test-graph" {
 		t.Errorf("expected graph id 'test-graph', got %q", graphResp.Graph.ID)
+	}
+}
+
+func TestNodeAdapterEnsureGraphOpensManagedDefaultGraph(t *testing.T) {
+	node, err := api.NewNode()
+	if err != nil {
+		t.Fatalf("failed to create MALT node: %v", err)
+	}
+	defer node.Close()
+
+	if _, err := node.CreateManagedGraph(context.Background(), "default", "ipa"); err != nil {
+		t.Fatalf("CreateManagedGraph failed: %v", err)
+	}
+
+	handler := NewServer(NewNodeAdapter(node), ":0").Handler()
+	body := map[string]any{
+		"arcs": map[string]string{
+			"name": fakeCID("alice"),
+		},
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/structure", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Root string `json:"root"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	root, err := cid.Decode(resp.Root)
+	if err != nil {
+		t.Fatalf("decode root: %v", err)
+	}
+	if got := codec.GetMaltCodec(root); got != codec.CodecMaltIPA {
+		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltIPA)
 	}
 }
 

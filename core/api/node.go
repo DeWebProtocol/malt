@@ -27,6 +27,15 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+func canonicalEATType(t string) string {
+	switch t {
+	case "simple":
+		return "overwrite"
+	default:
+		return t
+	}
+}
+
 // Node is the stateless MALT node that holds shared infrastructure.
 // It is the entry point for the MALT system and a factory for per-graph instances.
 type Node struct {
@@ -63,8 +72,10 @@ func NewNode(opts ...Option) (*Node, error) {
 
 	node := &Node{opts: options}
 
-	// Load config if file specified
-	if options.configFile != "" {
+	// Load config if explicitly provided or file specified.
+	if options.config != nil {
+		node.cfg = options.config
+	} else if options.configFile != "" {
 		cfg, err := config.LoadFromFile(options.configFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
@@ -134,9 +145,9 @@ func (n *Node) initKVStore() (kvstore.KVStore, error) {
 	}
 }
 
-// initCommitmentScheme creates a commitment scheme from config.
-func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
-	switch n.cfg.CommitmentType {
+// initCommitmentSchemeType creates a commitment scheme from its configured type.
+func (n *Node) initCommitmentSchemeType(kind string) (commitment.Scheme, error) {
+	switch kind {
 	case "kzg":
 		return kzg.NewScheme()
 	case "verkle":
@@ -144,8 +155,13 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 	case "ipa":
 		return ipa.NewScheme()
 	default:
-		return nil, fmt.Errorf("unknown commitment type: %s", n.cfg.CommitmentType)
+		return nil, fmt.Errorf("unknown commitment type: %s", kind)
 	}
+}
+
+// initCommitmentScheme creates the node's default commitment scheme from config.
+func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
+	return n.initCommitmentSchemeType(n.cfg.CommitmentType)
 }
 
 // initEAT creates an EAT from config.
@@ -198,7 +214,58 @@ func (n *Node) initCAS() (cas.Client, error) {
 	}
 }
 
-// NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
+// CreateManagedGraph creates graph metadata using the node's runtime profile.
+// The EAT implementation is node-scoped, so managed graphs always persist the
+// node's active EAT type. Backend may vary per graph because commitment schemes
+// are instantiated per graph.
+func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string) (*graph.GraphMeta, error) {
+	if backend == "" {
+		backend = n.cfg.CommitmentType
+	}
+	if _, err := n.initCommitmentSchemeType(backend); err != nil {
+		return nil, err
+	}
+	return n.graphManager.CreateGraph(ctx, id, backend, canonicalEATType(n.cfg.EATType))
+}
+
+// OpenGraph opens a managed graph using the runtime profile stored in GraphMeta.
+// The persisted backend selects the commitment scheme; the persisted EAT type
+// must match the node's shared EAT implementation.
+func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
+	meta, err := n.graphManager.GetGraph(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	graphEATType := canonicalEATType(meta.EATType)
+	nodeEATType := canonicalEATType(n.cfg.EATType)
+	if graphEATType != "" && graphEATType != nodeEATType {
+		return nil, fmt.Errorf("graph %q requires eat_type %q, node is %q", id, meta.EATType, n.cfg.EATType)
+	}
+
+	backend := meta.Backend
+	if backend == "" {
+		backend = n.cfg.CommitmentType
+	}
+
+	scheme, err := n.initCommitmentSchemeType(backend)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create commitment scheme for graph %q: %w", id, err)
+	}
+
+	graphOpts := []graph.Option{
+		graph.WithCommitmentScheme(scheme),
+		graph.WithSCECacheSize(sce.DefaultCacheSize),
+	}
+	if lm := n.LineageManager(); lm != nil {
+		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
+	}
+
+	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
+}
+
+// NewGraph creates a new ad hoc per-graph instance with its own SCE, resolver,
+// and writer. It does not consult GraphManager metadata.
 //
 // Parameters:
 //   - id: unique graph identifier

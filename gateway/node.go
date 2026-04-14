@@ -50,9 +50,15 @@ func (na *NodeAdapter) EnsureGraph() (*graph.Graph, error) {
 	if na.g != nil {
 		return na.g, nil
 	}
-	g, err := na.node.NewGraph(defaultGatewayGraphID)
+	g, err := na.node.OpenGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
-		return nil, err
+		if err != graph.ErrNotFound {
+			return nil, err
+		}
+		g, err = na.node.NewGraph(defaultGatewayGraphID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	na.g = g
 	return g, nil

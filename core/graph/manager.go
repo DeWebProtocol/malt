@@ -23,8 +23,8 @@ type GraphMeta struct {
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	ArcCount  int        `json:"arc_count"`
-	Backend   string     `json:"backend"`
-	EATType   string     `json:"eat_type"`
+	Backend   string     `json:"backend"`  // per-graph commitment scheme used when reopening the graph
+	EATType   string     `json:"eat_type"` // node-scoped EAT compatibility requirement for this graph
 	State     GraphState `json:"state"`
 }
 
@@ -205,7 +205,7 @@ func NewManager(store *Store) *Manager {
 	}
 }
 
-// CreateGraph creates a new graph with the given ID and initial parameters.
+// CreateGraph creates a new graph metadata entry with the given runtime profile.
 // The graph starts in the "active" state with an undefined root.
 func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, eatType string) (*GraphMeta, error) {
 	m.mu.Lock()

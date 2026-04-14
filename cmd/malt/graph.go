@@ -29,22 +29,34 @@ var graphCreateCmd = &cobra.Command{
 	RunE:  runGraphCreate,
 }
 
-var graphBackend = "kzg"
-var graphEATType = "overwrite"
+var graphBackend string
+var graphEATType string
+
+func canonicalCLIeATType(t string) string {
+	switch t {
+	case "simple":
+		return "overwrite"
+	default:
+		return t
+	}
+}
 
 func init() {
-	graphCreateCmd.Flags().StringVar(&graphBackend, "backend", graphBackend, "Backend type: kzg/verkle/ipa")
-	graphCreateCmd.Flags().StringVar(&graphEATType, "eat", graphEATType, "EAT type: simple/versioned/overwrite")
+	graphCreateCmd.Flags().StringVar(&graphBackend, "backend", "", "Backend type: kzg/verkle/ipa (default: node config)")
+	graphCreateCmd.Flags().StringVar(&graphEATType, "eat", "", "Required EAT type metadata (must match node config)")
 }
 
 func runGraphCreate(cmd *cobra.Command, args []string) error {
 	node := mustNode()
 	defer node.Close()
 
-	gm := node.GraphManager()
 	ctx := cmd.Context()
 
-	g, err := gm.CreateGraph(ctx, args[0], graphBackend, graphEATType)
+	if graphEATType != "" && canonicalCLIeATType(graphEATType) != canonicalCLIeATType(node.Config().EATType) {
+		return fmt.Errorf("graph eat_type %q must match node config %q", graphEATType, node.Config().EATType)
+	}
+
+	g, err := node.CreateManagedGraph(ctx, args[0], graphBackend)
 	if err != nil {
 		if err == graph.ErrAlreadyExists {
 			return fmt.Errorf("graph %q already exists", args[0])

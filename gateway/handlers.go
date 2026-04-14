@@ -52,8 +52,7 @@ func (s *Server) handleGraphCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := s.node.node.Config()
-	g, err := s.gm.CreateGraph(context.Background(), req.ID, cfg.CommitmentType, cfg.EATType)
+	g, err := s.node.node.CreateManagedGraph(context.Background(), req.ID, "")
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("failed to create graph: %v", err))
 		return
