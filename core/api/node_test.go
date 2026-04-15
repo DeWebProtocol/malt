@@ -1,0 +1,94 @@
+package api
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/types/arcset"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
+)
+
+func newTestCID(seed string) cid.Cid {
+	mhash, err := mh.Sum([]byte(seed), mh.SHA2_256, -1)
+	if err != nil {
+		panic(err)
+	}
+	return cid.NewCidV1(cid.Raw, mhash)
+}
+
+func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
+	node, err := NewNode()
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+
+	meta, err := node.CreateManagedGraph(context.Background(), "managed", "")
+	if err != nil {
+		t.Fatalf("CreateManagedGraph failed: %v", err)
+	}
+
+	if meta.Backend != "kzg" {
+		t.Fatalf("backend = %q, want %q", meta.Backend, "kzg")
+	}
+	if meta.EATType != "versioned" {
+		t.Fatalf("eat_type = %q, want %q", meta.EATType, "versioned")
+	}
+}
+
+func TestOpenGraphUsesStoredBackend(t *testing.T) {
+	node, err := NewNode()
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+
+	if _, err := node.CreateManagedGraph(context.Background(), "ipa-graph", "ipa"); err != nil {
+		t.Fatalf("CreateManagedGraph failed: %v", err)
+	}
+
+	g, err := node.OpenGraph(context.Background(), "ipa-graph")
+	if err != nil {
+		t.Fatalf("OpenGraph failed: %v", err)
+	}
+
+	root, err := g.Commit(context.Background(), arcset.NewMapFrom(map[string]cid.Cid{
+		"name": newTestCID("alice"),
+	}))
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	if got := codec.GetMaltCodec(root); got != codec.CodecMaltIPA {
+		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltIPA)
+	}
+}
+
+func TestOpenGraphRejectsEATMismatch(t *testing.T) {
+	node, err := NewNode(WithConfig(&config.Config{
+		CommitmentType: "kzg",
+		KVStoreType:    "memory",
+		EATType:        "versioned",
+		CASType:        "mock",
+	}))
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+
+	if _, err := node.GraphManager().CreateGraph(context.Background(), "legacy", "kzg", "overwrite"); err != nil {
+		t.Fatalf("CreateGraph failed: %v", err)
+	}
+
+	_, err = node.OpenGraph(context.Background(), "legacy")
+	if err == nil {
+		t.Fatal("OpenGraph should reject EAT mismatch")
+	}
+	if !strings.Contains(err.Error(), `requires eat_type "overwrite"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

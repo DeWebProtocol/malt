@@ -14,11 +14,12 @@ type Option func(*options)
 type options struct {
 	// Configuration file path
 	configFile string
+	config     *config.Config
 
 	// Pre-built components (override config-based creation)
-	kvStore    kvstore.KVStore
-	eat        eat.EAT
-	cas        cas.Client
+	kvStore kvstore.KVStore
+	eat     eat.EAT
+	cas     cas.Client
 }
 
 func defaultOptions() *options {
@@ -35,7 +36,7 @@ func WithConfigFile(path string) Option {
 // WithConfig uses the provided config struct.
 func WithConfig(cfg *config.Config) Option {
 	return func(o *options) {
-		// Config will be processed by NewNode
+		o.config = cfg
 	}
 }
 

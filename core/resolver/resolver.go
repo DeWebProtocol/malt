@@ -1,22 +1,22 @@
-// Package resolver implements hybrid resolution with prefix consumption.
-// It handles the full resolution loop, combining explicit MALT arcs
-// with implicit Merkle-DAG traversal via CAS.
+// Package resolver implements the MALT resolution loop with prefix consumption.
+// Native explicit-arc resolution is the primary path. Ordinary Merkle/IPLD
+// traversal is used as an interoperability path when resolution crosses into
+// legacy CID space.
 package resolver
 
 import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
 
-// Resolver handles hybrid resolution with prefix consumption.
-// It dispatches to different step executors based on CID codec and continues
-// traversal until the path is consumed or resolution fails.
+// Resolver handles resolution with prefix consumption. It dispatches to
+// different step executors based on CID codec and continues traversal until the
+// path is consumed or resolution fails.
 //
 // Architecture:
 //   - MALT commitments (malt-kzg/malt-verkle/malt-ipa) → explicitStep
@@ -31,7 +31,7 @@ type Resolver struct {
 	implicitStep  step.Step
 }
 
-// NewResolver creates a new hybrid resolver with explicit and implicit step executors.
+// NewResolver creates a new resolver with explicit and implicit step executors.
 func NewResolver(explicit, implicit step.Step) *Resolver {
 	return &Resolver{
 		explicitStep: explicit,
@@ -45,7 +45,7 @@ type ResolveResult struct {
 	Target cid.Cid
 
 	// Transcript contains the evidence for each step
-	Transcript *interfaces.Transcript
+	Transcript *Transcript
 }
 
 // Resolve resolves a path from a root CID.
@@ -59,7 +59,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		return nil, ErrUndefinedRoot
 	}
 
-	transcript := &interfaces.Transcript{Steps: make([]interfaces.StepEvidence, 0)}
+	transcript := &Transcript{Steps: make([]StepEvidence, 0)}
 	currentCID := root
 	remainingPath := path
 
@@ -104,7 +104,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		}
 
 		// Record step
-		transcript.Steps = append(transcript.Steps, interfaces.StepEvidence{
+		transcript.Steps = append(transcript.Steps, StepEvidence{
 			Path:     matchedPath,
 			Target:   target,
 			Evidence: ev,
@@ -126,7 +126,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		_, target, ev, err := r.explicitStep.Resolve(currentCID, explicit.PayloadArc)
 		if err == nil {
 			// Has @payload arc, record this step and return payload CID
-			transcript.Steps = append(transcript.Steps, interfaces.StepEvidence{
+			transcript.Steps = append(transcript.Steps, StepEvidence{
 				Path:     explicit.PayloadArc,
 				Target:   target,
 				Evidence: ev,
@@ -146,7 +146,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 }
 
 // VerifyTranscript verifies all steps in a transcript.
-func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *interfaces.Transcript) (bool, error) {
+func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, error) {
 	if transcript == nil {
 		return false, ErrTranscriptNil
 	}

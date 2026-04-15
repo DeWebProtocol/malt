@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/codec"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -22,8 +24,7 @@ func testServer(t *testing.T) *httptest.Server {
 		t.Fatalf("failed to create MALT node: %v", err)
 	}
 
-	adapter := NewNodeAdapter(node)
-	srv := NewServer(adapter, ":0")
+	srv := NewServer(node, ":0")
 	return httptest.NewServer(srv.Handler())
 }
 
@@ -66,6 +67,54 @@ func TestServer_GraphCreate(t *testing.T) {
 
 	if graphResp.Graph.ID != "test-graph" {
 		t.Errorf("expected graph id 'test-graph', got %q", graphResp.Graph.ID)
+	}
+}
+
+func TestNodeAdapterEnsureGraphOpensManagedDefaultGraph(t *testing.T) {
+	node, err := api.NewNode()
+	if err != nil {
+		t.Fatalf("failed to create MALT node: %v", err)
+	}
+	defer node.Close()
+
+	if _, err := node.CreateManagedGraph(context.Background(), "default", "ipa"); err != nil {
+		t.Fatalf("CreateManagedGraph failed: %v", err)
+	}
+
+	handler := NewServer(node, ":0").Handler()
+	body := map[string]any{
+		"arcs": map[string]string{
+			"name": fakeCID("alice"),
+		},
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/structure", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Root string `json:"root"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	root, err := cid.Decode(resp.Root)
+	if err != nil {
+		t.Fatalf("decode root: %v", err)
+	}
+	if got := codec.GetMaltCodec(root); got != codec.CodecMaltIPA {
+		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltIPA)
 	}
 }
 
@@ -223,6 +272,159 @@ func TestServer_GraphList(t *testing.T) {
 
 	if len(graphResp.Graphs) != 2 {
 		t.Errorf("expected 2 graphs, got %d", len(graphResp.Graphs))
+	}
+}
+
+func TestServer_GraphScopedLifecycle(t *testing.T) {
+	srv := testServer(t)
+	defer srv.Close()
+
+	resp, err := postJSON(srv.URL+"/graph", `{"id": "managed"}`)
+	if err != nil {
+		t.Fatalf("create graph failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	structBody := `{
+		"arcs": {
+			"name": "` + fakeCID("alice") + `",
+			"age": "` + fakeCID("30") + `"
+		}
+	}`
+	resp, err = postJSON(srv.URL+"/graph/managed/structure", structBody)
+	if err != nil {
+		t.Fatalf("create structure failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, bodyString(resp))
+	}
+
+	var createResp map[string]string
+	if err := readJSON(resp, &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	initialRoot := createResp["root"]
+	if initialRoot == "" {
+		t.Fatal("expected non-empty root")
+	}
+
+	resp, err = http.Get(srv.URL + "/graph/managed")
+	if err != nil {
+		t.Fatalf("get graph failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var graphResp GraphResponse
+	if err := readJSON(resp, &graphResp); err != nil {
+		t.Fatalf("decode graph response: %v", err)
+	}
+	if graphResp.Graph.Root != initialRoot {
+		t.Fatalf("graph root = %s, want %s", graphResp.Graph.Root, initialRoot)
+	}
+	if graphResp.Graph.ArcCount != 2 {
+		t.Fatalf("arc count = %d, want 2", graphResp.Graph.ArcCount)
+	}
+
+	resp, err = http.Get(srv.URL + "/graph/managed/resolve/name")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var resolveResp ResolveResponse
+	if err := readJSON(resp, &resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	if resolveResp.Target != fakeCID("alice") {
+		t.Fatalf("target = %s, want %s", resolveResp.Target, fakeCID("alice"))
+	}
+
+	resp, err = postJSON(srv.URL+"/graph/managed/update/name", `{"target":"`+fakeCID("bob")+`"}`)
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, bodyString(resp))
+	}
+
+	var updateResp WriteUpdateResponse
+	if err := readJSON(resp, &updateResp); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updateResp.NewRoot == initialRoot {
+		t.Fatal("expected new root after managed update")
+	}
+
+	resp, err = http.Get(srv.URL + "/graph/managed")
+	if err != nil {
+		t.Fatalf("get graph failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if err := readJSON(resp, &graphResp); err != nil {
+		t.Fatalf("decode graph response: %v", err)
+	}
+	if graphResp.Graph.Root != updateResp.NewRoot {
+		t.Fatalf("graph root = %s, want %s", graphResp.Graph.Root, updateResp.NewRoot)
+	}
+	if graphResp.Graph.ArcCount != 2 {
+		t.Fatalf("arc count = %d, want 2", graphResp.Graph.ArcCount)
+	}
+
+	resp, err = http.Get(srv.URL + "/graph/managed/resolve/name")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if err := readJSON(resp, &resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	if resolveResp.Target != fakeCID("bob") {
+		t.Fatalf("target = %s, want %s", resolveResp.Target, fakeCID("bob"))
+	}
+}
+
+func TestServer_GraphScopedWriteRejectsFrozenGraph(t *testing.T) {
+	node, err := api.NewNode()
+	if err != nil {
+		t.Fatalf("failed to create MALT node: %v", err)
+	}
+	defer node.Close()
+
+	if _, err := node.CreateManagedGraph(context.Background(), "frozen", ""); err != nil {
+		t.Fatalf("CreateManagedGraph failed: %v", err)
+	}
+
+	srv := httptest.NewServer(NewServer(node, ":0").Handler())
+	defer srv.Close()
+
+	resp, err := postJSON(srv.URL+"/graph/frozen/structure", `{"arcs":{"name":"`+fakeCID("alice")+`"}}`)
+	if err != nil {
+		t.Fatalf("create structure failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, bodyString(resp))
+	}
+	resp.Body.Close()
+
+	if err := node.GraphManager().FreezeGraph(context.Background(), "frozen"); err != nil {
+		t.Fatalf("FreezeGraph failed: %v", err)
+	}
+
+	resp, err = postJSON(srv.URL+"/graph/frozen/update/name", `{"target":"`+fakeCID("bob")+`"}`)
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", resp.StatusCode, bodyString(resp))
 	}
 }
 

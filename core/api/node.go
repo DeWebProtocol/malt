@@ -19,7 +19,6 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/lineage"
-	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -27,11 +26,20 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+func canonicalEATType(t string) string {
+	switch t {
+	case "simple":
+		return "overwrite"
+	default:
+		return t
+	}
+}
+
 // Node is the stateless MALT node that holds shared infrastructure.
 // It is the entry point for the MALT system and a factory for per-graph instances.
 type Node struct {
-	cfg    *config.Config
-	opts   *options
+	cfg  *config.Config
+	opts *options
 
 	// Shared components (namespace by bucketId)
 	kv           kvstore.KVStore
@@ -63,19 +71,21 @@ func NewNode(opts ...Option) (*Node, error) {
 
 	node := &Node{opts: options}
 
-	// Load config if file specified
-	if options.configFile != "" {
+	// Load config if explicitly provided or file specified.
+	if options.config != nil {
+		node.cfg = options.config
+	} else if options.configFile != "" {
 		cfg, err := config.LoadFromFile(options.configFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
 		node.cfg = cfg
 	} else {
-		// Use empty config with defaults
+		// Use in-process defaults consistent with config.Init().
 		node.cfg = &config.Config{
-			CommitmentType: "verkle", // Changed default to verkle
+			CommitmentType: "kzg",
 			KVStoreType:    "memory",
-			EATType:        "simple",
+			EATType:        "versioned",
 			CASType:        "mock",
 		}
 	}
@@ -134,9 +144,9 @@ func (n *Node) initKVStore() (kvstore.KVStore, error) {
 	}
 }
 
-// initCommitmentScheme creates a commitment scheme from config.
-func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
-	switch n.cfg.CommitmentType {
+// initCommitmentSchemeType creates a commitment scheme from its configured type.
+func (n *Node) initCommitmentSchemeType(kind string) (commitment.Scheme, error) {
+	switch kind {
 	case "kzg":
 		return kzg.NewScheme()
 	case "verkle":
@@ -144,7 +154,7 @@ func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
 	case "ipa":
 		return ipa.NewScheme()
 	default:
-		return nil, fmt.Errorf("unknown commitment type: %s", n.cfg.CommitmentType)
+		return nil, fmt.Errorf("unknown commitment type: %s", kind)
 	}
 }
 
@@ -198,7 +208,57 @@ func (n *Node) initCAS() (cas.Client, error) {
 	}
 }
 
-// NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
+// CreateManagedGraph creates graph metadata using the node's runtime profile.
+// The EAT implementation is node-scoped, so managed graphs always persist the
+// node's active EAT type. Backend may vary per graph because commitment schemes
+// are instantiated per graph.
+func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string) (*graph.GraphMeta, error) {
+	if backend == "" {
+		backend = n.cfg.CommitmentType
+	}
+	if _, err := n.initCommitmentSchemeType(backend); err != nil {
+		return nil, err
+	}
+	return n.graphManager.CreateGraph(ctx, id, backend, canonicalEATType(n.cfg.EATType))
+}
+
+// OpenGraph opens a managed graph using the runtime profile stored in GraphMeta.
+// The persisted backend selects the commitment scheme; the persisted EAT type
+// must match the node's shared EAT implementation.
+func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
+	meta, err := n.graphManager.GetGraph(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	graphEATType := canonicalEATType(meta.EATType)
+	nodeEATType := canonicalEATType(n.cfg.EATType)
+	if graphEATType != "" && graphEATType != nodeEATType {
+		return nil, fmt.Errorf("graph %q requires eat_type %q, node is %q", id, meta.EATType, n.cfg.EATType)
+	}
+
+	backend := meta.Backend
+	if backend == "" {
+		backend = n.cfg.CommitmentType
+	}
+
+	scheme, err := n.initCommitmentSchemeType(backend)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create commitment scheme for graph %q: %w", id, err)
+	}
+
+	graphOpts := []graph.Option{
+		graph.WithCommitmentScheme(scheme),
+	}
+	if lm := n.LineageManager(); lm != nil {
+		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
+	}
+
+	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
+}
+
+// NewGraph creates a new ad hoc per-graph instance with its own SCE, resolver,
+// and writer. It does not consult GraphManager metadata.
 //
 // Parameters:
 //   - id: unique graph identifier
@@ -215,22 +275,15 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	scheme := o.Scheme
 	if scheme == nil {
 		var err error
-		scheme, err = n.initCommitmentScheme()
+		scheme, err = n.initCommitmentSchemeType(n.cfg.CommitmentType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create commitment scheme: %w", err)
 		}
 	}
 
-	// SCE cache size from config if not specified
-	cacheSize := o.SCECacheSize
-	if cacheSize <= 0 {
-		cacheSize = sce.DefaultCacheSize
-	}
-
 	// Build graph options
 	graphOpts := []graph.Option{
 		graph.WithCommitmentScheme(scheme),
-		graph.WithSCECacheSize(cacheSize),
 	}
 
 	// Auto-inject lineage recorder if manager is available
@@ -244,7 +297,7 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
 }
 
-// lineageRecorderAdapter adapts lineage.Manager to graph.LineageRecorder.
+// lineageRecorderAdapter adapts lineage.Manager to writer.LineageRecorder.
 type lineageRecorderAdapter struct {
 	mgr *lineage.Manager
 }
@@ -256,7 +309,7 @@ func (a *lineageRecorderAdapter) Record(ctx context.Context, bucketId string, ne
 
 // Commitment returns the default commitment scheme type from config.
 func (n *Node) Commitment() commitment.Scheme {
-	scheme, err := n.initCommitmentScheme()
+	scheme, err := n.initCommitmentSchemeType(n.cfg.CommitmentType)
 	if err != nil {
 		return nil
 	}
@@ -283,8 +336,7 @@ func (n *Node) GraphManager() *graph.Manager {
 func (n *Node) LineageManager() *lineage.Manager {
 	if n.lineageMgr == nil {
 		kv := lineage.NewKVStoreAdapter(n.kv)
-		store := lineage.NewStore(kv)
-		n.lineageMgr = lineage.NewManager(store)
+		n.lineageMgr = lineage.NewManager(kv)
 	}
 	return n.lineageMgr
 }

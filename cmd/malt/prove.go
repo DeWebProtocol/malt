@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dewebprotocol/malt/core/graph"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -12,26 +14,50 @@ func init() {
 	rootCmd.AddCommand(proveCmd)
 }
 
+var proveGraphID string
+
 var proveCmd = &cobra.Command{
-	Use:   "prove <root> <path>",
+	Use:   "prove [<root>] <path>",
 	Short: "Generate a proof for a path resolution",
 	Long: `Resolve a path and output the evidence (proof) for each step.
 
 Examples:
-  malt prove bafy... data/file.txt`,
-	Args: cobra.ExactArgs(2),
+  malt prove bafy... data/file.txt
+  malt prove --graph my-graph data/file.txt`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if proveGraphID != "" {
+			return cobra.ExactArgs(1)(cmd, args)
+		}
+		return cobra.ExactArgs(2)(cmd, args)
+	},
 	RunE: runProve,
 }
 
 func runProve(cmd *cobra.Command, args []string) error {
-	g := mustGraph()
-	defer cleanupNode()
+	var (
+		g       *graph.Graph
+		rootCid cid.Cid
+		err     error
+		path    string
+	)
 
-	rootCid, err := parseCID(args[0])
-	if err != nil {
-		return err
+	if proveGraphID != "" {
+		var meta *graph.GraphMeta
+		g, meta = mustManagedGraph(proveGraphID, false)
+		rootCid, err = managedGraphHeadRoot(meta)
+		if err != nil {
+			return err
+		}
+		path = args[0]
+	} else {
+		g = mustGraph()
+		rootCid, err = parseCID(args[0])
+		if err != nil {
+			return err
+		}
+		path = args[1]
 	}
-	path := args[1]
+	defer cleanupNode()
 
 	result, err := g.Resolver().Resolve(rootCid, path)
 	if err != nil {
@@ -73,4 +99,5 @@ func runProve(cmd *cobra.Command, args []string) error {
 
 func init() {
 	proveCmd.Flags().BoolP("json", "j", false, "Output as JSON")
+	proveCmd.Flags().StringVar(&proveGraphID, "graph", "", "Generate a proof from the managed graph head instead of an explicit root")
 }

@@ -1,7 +1,7 @@
 {
   "commitment_type": "kzg",
   "kvstore_type": "memory",
-  "eat_type": "simple",
+  "eat_type": "versioned",
   "cas_type": "mock",
   "kvstore": {
     "path": "./data/malt.db",

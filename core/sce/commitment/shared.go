@@ -5,9 +5,9 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// ExtractSortedPathsValues extracts sorted paths and values from an ArcSetView.
+// ExtractSortedPathsValues extracts sorted paths and values from a Snapshot.
 // This is a shared utility used by all commitment schemes (KZG, IPA, Verkle).
-func ExtractSortedPathsValues(arcs arcset.View) ([]string, []cid.Cid) {
+func ExtractSortedPathsValues(arcs arcset.Snapshot) ([]string, []cid.Cid) {
 	var paths []string
 	iter := arcs.Iterate()
 	for {

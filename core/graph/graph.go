@@ -1,6 +1,5 @@
-// Package graph provides the per-graph unit for MALT.
-// Graph combines read (Resolver) and write (Writer) capabilities,
-// each with its own SCE instance, resolver, and writer.
+// Package graph provides the graph-scoped unit for MALT. Graph combines read
+// (Resolver) and write (Writer) capabilities around explicit arc state.
 package graph
 
 import (
@@ -9,7 +8,6 @@ import (
 
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/interfaces"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
@@ -20,11 +18,6 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// LineageRecorder is an optional interface for recording structure root lineage.
-type LineageRecorder interface {
-	Record(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid) error
-}
-
 // Graph is a per-graph unit combining resolver (read) and writer (write).
 // It is stateless: the root CID is always passed as a parameter, never held internally.
 type Graph struct {
@@ -34,7 +27,7 @@ type Graph struct {
 	resolver        *resolver.Resolver
 	wr              *writer.Writer
 	eat             eat.EAT
-	lineageRecorder LineageRecorder
+	lineageRecorder writer.LineageRecorder
 }
 
 // NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
@@ -66,14 +59,8 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 		scheme = s
 	}
 
-	// SCE cache size: use config value or default
-	cacheSize := o.SCECacheSize
-	if cacheSize <= 0 {
-		cacheSize = sce.DefaultCacheSize
-	}
-
-	// Create per-graph SCE
-	sceEngine := sce.NewEngine(scheme, sce.WithCacheSize(cacheSize))
+	// Create per-graph SCE (stateless — scheme manages its own caching)
+	sceEngine := sce.NewEngine(scheme)
 
 	// Create per-graph explicit resolver
 	explicitStep := explicit.NewResolver(eat, sceEngine, bucketId)
@@ -81,7 +68,8 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 	// Create per-graph implicit resolver
 	implicitStep := implicit.NewResolver(cas)
 
-	// Create per-graph hybrid resolver
+	// Create per-graph resolver with explicit native resolution and optional
+	// interoperability steps for legacy CID traversal.
 	res := resolver.NewResolver(explicitStep, implicitStep)
 
 	// Create per-graph writer
@@ -113,7 +101,7 @@ func (g *Graph) SCE() *sce.Engine {
 	return g.sce
 }
 
-// Resolver returns the per-graph hybrid resolver.
+// Resolver returns the per-graph resolver.
 func (g *Graph) Resolver() *resolver.Resolver {
 	return g.resolver
 }
@@ -123,10 +111,8 @@ func (g *Graph) Writer() *writer.Writer {
 	return g.wr
 }
 
-// ---- interfaces.Graph implementation ----
-
-// Resolve implements GraphResolver.Resolve.
-func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, interfaces.Proof, error) {
+// Resolve resolves a path from a root and returns the target plus a proof.
+func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid, Proof, error) {
 	if !root.Defined() {
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
@@ -137,8 +123,8 @@ func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid
 	return result.Target, NewTranscriptProof(result.Transcript), nil
 }
 
-// BatchResolve implements GraphResolver.BatchResolve.
-func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *interfaces.AggregatedProof, error) {
+// BatchResolve resolves multiple paths from a root.
+func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *arcset.AggregatedProof, error) {
 	if !root.Defined() {
 		return nil, nil, fmt.Errorf("root must be defined")
 	}
@@ -153,27 +139,16 @@ func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) 
 	return results, nil, nil
 }
 
-// Verify implements GraphResolver.Verify.
-func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof interfaces.Proof, expectedTarget cid.Cid) (bool, error) {
+// Verify verifies a proof against a root and expected target.
+func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof Proof, expectedTarget cid.Cid) (bool, error) {
 	if !root.Defined() {
 		return false, fmt.Errorf("root must be defined")
 	}
 	return proof.Verify(root, expectedTarget)
 }
 
-// BatchVerify implements GraphResolver.BatchVerify.
-func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *interfaces.AggregatedProof) (bool, error) {
-	if !root.Defined() {
-		return false, fmt.Errorf("root must be defined")
-	}
-	if aggProof == nil {
-		return false, fmt.Errorf("proof must not be nil")
-	}
-	return aggProof.Verify()
-}
-
-// Update implements GraphWriter.Update.
-func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
+// Update applies a batch of arc updates under a root.
+func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *UpdateDelta, error) {
 	if !root.Defined() {
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
@@ -181,7 +156,7 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("batch update failed: %w", err)
 	}
-	delta := &interfaces.UpdateDelta{
+	delta := &UpdateDelta{
 		OldRoot:              result.OldRoot,
 		NewRoot:              result.NewRoot,
 		RewriteAmplification: 1.0,
@@ -199,11 +174,6 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	return result.NewRoot, delta, nil
 }
 
-// BatchUpdate implements GraphWriter.BatchUpdate.
-func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *interfaces.UpdateDelta, error) {
-	return g.Update(ctx, root, arcs)
-}
-
 // Snapshot implements GraphWriter.Snapshot.
 func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
 	if !root.Defined() {
@@ -213,7 +183,7 @@ func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, er
 }
 
 // Commit implements GraphWriter.Commit.
-func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error) {
+func (g *Graph) Commit(ctx context.Context, snapshot arcset.Snapshot) (cid.Cid, error) {
 	root, err := g.sce.Commit(snapshot)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("SCE commit failed: %w", err)
@@ -241,6 +211,3 @@ func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, erro
 	}
 	return root, nil
 }
-
-// Ensure Graph implements interfaces.Graph.
-var _ interfaces.Graph = (*Graph)(nil)

@@ -56,7 +56,7 @@ func NewScheme() (*Scheme, error) {
 }
 
 // Commit generates an IPA commitment.
-func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
+func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Cid{}, fmt.Errorf("arc set is nil")
 	}
@@ -101,7 +101,7 @@ func (s *Scheme) Commit(arcs arcset.View) (cid.Cid, error) {
 }
 
 // Prove generates an IPA proof.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -191,7 +191,7 @@ func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) 
 }
 
 // Update updates a value in the commitment.
-func (s *Scheme) Update(comm cid.Cid, arcs arcset.View, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
+func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -239,7 +239,7 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.View, path string, oldValue, n
 }
 
 // BatchUpdate updates multiple values.
-func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]struct {
+func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[string]struct {
 	Old cid.Cid
 	New cid.Cid
 }) (cid.Cid, error) {
@@ -294,7 +294,7 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.View, updates map[string]
 }
 
 // BatchProve generates proofs for multiple paths.
-func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
+func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths is empty")
 	}
@@ -399,7 +399,7 @@ func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEn
 }
 
 // AggregateProve generates an aggregated proof.
-func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
+func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (*arcset.AggregatedProof, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths is empty")
 	}

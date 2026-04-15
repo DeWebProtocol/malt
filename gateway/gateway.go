@@ -1,5 +1,4 @@
 // Package gateway provides the HTTP gateway for MALT.
-// It exposes MALT resolution, graph management, and write-side operations via REST API.
 package gateway
 
 import (
@@ -8,11 +7,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
+	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
+
+const defaultGatewayGraphID = "default"
 
 // Graph represents a MALT graph (bucket) with metadata.
 type Graph struct {
@@ -26,18 +32,23 @@ type Graph struct {
 
 // Server is the MALT HTTP gateway server.
 type Server struct {
+	node   *api.Node
 	gm     *graph.Manager
-	node   *NodeAdapter
 	addr   string
 	server *http.Server
+
+	// Cache for non-managed graph instances (lazy-created per bucket ID)
+	mu     sync.Mutex
+	graphs map[string]*graph.Graph
 }
 
 // NewServer creates a new gateway server.
-func NewServer(node *NodeAdapter, addr string) *Server {
+func NewServer(node *api.Node, addr string) *Server {
 	return &Server{
-		gm:   node.GraphManager(),
-		node: node,
-		addr: addr,
+		node:   node,
+		gm:     node.GraphManager(),
+		addr:   addr,
+		graphs: make(map[string]*graph.Graph),
 	}
 }
 
@@ -74,6 +85,72 @@ func (s *Server) GraphManager() *graph.Manager {
 	return s.gm
 }
 
+// getGraph returns a cached graph instance for the given ID, creating it if needed.
+func (s *Server) getGraph(ctx context.Context, graphID string) (*graph.Graph, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if g, ok := s.graphs[graphID]; ok {
+		return g, nil
+	}
+
+	g, err := s.node.OpenGraph(ctx, graphID)
+	if err != nil {
+		if graphID == defaultGatewayGraphID && err == graph.ErrNotFound {
+			g, err = s.node.NewGraph(graphID)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+	s.graphs[graphID] = g
+	return g, nil
+}
+
+// stepsToResponse converts resolver transcript steps to HTTP response format.
+func stepsToResponse(steps []resolver.StepEvidence) []StepEvidenceResponse {
+	resp := make([]StepEvidenceResponse, len(steps))
+	for i, step := range steps {
+		kind := "unknown"
+		switch step.Evidence.Kind() {
+		case evidence.EvidenceKindExplicit:
+			kind = "explicit"
+		case evidence.EvidenceKindImplicit:
+			kind = "implicit"
+		case evidence.EvidenceKindHAMT:
+			kind = "hamt"
+		}
+		resp[i] = StepEvidenceResponse{
+			Path:     step.Path,
+			Target:   step.Target.String(),
+			Evidence: encodeBase64(step.Evidence.Bytes()),
+			Kind:     kind,
+		}
+	}
+	return resp
+}
+
+// snapshotToMap converts an arcset snapshot to a string map and count.
+func snapshotToMap(snapshot arcset.Snapshot) (map[string]string, int, error) {
+	arcs := make(map[string]string)
+	count := 0
+	iter := snapshot.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		arcs[path] = target.String()
+		count++
+	}
+	if iter.Err() != nil {
+		return nil, 0, iter.Err()
+	}
+	return arcs, count, nil
+}
+
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Health
 	mux.HandleFunc("/health", s.handleHealth)
@@ -83,6 +160,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /graph/{id}", s.handleGraphGet)
 	mux.HandleFunc("DELETE /graph/{id}", s.handleGraphDelete)
 	mux.HandleFunc("GET /graphs", s.handleGraphList)
+	mux.HandleFunc("GET /graph/{id}/resolve", s.handleGraphResolve)
+	mux.HandleFunc("GET /graph/{id}/resolve/{path...}", s.handleGraphResolveWithPath)
+	mux.HandleFunc("GET /graph/{id}/proof/{path...}", s.handleGraphProof)
+	mux.HandleFunc("GET /graph/{id}/arc/{path...}", s.handleGraphArc)
+	mux.HandleFunc("GET /graph/{id}/snapshot", s.handleGraphSnapshot)
+	mux.HandleFunc("POST /graph/{id}/update/{path}", s.handleGraphUpdateWithPath)
+	mux.HandleFunc("POST /graph/{id}/update/batch", s.handleGraphBatchUpdate)
+	mux.HandleFunc("POST /graph/{id}/structure", s.handleGraphCreateStructure)
 
 	// Resolution (read-side)
 	mux.HandleFunc("GET /resolve/{root}", s.handleResolve)
@@ -170,8 +255,8 @@ type CreateStructureRequest struct {
 
 // VerifyRequest is the POST body for /verify.
 type VerifyRequest struct {
-	Root       string                  `json:"root"`
-	Transcript []VerifyStepRequest     `json:"transcript"`
+	Root       string              `json:"root"`
+	Transcript []VerifyStepRequest `json:"transcript"`
 }
 
 // VerifyStepRequest is a single step in verification.
@@ -199,8 +284,8 @@ type WriteUpdateResponse struct {
 
 // WriteBatchResponse is the response for batch update.
 type WriteBatchResponse struct {
-	OldRoot string                      `json:"old_root"`
-	NewRoot string                      `json:"new_root"`
+	OldRoot string                          `json:"old_root"`
+	NewRoot string                          `json:"new_root"`
 	PerArc  map[string]*WriteUpdateResponse `json:"per_arc"`
 }
 
@@ -293,40 +378,11 @@ func enableCORS(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// ===== Internal types used by NodeAdapter =====
-
-// ResolveResult contains the result of a resolution operation (internal).
-type ResolveResult struct {
-	Target     string     `json:"target"`
-	Transcript *Transcript `json:"transcript"`
-}
-
-// Transcript records the evidence for each resolution step (internal).
-type Transcript struct {
-	Steps []StepEvidence `json:"steps"`
-}
-
-// StepEvidence represents evidence for a single resolution step (internal).
-type StepEvidence struct {
-	Path     string `json:"path"`
-	Target   string `json:"target"`
-	Evidence []byte `json:"evidence"`
-	Kind     string `json:"kind"`
-}
-
-// WriteUpdateResult contains the result of a single arc update (internal).
-type WriteUpdateResult struct {
-	OldRoot   string `json:"old_root"`
-	NewRoot   string `json:"new_root"`
-	Path      string `json:"path"`
-	OldTarget string `json:"old_target"`
-	NewTarget string `json:"new_target"`
-	Op        string `json:"op"`
-}
-
-// WriteBatchResult contains the result of a batch update (internal).
-type WriteBatchResult struct {
-	OldRoot string                      `json:"old_root"`
-	NewRoot string                      `json:"new_root"`
-	PerArc  map[string]*WriteUpdateResult `json:"per_arc"`
+// decodeCIDOr decodes a CID string, returning cid.Undef on error.
+func decodeCIDOr(s string) cid.Cid {
+	c, err := decodeCID(s)
+	if err != nil {
+		return cid.Undef
+	}
+	return c
 }

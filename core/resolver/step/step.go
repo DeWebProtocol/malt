@@ -21,16 +21,3 @@ type Step interface {
 	Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error)
 }
 
-// StepFunc is a function type that implements Step.
-// Useful for composing step executors.
-type StepFunc func(root cid.Cid, path string) (string, cid.Cid, evidence.Evidence, error)
-
-// Resolve implements Step.
-func (f StepFunc) Resolve(root cid.Cid, path string) (string, cid.Cid, evidence.Evidence, error) {
-	return f(root, path)
-}
-
-// Verify implements Step with a default no-op.
-func (f StepFunc) Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error) {
-	return true, nil
-}

@@ -12,20 +12,10 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// ErrNotFound is returned when an arc is not found.
-var ErrNotFound = errors.New("arc not found")
-
-// IsNotFound checks if an error is ErrNotFound or arcset.ErrNotFound.
-// EAT implementations may return either sentinel.
+// IsNotFound checks if an error represents an arc-not-found condition.
+// It covers both eat and arcset not-found errors.
 func IsNotFound(err error) bool {
-	if err == ErrNotFound {
-		return true
-	}
-	// Also check arcset.ErrNotFound for compatibility
-	if err != nil && err.Error() == "arc not found" {
-		return true
-	}
-	return false
+	return errors.Is(err, arcset.ErrNotFound)
 }
 
 // EAT (Explicit Arc Table) stores arc entries for fast lookup.

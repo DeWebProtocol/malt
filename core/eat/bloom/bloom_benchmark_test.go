@@ -316,40 +316,49 @@ func BenchmarkBloomCacheCreateBucket(b *testing.B) {
 // LRU Cache Benchmarks
 // ============================================================================
 
-// BenchmarkCacheGet benchmarks LRU cache Get operation.
+// BenchmarkCacheGet benchmarks BloomCache Get operation (cache hit path).
 func BenchmarkCacheGet(b *testing.B) {
-	cache := bloom.NewCache(100)
+	ctx := context.Background()
+	kv := memory.New()
+	bc := bloom.NewBloomCache(kv, 100)
 
 	// Pre-populate cache
 	for i := 0; i < 100; i++ {
-		bf := bloom.NewStandardBloom(1000, 0.01)
-		cache.Set(fmt.Sprintf("bucket-%d", i), bf)
+		bucketId := fmt.Sprintf("bucket-%d", i)
+		_ = bc.CreateBucket(ctx, bucketId, nil)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cache.Get(fmt.Sprintf("bucket-%d", i%100))
+		bucketId := fmt.Sprintf("bucket-%d", i%100)
+		_, _ = bc.Get(ctx, bucketId)
 	}
 }
 
-// BenchmarkCacheSet benchmarks LRU cache Set operation.
+// BenchmarkCacheSet benchmarks BloomCache Add operation (cache set path).
 func BenchmarkCacheSet(b *testing.B) {
-	cache := bloom.NewCache(100)
-	bf := bloom.NewStandardBloom(1000, 0.01)
+	ctx := context.Background()
+	kv := memory.New()
+	bc := bloom.NewBloomCache(kv, 100)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cache.Set(fmt.Sprintf("bucket-%d", i%100), bf)
+		bucketId := fmt.Sprintf("bucket-%d", i%100)
+		_ = bc.CreateBucket(ctx, bucketId, nil)
+		_ = bc.Add(ctx, bucketId, []string{fmt.Sprintf("path-%d", i)})
 	}
 }
 
-// BenchmarkCacheSetEvict benchmarks LRU cache Set with eviction.
+// BenchmarkCacheSetEvict benchmarks BloomCache with eviction.
 func BenchmarkCacheSetEvict(b *testing.B) {
-	cache := bloom.NewCache(10) // Small cache to trigger eviction
+	ctx := context.Background()
+	kv := memory.New()
+	bc := bloom.NewBloomCache(kv, 10) // Small cache to trigger eviction
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bf := bloom.NewStandardBloom(1000, 0.01)
-		cache.Set(fmt.Sprintf("bucket-%d", i), bf)
+		bucketId := fmt.Sprintf("bucket-%d", i)
+		_ = bc.CreateBucket(ctx, bucketId, nil)
+		_ = bc.Add(ctx, bucketId, []string{fmt.Sprintf("path-%d", i)})
 	}
 }

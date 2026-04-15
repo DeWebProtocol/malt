@@ -29,8 +29,8 @@ func TestInit_Defaults(t *testing.T) {
 	if got := viper.GetString("kvstore_type"); got != "memory" {
 		t.Errorf("kvstore_type = %q, want %q", got, "memory")
 	}
-	if got := viper.GetString("eat_type"); got != "simple" {
-		t.Errorf("eat_type = %q, want %q", got, "simple")
+	if got := viper.GetString("eat_type"); got != "versioned" {
+		t.Errorf("eat_type = %q, want %q", got, "versioned")
 	}
 	if got := viper.GetString("cas_type"); got != "mock" {
 		t.Errorf("cas_type = %q, want %q", got, "mock")
@@ -74,8 +74,8 @@ func TestLoad_NoConfigFile(t *testing.T) {
 	if cfg.KVStoreType != "memory" {
 		t.Errorf("KVStoreType = %q, want %q", cfg.KVStoreType, "memory")
 	}
-	if cfg.EATType != "simple" {
-		t.Errorf("EATType = %q, want %q", cfg.EATType, "simple")
+	if cfg.EATType != "versioned" {
+		t.Errorf("EATType = %q, want %q", cfg.EATType, "versioned")
 	}
 	if cfg.CASType != "mock" {
 		t.Errorf("CASType = %q, want %q", cfg.CASType, "mock")
@@ -262,12 +262,12 @@ func TestConfig_String(t *testing.T) {
 	cfg := &Config{
 		CommitmentType: "kzg",
 		KVStoreType:    "memory",
-		EATType:        "simple",
+		EATType:        "versioned",
 		CASType:        "mock",
 	}
 
 	got := cfg.String()
-	want := "Config{commitment=kzg, kv=memory, eat=simple, cas=mock}"
+	want := "Config{commitment=kzg, kv=memory, eat=versioned, cas=mock}"
 	if got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}

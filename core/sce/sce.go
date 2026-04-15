@@ -4,10 +4,8 @@ package sce
 
 import (
 	"fmt"
-	"sort"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/logger"
@@ -16,26 +14,15 @@ import (
 
 // Engine is the Structure Commitment Engine.
 // It manages arc sets and delegates cryptographic operations to commitment schemes.
+// The engine is stateless — each scheme manages its own caching internally.
 type Engine struct {
 	scheme commitment.Scheme
-	cache  *lruCache
 }
 
-type session struct {
-	paths        []string
-	values       []cid.Cid
-	pathToIndex  map[string]int
-}
-
-// NewEngine creates a new SCE with the given commitment scheme and optional cache configuration.
-func NewEngine(scheme commitment.Scheme, opts ...CacheOption) *Engine {
-	cfg := defaultCacheConfig()
-	for _, opt := range opts {
-		opt(cfg)
-	}
+// NewEngine creates a new SCE with the given commitment scheme.
+func NewEngine(scheme commitment.Scheme) *Engine {
 	return &Engine{
 		scheme: scheme,
-		cache:  newLRUCache(cfg.maxSize),
 	}
 }
 
@@ -45,7 +32,7 @@ func (e *Engine) Scheme() commitment.Scheme {
 }
 
 // Commit generates a commitment to an arc set.
-func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
+func (e *Engine) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("SCE.Commit started")
@@ -55,7 +42,6 @@ func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
 		return cid.Cid{}, ErrNilArcSet
 	}
 
-	// Delegate to commitment scheme
 	comm, err := e.scheme.Commit(arcs)
 	if err != nil {
 		logger.Error("SCE.Commit scheme failed",
@@ -63,76 +49,20 @@ func (e *Engine) Commit(arcs arcset.View) (cid.Cid, error) {
 		return cid.Cid{}, err
 	}
 
-	// Extract and store session data
-	paths, values, pathToIndex, err := extractArcs(arcs)
-	if err != nil {
-		logger.Error("SCE.Commit extract arcs failed",
-			logger.Err(err))
-		return cid.Cid{}, err
-	}
-
-	// Extract commitment bytes for session key
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		logger.Error("SCE.Commit extract commitment failed",
-			logger.Err(err))
-		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	e.cache.Put(string(commBytes), &session{
-		paths:       paths,
-		values:      values,
-		pathToIndex: pathToIndex,
-	})
-
 	logger.Info("SCE.Commit completed",
 		logger.String("root", comm.String()),
-		logger.Int("arc_count", len(paths)),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
 	return comm, nil
 }
 
 // Prove generates a proof for an arc.
-func (e *Engine) Prove(root cid.Cid, arcs arcset.View, path string) (cid.Cid, []byte, error) {
+func (e *Engine) Prove(root cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
 	start := time.Now()
 
 	logger.Debug("SCE.Prove started",
 		logger.String("root", root.String()),
 		logger.String("path", path))
-
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(root)
-	if err != nil {
-		logger.Error("SCE.Prove extract commitment failed",
-			logger.String("root", root.String()),
-			logger.Err(err))
-		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	sess, ok := e.cache.Get(string(commBytes))
-
-	if !ok {
-		logger.Warn("SCE.Prove session not found",
-			logger.String("root", root.String()))
-		return cid.Cid{}, nil, ErrSessionNotFound
-	}
-
-	_, ok = arcs.Get(path)
-	if !ok {
-		logger.Error("SCE.Prove path not found in arc set",
-			logger.String("root", root.String()),
-			logger.String("path", path))
-		return cid.Cid{}, nil, ErrPathNotFound
-	}
-
-	_, ok = sess.pathToIndex[path]
-	if !ok {
-		logger.Error("SCE.Prove path not found in session",
-			logger.String("root", root.String()),
-			logger.String("path", path))
-		return cid.Cid{}, nil, ErrPathNotFound
-	}
 
 	target, proof, err := e.scheme.Prove(root, arcs, path)
 	if err != nil {
@@ -180,7 +110,7 @@ func (e *Engine) Verify(root cid.Cid, path string, target cid.Cid, proof []byte)
 }
 
 // Update updates an arc.
-func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, newKey cid.Cid) (cid.Cid, error) {
+func (e *Engine) Update(root cid.Cid, arcs arcset.Snapshot, path string, oldKey, newKey cid.Cid) (cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("SCE.Update started",
@@ -188,30 +118,6 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 		logger.String("path", path),
 		logger.String("old_key", oldKey.String()),
 		logger.String("new_key", newKey.String()))
-
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(root)
-	if err != nil {
-		logger.Error("SCE.Update extract commitment failed",
-			logger.String("root", root.String()),
-			logger.Err(err))
-		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	sess, ok := e.cache.Get(string(commBytes))
-	if !ok {
-		logger.Warn("SCE.Update session not found",
-			logger.String("root", root.String()))
-		return cid.Cid{}, ErrSessionNotFound
-	}
-
-	_, ok = sess.pathToIndex[path]
-	if !ok {
-		logger.Error("SCE.Update path not found in session",
-			logger.String("root", root.String()),
-			logger.String("path", path))
-		return cid.Cid{}, ErrPathNotFound
-	}
 
 	newComm, err := e.scheme.Update(root, arcs, path, oldKey, newKey)
 	if err != nil {
@@ -221,19 +127,6 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 			logger.Err(err))
 		return cid.Cid{}, err
 	}
-
-	// Extract new commitment bytes for session key
-	newCommBytes, err := codec.ExtractCommitment(newComm)
-	if err != nil {
-		logger.Error("SCE.Update extract new commitment failed",
-			logger.Err(err))
-		return cid.Cid{}, fmt.Errorf("failed to extract new commitment: %w", err)
-	}
-
-	// Update session
-	index := sess.pathToIndex[path]
-	sess.values[index] = newKey
-	e.cache.Put(string(newCommBytes), sess)
 
 	logger.Info("SCE.Update completed",
 		logger.String("old_root", root.String()),
@@ -245,74 +138,18 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.View, path string, oldKey, new
 }
 
 // BatchUpdate updates multiple arcs.
-func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.View, updates map[string]struct {
+func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.Snapshot, updates map[string]struct {
 	Old cid.Cid
 	New cid.Cid
 }) (cid.Cid, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(root)
-	if err != nil {
-		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	sess, ok := e.cache.Get(string(commBytes))
-	if !ok {
-		return cid.Cid{}, ErrSessionNotFound
-	}
-
-	// Validate all paths exist
-	for path := range updates {
-		if _, ok := sess.pathToIndex[path]; !ok {
-			return cid.Cid{}, ErrPathNotFound
-		}
-	}
-
-	newComm, err := e.scheme.BatchUpdate(root, arcs, updates)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-
-	// Extract new commitment bytes for session key
-	newCommBytes, err := codec.ExtractCommitment(newComm)
-	if err != nil {
-		return cid.Cid{}, fmt.Errorf("failed to extract new commitment: %w", err)
-	}
-
-	// Update session values
-	for path, update := range updates {
-		index := sess.pathToIndex[path]
-		sess.values[index] = update.New
-	}
-	e.cache.Put(string(newCommBytes), sess)
-
-	return newComm, nil
+	return e.scheme.BatchUpdate(root, arcs, updates)
 }
 
 // BatchProve generates proofs for multiple paths.
-func (e *Engine) BatchProve(root cid.Cid, arcs arcset.View, paths []string) (map[string]arcset.BatchProofEntry, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(root)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
+func (e *Engine) BatchProve(root cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths must not be empty")
 	}
-
-	sess, ok := e.cache.Get(string(commBytes))
-
-	if !ok {
-		return nil, ErrSessionNotFound
-	}
-
-	// Validate all paths exist
-	for _, path := range paths {
-		if _, ok := sess.pathToIndex[path]; !ok {
-			return nil, ErrPathNotFound
-		}
-	}
-
 	return e.scheme.BatchProve(root, arcs, paths)
 }
 
@@ -322,65 +159,14 @@ func (e *Engine) BatchVerify(root cid.Cid, proofs map[string]arcset.BatchProofEn
 }
 
 // AggregateProve generates an aggregated proof.
-func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.View, paths []string) (*arcset.AggregatedProof, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(root)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
+func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.Snapshot, paths []string) (*arcset.AggregatedProof, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths must not be empty")
 	}
-
-	sess, ok := e.cache.Get(string(commBytes))
-
-	if !ok {
-		return nil, ErrSessionNotFound
-	}
-
-	// Validate all paths exist
-	for _, path := range paths {
-		if _, ok := sess.pathToIndex[path]; !ok {
-			return nil, ErrPathNotFound
-		}
-	}
-
 	return e.scheme.AggregateProve(root, arcs, paths)
 }
 
 // AggregateVerify verifies an aggregated proof.
 func (e *Engine) AggregateVerify(root cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
 	return e.scheme.AggregateVerify(root, aggProof)
-}
-
-// extractArcs extracts sorted paths, values, and pathToIndex from ArcSetView.
-func extractArcs(arcs arcset.View) ([]string, []cid.Cid, map[string]int, error) {
-	var paths []string
-	iter := arcs.Iterate()
-	for {
-		path, _, ok := iter.Next()
-		if !ok {
-			break
-		}
-		paths = append(paths, path)
-	}
-	if iter.Err() != nil {
-		return nil, nil, nil, iter.Err()
-	}
-	sort.Strings(paths)
-
-	values := make([]cid.Cid, len(paths))
-	pathToIndex := make(map[string]int, len(paths))
-
-	for i, path := range paths {
-		value, ok := arcs.Get(path)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("path %s disappeared during iteration", path)
-		}
-		values[i] = value
-		pathToIndex[path] = i
-	}
-
-	return paths, values, pathToIndex, nil
 }

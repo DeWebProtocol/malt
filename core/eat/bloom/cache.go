@@ -33,96 +33,10 @@ func DefaultBucketConfig() *BucketConfig {
 	}
 }
 
-// Cache is an LRU cache for bloom filters (memory only, no persistence).
-// Deprecated: Use BloomCache for persistence support.
-type Cache struct {
-	mu       sync.RWMutex
-	maxSize  int
-	items    map[string]*list.Element
-	eviction *list.List
-}
-
 // cacheEntry holds a cached bloom filter.
 type cacheEntry struct {
 	key    string
 	filter *StandardBloom
-}
-
-// NewCache creates a new LRU cache with the given max size.
-// Deprecated: Use NewBloomCache for persistence support.
-func NewCache(maxSize int) *Cache {
-	if maxSize <= 0 {
-		maxSize = 100
-	}
-	return &Cache{
-		maxSize:  maxSize,
-		items:    make(map[string]*list.Element),
-		eviction: list.New(),
-	}
-}
-
-// Get retrieves a bloom filter from the cache.
-// Returns nil if not found.
-func (c *Cache) Get(key string) *StandardBloom {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if elem, ok := c.items[key]; ok {
-		c.eviction.MoveToFront(elem)
-		return elem.Value.(*cacheEntry).filter
-	}
-	return nil
-}
-
-// Set adds a bloom filter to the cache.
-func (c *Cache) Set(key string, filter *StandardBloom) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if elem, ok := c.items[key]; ok {
-		elem.Value.(*cacheEntry).filter = filter
-		c.eviction.MoveToFront(elem)
-		return
-	}
-
-	entry := &cacheEntry{key: key, filter: filter}
-	elem := c.eviction.PushFront(entry)
-	c.items[key] = elem
-
-	for c.eviction.Len() > c.maxSize {
-		oldest := c.eviction.Back()
-		if oldest != nil {
-			c.eviction.Remove(oldest)
-			delete(c.items, oldest.Value.(*cacheEntry).key)
-		}
-	}
-}
-
-// Delete removes a bloom filter from the cache.
-func (c *Cache) Delete(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if elem, ok := c.items[key]; ok {
-		c.eviction.Remove(elem)
-		delete(c.items, key)
-	}
-}
-
-// Clear removes all entries from the cache.
-func (c *Cache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.items = make(map[string]*list.Element)
-	c.eviction.Init()
-}
-
-// Size returns the current number of entries in the cache.
-func (c *Cache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.eviction.Len()
 }
 
 // BloomCache is an independent component that manages bloom filters for all buckets.
@@ -130,7 +44,10 @@ func (c *Cache) Size() int {
 type BloomCache struct {
 	kv      kvstore.KVStore
 	maxSize int
-	cache   *Cache
+
+	mu       sync.RWMutex
+	items    map[string]*list.Element
+	eviction *list.List
 
 	// Default config for new buckets
 	defaultConfig *BucketConfig
@@ -144,7 +61,8 @@ func NewBloomCache(kv kvstore.KVStore, maxSize int) *BloomCache {
 	return &BloomCache{
 		kv:            kv,
 		maxSize:       maxSize,
-		cache:         NewCache(maxSize),
+		items:         make(map[string]*list.Element),
+		eviction:      list.New(),
 		defaultConfig: DefaultBucketConfig(),
 	}
 }
@@ -160,9 +78,65 @@ func NewBloomCacheWithConfig(kv kvstore.KVStore, maxSize int, defaultConfig *Buc
 	return &BloomCache{
 		kv:            kv,
 		maxSize:       maxSize,
-		cache:         NewCache(maxSize),
+		items:         make(map[string]*list.Element),
+		eviction:      list.New(),
 		defaultConfig: defaultConfig,
 	}
+}
+
+func (bc *BloomCache) cacheGet(key string) *StandardBloom {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	if elem, ok := bc.items[key]; ok {
+		bc.eviction.MoveToFront(elem)
+		return elem.Value.(*cacheEntry).filter
+	}
+	return nil
+}
+
+func (bc *BloomCache) cacheSet(key string, filter *StandardBloom) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	if elem, ok := bc.items[key]; ok {
+		elem.Value.(*cacheEntry).filter = filter
+		bc.eviction.MoveToFront(elem)
+		return
+	}
+
+	entry := &cacheEntry{key: key, filter: filter}
+	elem := bc.eviction.PushFront(entry)
+	bc.items[key] = elem
+
+	for bc.eviction.Len() > bc.maxSize {
+		oldest := bc.eviction.Back()
+		if oldest != nil {
+			bc.eviction.Remove(oldest)
+			delete(bc.items, oldest.Value.(*cacheEntry).key)
+		}
+	}
+}
+
+func (bc *BloomCache) cacheDelete(key string) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	if elem, ok := bc.items[key]; ok {
+		bc.eviction.Remove(elem)
+		delete(bc.items, key)
+	}
+}
+
+func (bc *BloomCache) cacheClear() {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	bc.items = make(map[string]*list.Element)
+	bc.eviction.Init()
+}
+
+func (bc *BloomCache) cacheSize() int {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.eviction.Len()
 }
 
 // bucketMetaKey returns the KVStore key for bucket metadata.
@@ -244,7 +218,7 @@ func (bc *BloomCache) CreateBucket(ctx context.Context, bucketId string, cfg *Bu
 	}
 
 	// Cache the bloom filter
-	bc.cache.Set(bucketId, filter)
+	bc.cacheSet(bucketId, filter)
 
 	return nil
 }
@@ -268,7 +242,7 @@ func (bc *BloomCache) DeleteBucket(ctx context.Context, bucketId string) error {
 	}
 
 	// Remove from cache
-	bc.cache.Delete(bucketId)
+	bc.cacheDelete(bucketId)
 
 	return nil
 }
@@ -278,7 +252,7 @@ func (bc *BloomCache) DeleteBucket(ctx context.Context, bucketId string) error {
 // If the bucket doesn't exist, it creates one with default config.
 func (bc *BloomCache) Get(ctx context.Context, bucketId string) (*StandardBloom, error) {
 	// Check cache first
-	if filter := bc.cache.Get(bucketId); filter != nil {
+	if filter := bc.cacheGet(bucketId); filter != nil {
 		return filter, nil
 	}
 
@@ -307,7 +281,7 @@ func (bc *BloomCache) Get(ctx context.Context, bucketId string) (*StandardBloom,
 	}
 
 	// Cache it
-	bc.cache.Set(bucketId, filter)
+	bc.cacheSet(bucketId, filter)
 
 	return filter, nil
 }
@@ -384,17 +358,17 @@ func (bc *BloomCache) UpdateBucketMeta(ctx context.Context, bucketId string, met
 
 // Invalidate removes a bucket's bloom filter from the cache.
 func (bc *BloomCache) Invalidate(bucketId string) {
-	bc.cache.Delete(bucketId)
+	bc.cacheDelete(bucketId)
 }
 
 // Clear removes all entries from the cache.
 func (bc *BloomCache) Clear() {
-	bc.cache.Clear()
+	bc.cacheClear()
 }
 
 // Size returns the current number of entries in the cache.
 func (bc *BloomCache) Size() int {
-	return bc.cache.Size()
+	return bc.cacheSize()
 }
 
 // DefaultConfig returns the default bucket configuration.
