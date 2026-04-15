@@ -7,22 +7,8 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/eat/bloom"
-	"github.com/dewebprotocol/malt/core/kvstore"
 	cid "github.com/ipfs/go-cid"
 )
-
-// KeyBuilder defines the interface for generating EAT storage keys.
-// Different EAT implementations (overwrite vs versioned) may have different key formats.
-type KeyBuilder interface {
-	// ArcKey generates the storage key for a specific arc (path) within a bucket.
-	ArcKey(bucketId, path string, version ...cid.Cid) []byte
-
-	// BucketPrefix generates the prefix for all arcs in a bucket.
-	BucketPrefix(bucketId string, version ...cid.Cid) []byte
-
-	// RootKey generates the key for root->bucketId mapping.
-	RootKey(root cid.Cid) []byte
-}
 
 // BloomFilterManager provides unified bloom filter management across EAT implementations.
 type BloomFilterManager struct {
@@ -109,38 +95,13 @@ func (bfm *BloomFilterManager) GetBloomCache() *bloom.BloomCache {
 	return bfm.bloomCache
 }
 
-// BaseEAT provides common EAT construction and validation logic.
-type BaseEAT struct {
-	KV           kvstore.KVStore
-	BloomManager *BloomFilterManager
-	KeyBuilder   KeyBuilder
-}
-
-// ValidateConfig validates that required EAT components are properly configured.
-func (be *BaseEAT) ValidateConfig() error {
-	if be.KV == nil {
-		return fmt.Errorf("KVStore is required")
-	}
-	if be.KeyBuilder == nil {
-		return fmt.Errorf("KeyBuilder is required")
-	}
-	return nil
-}
-
 // Helper function for common key generation patterns
 
 // DefaultArcKey generates the standard arc key format.
-// Used by overwrite and versioned EAT implementations.
+// Used by overwrite EAT implementation.
 func DefaultArcKey(bucketId, path string) []byte {
 	// Format: bucketId:path
 	return []byte(bucketId + ":" + path)
-}
-
-// VersionedArcKey generates a versioned arc key format.
-// Used by versioned EAT implementation to include version information.
-func VersionedArcKey(bucketId string, version cid.Cid, path string) []byte {
-	// Format: bucketId:version:path
-	return []byte(bucketId + ":" + version.String() + ":" + path)
 }
 
 // DefaultBucketPrefix generates the standard bucket prefix format.
@@ -148,6 +109,13 @@ func VersionedArcKey(bucketId string, version cid.Cid, path string) []byte {
 func DefaultBucketPrefix(bucketId string) []byte {
 	// Format: bucketId:
 	return []byte(bucketId + ":")
+}
+
+// VersionedArcKey generates a versioned arc key format.
+// Used by versioned EAT implementation to include version information.
+func VersionedArcKey(bucketId string, version cid.Cid, path string) []byte {
+	// Format: bucketId:version:path
+	return []byte(bucketId + ":" + version.String() + ":" + path)
 }
 
 // VersionedBucketPrefix generates a versioned bucket prefix format.
