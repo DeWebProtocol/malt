@@ -1,29 +1,26 @@
-// Package integration provides end-to-end integration tests for MALT.
-// These tests exercise the full stack: Writer → EAT → SCE → Resolver.
-package integration
+// Package api provides end-to-end integration tests for the MALT Go API.
+// These tests exercise the full stack: Graph Commit → SCE → EAT → Resolver → Verify.
+package api
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
-// fakeCID creates a deterministic CID from a string seed.
 func fakeCID(seed string) cid.Cid {
 	mhash, _ := mh.Sum([]byte(seed), mh.SHA2_256, -1)
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
-// newNode creates a fresh MALT node and graph for testing.
-func newNode(t *testing.T) (*api.Node, *graph.Graph) {
+func newTestGraph(t *testing.T) (*Node, *graph.Graph) {
 	t.Helper()
-	node, err := api.NewNode()
+	node, err := NewNode()
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -35,7 +32,6 @@ func newNode(t *testing.T) (*api.Node, *graph.Graph) {
 	return node, g
 }
 
-// buildArcs creates a map of arc path → target CID.
 func buildArcs(n int) map[string]cid.Cid {
 	arcs := make(map[string]cid.Cid, n)
 	for i := 0; i < n; i++ {
@@ -44,34 +40,30 @@ func buildArcs(n int) map[string]cid.Cid {
 	return arcs
 }
 
-// ===== E2E: Create → Resolve =====
+// ===== Create → Resolve =====
 
-func TestE2E_CreateAndResolve(t *testing.T) {
-	node, g := newNode(t)
+func TestAPI_CreateAndResolve(t *testing.T) {
+	_, g := newTestGraph(t)
 	ctx := context.Background()
 
-	// Create arcs
 	arcs := buildArcs(10)
 	snapshot := arcset.NewMapFrom(arcs)
 
-	// Create structure using graph.Commit
 	root, err := g.Commit(ctx, snapshot)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-
 	if !root.Defined() {
 		t.Fatal("root CID is undefined after commit")
 	}
 
-	// Resolve each arc via Graph API
 	for path, expected := range arcs {
 		result, err := g.Resolver().Resolve(root, path)
 		if err != nil {
 			t.Fatalf("Resolve failed for %s: %v", path, err)
 		}
 		if !result.Target.Equals(expected) {
-			t.Errorf("resolve target mismatch for %s: got %s, want %s", path, result.Target, expected)
+			t.Errorf("target mismatch for %s: got %s, want %s", path, result.Target, expected)
 		}
 
 		proof := graph.NewTranscriptProof(result.Transcript)
@@ -83,18 +75,14 @@ func TestE2E_CreateAndResolve(t *testing.T) {
 			t.Errorf("proof invalid for %s", path)
 		}
 	}
-
-	// Silence unused variable warning
-	_ = node
 }
 
-// ===== E2E: Update → Resolve Cycle =====
+// ===== Update → Resolve Cycle =====
 
-func TestE2E_UpdateResolveCycle(t *testing.T) {
-	_, g := newNode(t)
+func TestAPI_UpdateResolveCycle(t *testing.T) {
+	_, g := newTestGraph(t)
 	ctx := context.Background()
 
-	// Create initial structure
 	arcs := buildArcs(10)
 	snapshot := arcset.NewMapFrom(arcs)
 
@@ -115,7 +103,7 @@ func TestE2E_UpdateResolveCycle(t *testing.T) {
 		t.Fatal("initial proof invalid")
 	}
 
-	// Update arc5 to a new target
+	// Update arc5
 	newTarget := fakeCID("updated_data5")
 	arcs[path] = newTarget
 	snapshot2 := arcset.NewMapFrom(arcs)
@@ -124,7 +112,7 @@ func TestE2E_UpdateResolveCycle(t *testing.T) {
 		t.Fatalf("Update commit failed: %v", err)
 	}
 
-	// Resolve arc5 on new root
+	// Resolve on new root
 	result2, err := g.Resolver().Resolve(root2, path)
 	if err != nil {
 		t.Fatalf("Resolve after update failed: %v", err)
@@ -147,16 +135,14 @@ func TestE2E_UpdateResolveCycle(t *testing.T) {
 	}
 }
 
-// ===== E2E: Chained Updates with Lineage =====
+// ===== Chained Updates with Lineage =====
 
-func TestE2E_ChainedUpdatesWithLineage(t *testing.T) {
-	node, g := newNode(t)
+func TestAPI_ChainedUpdatesWithLineage(t *testing.T) {
+	node, g := newTestGraph(t)
 	ctx := context.Background()
 
-	// Get lineage manager
 	lm := node.LineageManager()
 
-	// Start with initial arcs
 	arcs := buildArcs(4)
 	snapshot := arcset.NewMapFrom(arcs)
 
@@ -172,7 +158,7 @@ func TestE2E_ChainedUpdatesWithLineage(t *testing.T) {
 		currentArcs[k] = v
 	}
 
-	// Perform 5 updates, each modifying 4 arcs
+	// 5 updates, each modifying 4 arcs
 	for i := 0; i < 5; i++ {
 		for j := 0; j < 4; j++ {
 			path := fmt.Sprintf("arc%d", j)
@@ -199,12 +185,11 @@ func TestE2E_ChainedUpdatesWithLineage(t *testing.T) {
 		t.Errorf("expected 5 ancestors, got %d", len(ancestors))
 	}
 
-	// Verify depth
 	depth, err := lm.Depth(ctx, current)
 	if err != nil {
 		t.Fatalf("Depth failed: %v", err)
 	}
-	if depth != 6 { // 1 (root) + 5 updates
+	if depth != 6 {
 		t.Errorf("expected depth 6, got %d", depth)
 	}
 
@@ -215,13 +200,12 @@ func TestE2E_ChainedUpdatesWithLineage(t *testing.T) {
 	}
 }
 
-// ===== E2E: Insert and Delete Operations =====
+// ===== Insert and Delete =====
 
-func TestE2E_InsertDelete(t *testing.T) {
-	_, g := newNode(t)
+func TestAPI_InsertDelete(t *testing.T) {
+	_, g := newTestGraph(t)
 	ctx := context.Background()
 
-	// Create initial structure
 	arcs := buildArcs(10)
 	snapshot := arcset.NewMapFrom(arcs)
 
@@ -229,7 +213,7 @@ func TestE2E_InsertDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Initial commit failed: %v", err)
 	}
-	_ = root // Initial root used for reference only
+	_ = root
 
 	// Insert new arc
 	newPath := "new_arc"
@@ -241,7 +225,7 @@ func TestE2E_InsertDelete(t *testing.T) {
 		t.Fatalf("Insert commit failed: %v", err)
 	}
 
-	// Verify new arc exists
+	// Verify new arc
 	result, err := g.Resolver().Resolve(root2, newPath)
 	if err != nil {
 		t.Fatalf("Resolve new arc failed: %v", err)
@@ -260,21 +244,20 @@ func TestE2E_InsertDelete(t *testing.T) {
 	}
 
 	// Delete arc0
-	delPath := "arc0"
-	arcs[delPath] = cid.Undef
+	arcs["arc0"] = cid.Undef
 	snapshot3 := arcset.NewMapFrom(arcs)
 	root3, err := g.Commit(ctx, snapshot3)
 	if err != nil {
 		t.Fatalf("Delete commit failed: %v", err)
 	}
 
-	// Verify deleted arc is gone from new root
-	_, err = g.Resolver().Resolve(root3, delPath)
+	// Verify deleted
+	_, err = g.Resolver().Resolve(root3, "arc0")
 	if err == nil {
 		t.Error("deleted arc should not be found on new root")
 	}
 
-	// Verify remaining arcs still work
+	// Verify remaining arcs
 	remainingResult, err := g.Resolver().Resolve(root3, "arc1")
 	if err != nil {
 		t.Errorf("arc1 should exist on root3: %v", err)
@@ -283,7 +266,7 @@ func TestE2E_InsertDelete(t *testing.T) {
 		t.Errorf("arc1 on root3 has wrong value: got %s", remainingResult.Target)
 	}
 
-	// Count arcs on new root
+	// Count arcs
 	snap3, err := g.Snapshot(ctx, root3)
 	if err != nil {
 		t.Fatalf("Snapshot for root3 failed: %v", err)
@@ -297,7 +280,6 @@ func TestE2E_InsertDelete(t *testing.T) {
 		}
 		count++
 	}
-	// Should have 10 (original) + 1 (inserted) - 1 (deleted) = 10 arcs
 	if count != 10 {
 		t.Errorf("expected 10 arcs after insert+delete, got %d", count)
 	}
