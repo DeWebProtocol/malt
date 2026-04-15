@@ -336,8 +336,7 @@ func (n *Node) GraphManager() *graph.Manager {
 func (n *Node) LineageManager() *lineage.Manager {
 	if n.lineageMgr == nil {
 		kv := lineage.NewKVStoreAdapter(n.kv)
-		store := lineage.NewStore(kv)
-		n.lineageMgr = lineage.NewManager(store)
+		n.lineageMgr = lineage.NewManager(kv)
 	}
 	return n.lineageMgr
 }
