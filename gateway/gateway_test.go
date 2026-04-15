@@ -24,8 +24,7 @@ func testServer(t *testing.T) *httptest.Server {
 		t.Fatalf("failed to create MALT node: %v", err)
 	}
 
-	adapter := NewNodeAdapter(node)
-	srv := NewServer(adapter, ":0")
+	srv := NewServer(node, ":0")
 	return httptest.NewServer(srv.Handler())
 }
 
@@ -82,7 +81,7 @@ func TestNodeAdapterEnsureGraphOpensManagedDefaultGraph(t *testing.T) {
 		t.Fatalf("CreateManagedGraph failed: %v", err)
 	}
 
-	handler := NewServer(NewNodeAdapter(node), ":0").Handler()
+	handler := NewServer(node, ":0").Handler()
 	body := map[string]any{
 		"arcs": map[string]string{
 			"name": fakeCID("alice"),
@@ -404,7 +403,7 @@ func TestServer_GraphScopedWriteRejectsFrozenGraph(t *testing.T) {
 		t.Fatalf("CreateManagedGraph failed: %v", err)
 	}
 
-	srv := httptest.NewServer(NewServer(NewNodeAdapter(node), ":0").Handler())
+	srv := httptest.NewServer(NewServer(node, ":0").Handler())
 	defer srv.Close()
 
 	resp, err := postJSON(srv.URL+"/graph/frozen/structure", `{"arcs":{"name":"`+fakeCID("alice")+`"}}`)

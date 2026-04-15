@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt/core/graph"
+	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
@@ -15,19 +16,15 @@ import (
 
 // ===== Health =====
 
-// handleHealth handles GET /health
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // ===== Graph Management =====
 
-// handleGraphCreate handles POST /graph
 func (s *Server) handleGraphCreate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -38,13 +35,11 @@ func (s *Server) handleGraphCreate(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, fmt.Sprintf("invalid JSON: %v", err))
 		return
 	}
-
 	if req.ID == "" {
 		writeBadRequest(w, "graph id is required")
 		return
 	}
 
-	// Check if graph already exists
 	_, err := s.gm.GetGraph(context.Background(), req.ID)
 	if err == nil {
 		writeError(w, http.StatusConflict, fmt.Sprintf("graph %q already exists", req.ID))
@@ -55,7 +50,7 @@ func (s *Server) handleGraphCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g, err := s.node.node.CreateManagedGraph(context.Background(), req.ID, "")
+	g, err := s.node.CreateManagedGraph(context.Background(), req.ID, "")
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("failed to create graph: %v", err))
 		return
@@ -63,7 +58,6 @@ func (s *Server) handleGraphCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, GraphResponse{Graph: graphResponseFromGraph(g)})
 }
 
-// handleGraphGet handles GET /graph/{id}
 func (s *Server) handleGraphGet(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -88,7 +82,6 @@ func (s *Server) handleGraphGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, GraphResponse{Graph: graphResponseFromGraph(g)})
 }
 
-// handleGraphDelete handles DELETE /graph/{id}
 func (s *Server) handleGraphDelete(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -109,7 +102,6 @@ func (s *Server) handleGraphDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("graph %q deleted", id)})
 }
 
-// handleGraphList handles GET /graphs
 func (s *Server) handleGraphList(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -145,7 +137,7 @@ func (s *Server) openManagedGraph(ctx context.Context, graphID string) (*graph.G
 		return nil, nil, err
 	}
 
-	g, err := s.node.ManagedGraph(graphID)
+	g, err := s.getGraph(ctx, graphID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -158,7 +150,7 @@ func (s *Server) openActiveManagedGraph(ctx context.Context, graphID string) (*g
 		return nil, nil, err
 	}
 
-	g, err := s.node.ManagedGraph(graphID)
+	g, err := s.getGraph(ctx, graphID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -173,24 +165,6 @@ func managedGraphHead(meta *graph.GraphMeta) (cid.Cid, error) {
 		return cid.Undef, fmt.Errorf("graph %q has no head root", meta.ID)
 	}
 	return meta.Root, nil
-}
-
-func snapshotToMap(snapshot arcset.Snapshot) (map[string]string, int, error) {
-	arcs := make(map[string]string)
-	count := 0
-	iter := snapshot.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		arcs[path] = target.String()
-		count++
-	}
-	if iter.Err() != nil {
-		return nil, 0, iter.Err()
-	}
-	return arcs, count, nil
 }
 
 func (s *Server) updateManagedGraphHead(ctx context.Context, graphID string, g *graph.Graph, newRoot cid.Cid) error {
@@ -208,7 +182,8 @@ func (s *Server) updateManagedGraphHead(ctx context.Context, graphID string, g *
 	return err
 }
 
-// handleGraphResolve handles GET /graph/{id}/resolve
+// ===== Graph-scoped handlers =====
+
 func (s *Server) handleGraphResolve(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -233,32 +208,12 @@ func (s *Server) handleGraphResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := ResolveResponse{
+	writeJSON(w, http.StatusOK, ResolveResponse{
 		Target:     result.Target.String(),
-		Transcript: make([]StepEvidenceResponse, len(result.Transcript.Steps)),
-	}
-	for i, step := range result.Transcript.Steps {
-		kind := "unknown"
-		switch step.Evidence.Kind() {
-		case evidence.EvidenceKindExplicit:
-			kind = "explicit"
-		case evidence.EvidenceKindImplicit:
-			kind = "implicit"
-		case evidence.EvidenceKindHAMT:
-			kind = "hamt"
-		}
-		resp.Transcript[i] = StepEvidenceResponse{
-			Path:     step.Path,
-			Target:   step.Target.String(),
-			Evidence: encodeBase64(step.Evidence.Bytes()),
-			Kind:     kind,
-		}
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+		Transcript: stepsToResponse(result.Transcript.Steps),
+	})
 }
 
-// handleGraphResolveWithPath handles GET /graph/{id}/resolve/{path...}
 func (s *Server) handleGraphResolveWithPath(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -285,32 +240,12 @@ func (s *Server) handleGraphResolveWithPath(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	resp := ResolveResponse{
+	writeJSON(w, http.StatusOK, ResolveResponse{
 		Target:     result.Target.String(),
-		Transcript: make([]StepEvidenceResponse, len(result.Transcript.Steps)),
-	}
-	for i, step := range result.Transcript.Steps {
-		kind := "unknown"
-		switch step.Evidence.Kind() {
-		case evidence.EvidenceKindExplicit:
-			kind = "explicit"
-		case evidence.EvidenceKindImplicit:
-			kind = "implicit"
-		case evidence.EvidenceKindHAMT:
-			kind = "hamt"
-		}
-		resp.Transcript[i] = StepEvidenceResponse{
-			Path:     step.Path,
-			Target:   step.Target.String(),
-			Evidence: encodeBase64(step.Evidence.Bytes()),
-			Kind:     kind,
-		}
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+		Transcript: stepsToResponse(result.Transcript.Steps),
+	})
 }
 
-// handleGraphProof handles GET /graph/{id}/proof/{path...}
 func (s *Server) handleGraphProof(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -348,7 +283,6 @@ func (s *Server) handleGraphProof(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGraphArc handles GET /graph/{id}/arc/{path...}
 func (s *Server) handleGraphArc(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -381,7 +315,6 @@ func (s *Server) handleGraphArc(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGraphSnapshot handles GET /graph/{id}/snapshot
 func (s *Server) handleGraphSnapshot(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -418,7 +351,6 @@ func (s *Server) handleGraphSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGraphUpdateWithPath handles POST /graph/{id}/update/{path}
 func (s *Server) handleGraphUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -475,7 +407,6 @@ func (s *Server) handleGraphUpdateWithPath(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// handleGraphBatchUpdate handles POST /graph/{id}/update/batch
 func (s *Server) handleGraphBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -545,7 +476,6 @@ func (s *Server) handleGraphBatchUpdate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleGraphCreateStructure handles POST /graph/{id}/structure
 func (s *Server) handleGraphCreateStructure(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -594,14 +524,11 @@ func (s *Server) handleGraphCreateStructure(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"root": root.String(),
-	})
+	writeJSON(w, http.StatusCreated, map[string]string{"root": root.String()})
 }
 
-// ===== Resolution =====
+// ===== Non-managed resolution =====
 
-// handleResolve handles GET /resolve/{root} (no path, resolve to structure root or payload)
 func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -613,29 +540,30 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.node.HybridResolve(root, "")
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
 	}
 
-	resp := ResolveResponse{
-		Target:     result.Target,
-		Transcript: make([]StepEvidenceResponse, len(result.Transcript.Steps)),
-	}
-	for i, step := range result.Transcript.Steps {
-		resp.Transcript[i] = StepEvidenceResponse{
-			Path:     step.Path,
-			Target:   step.Target,
-			Evidence: encodeBase64(step.Evidence),
-			Kind:     evidenceKind(step.Kind),
-		}
+	rootCid, err := decodeCID(root)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	result, err := g.Resolver().Resolve(rootCid, "")
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("resolution failed: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ResolveResponse{
+		Target:     result.Target.String(),
+		Transcript: stepsToResponse(result.Transcript.Steps),
+	})
 }
 
-// handleResolveWithPath handles GET /resolve/{root}/{path...}
 func (s *Server) handleResolveWithPath(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -644,29 +572,30 @@ func (s *Server) handleResolveWithPath(w http.ResponseWriter, r *http.Request) {
 	root := r.PathValue("root")
 	path := r.PathValue("path")
 
-	result, err := s.node.HybridResolve(root, path)
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
 	}
 
-	resp := ResolveResponse{
-		Target:     result.Target,
-		Transcript: make([]StepEvidenceResponse, len(result.Transcript.Steps)),
-	}
-	for i, step := range result.Transcript.Steps {
-		resp.Transcript[i] = StepEvidenceResponse{
-			Path:     step.Path,
-			Target:   step.Target,
-			Evidence: encodeBase64(step.Evidence),
-			Kind:     evidenceKind(step.Kind),
-		}
+	rootCid, err := decodeCID(root)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	result, err := g.Resolver().Resolve(rootCid, path)
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("resolution failed: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ResolveResponse{
+		Target:     result.Target.String(),
+		Transcript: stepsToResponse(result.Transcript.Steps),
+	})
 }
 
-// handleResolvePOST handles POST /resolve
 func (s *Server) handleResolvePOST(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -678,31 +607,32 @@ func (s *Server) handleResolvePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.node.HybridResolve(req.Root, req.Path)
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
 	}
 
-	resp := ResolveResponse{
-		Target:     result.Target,
-		Transcript: make([]StepEvidenceResponse, len(result.Transcript.Steps)),
-	}
-	for i, step := range result.Transcript.Steps {
-		resp.Transcript[i] = StepEvidenceResponse{
-			Path:     step.Path,
-			Target:   step.Target,
-			Evidence: encodeBase64(step.Evidence),
-			Kind:     evidenceKind(step.Kind),
-		}
+	rootCid, err := decodeCID(req.Root)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	result, err := g.Resolver().Resolve(rootCid, req.Path)
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("resolution failed: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ResolveResponse{
+		Target:     result.Target.String(),
+		Transcript: stepsToResponse(result.Transcript.Steps),
+	})
 }
 
 // ===== Proof and Arc Queries =====
 
-// handleProof handles GET /proof/{root}/{path...}
 func (s *Server) handleProof(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -711,11 +641,21 @@ func (s *Server) handleProof(w http.ResponseWriter, r *http.Request) {
 	rootStr := r.PathValue("root")
 	path := r.PathValue("path")
 
-	// For proof generation, we need to resolve the path to get the target and evidence.
-	// The resolve endpoint already returns both, so we reuse it.
-	result, err := s.node.HybridResolve(rootStr, path)
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
+		return
+	}
+
+	rootCid, err := decodeCID(rootStr)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
+	}
+
+	result, err := g.Resolver().Resolve(rootCid, path)
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("resolution failed: %v", err))
 		return
 	}
 
@@ -724,15 +664,13 @@ func (s *Server) handleProof(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the last step's evidence (the one that matched the full path)
 	lastStep := result.Transcript.Steps[len(result.Transcript.Steps)-1]
 	writeJSON(w, http.StatusOK, ProofResponse{
-		Target:   lastStep.Target,
-		Evidence: encodeBase64(lastStep.Evidence),
+		Target:   lastStep.Target.String(),
+		Evidence: encodeBase64(lastStep.Evidence.Bytes()),
 	})
 }
 
-// handleArc handles GET /arc/{root}/{path...}
 func (s *Server) handleArc(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -741,7 +679,19 @@ func (s *Server) handleArc(w http.ResponseWriter, r *http.Request) {
 	rootStr := r.PathValue("root")
 	path := r.PathValue("path")
 
-	target, err := s.node.GetArc(defaultGatewayGraphID, rootStr, path)
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
+	if err != nil {
+		writeServerError(w, err.Error())
+		return
+	}
+
+	rootCid, err := decodeCID(rootStr)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
+	}
+
+	target, err := g.Writer().GetArc(context.Background(), g.BucketId(), rootCid, path)
 	if err != nil {
 		writeNotFound(w, fmt.Sprintf("arc %q not found: %v", path, err))
 		return
@@ -749,20 +699,38 @@ func (s *Server) handleArc(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, ArcResponse{
 		Path:   path,
-		Target: target,
+		Target: target.String(),
 	})
 }
 
-// handleSnapshot handles GET /snapshot/{root}
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
 	}
 
 	rootStr := r.PathValue("root")
-	arcs, err := s.node.GetArcSetSnapshot(defaultGatewayGraphID, rootStr)
+
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
+	if err != nil {
+		writeServerError(w, err.Error())
+		return
+	}
+
+	rootCid, err := decodeCID(rootStr)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
+	}
+
+	snapshot, err := g.Snapshot(context.Background(), rootCid)
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("failed to get snapshot: %v", err))
+		return
+	}
+
+	arcs, _, err := snapshotToMap(snapshot)
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("failed to iterate snapshot: %v", err))
 		return
 	}
 
@@ -772,14 +740,13 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleContent handles GET /content/{cid}
 func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
 	}
 
 	cidStr := r.PathValue("cid")
-	content, err := s.node.CASGet(cidStr)
+	content, err := s.node.CAS().Get(context.Background(), decodeCIDOr(cidStr))
 	if err != nil {
 		writeNotFound(w, fmt.Sprintf("content %q not found: %v", cidStr, err))
 		return
@@ -794,8 +761,6 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 
 // ===== Write-Side Operations =====
 
-// handleUpdateWithPath handles POST /update/{root}/{path}
-// Request body: {"target": "<cid>"}
 func (s *Server) handleUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -810,28 +775,43 @@ func (s *Server) handleUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wa, err := s.node.Writer()
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
 	}
-	result, err := wa.UpdateArc(context.Background(), defaultGatewayGraphID, rootStr, path, req.Target)
+
+	rootCid, err := decodeCID(rootStr)
 	if err != nil {
-		writeServerError(w, err.Error())
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
+	}
+
+	var newTarget cid.Cid
+	if req.Target != "" {
+		newTarget, err = decodeCID(req.Target)
+		if err != nil {
+			writeBadRequest(w, fmt.Sprintf("invalid target CID: %v", err))
+			return
+		}
+	}
+
+	result, err := g.Writer().UpdateArc(context.Background(), g.BucketId(), rootCid, path, newTarget)
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("update failed: %v", err))
 		return
 	}
 
 	writeJSON(w, http.StatusOK, WriteUpdateResponse{
-		OldRoot:   result.OldRoot,
-		NewRoot:   result.NewRoot,
+		OldRoot:   result.OldRoot.String(),
+		NewRoot:   result.NewRoot.String(),
 		Path:      result.Path,
-		OldTarget: result.OldTarget,
-		NewTarget: result.NewTarget,
-		Op:        result.Op,
+		OldTarget: result.OldTarget.String(),
+		NewTarget: result.NewTarget.String(),
+		Op:        result.Op.String(),
 	})
 }
 
-// handleBatchUpdate handles POST /update/batch/{root}
 func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -845,37 +825,57 @@ func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wa, err := s.node.Writer()
-	if err != nil {
-		writeServerError(w, err.Error())
-		return
-	}
-	result, err := wa.BatchUpdateArcs(context.Background(), defaultGatewayGraphID, rootStr, req.Updates)
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
 	}
 
-	perArc := make(map[string]*WriteUpdateResponse)
+	rootCid, err := decodeCID(rootStr)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
+	}
+
+	updates := make(map[string]cid.Cid, len(req.Updates))
+	for path, targetStr := range req.Updates {
+		if targetStr == "" {
+			updates[path] = cid.Undef
+		} else {
+			target, err := decodeCID(targetStr)
+			if err != nil {
+				writeBadRequest(w, fmt.Sprintf("invalid target CID for %s: %v", path, err))
+				return
+			}
+			updates[path] = target
+		}
+	}
+
+	result, err := g.Writer().BatchUpdateArcs(context.Background(), g.BucketId(), rootCid, updates)
+	if err != nil {
+		writeServerError(w, fmt.Sprintf("batch update failed: %v", err))
+		return
+	}
+
+	perArc := make(map[string]*WriteUpdateResponse, len(result.PerArc))
 	for path, r := range result.PerArc {
 		perArc[path] = &WriteUpdateResponse{
-			OldRoot:   r.OldRoot,
-			NewRoot:   r.NewRoot,
+			OldRoot:   r.OldRoot.String(),
+			NewRoot:   r.NewRoot.String(),
 			Path:      r.Path,
-			OldTarget: r.OldTarget,
-			NewTarget: r.NewTarget,
-			Op:        r.Op,
+			OldTarget: r.OldTarget.String(),
+			NewTarget: r.NewTarget.String(),
+			Op:        r.Op.String(),
 		}
 	}
 
 	writeJSON(w, http.StatusOK, WriteBatchResponse{
-		OldRoot: result.OldRoot,
-		NewRoot: result.NewRoot,
+		OldRoot: result.OldRoot.String(),
+		NewRoot: result.NewRoot.String(),
 		PerArc:  perArc,
 	})
 }
 
-// handleCreateStructure handles POST /structure
 func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -930,57 +930,37 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeJSON(w, http.StatusCreated, map[string]string{
-			"root": root.String(),
-		})
+		writeJSON(w, http.StatusCreated, map[string]string{"root": root.String()})
 		return
 	}
 
-	wa, err := s.node.Writer()
-	if err != nil {
-		writeServerError(w, err.Error())
-		return
-	}
-	rootStr, err := wa.CreateStructure(ctx, defaultGatewayGraphID, req.Arcs)
+	g, err := s.getGraph(ctx, defaultGatewayGraphID)
 	if err != nil {
 		writeServerError(w, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"root": rootStr,
-	})
-}
-
-// graphResponseFromGraph converts a core graph.Graph to a gateway Graph response.
-func graphResponseFromGraph(g *graph.GraphMeta) *Graph {
-	return &Graph{
-		ID:          g.ID,
-		Root:        g.Root.String(),
-		CreatedAt:   g.CreatedAt,
-		ArcCount:    g.ArcCount,
-		Codec:       g.Backend,
-		KVStoreType: "kvstore",
+	arcsMap := make(map[string]cid.Cid, len(req.Arcs))
+	for path, targetStr := range req.Arcs {
+		target, err := decodeCID(targetStr)
+		if err != nil {
+			writeBadRequest(w, fmt.Sprintf("invalid target CID for %s: %v", path, err))
+			return
+		}
+		arcsMap[path] = target
 	}
-}
 
-// graphToGraph converts a core graph.Graph to a gateway Graph.
-func graphToGateway(g *graph.GraphMeta) *Graph {
-	return graphResponseFromGraph(g)
-}
-
-// decodeCIDOr decodes a CID string, returning cid.Undef on error.
-func decodeCIDOr(s string) cid.Cid {
-	c, err := decodeCID(s)
+	root, err := g.Writer().CreateStructure(ctx, g.BucketId(), arcset.NewMapFrom(arcsMap))
 	if err != nil {
-		return cid.Undef
+		writeServerError(w, fmt.Sprintf("create structure failed: %v", err))
+		return
 	}
-	return c
+
+	writeJSON(w, http.StatusCreated, map[string]string{"root": root.String()})
 }
 
 // ===== Verification =====
 
-// handleVerify handles POST /verify
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -992,28 +972,74 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transcript := &Transcript{
-		Steps: make([]StepEvidence, len(req.Transcript)),
+	g, err := s.getGraph(context.Background(), defaultGatewayGraphID)
+	if err != nil {
+		writeServerError(w, err.Error())
+		return
 	}
+
+	rootCid, err := decodeCID(req.Root)
+	if err != nil {
+		writeBadRequest(w, fmt.Sprintf("invalid root CID: %v", err))
+		return
+	}
+
+	steps := make([]resolver.StepEvidence, len(req.Transcript))
 	for i, step := range req.Transcript {
 		evBytes, err := decodeBase64(step.Evidence)
 		if err != nil {
 			writeBadRequest(w, fmt.Sprintf("invalid evidence at step %d: %v", i, err))
 			return
 		}
-		transcript.Steps[i] = StepEvidence{
+
+		targetCid, err := decodeCID(step.Target)
+		if err != nil {
+			writeBadRequest(w, fmt.Sprintf("invalid target CID at step %d: %v", i, err))
+			return
+		}
+
+		var ev evidence.Evidence
+		switch step.Kind {
+		case "explicit":
+			ev = evidence.NewExplicitEvidence(evBytes)
+		case "implicit":
+			ev = evidence.NewImplicitEvidence(evBytes)
+		case "hamt":
+			ev = evidence.NewHAMTEvidence(evBytes)
+		default:
+			writeBadRequest(w, fmt.Sprintf("unknown evidence kind at step %d: %s", i, step.Kind))
+			return
+		}
+
+		steps[i] = resolver.StepEvidence{
 			Path:     step.Path,
-			Target:   step.Target,
-			Evidence: evBytes,
-			Kind:     evidenceKind(step.Kind),
+			Target:   targetCid,
+			Evidence: ev,
 		}
 	}
 
-	valid, err := s.node.VerifyTranscript(req.Root, transcript)
+	valid, err := g.Resolver().VerifyTranscript(rootCid, &resolver.Transcript{Steps: steps})
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("verification failed: %v", err))
 		return
 	}
 
 	writeJSON(w, http.StatusOK, VerifyResponse{Valid: valid})
+}
+
+// ===== Graph conversion helpers =====
+
+func graphResponseFromGraph(g *graph.GraphMeta) *Graph {
+	return &Graph{
+		ID:          g.ID,
+		Root:        g.Root.String(),
+		CreatedAt:   g.CreatedAt,
+		ArcCount:    g.ArcCount,
+		Codec:       g.Backend,
+		KVStoreType: "kvstore",
+	}
+}
+
+func graphToGateway(g *graph.GraphMeta) *Graph {
+	return graphResponseFromGraph(g)
 }

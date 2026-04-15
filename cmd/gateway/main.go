@@ -21,10 +21,10 @@ import (
 )
 
 var (
-	Version = "dev"
-	cfgFile  string
-	listen   string
-	ipfsAPI  string
+	Version     = "dev"
+	cfgFile     string
+	listen      string
+	ipfsAPI     string
 	mockLatency string
 )
 
@@ -93,16 +93,13 @@ func runGateway(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Failed to create MALT node: %v", err)
 	}
-
-	// Create adapter for the gateway
-	adapter := gateway.NewNodeAdapter(node)
-	defer adapter.Close()
+	defer node.Close()
 
 	log.Printf("MALT Gateway v%s starting...", Version)
-	log.Printf("Configuration: %s", adapter.Config())
+	log.Printf("Configuration: %s", node.Config())
 
 	// Create gateway server
-	srv := gateway.NewServer(adapter, listen)
+	srv := gateway.NewServer(node, listen)
 
 	// Handle graceful shutdown
 	stop := make(chan os.Signal, 1)
