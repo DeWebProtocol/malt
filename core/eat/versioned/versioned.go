@@ -29,8 +29,8 @@ const (
 // EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
 type EAT struct {
-	kv         kvstore.KVStore
-	bloomCache *bloom.BloomCache // Optional, can be nil
+	kv           kvstore.KVStore
+	bloomManager *eat.BloomFilterManager
 }
 
 // NewEAT creates a new versioned EAT with the given KVStore and optional configuration.
@@ -57,7 +57,7 @@ func NewEAT(opts ...Option) (*EAT, error) {
 	}
 	return &EAT{
 		kv:         o.kv,
-		bloomCache: o.bloomCache,
+		bloomManager: eat.NewBloomFilterManager(o.bloomCache),
 	}, nil
 }
 
@@ -69,38 +69,34 @@ func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EA
 
 // CreateBucket creates a new bucket with custom bloom configuration.
 func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		return fmt.Errorf("bloom cache not configured")
 	}
-	return e.bloomCache.CreateBucket(ctx, bucketId, cfg)
+	return e.bloomManager.CreateBucket(ctx, bucketId, cfg)
 }
 
 // MightContain checks if a path might exist in a bucket using bloom filter.
 // Returns false if the path definitely doesn't exist.
 // Returns true if the path might exist (need to call Get to verify).
 func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bool {
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
-	result, err := e.bloomCache.MightContain(ctx, bucketId, path)
-	if err != nil {
-		return true // On error, conservatively return true
-	}
-	return result
+	return e.bloomManager.MightContain(bucketId, path)
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
 func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
 	result := make(map[string]bool, len(paths))
 
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		for _, p := range paths {
 			result[p] = true
 		}
 		return result
 	}
 
-	batchResult, err := e.bloomCache.MightContainBatch(ctx, bucketId, paths)
+	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, paths)
 	if err != nil {
 		for _, p := range paths {
 			result[p] = true
@@ -383,8 +379,8 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 	}
 
 	// Update bucket bloom filter
-	if e.bloomCache != nil && len(addedPaths) > 0 {
-		if err := e.bloomCache.Add(ctx, bucketId, addedPaths); err != nil {
+	if e.bloomManager.Enabled() && len(addedPaths) > 0 {
+		if err := e.bloomManager.AddBatch(ctx, bucketId, addedPaths); err != nil {
 			logger.Warn("EAT.Update failed to update bloom (non-fatal)",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
@@ -523,8 +519,8 @@ func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arc
 
 // Close releases resources.
 func (e *EAT) Close() error {
-	if e.bloomCache != nil {
-		e.bloomCache.Clear()
+	if bc := e.bloomManager.GetBloomCache(); bc != nil {
+		bc.Clear()
 	}
 	return nil
 }

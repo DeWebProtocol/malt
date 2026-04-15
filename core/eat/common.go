@@ -50,6 +50,14 @@ func (bfm *BloomFilterManager) MightContain(bucketId, path string) bool {
 	return result
 }
 
+// CreateBucket creates a new bucket with custom bloom configuration.
+func (bfm *BloomFilterManager) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
+	if bfm.bloomCache == nil {
+		return fmt.Errorf("bloom cache not configured")
+	}
+	return bfm.bloomCache.CreateBucket(ctx, bucketId, cfg)
+}
+
 // Insert records that a path exists in the bloom filter.
 func (bfm *BloomFilterManager) Insert(ctx context.Context, bucketId, path string) error {
 	if bfm.bloomCache == nil {
@@ -73,6 +81,32 @@ func (bfm *BloomFilterManager) Delete(ctx context.Context, bucketId, path string
 // Enabled returns whether bloom filter is enabled.
 func (bfm *BloomFilterManager) Enabled() bool {
 	return bfm.bloomCache != nil
+}
+
+// AddBatch adds multiple paths to the bloom filter at once.
+func (bfm *BloomFilterManager) AddBatch(ctx context.Context, bucketId string, paths []string) error {
+	if bfm.bloomCache == nil {
+		return nil
+	}
+	return bfm.bloomCache.Add(ctx, bucketId, paths)
+}
+
+// MightContainBatch checks multiple paths at once using bloom filter.
+func (bfm *BloomFilterManager) MightContainBatch(ctx context.Context, bucketId string, paths []string) (map[string]bool, error) {
+	if bfm.bloomCache == nil {
+		result := make(map[string]bool)
+		for _, p := range paths {
+			result[p] = true
+		}
+		return result, nil
+	}
+	return bfm.bloomCache.MightContainBatch(ctx, bucketId, paths)
+}
+
+// GetBloomCache returns the underlying BloomCache for advanced operations.
+// This is intended for internal use by EAT implementations that need direct access.
+func (bfm *BloomFilterManager) GetBloomCache() *bloom.BloomCache {
+	return bfm.bloomCache
 }
 
 // BaseEAT provides common EAT construction and validation logic.
