@@ -40,10 +40,6 @@ type Snapshot interface {
 	Len() int
 }
 
-// View is an alias for Snapshot for backward compatibility.
-// Deprecated: Use Snapshot instead.
-type View = Snapshot
-
 // Map is an immutable snapshot backed by a map.
 // It is safe for concurrent read access.
 // Do not modify the underlying map after creation.

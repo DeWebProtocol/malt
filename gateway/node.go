@@ -350,11 +350,6 @@ func (wa *WriteAdapter) CreateStructure(ctx context.Context, bucketId string, ar
 	return rootCid.String(), nil
 }
 
-// buildSnapshot converts a map[string]cid.Cid to an arcset.Snapshot.
-func buildSnapshot(arcs map[string]cid.Cid) arcset.Snapshot {
-	return arcset.NewMapFrom(arcs)
-}
-
 // Verify codec detection helper.
 func (na *NodeAdapter) CodecName(rootStr string) (string, error) {
 	c, err := decodeCID(rootStr)

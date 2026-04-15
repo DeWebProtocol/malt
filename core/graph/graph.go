@@ -18,11 +18,6 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// LineageRecorder is an optional interface for recording structure root lineage.
-type LineageRecorder interface {
-	Record(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid) error
-}
-
 // Graph is a per-graph unit combining resolver (read) and writer (write).
 // It is stateless: the root CID is always passed as a parameter, never held internally.
 type Graph struct {
@@ -32,7 +27,7 @@ type Graph struct {
 	resolver        *resolver.Resolver
 	wr              *writer.Writer
 	eat             eat.EAT
-	lineageRecorder LineageRecorder
+	lineageRecorder writer.LineageRecorder
 }
 
 // NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
@@ -135,7 +130,7 @@ func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid
 }
 
 // BatchResolve resolves multiple paths from a root.
-func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *AggregatedProof, error) {
+func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) (map[string]cid.Cid, *arcset.AggregatedProof, error) {
 	if !root.Defined() {
 		return nil, nil, fmt.Errorf("root must be defined")
 	}
@@ -156,17 +151,6 @@ func (g *Graph) Verify(ctx context.Context, root cid.Cid, proof Proof, expectedT
 		return false, fmt.Errorf("root must be defined")
 	}
 	return proof.Verify(root, expectedTarget)
-}
-
-// BatchVerify verifies an aggregated proof against a root.
-func (g *Graph) BatchVerify(ctx context.Context, root cid.Cid, aggProof *AggregatedProof) (bool, error) {
-	if !root.Defined() {
-		return false, fmt.Errorf("root must be defined")
-	}
-	if aggProof == nil {
-		return false, fmt.Errorf("proof must not be nil")
-	}
-	return aggProof.Verify()
 }
 
 // Update applies a batch of arc updates under a root.
@@ -196,11 +180,6 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	return result.NewRoot, delta, nil
 }
 
-// BatchUpdate is a synonym for Update.
-func (g *Graph) BatchUpdate(ctx context.Context, root cid.Cid, arcs map[string]cid.Cid) (cid.Cid, *UpdateDelta, error) {
-	return g.Update(ctx, root, arcs)
-}
-
 // Snapshot implements GraphWriter.Snapshot.
 func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
 	if !root.Defined() {
@@ -210,7 +189,7 @@ func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, er
 }
 
 // Commit implements GraphWriter.Commit.
-func (g *Graph) Commit(ctx context.Context, snapshot arcset.View) (cid.Cid, error) {
+func (g *Graph) Commit(ctx context.Context, snapshot arcset.Snapshot) (cid.Cid, error) {
 	root, err := g.sce.Commit(snapshot)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("SCE commit failed: %w", err)

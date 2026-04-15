@@ -159,11 +159,6 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.Scheme, error) 
 	}
 }
 
-// initCommitmentScheme creates the node's default commitment scheme from config.
-func (n *Node) initCommitmentScheme() (commitment.Scheme, error) {
-	return n.initCommitmentSchemeType(n.cfg.CommitmentType)
-}
-
 // initEAT creates an EAT from config.
 func (n *Node) initEAT() error {
 	switch n.cfg.EATType {
@@ -282,7 +277,7 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	scheme := o.Scheme
 	if scheme == nil {
 		var err error
-		scheme, err = n.initCommitmentScheme()
+		scheme, err = n.initCommitmentSchemeType(n.cfg.CommitmentType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create commitment scheme: %w", err)
 		}
@@ -311,7 +306,7 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
 }
 
-// lineageRecorderAdapter adapts lineage.Manager to graph.LineageRecorder.
+// lineageRecorderAdapter adapts lineage.Manager to writer.LineageRecorder.
 type lineageRecorderAdapter struct {
 	mgr *lineage.Manager
 }
@@ -323,7 +318,7 @@ func (a *lineageRecorderAdapter) Record(ctx context.Context, bucketId string, ne
 
 // Commitment returns the default commitment scheme type from config.
 func (n *Node) Commitment() commitment.Scheme {
-	scheme, err := n.initCommitmentScheme()
+	scheme, err := n.initCommitmentSchemeType(n.cfg.CommitmentType)
 	if err != nil {
 		return nil
 	}
