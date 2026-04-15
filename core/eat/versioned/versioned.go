@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -24,7 +25,6 @@ import (
 const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
 )
-
 
 // EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
@@ -65,19 +65,6 @@ func NewEAT(opts ...Option) (*EAT, error) {
 // Deprecated: Use NewEAT with WithBloomCache option instead.
 func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EAT, error) {
 	return NewEAT(WithKVStore(kv), WithBloomCache(bloomCache))
-}
-
-
-// arcKey generates the storage key for a bucket, version and path.
-// Format: bucketId:version:path
-func arcKey(bucketId string, version cid.Cid, path string) []byte {
-	return []byte(bucketId + ":" + version.String() + ":" + path)
-}
-
-// versionPrefix generates the prefix for all arcs of a specific version in a bucket.
-// Format: bucketId:version:
-func versionPrefix(bucketId string, version cid.Cid) []byte {
-	return []byte(bucketId + ":" + version.String() + ":")
 }
 
 // CreateBucket creates a new bucket with custom bloom configuration.
@@ -159,7 +146,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		// Try to get the arc at current version
-		key := arcKey(bucketId, currentVersion, path)
+		key := eat.VersionedArcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
 			if len(val) == 0 {
@@ -190,7 +177,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		// Arc not found at this version, try parent
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -274,7 +261,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			if tombstones[path] {
 				continue
 			}
-			key := arcKey(bucketId, currentVersion, path)
+			key := eat.VersionedArcKey(bucketId, currentVersion, path)
 			keys = append(keys, key)
 			pathForKey[string(key)] = path
 		}
@@ -310,7 +297,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			break
 		}
 
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -349,7 +336,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Store all arcs for this version
 	for path, target := range arcs {
-		key := arcKey(bucketId, newRoot, path)
+		key := eat.VersionedArcKey(bucketId, newRoot, path)
 		if target == cid.Undef {
 			tombstoneCount++
 			if err := batch.Put(key, []byte{}); err != nil {
@@ -376,7 +363,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Link to parent via @previous
 	if parentRoot != cid.Undef {
-		prevKey := arcKey(bucketId, newRoot, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, newRoot, PreviousArc)
 		prevVal := parentRoot.Bytes()
 		if err := batch.Put(prevKey, prevVal); err != nil {
 			batch.Cancel()
@@ -418,7 +405,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 // GetParent returns the parent version of a given version via @previous.
 func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
-	prevKey := arcKey(bucketId, version, PreviousArc)
+	prevKey := eat.VersionedArcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -471,7 +458,7 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 			return nil, ctx.Err()
 		}
 
-		prefix := versionPrefix(bucketId, currentVersion)
+		prefix := eat.VersionedBucketPrefix(bucketId, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
 		for iter.Next() {
@@ -506,7 +493,7 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 		}
 		iter.Close()
 
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -581,7 +568,7 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 
 	it.maxDepth--
 
-	prefix := versionPrefix(it.bucketId, it.currentVersion)
+	prefix := eat.VersionedBucketPrefix(it.bucketId, it.currentVersion)
 	iter := it.eat.kv.NewIterator(it.ctx, prefix, nil)
 
 	it.currentBatch = make(map[string]cid.Cid)

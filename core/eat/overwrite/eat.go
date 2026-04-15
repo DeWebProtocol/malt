@@ -13,13 +13,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/logger"
 	cid "github.com/ipfs/go-cid"
 )
-
 
 // EAT is an EAT with overwrite semantics.
 // It uses bucketId for namespace isolation, allowing multiple graphs
@@ -61,25 +61,6 @@ func NewEAT(opts ...Option) (*EAT, error) {
 // Deprecated: Use NewEAT with WithBloomCache option instead.
 func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EAT, error) {
 	return NewEAT(WithKVStore(kv), WithBloomCache(bloomCache))
-}
-
-
-// arcKey generates the storage key for a path within a bucket.
-// Format: bucketId:path
-func arcKey(bucketId, path string) []byte {
-	return []byte(bucketId + ":" + path)
-}
-
-// bucketPrefix generates the prefix for all arcs in a bucket.
-// Format: bucketId:
-func bucketPrefix(bucketId string) []byte {
-	return []byte(bucketId + ":")
-}
-
-// rootKey generates the key for root->bucketId mapping.
-// Format: root:{cid}
-func rootKey(root cid.Cid) []byte {
-	return []byte("root:" + root.String())
 }
 
 // CreateBucket creates a new bucket with custom bloom configuration.
@@ -146,7 +127,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path strin
 
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -173,7 +154,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path strin
 	}
 
 	// Get the arc
-	arcKeyBytes := arcKey(bucketId, path)
+	arcKeyBytes := eat.DefaultArcKey(bucketId, path)
 	val, err := e.kv.Get(ctx, arcKeyBytes)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -227,7 +208,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -255,7 +236,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 	keys := make([][]byte, len(filteredPaths))
 	pathToKey := make(map[string]string, len(filteredPaths))
 	for i, path := range filteredPaths {
-		key := arcKey(bucketId, path)
+		key := eat.DefaultArcKey(bucketId, path)
 		keys[i] = key
 		pathToKey[string(key)] = path
 	}
@@ -303,7 +284,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Remove old root mapping if exists
 	if oldRoot != cid.Undef {
-		oldRootKey := rootKey(oldRoot)
+		oldRootKey := eat.RootKeyFormat(oldRoot)
 		if err := batch.Delete(oldRootKey); err != nil {
 			batch.Cancel()
 			logger.Error("EAT.Update failed to delete old root",
@@ -316,7 +297,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Add new root mapping if provided
 	if newRoot != cid.Undef {
-		newRootKey := rootKey(newRoot)
+		newRootKey := eat.RootKeyFormat(newRoot)
 		if err := batch.Put(newRootKey, []byte(bucketId)); err != nil {
 			batch.Cancel()
 			logger.Error("EAT.Update failed to add new root",
@@ -332,7 +313,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Add/Update/Delete arcs
 	for path, target := range arcs {
-		key := arcKey(bucketId, path)
+		key := eat.DefaultArcKey(bucketId, path)
 		if target == cid.Undef {
 			// Delete the arc
 			if err := batch.Delete(key); err != nil {
@@ -390,7 +371,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error) {
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
 			return arcset.NewMap(), nil // Return empty snapshot for invalid root
@@ -399,7 +380,7 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcs
 
 	// Load all arcs into memory
 	arcs := make(map[string]cid.Cid)
-	prefix := bucketPrefix(bucketId)
+	prefix := eat.DefaultBucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
@@ -423,14 +404,14 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcs
 func (e *EAT) Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset.Iterator {
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
 			return &emptyIterator{}
 		}
 	}
 
-	prefix := bucketPrefix(bucketId)
+	prefix := eat.DefaultBucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
 	return &eatIterator{
