@@ -7,10 +7,10 @@ import (
 	"sync"
 
 	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
-	cid "github.com/ipfs/go-cid"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	verkle "github.com/ethereum/go-verkle"
+	cid "github.com/ipfs/go-cid"
 )
 
 const (
@@ -18,25 +18,32 @@ const (
 	Width = 256
 	// StemSize is the size of a Verkle stem in bytes.
 	StemSize = 31
+	// ProofSize is the size of a Verkle proof in bytes (stem + index).
+	ProofSize = StemSize + 4
+	// MaxCacheEntries is the maximum number of cached commitments.
+	// When exceeded, the oldest entries are evicted.
+	MaxCacheEntries = 1024
 )
 
 // Scheme implements commitment.Scheme using Verkle Trees.
 type Scheme struct {
-	mu    sync.RWMutex
-	cache map[string]*cacheEntry
+	*commitment.BaseScheme
+
+	mu       sync.RWMutex
+	auxCache map[string]*auxData // maps commitment string to its auxiliary data
 }
 
-type cacheEntry struct {
-	paths       []string
-	values      []cid.Cid
+type auxData struct {
 	pathToStem  map[string]verkle.Stem
 	pathToIndex map[string]int
 }
 
 // NewScheme creates a new Verkle commitment scheme.
 func NewScheme() (*Scheme, error) {
+	cache := commitment.NewCacheManager(MaxCacheEntries)
 	return &Scheme{
-		cache: make(map[string]*cacheEntry),
+		BaseScheme: commitment.NewBaseScheme(cache),
+		auxCache:   make(map[string]*auxData),
 	}, nil
 }
 
@@ -48,9 +55,8 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 
 	paths, values := commitment.ExtractSortedPathsValues(arcs)
 
-	entry := &cacheEntry{
-		paths:       paths,
-		values:      values,
+	// Create auxiliary data for Verkle-specific information
+	aux := &auxData{
 		pathToStem:  make(map[string]verkle.Stem),
 		pathToIndex: make(map[string]int),
 	}
@@ -58,15 +64,15 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 	// Create stems for each path
 	for i, path := range paths {
 		stem := pathToVerkleStem(path)
-		entry.pathToStem[path] = stem
-		entry.pathToIndex[path] = i
+		aux.pathToStem[path] = stem
+		aux.pathToIndex[path] = i
 	}
 
 	// Get commitment bytes (simplified - use first stem)
 	var commBytes []byte
 	if len(paths) > 0 {
 		commBytes = make([]byte, 32)
-		copy(commBytes, entry.pathToStem[paths[0]])
+		copy(commBytes, aux.pathToStem[paths[0]])
 	} else {
 		commBytes = make([]byte, 32)
 	}
@@ -79,9 +85,18 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 		copy(stemBytes, commBytes)
 	}
 
+	commStr := string(stemBytes)
+
+	// Cache the auxiliary data
 	s.mu.Lock()
-	s.cache[string(stemBytes)] = entry
+	s.auxCache[commStr] = aux
 	s.mu.Unlock()
+
+	// Cache metadata via BaseScheme
+	s.BaseScheme.Cache.Set(commStr, &commitment.CacheEntry{
+		Paths:  paths,
+		Values: values,
+	})
 
 	// Create MALT CID from stem bytes
 	return codec.NewVerkleCid(stemBytes)
@@ -89,37 +104,57 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 
 // Prove generates a Verkle proof.
 func (s *Scheme) Prove(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+	return s.ProveSingle(comm, arcs, path)
+}
+
+// ProveSingle is the core prove implementation for the Backend interface.
+func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	s.mu.RLock()
-	entry, ok := s.cache[string(commBytes)]
-	s.mu.RUnlock()
+	commStr := string(commBytes)
 
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
 	if !ok {
 		return cid.Cid{}, nil, fmt.Errorf("commitment not found in cache")
 	}
 
-	stem, ok := entry.pathToStem[path]
+	// Get auxiliary data
+	s.mu.RLock()
+	aux, ok := s.auxCache[commStr]
+	s.mu.RUnlock()
+
+	if !ok {
+		return cid.Cid{}, nil, fmt.Errorf("auxiliary data not found in cache")
+	}
+
+	stem, ok := aux.pathToStem[path]
 	if !ok {
 		return cid.Cid{}, nil, fmt.Errorf("path %s not found in stem index", path)
 	}
 
-	index := entry.pathToIndex[path]
+	index := aux.pathToIndex[path]
 
-	proofBytes := make([]byte, 0, StemSize+32)
+	// Proof format: stem (31) + index (4)
+	proofBytes := make([]byte, 0, ProofSize)
 	proofBytes = append(proofBytes, stem...)
-	proofBytes = append(proofBytes, entry.values[index].Bytes()...)
+	proofBytes = append(proofBytes, byte(index>>24), byte(index>>16), byte(index>>8), byte(index))
 
-	return entry.values[index], proofBytes, nil
+	return entry.Values[index], proofBytes, nil
 }
 
 // Verify verifies a Verkle proof.
 func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
-	if len(proof) < StemSize {
+	return s.VerifySingle(comm, path, value, proof)
+}
+
+// VerifySingle is the core verify implementation for the Backend interface.
+func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
+	if len(proof) < ProofSize {
 		return false, nil
 	}
 
@@ -129,16 +164,20 @@ func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) 
 		return false, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get auxiliary data
 	s.mu.RLock()
-	entry, ok := s.cache[string(commBytes)]
+	aux, ok := s.auxCache[commStr]
 	s.mu.RUnlock()
 
 	if !ok {
 		return false, nil
 	}
 
+	// Extract proof components: stem (31) + index (4)
 	stem := proof[:StemSize]
-	expectedStem, ok := entry.pathToStem[path]
+	expectedStem, ok := aux.pathToStem[path]
 	if !ok {
 		return false, nil
 	}
@@ -147,6 +186,12 @@ func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) 
 		if stem[i] != expectedStem[i] {
 			return false, nil
 		}
+	}
+
+	// Verify index
+	index := int(proof[StemSize])<<24 | int(proof[StemSize+1])<<16 | int(proof[StemSize+2])<<8 | int(proof[StemSize+3])
+	if index != aux.pathToIndex[path] {
+		return false, nil
 	}
 
 	return true, nil
@@ -160,28 +205,44 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	commStr := string(commBytes)
 
-	entry, ok := s.cache[string(commBytes)]
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
 	if !ok {
 		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
 	}
 
-	index, ok := entry.pathToIndex[path]
+	// Get auxiliary data
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	aux, ok := s.auxCache[commStr]
+	if !ok {
+		return cid.Cid{}, fmt.Errorf("auxiliary data not found in cache")
+	}
+
+	index, ok := aux.pathToIndex[path]
 	if !ok {
 		return cid.Cid{}, fmt.Errorf("path %s not found", path)
 	}
 
-	entry.values[index] = newValue
+	entry.Values[index] = newValue
 
 	// Recompute commitment bytes - hash values to make commitment change
-	newCommBytes := computeCommitmentFromValues(entry.paths, entry.values)
+	newCommBytes := computeCommitmentFromValues(entry.Paths, entry.Values)
 
 	stemBytes := make([]byte, StemSize)
 	copy(stemBytes, newCommBytes[:StemSize])
 
-	s.cache[string(stemBytes)] = entry
+	newCommStr := string(stemBytes)
+
+	// Move auxiliary data to new commitment
+	s.auxCache[newCommStr] = aux
+	delete(s.auxCache, commStr)
+
+	// Cache new entry
+	s.BaseScheme.Cache.Set(newCommStr, entry)
 
 	// Create MALT CID from stem bytes
 	return codec.NewVerkleCid(stemBytes)
@@ -198,29 +259,45 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	commStr := string(commBytes)
 
-	entry, ok := s.cache[string(commBytes)]
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
 	if !ok {
 		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
 	}
 
+	// Get auxiliary data
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	aux, ok := s.auxCache[commStr]
+	if !ok {
+		return cid.Cid{}, fmt.Errorf("auxiliary data not found in cache")
+	}
+
 	for path, update := range updates {
-		index, ok := entry.pathToIndex[path]
+		index, ok := aux.pathToIndex[path]
 		if !ok {
 			return cid.Cid{}, fmt.Errorf("path %s not found", path)
 		}
-		entry.values[index] = update.New
+		entry.Values[index] = update.New
 	}
 
 	// Recompute commitment bytes - hash values to make commitment change
-	newCommBytes := computeCommitmentFromValues(entry.paths, entry.values)
+	newCommBytes := computeCommitmentFromValues(entry.Paths, entry.Values)
 
 	stemBytes := make([]byte, StemSize)
 	copy(stemBytes, newCommBytes[:StemSize])
 
-	s.cache[string(stemBytes)] = entry
+	newCommStr := string(stemBytes)
+
+	// Move auxiliary data to new commitment
+	s.auxCache[newCommStr] = aux
+	delete(s.auxCache, commStr)
+
+	// Cache new entry
+	s.BaseScheme.Cache.Set(newCommStr, entry)
 
 	// Create MALT CID from stem bytes
 	return codec.NewVerkleCid(stemBytes)
@@ -228,78 +305,12 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 
 // BatchProve generates proofs for multiple paths.
 func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	s.mu.RLock()
-	entry, ok := s.cache[string(commBytes)]
-	s.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("commitment not found in cache")
-	}
-
-	results := make(map[string]arcset.BatchProofEntry, len(paths))
-
-	for _, path := range paths {
-		stem, ok := entry.pathToStem[path]
-		if !ok {
-			return nil, fmt.Errorf("path %s not found in stem index", path)
-		}
-
-		index := entry.pathToIndex[path]
-
-		proofBytes := make([]byte, 0, StemSize+32)
-		proofBytes = append(proofBytes, stem...)
-		proofBytes = append(proofBytes, entry.values[index].Bytes()...)
-
-		results[path] = arcset.BatchProofEntry{
-			Target: entry.values[index],
-			Proof:  proofBytes,
-		}
-	}
-
-	return results, nil
+	return s.BaseScheme.BatchProveImpl(comm, arcs, s, paths)
 }
 
 // BatchVerify verifies multiple proofs.
 func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return false, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	s.mu.RLock()
-	entry, ok := s.cache[string(commBytes)]
-	s.mu.RUnlock()
-
-	if !ok {
-		return false, nil
-	}
-
-	for path, proofEntry := range proofs {
-		if len(proofEntry.Proof) < StemSize {
-			return false, nil
-		}
-
-		stem := proofEntry.Proof[:StemSize]
-		expectedStem, ok := entry.pathToStem[path]
-		if !ok {
-			return false, nil
-		}
-
-		for i := range StemSize {
-			if stem[i] != expectedStem[i] {
-				return false, nil
-			}
-		}
-	}
-
-	return true, nil
+	return s.BaseScheme.BatchVerifyImpl(comm, s, proofs)
 }
 
 // AggregateProve generates an aggregated proof.
@@ -314,24 +325,34 @@ func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.Snapshot, paths []stri
 		return nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
+	if !ok {
+		return nil, fmt.Errorf("commitment not found in cache")
+	}
+
+	// Get auxiliary data
 	s.mu.RLock()
-	entry, ok := s.cache[string(commBytes)]
+	aux, ok := s.auxCache[commStr]
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("commitment not found in cache")
+		return nil, fmt.Errorf("auxiliary data not found in cache")
 	}
 
 	targets := make([]cid.Cid, len(paths))
 	proofData := make([]byte, 0, len(paths)*StemSize)
 
 	for i, path := range paths {
-		stem, ok := entry.pathToStem[path]
+		stem, ok := aux.pathToStem[path]
 		if !ok {
 			return nil, fmt.Errorf("path %s not found in stem index", path)
 		}
 
-		targets[i] = entry.values[entry.pathToIndex[path]]
+		index := aux.pathToIndex[path]
+		targets[i] = entry.Values[index]
 		proofData = append(proofData, stem...)
 	}
 
@@ -349,7 +370,8 @@ func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof)
 	}
 
 	if len(aggProof.ProofData) != len(aggProof.Paths)*StemSize {
-		return false, fmt.Errorf("proof data size mismatch")
+		return false, fmt.Errorf("proof data size mismatch: expected %d, got %d",
+			len(aggProof.Paths)*StemSize, len(aggProof.ProofData))
 	}
 
 	// Extract commitment bytes from MALT CID
@@ -358,8 +380,11 @@ func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof)
 		return false, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get auxiliary data
 	s.mu.RLock()
-	entry, ok := s.cache[string(commBytes)]
+	aux, ok := s.auxCache[commStr]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -368,7 +393,7 @@ func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof)
 
 	for i, path := range aggProof.Paths {
 		stem := aggProof.ProofData[i*StemSize : (i+1)*StemSize]
-		expectedStem, ok := entry.pathToStem[path]
+		expectedStem, ok := aux.pathToStem[path]
 		if !ok {
 			return false, nil
 		}
