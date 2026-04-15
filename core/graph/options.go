@@ -13,7 +13,6 @@ type Options struct {
 	Scheme          commitment.Scheme
 	BucketId        string
 	LineageRecorder writer.LineageRecorder
-	SCECacheSize    int // 0 = use sce.DefaultCacheSize
 }
 
 func defaultOptions() *Options {
@@ -40,13 +39,5 @@ func WithBucketId(id string) Option {
 func WithLineageRecorder(rec writer.LineageRecorder) Option {
 	return func(o *Options) {
 		o.LineageRecorder = rec
-	}
-}
-
-// WithSCECacheSize sets the SCE session cache size for this Graph.
-// Default: sce.DefaultCacheSize (1024). Node.NewGraph() auto-sets this from config.
-func WithSCECacheSize(n int) Option {
-	return func(o *Options) {
-		o.SCECacheSize = n
 	}
 }

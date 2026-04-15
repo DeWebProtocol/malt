@@ -59,14 +59,8 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 		scheme = s
 	}
 
-	// SCE cache size: use config value or default
-	cacheSize := o.SCECacheSize
-	if cacheSize <= 0 {
-		cacheSize = sce.DefaultCacheSize
-	}
-
-	// Create per-graph SCE
-	sceEngine := sce.NewEngine(scheme, sce.WithCacheSize(cacheSize))
+	// Create per-graph SCE (stateless — scheme manages its own caching)
+	sceEngine := sce.NewEngine(scheme)
 
 	// Create per-graph explicit resolver
 	explicitStep := explicit.NewResolver(eat, sceEngine, bucketId)

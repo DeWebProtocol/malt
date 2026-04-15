@@ -19,7 +19,6 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/lineage"
-	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -250,7 +249,6 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 
 	graphOpts := []graph.Option{
 		graph.WithCommitmentScheme(scheme),
-		graph.WithSCECacheSize(sce.DefaultCacheSize),
 	}
 	if lm := n.LineageManager(); lm != nil {
 		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
@@ -283,16 +281,9 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 		}
 	}
 
-	// SCE cache size from config if not specified
-	cacheSize := o.SCECacheSize
-	if cacheSize <= 0 {
-		cacheSize = sce.DefaultCacheSize
-	}
-
 	// Build graph options
 	graphOpts := []graph.Option{
 		graph.WithCommitmentScheme(scheme),
-		graph.WithSCECacheSize(cacheSize),
 	}
 
 	// Auto-inject lineage recorder if manager is available
