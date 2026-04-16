@@ -383,7 +383,7 @@ type MerkleDAGBenchmarkRunner struct {
 // NewMerkleDAGBenchmarkRunner creates a new benchmark runner.
 func NewMerkleDAGBenchmarkRunner(depths []int, fanout int, seed int64) *MerkleDAGBenchmarkRunner {
 	return &MerkleDAGBenchmarkRunner{
-		cas:    mock.NewCAS(),
+		cas:    mock.NewCAS(mock.WithoutLatency()),
 		depths: depths,
 		fanout: fanout,
 		seed:   seed,

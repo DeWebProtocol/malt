@@ -12,7 +12,7 @@ import (
 // TestMerkleDAGTreeBuild tests tree building.
 func TestMerkleDAGTreeBuild(t *testing.T) {
 	ctx := context.Background()
-	cas := mock.NewCAS()
+	cas := mock.NewCAS(mock.WithoutLatency())
 
 	// Build a small tree for testing
 	depth := 4
@@ -39,7 +39,7 @@ func TestMerkleDAGTreeBuild(t *testing.T) {
 	}
 
 	// Expected leaf nodes
-	expectedLeaves := powInt(fanout, depth - 1)
+	expectedLeaves := powInt(fanout, depth-1)
 	if tree.nodes == nil {
 		t.Fatal("Nodes map should not be nil")
 	}
@@ -63,7 +63,7 @@ func TestMerkleDAGTreeBuild(t *testing.T) {
 // TestMerkleDAGLeafRetrieval tests leaf retrieval.
 func TestMerkleDAGLeafRetrieval(t *testing.T) {
 	ctx := context.Background()
-	cas := mock.NewCAS()
+	cas := mock.NewCAS(mock.WithoutLatency())
 
 	depth := 3
 	fanout := 4
@@ -97,7 +97,7 @@ func TestMerkleDAGLeafRetrieval(t *testing.T) {
 // TestMerkleDAGLeafUpdate tests leaf update with ancestor rewrite.
 func TestMerkleDAGLeafUpdate(t *testing.T) {
 	ctx := context.Background()
-	cas := mock.NewCAS()
+	cas := mock.NewCAS(mock.WithoutLatency())
 
 	depth := 4
 	fanout := 2
@@ -277,7 +277,7 @@ func BenchmarkMerkleDAGUpdate(b *testing.B) {
 
 	for _, depth := range []int{3, 5, 7, 10} {
 		b.Run(fmt.Sprintf("depth-%d", depth), func(b *testing.B) {
-			cas := mock.NewCAS()
+			cas := mock.NewCAS(mock.WithoutLatency())
 			tree := NewMerkleDAGTree(cas, depth, 4)
 			_, _, err := tree.Build(ctx)
 			if err != nil {
@@ -306,7 +306,7 @@ func BenchmarkMerkleDAGRetrieval(b *testing.B) {
 
 	for _, depth := range []int{3, 5, 7, 10} {
 		b.Run(fmt.Sprintf("depth-%d", depth), func(b *testing.B) {
-			cas := mock.NewCAS()
+			cas := mock.NewCAS(mock.WithoutLatency())
 			tree := NewMerkleDAGTree(cas, depth, 4)
 			_, _, err := tree.Build(ctx)
 			if err != nil {

@@ -11,9 +11,9 @@ import (
 	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/eval"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/eval"
 )
 
 // newTestEAT creates a new EAT for testing.
@@ -36,7 +36,7 @@ func TestBenchmarkRunner(t *testing.T) {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
+	c := mock.NewCAS(mock.WithoutLatency())
 
 	// Create benchmark runner with small config for quick test
 	cfg := &eval.BenchmarkConfig{
@@ -263,16 +263,16 @@ func TestEvalRunner_DefaultConfig(t *testing.T) {
 
 func TestComputeSummaryStats(t *testing.T) {
 	m := &eval.Metrics{
-		Backend:     eval.BackendKZG,
-		EATType:     eval.EATOverwrite,
-		ArcCount:    100,
-		CommitTime:  10 * time.Millisecond,
-		ProveTime:   80 * time.Millisecond,
-		VerifyTime:  2 * time.Millisecond,
+		Backend:         eval.BackendKZG,
+		EATType:         eval.EATOverwrite,
+		ArcCount:        100,
+		CommitTime:      10 * time.Millisecond,
+		ProveTime:       80 * time.Millisecond,
+		VerifyTime:      2 * time.Millisecond,
 		EndToEndLatency: 100 * time.Millisecond,
-		ProofSize:   84,
-		RootSize:    55,
-		RewriteAmp:  1.0,
+		ProofSize:       84,
+		RootSize:        55,
+		RewriteAmp:      1.0,
 		UpdateTimes: []time.Duration{
 			5 * time.Millisecond,
 			7 * time.Millisecond,
@@ -329,11 +329,11 @@ func TestExportJSON(t *testing.T) {
 	defer f.Close()
 
 	var parsed []struct {
-		Backend  eval.BackendType       `json:"backend"`
-		EATType  eval.EATType           `json:"eat_type"`
-		Workload string                 `json:"workload"`
-		ArcCount int                    `json:"arc_count"`
-		Metrics  *eval.MetricsSummary   `json:"metrics"`
+		Backend  eval.BackendType     `json:"backend"`
+		EATType  eval.EATType         `json:"eat_type"`
+		Workload string               `json:"workload"`
+		ArcCount int                  `json:"arc_count"`
+		Metrics  *eval.MetricsSummary `json:"metrics"`
 	}
 	if err := json.NewDecoder(f).Decode(&parsed); err != nil {
 		t.Fatalf("Cannot parse JSON file: %v", err)
@@ -389,7 +389,7 @@ func BenchmarkAppend(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
+	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{1000},
@@ -412,7 +412,7 @@ func BenchmarkRandom(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
+	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{1000},
@@ -435,7 +435,7 @@ func BenchmarkBulk(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
 	s := sce.NewEngine(scheme)
-	c := mock.NewCAS()
+	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
 		ArcCounts:    []int{1000},
