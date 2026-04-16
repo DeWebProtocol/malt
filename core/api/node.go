@@ -22,6 +22,7 @@ import (
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/sce/commitment/radix"
 	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
 	cid "github.com/ipfs/go-cid"
 )
@@ -153,6 +154,8 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.Scheme, error) 
 		return verkle.NewScheme()
 	case "ipa":
 		return ipa.NewScheme()
+	case "radix":
+		return radix.NewScheme(radix.WithKVStore(n.kv))
 	default:
 		return nil, fmt.Errorf("unknown commitment type: %s", kind)
 	}

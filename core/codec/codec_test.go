@@ -107,6 +107,26 @@ func TestNewIPACid(t *testing.T) {
 	}
 }
 
+func TestNewRadixCid(t *testing.T) {
+	commitment := make([]byte, codec.RadixCommitmentSize)
+	for i := range commitment {
+		commitment[i] = byte(i)
+	}
+
+	c, err := codec.NewRadixCid(commitment)
+	if err != nil {
+		t.Fatalf("NewRadixCid failed: %v", err)
+	}
+
+	if c.Prefix().Codec != codec.CodecMaltRadix {
+		t.Errorf("Expected codec %x, got %x", codec.CodecMaltRadix, c.Prefix().Codec)
+	}
+
+	if !codec.IsMaltCid(c) {
+		t.Error("Expected IsMaltCid to return true")
+	}
+}
+
 func TestIsMaltCidFalse(t *testing.T) {
 	// Create a regular CID (not MALT)
 	c := cid.NewCidV1(cid.Raw, nil)
@@ -134,12 +154,13 @@ func TestGetMaltCodec(t *testing.T) {
 
 func TestCodecName(t *testing.T) {
 	tests := []struct {
-		codec   uint64
+		codec    uint64
 		expected string
 	}{
 		{codec.CodecMaltKZG, "malt-kzg"},
 		{codec.CodecMaltVerkle, "malt-verkle"},
 		{codec.CodecMaltIPA, "malt-ipa"},
+		{codec.CodecMaltRadix, "malt-radix"},
 		{0x999999, "unknown-999999"},
 	}
 
