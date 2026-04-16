@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -25,12 +26,11 @@ const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
 )
 
-
 // EAT is a versioned EAT implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
 type EAT struct {
-	kv         kvstore.KVStore
-	bloomCache *bloom.BloomCache // Optional, can be nil
+	kv           kvstore.KVStore
+	bloomManager *eat.BloomFilterManager
 }
 
 // NewEAT creates a new versioned EAT with the given KVStore and optional configuration.
@@ -57,7 +57,7 @@ func NewEAT(opts ...Option) (*EAT, error) {
 	}
 	return &EAT{
 		kv:         o.kv,
-		bloomCache: o.bloomCache,
+		bloomManager: eat.NewBloomFilterManager(o.bloomCache),
 	}, nil
 }
 
@@ -67,53 +67,36 @@ func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EA
 	return NewEAT(WithKVStore(kv), WithBloomCache(bloomCache))
 }
 
-
-// arcKey generates the storage key for a bucket, version and path.
-// Format: bucketId:version:path
-func arcKey(bucketId string, version cid.Cid, path string) []byte {
-	return []byte(bucketId + ":" + version.String() + ":" + path)
-}
-
-// versionPrefix generates the prefix for all arcs of a specific version in a bucket.
-// Format: bucketId:version:
-func versionPrefix(bucketId string, version cid.Cid) []byte {
-	return []byte(bucketId + ":" + version.String() + ":")
-}
-
 // CreateBucket creates a new bucket with custom bloom configuration.
 func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		return fmt.Errorf("bloom cache not configured")
 	}
-	return e.bloomCache.CreateBucket(ctx, bucketId, cfg)
+	return e.bloomManager.CreateBucket(ctx, bucketId, cfg)
 }
 
 // MightContain checks if a path might exist in a bucket using bloom filter.
 // Returns false if the path definitely doesn't exist.
 // Returns true if the path might exist (need to call Get to verify).
 func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bool {
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
-	result, err := e.bloomCache.MightContain(ctx, bucketId, path)
-	if err != nil {
-		return true // On error, conservatively return true
-	}
-	return result
+	return e.bloomManager.MightContain(bucketId, path)
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
 func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
 	result := make(map[string]bool, len(paths))
 
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		for _, p := range paths {
 			result[p] = true
 		}
 		return result
 	}
 
-	batchResult, err := e.bloomCache.MightContainBatch(ctx, bucketId, paths)
+	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, paths)
 	if err != nil {
 		for _, p := range paths {
 			result[p] = true
@@ -159,7 +142,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		// Try to get the arc at current version
-		key := arcKey(bucketId, currentVersion, path)
+		key := eat.VersionedArcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
 			if len(val) == 0 {
@@ -190,7 +173,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		// Arc not found at this version, try parent
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -274,7 +257,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			if tombstones[path] {
 				continue
 			}
-			key := arcKey(bucketId, currentVersion, path)
+			key := eat.VersionedArcKey(bucketId, currentVersion, path)
 			keys = append(keys, key)
 			pathForKey[string(key)] = path
 		}
@@ -310,7 +293,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			break
 		}
 
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -349,7 +332,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Store all arcs for this version
 	for path, target := range arcs {
-		key := arcKey(bucketId, newRoot, path)
+		key := eat.VersionedArcKey(bucketId, newRoot, path)
 		if target == cid.Undef {
 			tombstoneCount++
 			if err := batch.Put(key, []byte{}); err != nil {
@@ -376,7 +359,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Link to parent via @previous
 	if parentRoot != cid.Undef {
-		prevKey := arcKey(bucketId, newRoot, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, newRoot, PreviousArc)
 		prevVal := parentRoot.Bytes()
 		if err := batch.Put(prevKey, prevVal); err != nil {
 			batch.Cancel()
@@ -396,8 +379,8 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 	}
 
 	// Update bucket bloom filter
-	if e.bloomCache != nil && len(addedPaths) > 0 {
-		if err := e.bloomCache.Add(ctx, bucketId, addedPaths); err != nil {
+	if e.bloomManager.Enabled() && len(addedPaths) > 0 {
+		if err := e.bloomManager.AddBatch(ctx, bucketId, addedPaths); err != nil {
 			logger.Warn("EAT.Update failed to update bloom (non-fatal)",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
@@ -418,7 +401,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 // GetParent returns the parent version of a given version via @previous.
 func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
-	prevKey := arcKey(bucketId, version, PreviousArc)
+	prevKey := eat.VersionedArcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -471,7 +454,7 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 			return nil, ctx.Err()
 		}
 
-		prefix := versionPrefix(bucketId, currentVersion)
+		prefix := eat.VersionedBucketPrefix(bucketId, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
 		for iter.Next() {
@@ -506,7 +489,7 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 		}
 		iter.Close()
 
-		prevKey := arcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -536,8 +519,8 @@ func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arc
 
 // Close releases resources.
 func (e *EAT) Close() error {
-	if e.bloomCache != nil {
-		e.bloomCache.Clear()
+	if bc := e.bloomManager.GetBloomCache(); bc != nil {
+		bc.Clear()
 	}
 	return nil
 }
@@ -581,7 +564,7 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 
 	it.maxDepth--
 
-	prefix := versionPrefix(it.bucketId, it.currentVersion)
+	prefix := eat.VersionedBucketPrefix(it.bucketId, it.currentVersion)
 	iter := it.eat.kv.NewIterator(it.ctx, prefix, nil)
 
 	it.currentBatch = make(map[string]cid.Cid)

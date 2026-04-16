@@ -20,25 +20,25 @@ import (
 const (
 	// MaxValues is the maximum number of values per commitment.
 	MaxValues = 256
-	// MaxAuxEntries is the maximum number of cached commitments.
+	// ProofSize is the size of a single IPA proof in bytes.
+	// For 256 elements: numRounds=8, size=4 + 8*32(L) + 8*32(R) + 32(A_scalar) + 4(index) = 552
+	ProofSize = 552
+	// MaxCacheEntries is the maximum number of cached commitments.
 	// When exceeded, the oldest entries are evicted.
-	MaxAuxEntries = 1024
+	MaxCacheEntries = 1024
 )
 
 // Scheme implements commitment.Scheme using Inner Product Arguments.
 type Scheme struct {
+	*commitment.BaseScheme
 	ipaConfig *ipa.IPAConfig
 
 	mu       sync.RWMutex
-	auxStore map[string]*auxData
-	order    []string // tracks insertion order for LRU eviction
+	auxCache map[string]*auxData // maps commitment string to its auxiliary data
 }
 
 type auxData struct {
-	vector      []fr.Element
-	paths       []string
-	values      []cid.Cid
-	pathToIndex map[string]int
+	vector []fr.Element
 }
 
 // NewScheme creates a new IPA commitment scheme.
@@ -48,10 +48,11 @@ func NewScheme() (*Scheme, error) {
 		return nil, fmt.Errorf("failed to create IPA settings: %w", err)
 	}
 
+	cache := commitment.NewCacheManager(MaxCacheEntries)
 	return &Scheme{
-		ipaConfig: ipaConfig,
-		auxStore:  make(map[string]*auxData),
-		order:     make([]string, 0, MaxAuxEntries),
+		BaseScheme: commitment.NewBaseScheme(cache),
+		ipaConfig:  ipaConfig,
+		auxCache:   make(map[string]*auxData),
 	}, nil
 }
 
@@ -75,26 +76,28 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 		vector[j] = zero
 	}
 
-	pathToIndex := make(map[string]int, len(paths))
-	for idx, path := range paths {
-		vector[idx] = cidToFieldElement(values[idx])
-		pathToIndex[path] = idx
+	for idx, value := range values {
+		vector[idx] = cidToFieldElement(value)
 	}
 
 	// Compute IPA commitment
 	comm := s.ipaConfig.Commit(vector)
 
 	commBytes := comm.Bytes()
+	commStr := string(commBytes[:])
+
+	// Cache auxiliary data
 	s.mu.Lock()
-	s.evictLocked()
-	s.auxStore[string(commBytes[:])] = &auxData{
-		vector:      vector,
-		paths:       paths,
-		values:      values,
-		pathToIndex: pathToIndex,
+	s.auxCache[commStr] = &auxData{
+		vector: vector,
 	}
-	s.order = append(s.order, string(commBytes[:]))
 	s.mu.Unlock()
+
+	// Cache metadata via BaseScheme
+	s.BaseScheme.Cache.Set(commStr, &commitment.CacheEntry{
+		Paths:  paths,
+		Values: values,
+	})
 
 	// Create MALT CID from commitment bytes
 	return codec.NewIPACid(commBytes[:])
@@ -102,21 +105,35 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 
 // Prove generates an IPA proof.
 func (s *Scheme) Prove(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+	return s.ProveSingle(comm, arcs, path)
+}
+
+// ProveSingle is the core prove implementation for the Backend interface.
+func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
+	if !ok {
+		return cid.Cid{}, nil, fmt.Errorf("commitment not found in cache")
+	}
+
+	// Get auxiliary data
 	s.mu.RLock()
-	aux, ok := s.auxStore[string(commBytes)]
+	aux, ok := s.auxCache[commStr]
 	s.mu.RUnlock()
 
 	if !ok {
-		return cid.Cid{}, nil, fmt.Errorf("commitment not found in auxiliary store")
+		return cid.Cid{}, nil, fmt.Errorf("auxiliary data not found in cache")
 	}
 
-	proveIndex, ok := aux.pathToIndex[path]
+	proveIndex, ok := commitment.FindPathIndex(entry.Paths, path)
 	if !ok {
 		return cid.Cid{}, nil, fmt.Errorf("path %s not found", path)
 	}
@@ -136,38 +153,57 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid
 		return cid.Cid{}, nil, fmt.Errorf("failed to create IPA proof: %w", err)
 	}
 
-	proofBytes, err := s.serializeProof(&proof)
+	proofBytes, err := s.serializeProof(&proof, proveIndex)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("failed to serialize proof: %w", err)
 	}
 
-	return aux.values[proveIndex], proofBytes, nil
+	return entry.Values[proveIndex], proofBytes, nil
 }
 
 // Verify verifies an IPA proof.
 func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
+	return s.VerifySingle(comm, path, value, proof)
+}
+
+// VerifySingle is the core verify implementation for the Backend interface.
+func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return false, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
+	if !ok {
+		return false, fmt.Errorf("commitment not found in cache")
+	}
+
+	// Get auxiliary data
 	s.mu.RLock()
-	aux, ok := s.auxStore[string(commBytes)]
+	_, ok = s.auxCache[commStr]
 	s.mu.RUnlock()
 
 	if !ok {
-		return false, fmt.Errorf("commitment not found in auxiliary store")
+		return false, fmt.Errorf("auxiliary data not found in cache")
 	}
 
-	index, ok := aux.pathToIndex[path]
+	index, ok := commitment.FindPathIndex(entry.Paths, path)
 	if !ok {
 		return false, nil
 	}
 
-	ipaProof, err := s.deserializeProof(proof)
+	ipaProof, evalPoint, err := s.deserializeProof(proof)
 	if err != nil {
 		return false, fmt.Errorf("failed to deserialize proof: %w", err)
+	}
+
+	// Verify index matches
+	if evalPoint != uint64(index) {
+		return false, nil
 	}
 
 	transcript := common.NewTranscript("malt-ipa")
@@ -177,12 +213,12 @@ func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) 
 		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
 	}
 
-	var evalPoint fr.Element
-	evalPoint.SetUint64(uint64(index))
+	var evalPointFr fr.Element
+	evalPointFr.SetUint64(evalPoint)
 
 	output := cidToFieldElement(value)
 
-	ok, err = ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPoint, output)
+	ok, err = ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPointFr, output)
 	if err != nil {
 		return false, fmt.Errorf("failed to check IPA proof: %w", err)
 	}
@@ -198,15 +234,24 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
+	if !ok {
+		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
+	}
+
+	// Get auxiliary data
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	aux, ok := s.auxStore[string(commBytes)]
+	aux, ok := s.auxCache[commStr]
 	if !ok {
-		return cid.Cid{}, fmt.Errorf("commitment not found in auxiliary store")
+		return cid.Cid{}, fmt.Errorf("auxiliary data not found in cache")
 	}
 
-	updateIndex, ok := aux.pathToIndex[path]
+	updateIndex, ok := commitment.FindPathIndex(entry.Paths, path)
 	if !ok {
 		return cid.Cid{}, fmt.Errorf("path %s not found", path)
 	}
@@ -220,19 +265,25 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 		return cid.Cid{}, fmt.Errorf("failed to reconstruct commitment: %w", err)
 	}
 
-	var update banderwagon.Element
-	update.ScalarMul(&s.ipaConfig.SRS[updateIndex], &diff)
+	var updateElem banderwagon.Element
+	updateElem.ScalarMul(&s.ipaConfig.SRS[updateIndex], &diff)
 
 	var newComm banderwagon.Element
-	newComm.Add(&c, &update)
+	newComm.Add(&c, &updateElem)
 
 	result := newComm.Bytes()
 
 	aux.vector[updateIndex] = newElement
-	aux.values[updateIndex] = newValue
-	s.evictLocked()
-	s.auxStore[string(result[:])] = aux
-	s.order = append(s.order, string(result[:]))
+	entry.Values[updateIndex] = newValue
+
+	newCommStr := string(result[:])
+
+	// Move auxiliary data to new commitment
+	s.auxCache[newCommStr] = aux
+	delete(s.auxCache, commStr)
+
+	// Cache new entry
+	s.BaseScheme.Cache.Set(newCommStr, entry)
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewIPACid(result[:])
@@ -249,16 +300,26 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
+	commStr := string(commBytes)
+
+	// Get cache entry
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
+	if !ok {
+		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
+	}
+
+	// Get auxiliary data
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	aux, ok := s.auxStore[string(commBytes)]
+	aux, ok := s.auxCache[commStr]
 	if !ok {
-		return cid.Cid{}, fmt.Errorf("commitment not found in auxiliary store")
+		return cid.Cid{}, fmt.Errorf("auxiliary data not found in cache")
 	}
 
+	// Apply all updates
 	for path, update := range updates {
-		index, ok := aux.pathToIndex[path]
+		index, ok := commitment.FindPathIndex(entry.Paths, path)
 		if !ok {
 			return cid.Cid{}, fmt.Errorf("path %s not found", path)
 		}
@@ -282,12 +343,17 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 		commBytes = result[:]
 
 		aux.vector[index] = newElement
-		aux.values[index] = update.New
+		entry.Values[index] = update.New
 	}
 
-	s.evictLocked()
-	s.auxStore[string(commBytes)] = aux
-	s.order = append(s.order, string(commBytes))
+	newCommStr := string(commBytes)
+
+	// Move auxiliary data to new commitment
+	s.auxCache[newCommStr] = aux
+	delete(s.auxCache, commStr)
+
+	// Cache new entry
+	s.BaseScheme.Cache.Set(newCommStr, entry)
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewIPACid(commBytes)
@@ -295,243 +361,28 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 
 // BatchProve generates proofs for multiple paths.
 func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
-	if len(paths) == 0 {
-		return nil, fmt.Errorf("paths is empty")
-	}
-
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	s.mu.RLock()
-	aux, ok := s.auxStore[string(commBytes)]
-	s.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("commitment not found in auxiliary store")
-	}
-
-	results := make(map[string]arcset.BatchProofEntry, len(paths))
-
-	for _, path := range paths {
-		index, ok := aux.pathToIndex[path]
-		if !ok {
-			return nil, fmt.Errorf("path %s not found", path)
-		}
-
-		transcript := common.NewTranscript("malt-ipa")
-
-		var c banderwagon.Element
-		if err := c.SetBytes(commBytes); err != nil {
-			return nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
-		}
-
-		var evalPoint fr.Element
-		evalPoint.SetUint64(uint64(index))
-
-		proof, err := ipa.CreateIPAProof(transcript, s.ipaConfig, c, aux.vector, evalPoint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create IPA proof for path %s: %w", path, err)
-		}
-
-		proofBytes, err := s.serializeProof(&proof)
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize proof for path %s: %w", path, err)
-		}
-
-		results[path] = arcset.BatchProofEntry{
-			Target: aux.values[index],
-			Proof:  proofBytes,
-		}
-	}
-
-	return results, nil
+	return s.BaseScheme.BatchProveImpl(comm, arcs, s, paths)
 }
 
 // BatchVerify verifies multiple proofs.
 func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return false, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	var c banderwagon.Element
-	if err := c.SetBytes(commBytes); err != nil {
-		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
-	}
-
-	s.mu.RLock()
-	aux, ok := s.auxStore[string(commBytes)]
-	s.mu.RUnlock()
-
-	if !ok {
-		return false, fmt.Errorf("commitment not found in auxiliary store")
-	}
-
-	for path, entry := range proofs {
-		index, ok := aux.pathToIndex[path]
-		if !ok {
-			return false, nil
-		}
-
-		ipaProof, err := s.deserializeProof(entry.Proof)
-		if err != nil {
-			return false, fmt.Errorf("failed to deserialize proof for path %s: %w", path, err)
-		}
-
-		transcript := common.NewTranscript("malt-ipa")
-
-		var evalPoint fr.Element
-		evalPoint.SetUint64(uint64(index))
-
-		output := cidToFieldElement(entry.Target)
-
-		valid, err := ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPoint, output)
-		if err != nil || !valid {
-			return false, err
-		}
-	}
-
-	return true, nil
+	return s.BaseScheme.BatchVerifyImpl(comm, s, proofs)
 }
 
 // AggregateProve generates an aggregated proof.
 func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (*arcset.AggregatedProof, error) {
-	if len(paths) == 0 {
-		return nil, fmt.Errorf("paths is empty")
-	}
-
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	s.mu.RLock()
-	aux, ok := s.auxStore[string(commBytes)]
-	s.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("commitment not found in auxiliary store")
-	}
-
-	targets := make([]cid.Cid, len(paths))
-	aggregatedProofData := make([]byte, 0)
-
-	var c banderwagon.Element
-	if err := c.SetBytes(commBytes); err != nil {
-		return nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
-	}
-
-	for i, path := range paths {
-		index, ok := aux.pathToIndex[path]
-		if !ok {
-			return nil, fmt.Errorf("path %s not found", path)
-		}
-
-		targets[i] = aux.values[index]
-
-		transcript := common.NewTranscript("malt-ipa-aggregate")
-
-		var evalPoint fr.Element
-		evalPoint.SetUint64(uint64(index))
-
-		proof, err := ipa.CreateIPAProof(transcript, s.ipaConfig, c, aux.vector, evalPoint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create IPA proof: %w", err)
-		}
-
-		proofBytes, err := s.serializeProof(&proof)
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize proof: %w", err)
-		}
-
-		lenBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(lenBytes, uint32(len(proofBytes)))
-		aggregatedProofData = append(aggregatedProofData, lenBytes...)
-		aggregatedProofData = append(aggregatedProofData, proofBytes...)
-	}
-
-	return &arcset.AggregatedProof{
-		Paths:     paths,
-		Targets:   targets,
-		ProofData: aggregatedProofData,
-	}, nil
+	return s.BaseScheme.AggregateProveImpl(comm, arcs, s, paths, ProofSize)
 }
 
 // AggregateVerify verifies an aggregated proof.
 func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
-	if aggProof == nil || len(aggProof.Paths) == 0 {
-		return false, fmt.Errorf("invalid aggregated proof")
-	}
-
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return false, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	var c banderwagon.Element
-	if err := c.SetBytes(commBytes); err != nil {
-		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
-	}
-
-	s.mu.RLock()
-	aux, ok := s.auxStore[string(commBytes)]
-	s.mu.RUnlock()
-
-	if !ok {
-		return false, fmt.Errorf("commitment not found in auxiliary store")
-	}
-
-	offset := 0
-	for i, path := range aggProof.Paths {
-		index, ok := aux.pathToIndex[path]
-		if !ok {
-			return false, nil
-		}
-
-		if offset+4 > len(aggProof.ProofData) {
-			return false, fmt.Errorf("proof data too short")
-		}
-
-		proofLen := int(binary.BigEndian.Uint32(aggProof.ProofData[offset : offset+4]))
-		offset += 4
-
-		if offset+proofLen > len(aggProof.ProofData) {
-			return false, fmt.Errorf("proof data too short for proof %d", i)
-		}
-
-		proofBytes := aggProof.ProofData[offset : offset+proofLen]
-		offset += proofLen
-
-		ipaProof, err := s.deserializeProof(proofBytes)
-		if err != nil {
-			return false, fmt.Errorf("failed to deserialize proof %d: %w", i, err)
-		}
-
-		transcript := common.NewTranscript("malt-ipa-aggregate")
-
-		var evalPoint fr.Element
-		evalPoint.SetUint64(uint64(index))
-
-		output := cidToFieldElement(aggProof.Targets[i])
-
-		valid, err := ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPoint, output)
-		if err != nil || !valid {
-			return false, err
-		}
-	}
-
-	return true, nil
+	return s.BaseScheme.AggregateVerifyImpl(comm, s, aggProof, ProofSize)
 }
 
-func (s *Scheme) serializeProof(proof *ipa.IPAProof) ([]byte, error) {
+// serializeProof serializes an IPA proof with index information.
+func (s *Scheme) serializeProof(proof *ipa.IPAProof, index int) ([]byte, error) {
 	numRounds := len(proof.L)
-	totalSize := 4 + (numRounds*2+1)*32
+	totalSize := 4 + (numRounds*2+1)*32 + 4 // +4 for index
 
 	result := make([]byte, totalSize)
 	binary.BigEndian.PutUint32(result[0:4], uint32(numRounds))
@@ -549,19 +400,25 @@ func (s *Scheme) serializeProof(proof *ipa.IPAProof) ([]byte, error) {
 	}
 	as := proof.A_scalar.BytesLE()
 	copy(result[offset:offset+32], as[:])
+	offset += 32
+
+	// Append index as 4 bytes
+	binary.BigEndian.PutUint32(result[offset:offset+4], uint32(index))
 
 	return result, nil
 }
 
-func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("proof data too short")
+// deserializeProof deserializes an IPA proof and returns the proof and index.
+func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, uint64, error) {
+	// Minimum size: 4 (numRounds) + 32 (A_scalar) + 4 (index)
+	if len(data) < 40 {
+		return nil, 0, fmt.Errorf("proof data too short")
 	}
 
 	numRounds := int(binary.BigEndian.Uint32(data[0:4]))
-	expectedSize := 4 + (numRounds*2+1)*32
+	expectedSize := 4 + (numRounds*2+1)*32 + 4 // +4 for index
 	if len(data) != expectedSize {
-		return nil, fmt.Errorf("proof data has wrong size: expected %d, got %d", expectedSize, len(data))
+		return nil, 0, fmt.Errorf("proof data has wrong size: expected %d, got %d", expectedSize, len(data))
 	}
 
 	proof := &ipa.IPAProof{
@@ -572,35 +429,24 @@ func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, error) {
 	offset := 4
 	for i := 0; i < numRounds; i++ {
 		if err := proof.L[i].SetBytes(data[offset : offset+32]); err != nil {
-			return nil, fmt.Errorf("failed to parse L[%d]: %w", i, err)
+			return nil, 0, fmt.Errorf("failed to parse L[%d]: %w", i, err)
 		}
 		offset += 32
 	}
 	for i := 0; i < numRounds; i++ {
 		if err := proof.R[i].SetBytes(data[offset : offset+32]); err != nil {
-			return nil, fmt.Errorf("failed to parse R[%d]: %w", i, err)
+			return nil, 0, fmt.Errorf("failed to parse R[%d]: %w", i, err)
 		}
 		offset += 32
 	}
 
 	proof.A_scalar.SetBytesLE(data[offset : offset+32])
+	offset += 32
 
-	return proof, nil
-}
+	// Extract index
+	index := uint64(binary.BigEndian.Uint32(data[offset : offset+4]))
 
-// evictLocked removes the oldest half of the cache when capacity is exceeded.
-// Must be called with s.mu held.
-func (s *Scheme) evictLocked() {
-	if len(s.auxStore) < MaxAuxEntries {
-		return
-	}
-	// Evict oldest half
-	evictCount := MaxAuxEntries / 2
-	for i := 0; i < evictCount && len(s.order) > 0; i++ {
-		key := s.order[0]
-		s.order = s.order[1:]
-		delete(s.auxStore, key)
-	}
+	return proof, index, nil
 }
 
 func cidToFieldElement(c cid.Cid) fr.Element {

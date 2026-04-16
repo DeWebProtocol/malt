@@ -45,9 +45,9 @@ func TestInitProduction(t *testing.T) {
 
 func TestInit_InvalidOutputPath(t *testing.T) {
 	cfg := Config{
-		Level:           InfoLevel,
-		Development:     false,
-		OutputPaths:     []string{"/nonexistent/path/that/does/not/exist/logfile.log"},
+		Level:            InfoLevel,
+		Development:      false,
+		OutputPaths:      []string{"/nonexistent/path/that/does/not/exist/logfile.log"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
 
@@ -120,13 +120,14 @@ func TestSync(t *testing.T) {
 	// Use a config without stderr to avoid platform-specific sync errors
 	// on /dev/stderr (macOS returns "bad file descriptor").
 	tmpDir := t.TempDir()
+	t.Cleanup(func() { _ = Close() })
 	logFile := filepath.Join(tmpDir, "sync-test.log")
 	errFile := filepath.Join(tmpDir, "sync-error.log")
 
 	cfg := Config{
-		Level:           DebugLevel,
-		Development:     true,
-		OutputPaths:     []string{logFile},
+		Level:            DebugLevel,
+		Development:      true,
+		OutputPaths:      []string{logFile},
 		ErrorOutputPaths: []string{errFile},
 	}
 
@@ -143,9 +144,9 @@ func TestSync(t *testing.T) {
 
 func TestInit_MultipleOutputPaths(t *testing.T) {
 	cfg := Config{
-		Level:           DebugLevel,
-		Development:     true,
-		OutputPaths:     []string{"stdout"},
+		Level:            DebugLevel,
+		Development:      true,
+		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
 
@@ -161,13 +162,14 @@ func TestInit_MultipleOutputPaths(t *testing.T) {
 
 func TestInit_FileOutput(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Cleanup(func() { _ = Close() })
 	logFile := filepath.Join(tmpDir, "test.log")
 	errFile := filepath.Join(tmpDir, "error.log")
 
 	cfg := Config{
-		Level:           DebugLevel,
-		Development:     false,
-		OutputPaths:     []string{logFile},
+		Level:            DebugLevel,
+		Development:      false,
+		OutputPaths:      []string{logFile},
 		ErrorOutputPaths: []string{errFile},
 	}
 
@@ -205,13 +207,14 @@ func TestInit_FileOutput(t *testing.T) {
 
 func TestLogLevel_Filtering(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Cleanup(func() { _ = Close() })
 	logFile := filepath.Join(tmpDir, "filter-test.log")
 	errFile := filepath.Join(tmpDir, "filter-error.log")
 
 	cfg := Config{
-		Level:           WarnLevel,
-		Development:     false,
-		OutputPaths:     []string{logFile},
+		Level:            WarnLevel,
+		Development:      false,
+		OutputPaths:      []string{logFile},
 		ErrorOutputPaths: []string{errFile},
 	}
 
@@ -271,14 +274,15 @@ func findSubstring(s, substr string) bool {
 
 func TestSetLevel_DynamicChange(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Cleanup(func() { _ = Close() })
 	logFile := filepath.Join(tmpDir, "dynamic-level-test.log")
 	errFile := filepath.Join(tmpDir, "dynamic-error.log")
 
 	// Start with ErrorLevel
 	cfg := Config{
-		Level:           ErrorLevel,
-		Development:     false,
-		OutputPaths:     []string{logFile},
+		Level:            ErrorLevel,
+		Development:      false,
+		OutputPaths:      []string{logFile},
 		ErrorOutputPaths: []string{errFile},
 	}
 
@@ -372,9 +376,9 @@ func TestSync_NilLogger(t *testing.T) {
 func TestInit_CustomEncoderConfig(t *testing.T) {
 	// Test that development mode uses console encoder with color
 	err := Init(Config{
-		Level:           DebugLevel,
-		Development:     true,
-		OutputPaths:     []string{"stdout"},
+		Level:            DebugLevel,
+		Development:      true,
+		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	})
 	if err != nil {
@@ -387,9 +391,9 @@ func TestInit_CustomEncoderConfig(t *testing.T) {
 
 	// Test that production mode uses JSON encoder
 	err = Init(Config{
-		Level:           InfoLevel,
-		Development:     false,
-		OutputPaths:     []string{"stdout"},
+		Level:            InfoLevel,
+		Development:      false,
+		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	})
 	if err != nil {

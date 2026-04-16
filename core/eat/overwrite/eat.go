@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -20,13 +21,12 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-
 // EAT is an EAT with overwrite semantics.
 // It uses bucketId for namespace isolation, allowing multiple graphs
 // to share the same KVStore instance.
 type EAT struct {
-	kv         kvstore.KVStore
-	bloomCache *bloom.BloomCache // Optional, can be nil
+	kv             kvstore.KVStore
+	bloomManager   *eat.BloomFilterManager // Uses common BloomFilterManager
 }
 
 // NewEAT creates a new EAT with the given KVStore and optional configuration.
@@ -51,9 +51,12 @@ func NewEAT(opts ...Option) (*EAT, error) {
 	if o.kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
+
+	bloomManager := eat.NewBloomFilterManager(o.bloomCache)
+
 	return &EAT{
-		kv:         o.kv,
-		bloomCache: o.bloomCache,
+		kv:           o.kv,
+		bloomManager: bloomManager,
 	}, nil
 }
 
@@ -63,59 +66,33 @@ func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EA
 	return NewEAT(WithKVStore(kv), WithBloomCache(bloomCache))
 }
 
-
-// arcKey generates the storage key for a path within a bucket.
-// Format: bucketId:path
-func arcKey(bucketId, path string) []byte {
-	return []byte(bucketId + ":" + path)
-}
-
-// bucketPrefix generates the prefix for all arcs in a bucket.
-// Format: bucketId:
-func bucketPrefix(bucketId string) []byte {
-	return []byte(bucketId + ":")
-}
-
-// rootKey generates the key for root->bucketId mapping.
-// Format: root:{cid}
-func rootKey(root cid.Cid) []byte {
-	return []byte("root:" + root.String())
-}
-
 // CreateBucket creates a new bucket with custom bloom configuration.
 func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
-	if e.bloomCache == nil {
-		return fmt.Errorf("bloom cache not configured")
-	}
-	return e.bloomCache.CreateBucket(ctx, bucketId, cfg)
+	return e.bloomManager.CreateBucket(ctx, bucketId, cfg)
 }
 
 // MightContain checks if a path might exist in the bucket using bloom filter.
 // Returns false if the path definitely doesn't exist (can skip KVStore lookup).
 // Returns true if the path might exist (need to call Get to verify).
 func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bool {
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
-	result, err := e.bloomCache.MightContain(ctx, bucketId, path)
-	if err != nil {
-		return true // On error, conservatively return true
-	}
-	return result
+	return e.bloomManager.MightContain(bucketId, path)
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
 func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
 	result := make(map[string]bool, len(paths))
 
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		for _, p := range paths {
 			result[p] = true
 		}
 		return result
 	}
 
-	batchResult, err := e.bloomCache.MightContainBatch(ctx, bucketId, paths)
+	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, paths)
 	if err != nil {
 		for _, p := range paths {
 			result[p] = true
@@ -146,7 +123,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path strin
 
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -173,7 +150,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, root cid.Cid, path strin
 	}
 
 	// Get the arc
-	arcKeyBytes := arcKey(bucketId, path)
+	arcKeyBytes := eat.DefaultArcKey(bucketId, path)
 	val, err := e.kv.Get(ctx, arcKeyBytes)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -227,7 +204,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
@@ -255,7 +232,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths
 	keys := make([][]byte, len(filteredPaths))
 	pathToKey := make(map[string]string, len(filteredPaths))
 	for i, path := range filteredPaths {
-		key := arcKey(bucketId, path)
+		key := eat.DefaultArcKey(bucketId, path)
 		keys[i] = key
 		pathToKey[string(key)] = path
 	}
@@ -303,7 +280,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Remove old root mapping if exists
 	if oldRoot != cid.Undef {
-		oldRootKey := rootKey(oldRoot)
+		oldRootKey := eat.RootKeyFormat(oldRoot)
 		if err := batch.Delete(oldRootKey); err != nil {
 			batch.Cancel()
 			logger.Error("EAT.Update failed to delete old root",
@@ -316,7 +293,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Add new root mapping if provided
 	if newRoot != cid.Undef {
-		newRootKey := rootKey(newRoot)
+		newRootKey := eat.RootKeyFormat(newRoot)
 		if err := batch.Put(newRootKey, []byte(bucketId)); err != nil {
 			batch.Cancel()
 			logger.Error("EAT.Update failed to add new root",
@@ -332,7 +309,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 
 	// Add/Update/Delete arcs
 	for path, target := range arcs {
-		key := arcKey(bucketId, path)
+		key := eat.DefaultArcKey(bucketId, path)
 		if target == cid.Undef {
 			// Delete the arc
 			if err := batch.Delete(key); err != nil {
@@ -366,8 +343,8 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 	}
 
 	// Update bucket bloom filter after successful commit
-	if e.bloomCache != nil && len(addedPaths) > 0 {
-		if err := e.bloomCache.Add(ctx, bucketId, addedPaths); err != nil {
+	if e.bloomManager.Enabled() && len(addedPaths) > 0 {
+		if err := e.bloomManager.AddBatch(ctx, bucketId, addedPaths); err != nil {
 			logger.Warn("EAT.Update failed to update bloom (non-fatal)",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
@@ -390,7 +367,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error) {
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
 			return arcset.NewMap(), nil // Return empty snapshot for invalid root
@@ -399,7 +376,7 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcs
 
 	// Load all arcs into memory
 	arcs := make(map[string]cid.Cid)
-	prefix := bucketPrefix(bucketId)
+	prefix := eat.DefaultBucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
@@ -423,14 +400,14 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcs
 func (e *EAT) Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset.Iterator {
 	// Validate root if provided
 	if root != cid.Undef {
-		rootKeyBytes := rootKey(root)
+		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
 			return &emptyIterator{}
 		}
 	}
 
-	prefix := bucketPrefix(bucketId)
+	prefix := eat.DefaultBucketPrefix(bucketId)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
 	return &eatIterator{
@@ -441,22 +418,22 @@ func (e *EAT) Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset
 
 // Close releases resources.
 func (e *EAT) Close() error {
-	if e.bloomCache != nil {
-		e.bloomCache.Clear()
+	if bc := e.bloomManager.GetBloomCache(); bc != nil {
+		bc.Clear()
 	}
 	return nil
 }
 
 // Stats returns bloom filter cache statistics.
 func (e *EAT) Stats() map[string]interface{} {
-	if e.bloomCache == nil {
+	if !e.bloomManager.Enabled() {
 		return map[string]interface{}{
 			"bloom_enabled": false,
 		}
 	}
 	return map[string]interface{}{
 		"bloom_enabled": true,
-		"cache_size":    e.bloomCache.Size(),
+		"cache_size":    e.bloomManager.GetBloomCache().Size(),
 	}
 }
 

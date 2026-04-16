@@ -4,6 +4,7 @@
 package logger
 
 import (
+	"io"
 	"os"
 
 	"go.uber.org/zap"
@@ -12,6 +13,14 @@ import (
 
 // Logger is the global logger instance.
 var Logger *zap.SugaredLogger
+
+// zapLogger holds the underlying zap logger for the global Logger instance.
+// It is used to properly close the logger and its file handles.
+var zapLogger *zap.Logger
+
+// openFiles stores references to all file handles opened by the logger.
+// This allows us to properly close them in Close().
+var openFiles []io.Closer
 
 // atomicLevel holds the current log level and allows dynamic changes.
 var atomicLevel zap.AtomicLevel
@@ -61,9 +70,9 @@ type Config struct {
 // DefaultConfig returns the default logger configuration.
 func DefaultConfig() Config {
 	return Config{
-		Level:           InfoLevel,
-		Development:     false,
-		OutputPaths:     []string{"stdout"},
+		Level:            InfoLevel,
+		Development:      false,
+		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
 }
@@ -71,15 +80,21 @@ func DefaultConfig() Config {
 // DevelopmentConfig returns a development-friendly configuration.
 func DevelopmentConfig() Config {
 	return Config{
-		Level:           DebugLevel,
-		Development:     true,
-		OutputPaths:     []string{"stdout"},
+		Level:            DebugLevel,
+		Development:      true,
+		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
 }
 
 // Init initializes the global logger with the given config.
 func Init(cfg Config) error {
+	// Close the previous logger and its file handles
+	if zapLogger != nil {
+		_ = zapLogger.Sync()
+	}
+	closeOpenFiles()
+
 	encoderConfig := zap.NewProductionEncoderConfig()
 	if cfg.Development {
 		encoderConfig = zap.NewDevelopmentEncoderConfig()
@@ -101,6 +116,7 @@ func Init(cfg Config) error {
 			if err != nil {
 				return err
 			}
+			openFiles = append(openFiles, file)
 			writeSyncers = append(writeSyncers, zapcore.AddSync(file))
 		}
 	}
@@ -115,6 +131,7 @@ func Init(cfg Config) error {
 			if err != nil {
 				return err
 			}
+			openFiles = append(openFiles, file)
 			errorSyncers = append(errorSyncers, zapcore.AddSync(file))
 		}
 	}
@@ -137,7 +154,7 @@ func Init(cfg Config) error {
 		core = zapcore.NewTee(core, errorCore)
 	}
 
-	zapLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	zapLogger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 	Logger = zapLogger.Sugar()
 
 	return nil
@@ -215,6 +232,25 @@ func Sync() error {
 		return Logger.Sync()
 	}
 	return nil
+}
+
+// Close closes the logger and releases any file handles.
+// This should be called when the logger is no longer needed, especially important
+// for tests using temporary directories to avoid file locking issues on Windows.
+func Close() error {
+	if zapLogger != nil {
+		_ = zapLogger.Sync()
+	}
+	closeOpenFiles()
+	return nil
+}
+
+// closeOpenFiles closes all open file handles.
+func closeOpenFiles() {
+	for _, f := range openFiles {
+		_ = f.Close()
+	}
+	openFiles = []io.Closer{}
 }
 
 // toAnySlice converts Field slice to Any slice for SugaredLogger.
