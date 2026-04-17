@@ -1,6 +1,6 @@
 # MALT
 
-MALT is a graph-scoped authenticated structure layer over immutable content-addressed storage.
+MALT is an authenticated structure layer over immutable content-addressed storage.
 
 Its purpose is to separate structure from payload:
 
@@ -42,12 +42,38 @@ A structure root is CID-compatible, but it is not semantically the same thing as
 
 This distinction is central to the design.
 
+## Terminology and Layers
+
+MALT uses a small set of terms that should not be collapsed into one "backend" bucket:
+
+| Layer | Question | Examples |
+| --- | --- | --- |
+| Semantics | What logical structure does the application want to express? | `list`, `map` |
+| Key Interpretation | What logical key identifies an arc? | list index, path segment sequence, full path |
+| Layout / Indexing | How does a logical key map into committed positions, and how are conflicts handled? | flat indexed layout, segment-radix layout, hashed-path keyed layout |
+| Commitment Backend | How are fixed positions authenticated? | KZG, IPA, hash/Merkle commitments |
+
+Two derived terms are useful:
+
+- authenticated layout / authenticated map
+  - a layout plus the commitment backend it uses internally
+  - `radix` belongs here
+- fixed-slot commitment primitive
+  - a backend that only authenticates already-positioned values
+  - `KZG` and `IPA` belong here
+
+The current codebase exposes these through one `commitment.Scheme` interface for engineering convenience.
+That interface flattening is an implementation choice, not the preferred conceptual layering.
+
+In the current prototype, hot proof/index state is typically organized per graph for performance.
+That state placement is an implementation choice, not a semantic requirement of the abstraction.
+
 ## Native Resolution
 
 Native MALT resolution works over explicit arcs:
 
 1. look up the relevant arc in `EAT`
-2. obtain a graph/root-scoped arc view
+2. obtain a root-scoped arc view
 3. generate a proof using `SCE`
 4. return a transcript that the client can verify locally
 
@@ -68,7 +94,7 @@ It is not the primary definition of MALT.
 
 ## Verification
 
-MALT uses transcript-based compositional verification:
+MALT uses transcript-based stepwise verification:
 
 1. an untrusted resolver executes the lookup
 2. it returns per-step evidence
@@ -82,7 +108,7 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
 - `Graph`
   - scoped unit of structure and main read/write entry point
 - `EAT`
-  - graph-scoped explicit arc materialization and lookup state
+  - explicit arc materialization and lookup state
 - `SCE`
   - stateless commitment/proof engine over caller-supplied arc views
 - `Writer`
@@ -127,7 +153,7 @@ These parts of the repo are useful, but they are not the conceptual center of MA
 - replication and snapshot tooling
 - benchmark scaffolding
 - helper deployment abstractions
-- backend comparisons among KZG, Verkle, and IPA
+- layout/backend comparisons such as radix, KZG, and IPA
 
 ## More Detail
 

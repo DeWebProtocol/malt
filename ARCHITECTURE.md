@@ -2,7 +2,7 @@
 
 ## Overview
 
-MALT is a graph-scoped authenticated structure layer over immutable content-addressed storage.
+MALT is an authenticated structure layer over immutable content-addressed storage.
 
 Its core design is:
 
@@ -15,6 +15,9 @@ MALT roots are encoded as CID-compatible identifiers, so MALT-native structures 
 
 This document is implementation-oriented. For the shorter system overview, see [`README.md`](./README.md).
 
+In the current prototype, hot proving/index state is colocated and organized per graph for performance.
+That placement is an implementation choice, not the core semantic definition of MALT.
+
 ## Architectural Center
 
 The codebase should be read around six first-class concepts:
@@ -23,7 +26,7 @@ The codebase should be read around six first-class concepts:
   - the scoped unit of structure
   - provides the main read and write entry points
 - `EAT`
-  - graph-scoped explicit arc materialization and lookup state
+  - explicit arc materialization and lookup state
 - `SCE`
   - stateless commitment/proof engine over caller-supplied arc views
 - `Writer`
@@ -70,9 +73,12 @@ malt/
 - `SCE` commits an arc set into a structure root.
 - A structure root is CID-compatible, but semantically it denotes committed structure rather than raw payload.
 
-### Graph-Scoped Structure State
+### Operational Structure State
 
-The main operational state of MALT lives in the graph-scoped explicit arc representation.
+The main operational state of MALT lives in the explicit arc representation.
+
+In the current implementation, this hot state is typically namespaced per graph.
+That organization is chosen for locality and performance, not as a semantic requirement of the abstraction.
 
 `EAT` provides:
 
@@ -97,11 +103,24 @@ It is best understood as stateless with respect to authoritative graph state:
 - it operates over inputs supplied by the caller
 - any internal cache is an optimization, not semantic system state
 
-Backends currently implemented:
+Conceptually, `SCE` spans two layers that the current code flattens together:
 
-- KZG
-- Verkle
-- IPA
+- layout / indexing
+  - maps logical keys into authenticated positions and handles key conflicts
+  - examples: flat indexed layout, segment-radix layout, hashed-path keyed layout
+- commitment backend
+  - authenticates values at already-chosen positions
+  - examples: KZG, IPA, hash/Merkle commitments
+
+This also yields a useful distinction:
+
+- fixed-slot commitment primitives
+  - `KZG`, `IPA`
+- authenticated layouts
+  - `radix`
+
+The current repository exposes all of these through a single `commitment.Scheme` interface for engineering convenience.
+That interface should be read as a code-level flattening, not as the preferred conceptual layering.
 
 ### Localized Write Path
 
@@ -236,15 +255,22 @@ The following parts of the repository are useful but should be treated as second
 - `versioned`
   - delta-per-version storage linked by `@previous`
 
-### Commitment Backends
+### SCE Schemes (Code)
 
-- KZG
-- Verkle
-- IPA
+- fixed-slot commitment primitives
+  - KZG
+  - IPA
+- authenticated layouts
+  - radix
+
+The repository may contain additional experimental schemes, but the main documented split is:
+
+- `radix` for map-like authenticated layout
+- `KZG` / `IPA` for fixed-slot or list-like commitments
 
 ## Verification Model
 
-MALT uses transcript-based compositional verification.
+MALT uses transcript-based stepwise verification.
 
 1. An untrusted resolver performs resolution.
 2. It returns a transcript containing evidence for each step.
