@@ -82,7 +82,7 @@ func BenchmarkKZGUpdate(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Commit failed: %v", err)
 	}
-	oldKey, _ := arcs.Get("arc_0")
+	oldKey, _ := arcs.Get(arcset.CanonicalizePath("arc_0"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -96,14 +96,14 @@ func BenchmarkKZGUpdate(b *testing.B) {
 }
 
 // generateRandomArcSet creates an arc set with simple deterministic keys.
-func generateRandomArcSet(n int) *arcset.Map {
+func generateRandomArcSet(n int) *arcset.Set {
 	arcsMap := make(map[string]cid.Cid)
 	for i := 0; i < n; i++ {
 		data := []byte{byte(i % 256), byte((i / 256) % 256), byte(i >> 16)}
 		k, _ := newPayloadCIDBench(data)
 		arcsMap[fmt.Sprintf("arc_%d", i)] = k
 	}
-	return arcset.NewMapFrom(arcsMap)
+	return arcset.NewSetFrom(arcsMap)
 }
 
 func generateRandomKey() cid.Cid {

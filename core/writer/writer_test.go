@@ -50,8 +50,8 @@ func fakeCID(seed string) cid.Cid {
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
-func makeArcSet(pairs map[string]cid.Cid) *arcset.Map {
-	return arcset.NewMapFrom(pairs)
+func makeArcSet(pairs map[string]cid.Cid) *arcset.Set {
+	return arcset.NewSetFrom(pairs)
 }
 
 // mockLineageRecorder is a thread-safe mock for testing lineage recording.
@@ -449,7 +449,7 @@ func TestWriter_GetSnapshot(t *testing.T) {
 		t.Errorf("expected 2 arcs, got %d", snapshot.Len())
 	}
 
-	target, ok := snapshot.Get("x")
+	target, ok := snapshot.Get(arcset.CanonicalizePath("x"))
 	if !ok {
 		t.Fatal("arc 'x' not found in snapshot")
 	}

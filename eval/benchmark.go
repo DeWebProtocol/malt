@@ -249,7 +249,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 		currentArcsMap[path] = target
 
 		// Create snapshot for commit
-		currentArcs := arcset.NewMapFrom(currentArcsMap)
+		currentArcs := arcset.NewSetFrom(currentArcsMap)
 
 		// Commit current arc set
 		start := time.Now()
@@ -269,7 +269,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	// First commit is the initial one
 	firstStart := time.Now()
-	emptyArcs := arcset.NewMap()
+	emptyArcs := arcset.NewSet()
 	_, _ = b.sce.Commit(emptyArcs)
 	metrics.CommitTime = time.Since(firstStart)
 
@@ -345,7 +345,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		keys[path] = target
 	}
 
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	// Initial commit
 	start := time.Now()
@@ -375,7 +375,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 
 		// Update arc set
 		arcsMap[path] = newKey
-		arcs := arcset.NewMapFrom(arcsMap)
+		arcs := arcset.NewSetFrom(arcsMap)
 
 		// Measure commit time (MockCommitment requires full commit)
 		start = time.Now()
@@ -462,7 +462,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		keys[path] = target
 	}
 
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	start := time.Now()
 	root, err := b.sce.Commit(arcs)
@@ -498,7 +498,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 			keys[path] = newKey
 		}
 
-		arcs := arcset.NewMapFrom(arcsMap)
+		arcs := arcset.NewSetFrom(arcsMap)
 
 		// Commit updated arc set
 		start = time.Now()

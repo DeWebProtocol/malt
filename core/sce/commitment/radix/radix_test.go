@@ -27,7 +27,7 @@ func TestRadixCommitProveVerify(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"a":    k1,
 		"a/b":  k2,
 		"root": k1,
@@ -71,7 +71,7 @@ func TestRadixRestartSafeProve(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"aaa": k1,
 		"bbb": k2,
 	})
@@ -115,7 +115,7 @@ func TestRadixUpdateReplace(t *testing.T) {
 	oldTarget, _ := newPayloadCID([]byte("old"))
 	newTarget, _ := newPayloadCID([]byte("new"))
 	otherTarget, _ := newPayloadCID([]byte("other"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"aaa": oldTarget,
 		"bbb": otherTarget,
 	})
@@ -133,7 +133,7 @@ func TestRadixUpdateReplace(t *testing.T) {
 		t.Fatal("new root should differ after update")
 	}
 
-	updatedSnapshot := arcset.NewMapFrom(map[string]cid.Cid{
+	updatedSnapshot := arcset.NewSetFrom(map[string]cid.Cid{
 		"aaa": newTarget,
 		"bbb": otherTarget,
 	})
@@ -163,7 +163,7 @@ func TestRadixAggregateProof(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"a":   k1,
 		"a/b": k2,
 	})
@@ -196,7 +196,7 @@ func TestRadixBatchUpdateRejectsOldValueMismatch(t *testing.T) {
 	oldTarget, _ := newPayloadCID([]byte("old"))
 	newTarget, _ := newPayloadCID([]byte("new"))
 	wrongOld, _ := newPayloadCID([]byte("wrong"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"aaa": oldTarget,
 	})
 

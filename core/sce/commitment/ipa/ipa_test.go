@@ -30,7 +30,7 @@ func TestIPACommitment(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1, "b": k2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestIPAProveAndVerify(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	target, _ := newPayloadCID([]byte("my-target"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"my-arc": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"my-arc": target})
 
 	root, _ := s.Commit(arcs)
 
@@ -81,7 +81,7 @@ func TestIPAUpdate(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	oldTarget, _ := newPayloadCID([]byte("old"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"link": oldTarget})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"link": oldTarget})
 
 	root, _ := s.Commit(arcs)
 
@@ -102,7 +102,7 @@ func TestIPABatchUpdate(t *testing.T) {
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1, "b": k2, "c": k3})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2, "c": k3})
 
 	root, _ := s.Commit(arcs)
 
@@ -134,7 +134,7 @@ func TestIPABatchProve(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1, "b": k2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
 
 	root, _ := s.Commit(arcs)
 
@@ -154,7 +154,7 @@ func TestIPABatchVerify(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1, "b": k2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
 
 	root, _ := s.Commit(arcs)
 
@@ -176,7 +176,7 @@ func TestIPAAggregateProve(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1, "b": k2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
 
 	root, _ := s.Commit(arcs)
 
@@ -200,7 +200,7 @@ func TestIPAAggregateVerify(t *testing.T) {
 
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1, "b": k2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
 
 	root, _ := s.Commit(arcs)
 
@@ -225,7 +225,7 @@ func TestIPABatchProveWithMultiplePaths(t *testing.T) {
 		k, _ := newPayloadCID([]byte{byte(j)})
 		arcsMap[fmt.Sprintf("item_%d", j)] = k
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	root, _ := s.Commit(arcs)
 
@@ -259,7 +259,7 @@ func TestIPACommitNilArcSet(t *testing.T) {
 func TestIPACommitEmptyArcSet(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
-	arcs := arcset.NewMap()
+	arcs := arcset.NewSet()
 	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Should handle empty arc set: %v", err)
@@ -274,7 +274,7 @@ func TestIPAProveNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"exists": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"exists": target})
 
 	root, _ := s.Commit(arcs)
 
@@ -288,7 +288,7 @@ func TestIPAProveWrongRootType(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
 
 	wrongRoot, _ := newPayloadCID([]byte("not-a-root"))
 
@@ -302,7 +302,7 @@ func TestIPAUpdateNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
 
 	root, _ := s.Commit(arcs)
 
@@ -319,7 +319,7 @@ func TestIPABatchProveEmptyPaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
 
 	root, _ := s.Commit(arcs)
 
@@ -333,7 +333,7 @@ func TestIPAAggregateProveEmptyPaths(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
 
 	root, _ := s.Commit(arcs)
 
@@ -347,7 +347,7 @@ func TestIPABatchProveNonExistentPath(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": k1})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
 
 	root, _ := s.Commit(arcs)
 
@@ -368,7 +368,7 @@ func TestIPALargeArcSet(t *testing.T) {
 		target, _ := newPayloadCID(data)
 		arcsMap[fmt.Sprintf("arc_%d", j)] = target
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -377,7 +377,7 @@ func TestIPALargeArcSet(t *testing.T) {
 
 	for _, j := range []int{0, 100, 199} {
 		path := fmt.Sprintf("arc_%d", j)
-		target, ok := arcs.Get(path)
+		target, ok := arcs.Get(arcset.CanonicalizePath(path))
 		if !ok {
 			t.Fatalf("Arc %s not found", path)
 		}
@@ -405,7 +405,7 @@ func TestIPAArcSetExceedsLimit(t *testing.T) {
 		target, _ := newPayloadCID(data)
 		arcsMap[fmt.Sprintf("arc_%d", j)] = target
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	_, err := s.Commit(arcs)
 	if err == nil {
@@ -417,11 +417,11 @@ func TestIPAMultipleCommits(t *testing.T) {
 	s, _ := ipa.NewScheme()
 
 	target1, _ := newPayloadCID([]byte("data1"))
-	arcs1 := arcset.NewMapFrom(map[string]cid.Cid{"a": target1})
+	arcs1 := arcset.NewSetFrom(map[string]cid.Cid{"a": target1})
 	root1, _ := s.Commit(arcs1)
 
 	target2, _ := newPayloadCID([]byte("data2"))
-	arcs2 := arcset.NewMapFrom(map[string]cid.Cid{"b": target2})
+	arcs2 := arcset.NewSetFrom(map[string]cid.Cid{"b": target2})
 	root2, _ := s.Commit(arcs2)
 
 	_, proof1, err := s.Prove(root1, arcs1, "a")

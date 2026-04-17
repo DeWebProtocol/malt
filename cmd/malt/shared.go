@@ -102,7 +102,7 @@ func managedGraphHeadRoot(meta *graph.GraphMeta) (cid.Cid, error) {
 	return meta.Root, nil
 }
 
-func countSnapshotArcs(snapshot arcset.Snapshot) (int, error) {
+func countSnapshotArcs(snapshot arcset.ArcSet) (int, error) {
 	count := 0
 	iter := snapshot.Iterate()
 	for {

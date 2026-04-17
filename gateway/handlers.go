@@ -513,7 +513,7 @@ func (s *Server) handleGraphCreateStructure(w http.ResponseWriter, r *http.Reque
 		arcsMap[path] = target
 	}
 
-	root, err := g.Writer().CreateStructure(context.Background(), g.BucketId(), arcset.NewMapFrom(arcsMap))
+	root, err := g.Writer().CreateStructure(context.Background(), g.BucketId(), arcset.NewSetFrom(arcsMap))
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("create structure failed: %v", err))
 		return
@@ -920,7 +920,7 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 			arcsMap[path] = target
 		}
 
-		root, err := g.Writer().CreateStructure(ctx, g.BucketId(), arcset.NewMapFrom(arcsMap))
+		root, err := g.Writer().CreateStructure(ctx, g.BucketId(), arcset.NewSetFrom(arcsMap))
 		if err != nil {
 			writeServerError(w, fmt.Sprintf("create structure failed: %v", err))
 			return
@@ -950,7 +950,7 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 		arcsMap[path] = target
 	}
 
-	root, err := g.Writer().CreateStructure(ctx, g.BucketId(), arcset.NewMapFrom(arcsMap))
+	root, err := g.Writer().CreateStructure(ctx, g.BucketId(), arcset.NewSetFrom(arcsMap))
 	if err != nil {
 		writeServerError(w, fmt.Sprintf("create structure failed: %v", err))
 		return

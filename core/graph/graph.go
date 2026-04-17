@@ -175,7 +175,7 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 }
 
 // Snapshot implements GraphWriter.Snapshot.
-func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, error) {
+func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.ArcSet, error) {
 	if !root.Defined() {
 		return nil, fmt.Errorf("root must be defined")
 	}
@@ -183,7 +183,7 @@ func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.Snapshot, er
 }
 
 // Commit implements GraphWriter.Commit.
-func (g *Graph) Commit(ctx context.Context, snapshot arcset.Snapshot) (cid.Cid, error) {
+func (g *Graph) Commit(ctx context.Context, snapshot arcset.ArcSet) (cid.Cid, error) {
 	root, err := g.sce.Commit(snapshot)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("SCE commit failed: %w", err)
@@ -196,7 +196,7 @@ func (g *Graph) Commit(ctx context.Context, snapshot arcset.Snapshot) (cid.Cid, 
 		if !ok {
 			break
 		}
-		arcsMap[p] = t
+		arcsMap[p.String()] = t
 	}
 	if iter.Err() != nil {
 		return cid.Undef, iter.Err()

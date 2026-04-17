@@ -7,7 +7,7 @@ import (
 
 // ExtractSortedPathsValues extracts sorted paths and values from a Snapshot.
 // This is a shared utility used by all commitment schemes (KZG, IPA, Verkle).
-func ExtractSortedPathsValues(arcs arcset.Snapshot) ([]string, []cid.Cid) {
+func ExtractSortedPathsValues(arcs arcset.ArcSet) ([]string, []cid.Cid) {
 	var paths []string
 	iter := arcs.Iterate()
 	for {
@@ -15,13 +15,13 @@ func ExtractSortedPathsValues(arcs arcset.Snapshot) ([]string, []cid.Cid) {
 		if !ok {
 			break
 		}
-		paths = append(paths, path)
+		paths = append(paths, path.String())
 	}
 	// paths are already sorted by iterator
 
 	values := make([]cid.Cid, len(paths))
 	for i, path := range paths {
-		values[i], _ = arcs.Get(path)
+		values[i], _ = arcs.Get(arcset.CanonicalizePath(path))
 	}
 
 	return paths, values

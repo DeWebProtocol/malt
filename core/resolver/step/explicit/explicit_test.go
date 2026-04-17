@@ -50,7 +50,7 @@ func newTestComponents() (*overwrite.EAT, *sce.Engine, *kzg.Scheme) {
 // setupArcSet commits arcs to SCE and stores them in EAT, returning the root CID.
 func setupArcSet(t *testing.T, e *overwrite.EAT, s *sce.Engine, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
@@ -377,7 +377,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 		"data/file": target,
 	}
 
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 	root, err := s.Commit(arcs)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)

@@ -32,7 +32,7 @@ func (e *Engine) Scheme() commitment.Scheme {
 }
 
 // Commit generates a commitment to an arc set.
-func (e *Engine) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
+func (e *Engine) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("SCE.Commit started")
@@ -57,7 +57,7 @@ func (e *Engine) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 }
 
 // Prove generates a proof for an arc.
-func (e *Engine) Prove(root cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+func (e *Engine) Prove(root cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
 	start := time.Now()
 
 	logger.Debug("SCE.Prove started",
@@ -110,7 +110,7 @@ func (e *Engine) Verify(root cid.Cid, path string, target cid.Cid, proof []byte)
 }
 
 // Update updates an arc.
-func (e *Engine) Update(root cid.Cid, arcs arcset.Snapshot, path string, oldKey, newKey cid.Cid) (cid.Cid, error) {
+func (e *Engine) Update(root cid.Cid, arcs arcset.ArcSet, path string, oldKey, newKey cid.Cid) (cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("SCE.Update started",
@@ -138,7 +138,7 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.Snapshot, path string, oldKey,
 }
 
 // BatchUpdate updates multiple arcs.
-func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.Snapshot, updates map[string]struct {
+func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.ArcSet, updates map[string]struct {
 	Old cid.Cid
 	New cid.Cid
 }) (cid.Cid, error) {
@@ -146,7 +146,7 @@ func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.Snapshot, updates map[str
 }
 
 // BatchProve generates proofs for multiple paths.
-func (e *Engine) BatchProve(root cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
+func (e *Engine) BatchProve(root cid.Cid, arcs arcset.ArcSet, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths must not be empty")
 	}
@@ -159,7 +159,7 @@ func (e *Engine) BatchVerify(root cid.Cid, proofs map[string]arcset.BatchProofEn
 }
 
 // AggregateProve generates an aggregated proof.
-func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.Snapshot, paths []string) (*arcset.AggregatedProof, error) {
+func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.ArcSet, paths []string) (*arcset.AggregatedProof, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths must not be empty")
 	}

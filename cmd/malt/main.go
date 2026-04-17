@@ -126,7 +126,7 @@ func runDemo(cmd *cobra.Command, args []string) {
 	target2, _ := newPayloadCID([]byte("target2"))
 
 	// Create structure using graph.Commit
-	snapshot := arcset.NewMapFrom(map[string]cid.Cid{
+	snapshot := arcset.NewSetFrom(map[string]cid.Cid{
 		"link1": target1,
 		"link2": target2,
 	})

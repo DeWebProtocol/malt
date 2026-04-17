@@ -61,7 +61,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 		"a/b":   k2,
 		"a/b/c": k3,
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -126,7 +126,7 @@ func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 	arcsMap := map[string]cid.Cid{
 		"a/b": target,
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -172,7 +172,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 		"a/b":   k2,
 		"a/b/c": k3,
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 	// Create arc set pointing to a PayloadCID
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcsMap := map[string]cid.Cid{"data": payloadCID}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -269,7 +269,7 @@ func TestGatewayTranscript(t *testing.T) {
 		"inner": innerCID,
 		"outer": outerCID,
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	// Create structure
 	root, err := s.Commit(arcs)
@@ -325,7 +325,7 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 		"@payload": payloadCID,
 		"link":     payloadCID,
 	}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	root, err := s.Commit(arcs)
 	if err != nil {
@@ -384,7 +384,7 @@ func TestGatewayStructureOnlyNode(t *testing.T) {
 	// Create arc set WITHOUT @payload (structure-only node)
 	targetCID, _ := newPayloadCID([]byte("target-data"))
 	arcsMap := map[string]cid.Cid{"link": targetCID}
-	arcs := arcset.NewMapFrom(arcsMap)
+	arcs := arcset.NewSetFrom(arcsMap)
 
 	root, err := s.Commit(arcs)
 	if err != nil {

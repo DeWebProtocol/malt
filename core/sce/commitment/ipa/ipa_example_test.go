@@ -17,7 +17,7 @@ func ExampleNewScheme() {
 	}
 
 	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"key": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"key": target})
 
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -36,7 +36,7 @@ func ExampleScheme_Prove() {
 	c, _ := ipa.NewScheme()
 
 	target, _ := newPayloadCID([]byte("content"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"path": target})
 
 	root, _ := c.Commit(arcs)
 
@@ -59,7 +59,7 @@ func ExampleScheme_Update() {
 	c, _ := ipa.NewScheme()
 
 	oldTarget, _ := newPayloadCID([]byte("old"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"data": oldTarget})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"data": oldTarget})
 
 	root, _ := c.Commit(arcs)
 
@@ -78,7 +78,7 @@ func ExampleScheme_BatchProve() {
 
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 
@@ -99,7 +99,7 @@ func ExampleScheme_AggregateProve() {
 
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 

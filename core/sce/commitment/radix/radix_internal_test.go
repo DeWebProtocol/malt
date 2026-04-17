@@ -30,7 +30,7 @@ func TestRadixProveFallsBackWhenHotIndexIsCorrupted(t *testing.T) {
 
 	k1, _ := newInternalPayloadCID([]byte("target1"))
 	k2, _ := newInternalPayloadCID([]byte("target2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"aaa": k1,
 		"bbb": k2,
 	})
@@ -115,7 +115,7 @@ func TestRadixEnsureRootNodeFailedRecoveryDoesNotPersistGarbage(t *testing.T) {
 	}
 
 	k1, _ := newInternalPayloadCID([]byte("target1"))
-	correctArcs := arcset.NewMapFrom(map[string]cid.Cid{
+	correctArcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"aaa": k1,
 	})
 	root, err := s.Commit(correctArcs)
@@ -132,7 +132,7 @@ func TestRadixEnsureRootNodeFailedRecoveryDoesNotPersistGarbage(t *testing.T) {
 	}
 
 	k2, _ := newInternalPayloadCID([]byte("other"))
-	wrongArcs := arcset.NewMapFrom(map[string]cid.Cid{
+	wrongArcs := arcset.NewSetFrom(map[string]cid.Cid{
 		"bbb": k2,
 	})
 

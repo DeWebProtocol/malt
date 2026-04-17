@@ -47,7 +47,7 @@ type EAT interface {
 	// The snapshot preloads all data into memory, suitable for random access.
 	// For overwrite EAT: root is optional (cid.Undef skips validation).
 	// For versioned EAT: includes all ancestor arcs via @previous chain.
-	Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error)
+	Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.ArcSet, error)
 
 	// Iterate returns a streaming iterator over arcs for a given root.
 	// For overwrite EAT: root is optional (cid.Undef skips validation).

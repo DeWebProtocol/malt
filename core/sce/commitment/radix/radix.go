@@ -58,7 +58,7 @@ func NewScheme(opts ...Option) (*Scheme, error) {
 	}, nil
 }
 
-func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
+func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
 	}
@@ -83,11 +83,11 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 	return rootCID, nil
 }
 
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
 	return s.ProveSingle(comm, arcs, path)
 }
 
-func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
 	if comm.Prefix().Codec != codec.CodecMaltRadix {
 		return cid.Undef, nil, fmt.Errorf("not a radix commitment CID: codec=%x", comm.Prefix().Codec)
 	}
@@ -184,7 +184,7 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 	return false, nil
 }
 
-func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
+func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
 	if comm.Prefix().Codec != codec.CodecMaltRadix {
 		return cid.Undef, fmt.Errorf("not a radix commitment CID: codec=%x", comm.Prefix().Codec)
 	}
@@ -217,7 +217,7 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 		} else {
 			delete(updated, path)
 		}
-		paths, values := commitment.ExtractSortedPathsValues(arcset.NewMapFrom(updated))
+		paths, values := commitment.ExtractSortedPathsValues(arcset.NewSetFrom(updated))
 		commitmentBytes, err := codec.ExtractCommitment(newRootCID)
 		if err == nil {
 			s.BaseScheme.Cache.Set(string(commitmentBytes), &commitment.CacheEntry{
@@ -230,7 +230,7 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 	return newRootCID, nil
 }
 
-func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[string]struct {
+func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.ArcSet, updates map[string]struct {
 	Old cid.Cid
 	New cid.Cid
 }) (cid.Cid, error) {
@@ -254,10 +254,10 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 			delete(updated, path)
 		}
 	}
-	return s.Commit(arcset.NewMapFrom(updated))
+	return s.Commit(arcset.NewSetFrom(updated))
 }
 
-func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
+func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	return s.BaseScheme.BatchProveImpl(comm, arcs, s, paths)
 }
 
@@ -265,7 +265,7 @@ func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEn
 	return s.BaseScheme.BatchVerifyImpl(comm, s, proofs)
 }
 
-func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (*arcset.AggregatedProof, error) {
+func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (*arcset.AggregatedProof, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths is empty")
 	}
@@ -315,7 +315,7 @@ func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof)
 	return true, nil
 }
 
-func (s *Scheme) ensureRootNode(ctx context.Context, root cid.Cid, arcs arcset.Snapshot) (cid.Cid, error) {
+func (s *Scheme) ensureRootNode(ctx context.Context, root cid.Cid, arcs arcset.ArcSet) (cid.Cid, error) {
 	rootNodeCID, err := rootNodeCIDFromCommitment(root)
 	if err != nil {
 		return cid.Undef, err
@@ -575,7 +575,7 @@ func (s *Scheme) refreshHotIndex(ctx context.Context, root cid.Cid, entries map[
 	return batch.Commit(ctx)
 }
 
-func snapshotToMap(arcs arcset.Snapshot) map[string]cid.Cid {
+func snapshotToMap(arcs arcset.ArcSet) map[string]cid.Cid {
 	out := make(map[string]cid.Cid)
 	if arcs == nil {
 		return out
@@ -586,12 +586,12 @@ func snapshotToMap(arcs arcset.Snapshot) map[string]cid.Cid {
 		if !ok {
 			break
 		}
-		out[path] = target
+		out[path.String()] = target
 	}
 	return out
 }
 
-func (s *Scheme) materializeSnapshot(arcs arcset.Snapshot) (rootCID cid.Cid, rootNodeCID cid.Cid, paths []string, values []cid.Cid, stagedNodes map[string][]byte, indexEntries map[string]cid.Cid, err error) {
+func (s *Scheme) materializeSnapshot(arcs arcset.ArcSet) (rootCID cid.Cid, rootNodeCID cid.Cid, paths []string, values []cid.Cid, stagedNodes map[string][]byte, indexEntries map[string]cid.Cid, err error) {
 	if arcs == nil {
 		err = fmt.Errorf("arc set is nil")
 		return

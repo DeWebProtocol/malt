@@ -47,7 +47,7 @@ func TestAPI_CreateAndResolve(t *testing.T) {
 	ctx := context.Background()
 
 	arcs := buildArcs(10)
-	snapshot := arcset.NewMapFrom(arcs)
+	snapshot := arcset.NewSetFrom(arcs)
 
 	root, err := g.Commit(ctx, snapshot)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	ctx := context.Background()
 
 	arcs := buildArcs(10)
-	snapshot := arcset.NewMapFrom(arcs)
+	snapshot := arcset.NewSetFrom(arcs)
 
 	root1, err := g.Commit(ctx, snapshot)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	// Update arc5
 	newTarget := fakeCID("updated_data5")
 	arcs[path] = newTarget
-	snapshot2 := arcset.NewMapFrom(arcs)
+	snapshot2 := arcset.NewSetFrom(arcs)
 	root2, err := g.Commit(ctx, snapshot2)
 	if err != nil {
 		t.Fatalf("Update commit failed: %v", err)
@@ -144,7 +144,7 @@ func TestAPI_ChainedUpdatesWithLineage(t *testing.T) {
 	lm := node.LineageManager()
 
 	arcs := buildArcs(4)
-	snapshot := arcset.NewMapFrom(arcs)
+	snapshot := arcset.NewSetFrom(arcs)
 
 	root0, err := g.Commit(ctx, snapshot)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestAPI_ChainedUpdatesWithLineage(t *testing.T) {
 			path := fmt.Sprintf("arc%d", j)
 			currentArcs[path] = fakeCID(fmt.Sprintf("v%d_%s", i+1, path))
 		}
-		snapshot := arcset.NewMapFrom(currentArcs)
+		snapshot := arcset.NewSetFrom(currentArcs)
 
 		newRoot, err := g.Commit(ctx, snapshot)
 		if err != nil {
@@ -207,7 +207,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	ctx := context.Background()
 
 	arcs := buildArcs(10)
-	snapshot := arcset.NewMapFrom(arcs)
+	snapshot := arcset.NewSetFrom(arcs)
 
 	root, err := g.Commit(ctx, snapshot)
 	if err != nil {
@@ -219,7 +219,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	newPath := "new_arc"
 	newTarget := fakeCID("new_data")
 	arcs[newPath] = newTarget
-	snapshot2 := arcset.NewMapFrom(arcs)
+	snapshot2 := arcset.NewSetFrom(arcs)
 	root2, err := g.Commit(ctx, snapshot2)
 	if err != nil {
 		t.Fatalf("Insert commit failed: %v", err)
@@ -245,7 +245,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 
 	// Delete arc0
 	arcs["arc0"] = cid.Undef
-	snapshot3 := arcset.NewMapFrom(arcs)
+	snapshot3 := arcset.NewSetFrom(arcs)
 	root3, err := g.Commit(ctx, snapshot3)
 	if err != nil {
 		t.Fatalf("Delete commit failed: %v", err)

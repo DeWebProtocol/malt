@@ -364,13 +364,13 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.
 }
 
 // Snapshot returns an immutable snapshot of all arcs in the bucket.
-func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error) {
+func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.ArcSet, error) {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := eat.RootKeyFormat(root)
 		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil || string(bucketIdBytes) != bucketId {
-			return arcset.NewMap(), nil // Return empty snapshot for invalid root
+			return arcset.NewSet(), nil // Return empty snapshot for invalid root
 		}
 	}
 
@@ -393,7 +393,7 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcs
 		return nil, fmt.Errorf("iterator error: %w", err)
 	}
 
-	return arcset.NewMapFrom(arcs), nil
+	return arcset.NewSetFrom(arcs), nil
 }
 
 // Iterate returns a streaming iterator over all arcs in the bucket.
@@ -443,14 +443,14 @@ type eatIterator struct {
 	prefix []byte
 }
 
-func (it *eatIterator) Next() (string, cid.Cid, bool) {
+func (it *eatIterator) Next() (arcset.Path, cid.Cid, bool) {
 	for {
 		if !it.iter.Next() {
 			return "", cid.Cid{}, false
 		}
 
 		key := it.iter.Key()
-		path := string(key[len(it.prefix):])
+		path := arcset.CanonicalizePath(string(key[len(it.prefix):]))
 
 		val := it.iter.Value()
 		c, err := cid.Cast(val)
@@ -473,7 +473,7 @@ func (it *eatIterator) Close() {
 // emptyIterator is an empty iterator for invalid root cases.
 type emptyIterator struct{}
 
-func (it *emptyIterator) Next() (string, cid.Cid, bool) {
+func (it *emptyIterator) Next() (arcset.Path, cid.Cid, bool) {
 	return "", cid.Cid{}, false
 }
 

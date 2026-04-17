@@ -123,24 +123,24 @@ func NewBaseScheme(cache *CacheManager) *BaseScheme {
 // The base scheme provides batch and aggregate implementations on top of these.
 type Backend interface {
 	// Commit generates a commitment to an arc set and returns the commitment CID.
-	Commit(arcs arcset.Snapshot) (cid.Cid, error)
+	Commit(arcs arcset.ArcSet) (cid.Cid, error)
 
 	// ProveSingle generates a single proof for a path.
 	// Returns the target CID and proof bytes.
-	ProveSingle(commitment cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error)
+	ProveSingle(commitment cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error)
 
 	// VerifySingle verifies a single proof.
 	VerifySingle(commitment cid.Cid, path string, value cid.Cid, proof []byte) (bool, error)
 
 	// Update updates a single value in the commitment and returns the new commitment CID.
-	Update(commitment cid.Cid, arcs arcset.Snapshot, path string, oldValue, newValue cid.Cid) (cid.Cid, error)
+	Update(commitment cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error)
 }
 
 // BatchProveImpl generates proofs for multiple paths using the provided prover function.
 // This is a common implementation used by all backends.
 func (bs *BaseScheme) BatchProveImpl(
 	commitment cid.Cid,
-	arcs arcset.Snapshot,
+	arcs arcset.ArcSet,
 	backend Backend,
 	paths []string,
 ) (map[string]arcset.BatchProofEntry, error) {
@@ -189,7 +189,7 @@ func (bs *BaseScheme) BatchVerifyImpl(
 // It strips the index from individual proofs since paths are already stored.
 func (bs *BaseScheme) AggregateProveImpl(
 	commitment cid.Cid,
-	arcs arcset.Snapshot,
+	arcs arcset.ArcSet,
 	backend Backend,
 	paths []string,
 	proofSize int, // total size of proof including index

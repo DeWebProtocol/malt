@@ -133,7 +133,7 @@ func stepsToResponse(steps []resolver.StepEvidence) []StepEvidenceResponse {
 }
 
 // snapshotToMap converts an arcset snapshot to a string map and count.
-func snapshotToMap(snapshot arcset.Snapshot) (map[string]string, int, error) {
+func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {
 	arcs := make(map[string]string)
 	count := 0
 	iter := snapshot.Iterate()
@@ -142,7 +142,7 @@ func snapshotToMap(snapshot arcset.Snapshot) (map[string]string, int, error) {
 		if !ok {
 			break
 		}
-		arcs[path] = target.String()
+		arcs[path.String()] = target.String()
 		count++
 	}
 	if iter.Err() != nil {

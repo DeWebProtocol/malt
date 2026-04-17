@@ -18,7 +18,7 @@ func ExampleNewScheme() {
 
 	target1, _ := newPayloadCID([]byte("document.pdf"))
 	target2, _ := newPayloadCID([]byte("image.png"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"document": target1, "image": target2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"document": target1, "image": target2})
 
 	root, err := c.Commit(arcs)
 	if err != nil {
@@ -37,7 +37,7 @@ func ExampleScheme_Prove() {
 	c, _ := kzg.NewScheme()
 
 	target, _ := newPayloadCID([]byte("my-data"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"data": target})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"data": target})
 
 	root, _ := c.Commit(arcs)
 
@@ -64,7 +64,7 @@ func ExampleScheme_Update() {
 	c, _ := kzg.NewScheme()
 
 	oldTarget, _ := newPayloadCID([]byte("version-1"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"file": oldTarget})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"file": oldTarget})
 
 	root, _ := c.Commit(arcs)
 	fmt.Printf("Initial root created: %v\n", root.Defined())
@@ -89,7 +89,7 @@ func ExampleScheme_BatchUpdate() {
 
 	target1, _ := newPayloadCID([]byte("data-1"))
 	target2, _ := newPayloadCID([]byte("data-2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"a": target1, "b": target2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target1, "b": target2})
 
 	root, _ := c.Commit(arcs)
 
@@ -117,7 +117,7 @@ func ExampleScheme_BatchProve() {
 
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 
@@ -138,7 +138,7 @@ func ExampleScheme_AggregateProve() {
 
 	t1, _ := newPayloadCID([]byte("data1"))
 	t2, _ := newPayloadCID([]byte("data2"))
-	arcs := arcset.NewMapFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"path1": t1, "path2": t2})
 
 	root, _ := c.Commit(arcs)
 

@@ -132,7 +132,7 @@ func canonicalizeUpdateMap(updates map[string]cid.Cid) (map[arcset.Path]cid.Cid,
 	return out, nil
 }
 
-func canonicalizeSnapshot(arcs arcset.Snapshot) (arcset.Snapshot, map[arcset.Path]cid.Cid, error) {
+func canonicalizeSnapshot(arcs arcset.ArcSet) (arcset.ArcSet, map[arcset.Path]cid.Cid, error) {
 	if arcs == nil {
 		return nil, nil, fmt.Errorf("arc set is nil")
 	}
@@ -145,7 +145,7 @@ func canonicalizeSnapshot(arcs arcset.Snapshot) (arcset.Snapshot, map[arcset.Pat
 		if !ok {
 			break
 		}
-		canonical := arcset.CanonicalizePath(path)
+		canonical := path
 		if canonical.IsEmpty() {
 			return nil, nil, ErrEmptyPath
 		}
@@ -159,7 +159,7 @@ func canonicalizeSnapshot(arcs arcset.Snapshot) (arcset.Snapshot, map[arcset.Pat
 		return nil, nil, fmt.Errorf("arc iteration error: %w", iter.Err())
 	}
 
-	return arcset.NewMapFrom(stringMap), arcsMap, nil
+	return arcset.NewSetFrom(stringMap), arcsMap, nil
 }
 
 func stringifyPathMap(paths map[arcset.Path]cid.Cid) map[string]cid.Cid {
@@ -236,12 +236,12 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 		// Build modified arc set
 		arcsMap := make(map[string]cid.Cid)
 		iter := snapshot.Iterate()
-		for {
-			p, t, ok := iter.Next()
-			if !ok {
-				break
-			}
-			arcsMap[p] = t
+	for {
+		p, t, ok := iter.Next()
+		if !ok {
+			break
+		}
+		arcsMap[p.String()] = t
 		}
 		if iter.Err() != nil {
 			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
@@ -255,7 +255,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 			delete(arcsMap, canonicalPath.String())
 		}
 
-		newRoot, err = w.sce.Commit(arcset.NewMapFrom(arcsMap))
+		newRoot, err = w.sce.Commit(arcset.NewSetFrom(arcsMap))
 		if err != nil {
 			return nil, fmt.Errorf("SCE.Commit failed for arc %s: %w", op, err)
 		}
@@ -377,7 +377,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 			if !ok {
 				break
 			}
-			arcsMap[p] = t
+			arcsMap[p.String()] = t
 		}
 		if iter.Err() != nil {
 			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
@@ -391,7 +391,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 			}
 		}
 
-		newRoot, err = w.sce.Commit(arcset.NewMapFrom(arcsMap))
+		newRoot, err = w.sce.Commit(arcset.NewSetFrom(arcsMap))
 		if err != nil {
 			return nil, fmt.Errorf("SCE.Commit failed for batch: %w", err)
 		}
@@ -444,7 +444,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 //  1. Commits the arc set via SCE
 //  2. Stores arcs in EAT (first version, no parent)
 //  3. Records lineage with cid.Undef as parent
-func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcset.Snapshot) (cid.Cid, error) {
+func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
 	}
@@ -499,7 +499,7 @@ func (w *Writer) GetArc(ctx context.Context, bucketId string, root cid.Cid, path
 }
 
 // GetSnapshot retrieves the current arc set snapshot for a structure root.
-func (w *Writer) GetSnapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.Snapshot, error) {
+func (w *Writer) GetSnapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.ArcSet, error) {
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
 	}

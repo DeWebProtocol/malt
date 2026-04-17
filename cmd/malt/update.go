@@ -239,7 +239,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	w := g.Writer()
 	ctx := context.Background()
-	snapshot := arcset.NewMapFrom(arcs)
+	snapshot := arcset.NewSetFrom(arcs)
 
 	rootCid, err := w.CreateStructure(ctx, g.BucketId(), snapshot)
 	if err != nil {

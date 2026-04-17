@@ -414,7 +414,7 @@ func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (
 }
 
 // Snapshot returns an immutable snapshot of all arcs visible at the given version.
-func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.Snapshot, error) {
+func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.ArcSet, error) {
 	start := time.Now()
 
 	logger.Debug("EAT.Snapshot started",
@@ -436,7 +436,7 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (a
 		logger.Int("arc_count", len(arcs)),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
-	return arcset.NewMapFrom(arcs), nil
+	return arcset.NewSetFrom(arcs), nil
 }
 
 // collectFlattenedArcs collects all arcs visible at a version (including ancestors).
@@ -541,7 +541,7 @@ type chainIterator struct {
 	err error
 }
 
-func (it *chainIterator) Next() (string, cid.Cid, bool) {
+func (it *chainIterator) Next() (arcset.Path, cid.Cid, bool) {
 	if it.ctx.Err() != nil {
 		it.err = it.ctx.Err()
 		return "", cid.Cid{}, false
@@ -555,7 +555,7 @@ func (it *chainIterator) Next() (string, cid.Cid, bool) {
 			continue
 		}
 		it.seen[path] = true
-		return path, it.currentBatch[path], true
+		return arcset.CanonicalizePath(path), it.currentBatch[path], true
 	}
 
 	if it.currentVersion == cid.Undef || it.maxDepth <= 0 {

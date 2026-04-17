@@ -7,6 +7,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -224,7 +225,7 @@ func TestEATSnapshot(t *testing.T) {
 		t.Fatalf("Snapshot failed: %v", err)
 	}
 
-	got, ok := snapshot.Get("a")
+	got, ok := snapshot.Get(arcset.CanonicalizePath("a"))
 	if !ok {
 		t.Error("expected to find 'a'")
 	}
@@ -802,7 +803,7 @@ func BenchmarkOverwriteEATSnapshot(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				snapshot, _ := eat.Snapshot(ctx, bucketId, root)
-				snapshot.Get("arc0")
+				snapshot.Get(arcset.CanonicalizePath("arc0"))
 			}
 		})
 	}
@@ -839,4 +840,3 @@ func BenchmarkOverwriteEATIterate(b *testing.B) {
 		})
 	}
 }
-

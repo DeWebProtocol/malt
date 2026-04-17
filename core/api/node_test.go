@@ -56,7 +56,7 @@ func TestOpenGraphUsesStoredBackend(t *testing.T) {
 		t.Fatalf("OpenGraph failed: %v", err)
 	}
 
-	root, err := g.Commit(context.Background(), arcset.NewMapFrom(map[string]cid.Cid{
+	root, err := g.Commit(context.Background(), arcset.NewSetFrom(map[string]cid.Cid{
 		"name": newTestCID("alice"),
 	}))
 	if err != nil {

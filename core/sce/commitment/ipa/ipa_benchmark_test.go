@@ -83,7 +83,7 @@ func BenchmarkIPAUpdate(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Commit failed: %v", err)
 	}
-	oldKey, _ := arcs.Get("arc_0")
+	oldKey, _ := arcs.Get(arcset.CanonicalizePath("arc_0"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -96,12 +96,12 @@ func BenchmarkIPAUpdate(b *testing.B) {
 	}
 }
 
-func generateRandomIPAArcSet(n int) *arcset.Map {
+func generateRandomIPAArcSet(n int) *arcset.Set {
 	arcsMap := make(map[string]cid.Cid)
 	for i := 0; i < n; i++ {
 		arcsMap[fmt.Sprintf("arc_%d", i)] = generateRandomIPAKey()
 	}
-	return arcset.NewMapFrom(arcsMap)
+	return arcset.NewSetFrom(arcsMap)
 }
 
 func generateRandomIPAKey() cid.Cid {

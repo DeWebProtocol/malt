@@ -57,7 +57,7 @@ func NewScheme() (*Scheme, error) {
 }
 
 // Commit generates an IPA commitment.
-func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
+func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Cid{}, fmt.Errorf("arc set is nil")
 	}
@@ -104,12 +104,12 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 }
 
 // Prove generates an IPA proof.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
 	return s.ProveSingle(comm, arcs, path)
 }
 
 // ProveSingle is the core prove implementation for the Backend interface.
-func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.Snapshot, path string) (cid.Cid, []byte, error) {
+func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -227,7 +227,7 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 }
 
 // Update updates a value in the commitment.
-func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
+func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
 	// Extract commitment bytes from MALT CID
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
@@ -290,7 +290,7 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 }
 
 // BatchUpdate updates multiple values.
-func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[string]struct {
+func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.ArcSet, updates map[string]struct {
 	Old cid.Cid
 	New cid.Cid
 }) (cid.Cid, error) {
@@ -360,7 +360,7 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 }
 
 // BatchProve generates proofs for multiple paths.
-func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (map[string]arcset.BatchProofEntry, error) {
+func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (map[string]arcset.BatchProofEntry, error) {
 	return s.BaseScheme.BatchProveImpl(comm, arcs, s, paths)
 }
 
@@ -370,7 +370,7 @@ func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEn
 }
 
 // AggregateProve generates an aggregated proof.
-func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.Snapshot, paths []string) (*arcset.AggregatedProof, error) {
+func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (*arcset.AggregatedProof, error) {
 	return s.BaseScheme.AggregateProveImpl(comm, arcs, s, paths, ProofSize)
 }
 

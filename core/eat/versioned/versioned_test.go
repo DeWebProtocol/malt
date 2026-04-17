@@ -7,6 +7,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -264,7 +265,7 @@ func TestVersionedEATSnapshot(t *testing.T) {
 		t.Fatalf("Snapshot failed: %v", err)
 	}
 
-	got, ok := snapshot.Get("a")
+	got, ok := snapshot.Get(arcset.CanonicalizePath("a"))
 	if !ok {
 		t.Error("expected to find 'a' at root2 snapshot")
 	}
@@ -272,7 +273,7 @@ func TestVersionedEATSnapshot(t *testing.T) {
 		t.Error("wrong value for 'a'")
 	}
 
-	got, ok = snapshot.Get("b")
+	got, ok = snapshot.Get(arcset.CanonicalizePath("b"))
 	if !ok {
 		t.Error("expected to find 'b' at root2 snapshot")
 	}
@@ -958,7 +959,7 @@ func BenchmarkVersionedEATSnapshot(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				snapshot, _ := eat.Snapshot(ctx, bucketId, latestRoot)
-				snapshot.Get("v0_arc")
+				snapshot.Get(arcset.CanonicalizePath("v0_arc"))
 			}
 		})
 	}
