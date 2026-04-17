@@ -1,6 +1,7 @@
 package radix
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -63,29 +64,11 @@ func (s *Scheme) Commit(arcs arcset.Snapshot) (cid.Cid, error) {
 	}
 
 	ctx := context.Background()
-	paths, values := commitment.ExtractSortedPathsValues(arcs)
-	entries := make([]leafEntry, 0, len(paths))
-	for i, path := range paths {
-		canonical := canonicalizePath(path)
-		entries = append(entries, leafEntry{
-			FullPath:  canonical,
-			KeyDigest: digestPath(canonical),
-			Target:    values[i],
-		})
-	}
-
-	rootBuild := buildTree(entries)
-	indexEntries := make(map[string]cid.Cid)
-	rootNodeCID, err := persistBuildNode(ctx, s.kv, rootBuild, indexEntries)
+	rootCID, _, paths, values, stagedNodes, indexEntries, err := s.materializeSnapshot(arcs)
 	if err != nil {
 		return cid.Undef, err
 	}
-
-	rootCID, err := rootCIDFromNodeCID(rootNodeCID)
-	if err != nil {
-		return cid.Undef, err
-	}
-	if err := s.refreshHotIndex(ctx, rootCID, indexEntries); err != nil {
+	if err := s.persistMaterializedState(ctx, rootCID, stagedNodes, indexEntries); err != nil {
 		return cid.Undef, err
 	}
 
@@ -115,10 +98,9 @@ func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.Snapshot, path string) (c
 		return cid.Undef, nil, err
 	}
 
-	canonical := canonicalizePath(path)
-	digest := digestPath(canonical)
+	digest := digestPath(path)
 
-	nodes, target, err := s.walkProofPath(ctx, comm, rootNodeCID, canonical, digest)
+	nodes, target, err := s.walkProofPath(ctx, comm, rootNodeCID, path, digest)
 	if err != nil {
 		return cid.Undef, nil, err
 	}
@@ -152,8 +134,7 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 		return false, err
 	}
 
-	canonical := canonicalizePath(path)
-	digest := digestPath(canonical)
+	digest := digestPath(path)
 	depth := 0
 
 	for i, nodeBytes := range sp.Nodes {
@@ -190,7 +171,7 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 				return false, nil
 			}
 			for _, entry := range node.Entries {
-				if entry.FullPath == canonical && entry.Target.Equals(value) && entry.KeyDigest == digest {
+				if entry.FullPath == path && entry.Target.Equals(value) && entry.KeyDigest == digest {
 					return true, nil
 				}
 			}
@@ -214,10 +195,9 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 		return cid.Undef, err
 	}
 
-	canonical := canonicalizePath(path)
-	digest := digestPath(canonical)
+	digest := digestPath(path)
 	touched := make(map[string]cid.Cid)
-	newRootNodeCID, err := s.updateInternal(ctx, rootNodeCID, 0, canonical, digest, oldValue, newValue, touched)
+	newRootNodeCID, err := s.updateInternal(ctx, rootNodeCID, 0, path, digest, oldValue, newValue, touched)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -233,9 +213,9 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.Snapshot, path string, oldValu
 	if arcs != nil {
 		updated := snapshotToMap(arcs)
 		if newValue.Defined() {
-			updated[canonical] = newValue
+			updated[path] = newValue
 		} else {
-			delete(updated, canonical)
+			delete(updated, path)
 		}
 		paths, values := commitment.ExtractSortedPathsValues(arcset.NewMapFrom(updated))
 		commitmentBytes, err := codec.ExtractCommitment(newRootCID)
@@ -259,11 +239,19 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.Snapshot, updates map[str
 	}
 	updated := snapshotToMap(arcs)
 	for path, change := range updates {
-		canonical := canonicalizePath(path)
+		current, exists := updated[path]
+		switch {
+		case change.Old.Defined():
+			if !exists || !current.Equals(change.Old) {
+				return cid.Undef, fmt.Errorf("old value mismatch for path %s", path)
+			}
+		case exists:
+			return cid.Undef, fmt.Errorf("path %s already exists", path)
+		}
 		if change.New.Defined() {
-			updated[canonical] = change.New
+			updated[path] = change.New
 		} else {
-			delete(updated, canonical)
+			delete(updated, path)
 		}
 	}
 	return s.Commit(arcset.NewMapFrom(updated))
@@ -342,14 +330,17 @@ func (s *Scheme) ensureRootNode(ctx context.Context, root cid.Cid, arcs arcset.S
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("root state missing and no arc snapshot provided")
 	}
-	rebuiltRoot, err := s.Commit(arcs)
+	rebuiltRoot, rebuiltRootNodeCID, _, _, stagedNodes, indexEntries, err := s.materializeSnapshot(arcs)
 	if err != nil {
 		return cid.Undef, err
 	}
 	if !rebuiltRoot.Equals(root) {
 		return cid.Undef, fmt.Errorf("rebuilt root %s does not match expected root %s", rebuiltRoot, root)
 	}
-	return rootNodeCIDFromCommitment(root)
+	if err := s.persistMaterializedState(ctx, root, stagedNodes, indexEntries); err != nil {
+		return cid.Undef, err
+	}
+	return rebuiltRootNodeCID, nil
 }
 
 func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID cid.Cid, path string, digest [32]byte) ([][]byte, cid.Cid, error) {
@@ -359,7 +350,7 @@ func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID ci
 
 	for {
 		if currentCID.Defined() && depth <= len(digest) {
-			if hotCID, err := getHotIndex(ctx, s.kv, root, digest[:depth]); err == nil {
+			if hotCID, ok := s.tryHotIndex(ctx, root, digest[:depth]); ok {
 				currentCID = hotCID
 			}
 		}
@@ -372,6 +363,9 @@ func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID ci
 
 		switch node.Kind {
 		case nodeKindInternal:
+			if depth >= len(digest) {
+				return nil, cid.Undef, fmt.Errorf("radix tree malformed: internal node at depth %d exceeds digest length", depth)
+			}
 			slot := digest[depth]
 			childCID, ok := node.Children[slot]
 			if !ok {
@@ -390,6 +384,21 @@ func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID ci
 			return nil, cid.Undef, fmt.Errorf("unknown node kind: %d", node.Kind)
 		}
 	}
+}
+
+func (s *Scheme) tryHotIndex(ctx context.Context, root cid.Cid, prefix []byte) (cid.Cid, bool) {
+	hotCID, err := getHotIndex(ctx, s.kv, root, prefix)
+	if err != nil {
+		return cid.Undef, false
+	}
+	node, _, err := loadNode(ctx, s.kv, hotCID)
+	if err != nil {
+		return cid.Undef, false
+	}
+	if !bytes.Equal(node.NodePath, prefix) {
+		return cid.Undef, false
+	}
+	return hotCID, true
 }
 
 func (s *Scheme) updateInternal(ctx context.Context, nodeCID cid.Cid, depth int, path string, digest [32]byte, oldValue, newValue cid.Cid, touched map[string]cid.Cid) (cid.Cid, error) {
@@ -577,9 +586,54 @@ func snapshotToMap(arcs arcset.Snapshot) map[string]cid.Cid {
 		if !ok {
 			break
 		}
-		out[canonicalizePath(path)] = target
+		out[path] = target
 	}
 	return out
+}
+
+func (s *Scheme) materializeSnapshot(arcs arcset.Snapshot) (rootCID cid.Cid, rootNodeCID cid.Cid, paths []string, values []cid.Cid, stagedNodes map[string][]byte, indexEntries map[string]cid.Cid, err error) {
+	if arcs == nil {
+		err = fmt.Errorf("arc set is nil")
+		return
+	}
+
+	paths, values = commitment.ExtractSortedPathsValues(arcs)
+	entries := make([]leafEntry, 0, len(paths))
+	for i, path := range paths {
+		entries = append(entries, leafEntry{
+			FullPath:  path,
+			KeyDigest: digestPath(path),
+			Target:    values[i],
+		})
+	}
+
+	rootBuild := buildTree(entries)
+	indexEntries = make(map[string]cid.Cid)
+	stagedNodes = make(map[string][]byte)
+	rootNodeCID, err = materializeBuildNode(rootBuild, indexEntries, stagedNodes)
+	if err != nil {
+		return
+	}
+
+	rootCID, err = rootCIDFromNodeCID(rootNodeCID)
+	return
+}
+
+func (s *Scheme) persistMaterializedState(ctx context.Context, root cid.Cid, stagedNodes map[string][]byte, indexEntries map[string]cid.Cid) error {
+	batch := s.kv.Batch()
+	for key, value := range stagedNodes {
+		if err := batch.Put([]byte(key), value); err != nil {
+			batch.Cancel()
+			return err
+		}
+	}
+	for prefix, nodeCID := range indexEntries {
+		if err := batch.Put(hotIndexKey(root, []byte(prefix)), nodeCID.Bytes()); err != nil {
+			batch.Cancel()
+			return err
+		}
+	}
+	return batch.Commit(ctx)
 }
 
 func rootCIDFromNodeCID(nodeCID cid.Cid) (cid.Cid, error) {

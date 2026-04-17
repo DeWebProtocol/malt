@@ -400,7 +400,7 @@ func (s *Server) handleGraphUpdateWithPath(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, WriteUpdateResponse{
 		OldRoot:   result.OldRoot.String(),
 		NewRoot:   result.NewRoot.String(),
-		Path:      result.Path,
+		Path:      result.Path.String(),
 		OldTarget: result.OldTarget.String(),
 		NewTarget: result.NewTarget.String(),
 		Op:        result.Op.String(),
@@ -459,10 +459,10 @@ func (s *Server) handleGraphBatchUpdate(w http.ResponseWriter, r *http.Request) 
 
 	perArc := make(map[string]*WriteUpdateResponse, len(result.PerArc))
 	for path, r := range result.PerArc {
-		perArc[path] = &WriteUpdateResponse{
+		perArc[path.String()] = &WriteUpdateResponse{
 			OldRoot:   r.OldRoot.String(),
 			NewRoot:   r.NewRoot.String(),
-			Path:      r.Path,
+			Path:      r.Path.String(),
 			OldTarget: r.OldTarget.String(),
 			NewTarget: r.NewTarget.String(),
 			Op:        r.Op.String(),
@@ -805,7 +805,7 @@ func (s *Server) handleUpdateWithPath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, WriteUpdateResponse{
 		OldRoot:   result.OldRoot.String(),
 		NewRoot:   result.NewRoot.String(),
-		Path:      result.Path,
+		Path:      result.Path.String(),
 		OldTarget: result.OldTarget.String(),
 		NewTarget: result.NewTarget.String(),
 		Op:        result.Op.String(),
@@ -859,10 +859,10 @@ func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 
 	perArc := make(map[string]*WriteUpdateResponse, len(result.PerArc))
 	for path, r := range result.PerArc {
-		perArc[path] = &WriteUpdateResponse{
+		perArc[path.String()] = &WriteUpdateResponse{
 			OldRoot:   r.OldRoot.String(),
 			NewRoot:   r.NewRoot.String(),
-			Path:      r.Path,
+			Path:      r.Path.String(),
 			OldTarget: r.OldTarget.String(),
 			NewTarget: r.NewTarget.String(),
 			Op:        r.Op.String(),
@@ -1012,7 +1012,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		}
 
 		steps[i] = resolver.StepEvidence{
-			Path:     step.Path,
+			Path:     arcset.CanonicalizePath(step.Path),
 			Target:   targetCid,
 			Evidence: ev,
 		}

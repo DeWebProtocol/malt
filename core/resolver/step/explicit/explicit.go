@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/logger"
 	cid "github.com/ipfs/go-cid"
 )
@@ -21,7 +22,7 @@ const (
 	// PayloadArc is the reserved path that binds a structure root to its payload CID.
 	// When resolving a MALT object with an empty path, Gateway automatically redirects
 	// to this arc to materialize the payload.
-	PayloadArc = "@payload"
+	PayloadArc arcset.Path = "@payload"
 )
 
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
@@ -45,19 +46,19 @@ func NewResolver(e eat.EAT, s *sce.Engine, bucketId string) *Resolver {
 //
 // Example: if EAT contains "a/b/c" → key1 and path is "a/b/c/d/e",
 // it matches "a/b/c" and returns that path with its target and evidence.
-func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, target cid.Cid, ev evidence.Evidence, err error) {
+func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	start := time.Now()
 
 	logger.Debug("Resolver.Resolve started",
 		logger.String("bucket", r.bucketId),
 		logger.String("root", root.String()),
-		logger.String("path", path))
+		logger.String("path", path.String()))
 
 	if !root.Defined() {
 		logger.Error("Resolver.Resolve root not defined")
 		return "", cid.Cid{}, nil, fmt.Errorf("root is not defined")
 	}
-	if path == "" {
+	if path.IsEmpty() {
 		logger.Error("Resolver.Resolve path is empty")
 		return "", cid.Cid{}, nil, fmt.Errorf("path is empty")
 	}
@@ -92,32 +93,32 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 			logger.Info("Resolver.Resolve completed",
 				logger.String("bucket", r.bucketId),
 				logger.String("root", root.String()),
-				logger.String("requested_path", path),
+				logger.String("requested_path", path.String()),
 				logger.String("matched_path", candidatePath),
 				logger.String("target", target.String()),
 				logger.Int("segment_depth", len(segments)-i),
 				logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
-			return candidatePath, target, evidence.NewExplicitEvidence(proof), nil
+			return arcset.Path(candidatePath), target, evidence.NewExplicitEvidence(proof), nil
 		}
 	}
 
 	logger.Warn("Resolver.Resolve no match found",
 		logger.String("bucket", r.bucketId),
 		logger.String("root", root.String()),
-		logger.String("path", path))
+		logger.String("path", path.String()))
 
 	return "", cid.Cid{}, nil, fmt.Errorf("no matching arc found for path: %s", path)
 }
 
 // Verify verifies a single step's evidence.
-func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error) {
+func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
 	start := time.Now()
 
 	logger.Debug("Resolver.Verify started",
 		logger.String("bucket", r.bucketId),
 		logger.String("root", root.String()),
-		logger.String("path", path))
+		logger.String("path", path.String()))
 
 	if ev == nil {
 		logger.Error("Resolver.Verify evidence is nil")
@@ -131,17 +132,17 @@ func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence
 		return false, fmt.Errorf("expected ExplicitEvidence, got %T", ev)
 	}
 
-	valid, err := r.sce.Verify(root, path, target, explicitEv.Bytes())
+	valid, err := r.sce.Verify(root, path.String(), target, explicitEv.Bytes())
 	if err != nil {
 		logger.Error("Resolver.Verify SCE failed",
-			logger.String("path", path),
+			logger.String("path", path.String()),
 			logger.Err(err))
 		return false, err
 	}
 
 	logger.Debug("Resolver.Verify completed",
 		logger.String("bucket", r.bucketId),
-		logger.String("path", path),
+		logger.String("path", path.String()),
 		logger.Bool("valid", valid),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
@@ -149,6 +150,6 @@ func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence
 }
 
 // splitPath splits a path into segments.
-func splitPath(path string) []string {
+func splitPath(path arcset.Path) []string {
 	return step.SplitPath(path)
 }

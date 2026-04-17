@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
@@ -88,7 +89,7 @@ func NewResolver(c cas.Client, opts ...Option) *Resolver {
 // Resolve resolves a path through the HAMT.
 // The path is treated as a key to look up in the HAMT.
 // Returns the matched path (key), the target CID (value), and evidence.
-func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, target cid.Cid, ev evidence.Evidence, err error) {
+func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	if !root.Defined() {
 		return "", cid.Cid{}, nil, fmt.Errorf("root is not defined")
 	}
@@ -98,12 +99,12 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	}
 
 	// Empty path returns the root
-	if path == "" {
+	if path.IsEmpty() {
 		return "", root, nil, nil
 	}
 
 	// Resolve the key in HAMT
-	valueCID, proof, err := r.resolveKey(root, path)
+	valueCID, proof, err := r.resolveKey(root, path.String())
 	if err != nil {
 		return "", cid.Cid{}, nil, err
 	}
@@ -115,7 +116,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 }
 
 // Verify verifies the HAMT evidence.
-func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error) {
+func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
 	if ev == nil {
 		return false, fmt.Errorf("evidence is nil")
 	}
@@ -126,7 +127,7 @@ func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence
 	}
 
 	// Re-resolve to verify
-	actualCID, _, err := r.resolveKey(root, path)
+	actualCID, _, err := r.resolveKey(root, path.String())
 	if err != nil {
 		return false, err
 	}

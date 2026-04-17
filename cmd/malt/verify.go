@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/dewebprotocol/malt/core/resolver"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/spf13/cobra"
 )
@@ -96,7 +97,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		}
 
 		steps[i] = resolver.StepEvidence{
-			Path:     step.Path,
+			Path:     arcset.CanonicalizePath(step.Path),
 			Target:   targetCid,
 			Evidence: ev,
 		}

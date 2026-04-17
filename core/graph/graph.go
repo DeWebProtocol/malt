@@ -164,11 +164,11 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	for _, r := range result.PerArc {
 		switch r.Op {
 		case writer.ArcInsert:
-			delta.Added = append(delta.Added, r.Path)
+			delta.Added = append(delta.Added, r.Path.String())
 		case writer.ArcReplace:
-			delta.Updated = append(delta.Updated, r.Path)
+			delta.Updated = append(delta.Updated, r.Path.String())
 		case writer.ArcDelete:
-			delta.Deleted = append(delta.Deleted, r.Path)
+			delta.Deleted = append(delta.Deleted, r.Path.String())
 		}
 	}
 	return result.NewRoot, delta, nil

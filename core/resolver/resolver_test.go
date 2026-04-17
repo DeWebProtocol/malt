@@ -112,6 +112,44 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	}
 }
 
+func TestGatewayCanonicalizesResolvePath(t *testing.T) {
+	e := newTestEAT()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	s := sce.NewEngine(scheme)
+	c := mock.NewCAS()
+
+	ctx := context.Background()
+	target, _ := newPayloadCID([]byte("target"))
+	arcsMap := map[string]cid.Cid{
+		"a/b": target,
+	}
+	arcs := arcset.NewMapFrom(arcsMap)
+
+	root, err := s.Commit(arcs)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
+
+	explicitR := explicit.NewResolver(e, s, testBucketId)
+	implicitR := implicit.NewResolver(c)
+	g := resolver.NewResolver(explicitR, implicitR)
+
+	result, err := g.Resolve(root, "/a//b/")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !result.Target.Equals(target) {
+		t.Errorf("Resolve(/a//b/) = %v, want %v", result.Target, target)
+	}
+	if len(result.Transcript.Steps) != 1 || result.Transcript.Steps[0].Path != "a/b" {
+		t.Errorf("expected canonical transcript path a/b, got %+v", result.Transcript.Steps)
+	}
+}
+
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	// Test that longest prefix matching works
 	e := newTestEAT()

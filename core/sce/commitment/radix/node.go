@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
 	cid "github.com/ipfs/go-cid"
@@ -15,7 +14,7 @@ import (
 )
 
 const (
-	nodeVersion byte = 1
+	currentNodeVersion byte = 1
 
 	nodeKindInternal byte = 1
 	nodeKindLeaf     byte = 2
@@ -27,6 +26,7 @@ const (
 )
 
 type radixNode struct {
+	Version  byte
 	Kind     byte
 	NodePath []byte
 	Children map[byte]cid.Cid
@@ -46,28 +46,13 @@ type buildNode struct {
 	Entries  []leafEntry
 }
 
-func canonicalizePath(path string) string {
-	if path == "" {
-		return ""
-	}
-
-	parts := strings.Split(path, "/")
-	filtered := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		filtered = append(filtered, part)
-	}
-	return strings.Join(filtered, "/")
-}
-
 func digestPath(path string) [32]byte {
-	return sha256.Sum256([]byte(canonicalizePath(path)))
+	return sha256.Sum256([]byte(path))
 }
 
 func cloneNode(n *radixNode) *radixNode {
 	out := &radixNode{
+		Version:  n.Version,
 		Kind:     n.Kind,
 		NodePath: append([]byte(nil), n.NodePath...),
 	}
@@ -86,6 +71,7 @@ func cloneNode(n *radixNode) *radixNode {
 
 func newInternalNode(prefix []byte) *radixNode {
 	return &radixNode{
+		Version:  currentNodeVersion,
 		Kind:     nodeKindInternal,
 		NodePath: append([]byte(nil), prefix...),
 		Children: make(map[byte]cid.Cid),
@@ -94,6 +80,7 @@ func newInternalNode(prefix []byte) *radixNode {
 
 func newLeafNode(entry leafEntry) *radixNode {
 	return &radixNode{
+		Version:  currentNodeVersion,
 		Kind:     nodeKindLeaf,
 		NodePath: append([]byte(nil), entry.KeyDigest[:]...),
 		Entries:  []leafEntry{entry},
@@ -122,22 +109,29 @@ func sortLeafEntries(entries []leafEntry) {
 	})
 }
 
-func serializeNode(node *radixNode) ([]byte, error) {
+func (n *radixNode) FormatVersion() byte {
+	if n == nil || n.Version == 0 {
+		return currentNodeVersion
+	}
+	return n.Version
+}
+
+func (n *radixNode) Serialize() ([]byte, error) {
 	var buf bytes.Buffer
-	buf.WriteByte(nodeVersion)
-	buf.WriteByte(node.Kind)
+	buf.WriteByte(n.FormatVersion())
+	buf.WriteByte(n.Kind)
 
-	if err := binary.Write(&buf, binary.BigEndian, uint16(len(node.NodePath))); err != nil {
+	if err := binary.Write(&buf, binary.BigEndian, uint16(len(n.NodePath))); err != nil {
 		return nil, err
 	}
-	if _, err := buf.Write(node.NodePath); err != nil {
+	if _, err := buf.Write(n.NodePath); err != nil {
 		return nil, err
 	}
 
-	switch node.Kind {
+	switch n.Kind {
 	case nodeKindInternal:
-		slots := make([]int, 0, len(node.Children))
-		for slot := range node.Children {
+		slots := make([]int, 0, len(n.Children))
+		for slot := range n.Children {
 			slots = append(slots, int(slot))
 		}
 		sort.Ints(slots)
@@ -146,7 +140,7 @@ func serializeNode(node *radixNode) ([]byte, error) {
 		}
 		for _, slot := range slots {
 			buf.WriteByte(byte(slot))
-			child := node.Children[byte(slot)]
+			child := n.Children[byte(slot)]
 			childBytes := child.Bytes()
 			if err := binary.Write(&buf, binary.BigEndian, uint16(len(childBytes))); err != nil {
 				return nil, err
@@ -156,8 +150,8 @@ func serializeNode(node *radixNode) ([]byte, error) {
 			}
 		}
 	case nodeKindLeaf:
-		entries := make([]leafEntry, len(node.Entries))
-		copy(entries, node.Entries)
+		entries := make([]leafEntry, len(n.Entries))
+		copy(entries, n.Entries)
 		sortLeafEntries(entries)
 		if err := binary.Write(&buf, binary.BigEndian, uint16(len(entries))); err != nil {
 			return nil, err
@@ -182,7 +176,7 @@ func serializeNode(node *radixNode) ([]byte, error) {
 			}
 		}
 	default:
-		return nil, fmt.Errorf("unknown node kind: %d", node.Kind)
+		return nil, fmt.Errorf("unknown node kind: %d", n.Kind)
 	}
 
 	return buf.Bytes(), nil
@@ -195,7 +189,7 @@ func deserializeNode(data []byte) (*radixNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	if version != nodeVersion {
+	if version != currentNodeVersion {
 		return nil, fmt.Errorf("unsupported radix node version: %d", version)
 	}
 
@@ -214,6 +208,7 @@ func deserializeNode(data []byte) (*radixNode, error) {
 	}
 
 	node := &radixNode{
+		Version:  version,
 		Kind:     kind,
 		NodePath: nodePath,
 	}
@@ -323,15 +318,23 @@ func hotIndexKey(root cid.Cid, prefix []byte) []byte {
 }
 
 func putNode(ctx context.Context, store kvstore.KVStore, node *radixNode) (cid.Cid, []byte, error) {
-	serialized, err := serializeNode(node)
+	nodeCID, serialized, err := materializeNode(node)
+	if err != nil {
+		return cid.Undef, nil, err
+	}
+	if err := store.Put(ctx, nodeStoreKey(nodeCID), serialized); err != nil {
+		return cid.Undef, nil, err
+	}
+	return nodeCID, serialized, nil
+}
+
+func materializeNode(node *radixNode) (cid.Cid, []byte, error) {
+	serialized, err := node.Serialize()
 	if err != nil {
 		return cid.Undef, nil, err
 	}
 	nodeCID, err := nodeCIDForBytes(serialized)
 	if err != nil {
-		return cid.Undef, nil, err
-	}
-	if err := store.Put(ctx, nodeStoreKey(nodeCID), serialized); err != nil {
 		return cid.Undef, nil, err
 	}
 	return nodeCID, serialized, nil
@@ -407,12 +410,12 @@ func buildBranch(depth int, oldLeaf *buildNode, oldDigest [32]byte, newLeaf *bui
 	return node
 }
 
-func persistBuildNode(ctx context.Context, store kvstore.KVStore, node *buildNode, index map[string]cid.Cid) (cid.Cid, error) {
+func materializeBuildNode(node *buildNode, index map[string]cid.Cid, staged map[string][]byte) (cid.Cid, error) {
 	switch node.Kind {
 	case nodeKindInternal:
 		children := make(map[byte]cid.Cid, len(node.Children))
 		for slot, child := range node.Children {
-			childCID, err := persistBuildNode(ctx, store, child, index)
+			childCID, err := materializeBuildNode(child, index, staged)
 			if err != nil {
 				return cid.Undef, err
 			}
@@ -423,10 +426,11 @@ func persistBuildNode(ctx context.Context, store kvstore.KVStore, node *buildNod
 			NodePath: append([]byte(nil), node.NodePath...),
 			Children: children,
 		}
-		nodeCID, _, err := putNode(ctx, store, rn)
+		nodeCID, serialized, err := materializeNode(rn)
 		if err != nil {
 			return cid.Undef, err
 		}
+		staged[string(nodeStoreKey(nodeCID))] = serialized
 		index[string(rn.NodePath)] = nodeCID
 		return nodeCID, nil
 	case nodeKindLeaf:
@@ -436,10 +440,11 @@ func persistBuildNode(ctx context.Context, store kvstore.KVStore, node *buildNod
 			Entries:  append([]leafEntry(nil), node.Entries...),
 		}
 		sortLeafEntries(rn.Entries)
-		nodeCID, _, err := putNode(ctx, store, rn)
+		nodeCID, serialized, err := materializeNode(rn)
 		if err != nil {
 			return cid.Undef, err
 		}
+		staged[string(nodeStoreKey(nodeCID))] = serialized
 		index[string(rn.NodePath)] = nodeCID
 		return nodeCID, nil
 	default:

@@ -99,7 +99,7 @@ func runResolve(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nResolution transcript:\n")
 		for i, step := range result.Transcript.Steps {
 			fmt.Fprintf(os.Stderr, "  [%d] %s -> %s (evidence: %s)\n",
-				i, step.Path, step.Target, evidenceKindStr(step.Evidence.Kind()))
+				i, step.Path.String(), step.Target, evidenceKindStr(step.Evidence.Kind()))
 		}
 	} else {
 		fmt.Println(result.Target.String())
@@ -114,7 +114,7 @@ func runResolve(cmd *cobra.Command, args []string) error {
 	if path != "" && len(result.Transcript.Steps) > 0 {
 		matchedPaths := make([]string, len(result.Transcript.Steps))
 		for i, step := range result.Transcript.Steps {
-			matchedPaths[i] = step.Path
+			matchedPaths[i] = step.Path.String()
 		}
 		fmt.Fprintf(os.Stderr, "path matched: %s\n", strings.Join(matchedPaths, " -> "))
 	}

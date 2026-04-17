@@ -20,6 +20,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagcbor"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagjson"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit/dagpb"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	multihash "github.com/multiformats/go-multihash"
@@ -76,7 +77,7 @@ func NewResolverWithCodecs(c cas.Client, registry *codec.Registry) *Resolver {
 //
 // This resolver only handles a single hop. The caller is responsible for
 // continuing traversal if needed.
-func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, target cid.Cid, ev evidence.Evidence, err error) {
+func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	if !root.Defined() {
 		return "", cid.Cid{}, nil, fmt.Errorf("root is not defined")
 	}
@@ -107,7 +108,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	}
 
 	// If no path, just return the block content
-	if path == "" {
+	if path.IsEmpty() {
 		return "", cid.Cid{}, evidence.NewImplicitEvidence(blockContent), nil
 	}
 
@@ -121,8 +122,8 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	if codecName == "dag-pb" {
 		hamtResult := r.tryHAMTResolution(root, blockContent, path)
 		if hamtResult.isHAMT {
-			return hamtResult.matchedPath, hamtResult.target, hamtResult.evidence, hamtResult.err
-		}
+		return hamtResult.matchedPath, hamtResult.target, hamtResult.evidence, hamtResult.err
+	}
 	}
 
 	// Try to resolve the first segment
@@ -133,11 +134,11 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 	}
 
 	// Found a link
-	matchedPath = segments[0]
+	matchedPath = arcset.Path(segments[0])
 	if len(segments) > 1 && len(remaining) < len(segments)-1 {
 		// If some path was consumed, adjust matchedPath
 		consumed := len(segments) - len(remaining)
-		matchedPath = strings.Join(segments[:consumed], "/")
+		matchedPath = arcset.Path(strings.Join(segments[:consumed], "/"))
 	}
 
 	return matchedPath, nextCID, evidence.NewImplicitEvidence(blockContent), nil
@@ -147,7 +148,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (matchedPath string, targe
 // It performs two checks:
 //  1. Verifies that the block content in evidence hashes to the root CID
 //  2. Verifies that the path resolves to the target CID within the block
-func (r *Resolver) Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error) {
+func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
 	if ev == nil {
 		return false, fmt.Errorf("evidence is nil")
 	}
@@ -184,9 +185,9 @@ func verifyBlockHash(root cid.Cid, blockContent []byte) bool {
 }
 
 // verifyPathMapping verifies that path resolves to target within the block.
-func (r *Resolver) verifyPathMapping(root cid.Cid, blockContent []byte, path string, target cid.Cid) (bool, error) {
+func (r *Resolver) verifyPathMapping(root cid.Cid, blockContent []byte, path arcset.Path, target cid.Cid) (bool, error) {
 	// Empty path means no traversal, target should equal root
-	if path == "" {
+	if path.IsEmpty() {
 		return root.Equals(target), nil
 	}
 
@@ -250,14 +251,14 @@ func codecFromCID(c cid.Cid) string {
 }
 
 // splitPath splits a path into segments.
-func splitPath(path string) []string {
+func splitPath(path arcset.Path) []string {
 	return step.SplitPath(path)
 }
 
 // hamtResult holds the result of HAMT detection and resolution.
 type hamtResult struct {
 	isHAMT      bool
-	matchedPath string
+	matchedPath arcset.Path
 	target      cid.Cid
 	evidence    evidence.Evidence
 	err         error
@@ -266,7 +267,7 @@ type hamtResult struct {
 // tryHAMTResolution attempts to detect and resolve a HAMT structure.
 // HAMT nodes are dag-pb blocks where the Data field contains a dag-cbor
 // encoded map with "0" (bitfield) and "1" (entries) keys.
-func (r *Resolver) tryHAMTResolution(root cid.Cid, blockContent []byte, path string) hamtResult {
+func (r *Resolver) tryHAMTResolution(root cid.Cid, blockContent []byte, path arcset.Path) hamtResult {
 	// Try to parse as HAMT node
 	_, err := hamt.ParseNode(blockContent)
 	if err != nil {
@@ -275,7 +276,7 @@ func (r *Resolver) tryHAMTResolution(root cid.Cid, blockContent []byte, path str
 	}
 
 	// Successfully parsed as HAMT - this is a HAMT node
-	if path == "" {
+	if path.IsEmpty() {
 		// Empty path returns the root with HAMT evidence
 		return hamtResult{
 			isHAMT:   true,

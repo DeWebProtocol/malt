@@ -123,7 +123,7 @@ func stepsToResponse(steps []resolver.StepEvidence) []StepEvidenceResponse {
 			kind = "hamt"
 		}
 		resp[i] = StepEvidenceResponse{
-			Path:     step.Path,
+			Path:     step.Path.String(),
 			Target:   step.Target.String(),
 			Evidence: encodeBase64(step.Evidence.Bytes()),
 			Kind:     kind,

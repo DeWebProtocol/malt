@@ -70,7 +70,7 @@ func runProve(cmd *cobra.Command, args []string) error {
 		for i, step := range result.Transcript.Steps {
 			kind := evidenceKindStr(step.Evidence.Kind())
 			steps[i] = map[string]string{
-				"path":     step.Path,
+				"path":     step.Path.String(),
 				"target":   step.Target.String(),
 				"evidence": base64.StdEncoding.EncodeToString(step.Evidence.Bytes()),
 				"kind":     kind,
@@ -88,7 +88,7 @@ func runProve(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stdout, "\n")
 		for i, step := range result.Transcript.Steps {
 			kind := evidenceKindStr(step.Evidence.Kind())
-			fmt.Fprintf(os.Stdout, "[%d] %s -> %s\n", i, step.Path, step.Target)
+			fmt.Fprintf(os.Stdout, "[%d] %s -> %s\n", i, step.Path.String(), step.Target)
 			fmt.Fprintf(os.Stdout, "    evidence: %s (base64)\n", base64.StdEncoding.EncodeToString(step.Evidence.Bytes()))
 			fmt.Fprintf(os.Stdout, "    kind:     %s\n", kind)
 		}

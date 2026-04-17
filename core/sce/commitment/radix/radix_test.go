@@ -186,3 +186,32 @@ func TestRadixAggregateProof(t *testing.T) {
 		t.Fatal("aggregate proof should be valid")
 	}
 }
+
+func TestRadixBatchUpdateRejectsOldValueMismatch(t *testing.T) {
+	s, err := radix.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	oldTarget, _ := newPayloadCID([]byte("old"))
+	newTarget, _ := newPayloadCID([]byte("new"))
+	wrongOld, _ := newPayloadCID([]byte("wrong"))
+	arcs := arcset.NewMapFrom(map[string]cid.Cid{
+		"aaa": oldTarget,
+	})
+
+	root, err := s.Commit(arcs)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	_, err = s.BatchUpdate(root, arcs, map[string]struct {
+		Old cid.Cid
+		New cid.Cid
+	}{
+		"aaa": {Old: wrongOld, New: newTarget},
+	})
+	if err == nil {
+		t.Fatal("expected BatchUpdate to reject mismatched old value")
+	}
+}

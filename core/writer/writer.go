@@ -59,7 +59,7 @@ type UpdateResult struct {
 	NewRoot cid.Cid
 
 	// Path is the arc path that was updated.
-	Path string
+	Path arcset.Path
 
 	// OldTarget is the previous target CID (cid.Undef if insert).
 	OldTarget cid.Cid
@@ -80,7 +80,7 @@ type BatchUpdateResult struct {
 	NewRoot cid.Cid
 
 	// PerArc contains the result for each updated arc.
-	PerArc map[string]UpdateResult
+	PerArc map[arcset.Path]UpdateResult
 }
 
 // LineageRecorder is an optional interface for recording structure root lineage.
@@ -117,6 +117,59 @@ func NewWriter(sce *sce.Engine, eat eat.EAT, rec LineageRecorder) *Writer {
 	}
 }
 
+func canonicalizeUpdateMap(updates map[string]cid.Cid) (map[arcset.Path]cid.Cid, error) {
+	out := make(map[arcset.Path]cid.Cid, len(updates))
+	for path, target := range updates {
+		canonical := arcset.CanonicalizePath(path)
+		if canonical.IsEmpty() {
+			return nil, ErrEmptyPath
+		}
+		if existing, ok := out[canonical]; ok && !existing.Equals(target) {
+			return nil, fmt.Errorf("duplicate canonical path %q in updates", canonical.String())
+		}
+		out[canonical] = target
+	}
+	return out, nil
+}
+
+func canonicalizeSnapshot(arcs arcset.Snapshot) (arcset.Snapshot, map[arcset.Path]cid.Cid, error) {
+	if arcs == nil {
+		return nil, nil, fmt.Errorf("arc set is nil")
+	}
+
+	arcsMap := make(map[arcset.Path]cid.Cid, arcs.Len())
+	stringMap := make(map[string]cid.Cid, arcs.Len())
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		canonical := arcset.CanonicalizePath(path)
+		if canonical.IsEmpty() {
+			return nil, nil, ErrEmptyPath
+		}
+		if existing, ok := arcsMap[canonical]; ok && !existing.Equals(target) {
+			return nil, nil, fmt.Errorf("duplicate canonical path %q in arc set", canonical.String())
+		}
+		arcsMap[canonical] = target
+		stringMap[canonical.String()] = target
+	}
+	if iter.Err() != nil {
+		return nil, nil, fmt.Errorf("arc iteration error: %w", iter.Err())
+	}
+
+	return arcset.NewMapFrom(stringMap), arcsMap, nil
+}
+
+func stringifyPathMap(paths map[arcset.Path]cid.Cid) map[string]cid.Cid {
+	out := make(map[string]cid.Cid, len(paths))
+	for path, target := range paths {
+		out[path.String()] = target
+	}
+	return out
+}
+
 // UpdateArc executes the unified arc update procedure.
 //
 // Given a structure root, path, and new target CID, this method:
@@ -134,12 +187,13 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
 	}
-	if path == "" {
+	canonicalPath := arcset.CanonicalizePath(path)
+	if canonicalPath.IsEmpty() {
 		return nil, ErrEmptyPath
 	}
 
 	// Step 1: Look up current binding
-	oldTarget, err := w.eat.Get(ctx, bucketId, root, path)
+	oldTarget, err := w.eat.Get(ctx, bucketId, root, canonicalPath.String())
 	if err != nil && !eat.IsNotFound(err) {
 		return nil, fmt.Errorf("EAT.Get failed: %w", err)
 	}
@@ -162,7 +216,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 		return &UpdateResult{
 			OldRoot:   root,
 			NewRoot:   root,
-			Path:      path,
+			Path:      canonicalPath,
 			OldTarget: oldTarget,
 			NewTarget: newTarget,
 			Op:        ArcInsert,
@@ -195,10 +249,10 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 
 		// Apply the change
 		if isInsert {
-			arcsMap[path] = newTarget
+			arcsMap[canonicalPath.String()] = newTarget
 		} else {
 			// isDelete
-			delete(arcsMap, path)
+			delete(arcsMap, canonicalPath.String())
 		}
 
 		newRoot, err = w.sce.Commit(arcset.NewMapFrom(arcsMap))
@@ -212,14 +266,14 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 			return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
 		}
 
-		newRoot, err = w.sce.Update(root, snapshot, path, oldTarget, newTarget)
+		newRoot, err = w.sce.Update(root, snapshot, canonicalPath.String(), oldTarget, newTarget)
 		if err != nil {
 			return nil, fmt.Errorf("SCE.Update failed: %w", err)
 		}
 	}
 
 	// Step 3: Apply update to EAT
-	arcsMap := map[string]cid.Cid{path: newTarget}
+	arcsMap := map[string]cid.Cid{canonicalPath.String(): newTarget}
 	if err := w.eat.Update(ctx, bucketId, newRoot, root, arcsMap); err != nil {
 		return nil, fmt.Errorf("EAT.Update failed: %w", err)
 	}
@@ -234,7 +288,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	return &UpdateResult{
 		OldRoot:   root,
 		NewRoot:   newRoot,
-		Path:      path,
+		Path:      canonicalPath,
 		OldTarget: oldTarget,
 		NewTarget: newTarget,
 		Op:        op,
@@ -256,6 +310,10 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	if len(updates) == 0 {
 		return nil, fmt.Errorf("updates must not be empty")
 	}
+	normalizedUpdates, err := canonicalizeUpdateMap(updates)
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 1: Get current arc set snapshot
 	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
@@ -264,17 +322,17 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	}
 
 	// Step 2: Look up all current bindings and classify operations
-	perArc := make(map[string]UpdateResult, len(updates))
-	sceUpdates := make(map[string]struct {
+	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
+	sceUpdates := make(map[arcset.Path]struct {
 		Old cid.Cid
 		New cid.Cid
-	}, len(updates))
+	}, len(normalizedUpdates))
 	needsRecommit := false
 
-	for path, newTarget := range updates {
-		oldTarget, err := w.eat.Get(ctx, bucketId, root, path)
+	for path, newTarget := range normalizedUpdates {
+		oldTarget, err := w.eat.Get(ctx, bucketId, root, path.String())
 		if err != nil && !eat.IsNotFound(err) {
-			return nil, fmt.Errorf("EAT.Get failed for %s: %w", path, err)
+			return nil, fmt.Errorf("EAT.Get failed for %s: %w", path.String(), err)
 		}
 
 		isInsert := !oldTarget.Defined() && newTarget.Defined()
@@ -325,11 +383,11 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
 		}
 
-		for path, newTarget := range updates {
+		for path, newTarget := range normalizedUpdates {
 			if newTarget.Defined() {
-				arcsMap[path] = newTarget
+				arcsMap[path.String()] = newTarget
 			} else {
-				delete(arcsMap, path)
+				delete(arcsMap, path.String())
 			}
 		}
 
@@ -343,9 +401,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 		batchSCEUpdates := make(map[string]struct {
 			Old cid.Cid
 			New cid.Cid
-		}, len(updates))
+		}, len(normalizedUpdates))
 		for path, u := range sceUpdates {
-			batchSCEUpdates[path] = u
+			batchSCEUpdates[path.String()] = u
 		}
 
 		newRoot, err = w.sce.BatchUpdate(root, snapshot, batchSCEUpdates)
@@ -355,7 +413,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	}
 
 	// Step 4: Apply all updates to EAT
-	if err := w.eat.Update(ctx, bucketId, newRoot, root, updates); err != nil {
+	if err := w.eat.Update(ctx, bucketId, newRoot, root, stringifyPathMap(normalizedUpdates)); err != nil {
 		return nil, fmt.Errorf("EAT.Update failed: %w", err)
 	}
 
@@ -390,28 +448,19 @@ func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcs
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
 	}
+	normalizedSnapshot, arcsMap, err := canonicalizeSnapshot(arcs)
+	if err != nil {
+		return cid.Undef, err
+	}
 
 	// Step 1: Commit arc set via SCE
-	root, err := w.sce.Commit(arcs)
+	root, err := w.sce.Commit(normalizedSnapshot)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("SCE.Commit failed: %w", err)
 	}
 
 	// Step 2: Store arcs in EAT (first version)
-	arcsMap := make(map[string]cid.Cid)
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		arcsMap[path] = target
-	}
-	if iter.Err() != nil {
-		return cid.Undef, fmt.Errorf("arc iteration error: %w", iter.Err())
-	}
-
-	if err := w.eat.Update(ctx, bucketId, root, cid.Undef, arcsMap); err != nil {
+	if err := w.eat.Update(ctx, bucketId, root, cid.Undef, stringifyPathMap(arcsMap)); err != nil {
 		return cid.Undef, fmt.Errorf("EAT.Update failed: %w", err)
 	}
 
@@ -433,14 +482,15 @@ func (w *Writer) GetArc(ctx context.Context, bucketId string, root cid.Cid, path
 	if !root.Defined() {
 		return cid.Undef, ErrInvalidRoot
 	}
-	if path == "" {
+	canonicalPath := arcset.CanonicalizePath(path)
+	if canonicalPath.IsEmpty() {
 		return cid.Undef, ErrEmptyPath
 	}
 
-	target, err := w.eat.Get(ctx, bucketId, root, path)
+	target, err := w.eat.Get(ctx, bucketId, root, canonicalPath.String())
 	if err != nil {
 		if eat.IsNotFound(err) {
-			return cid.Undef, fmt.Errorf("%s: %w", path, ErrArcNotFound)
+			return cid.Undef, fmt.Errorf("%s: %w", canonicalPath.String(), ErrArcNotFound)
 		}
 		return cid.Undef, fmt.Errorf("EAT.Get failed: %w", err)
 	}

@@ -6,6 +6,7 @@
 package step
 
 import (
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
@@ -15,9 +16,8 @@ import (
 type Step interface {
 	// Resolve finds the longest matching prefix and returns evidence.
 	// Returns: matchedPath, target, evidence, error
-	Resolve(root cid.Cid, path string) (matchedPath string, target cid.Cid, ev evidence.Evidence, err error)
+	Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error)
 
 	// Verify verifies the evidence for a resolution step.
-	Verify(root cid.Cid, path string, target cid.Cid, ev evidence.Evidence) (bool, error)
+	Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error)
 }
-

@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
@@ -13,7 +14,7 @@ type Transcript struct {
 // StepEvidence represents evidence for a single resolution step.
 type StepEvidence struct {
 	// Path is the path segment consumed in this step.
-	Path string
+	Path arcset.Path
 
 	// Target is the CID resolved to in this step.
 	Target cid.Cid

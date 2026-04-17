@@ -10,6 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 )
@@ -61,10 +62,10 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 
 	transcript := &Transcript{Steps: make([]StepEvidence, 0)}
 	currentCID := root
-	remainingPath := path
+	remainingPath := arcset.CanonicalizePath(path)
 
-	for remainingPath != "" {
-		var matchedPath string
+	for !remainingPath.IsEmpty() {
+		var matchedPath arcset.Path
 		var target cid.Cid
 		var ev evidence.Evidence
 		var err error
@@ -96,7 +97,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		}
 
 		// If no path was matched, we can't continue
-		if matchedPath == "" {
+		if matchedPath.IsEmpty() {
 			return &ResolveResult{
 				Target:     currentCID,
 				Transcript: transcript,
@@ -114,10 +115,11 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		currentCID = target
 
 		// Update remaining path
-		remainingPath = remainingPath[len(matchedPath):]
-		if remainingPath != "" && remainingPath[0] == '/' {
-			remainingPath = remainingPath[1:]
+		nextPath, ok := remainingPath.Consume(matchedPath)
+		if !ok {
+			return nil, fmt.Errorf("%w: failed to consume matched path %q from %q", ErrResolutionFailed, matchedPath.String(), remainingPath.String())
 		}
+		remainingPath = nextPath
 	}
 
 	// When path is exhausted, check if current CID is a MALT commitment.

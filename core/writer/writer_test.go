@@ -368,6 +368,40 @@ func TestWriter_CreateStructure(t *testing.T) {
 	}
 }
 
+func TestWriter_CanonicalizesPathsAtWriteBoundary(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	bucketId := "test"
+
+	arcs := makeArcSet(map[string]cid.Cid{
+		"/foo//bar/": fakeCID("data-foo-bar"),
+	})
+	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	got, err := w.GetArc(ctx, bucketId, root, "foo/bar")
+	if err != nil {
+		t.Fatalf("GetArc failed: %v", err)
+	}
+	if got != fakeCID("data-foo-bar") {
+		t.Errorf("GetArc(foo/bar): expected %s, got %s", fakeCID("data-foo-bar"), got)
+	}
+
+	updated, err := w.UpdateArc(ctx, bucketId, root, "/foo//bar/", fakeCID("data-foo-bar-v2"))
+	if err != nil {
+		t.Fatalf("UpdateArc failed: %v", err)
+	}
+	got, err = w.GetArc(ctx, bucketId, updated.NewRoot, "/foo//bar/")
+	if err != nil {
+		t.Fatalf("GetArc after update failed: %v", err)
+	}
+	if got != fakeCID("data-foo-bar-v2") {
+		t.Errorf("GetArc after update: expected %s, got %s", fakeCID("data-foo-bar-v2"), got)
+	}
+}
+
 func TestWriter_CreateStructure_NilArcSet(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
