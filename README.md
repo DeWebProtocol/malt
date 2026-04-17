@@ -44,26 +44,34 @@ This distinction is central to the design.
 
 ## Terminology and Layers
 
-MALT uses a small set of terms that should not be collapsed into one "backend" bucket:
+The preferred abstraction is to expose **structural semantics** publicly and keep
+layout/backend choices internal to each semantic implementation.
 
 | Layer | Question | Examples |
 | --- | --- | --- |
-| Semantics | What logical structure does the application want to express? | `list`, `map` |
-| Key Interpretation | What logical key identifies an arc? | list index, path segment sequence, full path |
-| Layout / Indexing | How does a logical key map into committed positions, and how are conflicts handled? | flat indexed layout, segment-radix layout, hashed-path keyed layout |
-| Commitment Backend | How are fixed positions authenticated? | KZG, IPA, hash/Merkle commitments |
+| Structural Semantics | What logical structure does the application expose? | `list`, `map` |
+| Semantic Implementation | How is that semantic contract realized internally? | flat indexed list, linked/chunked list, segment-radix map, hashed-path radix map |
+| Commitment Backend | What primitive authenticates already-positioned values or nodes? | KZG, IPA, hash/Merkle commitments |
 
-Two derived terms are useful:
+Under this terminology:
 
-- authenticated layout / authenticated map
-  - a layout plus the commitment backend it uses internally
-  - `radix` belongs here
+- `list`
+  - a stable indexed structure
+  - native operations are index-based proof and index-stable replacement
+  - length must be committed as part of the structure state
+  - insert/delete are not primitive operations; they can be implemented above the semantic layer as expensive shift-and-rewrite sequences
+- `map`
+  - a keyed structure
+  - implementations choose how keys are placed into authenticated positions and how conflicts are handled
 - fixed-slot commitment primitive
   - a backend that only authenticates already-positioned values
   - `KZG` and `IPA` belong here
 
-The current codebase exposes these through one `commitment.Scheme` interface for engineering convenience.
-That interface flattening is an implementation choice, not the preferred conceptual layering.
+For engineering convenience, the current codebase still exposes many of these
+choices through one `commitment.Scheme` interface under `core/sce`.
+That is a legacy flattening of concerns, not the preferred conceptual layering.
+The cleaner direction is to introduce a separate `core/structure` layer with
+public `list` and `map` semantics, each with their own internal implementations.
 
 In the current prototype, hot proof/index state is typically organized per graph for performance.
 That state placement is an implementation choice, not a semantic requirement of the abstraction.
@@ -107,6 +115,9 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
 
 - `Graph`
   - scoped unit of structure and main read/write entry point
+- `Structure`
+  - preferred semantic layer for public `list` and `map` contracts
+  - currently not separated in code yet; today's repository still flattens this into `sce`
 - `EAT`
   - explicit arc materialization and lookup state
 - `SCE`
@@ -137,6 +148,7 @@ malt/
 │   ├── replication/  # secondary snapshot/sync tooling
 │   ├── resolver/     # resolution loop and step executors
 │   ├── sce/          # structure commitment engine
+│   ├── structure/    # public structural semantics (`list`, `map`)
 │   ├── types/        # arc sets, evidence, proof-related types
 │   └── writer/       # write-side structure update flow
 ├── eval/
@@ -154,6 +166,19 @@ These parts of the repo are useful, but they are not the conceptual center of MA
 - benchmark scaffolding
 - helper deployment abstractions
 - layout/backend comparisons such as radix, KZG, and IPA
+
+## Preferred Refactor Direction
+
+The long-term public abstraction should look like:
+
+- `core/structure/list`
+  - public stable-indexed list semantic
+  - implementations may include flat indexed layouts backed by `IPA` or `KZG`
+- `core/structure/map`
+  - public keyed map semantic
+  - implementations may include segment-radix or hashed-path radix layouts
+- commitment backends
+  - internal dependencies of structure implementations rather than the primary API surface
 
 ## More Detail
 

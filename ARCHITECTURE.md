@@ -58,6 +58,7 @@ malt/
 │   ├── replication/  # Secondary snapshot/sync tooling
 │   ├── resolver/     # Resolution loop and step executors
 │   ├── sce/          # Structure commitment engine
+│   ├── structure/    # Public structural semantics (`list`, `map`)
 │   ├── types/        # Arc sets, evidence, proof-related types
 │   └── writer/       # Write-side structure update flow
 ├── eval/
@@ -103,24 +104,35 @@ It is best understood as stateless with respect to authoritative graph state:
 - it operates over inputs supplied by the caller
 - any internal cache is an optimization, not semantic system state
 
-Conceptually, `SCE` spans two layers that the current code flattens together:
+The preferred conceptual split is:
 
-- layout / indexing
-  - maps logical keys into authenticated positions and handles key conflicts
-  - examples: flat indexed layout, segment-radix layout, hashed-path keyed layout
+- structural semantics
+  - the public contract exposed to applications
+  - `list` and `map`
+- semantic implementations
+  - internal realizations of those contracts
+  - examples: flat indexed list, linked/chunked list, segment-radix map, hashed-path radix map
 - commitment backend
-  - authenticates values at already-chosen positions
+  - internal authentication primitive used by an implementation
   - examples: KZG, IPA, hash/Merkle commitments
 
-This also yields a useful distinction:
+In that model, `SCE` should not be the public semantic layer.
+The cleaner long-term direction is a separate `core/structure` layer that
+exposes `list` and `map`, while `SCE` and commitment backends remain internal.
 
-- fixed-slot commitment primitives
-  - `KZG`, `IPA`
-- authenticated layouts
-  - `radix`
+Two semantic notes matter:
 
-The current repository exposes all of these through a single `commitment.Scheme` interface for engineering convenience.
-That interface should be read as a code-level flattening, not as the preferred conceptual layering.
+- `list`
+  - stable indexed structure with committed length
+  - native operations are index proof and index-stable replacement
+  - insert/delete are derived, higher-cost rewrites built above the semantic contract
+- `map`
+  - keyed structure whose implementation chooses the internal key-placement rule
+
+The current repository still exposes many of these concerns through a single
+`commitment.Scheme` interface for engineering convenience.
+That interface should be read as a temporary code-level flattening, not as the
+preferred architecture.
 
 ### Localized Write Path
 
@@ -257,16 +269,20 @@ The following parts of the repository are useful but should be treated as second
 
 ### SCE Schemes (Code)
 
-- fixed-slot commitment primitives
+The current code still groups several concerns under one `Scheme` notion:
+
+- map-style implementation
+  - radix
+- fixed-slot backends used by list-like implementations
   - KZG
   - IPA
-- authenticated layouts
-  - radix
 
-The repository may contain additional experimental schemes, but the main documented split is:
+The intended refactor direction is:
 
-- `radix` for map-like authenticated layout
-- `KZG` / `IPA` for fixed-slot or list-like commitments
+- public `core/structure/list`
+- public `core/structure/map`
+- implementation subpackages below each semantic
+- internal commitment backends selected by the implementation
 
 ## Verification Model
 
