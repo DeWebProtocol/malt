@@ -7,7 +7,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/structure"
-	mapping "github.com/dewebprotocol/malt/core/structure/map"
+	mapping "github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )

@@ -7,7 +7,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// SetView is an immutable in-memory keyed view used by map semantics and tests.
+// SetView is an immutable in-memory keyed view used by mapping semantics and tests.
 type SetView struct {
 	entries map[arcset.Path]cid.Cid
 }

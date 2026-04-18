@@ -16,7 +16,7 @@ type ListBackend interface {
 	ReplaceIndex(root cid.Cid, values []cid.Cid, index uint64, oldValue, newValue cid.Cid) (cid.Cid, error)
 }
 
-// MappingBackend is the internal keyed backend contract consumed by map semantics.
+// MappingBackend is the internal keyed backend contract consumed by mapping semantics.
 type MappingBackend interface {
 	CommitBindings(bindings arcset.ArcSet) (cid.Cid, error)
 	ProveBinding(root cid.Cid, bindings arcset.ArcSet, key arcset.Path) (cid.Cid, bool, []byte, error)

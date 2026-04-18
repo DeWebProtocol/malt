@@ -6,8 +6,8 @@ import (
 
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
 	backendradix "github.com/dewebprotocol/malt/core/sce/commitment/radix"
-	mapping "github.com/dewebprotocol/malt/core/structure/map"
-	semanticradix "github.com/dewebprotocol/malt/core/structure/map/radix"
+	mapping "github.com/dewebprotocol/malt/core/structure/mapping"
+	semanticradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
