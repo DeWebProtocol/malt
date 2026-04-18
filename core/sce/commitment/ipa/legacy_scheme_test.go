@@ -31,12 +31,12 @@ func TestIPALegacySchemeProveAndVerify(t *testing.T) {
 		t.Fatalf("unexpected proved value %s", proved)
 	}
 	if len(proof) <= ipa.ProofSize {
-		t.Fatalf("expected wrapped legacy proof larger than primitive size %d, got %d", ipa.ProofSize, len(proof))
+		t.Fatalf("expected path-bound proof larger than primitive size %d, got %d", ipa.ProofSize, len(proof))
 	}
 
-	primitiveProof, err := commitment.UnwrapLegacyPathProof("item", proof)
+	primitiveProof, err := commitment.UnwrapPathProof("item", proof)
 	if err != nil {
-		t.Fatalf("UnwrapLegacyPathProof failed: %v", err)
+		t.Fatalf("UnwrapPathProof failed: %v", err)
 	}
 	ok, err := scheme.VerifyIndex(root, 0, target, primitiveProof)
 	if err != nil {

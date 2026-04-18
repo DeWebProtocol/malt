@@ -48,14 +48,14 @@ func ExampleScheme_Prove() {
 	}
 
 	fmt.Printf("Proved target: %v\n", provedTarget.Equals(target))
-	fmt.Printf("Wrapped legacy proof: %v\n", len(proof) > kzg.ProofSize)
+	fmt.Printf("Path-bound proof: %v\n", len(proof) > kzg.ProofSize)
 
 	valid, _ := c.Verify(root, "data", target, proof)
 	fmt.Printf("Proof valid: %v\n", valid)
 
 	// Output:
 	// Proved target: true
-	// Wrapped legacy proof: true
+	// Path-bound proof: true
 	// Proof valid: true
 }
 
