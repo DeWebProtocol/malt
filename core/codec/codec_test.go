@@ -61,29 +61,6 @@ func TestNewKZGCidInvalidSize(t *testing.T) {
 	}
 }
 
-func TestNewVerkleCid(t *testing.T) {
-	// Create a valid Verkle stem (31 bytes)
-	commitment := make([]byte, codec.VerkleStemSize)
-	for i := range commitment {
-		commitment[i] = byte(i)
-	}
-
-	c, err := codec.NewVerkleCid(commitment)
-	if err != nil {
-		t.Fatalf("NewVerkleCid failed: %v", err)
-	}
-
-	// Check codec
-	if c.Prefix().Codec != codec.CodecMaltVerkle {
-		t.Errorf("Expected codec %x, got %x", codec.CodecMaltVerkle, c.Prefix().Codec)
-	}
-
-	// Check it's a MALT CID
-	if !codec.IsMaltCid(c) {
-		t.Error("Expected IsMaltCid to return true")
-	}
-}
-
 func TestNewIPACid(t *testing.T) {
 	// Create a valid IPA commitment (32 bytes)
 	commitment := make([]byte, codec.IPACommitmentSize)
@@ -102,26 +79,6 @@ func TestNewIPACid(t *testing.T) {
 	}
 
 	// Check it's a MALT CID
-	if !codec.IsMaltCid(c) {
-		t.Error("Expected IsMaltCid to return true")
-	}
-}
-
-func TestNewRadixCid(t *testing.T) {
-	commitment := make([]byte, codec.RadixCommitmentSize)
-	for i := range commitment {
-		commitment[i] = byte(i)
-	}
-
-	c, err := codec.NewRadixCid(commitment)
-	if err != nil {
-		t.Fatalf("NewRadixCid failed: %v", err)
-	}
-
-	if c.Prefix().Codec != codec.CodecMaltRadix {
-		t.Errorf("Expected codec %x, got %x", codec.CodecMaltRadix, c.Prefix().Codec)
-	}
-
 	if !codec.IsMaltCid(c) {
 		t.Error("Expected IsMaltCid to return true")
 	}
@@ -158,9 +115,7 @@ func TestCodecName(t *testing.T) {
 		expected string
 	}{
 		{codec.CodecMaltKZG, "malt-kzg"},
-		{codec.CodecMaltVerkle, "malt-verkle"},
 		{codec.CodecMaltIPA, "malt-ipa"},
-		{codec.CodecMaltRadix, "malt-radix"},
 		{0x999999, "unknown-999999"},
 	}
 

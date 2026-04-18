@@ -52,6 +52,22 @@ func TestIPAIndexedBackendRestartSafe(t *testing.T) {
 	if ok {
 		t.Fatal("expected wrong value verification to fail")
 	}
+
+	value0, proof0, err := second.ProveIndex(root, values, 0)
+	if err != nil {
+		t.Fatalf("ProveIndex(0) failed: %v", err)
+	}
+	if !value0.Equals(values[0]) {
+		t.Fatalf("unexpected value at index 0: %s", value0)
+	}
+
+	ok, err = second.VerifyIndex(root, 0, values[0], proof0)
+	if err != nil {
+		t.Fatalf("VerifyIndex(0) failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected index 0 proof to verify")
+	}
 }
 
 func newIndexedPayloadCID(data []byte) cid.Cid {

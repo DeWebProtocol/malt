@@ -48,14 +48,14 @@ func ExampleScheme_Prove() {
 	}
 
 	fmt.Printf("Proved target: %v\n", provedTarget.Equals(target))
-	fmt.Printf("Proof length: %d bytes\n", len(proof))
+	fmt.Printf("Wrapped legacy proof: %v\n", len(proof) > kzg.ProofSize)
 
 	valid, _ := c.Verify(root, "data", target, proof)
 	fmt.Printf("Proof valid: %v\n", valid)
 
 	// Output:
 	// Proved target: true
-	// Proof length: 84 bytes
+	// Wrapped legacy proof: true
 	// Proof valid: true
 }
 
@@ -144,13 +144,13 @@ func ExampleScheme_AggregateProve() {
 
 	aggProof, _ := c.AggregateProve(root, arcs, []string{"path1", "path2"})
 	fmt.Printf("Aggregated proof for %d paths\n", len(aggProof.Paths))
-	fmt.Printf("Proof data size: %d bytes\n", len(aggProof.ProofData))
+	fmt.Printf("Stored proofs: %d\n", len(aggProof.Proofs))
 
 	valid, _ := c.AggregateVerify(root, aggProof)
 	fmt.Printf("Aggregate valid: %v\n", valid)
 
 	// Output:
 	// Aggregated proof for 2 paths
-	// Proof data size: 160 bytes
+	// Stored proofs: 2
 	// Aggregate valid: true
 }

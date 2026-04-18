@@ -293,7 +293,7 @@ func TestManagerListGraphs(t *testing.T) {
 	m := newTestManager()
 
 	m.CreateGraph(ctx, "a1", "kzg", "overwrite")
-	m.CreateGraph(ctx, "a2", "verkle", "overwrite")
+	m.CreateGraph(ctx, "a2", "kzg", "overwrite")
 	m.CreateGraph(ctx, "d1", "kzg", "overwrite")
 	m.DeleteGraph(ctx, "d1")
 

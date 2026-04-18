@@ -12,7 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
+	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/writer"
 	cid "github.com/ipfs/go-cid"
@@ -49,17 +49,18 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 		bucketId = id
 	}
 
-	// Default commitment scheme: Verkle
+	// Default commitment scheme: KZG
 	scheme := o.Scheme
 	if scheme == nil {
-		s, err := verkle.NewScheme()
+		s, err := kzg.NewScheme()
 		if err != nil {
-			return nil, fmt.Errorf("failed to create default Verkle scheme: %w", err)
+			return nil, fmt.Errorf("failed to create default KZG scheme: %w", err)
 		}
 		scheme = s
 	}
 
-	// Create per-graph SCE (stateless — scheme manages its own caching)
+	// Create per-graph SCE. Correctness must not depend on RAM-only state inside
+	// the underlying commitment scheme.
 	sceEngine := sce.NewEngine(scheme)
 
 	// Create per-graph explicit resolver

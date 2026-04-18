@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -118,8 +119,8 @@ func TestAllBackends(t *testing.T) {
 		t.Fatalf("RunAllBackends failed: %v", err)
 	}
 
-	if len(allResults) != 3 {
-		t.Errorf("Expected 3 backends, got %d", len(allResults))
+	if want := len(eval.AllBackends()); len(allResults) != want {
+		t.Errorf("Expected %d backends, got %d", want, len(allResults))
 	}
 
 	for _, backend := range eval.AllBackends() {
@@ -380,7 +381,21 @@ func TestGenerateLatexTable(t *testing.T) {
 	if !strings.Contains(latex, "kzg") {
 		t.Error("LaTeX table missing backend 'kzg'")
 	}
-	if !strings.Contains(latex, "84") {
+	proofSizeFound := false
+	for _, eatResults := range results[eval.BackendKZG] {
+		if metricsByArc, ok := eatResults["append"]; ok {
+			for _, metrics := range metricsByArc {
+				if strings.Contains(latex, strconv.Itoa(metrics.ProofSize)) {
+					proofSizeFound = true
+					break
+				}
+			}
+		}
+		if proofSizeFound {
+			break
+		}
+	}
+	if !proofSizeFound {
 		t.Error("LaTeX table missing proof size")
 	}
 }

@@ -7,7 +7,6 @@ require (
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c
 	github.com/crate-crypto/go-kzg-4844 v1.1.0
 	github.com/dgraph-io/badger/v4 v4.2.0
-	github.com/ethereum/go-verkle v0.2.2
 	github.com/ipfs/go-cid v0.6.0
 	github.com/ipld/go-codec-dagpb v1.7.0
 	github.com/ipld/go-ipld-prime v0.22.0

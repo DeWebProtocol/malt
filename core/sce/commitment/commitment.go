@@ -1,5 +1,6 @@
-// Package commitment defines the pure cryptographic commitment interface.
-// Implementations include KZG, Verkle, and IPA.
+// Package commitment defines cryptographic commitment interfaces.
+// Primitive backends in this package are restart-safe and do not rely on
+// RAM-only state for correctness.
 package commitment
 
 import (
@@ -7,11 +8,12 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Scheme defines the pure commitment interface.
-// Implementations are KZG, Verkle, IPA, etc.
+// Scheme is the legacy path-oriented commitment interface still consumed by the
+// current graph/writer/resolver stack. Primitive semantic backends should
+// prefer narrower contracts such as ListBackend.
 type Scheme interface {
 	// Commit generates a commitment to an arc set.
-	// Returns a CID with MALT-specific codec (e.g., malt-kzg, malt-verkle, malt-ipa).
+	// Returns a CID with a MALT-specific codec (e.g., malt-kzg, malt-ipa).
 	Commit(arcs arcset.ArcSet) (cid.Cid, error)
 
 	// Prove generates a proof for a single path.

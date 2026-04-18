@@ -72,8 +72,8 @@ func TestKZGProveAndVerify(t *testing.T) {
 		t.Error("Proved target should match original")
 	}
 
-	if len(proof) != 84 {
-		t.Errorf("Expected proof size 84, got %d", len(proof))
+	if len(proof) <= kzg.ProofSize {
+		t.Errorf("Expected wrapped legacy proof larger than primitive size %d, got %d", kzg.ProofSize, len(proof))
 	}
 
 	// Verify
@@ -183,8 +183,8 @@ func TestKZGBatchProve(t *testing.T) {
 			continue
 		}
 
-		if len(entry.Proof) != 84 {
-			t.Errorf("Expected proof size 84 for path %s, got %d", path, len(entry.Proof))
+		if len(entry.Proof) <= kzg.ProofSize {
+			t.Errorf("Expected wrapped proof for path %s to exceed primitive size %d, got %d", path, kzg.ProofSize, len(entry.Proof))
 		}
 	}
 }
@@ -261,8 +261,13 @@ func TestKZGAggregateProve(t *testing.T) {
 		t.Errorf("Expected 2 targets, got %d", len(aggProof.Targets))
 	}
 
-	if len(aggProof.ProofData) != 160 { // 2 * 80 bytes (proof + claimedValue)
-		t.Errorf("Expected proof data size 160, got %d", len(aggProof.ProofData))
+	if len(aggProof.Proofs) != 2 {
+		t.Errorf("Expected 2 proofs, got %d", len(aggProof.Proofs))
+	}
+	for i, proof := range aggProof.Proofs {
+		if len(proof) <= kzg.ProofSize {
+			t.Errorf("expected wrapped proof %d to exceed primitive size %d, got %d", i, kzg.ProofSize, len(proof))
+		}
 	}
 }
 
@@ -337,6 +342,24 @@ func TestKZGVerifyWrongProof(t *testing.T) {
 		t.Error("Wrong proof should be invalid")
 	}
 	// Either err != nil (proof verification failed) or (err == nil && valid == false) is acceptable
+}
+
+func TestKZGVerifyWrongPath(t *testing.T) {
+	k, _ := kzg.NewScheme()
+
+	target, _ := newPayloadCID([]byte("data"))
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
+
+	root, _ := k.Commit(arcs)
+	_, proof, err := k.Prove(root, arcs, "a")
+	if err != nil {
+		t.Fatalf("Prove failed: %v", err)
+	}
+
+	valid, err := k.Verify(root, "b", target, proof)
+	if err == nil && valid {
+		t.Fatal("verification should fail when the requested path differs from the proved path")
+	}
 }
 
 func TestKZGVerifyShortProof(t *testing.T) {

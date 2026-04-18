@@ -47,11 +47,11 @@ func TestOpenGraphUsesStoredBackend(t *testing.T) {
 	}
 	defer node.Close()
 
-	if _, err := node.CreateManagedGraph(context.Background(), "ipa-graph", "ipa"); err != nil {
+	if _, err := node.CreateManagedGraph(context.Background(), "kzg-graph", "kzg"); err != nil {
 		t.Fatalf("CreateManagedGraph failed: %v", err)
 	}
 
-	g, err := node.OpenGraph(context.Background(), "ipa-graph")
+	g, err := node.OpenGraph(context.Background(), "kzg-graph")
 	if err != nil {
 		t.Fatalf("OpenGraph failed: %v", err)
 	}
@@ -63,8 +63,8 @@ func TestOpenGraphUsesStoredBackend(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	if got := codec.GetMaltCodec(root); got != codec.CodecMaltIPA {
-		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltIPA)
+	if got := codec.GetMaltCodec(root); got != codec.CodecMaltKZG {
+		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltKZG)
 	}
 }
 
