@@ -42,7 +42,7 @@ func canonicalCLIeATType(t string) string {
 }
 
 func init() {
-	graphCreateCmd.Flags().StringVar(&graphBackend, "backend", "", "Backend type: kzg/verkle/ipa (default: node config)")
+	graphCreateCmd.Flags().StringVar(&graphBackend, "backend", "", "Backend type: kzg (default: node config)")
 	graphCreateCmd.Flags().StringVar(&graphEATType, "eat", "", "Required EAT type metadata (must match node config)")
 }
 

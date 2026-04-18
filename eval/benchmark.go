@@ -21,9 +21,7 @@ import (
 	"github.com/dewebprotocol/malt/core/eat/versioned"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/sce/commitment/verkle"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -35,14 +33,12 @@ import (
 type BackendType string
 
 const (
-	BackendKZG    BackendType = "kzg"
-	BackendVerkle BackendType = "verkle"
-	BackendIPA    BackendType = "ipa"
+	BackendKZG BackendType = "kzg"
 )
 
 // AllBackends returns all available backend types.
 func AllBackends() []BackendType {
-	return []BackendType{BackendKZG, BackendVerkle, BackendIPA}
+	return []BackendType{BackendKZG}
 }
 
 // EATType selects the EAT implementation.
@@ -79,10 +75,6 @@ func NewScheme(b BackendType) (commitment.Scheme, error) {
 	switch b {
 	case BackendKZG:
 		return kzg.NewScheme()
-	case BackendVerkle:
-		return verkle.NewScheme()
-	case BackendIPA:
-		return ipa.NewScheme()
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", b)
 	}

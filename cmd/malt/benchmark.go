@@ -21,7 +21,7 @@ Use "eval" for comprehensive multi-configuration evaluation.
 Examples:
   malt benchmark append
   malt benchmark random --arcs 1000 --rounds 50
-  malt benchmark bulk --backend verkle`,
+  malt benchmark bulk --backend kzg`,
 	Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 	ValidArgs: []string{"append", "random", "bulk"},
 	RunE:      runBenchmark,
@@ -39,7 +39,7 @@ var (
 func init() {
 	benchmarkCmd.Flags().StringVar(&benchArcs, "arcs", "100,1000", "Arc counts (comma-separated)")
 	benchmarkCmd.Flags().IntVar(&benchRounds, "rounds", 100, "Number of update rounds")
-	benchmarkCmd.Flags().StringVar(&benchBackend, "backend", "kzg", "Backend type (kzg/verkle/ipa)")
+	benchmarkCmd.Flags().StringVar(&benchBackend, "backend", "kzg", "Backend type (kzg)")
 	benchmarkCmd.Flags().StringVar(&benchEATType, "eat", "overwrite", "EAT type (overwrite/versioned/bloom)")
 	benchmarkCmd.Flags().StringVar(&benchCSV, "csv", "", "Export results to CSV file")
 	benchmarkCmd.Flags().Int64Var(&benchSeed, "seed", 42, "Random seed")

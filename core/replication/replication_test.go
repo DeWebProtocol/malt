@@ -99,7 +99,7 @@ func TestExporter_ExportAll(t *testing.T) {
 
 	// Create two graphs
 	g1, _ := mgr.CreateGraph(ctx, "graph-a", "kzg", "overwrite")
-	g2, _ := mgr.CreateGraph(ctx, "graph-b", "verkle", "overwrite")
+	g2, _ := mgr.CreateGraph(ctx, "graph-b", "kzg", "overwrite")
 
 	// Add entries for each
 	kv.Put(ctx, []byte("graph-a:test"), []byte("val1"))

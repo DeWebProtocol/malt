@@ -13,23 +13,13 @@ import (
 // These codecs identify different commitment schemes in CID.
 const (
 	CodecMaltKZG = 0x300001 // CodecMaltKZG is the codec for KZG polynomial commitments (48 bytes).
-
-	CodecMaltVerkle = 0x300002 // CodecMaltVerkle is the codec for Verkle commitments (31 bytes stem).
-
 	CodecMaltIPA = 0x300003 // CodecMaltIPA is the codec for Inner Product Argument commitments (32 bytes).
-
-	CodecMaltRadix = 0x300004 // CodecMaltRadix is the codec for committed radix tree commitments (32 bytes).
 )
 
 // Commitment size constants
 const (
 	KZGCommitmentSize = 48 // KZGCommitmentSize is the size of a KZG commitment in bytes (48 bytes).
-
-	VerkleStemSize = 31 // VerkleStemSize is the size of a Verkle stem in bytes (31 bytes).
-
 	IPACommitmentSize = 32 // IPACommitmentSize is the size of an IPA commitment in bytes (32 bytes).
-
-	RadixCommitmentSize = 32 // RadixCommitmentSize is the size of a radix commitment in bytes (32-byte root digest).
 )
 
 // NewKZGCid creates a CID from KZG commitment bytes.
@@ -41,15 +31,6 @@ func NewKZGCid(commitment []byte) (cid.Cid, error) {
 	return newMaltCid(CodecMaltKZG, commitment)
 }
 
-// NewVerkleCid creates a CID from Verkle commitment bytes.
-// Uses identity multihash to store the commitment directly.
-func NewVerkleCid(commitment []byte) (cid.Cid, error) {
-	if len(commitment) != VerkleStemSize {
-		return cid.Cid{}, fmt.Errorf("invalid Verkle stem size: %d, expected %d", len(commitment), VerkleStemSize)
-	}
-	return newMaltCid(CodecMaltVerkle, commitment)
-}
-
 // NewIPACid creates a CID from IPA commitment bytes.
 // Uses identity multihash to store the commitment directly.
 func NewIPACid(commitment []byte) (cid.Cid, error) {
@@ -57,15 +38,6 @@ func NewIPACid(commitment []byte) (cid.Cid, error) {
 		return cid.Cid{}, fmt.Errorf("invalid IPA commitment size: %d, expected %d", len(commitment), IPACommitmentSize)
 	}
 	return newMaltCid(CodecMaltIPA, commitment)
-}
-
-// NewRadixCid creates a CID from committed radix tree root bytes.
-// Uses identity multihash to store the commitment directly.
-func NewRadixCid(commitment []byte) (cid.Cid, error) {
-	if len(commitment) != RadixCommitmentSize {
-		return cid.Cid{}, fmt.Errorf("invalid radix commitment size: %d, expected %d", len(commitment), RadixCommitmentSize)
-	}
-	return newMaltCid(CodecMaltRadix, commitment)
 }
 
 // newMaltCid creates a CIDv1 with the given codec and commitment bytes.
@@ -85,7 +57,7 @@ func newMaltCid(codec uint64, commitment []byte) (cid.Cid, error) {
 // IsMaltCid checks if a CID is a MALT commitment CID.
 func IsMaltCid(c cid.Cid) bool {
 	codec := c.Prefix().Codec
-	return codec == CodecMaltKZG || codec == CodecMaltVerkle || codec == CodecMaltIPA || codec == CodecMaltRadix
+	return codec == CodecMaltKZG || codec == CodecMaltIPA
 }
 
 // GetMaltCodec returns the MALT codec type for a CID.
@@ -124,12 +96,8 @@ func CodecName(codec uint64) string {
 	switch codec {
 	case CodecMaltKZG:
 		return "malt-kzg"
-	case CodecMaltVerkle:
-		return "malt-verkle"
 	case CodecMaltIPA:
 		return "malt-ipa"
-	case CodecMaltRadix:
-		return "malt-radix"
 	default:
 		return fmt.Sprintf("unknown-%x", codec)
 	}

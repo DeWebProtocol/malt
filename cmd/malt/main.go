@@ -65,7 +65,7 @@ func init() {
 	config.Init()
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
-	rootCmd.PersistentFlags().String("commitment", "", "commitment type: kzg/verkle/ipa/radix")
+	rootCmd.PersistentFlags().String("commitment", "", "commitment type: kzg")
 	rootCmd.PersistentFlags().String("kvstore", "", "KVStore type: memory/badger")
 	rootCmd.PersistentFlags().String("eat", "", "EAT type: simple/versioned")
 	rootCmd.PersistentFlags().String("cas", "", "CAS type: mock/ipfs-gateway")

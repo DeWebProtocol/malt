@@ -13,8 +13,9 @@ import (
 )
 
 // Engine is the Structure Commitment Engine.
-// It manages arc sets and delegates cryptographic operations to commitment schemes.
-// The engine is stateless — each scheme manages its own caching internally.
+// It manages arc sets and delegates cryptographic operations to commitment
+// schemes. Correctness must not depend on RAM-only backend state; any backend
+// cache is an optimization only.
 type Engine struct {
 	scheme commitment.Scheme
 }

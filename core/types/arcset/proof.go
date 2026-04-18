@@ -11,7 +11,7 @@ type BatchProofEntry struct {
 
 // AggregatedProof represents a proof for multiple values.
 type AggregatedProof struct {
-	Paths     []string
-	Targets   []cid.Cid
-	ProofData []byte
+	Paths   []string
+	Targets []cid.Cid
+	Proofs  [][]byte
 }

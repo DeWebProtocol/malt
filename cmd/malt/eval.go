@@ -41,7 +41,7 @@ var (
 func init() {
 	evalCmd.Flags().StringVar(&evalArcs, "arcs", "50,100,200", "Arc counts to test (comma-separated)")
 	evalCmd.Flags().IntVar(&evalRounds, "rounds", 100, "Number of update rounds")
-	evalCmd.Flags().StringVar(&evalBackend, "backend", "", "Single backend (kzg/verkle/ipa), default: all")
+	evalCmd.Flags().StringVar(&evalBackend, "backend", "", "Single backend (kzg), default: all")
 	evalCmd.Flags().StringVar(&evalEATType, "eat", "", "Single EAT type (overwrite/versioned/bloom), default: all")
 	evalCmd.Flags().StringVar(&evalWorkload, "workload", "", "Single workload (append/random/bulk), default: all")
 	evalCmd.Flags().StringVar(&evalOutput, "output", "", "JSON output file path")

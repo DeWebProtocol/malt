@@ -20,7 +20,7 @@ import (
 // path is consumed or resolution fails.
 //
 // Architecture:
-//   - MALT commitments (malt-kzg/malt-verkle/malt-ipa) → explicitStep
+//   - MALT commitments (malt-kzg/malt-ipa) → explicitStep
 //   - All other CIDs (dag-pb, dag-cbor, raw, etc.) → implicitStep
 //
 // The implicitStep internally handles different data structures:

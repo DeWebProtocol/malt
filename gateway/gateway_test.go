@@ -77,7 +77,7 @@ func TestNodeAdapterEnsureGraphOpensManagedDefaultGraph(t *testing.T) {
 	}
 	defer node.Close()
 
-	if _, err := node.CreateManagedGraph(context.Background(), "default", "ipa"); err != nil {
+	if _, err := node.CreateManagedGraph(context.Background(), "default", "kzg"); err != nil {
 		t.Fatalf("CreateManagedGraph failed: %v", err)
 	}
 
@@ -113,8 +113,8 @@ func TestNodeAdapterEnsureGraphOpensManagedDefaultGraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode root: %v", err)
 	}
-	if got := codec.GetMaltCodec(root); got != codec.CodecMaltIPA {
-		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltIPA)
+	if got := codec.GetMaltCodec(root); got != codec.CodecMaltKZG {
+		t.Fatalf("root codec = %x, want %x", got, codec.CodecMaltKZG)
 	}
 }
 

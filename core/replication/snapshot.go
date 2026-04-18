@@ -52,7 +52,7 @@ type Snapshot struct {
 	// ArcCount is the number of arcs in the graph.
 	ArcCount int `json:"arc_count"`
 
-	// Backend is the commitment scheme used (kzg/verkle/ipa).
+	// Backend is the commitment scheme used (kzg/ipa).
 	Backend string `json:"backend"`
 
 	// EATType is the EAT implementation used (overwrite/versioned).
