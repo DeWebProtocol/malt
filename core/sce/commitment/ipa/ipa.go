@@ -56,6 +56,16 @@ func NewScheme() (*Scheme, error) {
 	}, nil
 }
 
+// MaxValues returns the maximum number of authenticated slots.
+func (s *Scheme) MaxValues() int {
+	return MaxValues
+}
+
+// CommitValues commits a stable indexed value vector.
+func (s *Scheme) CommitValues(values []cid.Cid) (cid.Cid, error) {
+	return s.commitValues(nil, values)
+}
+
 // Commit generates an IPA commitment.
 func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
@@ -63,44 +73,7 @@ func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
 	}
 
 	paths, values := commitment.ExtractSortedPathsValues(arcs)
-
-	if len(paths) > MaxValues {
-		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(paths), MaxValues)
-	}
-
-	// Create vector (padded to 256 elements)
-	vector := make([]fr.Element, MaxValues)
-	zero := fr.Element{}
-	zero.SetZero()
-	for j := range vector {
-		vector[j] = zero
-	}
-
-	for idx, value := range values {
-		vector[idx] = cidToFieldElement(value)
-	}
-
-	// Compute IPA commitment
-	comm := s.ipaConfig.Commit(vector)
-
-	commBytes := comm.Bytes()
-	commStr := string(commBytes[:])
-
-	// Cache auxiliary data
-	s.mu.Lock()
-	s.auxCache[commStr] = &auxData{
-		vector: vector,
-	}
-	s.mu.Unlock()
-
-	// Cache metadata via BaseScheme
-	s.BaseScheme.Cache.Set(commStr, &commitment.CacheEntry{
-		Paths:  paths,
-		Values: values,
-	})
-
-	// Create MALT CID from commitment bytes
-	return codec.NewIPACid(commBytes[:])
+	return s.commitValues(paths, values)
 }
 
 // Prove generates an IPA proof.
@@ -110,55 +83,23 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, 
 
 // ProveSingle is the core prove implementation for the Backend interface.
 func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
+	var (
+		paths  []string
+		values []cid.Cid
+	)
+	if arcs != nil {
+		paths, values = commitment.ExtractSortedPathsValues(arcs)
+	}
+	entry, _, err := s.ensureState(comm, paths, values)
 	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	commStr := string(commBytes)
-
-	// Get cache entry
-	entry, ok := s.BaseScheme.Cache.Get(commStr)
-	if !ok {
-		return cid.Cid{}, nil, fmt.Errorf("commitment not found in cache")
-	}
-
-	// Get auxiliary data
-	s.mu.RLock()
-	aux, ok := s.auxCache[commStr]
-	s.mu.RUnlock()
-
-	if !ok {
-		return cid.Cid{}, nil, fmt.Errorf("auxiliary data not found in cache")
+		return cid.Cid{}, nil, err
 	}
 
 	proveIndex, ok := commitment.FindPathIndex(entry.Paths, path)
 	if !ok {
 		return cid.Cid{}, nil, fmt.Errorf("path %s not found", path)
 	}
-
-	transcript := common.NewTranscript("malt-ipa")
-
-	var c banderwagon.Element
-	if err := c.SetBytes(commBytes); err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
-	}
-
-	var evalPoint fr.Element
-	evalPoint.SetUint64(uint64(proveIndex))
-
-	proof, err := ipa.CreateIPAProof(transcript, s.ipaConfig, c, aux.vector, evalPoint)
-	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to create IPA proof: %w", err)
-	}
-
-	proofBytes, err := s.serializeProof(&proof, proveIndex)
-	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to serialize proof: %w", err)
-	}
-
-	return entry.Values[proveIndex], proofBytes, nil
+	return s.ProveIndex(comm, values, uint64(proveIndex))
 }
 
 // Verify verifies an IPA proof.
@@ -182,111 +123,32 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 		return false, fmt.Errorf("commitment not found in cache")
 	}
 
-	// Get auxiliary data
-	s.mu.RLock()
-	_, ok = s.auxCache[commStr]
-	s.mu.RUnlock()
-
-	if !ok {
-		return false, fmt.Errorf("auxiliary data not found in cache")
-	}
-
 	index, ok := commitment.FindPathIndex(entry.Paths, path)
 	if !ok {
 		return false, nil
 	}
-
-	ipaProof, evalPoint, err := s.deserializeProof(proof)
-	if err != nil {
-		return false, fmt.Errorf("failed to deserialize proof: %w", err)
-	}
-
-	// Verify index matches
-	if evalPoint != uint64(index) {
-		return false, nil
-	}
-
-	transcript := common.NewTranscript("malt-ipa")
-
-	var c banderwagon.Element
-	if err := c.SetBytes(commBytes); err != nil {
-		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
-	}
-
-	var evalPointFr fr.Element
-	evalPointFr.SetUint64(evalPoint)
-
-	output := cidToFieldElement(value)
-
-	ok, err = ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPointFr, output)
-	if err != nil {
-		return false, fmt.Errorf("failed to check IPA proof: %w", err)
-	}
-
-	return ok, nil
+	return s.VerifyIndex(comm, uint64(index), value, proof)
 }
 
 // Update updates a value in the commitment.
 func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	// Extract commitment bytes from MALT CID
-	commBytes, err := codec.ExtractCommitment(comm)
+	var (
+		paths  []string
+		values []cid.Cid
+	)
+	if arcs != nil {
+		paths, values = commitment.ExtractSortedPathsValues(arcs)
+	}
+	entry, _, err := s.ensureState(comm, paths, values)
 	if err != nil {
-		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-
-	commStr := string(commBytes)
-
-	// Get cache entry
-	entry, ok := s.BaseScheme.Cache.Get(commStr)
-	if !ok {
-		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
-	}
-
-	// Get auxiliary data
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	aux, ok := s.auxCache[commStr]
-	if !ok {
-		return cid.Cid{}, fmt.Errorf("auxiliary data not found in cache")
+		return cid.Cid{}, err
 	}
 
 	updateIndex, ok := commitment.FindPathIndex(entry.Paths, path)
 	if !ok {
 		return cid.Cid{}, fmt.Errorf("path %s not found", path)
 	}
-
-	newElement := cidToFieldElement(newValue)
-	var diff fr.Element
-	diff.Sub(&newElement, &aux.vector[updateIndex])
-
-	var c banderwagon.Element
-	if err := c.SetBytes(commBytes); err != nil {
-		return cid.Cid{}, fmt.Errorf("failed to reconstruct commitment: %w", err)
-	}
-
-	var updateElem banderwagon.Element
-	updateElem.ScalarMul(&s.ipaConfig.SRS[updateIndex], &diff)
-
-	var newComm banderwagon.Element
-	newComm.Add(&c, &updateElem)
-
-	result := newComm.Bytes()
-
-	aux.vector[updateIndex] = newElement
-	entry.Values[updateIndex] = newValue
-
-	newCommStr := string(result[:])
-
-	// Move auxiliary data to new commitment
-	s.auxCache[newCommStr] = aux
-	delete(s.auxCache, commStr)
-
-	// Cache new entry
-	s.BaseScheme.Cache.Set(newCommStr, entry)
-
-	// Create MALT CID from new commitment bytes
-	return codec.NewIPACid(result[:])
+	return s.ReplaceIndex(comm, values, uint64(updateIndex), oldValue, newValue)
 }
 
 // BatchUpdate updates multiple values.
@@ -294,58 +156,52 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.ArcSet, updates map[strin
 	Old cid.Cid
 	New cid.Cid
 }) (cid.Cid, error) {
-	// Extract commitment bytes from MALT CID
+	paths, values := commitment.ExtractSortedPathsValues(arcs)
+	entry, aux, err := s.ensureState(comm, paths, values)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
 	}
-
 	commStr := string(commBytes)
 
-	// Get cache entry
-	entry, ok := s.BaseScheme.Cache.Get(commStr)
-	if !ok {
-		return cid.Cid{}, fmt.Errorf("commitment not found in cache")
-	}
-
-	// Get auxiliary data
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	aux, ok := s.auxCache[commStr]
-	if !ok {
-		return cid.Cid{}, fmt.Errorf("auxiliary data not found in cache")
+	var currentComm banderwagon.Element
+	if err := currentComm.SetBytes(commBytes); err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to reconstruct commitment: %w", err)
 	}
 
-	// Apply all updates
 	for path, update := range updates {
 		index, ok := commitment.FindPathIndex(entry.Paths, path)
 		if !ok {
 			return cid.Cid{}, fmt.Errorf("path %s not found", path)
+		}
+		if !entry.Values[index].Equals(update.Old) {
+			return cid.Cid{}, fmt.Errorf("old value mismatch for path %s", path)
 		}
 
 		newElement := cidToFieldElement(update.New)
 		var diff fr.Element
 		diff.Sub(&newElement, &aux.vector[index])
 
-		var c banderwagon.Element
-		if err := c.SetBytes(commBytes); err != nil {
-			return cid.Cid{}, fmt.Errorf("failed to reconstruct commitment: %w", err)
-		}
-
 		var updateElem banderwagon.Element
 		updateElem.ScalarMul(&s.ipaConfig.SRS[index], &diff)
 
 		var newComm banderwagon.Element
-		newComm.Add(&c, &updateElem)
-
-		result := newComm.Bytes()
-		commBytes = result[:]
+		newComm.Add(&currentComm, &updateElem)
+		currentComm = newComm
 
 		aux.vector[index] = newElement
 		entry.Values[index] = update.New
 	}
 
+	result := currentComm.Bytes()
+	commBytes = result[:]
 	newCommStr := string(commBytes)
 
 	// Move auxiliary data to new commitment
@@ -357,6 +213,126 @@ func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.ArcSet, updates map[strin
 
 	// Create MALT CID from new commitment bytes
 	return codec.NewIPACid(commBytes)
+}
+
+// ProveIndex proves the value at a stable index.
+func (s *Scheme) ProveIndex(comm cid.Cid, values []cid.Cid, index uint64) (cid.Cid, []byte, error) {
+	entry, aux, err := s.ensureState(comm, nil, values)
+	if err != nil {
+		return cid.Cid{}, nil, err
+	}
+	if index >= uint64(len(entry.Values)) {
+		return cid.Cid{}, nil, fmt.Errorf("index %d out of range", index)
+	}
+
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
+	transcript := common.NewTranscript("malt-ipa")
+
+	var c banderwagon.Element
+	if err := c.SetBytes(commBytes); err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	var evalPoint fr.Element
+	evalPoint.SetUint64(index)
+
+	proof, err := ipa.CreateIPAProof(transcript, s.ipaConfig, c, aux.vector, evalPoint)
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to create IPA proof: %w", err)
+	}
+
+	proofBytes, err := s.serializeProof(&proof, int(index))
+	if err != nil {
+		return cid.Cid{}, nil, fmt.Errorf("failed to serialize proof: %w", err)
+	}
+
+	return entry.Values[index], proofBytes, nil
+}
+
+// VerifyIndex verifies a proof for a stable index without requiring cache state.
+func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []byte) (bool, error) {
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
+	ipaProof, evalPoint, err := s.deserializeProof(proof)
+	if err != nil {
+		return false, fmt.Errorf("failed to deserialize proof: %w", err)
+	}
+	if evalPoint != index {
+		return false, nil
+	}
+
+	transcript := common.NewTranscript("malt-ipa")
+
+	var c banderwagon.Element
+	if err := c.SetBytes(commBytes); err != nil {
+		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	var evalPointFr fr.Element
+	evalPointFr.SetUint64(index)
+
+	output := cidToFieldElement(value)
+	ok, err := ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPointFr, output)
+	if err != nil {
+		return false, fmt.Errorf("failed to check IPA proof: %w", err)
+	}
+	return ok, nil
+}
+
+// ReplaceIndex performs an index-stable replacement.
+func (s *Scheme) ReplaceIndex(comm cid.Cid, values []cid.Cid, index uint64, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	entry, aux, err := s.ensureState(comm, nil, values)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+	if index >= uint64(len(entry.Values)) {
+		return cid.Cid{}, fmt.Errorf("index %d out of range", index)
+	}
+	if !entry.Values[index].Equals(oldValue) {
+		return cid.Cid{}, fmt.Errorf("old value mismatch at index %d", index)
+	}
+
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+	commStr := string(commBytes)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	newElement := cidToFieldElement(newValue)
+	var diff fr.Element
+	diff.Sub(&newElement, &aux.vector[index])
+
+	var current banderwagon.Element
+	if err := current.SetBytes(commBytes); err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	var updateElem banderwagon.Element
+	updateElem.ScalarMul(&s.ipaConfig.SRS[index], &diff)
+
+	var newComm banderwagon.Element
+	newComm.Add(&current, &updateElem)
+	result := newComm.Bytes()
+
+	aux.vector[index] = newElement
+	entry.Values[index] = newValue
+
+	newCommStr := string(result[:])
+	s.auxCache[newCommStr] = aux
+	delete(s.auxCache, commStr)
+	s.BaseScheme.Cache.Set(newCommStr, entry)
+
+	return codec.NewIPACid(result[:])
 }
 
 // BatchProve generates proofs for multiple paths.
@@ -457,5 +433,74 @@ func cidToFieldElement(c cid.Cid) fr.Element {
 	return result
 }
 
+func (s *Scheme) commitValues(paths []string, values []cid.Cid) (cid.Cid, error) {
+	if len(values) > MaxValues {
+		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
+	}
+
+	vector := make([]fr.Element, MaxValues)
+	zero := fr.Element{}
+	zero.SetZero()
+	for i := range vector {
+		vector[i] = zero
+	}
+	for i, value := range values {
+		vector[i] = cidToFieldElement(value)
+	}
+
+	comm := s.ipaConfig.Commit(vector)
+	commBytes := comm.Bytes()
+	commStr := string(commBytes[:])
+
+	clonedValues := append([]cid.Cid(nil), values...)
+	clonedPaths := append([]string(nil), paths...)
+
+	s.mu.Lock()
+	s.auxCache[commStr] = &auxData{vector: vector}
+	s.mu.Unlock()
+
+	s.BaseScheme.Cache.Set(commStr, &commitment.CacheEntry{
+		Paths:  clonedPaths,
+		Values: clonedValues,
+	})
+
+	return codec.NewIPACid(commBytes[:])
+}
+
+func (s *Scheme) ensureState(comm cid.Cid, paths []string, values []cid.Cid) (*commitment.CacheEntry, *auxData, error) {
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+	commStr := string(commBytes)
+
+	entry, ok := s.BaseScheme.Cache.Get(commStr)
+	if !ok {
+		if values == nil {
+			return nil, nil, fmt.Errorf("commitment not found in cache")
+		}
+		rebuilt, err := s.commitValues(paths, values)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !rebuilt.Equals(comm) {
+			return nil, nil, fmt.Errorf("reconstructed commitment does not match expected root")
+		}
+		entry, ok = s.BaseScheme.Cache.Get(commStr)
+		if !ok {
+			return nil, nil, fmt.Errorf("commitment not found in cache")
+		}
+	}
+
+	s.mu.RLock()
+	aux, ok := s.auxCache[commStr]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, nil, fmt.Errorf("auxiliary data not found in cache")
+	}
+	return entry, aux, nil
+}
+
 // Ensure Scheme implements commitment.Scheme.
 var _ commitment.Scheme = (*Scheme)(nil)
+var _ commitment.ListBackend = (*Scheme)(nil)

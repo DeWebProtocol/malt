@@ -1,5 +1,5 @@
-// Package keymap defines the public keyed-map semantic for MALT.
-package keymap
+// Package mapping defines the public keyed-map semantic for MALT.
+package mapping
 
 import (
 	"context"

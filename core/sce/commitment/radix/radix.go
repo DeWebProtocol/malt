@@ -58,6 +58,10 @@ func NewScheme(opts ...Option) (*Scheme, error) {
 	}, nil
 }
 
+func (s *Scheme) CommitBindings(bindings arcset.ArcSet) (cid.Cid, error) {
+	return s.Commit(bindings)
+}
+
 func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
@@ -88,28 +92,39 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, 
 }
 
 func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
+	target, present, proof, err := s.ProveBinding(comm, arcs, arcset.CanonicalizePath(path))
+	if err != nil {
+		return cid.Undef, nil, err
+	}
+	if !present {
+		return cid.Undef, nil, fmt.Errorf("path %s not found", path)
+	}
+	return target, proof, nil
+}
+
+func (s *Scheme) ProveBinding(comm cid.Cid, arcs arcset.ArcSet, key arcset.Path) (cid.Cid, bool, []byte, error) {
 	if comm.Prefix().Codec != codec.CodecMaltRadix {
-		return cid.Undef, nil, fmt.Errorf("not a radix commitment CID: codec=%x", comm.Prefix().Codec)
+		return cid.Undef, false, nil, fmt.Errorf("not a radix commitment CID: codec=%x", comm.Prefix().Codec)
 	}
 
 	ctx := context.Background()
 	rootNodeCID, err := s.ensureRootNode(ctx, comm, arcs)
 	if err != nil {
-		return cid.Undef, nil, err
+		return cid.Undef, false, nil, err
 	}
 
-	digest := digestPath(path)
+	digest := digestPath(key.String())
 
-	nodes, target, err := s.walkProofPath(ctx, comm, rootNodeCID, path, digest)
+	nodes, target, present, err := s.walkBindingPath(ctx, comm, rootNodeCID, key.String(), digest)
 	if err != nil {
-		return cid.Undef, nil, err
+		return cid.Undef, false, nil, err
 	}
 
 	proofBytes, err := json.Marshal(singleProof{Nodes: nodes})
 	if err != nil {
-		return cid.Undef, nil, err
+		return cid.Undef, false, nil, err
 	}
-	return target, proofBytes, nil
+	return target, present, proofBytes, nil
 }
 
 func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
@@ -117,6 +132,10 @@ func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) 
 }
 
 func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
+	return s.VerifyBinding(comm, arcset.CanonicalizePath(path), value, true, proof)
+}
+
+func (s *Scheme) VerifyBinding(comm cid.Cid, key arcset.Path, value cid.Cid, present bool, proof []byte) (bool, error) {
 	if comm.Prefix().Codec != codec.CodecMaltRadix {
 		return false, fmt.Errorf("not a radix commitment CID: codec=%x", comm.Prefix().Codec)
 	}
@@ -134,7 +153,7 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 		return false, err
 	}
 
-	digest := digestPath(path)
+	digest := digestPath(key.String())
 	depth := 0
 
 	for i, nodeBytes := range sp.Nodes {
@@ -162,7 +181,7 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 			slot := digest[depth]
 			childCID, ok := node.Children[slot]
 			if !ok {
-				return false, nil
+				return !present && i == len(sp.Nodes)-1, nil
 			}
 			currentCID = childCID
 			depth++
@@ -171,11 +190,14 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 				return false, nil
 			}
 			for _, entry := range node.Entries {
-				if entry.FullPath == path && entry.Target.Equals(value) && entry.KeyDigest == digest {
-					return true, nil
+				if entry.FullPath == key.String() && entry.KeyDigest == digest {
+					if !present {
+						return false, nil
+					}
+					return entry.Target.Equals(value), nil
 				}
 			}
-			return false, nil
+			return !present, nil
 		default:
 			return false, fmt.Errorf("unknown node kind: %d", node.Kind)
 		}
@@ -185,6 +207,10 @@ func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []
 }
 
 func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	return s.UpdateBinding(comm, arcs, arcset.CanonicalizePath(path), oldValue, newValue)
+}
+
+func (s *Scheme) UpdateBinding(comm cid.Cid, arcs arcset.ArcSet, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
 	if comm.Prefix().Codec != codec.CodecMaltRadix {
 		return cid.Undef, fmt.Errorf("not a radix commitment CID: codec=%x", comm.Prefix().Codec)
 	}
@@ -195,9 +221,9 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue,
 		return cid.Undef, err
 	}
 
-	digest := digestPath(path)
+	digest := digestPath(key.String())
 	touched := make(map[string]cid.Cid)
-	newRootNodeCID, err := s.updateInternal(ctx, rootNodeCID, 0, path, digest, oldValue, newValue, touched)
+	newRootNodeCID, err := s.updateInternal(ctx, rootNodeCID, 0, key.String(), digest, oldValue, newValue, touched)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -213,9 +239,9 @@ func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue,
 	if arcs != nil {
 		updated := snapshotToMap(arcs)
 		if newValue.Defined() {
-			updated[path] = newValue
+			updated[key.String()] = newValue
 		} else {
-			delete(updated, path)
+			delete(updated, key.String())
 		}
 		paths, values := commitment.ExtractSortedPathsValues(arcset.NewSetFrom(updated))
 		commitmentBytes, err := codec.ExtractCommitment(newRootCID)
@@ -343,7 +369,7 @@ func (s *Scheme) ensureRootNode(ctx context.Context, root cid.Cid, arcs arcset.A
 	return rebuiltRootNodeCID, nil
 }
 
-func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID cid.Cid, path string, digest [32]byte) ([][]byte, cid.Cid, error) {
+func (s *Scheme) walkBindingPath(ctx context.Context, root cid.Cid, rootNodeCID cid.Cid, path string, digest [32]byte) ([][]byte, cid.Cid, bool, error) {
 	nodes := make([][]byte, 0, 8)
 	currentCID := rootNodeCID
 	depth := 0
@@ -357,33 +383,47 @@ func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID ci
 
 		node, nodeBytes, err := loadNode(ctx, s.kv, currentCID)
 		if err != nil {
-			return nil, cid.Undef, err
+			return nil, cid.Undef, false, err
 		}
 		nodes = append(nodes, nodeBytes)
 
 		switch node.Kind {
 		case nodeKindInternal:
 			if depth >= len(digest) {
-				return nil, cid.Undef, fmt.Errorf("radix tree malformed: internal node at depth %d exceeds digest length", depth)
+				return nil, cid.Undef, false, fmt.Errorf("radix tree malformed: internal node at depth %d exceeds digest length", depth)
 			}
 			slot := digest[depth]
 			childCID, ok := node.Children[slot]
 			if !ok {
-				return nil, cid.Undef, fmt.Errorf("path %s not found", path)
+				return nodes, cid.Undef, false, nil
 			}
 			currentCID = childCID
 			depth++
 		case nodeKindLeaf:
 			for _, entry := range node.Entries {
 				if entry.FullPath == path && entry.KeyDigest == digest {
-					return nodes, entry.Target, nil
+					return nodes, entry.Target, true, nil
 				}
 			}
-			return nil, cid.Undef, fmt.Errorf("path %s not found", path)
+			return nodes, cid.Undef, false, nil
 		default:
-			return nil, cid.Undef, fmt.Errorf("unknown node kind: %d", node.Kind)
+			return nil, cid.Undef, false, fmt.Errorf("unknown node kind: %d", node.Kind)
 		}
 	}
+}
+
+// walkProofPath preserves the legacy internal helper shape that older tests
+// exercise. New code should prefer walkBindingPath, which also reports
+// non-membership without forcing it into an error path.
+func (s *Scheme) walkProofPath(ctx context.Context, root cid.Cid, rootNodeCID cid.Cid, path string, digest [32]byte) ([][]byte, cid.Cid, error) {
+	nodes, target, present, err := s.walkBindingPath(ctx, root, rootNodeCID, path, digest)
+	if err != nil {
+		return nil, cid.Undef, err
+	}
+	if !present {
+		return nil, cid.Undef, fmt.Errorf("path %s not found", path)
+	}
+	return nodes, target, nil
 }
 
 func (s *Scheme) tryHotIndex(ctx context.Context, root cid.Cid, prefix []byte) (cid.Cid, bool) {
@@ -655,3 +695,6 @@ func rootNodeCIDFromCommitment(root cid.Cid) (cid.Cid, error) {
 	}
 	return cid.NewCidV1(cid.Raw, mhash), nil
 }
+
+var _ commitment.MappingBackend = (*Scheme)(nil)
+var _ commitment.Scheme = (*Scheme)(nil)
