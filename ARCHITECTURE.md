@@ -15,16 +15,17 @@ MALT roots are encoded as CID-compatible identifiers, so MALT-native structures 
 
 This document is implementation-oriented. For the shorter system overview, see [`README.md`](./README.md).
 
-In the current prototype, hot proving/index state is colocated and organized per graph for performance.
-That placement is an implementation choice, not the core semantic definition of MALT.
+In the current prototype, hot proving/index state is colocated and organized in deployment-specific namespaces for performance.
+The current code often maps one namespace to one graph, but that placement is an implementation choice, not the core semantic definition of MALT.
 
 ## Architectural Center
 
 The codebase should be read around six first-class concepts:
 
 - `Graph`
-  - the scoped unit of structure
+  - the main runtime composition unit
   - provides the main read and write entry points
+  - does not redefine the authentication boundary, which remains the structure root
 - `EAT`
   - explicit arc materialization and lookup state
 - `SCE`
@@ -52,7 +53,7 @@ malt/
 │   ├── cas/          # CAS clients and adapters
 │   ├── codec/        # MALT CID codecs and CID utilities
 │   ├── eat/          # Explicit Arc Table implementations
-│   ├── graph/        # Graph metadata and per-graph composition
+│   ├── graph/        # Graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # Version lineage metadata
 │   ├── replication/  # Secondary snapshot/sync tooling
@@ -78,8 +79,8 @@ malt/
 
 The main operational state of MALT lives in the explicit arc representation.
 
-In the current implementation, this hot state is typically namespaced per graph.
-That organization is chosen for locality and performance, not as a semantic requirement of the abstraction.
+In the current implementation, this hot state is typically namespaced for locality and performance.
+The current code often uses one namespace per graph, but that organization is a deployment choice rather than a semantic requirement of the abstraction.
 
 `EAT` provides:
 
@@ -115,10 +116,12 @@ The preferred conceptual split is:
 - commitment backend
   - internal authentication primitive used by an implementation
   - examples: KZG, IPA, hash/Merkle commitments
+  - authenticates already-positioned slots or nodes
+  - does not define the public structure contract or a map key-placement rule
 
 In that model, `SCE` should not be the public semantic layer.
-The cleaner long-term direction is a separate `core/structure` layer that
-exposes `list` and `map`, while `SCE` and commitment backends remain internal.
+The codebase is already moving in that direction with `core/structure`, while
+older code paths still route through `sce` and `commitment` for compatibility.
 
 Two semantic notes matter:
 
@@ -164,6 +167,7 @@ There are two step kinds:
 
 The explicit step is the native MALT path.
 The implicit step exists for compatibility when traversal crosses into legacy CID space.
+In the current prototype, the runtime dispatch between these steps is surfaced mainly through `gateway`; that compatibility logic should be treated as an operational detail rather than the primary definition of MALT.
 
 Clients verify the returned transcript locally:
 
@@ -186,7 +190,7 @@ It is not itself the graph abstraction. It constructs per-graph instances.
 
 ### `graph.Graph`
 
-`Graph` is the main scoped MALT unit.
+`Graph` is the main runtime MALT unit.
 
 Important property:
 
@@ -194,6 +198,7 @@ Important property:
 - the root is always passed as an argument to read and write operations
 
 This keeps structure evolution explicit and avoids embedding mutable "current root" state inside the graph object.
+The cryptographic boundary remains the structure root itself; `Graph` is a composition and deployment construct.
 
 ### `lineage`
 

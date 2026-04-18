@@ -66,6 +66,7 @@ Under this terminology:
 - fixed-slot commitment primitive
   - a backend that only authenticates already-positioned values
   - `KZG` and `IPA` belong here
+  - it does not define public structure semantics or a general `key -> position` rule
 
 For engineering convenience, the current codebase still exposes many of these
 choices through one `commitment.Scheme` interface under `core/sce`.
@@ -73,8 +74,8 @@ That is a legacy flattening of concerns, not the preferred conceptual layering.
 The cleaner direction is to introduce a separate `core/structure` layer with
 public `list` and `map` semantics, each with their own internal implementations.
 
-In the current prototype, hot proof/index state is typically organized per graph for performance.
-That state placement is an implementation choice, not a semantic requirement of the abstraction.
+In the current prototype, hot proof/index state is typically organized in deployment-specific namespaces for performance.
+The current code often maps one namespace to one graph, but that state placement is an implementation choice, not a semantic requirement of the abstraction.
 
 ## Native Resolution
 
@@ -114,10 +115,12 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
 ## Core Components
 
 - `Graph`
-  - scoped unit of structure and main read/write entry point
+  - runtime composition unit and main read/write entry point
+  - the authentication boundary remains the structure root, not the graph object
 - `Structure`
   - preferred semantic layer for public `list` and `map` contracts
-  - currently not separated in code yet; today's repository still flattens this into `sce`
+  - now lives under `core/structure`
+  - some older code paths still route through `sce`/`commitment`
 - `EAT`
   - explicit arc materialization and lookup state
 - `SCE`
@@ -142,7 +145,7 @@ malt/
 │   ├── cas/          # CAS clients and adapters
 │   ├── codec/        # MALT CID codecs and CID utilities
 │   ├── eat/          # explicit arc table implementations
-│   ├── graph/        # graph metadata and per-graph composition
+│   ├── graph/        # graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # version lineage metadata
 │   ├── replication/  # secondary snapshot/sync tooling
@@ -161,7 +164,7 @@ malt/
 These parts of the repo are useful, but they are not the conceptual center of MALT:
 
 - gateway deployment
-- mixed MALT/IPLD traversal machinery
+- compatibility traversal machinery in the resolver/gateway path
 - replication and snapshot tooling
 - benchmark scaffolding
 - helper deployment abstractions
@@ -179,6 +182,7 @@ The long-term public abstraction should look like:
   - implementations may include segment-radix or hashed-path radix layouts
 - commitment backends
   - internal dependencies of structure implementations rather than the primary API surface
+  - they authenticate positioned slots or nodes; they do not define public `list` / `map` semantics
 
 ## More Detail
 
