@@ -104,12 +104,12 @@ func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, 
 	if err != nil {
 		return cid.Cid{}, nil, err
 	}
-	return target, commitment.WrapLegacyPathProof(path, proof), nil
+	return target, commitment.WrapPathProof(path, proof), nil
 }
 
 // Verify verifies a KZG proof.
 func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
-	primitiveProof, err := commitment.UnwrapLegacyPathProof(path, proof)
+	primitiveProof, err := commitment.UnwrapPathProof(path, proof)
 	if err != nil {
 		return false, err
 	}
