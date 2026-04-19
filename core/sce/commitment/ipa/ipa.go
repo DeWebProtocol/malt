@@ -29,8 +29,8 @@ const (
 )
 
 // Scheme implements a primitive indexed commitment backend using Inner Product
-// Arguments. The legacy path-oriented Scheme methods are retained as
-// compatibility wrappers over the primitive indexed operations.
+// Arguments. The path-oriented Scheme methods are retained as wrappers over
+// the primitive indexed operations.
 type Scheme struct {
 	ipaConfig *ipa.IPAConfig
 

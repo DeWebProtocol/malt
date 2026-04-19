@@ -30,8 +30,8 @@ const (
 )
 
 // Scheme implements a primitive indexed commitment backend using KZG
-// polynomial commitments. The legacy path-oriented Scheme methods are retained
-// as compatibility wrappers over the primitive indexed operations.
+// polynomial commitments. The path-oriented Scheme methods are retained as
+// wrappers over the primitive indexed operations.
 type Scheme struct {
 	context      *gokzg4844.Context
 	domainPoints []gokzg4844.Scalar

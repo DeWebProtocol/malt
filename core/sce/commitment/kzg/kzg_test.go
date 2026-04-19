@@ -73,7 +73,7 @@ func TestKZGProveAndVerify(t *testing.T) {
 	}
 
 	if len(proof) <= kzg.ProofSize {
-		t.Errorf("Expected wrapped legacy proof larger than primitive size %d, got %d", kzg.ProofSize, len(proof))
+		t.Errorf("Expected path-bound proof larger than primitive size %d, got %d", kzg.ProofSize, len(proof))
 	}
 
 	// Verify
@@ -184,7 +184,7 @@ func TestKZGBatchProve(t *testing.T) {
 		}
 
 		if len(entry.Proof) <= kzg.ProofSize {
-			t.Errorf("Expected wrapped proof for path %s to exceed primitive size %d, got %d", path, kzg.ProofSize, len(entry.Proof))
+			t.Errorf("Expected path-bound proof for path %s to exceed primitive size %d, got %d", path, kzg.ProofSize, len(entry.Proof))
 		}
 	}
 }
@@ -266,7 +266,7 @@ func TestKZGAggregateProve(t *testing.T) {
 	}
 	for i, proof := range aggProof.Proofs {
 		if len(proof) <= kzg.ProofSize {
-			t.Errorf("expected wrapped proof %d to exceed primitive size %d, got %d", i, kzg.ProofSize, len(proof))
+			t.Errorf("expected path-bound proof %d to exceed primitive size %d, got %d", i, kzg.ProofSize, len(proof))
 		}
 	}
 }
