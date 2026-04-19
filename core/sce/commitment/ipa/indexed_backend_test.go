@@ -70,6 +70,55 @@ func TestIPAIndexedBackendRestartSafe(t *testing.T) {
 	}
 }
 
+func TestIPAReplaceIndexRestartSafe(t *testing.T) {
+	first, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	values := []cid.Cid{
+		newIndexedPayloadCID([]byte("slot0")),
+		newIndexedPayloadCID([]byte("slot1")),
+	}
+	root, err := first.CommitValues(values)
+	if err != nil {
+		t.Fatalf("CommitValues failed: %v", err)
+	}
+
+	second, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	newValue := newIndexedPayloadCID([]byte("slot1-new"))
+	newRoot, err := second.ReplaceIndex(root, values, 1, values[1], newValue)
+	if err != nil {
+		t.Fatalf("ReplaceIndex failed after restart: %v", err)
+	}
+
+	updatedValues := []cid.Cid{values[0], newValue}
+	third, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	value, proof, err := third.ProveIndex(newRoot, updatedValues, 1)
+	if err != nil {
+		t.Fatalf("ProveIndex on updated root failed: %v", err)
+	}
+	if !value.Equals(newValue) {
+		t.Fatalf("unexpected updated value %s", value)
+	}
+
+	ok, err := third.VerifyIndex(newRoot, 1, newValue, proof)
+	if err != nil {
+		t.Fatalf("VerifyIndex on updated root failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected updated proof to verify")
+	}
+}
+
 func newIndexedPayloadCID(data []byte) cid.Cid {
 	sum, err := mh.Sum(data, mh.SHA2_256, -1)
 	if err != nil {

@@ -24,14 +24,14 @@ func WrapLegacyPathProof(path string, primitiveProof []byte) []byte {
 	return out
 }
 
-// UnwrapLegacyPathProof validates and unwraps a path-bound legacy proof. For
-// backward compatibility, unwrapped primitive proofs are returned as-is.
+// UnwrapLegacyPathProof validates and unwraps a path-bound legacy proof.
+// Proofs must use the wrapped format; raw primitive proofs are rejected.
 func UnwrapLegacyPathProof(path string, proof []byte) ([]byte, error) {
 	if len(proof) < legacyPathProofOverhead {
-		return proof, nil
+		return nil, fmt.Errorf("legacy path proof too short: %d", len(proof))
 	}
 	if !bytes.Equal(proof[:4], legacyPathProofMagic[:]) {
-		return proof, nil
+		return nil, fmt.Errorf("missing legacy path proof magic")
 	}
 	if proof[4] != legacyPathProofVersion {
 		return nil, fmt.Errorf("unsupported legacy path proof version %d", proof[4])

@@ -79,3 +79,75 @@ func TestIPALegacySchemeRejectsWrongPath(t *testing.T) {
 		t.Fatal("verification should fail when the requested path differs from the proved path")
 	}
 }
+
+func TestIPALegacySchemeBatchUpdateRestartSafe(t *testing.T) {
+	first, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	oldA := newIndexedPayloadCID([]byte("a-old"))
+	oldB := newIndexedPayloadCID([]byte("b-old"))
+	arcs := arcset.NewSetFrom(map[string]cid.Cid{
+		"a": oldA,
+		"b": oldB,
+	})
+
+	root, err := first.Commit(arcs)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	second, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	newA := newIndexedPayloadCID([]byte("a-new"))
+	updates := map[string]struct {
+		Old cid.Cid
+		New cid.Cid
+	}{
+		"a": {Old: oldA, New: newA},
+	}
+
+	newRoot, err := second.BatchUpdate(root, arcs, updates)
+	if err != nil {
+		t.Fatalf("BatchUpdate failed after restart: %v", err)
+	}
+
+	updatedArcs := arcset.NewSetFrom(map[string]cid.Cid{
+		"a": newA,
+		"b": oldB,
+	})
+
+	third, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+
+	freshRoot, err := third.Commit(updatedArcs)
+	if err != nil {
+		t.Fatalf("Commit on updated arcs failed: %v", err)
+	}
+	if !freshRoot.Equals(newRoot) {
+		t.Fatalf("batch update root does not match recomputed root")
+	}
+
+	values := []cid.Cid{newA, oldB}
+	proved, proof, err := third.ProveIndex(newRoot, values, 0)
+	if err != nil {
+		t.Fatalf("ProveIndex on updated root failed: %v", err)
+	}
+	if !proved.Equals(newA) {
+		t.Fatalf("unexpected proved value %s", proved)
+	}
+
+	ok, err := third.VerifyIndex(newRoot, 0, newA, proof)
+	if err != nil {
+		t.Fatalf("VerifyIndex on updated root failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected updated primitive proof to verify")
+	}
+}
