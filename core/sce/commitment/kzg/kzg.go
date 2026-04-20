@@ -3,6 +3,7 @@ package kzg
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"math/bits"
@@ -81,13 +82,46 @@ func (s *Scheme) ProveIndex(comm cid.Cid, values []commitment.Cell, index uint64
 	if index >= uint64(len(entry.values)) {
 		return nil, nil, fmt.Errorf("index %d out of range", index)
 	}
+	return s.proveEntryIndex(entry, index)
+}
 
+func (s *Scheme) proveEntryIndex(entry *cacheEntry, index uint64) (commitment.Cell, []byte, error) {
 	inputPoint := s.domainPoint(index)
 	proof, claimedValue, err := s.context.ComputeKZGProof(entry.blob, inputPoint, 1)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to compute proof: %w", err)
 	}
 	return commitment.NewCell(entry.values[index]), serializeProof(proof, claimedValue, index), nil
+}
+
+// BatchProve currently concatenates single-index KZG proofs because the
+// current go-kzg-4844 dependency does not expose batch opening generation.
+// TODO: replace this looped encoding with a real KZG multiproof when the
+// backend supports batch opening generation for our index-commitment setting.
+func (s *Scheme) BatchProve(comm cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
+	entry, err := s.ensureState(comm, values)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(indices) == 0 {
+		return nil, nil, fmt.Errorf("indices must not be empty")
+	}
+
+	proved := make([]commitment.Cell, len(indices))
+	proofs := make([][]byte, len(indices))
+	for i, index := range indices {
+		if index >= uint64(len(entry.values)) {
+			return nil, nil, fmt.Errorf("index %d out of range", index)
+		}
+
+		value, proof, err := s.proveEntryIndex(entry, index)
+		if err != nil {
+			return nil, nil, err
+		}
+		proved[i] = value
+		proofs[i] = proof
+	}
+	return proved, serializeBatchProof(proofs), nil
 }
 
 // VerifyIndex verifies a proof for a stable index without cache state.
@@ -114,6 +148,38 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, 
 	inputPoint := s.domainPoint(index)
 	if err := s.context.VerifyKZGProof(kzgComm, inputPoint, claimedValue, kzgProof); err != nil {
 		return false, fmt.Errorf("KZG proof verification failed: %w", err)
+	}
+	return true, nil
+}
+
+// BatchVerify currently replays single-index KZG verification because the
+// current go-kzg-4844 dependency does not expose batch opening generation.
+// TODO: replace this looped verification path once BatchProve emits a real
+// KZG multiproof for our index-commitment setting.
+func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment.Cell, proof []byte) (bool, error) {
+	if len(indices) == 0 {
+		return false, fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) != len(values) {
+		return false, fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	}
+
+	proofs, err := deserializeBatchProof(proof)
+	if err != nil {
+		return false, err
+	}
+	if len(proofs) != len(indices) {
+		return false, fmt.Errorf("batch proof count mismatch: %d != %d", len(proofs), len(indices))
+	}
+
+	for i := range indices {
+		ok, err := s.VerifyIndex(comm, indices[i], values[i], proofs[i])
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
 	}
 	return true, nil
 }
@@ -260,6 +326,37 @@ func deserializeProof(data []byte) (gokzg4844.KZGProof, gokzg4844.Scalar, uint64
 	copy(claimed[:], data[48:80])
 	index := uint64(data[80])<<24 | uint64(data[81])<<16 | uint64(data[82])<<8 | uint64(data[83])
 	return proof, claimed, index, nil
+}
+
+func serializeBatchProof(proofs [][]byte) []byte {
+	buf := make([]byte, 4+len(proofs)*ProofSize)
+	binary.BigEndian.PutUint32(buf[:4], uint32(len(proofs)))
+	offset := 4
+	for _, proof := range proofs {
+		copy(buf[offset:offset+ProofSize], proof)
+		offset += ProofSize
+	}
+	return buf
+}
+
+func deserializeBatchProof(data []byte) ([][]byte, error) {
+	if len(data) < 4 {
+		return nil, fmt.Errorf("batch proof too short: %d", len(data))
+	}
+
+	count := int(binary.BigEndian.Uint32(data[:4]))
+	expectedSize := 4 + count*ProofSize
+	if len(data) != expectedSize {
+		return nil, fmt.Errorf("batch proof has wrong size: expected %d, got %d", expectedSize, len(data))
+	}
+
+	proofs := make([][]byte, count)
+	offset := 4
+	for i := 0; i < count; i++ {
+		proofs[i] = append([]byte(nil), data[offset:offset+ProofSize]...)
+		offset += ProofSize
+	}
+	return proofs, nil
 }
 
 func buildDomainPoints(size int) ([]gokzg4844.Scalar, error) {

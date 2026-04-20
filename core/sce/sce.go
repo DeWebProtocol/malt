@@ -65,7 +65,7 @@ func (e *Engine) Prove(root cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, 
 		logger.String("path", path))
 
 	paths, cells := commitment.ExtractSortedPathsCells(arcs)
-	index, ok := commitment.FindPathIndex(paths, path)
+	index, ok := findPathIndex(paths, path)
 	if !ok {
 		return cid.Cid{}, nil, fmt.Errorf("path %s not found", path)
 	}
@@ -137,7 +137,7 @@ func (e *Engine) Update(root cid.Cid, arcs arcset.ArcSet, path string, oldKey, n
 		logger.String("new_key", newKey.String()))
 
 	paths, cells := commitment.ExtractSortedPathsCells(arcs)
-	index, ok := commitment.FindPathIndex(paths, path)
+	index, ok := findPathIndex(paths, path)
 	if !ok {
 		return cid.Cid{}, fmt.Errorf("path %s not found", path)
 	}
@@ -176,7 +176,7 @@ func (e *Engine) BatchUpdate(root cid.Cid, arcs arcset.ArcSet, updates map[strin
 
 	nextCells := commitment.CloneCells(cells)
 	for path, update := range updates {
-		index, ok := commitment.FindPathIndex(paths, path)
+		index, ok := findPathIndex(paths, path)
 		if !ok {
 			return cid.Cid{}, fmt.Errorf("path %s not found", path)
 		}
@@ -193,14 +193,14 @@ func (e *Engine) BatchProve(root cid.Cid, arcs arcset.ArcSet, paths []string) (m
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths must not be empty")
 	}
-	return commitment.BatchProve(paths, func(path string) (cid.Cid, []byte, error) {
+	return batchProve(paths, func(path string) (cid.Cid, []byte, error) {
 		return e.Prove(root, arcs, path)
 	})
 }
 
 // BatchVerify verifies multiple proofs.
 func (e *Engine) BatchVerify(root cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
-	return commitment.BatchVerify(proofs, func(path string, value cid.Cid, proof []byte) (bool, error) {
+	return batchVerify(proofs, func(path string, value cid.Cid, proof []byte) (bool, error) {
 		return e.Verify(root, path, value, proof)
 	})
 }
@@ -210,14 +210,14 @@ func (e *Engine) AggregateProve(root cid.Cid, arcs arcset.ArcSet, paths []string
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("paths must not be empty")
 	}
-	return commitment.AggregateProve(paths, func(path string) (cid.Cid, []byte, error) {
+	return aggregateProve(paths, func(path string) (cid.Cid, []byte, error) {
 		return e.Prove(root, arcs, path)
 	})
 }
 
 // AggregateVerify verifies an aggregated proof.
 func (e *Engine) AggregateVerify(root cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
-	return commitment.AggregateVerify(aggProof, func(path string, value cid.Cid, proof []byte) (bool, error) {
+	return aggregateVerify(aggProof, func(path string, value cid.Cid, proof []byte) (bool, error) {
 		return e.Verify(root, path, value, proof)
 	})
 }

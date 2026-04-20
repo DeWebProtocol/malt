@@ -19,8 +19,16 @@ type IndexCommitment interface {
 	// ProveIndex generates a proof for one index and returns the proved cell.
 	ProveIndex(root cid.Cid, values []Cell, index uint64) (Cell, []byte, error)
 
+	// BatchProve generates one proof payload for an ordered index list and
+	// returns the proved cells in the same order as indices.
+	BatchProve(root cid.Cid, values []Cell, indices []uint64) ([]Cell, []byte, error)
+
 	// VerifyIndex verifies a proof for one index against the expected cell.
 	VerifyIndex(root cid.Cid, index uint64, value Cell, proof []byte) (bool, error)
+
+	// BatchVerify verifies a proof payload for an ordered index list against
+	// the expected cells in the same order as indices.
+	BatchVerify(root cid.Cid, indices []uint64, values []Cell, proof []byte) (bool, error)
 
 	// VerifyProof verifies a proof that already carries its own index metadata.
 	VerifyProof(root cid.Cid, value Cell, proof []byte) (bool, error)

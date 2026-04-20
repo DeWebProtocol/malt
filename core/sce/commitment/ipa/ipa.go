@@ -2,11 +2,13 @@
 package ipa
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"sync"
 
+	multiproof "github.com/crate-crypto/go-ipa"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
 	"github.com/crate-crypto/go-ipa/banderwagon"
 	"github.com/crate-crypto/go-ipa/common"
@@ -25,6 +27,11 @@ const (
 	// MaxCacheEntries is the maximum number of cached commitments.
 	// When exceeded, the oldest entries are evicted.
 	MaxCacheEntries = 1024
+)
+
+const (
+	singleTranscriptLabel = "malt-ipa"
+	batchTranscriptLabel  = "malt-ipa-batch"
 )
 
 // Scheme implements an IPA-based index commitment backend.
@@ -76,6 +83,60 @@ func (s *Scheme) ProveIndex(comm cid.Cid, values []commitment.Cell, index uint64
 	return s.proveEntryIndex(comm, entry, index)
 }
 
+// BatchProve proves multiple stable indices with one batch proof payload.
+func (s *Scheme) BatchProve(comm cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
+	entry, err := s.ensureState(comm, values)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(indices) == 0 {
+		return nil, nil, fmt.Errorf("indices must not be empty")
+	}
+
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
+	var c banderwagon.Element
+	if err := c.SetBytes(commBytes); err != nil {
+		return nil, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	vector := valuesToVector(entry.values)
+	commitments := make([]banderwagon.Element, len(indices))
+	cs := make([]*banderwagon.Element, len(indices))
+	fs := make([][]fr.Element, len(indices))
+	zs := make([]uint8, len(indices))
+	proved := make([]commitment.Cell, len(indices))
+	for i, index := range indices {
+		if index >= uint64(len(entry.values)) {
+			return nil, nil, fmt.Errorf("index %d out of range", index)
+		}
+		if index >= MaxValues {
+			return nil, nil, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
+		}
+
+		commitments[i] = c
+		cs[i] = &commitments[i]
+		fs[i] = vector
+		zs[i] = uint8(index)
+		proved[i] = commitment.NewCell(entry.values[int(index)])
+	}
+
+	transcript := common.NewTranscript(batchTranscriptLabel)
+	proof, err := multiproof.CreateMultiProof(transcript, s.ipaConfig, cs, fs, zs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create IPA batch proof: %w", err)
+	}
+
+	proofBytes, err := serializeMultiProof(proof)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to serialize IPA batch proof: %w", err)
+	}
+	return proved, proofBytes, nil
+}
+
 func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) (commitment.Cell, []byte, error) {
 	vector := valuesToVector(entry.values)
 	commBytes, err := codec.ExtractCommitment(comm)
@@ -83,7 +144,7 @@ func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) 
 		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
-	transcript := common.NewTranscript("malt-ipa")
+	transcript := common.NewTranscript(singleTranscriptLabel)
 
 	var c banderwagon.Element
 	if err := c.SetBytes(commBytes); err != nil {
@@ -125,7 +186,7 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, 
 		return false, nil
 	}
 
-	transcript := common.NewTranscript("malt-ipa")
+	transcript := common.NewTranscript(singleTranscriptLabel)
 
 	var c banderwagon.Element
 	if err := c.SetBytes(commBytes); err != nil {
@@ -139,6 +200,55 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, 
 	ok, err := ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPointFr, output)
 	if err != nil {
 		return false, fmt.Errorf("failed to check IPA proof: %w", err)
+	}
+	return ok, nil
+}
+
+// BatchVerify verifies a batch proof for an ordered index list.
+func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment.Cell, proof []byte) (bool, error) {
+	if len(indices) == 0 {
+		return false, fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) != len(values) {
+		return false, fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	}
+
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
+	var c banderwagon.Element
+	if err := c.SetBytes(commBytes); err != nil {
+		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	mp, err := deserializeMultiProof(proof)
+	if err != nil {
+		return false, fmt.Errorf("failed to deserialize IPA batch proof: %w", err)
+	}
+
+	commitments := make([]banderwagon.Element, len(indices))
+	cs := make([]*banderwagon.Element, len(indices))
+	outputs := make([]fr.Element, len(indices))
+	ys := make([]*fr.Element, len(indices))
+	zs := make([]uint8, len(indices))
+	for i, index := range indices {
+		if index >= MaxValues {
+			return false, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
+		}
+
+		commitments[i] = c
+		cs[i] = &commitments[i]
+		outputs[i] = cellToFieldElement(values[i])
+		ys[i] = &outputs[i]
+		zs[i] = uint8(index)
+	}
+
+	transcript := common.NewTranscript(batchTranscriptLabel)
+	ok, err := multiproof.CheckMultiProof(transcript, s.ipaConfig, mp, cs, ys, zs)
+	if err != nil {
+		return false, fmt.Errorf("failed to check IPA batch proof: %w", err)
 	}
 	return ok, nil
 }
@@ -235,6 +345,22 @@ func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, uint64, error) {
 	index := uint64(binary.BigEndian.Uint32(data[offset : offset+4]))
 
 	return proof, index, nil
+}
+
+func serializeMultiProof(proof *multiproof.MultiProof) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := proof.Write(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func deserializeMultiProof(data []byte) (*multiproof.MultiProof, error) {
+	var proof multiproof.MultiProof
+	if err := proof.Read(bytes.NewReader(data)); err != nil {
+		return nil, err
+	}
+	return &proof, nil
 }
 
 func cellToFieldElement(cell commitment.Cell) fr.Element {
