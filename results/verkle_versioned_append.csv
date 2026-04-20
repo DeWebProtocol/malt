@@ -1,4 +1,0 @@
-workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
-append,verkle,versioned,50,0,0,33789,5,1,33796,67,38,1.0000
-append,verkle,versioned,100,0,0,58283,4,1,58290,67,38,1.0000
-append,verkle,versioned,200,0,0,116107,5,1,116113,67,38,1.0000

@@ -1,4 +1,0 @@
-workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
-random,kzg,bloom,50,7,7,687534,77317,1850,766702,84,55,1.0000
-random,kzg,bloom,100,8,8,1495855,77339,1797,1574992,84,55,1.0000
-random,kzg,bloom,200,10,10,3604705,117983,1811,3724501,84,55,1.0000

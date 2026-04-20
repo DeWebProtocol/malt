@@ -1,4 +1,0 @@
-workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
-append,kzg,overwrite,50,0,6,50,77482,1834,79368,84,55,1.0000
-append,kzg,overwrite,100,0,7,73,77440,1915,79429,84,55,1.0000
-append,kzg,overwrite,200,0,8,141,77478,1795,79415,84,55,1.0000

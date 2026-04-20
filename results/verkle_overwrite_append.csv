@@ -1,4 +1,0 @@
-workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
-append,verkle,overwrite,100,0,0,57,2,1,61,67,38,1.0000
-append,verkle,overwrite,200,0,0,115,2,1,119,67,38,1.0000
-append,verkle,overwrite,50,0,0,33,2,1,37,67,38,1.0000

@@ -1,4 +1,0 @@
-workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
-append,ipa,overwrite,50,0,0,32,27258,3612,30903,548,39,1.0000
-append,ipa,overwrite,100,0,0,69,28208,4385,32664,548,39,1.0000
-append,ipa,overwrite,200,0,1,119,27229,3727,31076,548,39,1.0000

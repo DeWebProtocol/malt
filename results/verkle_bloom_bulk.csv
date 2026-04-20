@@ -1,4 +1,0 @@
-workload,backend,eat_type,arc_count,commit_ms,update_ms,eat_lookup_ms,prove_ms,verify_ms,end_to_end_ms,proof_size,root_size,rewrite_amp
-bulk,verkle,bloom,50,0,0,110290,6,2,110300,67,38,5.0000
-bulk,verkle,bloom,100,0,0,114432,5,1,114440,67,38,10.0000
-bulk,verkle,bloom,200,0,0,109940,4,1,109946,67,38,20.0000
