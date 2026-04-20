@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listruntime "github.com/dewebprotocol/malt/core/structure/list/internal/runtime"

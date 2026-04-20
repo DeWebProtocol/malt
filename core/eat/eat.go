@@ -1,6 +1,7 @@
 // Package eat defines the Explicit Arc Table interface and implementations.
 // EAT is an internal component for fast lookup of arc targets.
-// It provides NO correctness guarantee - SCE is responsible for verification.
+// It provides NO correctness guarantee; verification belongs to the semantic
+// layer and its commitment backend.
 package eat
 
 import (

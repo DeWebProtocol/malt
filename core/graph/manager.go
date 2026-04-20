@@ -190,7 +190,7 @@ func (s *Store) List(ctx context.Context) ([]*GraphMeta, error) {
 }
 
 // Manager manages graph lifecycle: creation, access, state transitions.
-// It coordinates graph metadata with EAT/SCE buckets.
+// It coordinates graph metadata with EAT namespaces and commitment backend selection.
 type Manager struct {
 	store  *Store
 	mu     sync.RWMutex

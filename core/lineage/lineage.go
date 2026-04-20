@@ -28,11 +28,11 @@ type KVStore interface {
 
 // LineageRecord stores metadata about a single structure version.
 type LineageRecord struct {
-	Root      cid.Cid    `json:"root"`
-	Parent    cid.Cid    `json:"parent"`    // cid.Undef for root versions
-	Timestamp time.Time  `json:"timestamp"`
-	Depth     int        `json:"depth"`     // distance from the root version
-	ArcCount  int        `json:"arc_count"` // number of arcs in this version
+	Root      cid.Cid   `json:"root"`
+	Parent    cid.Cid   `json:"parent"` // cid.Undef for root versions
+	Timestamp time.Time `json:"timestamp"`
+	Depth     int       `json:"depth"`     // distance from the root version
+	ArcCount  int       `json:"arc_count"` // number of arcs in this version
 }
 
 // MarshalJSON encodes a LineageRecord to JSON with CID strings.

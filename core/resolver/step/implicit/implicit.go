@@ -122,8 +122,8 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	if codecName == "dag-pb" {
 		hamtResult := r.tryHAMTResolution(root, blockContent, path)
 		if hamtResult.isHAMT {
-		return hamtResult.matchedPath, hamtResult.target, hamtResult.evidence, hamtResult.err
-	}
+			return hamtResult.matchedPath, hamtResult.target, hamtResult.evidence, hamtResult.err
+		}
 	}
 
 	// Try to resolve the first segment

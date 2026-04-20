@@ -5,14 +5,13 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
-	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -37,21 +36,39 @@ func newTestEAT() *overwrite.EAT {
 	return e
 }
 
-const testBucketId = "test-graph"
-
-func TestGatewayExplicitOnly(t *testing.T) {
-	// Create components
-	e := newTestEAT()
+func newSemantic(t *testing.T) mapping.Semantic {
+	t.Helper()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	s := sce.NewEngine(scheme)
+	semantic, err := mapping.NewIndexedSemantic(scheme)
+	if err != nil {
+		t.Fatalf("NewIndexedSemantic failed: %v", err)
+	}
+	return semantic
+}
+
+func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantic, e *overwrite.EAT, bucketID string, arcs map[string]cid.Cid) cid.Cid {
+	t.Helper()
+	root, err := semantic.Commit(ctx, mapping.NewViewFrom(arcs))
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	if err := e.Update(ctx, bucketID, root, cid.Undef, arcs); err != nil {
+		t.Fatalf("EAT.Update failed: %v", err)
+	}
+	return root
+}
+
+const testBucketId = "test-graph"
+
+func TestGatewayExplicitOnly(t *testing.T) {
+	e := newTestEAT()
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
-
-	// Create arc set with hierarchical paths pointing to PayloadCIDs
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -61,23 +78,12 @@ func TestGatewayExplicitOnly(t *testing.T) {
 		"a/b":   k2,
 		"a/b/c": k3,
 	}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	// Create structure
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Store arcs in EAT
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	// Create resolver
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Test exact path matching (no remaining path after resolution)
 	tests := []struct {
 		path     string
 		expected cid.Cid
@@ -93,11 +99,9 @@ func TestGatewayExplicitOnly(t *testing.T) {
 			t.Errorf("Resolve(%s) failed: %v", tt.path, err)
 			continue
 		}
-
 		if !result.Target.Equals(tt.expected) {
 			t.Errorf("Resolve(%s) = %v, want %v", tt.path, result.Target, tt.expected)
 		}
-
 		if len(result.Transcript.Steps) != 1 {
 			t.Errorf("Resolve(%s) should have exactly one step, got %d", tt.path, len(result.Transcript.Steps))
 		}
@@ -114,11 +118,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 
 func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -126,15 +126,9 @@ func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 	arcsMap := map[string]cid.Cid{
 		"a/b": target,
 	}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -151,18 +145,11 @@ func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 }
 
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
-	// Test that longest prefix matching works
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
-
-	// Create arc set
 	k1, _ := newPayloadCID([]byte("target1"))
 	k2, _ := newPayloadCID([]byte("target2"))
 	k3, _ := newPayloadCID([]byte("target3"))
@@ -172,96 +159,52 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 		"a/b":   k2,
 		"a/b/c": k3,
 	}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Test: "a/b/c/d" should resolve to k3 (longest prefix "a/b/c")
-	// Then Resolver tries to continue with remaining path "d" via implicit resolution
-	// Since CAS doesn't have the block for k3, it should return error
 	result, err := g.Resolve(root, "a/b/c/d")
-	if err == nil {
-		// If no error, the target should be k3 (explicit step only)
-		// This means Gateway stopped at explicit resolution
-		if !result.Target.Equals(k3) {
-			t.Errorf("Resolve(a/b/c/d) = %v, want %v", result.Target, k3)
-		}
+	if err == nil && !result.Target.Equals(k3) {
+		t.Errorf("Resolve(a/b/c/d) = %v, want %v", result.Target, k3)
 	}
-	// If error, that's also acceptable behavior (CAS doesn't have the block)
 }
 
 func TestGatewayImplicitStep(t *testing.T) {
-	// Create components
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
-
-	// Create arc set pointing to a PayloadCID
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcsMap := map[string]cid.Cid{"data": payloadCID}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	// Create structure
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Store arcs in EAT
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	// Add block to mock CAS
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
 
-	// Create resolver
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Resolve should stop at PayloadCID
 	result, err := g.Resolve(root, "data")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-
-	// Check that target is defined (was a PayloadCID)
 	if !result.Target.Defined() {
 		t.Error("Target should be defined")
 	}
-
 	if len(result.Transcript.Steps) != 1 {
 		t.Errorf("Expected 1 step, got %d", len(result.Transcript.Steps))
 	}
 }
 
 func TestGatewayTranscript(t *testing.T) {
-	// Create components
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
-
-	// Create arc set with nested structure
 	innerCID, _ := newPayloadCID([]byte("inner"))
 	outerCID, _ := newPayloadCID([]byte("outer"))
 
@@ -269,28 +212,16 @@ func TestGatewayTranscript(t *testing.T) {
 		"inner": innerCID,
 		"outer": outerCID,
 	}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	// Create structure
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Store arcs in EAT
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	// Create resolver
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Resolve and check transcript
 	result, err := g.Resolve(root, "inner")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-
 	if len(result.Transcript.Steps) != 1 {
 		t.Errorf("Expected 1 step, got %d", len(result.Transcript.Steps))
 	}
@@ -308,58 +239,36 @@ func TestGatewayTranscript(t *testing.T) {
 }
 
 func TestGatewayPayloadRedirect(t *testing.T) {
-	// Test @payload redirect when resolving MALT CID with empty path
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
-
-	// Create arc set with @payload pointing to a payload CID
 	payloadCID, _ := newPayloadCID([]byte("payload-data"))
 	arcsMap := map[string]cid.Cid{
 		"@payload": payloadCID,
 		"link":     payloadCID,
 	}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Store arcs in EAT
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Resolve with empty path - should auto-redirect to @payload
 	result, err := g.Resolve(root, "")
 	if err != nil {
 		t.Fatalf("Resolve with empty path failed: %v", err)
 	}
-
-	// Should resolve to payload CID
 	if !result.Target.Equals(payloadCID) {
 		t.Errorf("Empty path resolve target = %v, want payloadCID %v", result.Target, payloadCID)
 	}
-
-	// Should have one step with @payload
 	if len(result.Transcript.Steps) != 1 {
 		t.Errorf("Expected 1 step, got %d", len(result.Transcript.Steps))
 	}
-
 	if result.Transcript.Steps[0].Path != "@payload" {
 		t.Errorf("Step path = %s, want @payload", result.Transcript.Steps[0].Path)
 	}
 
-	// Verify transcript
 	valid, err := g.VerifyTranscript(root, result.Transcript)
 	if err != nil {
 		t.Fatalf("VerifyTranscript failed: %v", err)
@@ -370,81 +279,50 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 }
 
 func TestGatewayStructureOnlyNode(t *testing.T) {
-	// Test that structure-only nodes (no @payload) return structure root
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
-
-	// Create arc set WITHOUT @payload (structure-only node)
 	targetCID, _ := newPayloadCID([]byte("target-data"))
 	arcsMap := map[string]cid.Cid{"link": targetCID}
-	arcs := arcset.NewSetFrom(arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
 
-	root, err := s.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Store arcs in EAT
-	e.Update(ctx, testBucketId, root, cid.Undef, arcsMap)
-
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Resolve with empty path - should return structure root (no @payload)
 	result, err := g.Resolve(root, "")
 	if err != nil {
 		t.Fatalf("Resolve with empty path failed: %v", err)
 	}
-
-	// Should return the structure root itself
 	if !result.Target.Equals(root) {
 		t.Errorf("Empty path resolve target = %v, want structure root %v", result.Target, root)
 	}
-
-	// Should have no steps (no @payload to resolve)
 	if len(result.Transcript.Steps) != 0 {
 		t.Errorf("Expected 0 steps for structure-only node, got %d", len(result.Transcript.Steps))
 	}
 }
 
 func TestGatewayNonMaltEmptyPath(t *testing.T) {
-	// Test that non-MALT CIDs with empty path are returned directly
 	e := newTestEAT()
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	s := sce.NewEngine(scheme)
+	semantic := newSemantic(t)
 	c := mock.NewCAS()
 
-	// Create a regular payload CID (not MALT)
 	payloadCID, _ := newPayloadCID([]byte("raw-data"))
 	c.AddBlock(payloadCID, []byte("raw-data"))
 
-	explicitR := explicit.NewResolver(e, s, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
-	// Resolve non-MALT CID with empty path
 	result, err := g.Resolve(payloadCID, "")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-
-	// Should return the same CID
 	if !result.Target.Equals(payloadCID) {
 		t.Errorf("Target = %v, want %v", result.Target, payloadCID)
 	}
-
-	// Should have no steps
 	if len(result.Transcript.Steps) != 0 {
 		t.Errorf("Expected 0 steps, got %d", len(result.Transcript.Steps))
 	}

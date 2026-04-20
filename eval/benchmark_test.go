@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/eval"
 )
 
@@ -36,7 +36,10 @@ func TestBenchmarkRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	s := sce.NewEngine(scheme)
+	semantic, err := mapping.NewIndexedSemantic(scheme)
+	if err != nil {
+		t.Fatalf("NewIndexedSemantic failed: %v", err)
+	}
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	// Create benchmark runner with small config for quick test
@@ -48,7 +51,7 @@ func TestBenchmarkRunner(t *testing.T) {
 		EATType:      eval.EATOverwrite,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
 
 	ctx := context.Background()
 
@@ -154,8 +157,8 @@ func TestNewTestComponents(t *testing.T) {
 		if tc.EAT == nil {
 			t.Errorf("EAT is nil for %s", backend)
 		}
-		if tc.SCE == nil {
-			t.Errorf("SCE is nil for %s", backend)
+		if tc.Semantic == nil {
+			t.Errorf("Semantic is nil for %s", backend)
 		}
 		if tc.CAS == nil {
 			t.Errorf("CAS is nil for %s", backend)
@@ -192,8 +195,8 @@ func TestAllEATTypes(t *testing.T) {
 		if tc.EAT == nil {
 			t.Errorf("EAT is nil for %s", eatType)
 		}
-		if tc.SCE == nil {
-			t.Errorf("SCE is nil for %s", eatType)
+		if tc.Semantic == nil {
+			t.Errorf("Semantic is nil for %s", eatType)
 		}
 	}
 
@@ -403,7 +406,7 @@ func TestGenerateLatexTable(t *testing.T) {
 func BenchmarkAppend(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
-	s := sce.NewEngine(scheme)
+	semantic, _ := mapping.NewIndexedSemantic(scheme)
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
@@ -414,7 +417,7 @@ func BenchmarkAppend(b *testing.B) {
 		EATType:      eval.EATOverwrite,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -426,7 +429,7 @@ func BenchmarkAppend(b *testing.B) {
 func BenchmarkRandom(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
-	s := sce.NewEngine(scheme)
+	semantic, _ := mapping.NewIndexedSemantic(scheme)
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
@@ -437,7 +440,7 @@ func BenchmarkRandom(b *testing.B) {
 		EATType:      eval.EATOverwrite,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -449,7 +452,7 @@ func BenchmarkRandom(b *testing.B) {
 func BenchmarkBulk(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
-	s := sce.NewEngine(scheme)
+	semantic, _ := mapping.NewIndexedSemantic(scheme)
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
@@ -460,7 +463,7 @@ func BenchmarkBulk(b *testing.B) {
 		EATType:      eval.EATOverwrite,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, s, c)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
 	ctx := context.Background()
 
 	b.ResetTimer()

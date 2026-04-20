@@ -33,11 +33,11 @@ const (
 
 // CAS is a mock CAS for testing, backed by KVStore with simulated latency.
 type CAS struct {
-	kv          *memory.KV
-	getLatency  time.Duration
-	putLatency  time.Duration
-	hasLatency  time.Duration
-	jitter      time.Duration
+	kv         *memory.KV
+	getLatency time.Duration
+	putLatency time.Duration
+	hasLatency time.Duration
+	jitter     time.Duration
 }
 
 // Option configures a mock CAS.

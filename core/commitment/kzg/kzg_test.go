@@ -3,8 +3,8 @@ package kzg_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 )
 
 func TestKZGProveIndexRestartSafe(t *testing.T) {

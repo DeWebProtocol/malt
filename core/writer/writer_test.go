@@ -5,10 +5,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -16,7 +16,7 @@ import (
 
 // Test helpers.
 
-func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, *sce.Engine, *kvg) {
+func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, mapping.Semantic, *kvg) {
 	t.Helper()
 
 	// Memory KVStore
@@ -34,13 +34,15 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, *sce.Engine, *kvg) {
 		t.Fatalf("failed to create KZG scheme: %v", err)
 	}
 
-	// SCE engine
-	s := sce.NewEngine(scheme)
+	semantic, err := mapping.NewIndexedSemantic(scheme)
+	if err != nil {
+		t.Fatalf("failed to create mapping semantic: %v", err)
+	}
 
 	// Writer (no lineage recorder for basic tests)
-	w := NewWriter(s, e, nil)
+	w := NewWriter(semantic, e, nil)
 
-	return w, e, s, kv
+	return w, e, semantic, kv
 }
 
 type kvg = kvmemory.KV
@@ -463,9 +465,9 @@ func TestWriter_LineageRecorder(t *testing.T) {
 	kv := kvmemory.New()
 	e, _ := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	scheme, _ := kzg.NewScheme()
-	s := sce.NewEngine(scheme)
+	semantic, _ := mapping.NewIndexedSemantic(scheme)
 	rec := &mockLineageRecorder{}
-	w := NewWriter(s, e, rec)
+	w := NewWriter(semantic, e, rec)
 
 	ctx := context.Background()
 	bucketId := "test"

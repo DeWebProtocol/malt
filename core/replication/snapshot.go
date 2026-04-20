@@ -1,5 +1,5 @@
 // Package replication provides graph-level snapshot export/import
-// and state synchronization between replicated EAT+SCE units.
+// and state synchronization between replicated EAT and semantic state units.
 //
 // Replication in MALT operates at the KVStore level, exporting all
 // keys associated with a graph's bucketId and lineage records,
@@ -30,10 +30,10 @@ const SnapshotVersion uint32 = 1
 
 // Key prefixes used by MALT components.
 const (
-	GraphMetaPrefix   = "graph/meta/"
-	GraphIndexPrefix  = "graph/index/"
-	LineagePrefix     = "lineage/"
-	EATKeySep         = ":"
+	GraphMetaPrefix  = "graph/meta/"
+	GraphIndexPrefix = "graph/index/"
+	LineagePrefix    = "lineage/"
+	EATKeySep        = ":"
 )
 
 // Snapshot is a portable archive of a graph's complete state.

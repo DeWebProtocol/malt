@@ -1,6 +1,6 @@
 // Package writer implements the write-side API for MALT.
 // It provides the unified arc update procedure (UpdateArc) described in Sec 4.5,
-// coordinating SCE (commitment), EAT (index), and lineage recording.
+// coordinating map semantics, EAT (index), and lineage recording.
 package writer
 
 import (
@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
@@ -91,29 +91,29 @@ type LineageRecorder interface {
 }
 
 // Writer implements the write-side API for MALT.
-// It coordinates SCE (commitment), EAT (index), and optional lineage recording
+// It coordinates keyed-map semantics, EAT (index), and optional lineage recording
 // to execute the unified arc update procedure from Sec 4.5.
 //
 // Symmetric to Resolver on the read side:
-//   - Resolver: (root, path) → (target, transcript) via EAT lookup + SCE prove
-//   - Writer:   (root, path, newTarget) → newRoot via SCE update + EAT apply + lineage
+//   - Resolver: (root, path) -> (target, transcript) via EAT lookup + semantic prove
+//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + EAT apply + lineage
 type Writer struct {
-	sce    *sce.Engine
-	eat    eat.EAT
-	rec    LineageRecorder
+	semantic mapping.Semantic
+	eat      eat.EAT
+	rec      LineageRecorder
 }
 
 // NewWriter creates a new Writer.
 //
 // Parameters:
-//   - sce: Structure Commitment Engine (required)
+//   - semantic: keyed-map semantic (required)
 //   - eat: Explicit Arc Table (required)
 //   - rec: optional LineageRecorder for versioned resolution (nil to disable)
-func NewWriter(sce *sce.Engine, eat eat.EAT, rec LineageRecorder) *Writer {
+func NewWriter(semantic mapping.Semantic, eat eat.EAT, rec LineageRecorder) *Writer {
 	return &Writer{
-		sce: sce,
-		eat: eat,
-		rec: rec,
+		semantic: semantic,
+		eat:      eat,
+		rec:      rec,
 	}
 }
 
@@ -149,6 +149,9 @@ func canonicalizeSnapshot(arcs arcset.ArcSet) (arcset.ArcSet, map[arcset.Path]ci
 		if canonical.IsEmpty() {
 			return nil, nil, ErrEmptyPath
 		}
+		if !target.Defined() {
+			continue
+		}
 		if existing, ok := arcsMap[canonical]; ok && !existing.Equals(target) {
 			return nil, nil, fmt.Errorf("duplicate canonical path %q in arc set", canonical.String())
 		}
@@ -162,9 +165,33 @@ func canonicalizeSnapshot(arcs arcset.ArcSet) (arcset.ArcSet, map[arcset.Path]ci
 	return arcset.NewSetFrom(stringMap), arcsMap, nil
 }
 
-func stringifyPathMap(paths map[arcset.Path]cid.Cid) map[string]cid.Cid {
-	out := make(map[string]cid.Cid, len(paths))
-	for path, target := range paths {
+func diffArcMaps(oldArcs, newArcs map[string]cid.Cid) map[string]cid.Cid {
+	diff := make(map[string]cid.Cid)
+
+	for path, newTarget := range newArcs {
+		oldTarget, ok := oldArcs[path]
+		if !ok || !oldTarget.Equals(newTarget) {
+			diff[path] = newTarget
+		}
+	}
+
+	for path := range oldArcs {
+		if _, ok := newArcs[path]; !ok {
+			diff[path] = cid.Undef
+		}
+	}
+
+	return diff
+}
+
+func stringifyArcSet(arcs arcset.ArcSet) map[string]cid.Cid {
+	out := make(map[string]cid.Cid, arcs.Len())
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
 		out[path.String()] = target
 	}
 	return out
@@ -174,14 +201,14 @@ func stringifyPathMap(paths map[arcset.Path]cid.Cid) map[string]cid.Cid {
 //
 // Given a structure root, path, and new target CID, this method:
 //  1. Looks up the current binding: c = EAT.Get(root, path)
-//  2. Updates the commitment: newRoot = SCE.Update(root, path, c, newTarget)
-//     or for inserts: newRoot = SCE.Commit(expanded arc set)
-//  3. Applies the update to EAT: EAT.Update(newRoot, oldRoot, {path: newTarget})
+//  2. Updates the commitment: newRoot = semantic.Update(root, path, c, newTarget)
+//     or for inserts: newRoot = semantic.Commit(expanded arc set)
+//  3. Applies the update to EAT using the full new arc set for newRoot
 //  4. Records lineage: RecordLineage(newRoot, root)
 //
 // The operation covers three semantic cases:
 //   - Insert (⊥ → c): path has no current binding; recommit with expanded arc set
-//   - Replace (c → c'): path has an existing binding; use SCE.Update
+//   - Replace (c -> c'): path has an existing binding; use semantic.Update
 //   - Delete (c → ⊥): newTarget is cid.Undef; recommit with reduced arc set
 func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, path string, newTarget cid.Cid) (*UpdateResult, error) {
 	if !root.Defined() {
@@ -198,6 +225,10 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 		return nil, fmt.Errorf("EAT.Get failed: %w", err)
 	}
 	// eat.IsNotFound means oldTarget == cid.Undef, which is valid for insert
+	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
+	if err != nil {
+		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
+	}
 
 	// Determine operation type
 	var op ArcOp
@@ -226,22 +257,17 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	var newRoot cid.Cid
 
 	if isInsert || isDelete {
-		// Insert or delete: requires recommit with modified arc set
-		// because SCE.Update only supports replacing existing paths.
-		snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
-		if err != nil {
-			return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
-		}
-
+		// Insert or delete: requires recommit with modified arc set because
+		// semantic.Update only supports replacing existing paths.
 		// Build modified arc set
 		arcsMap := make(map[string]cid.Cid)
 		iter := snapshot.Iterate()
-	for {
-		p, t, ok := iter.Next()
-		if !ok {
-			break
-		}
-		arcsMap[p.String()] = t
+		for {
+			p, t, ok := iter.Next()
+			if !ok {
+				break
+			}
+			arcsMap[p.String()] = t
 		}
 		if iter.Err() != nil {
 			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
@@ -255,26 +281,30 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 			delete(arcsMap, canonicalPath.String())
 		}
 
-		newRoot, err = w.sce.Commit(arcset.NewSetFrom(arcsMap))
+		newRoot, err = w.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
 		if err != nil {
-			return nil, fmt.Errorf("SCE.Commit failed for arc %s: %w", op, err)
+			return nil, fmt.Errorf("semantic.Commit failed for arc %s: %w", op, err)
 		}
 	} else {
-		// Replace: use SCE.Update for efficient in-place modification
-		snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
+		// Replace: use semantic.Update for efficient in-place modification
+		newRoot, err = w.semantic.Update(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), canonicalPath, oldTarget, newTarget)
 		if err != nil {
-			return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
-		}
-
-		newRoot, err = w.sce.Update(root, snapshot, canonicalPath.String(), oldTarget, newTarget)
-		if err != nil {
-			return nil, fmt.Errorf("SCE.Update failed: %w", err)
+			return nil, fmt.Errorf("semantic.Update failed: %w", err)
 		}
 	}
 
-	// Step 3: Apply update to EAT
-	arcsMap := map[string]cid.Cid{canonicalPath.String(): newTarget}
-	if err := w.eat.Update(ctx, bucketId, newRoot, root, arcsMap); err != nil {
+	oldArcs := stringifyArcSet(snapshot)
+	updatedArcs := stringifyArcSet(snapshot)
+	if newTarget.Defined() {
+		updatedArcs[canonicalPath.String()] = newTarget
+	} else {
+		delete(updatedArcs, canonicalPath.String())
+	}
+	delta := diffArcMaps(oldArcs, updatedArcs)
+
+	// Step 3: Apply update to EAT as an old->new delta. This keeps versioned EAT
+	// compact while still emitting tombstones for deletions.
+	if err := w.eat.Update(ctx, bucketId, newRoot, root, delta); err != nil {
 		return nil, fmt.Errorf("EAT.Update failed: %w", err)
 	}
 
@@ -299,7 +329,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 //
 // Given a structure root and a map of path → newTarget, this method:
 //  1. Looks up all current bindings
-//  2. If all operations are replacements: newRoot = SCE.BatchUpdate(root, updates)
+//  2. If all operations are replacements: apply semantic.Update per key
 //  3. If any insert or delete is present: recommit with modified arc set
 //  4. Applies all updates to EAT
 //  5. Records lineage: RecordLineage(newRoot, root)
@@ -323,10 +353,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 
 	// Step 2: Look up all current bindings and classify operations
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
-	sceUpdates := make(map[arcset.Path]struct {
-		Old cid.Cid
-		New cid.Cid
-	}, len(normalizedUpdates))
 	needsRecommit := false
 
 	for path, newTarget := range normalizedUpdates {
@@ -350,11 +376,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 		} else if isDelete {
 			op = ArcDelete
 		}
-
-		sceUpdates[path] = struct {
-			Old cid.Cid
-			New cid.Cid
-		}{Old: oldTarget, New: newTarget}
 
 		perArc[path] = UpdateResult{
 			OldRoot:   root,
@@ -391,29 +412,38 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 			}
 		}
 
-		newRoot, err = w.sce.Commit(arcset.NewSetFrom(arcsMap))
+		newRoot, err = w.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
 		if err != nil {
-			return nil, fmt.Errorf("SCE.Commit failed for batch: %w", err)
+			return nil, fmt.Errorf("semantic.Commit failed for batch: %w", err)
 		}
 	} else {
-		// All replacements; use SCE.BatchUpdate
-		// Convert sceUpdates format
-		batchSCEUpdates := make(map[string]struct {
-			Old cid.Cid
-			New cid.Cid
-		}, len(normalizedUpdates))
-		for path, u := range sceUpdates {
-			batchSCEUpdates[path.String()] = u
+		currentRoot := root
+		currentMap := stringifyArcSet(snapshot)
+		for path, result := range perArc {
+			currentView := mapping.NewViewFrom(currentMap)
+			currentRoot, err = w.semantic.Update(ctx, currentRoot, currentView, path, result.OldTarget, result.NewTarget)
+			if err != nil {
+				return nil, fmt.Errorf("semantic.Update failed for %s: %w", path.String(), err)
+			}
+			currentMap[path.String()] = result.NewTarget
 		}
+		newRoot = currentRoot
+	}
 
-		newRoot, err = w.sce.BatchUpdate(root, snapshot, batchSCEUpdates)
-		if err != nil {
-			return nil, fmt.Errorf("SCE.BatchUpdate failed: %w", err)
+	oldArcs := stringifyArcSet(snapshot)
+	updatedArcs := stringifyArcSet(snapshot)
+	for path, newTarget := range normalizedUpdates {
+		if newTarget.Defined() {
+			updatedArcs[path.String()] = newTarget
+		} else {
+			delete(updatedArcs, path.String())
 		}
 	}
 
-	// Step 4: Apply all updates to EAT
-	if err := w.eat.Update(ctx, bucketId, newRoot, root, stringifyPathMap(normalizedUpdates)); err != nil {
+	delta := diffArcMaps(oldArcs, updatedArcs)
+
+	// Step 4: Apply the update delta to EAT.
+	if err := w.eat.Update(ctx, bucketId, newRoot, root, delta); err != nil {
 		return nil, fmt.Errorf("EAT.Update failed: %w", err)
 	}
 
@@ -441,26 +471,26 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 // CreateStructure creates a new structure from an arc set.
 //
 // This is the initial commitment operation:
-//  1. Commits the arc set via SCE
+//  1. Commits the arc set via the semantic layer
 //  2. Stores arcs in EAT (first version, no parent)
 //  3. Records lineage with cid.Undef as parent
 func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
 	}
-	normalizedSnapshot, arcsMap, err := canonicalizeSnapshot(arcs)
+	normalizedSnapshot, _, err := canonicalizeSnapshot(arcs)
 	if err != nil {
 		return cid.Undef, err
 	}
 
-	// Step 1: Commit arc set via SCE
-	root, err := w.sce.Commit(normalizedSnapshot)
+	// Step 1: Commit arc set via semantic layer
+	root, err := w.semantic.Commit(ctx, mapping.NewViewFrom(stringifyArcSet(normalizedSnapshot)))
 	if err != nil {
-		return cid.Undef, fmt.Errorf("SCE.Commit failed: %w", err)
+		return cid.Undef, fmt.Errorf("semantic.Commit failed: %w", err)
 	}
 
 	// Step 2: Store arcs in EAT (first version)
-	if err := w.eat.Update(ctx, bucketId, root, cid.Undef, stringifyPathMap(arcsMap)); err != nil {
+	if err := w.eat.Update(ctx, bucketId, root, cid.Undef, stringifyArcSet(normalizedSnapshot)); err != nil {
 		return cid.Undef, fmt.Errorf("EAT.Update failed: %w", err)
 	}
 

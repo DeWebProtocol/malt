@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"

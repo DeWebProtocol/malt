@@ -76,7 +76,7 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 		EATType:      eval.EATType(benchEATType),
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, tc.BucketID, tc.EAT, tc.SCE, tc.CAS)
+	runner := eval.NewBenchmarkRunner(cfg, tc.BucketID, tc.EAT, tc.Semantic, tc.CAS)
 	ctx := context.Background()
 
 	fmt.Printf("Running %s benchmark: backend=%s, eat=%s, arcs=%v, rounds=%d\n\n",

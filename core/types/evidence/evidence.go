@@ -36,7 +36,8 @@ type Evidence interface {
 	Kind() EvidenceKind
 }
 
-// ExplicitEvidence represents cryptographic proof from SCE (KZG/Verkle/IPA).
+// ExplicitEvidence represents cryptographic proof emitted by the semantic layer
+// over a primitive commitment backend (for example KZG or IPA).
 type ExplicitEvidence struct {
 	proof []byte
 }

@@ -4,13 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -36,22 +35,24 @@ func newTestEAT() *overwrite.EAT {
 }
 
 // newTestComponents creates a complete set of test components:
-// EAT, SCE engine, and KZG scheme.
-func newTestComponents() (*overwrite.EAT, *sce.Engine, *kzg.Scheme) {
+// EAT, mapping semantic, and KZG scheme.
+func newTestComponents() (*overwrite.EAT, mapping.Semantic, *kzg.Scheme) {
 	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		panic(err)
 	}
-	s := sce.NewEngine(scheme)
-	return e, s, scheme
+	semantic, err := mapping.NewIndexedSemantic(scheme)
+	if err != nil {
+		panic(err)
+	}
+	return e, semantic, scheme
 }
 
-// setupArcSet commits arcs to SCE and stores them in EAT, returning the root CID.
-func setupArcSet(t *testing.T, e *overwrite.EAT, s *sce.Engine, arcsMap map[string]cid.Cid) cid.Cid {
+// setupArcSet commits arcs to semantic layer and stores them in EAT.
+func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantic, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
-	arcs := arcset.NewSetFrom(arcsMap)
-	root, err := s.Commit(arcs)
+	root, err := semantic.Commit(context.Background(), mapping.NewViewFrom(arcsMap))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -63,7 +64,7 @@ func setupArcSet(t *testing.T, e *overwrite.EAT, s *sce.Engine, arcsMap map[stri
 }
 
 func TestResolve_LongestPrefixMatch(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 	ctx := context.Background()
 
 	// Create target CIDs
@@ -77,10 +78,10 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 		"a/b":   target2,
 		"a/b/c": target3,
 	}
-	root := setupArcSet(t, e, s, arcsMap)
+	root := setupArcSet(t, e, semantic, arcsMap)
 
 	// Create resolver
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// Resolve "a/b/c/d" should match longest prefix "a/b/c" -> target3
 	matchedPath, target, ev, err := r.Resolve(root, "a/b/c/d")
@@ -130,7 +131,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 		t.Error("Verify should return true for valid evidence")
 	}
 
-	// Verify that "a/b" is still stored in the snapshot (needed for SCE Prove)
+	// Verify that "a/b" is still stored in the snapshot (needed for semantic.Prove)
 	// by resolving "a/x" -> should match "a" -> target1
 	matchedPath, target, ev, err = r.Resolve(root, "a/x")
 	if err != nil {
@@ -157,18 +158,18 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 }
 
 func TestResolve_ExactMatch(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
 	target1 := makeCID(1)
 	target2 := makeCID(2)
 
 	arcsMap := map[string]cid.Cid{
-		"a":     target1,
-		"a/b":   target2,
+		"a":   target1,
+		"a/b": target2,
 	}
-	root := setupArcSet(t, e, s, arcsMap)
+	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// Exact match: resolve "a/b" should return "a/b" -> target2
 	matchedPath, target, ev, err := r.Resolve(root, "a/b")
@@ -196,15 +197,15 @@ func TestResolve_ExactMatch(t *testing.T) {
 }
 
 func TestResolve_NoMatch(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
 		"a/b": target,
 	}
-	root := setupArcSet(t, e, s, arcsMap)
+	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// Resolve "x/y/z" has no matching prefix
 	_, _, _, err := r.Resolve(root, "x/y/z")
@@ -214,15 +215,15 @@ func TestResolve_NoMatch(t *testing.T) {
 }
 
 func TestResolve_EmptyPath(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
 		"a": target,
 	}
-	root := setupArcSet(t, e, s, arcsMap)
+	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// Empty path should error with "path is empty"
 	_, _, _, err := r.Resolve(root, "")
@@ -235,9 +236,9 @@ func TestResolve_EmptyPath(t *testing.T) {
 }
 
 func TestResolve_UndefinedRoot(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// Undefined root should error with "root is not defined"
 	_, _, _, err := r.Resolve(cid.Undef, "a/b")
@@ -250,15 +251,15 @@ func TestResolve_UndefinedRoot(t *testing.T) {
 }
 
 func TestVerify_ValidProof(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
 		"a/b": target,
 	}
-	root := setupArcSet(t, e, s, arcsMap)
+	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// First resolve to get valid evidence
 	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "a/b")
@@ -277,15 +278,15 @@ func TestVerify_ValidProof(t *testing.T) {
 }
 
 func TestVerify_WrongProof(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
 		"a/b": target,
 	}
-	root := setupArcSet(t, e, s, arcsMap)
+	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 
 	// Resolve to get a valid evidence
 	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "a/b")
@@ -316,9 +317,9 @@ func TestVerify_WrongProof(t *testing.T) {
 }
 
 func TestVerify_NilEvidence(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 	root := makeCID(1)
 	target := makeCID(2)
 
@@ -333,9 +334,9 @@ func TestVerify_NilEvidence(t *testing.T) {
 }
 
 func TestVerify_WrongEvidenceType(t *testing.T) {
-	e, s, _ := newTestComponents()
+	e, semantic, _ := newTestComponents()
 
-	r := explicit.NewResolver(e, s, testBucketId)
+	r := explicit.NewResolver(e, semantic, testBucketId)
 	root := makeCID(1)
 	target := makeCID(2)
 
@@ -367,7 +368,10 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	s := sce.NewEngine(scheme)
+	semantic, err := mapping.NewIndexedSemantic(scheme)
+	if err != nil {
+		t.Fatalf("NewIndexedSemantic failed: %v", err)
+	}
 
 	ctx := context.Background()
 	bucketId := "bloom-test"
@@ -377,8 +381,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 		"data/file": target,
 	}
 
-	arcs := arcset.NewSetFrom(arcsMap)
-	root, err := s.Commit(arcs)
+	root, err := semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -386,7 +389,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 		t.Fatalf("EAT.Update failed: %v", err)
 	}
 
-	r := explicit.NewResolver(e, s, bucketId)
+	r := explicit.NewResolver(e, semantic, bucketId)
 
 	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "data/file")
 	if err != nil {

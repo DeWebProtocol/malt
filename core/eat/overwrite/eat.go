@@ -25,8 +25,8 @@ import (
 // It uses bucketId for namespace isolation, allowing multiple graphs
 // to share the same KVStore instance.
 type EAT struct {
-	kv             kvstore.KVStore
-	bloomManager   *eat.BloomFilterManager // Uses common BloomFilterManager
+	kv           kvstore.KVStore
+	bloomManager *eat.BloomFilterManager // Uses common BloomFilterManager
 }
 
 // NewEAT creates a new EAT with the given KVStore and optional configuration.

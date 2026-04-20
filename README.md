@@ -69,7 +69,7 @@ Under this terminology:
   - it does not define public structure semantics or a general `key -> position` rule
 
 For engineering convenience, the current codebase still exposes many of these
-choices through one `commitment.Scheme` interface under `core/sce`.
+choices through one `commitment.Scheme` interface under `core/commitment`.
 That is a legacy flattening of concerns, not the preferred conceptual layering.
 The cleaner direction is to introduce a separate `core/structure` layer with
 public `list` and `map` semantics, each with their own internal implementations.
@@ -83,7 +83,7 @@ Native MALT resolution works over explicit arcs:
 
 1. look up the relevant arc in `EAT`
 2. obtain a root-scoped arc view
-3. generate a proof using `SCE`
+3. generate a proof using the semantic layer and primitive commitment backend
 4. return a transcript that the client can verify locally
 
 The explicit path is the primary path.
@@ -120,11 +120,11 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
 - `Structure`
   - preferred semantic layer for public `list` and `map` contracts
   - now lives under `core/structure`
-  - some older code paths still route through `sce`/`commitment`
+  - commitment backends now live under `core/commitment`
 - `EAT`
   - explicit arc materialization and lookup state
-- `SCE`
-  - stateless commitment/proof engine over caller-supplied arc views
+- `Commitment Backend`
+  - stateless primitive commitment/proof engine over caller-supplied indexed views
 - `Writer`
   - advances structure roots through localized arc updates
 - `Resolver`
@@ -150,7 +150,7 @@ malt/
 │   ├── lineage/      # version lineage metadata
 │   ├── replication/  # secondary snapshot/sync tooling
 │   ├── resolver/     # resolution loop and step executors
-│   ├── sce/          # structure commitment engine
+│   ├── commitment/   # primitive commitment backends
 │   ├── structure/    # public structural semantics (`list`, `map`)
 │   ├── types/        # arc sets, evidence, proof-related types
 │   └── writer/       # write-side structure update flow

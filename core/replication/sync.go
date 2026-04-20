@@ -1,4 +1,4 @@
-// State synchronization between EAT+SCE units.
+// State synchronization between EAT and commitment-backed semantic units.
 //
 // Sync compares snapshots between a source and target KVStore and
 // reconciles differences by importing missing entries into the target.

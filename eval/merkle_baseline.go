@@ -17,10 +17,10 @@ import (
 // MerkleDAGMetrics captures metrics for Merkle DAG baseline benchmarks.
 type MerkleDAGMetrics struct {
 	// Tree configuration
-	Depth        int // depth of the tree
-	Fanout       int // fanout at each level
-	TotalNodes   int // total number of nodes in the tree
-	LeafNodes    int // number of leaf nodes
+	Depth      int // depth of the tree
+	Fanout     int // fanout at each level
+	TotalNodes int // total number of nodes in the tree
+	LeafNodes  int // number of leaf nodes
 
 	// Update metrics
 	UpdateDepth          int           // depth of the leaf being updated (from root)
@@ -84,7 +84,7 @@ func (t *MerkleDAGTree) Build(ctx context.Context) (cid.Cid, int, error) {
 func (t *MerkleDAGTree) buildNode(ctx context.Context, path string, depth int) (cid.Cid, error) {
 	node := &MerkleNode{
 		Path:   path,
-		IsLeaf: depth >= t.depth - 1,
+		IsLeaf: depth >= t.depth-1,
 	}
 
 	var err error
@@ -164,7 +164,7 @@ func (t *MerkleDAGTree) UpdateLeaf(ctx context.Context, leafPath string, newData
 		return nil, fmt.Errorf("path depth mismatch: expected %d, got %d", expectedPathDepth, len(pathSegments))
 	}
 
-	metrics.UpdateDepth = expectedPathDepth // path segments = tree depth - 1
+	metrics.UpdateDepth = expectedPathDepth        // path segments = tree depth - 1
 	metrics.AncestorsRewritten = expectedPathDepth // all ancestors must be rewritten
 
 	// Step 1: Update the leaf
@@ -202,7 +202,7 @@ func (t *MerkleDAGTree) UpdateLeaf(ctx context.Context, leafPath string, newData
 
 		// If we just updated an immediate child, use that CID
 		// Otherwise use the CID from the child we just rewrote
-		if i == len(ancestorPaths) - 1 {
+		if i == len(ancestorPaths)-1 {
 			// This is the parent of the leaf, update with new leaf CID
 		} else {
 			// This is a higher ancestor, update with the rewritten child's new CID
@@ -262,7 +262,7 @@ func (t *MerkleDAGTree) RetrieveLeaf(ctx context.Context, leafPath string) (*Mer
 		}
 		totalProofSize += len(data)
 
-		if i == len(pathSegments) - 1 {
+		if i == len(pathSegments)-1 {
 			// This is the leaf
 			break
 		}
@@ -460,7 +460,7 @@ func (r *MerkleDAGBenchmarkRunner) runDepthBenchmark(ctx context.Context, depth 
 func generateLeafPath(index, depth, fanout int) string {
 	segments := make([]string, depth-1)
 	for i := depth - 2; i >= 0; i-- {
-		segments[i] = fmt.Sprintf("%d", index % fanout)
+		segments[i] = fmt.Sprintf("%d", index%fanout)
 		index = index / fanout
 	}
 	return "/" + joinPath(segments)
@@ -494,7 +494,7 @@ type CompareMetrics struct {
 	MALTRewriteAmp       float64
 	RewriteAmpReduction  float64 // percentage reduction
 	MerkleAncestors      int
-	MALTUpdates          int     // MALT updates are localized (always 1)
+	MALTUpdates          int // MALT updates are localized (always 1)
 	MerkleProofSize      int
 	MALTProofSize        int
 	MerkleUpdateLatency  time.Duration

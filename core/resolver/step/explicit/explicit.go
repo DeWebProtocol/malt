@@ -1,5 +1,6 @@
 // Package explicit implements the Step interface for MALT explicit arcs.
-// It uses longest-prefix matching in EAT and generates cryptographic proof via SCE.
+// It uses longest-prefix matching in EAT and generates cryptographic proof via
+// keyed-map semantics.
 package explicit
 
 import (
@@ -10,7 +11,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/resolver/step"
-	"github.com/dewebprotocol/malt/core/sce"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/logger"
@@ -28,15 +29,15 @@ const (
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
 	eat      eat.EAT
-	sce      *sce.Engine
+	semantic mapping.Semantic
 	bucketId string
 }
 
 // NewResolver creates a new explicit arc resolver.
-func NewResolver(e eat.EAT, s *sce.Engine, bucketId string) *Resolver {
+func NewResolver(e eat.EAT, semantic mapping.Semantic, bucketId string) *Resolver {
 	return &Resolver{
 		eat:      e,
-		sce:      s,
+		semantic: semantic,
 		bucketId: bucketId,
 	}
 }
@@ -82,7 +83,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 					logger.Err(err))
 				return "", cid.Cid{}, nil, fmt.Errorf("failed to get snapshot: %w", err)
 			}
-			_, proof, err := r.sce.Prove(root, snapshot, candidatePath)
+			binding, proof, err := r.semantic.Prove(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), arcset.CanonicalizePath(candidatePath))
 			if err != nil {
 				logger.Error("Resolver.Resolve prove failed",
 					logger.String("path", candidatePath),
@@ -99,6 +100,9 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 				logger.Int("segment_depth", len(segments)-i),
 				logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
+			if !binding.Present || !binding.Value.Equals(target) {
+				return "", cid.Cid{}, nil, fmt.Errorf("semantic proof binding mismatch for path: %s", candidatePath)
+			}
 			return arcset.Path(candidatePath), target, evidence.NewExplicitEvidence(proof), nil
 		}
 	}
@@ -132,9 +136,9 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 		return false, fmt.Errorf("expected ExplicitEvidence, got %T", ev)
 	}
 
-	valid, err := r.sce.Verify(root, path.String(), target, explicitEv.Bytes())
+	valid, err := r.semantic.Verify(root, path, mapping.Binding{Value: target, Present: true}, explicitEv.Bytes())
 	if err != nil {
-		logger.Error("Resolver.Verify SCE failed",
+		logger.Error("Resolver.Verify semantic verification failed",
 			logger.String("path", path.String()),
 			logger.Err(err))
 		return false, err
@@ -152,4 +156,17 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 // splitPath splits a path into segments.
 func splitPath(path arcset.Path) []string {
 	return step.SplitPath(path)
+}
+
+func stringifyArcSet(arcs arcset.ArcSet) map[string]cid.Cid {
+	out := make(map[string]cid.Cid, arcs.Len())
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		out[path.String()] = target
+	}
+	return out
 }

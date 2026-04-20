@@ -11,7 +11,7 @@ This submodule contains the Go implementation of MALT:
 
 - resolver / typed step executors
 - EAT
-- SCE and commitment backends
+- primitive commitment backends
 - graph and writer layers
 - gateway, CLI, evaluation, and replication
 
@@ -43,4 +43,3 @@ This submodule contains the Go implementation of MALT:
 - Prefer names that reflect semantic roles rather than Go built-in terms.
 - Keep upper-level runtime abstractions distinct from lower-level executor packages.
 - Avoid duplicating path semantics or canonicalization logic across packages.
-

@@ -13,11 +13,11 @@ import (
 
 // BaselineReport represents a complete baseline benchmark report.
 type BaselineReport struct {
-	Timestamp       string                   `json:"timestamp"`
-	MerkleDAG       map[int]*MerkleDAGMetrics `json:"merkle_dag"`
-	MALT            map[int]*Metrics         `json:"malt"`
-	Comparison      map[int]*CompareMetrics  `json:"comparison"`
-	Summary         string                   `json:"summary"`
+	Timestamp  string                    `json:"timestamp"`
+	MerkleDAG  map[int]*MerkleDAGMetrics `json:"merkle_dag"`
+	MALT       map[int]*Metrics          `json:"malt"`
+	Comparison map[int]*CompareMetrics   `json:"comparison"`
+	Summary    string                    `json:"summary"`
 }
 
 // RunBaselineReport generates a complete baseline comparison report.
@@ -47,7 +47,7 @@ func RunBaselineReport(ctx context.Context, depths []int, fanout int, arcCounts 
 		RandomSeed:   42,
 		Backend:      BackendKZG,
 		EATType:      EATOverwrite,
-	}, maltComponents.BucketID, maltComponents.EAT, maltComponents.SCE, maltComponents.CAS)
+	}, maltComponents.BucketID, maltComponents.EAT, maltComponents.Semantic, maltComponents.CAS)
 
 	maltResults, err := maltRunner.RunAppendBenchmark(ctx)
 	if err != nil {
@@ -173,14 +173,14 @@ func RunHAMTBaseline(ctx context.Context, sizes []int) (map[int]*HAMTMetrics, er
 
 // HAMTMetrics captures metrics for HAMT baseline.
 type HAMTMetrics struct {
-	Size            int
-	Depth           int           // HAMT depth (log2(size) / bitWidth)
-	LookupTime      time.Duration // time to lookup a key
-	UpdateTime      time.Duration // time to update a value
-	ProofSize       int           // size of lookup proof
-	RewriteAmp      float64       // number of nodes rewritten per update
-	TotalNodes      int           // total HAMT nodes
-	StorageBytes    int           // total storage
+	Size         int
+	Depth        int           // HAMT depth (log2(size) / bitWidth)
+	LookupTime   time.Duration // time to lookup a key
+	UpdateTime   time.Duration // time to update a value
+	ProofSize    int           // size of lookup proof
+	RewriteAmp   float64       // number of nodes rewritten per update
+	TotalNodes   int           // total HAMT nodes
+	StorageBytes int           // total storage
 }
 
 // runHAMTBenchmark runs HAMT benchmark for a given size.
@@ -199,7 +199,7 @@ func runHAMTBenchmark(ctx context.Context, size int) (*HAMTMetrics, error) {
 	metrics := &HAMTMetrics{
 		Size:       size,
 		Depth:      expectedDepth,
-		TotalNodes: size / (1 << bitWidth) + 1, // approximate node count
+		TotalNodes: size/(1<<bitWidth) + 1, // approximate node count
 	}
 
 	// HAMT update cost: need to rewrite nodes along the hash path
