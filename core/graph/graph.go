@@ -7,12 +7,12 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
-	"github.com/dewebprotocol/malt/core/sce"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/writer"
 	cid "github.com/ipfs/go-cid"
@@ -23,14 +23,15 @@ import (
 type Graph struct {
 	id              string
 	bucketId        string
-	sce             *sce.Engine
+	semantic        mapping.Semantic
 	resolver        *resolver.Resolver
 	wr              *writer.Writer
 	eat             eat.EAT
 	lineageRecorder writer.LineageRecorder
 }
 
-// NewGraph creates a new per-graph instance with its own SCE, resolver, and writer.
+// NewGraph creates a new per-graph instance with its own semantic layer,
+// resolver, and writer.
 //
 // Parameters:
 //   - id: unique graph identifier
@@ -59,12 +60,13 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 		scheme = s
 	}
 
-	// Create per-graph SCE. Correctness must not depend on RAM-only state inside
-	// the underlying commitment scheme.
-	sceEngine := sce.NewEngine(scheme)
+	semantic, err := mapping.NewIndexedSemantic(scheme)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
+	}
 
 	// Create per-graph explicit resolver
-	explicitStep := explicit.NewResolver(eat, sceEngine, bucketId)
+	explicitStep := explicit.NewResolver(eat, semantic, bucketId)
 
 	// Create per-graph implicit resolver
 	implicitStep := implicit.NewResolver(cas)
@@ -74,12 +76,12 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 	res := resolver.NewResolver(explicitStep, implicitStep)
 
 	// Create per-graph writer
-	wr := writer.NewWriter(sceEngine, eat, o.LineageRecorder)
+	wr := writer.NewWriter(semantic, eat, o.LineageRecorder)
 
 	return &Graph{
 		id:              id,
 		bucketId:        bucketId,
-		sce:             sceEngine,
+		semantic:        semantic,
 		resolver:        res,
 		wr:              wr,
 		eat:             eat,
@@ -97,9 +99,9 @@ func (g *Graph) BucketId() string {
 	return g.bucketId
 }
 
-// SCE returns the per-graph SCE engine.
-func (g *Graph) SCE() *sce.Engine {
-	return g.sce
+// Semantic returns the per-graph keyed-map semantic.
+func (g *Graph) Semantic() mapping.Semantic {
+	return g.semantic
 }
 
 // Resolver returns the per-graph resolver.
@@ -185,30 +187,5 @@ func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.ArcSet, erro
 
 // Commit implements GraphWriter.Commit.
 func (g *Graph) Commit(ctx context.Context, snapshot arcset.ArcSet) (cid.Cid, error) {
-	root, err := g.sce.Commit(snapshot)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("SCE commit failed: %w", err)
-	}
-	// Store arcs in EAT
-	arcsMap := make(map[string]cid.Cid)
-	iter := snapshot.Iterate()
-	for {
-		p, t, ok := iter.Next()
-		if !ok {
-			break
-		}
-		arcsMap[p.String()] = t
-	}
-	if iter.Err() != nil {
-		return cid.Undef, iter.Err()
-	}
-	if err := g.eat.Update(ctx, g.bucketId, root, cid.Undef, arcsMap); err != nil {
-		return cid.Undef, fmt.Errorf("EAT update failed: %w", err)
-	}
-	if g.lineageRecorder != nil {
-		if err := g.lineageRecorder.Record(ctx, g.bucketId, root, cid.Undef); err != nil {
-			return cid.Undef, fmt.Errorf("lineage record failed: %w", err)
-		}
-	}
-	return root, nil
+	return g.wr.CreateStructure(ctx, g.bucketId, snapshot)
 }

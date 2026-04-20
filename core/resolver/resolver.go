@@ -29,14 +29,14 @@ import (
 //   - Plain DAG: IPLD node traversal
 type Resolver struct {
 	explicitStep step.Step
-	implicitStep  step.Step
+	implicitStep step.Step
 }
 
 // NewResolver creates a new resolver with explicit and implicit step executors.
 func NewResolver(explicit, implicit step.Step) *Resolver {
 	return &Resolver{
 		explicitStep: explicit,
-		implicitStep:  implicit,
+		implicitStep: implicit,
 	}
 }
 

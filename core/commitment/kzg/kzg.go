@@ -12,7 +12,7 @@ import (
 	blsfr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	gokzg4844 "github.com/crate-crypto/go-kzg-4844"
 	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/sce/commitment"
+	"github.com/dewebprotocol/malt/core/commitment"
 	cid "github.com/ipfs/go-cid"
 )
 

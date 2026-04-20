@@ -1,7 +1,7 @@
 package graph
 
 import (
-	"github.com/dewebprotocol/malt/core/sce/commitment"
+	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/writer"
 )
 

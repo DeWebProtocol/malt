@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"fmt"
 
-	ipld "github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-codec-dagpb"
+	ipld "github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 )
 

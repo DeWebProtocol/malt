@@ -11,6 +11,8 @@ import (
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
@@ -19,8 +21,6 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/lineage"
-	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -251,8 +251,8 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
 }
 
-// NewGraph creates a new ad hoc per-graph instance with its own SCE, resolver,
-// and writer. It does not consult GraphManager metadata.
+// NewGraph creates a new ad hoc per-graph instance with its own per-graph
+// semantic wiring, resolver, and writer. It does not consult GraphManager metadata.
 //
 // Parameters:
 //   - id: unique graph identifier

@@ -56,7 +56,7 @@ func NewEAT(opts ...Option) (*EAT, error) {
 		return nil, fmt.Errorf("KVStore is required")
 	}
 	return &EAT{
-		kv:         o.kv,
+		kv:           o.kv,
 		bloomManager: eat.NewBloomFilterManager(o.bloomCache),
 	}, nil
 }

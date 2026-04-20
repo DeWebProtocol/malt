@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 
+	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagcbor"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
-	cid "github.com/ipfs/go-cid"
 )
 
 // Node represents a parsed HAMT node.

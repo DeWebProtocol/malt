@@ -3,8 +3,8 @@ package ipa_test
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
+	"github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/commitment/ipa"
 )
 
 func TestIPAProveIndexRestartSafe(t *testing.T) {

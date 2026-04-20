@@ -334,7 +334,6 @@ func TestEATMultipleBuckets(t *testing.T) {
 	}
 }
 
-
 func TestEATBatchGet(t *testing.T) {
 	kv := kvstore_memory.New()
 	eat, err := NewEAT(WithKVStore(kv))
@@ -511,7 +510,6 @@ func TestEATBatchGetAfterDelete(t *testing.T) {
 		t.Error("'c' should still exist")
 	}
 }
-
 
 func TestEATBatchUpdate(t *testing.T) {
 	kv := kvstore_memory.New()

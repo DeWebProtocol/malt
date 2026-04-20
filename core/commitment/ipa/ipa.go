@@ -14,7 +14,7 @@ import (
 	"github.com/crate-crypto/go-ipa/common"
 	ipa "github.com/crate-crypto/go-ipa/ipa"
 	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/sce/commitment"
+	"github.com/dewebprotocol/malt/core/commitment"
 	cid "github.com/ipfs/go-cid"
 )
 
