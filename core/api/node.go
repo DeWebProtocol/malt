@@ -143,7 +143,7 @@ func (n *Node) initKVStore() (kvstore.KVStore, error) {
 }
 
 // initCommitmentSchemeType creates a commitment scheme from its configured type.
-func (n *Node) initCommitmentSchemeType(kind string) (commitment.Scheme, error) {
+func (n *Node) initCommitmentSchemeType(kind string) (commitment.IndexCommitment, error) {
 	switch kind {
 	case "kzg":
 		return kzg.NewScheme()
@@ -302,7 +302,7 @@ func (a *lineageRecorderAdapter) Record(ctx context.Context, bucketId string, ne
 }
 
 // Commitment returns the default commitment scheme type from config.
-func (n *Node) Commitment() commitment.Scheme {
+func (n *Node) Commitment() commitment.IndexCommitment {
 	scheme, err := n.initCommitmentSchemeType(n.cfg.CommitmentType)
 	if err != nil {
 		return nil

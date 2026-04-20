@@ -19,11 +19,11 @@ import (
 	"github.com/dewebprotocol/malt/core/eat/bloom"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	"github.com/dewebprotocol/malt/core/eat/versioned"
+	"github.com/dewebprotocol/malt/core/kvstore"
+	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/sce"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/kvstore"
-	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -45,9 +45,9 @@ func AllBackends() []BackendType {
 type EATType string
 
 const (
-	EATOverwrite  EATType = "overwrite"
-	EATVersioned  EATType = "versioned"
-	EATBloom      EATType = "bloom"
+	EATOverwrite EATType = "overwrite"
+	EATVersioned EATType = "versioned"
+	EATBloom     EATType = "bloom"
 )
 
 // AllEATTypes returns all available EAT types.
@@ -70,8 +70,8 @@ func NewEAT(t EATType, kv kvstore.KVStore) (eat.EAT, error) {
 	}
 }
 
-// NewScheme creates a commitment.Scheme for the given backend type.
-func NewScheme(b BackendType) (commitment.Scheme, error) {
+// NewScheme creates an index commitment backend for the given backend type.
+func NewScheme(b BackendType) (commitment.IndexCommitment, error) {
 	switch b {
 	case BackendKZG:
 		return kzg.NewScheme()
@@ -97,9 +97,9 @@ type Metrics struct {
 	EndToEndLatency time.Duration // full resolve: EAT + Prove + Verify
 
 	// Per-round timing (for workloads with multiple rounds)
-	UpdateTimes  []time.Duration // individual update times
-	ProveTimes   []time.Duration // individual prove times (for distribution)
-	VerifyTimes  []time.Duration // individual verify times
+	UpdateTimes []time.Duration // individual update times
+	ProveTimes  []time.Duration // individual prove times (for distribution)
+	VerifyTimes []time.Duration // individual verify times
 
 	// Size metrics
 	ProofSize int // bytes per proof
@@ -223,6 +223,7 @@ func (b *BenchmarkRunner) RunAppendBenchmark(ctx context.Context) (map[int]*Metr
 // runAppendWorkload executes the append workload.
 func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (*Metrics, error) {
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
+	bucketID := fmt.Sprintf("%s-append-%d", b.bucketId, arcCount)
 
 	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
 
@@ -252,7 +253,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 		}
 
 		// Store arcs in EAT using Update
-		if err := b.eat.Update(ctx, b.bucketId, newRoot, root, currentArcsMap); err != nil {
+		if err := b.eat.Update(ctx, bucketID, newRoot, root, currentArcsMap); err != nil {
 			return nil, fmt.Errorf("eat update failed at arc %d: %w", i, err)
 		}
 
@@ -270,7 +271,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation for a random arc
 	testPath := fmt.Sprintf("arc%d", r.Intn(arcCount))
 	start := time.Now()
-	snapshot, err := b.eat.Snapshot(ctx, b.bucketId, root)
+	snapshot, err := b.eat.Snapshot(ctx, bucketID, root)
 	metrics.EATLookupTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot failed: %w", err)
@@ -285,7 +286,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics.RootSize = len(root.Bytes())
 
 	// Measure verification
-	target, _ := b.eat.Get(ctx, b.bucketId, root, testPath)
+	target, _ := b.eat.Get(ctx, bucketID, root, testPath)
 	start = time.Now()
 	valid, err := b.sce.Verify(root, testPath, target, proof)
 	metrics.VerifyTime = time.Since(start)
@@ -323,6 +324,7 @@ func (b *BenchmarkRunner) RunRandomBenchmark(ctx context.Context) (map[int]*Metr
 // runRandomWorkload executes random update workload.
 func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (*Metrics, error) {
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
+	bucketID := fmt.Sprintf("%s-random-%d", b.bucketId, arcCount)
 
 	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
 
@@ -348,7 +350,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	}
 
 	// Store in EAT
-	b.eat.Update(ctx, b.bucketId, root, cid.Undef, arcsMap)
+	b.eat.Update(ctx, bucketID, root, cid.Undef, arcsMap)
 
 	// Perform random updates
 	totalUpdateTime := time.Duration(0)
@@ -380,7 +382,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		}
 
 		// Store in EAT
-		b.eat.Update(ctx, b.bucketId, newRoot, root, arcsMap)
+		b.eat.Update(ctx, bucketID, newRoot, root, arcsMap)
 
 		root = newRoot
 		keys[path] = newKey
@@ -391,7 +393,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	snapshot, err := b.eat.Snapshot(ctx, b.bucketId, root)
+	snapshot, err := b.eat.Snapshot(ctx, bucketID, root)
 	metrics.EATLookupTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot failed: %w", err)
@@ -440,6 +442,7 @@ func (b *BenchmarkRunner) RunBulkBenchmark(ctx context.Context) (map[int]*Metric
 // runBulkWorkload executes bulk update workload.
 func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*Metrics, error) {
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
+	bucketID := fmt.Sprintf("%s-bulk-%d", b.bucketId, arcCount)
 
 	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
 
@@ -464,7 +467,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	}
 
 	// Store in EAT
-	b.eat.Update(ctx, b.bucketId, root, cid.Undef, arcsMap)
+	b.eat.Update(ctx, bucketID, root, cid.Undef, arcsMap)
 
 	// Bulk update: update 10% of arcs at once
 	bulkSize := max(1, arcCount/10)
@@ -503,7 +506,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		}
 
 		// Store in EAT
-		b.eat.Update(ctx, b.bucketId, newRoot, root, arcsMap)
+		b.eat.Update(ctx, bucketID, newRoot, root, arcsMap)
 
 		root = newRoot
 	}
@@ -513,7 +516,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	// Measure proof
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	snapshot, err := b.eat.Snapshot(ctx, b.bucketId, root)
+	snapshot, err := b.eat.Snapshot(ctx, bucketID, root)
 	metrics.EATLookupTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot failed: %w", err)
@@ -741,7 +744,7 @@ func DefaultEvalConfig() *EvalConfig {
 
 // EvalRunner runs comprehensive evaluation across all backends, EAT types, and workloads.
 type EvalRunner struct {
-	config  *EvalConfig
+	config   *EvalConfig
 	bucketId string
 }
 
@@ -936,19 +939,19 @@ func computeStats(durations []time.Duration) DurationStats {
 
 // MetricsSummary holds the summary statistics for all timing metrics.
 type MetricsSummary struct {
-	Backend     BackendType   `json:"backend"`
-	EATType     EATType       `json:"eat_type"`
-	ArcCount    int           `json:"arc_count"`
-	Workload    string        `json:"workload"`
-	Commit      DurationStats `json:"commit"`
-	Update      DurationStats `json:"update"`
-	EATLookup   DurationStats `json:"eat_lookup"`
-	Prove       DurationStats `json:"prove"`
-	Verify      DurationStats `json:"verify"`
-	EndToEnd    DurationStats `json:"end_to_end"`
-	ProofSize   int           `json:"proof_size"`
-	RootSize    int           `json:"root_size"`
-	RewriteAmp  float64       `json:"rewrite_amp"`
+	Backend    BackendType   `json:"backend"`
+	EATType    EATType       `json:"eat_type"`
+	ArcCount   int           `json:"arc_count"`
+	Workload   string        `json:"workload"`
+	Commit     DurationStats `json:"commit"`
+	Update     DurationStats `json:"update"`
+	EATLookup  DurationStats `json:"eat_lookup"`
+	Prove      DurationStats `json:"prove"`
+	Verify     DurationStats `json:"verify"`
+	EndToEnd   DurationStats `json:"end_to_end"`
+	ProofSize  int           `json:"proof_size"`
+	RootSize   int           `json:"root_size"`
+	RewriteAmp float64       `json:"rewrite_amp"`
 }
 
 // ComputeSummaryStats computes summary statistics from metrics.

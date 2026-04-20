@@ -15,7 +15,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-type schemeFactory func(t *testing.T) commitment.Scheme
+type schemeFactory func(t *testing.T) commitment.IndexCommitment
 
 func newPayloadCID(data []byte) cid.Cid {
 	sum, err := mh.Sum(data, mh.SHA2_256, -1)
@@ -27,7 +27,7 @@ func newPayloadCID(data []byte) cid.Cid {
 
 func listSchemes() map[string]schemeFactory {
 	return map[string]schemeFactory{
-		"ipa": func(t *testing.T) commitment.Scheme {
+		"ipa": func(t *testing.T) commitment.IndexCommitment {
 			t.Helper()
 			scheme, err := ipa.NewScheme()
 			if err != nil {
@@ -35,7 +35,7 @@ func listSchemes() map[string]schemeFactory {
 			}
 			return scheme
 		},
-		"kzg": func(t *testing.T) commitment.Scheme {
+		"kzg": func(t *testing.T) commitment.IndexCommitment {
 			t.Helper()
 			scheme, err := kzg.NewScheme()
 			if err != nil {

@@ -3,9 +3,8 @@ package kzg_test
 import (
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
 )
 
 func TestKZGIndexedBackendRestartSafe(t *testing.T) {
@@ -14,9 +13,9 @@ func TestKZGIndexedBackendRestartSafe(t *testing.T) {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	values := []cid.Cid{
-		newIndexedPayloadCID([]byte("slot0")),
-		newIndexedPayloadCID([]byte("slot1")),
+	values := []commitment.Cell{
+		commitment.NewCell([]byte("slot0")),
+		commitment.NewCell([]byte("slot1")),
 	}
 	root, err := first.CommitValues(values)
 	if err != nil {
@@ -32,8 +31,8 @@ func TestKZGIndexedBackendRestartSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProveIndex failed: %v", err)
 	}
-	if !value.Equals(values[1]) {
-		t.Fatalf("unexpected value %s", value)
+	if !value.Equal(values[1]) {
+		t.Fatalf("unexpected value %x", value)
 	}
 
 	ok, err := second.VerifyIndex(root, 1, values[1], proof)
@@ -44,7 +43,7 @@ func TestKZGIndexedBackendRestartSafe(t *testing.T) {
 		t.Fatal("expected proof to verify")
 	}
 
-	wrong := newIndexedPayloadCID([]byte("wrong"))
+	wrong := commitment.NewCell([]byte("wrong"))
 	ok, err = second.VerifyIndex(root, 1, wrong, proof)
 	if err != nil {
 		t.Fatalf("VerifyIndex(wrong) failed: %v", err)
@@ -52,12 +51,4 @@ func TestKZGIndexedBackendRestartSafe(t *testing.T) {
 	if ok {
 		t.Fatal("expected wrong value verification to fail")
 	}
-}
-
-func newIndexedPayloadCID(data []byte) cid.Cid {
-	sum, err := mh.Sum(data, mh.SHA2_256, -1)
-	if err != nil {
-		panic(err)
-	}
-	return cid.NewCidV1(cid.Raw, sum)
 }

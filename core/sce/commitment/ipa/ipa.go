@@ -1,4 +1,4 @@
-// Package ipa provides an IPA (Inner Product Argument) commitment implementation.
+// Package ipa provides an IPA (Inner Product Argument) commitment backend.
 package ipa
 
 import (
@@ -13,7 +13,6 @@ import (
 	ipa "github.com/crate-crypto/go-ipa/ipa"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -28,9 +27,7 @@ const (
 	MaxCacheEntries = 1024
 )
 
-// Scheme implements a primitive indexed commitment backend using Inner Product
-// Arguments. The path-oriented Scheme methods are retained as wrappers over
-// the primitive indexed operations.
+// Scheme implements an IPA-based index commitment backend.
 type Scheme struct {
 	ipaConfig *ipa.IPAConfig
 
@@ -40,8 +37,7 @@ type Scheme struct {
 }
 
 type cacheEntry struct {
-	paths  []string
-	values []cid.Cid
+	values []commitment.Cell
 }
 
 // NewScheme creates a new IPA commitment scheme.
@@ -63,139 +59,35 @@ func (s *Scheme) MaxValues() int {
 	return MaxValues
 }
 
-// CommitValues commits a stable indexed value vector.
-func (s *Scheme) CommitValues(values []cid.Cid) (cid.Cid, error) {
-	return s.commitValues(nil, values)
-}
-
-// Commit generates an IPA commitment.
-func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
-	if arcs == nil {
-		return cid.Cid{}, fmt.Errorf("arc set is nil")
-	}
-
-	paths, values := commitment.ExtractSortedPathsValues(arcs)
-	return s.commitValues(paths, values)
-}
-
-// Prove generates an IPA proof.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
-	return s.ProveSingle(comm, arcs, path)
-}
-
-// ProveSingle is the core prove implementation for the Backend interface.
-func (s *Scheme) ProveSingle(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
-	var (
-		paths  []string
-		values []cid.Cid
-	)
-	if arcs != nil {
-		paths, values = commitment.ExtractSortedPathsValues(arcs)
-	}
-	entry, err := s.ensureState(comm, paths, values)
-	if err != nil {
-		return cid.Cid{}, nil, err
-	}
-
-	proveIndex, ok := commitment.FindPathIndex(entry.paths, path)
-	if !ok {
-		return cid.Cid{}, nil, fmt.Errorf("path %s not found", path)
-	}
-	target, proof, err := s.proveEntryIndex(comm, entry, uint64(proveIndex))
-	if err != nil {
-		return cid.Cid{}, nil, err
-	}
-	return target, commitment.WrapPathProof(path, proof), nil
-}
-
-// Verify verifies an IPA proof.
-func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
-	return s.VerifySingle(comm, path, value, proof)
-}
-
-// VerifySingle is the core verify implementation for the Backend interface.
-func (s *Scheme) VerifySingle(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
-	primitiveProof, err := commitment.UnwrapPathProof(path, proof)
-	if err != nil {
-		return false, err
-	}
-	_, index, err := s.deserializeProof(primitiveProof)
-	if err != nil {
-		return false, fmt.Errorf("failed to deserialize proof: %w", err)
-	}
-	return s.VerifyIndex(comm, index, value, primitiveProof)
-}
-
-// Update updates a value in the commitment.
-func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	var (
-		paths  []string
-		values []cid.Cid
-	)
-	if arcs != nil {
-		paths, values = commitment.ExtractSortedPathsValues(arcs)
-	}
-	entry, err := s.ensureState(comm, paths, values)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-
-	updateIndex, ok := commitment.FindPathIndex(entry.paths, path)
-	if !ok {
-		return cid.Cid{}, fmt.Errorf("path %s not found", path)
-	}
-	return s.ReplaceIndex(comm, values, uint64(updateIndex), oldValue, newValue)
-}
-
-// BatchUpdate updates multiple values.
-func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.ArcSet, updates map[string]struct {
-	Old cid.Cid
-	New cid.Cid
-}) (cid.Cid, error) {
-	paths, values := commitment.ExtractSortedPathsValues(arcs)
-	entry, err := s.ensureState(comm, paths, values)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	nextValues := append([]cid.Cid(nil), entry.values...)
-
-	for path, update := range updates {
-		index, ok := commitment.FindPathIndex(entry.paths, path)
-		if !ok {
-			return cid.Cid{}, fmt.Errorf("path %s not found", path)
-		}
-		if !entry.values[index].Equals(update.Old) {
-			return cid.Cid{}, fmt.Errorf("old value mismatch for path %s", path)
-		}
-		nextValues[index] = update.New
-	}
-	return s.commitValues(entry.paths, nextValues)
+// CommitValues commits a stable indexed cell vector.
+func (s *Scheme) CommitValues(values []commitment.Cell) (cid.Cid, error) {
+	return s.commitValues(values)
 }
 
 // ProveIndex proves the value at a stable index.
-func (s *Scheme) ProveIndex(comm cid.Cid, values []cid.Cid, index uint64) (cid.Cid, []byte, error) {
-	entry, err := s.ensureState(comm, nil, values)
+func (s *Scheme) ProveIndex(comm cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	entry, err := s.ensureState(comm, values)
 	if err != nil {
-		return cid.Cid{}, nil, err
+		return nil, nil, err
 	}
 	if index >= uint64(len(entry.values)) {
-		return cid.Cid{}, nil, fmt.Errorf("index %d out of range", index)
+		return nil, nil, fmt.Errorf("index %d out of range", index)
 	}
 	return s.proveEntryIndex(comm, entry, index)
 }
 
-func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) (cid.Cid, []byte, error) {
+func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) (commitment.Cell, []byte, error) {
 	vector := valuesToVector(entry.values)
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to extract commitment: %w", err)
+		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
 	transcript := common.NewTranscript("malt-ipa")
 
 	var c banderwagon.Element
 	if err := c.SetBytes(commBytes); err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+		return nil, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
 	}
 
 	var evalPoint fr.Element
@@ -203,23 +95,23 @@ func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) 
 
 	proof, err := ipa.CreateIPAProof(transcript, s.ipaConfig, c, vector, evalPoint)
 	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to create IPA proof: %w", err)
+		return nil, nil, fmt.Errorf("failed to create IPA proof: %w", err)
 	}
 
 	proofBytes, err := s.serializeProof(&proof, int(index))
 	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to serialize proof: %w", err)
+		return nil, nil, fmt.Errorf("failed to serialize proof: %w", err)
 	}
 
 	valueIndex := int(index)
 	if valueIndex < 0 || valueIndex >= len(entry.values) {
-		return cid.Cid{}, nil, fmt.Errorf("index %d out of range", index)
+		return nil, nil, fmt.Errorf("index %d out of range", index)
 	}
-	return entry.values[valueIndex], proofBytes, nil
+	return commitment.NewCell(entry.values[valueIndex]), proofBytes, nil
 }
 
 // VerifyIndex verifies a proof for a stable index without requiring cache state.
-func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []byte) (bool, error) {
+func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, proof []byte) (bool, error) {
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return false, fmt.Errorf("failed to extract commitment: %w", err)
@@ -243,7 +135,7 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []
 	var evalPointFr fr.Element
 	evalPointFr.SetUint64(index)
 
-	output := cidToFieldElement(value)
+	output := cellToFieldElement(value)
 	ok, err := ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPointFr, output)
 	if err != nil {
 		return false, fmt.Errorf("failed to check IPA proof: %w", err)
@@ -251,56 +143,37 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []
 	return ok, nil
 }
 
+// VerifyProof verifies a proof carrying its own index metadata.
+func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) (bool, error) {
+	_, index, err := s.deserializeProof(proof)
+	if err != nil {
+		return false, fmt.Errorf("failed to deserialize proof: %w", err)
+	}
+	return s.VerifyIndex(comm, index, value, proof)
+}
+
 // ReplaceIndex performs an index-stable replacement.
-func (s *Scheme) ReplaceIndex(comm cid.Cid, values []cid.Cid, index uint64, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	entry, err := s.ensureState(comm, nil, values)
+func (s *Scheme) ReplaceIndex(comm cid.Cid, values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
+	entry, err := s.ensureState(comm, values)
 	if err != nil {
 		return cid.Cid{}, err
 	}
 	if index >= uint64(len(entry.values)) {
 		return cid.Cid{}, fmt.Errorf("index %d out of range", index)
 	}
-	if !entry.values[index].Equals(oldValue) {
+	if !entry.values[index].Equal(oldValue) {
 		return cid.Cid{}, fmt.Errorf("old value mismatch at index %d", index)
 	}
 
-	nextValues := append([]cid.Cid(nil), entry.values...)
-	nextValues[index] = newValue
-	return s.commitValues(entry.paths, nextValues)
-}
-
-// BatchProve generates proofs for multiple paths.
-func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (map[string]arcset.BatchProofEntry, error) {
-	return commitment.BatchProve(paths, func(path string) (cid.Cid, []byte, error) {
-		return s.ProveSingle(comm, arcs, path)
-	})
-}
-
-// BatchVerify verifies multiple proofs.
-func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
-	return commitment.BatchVerify(proofs, func(path string, value cid.Cid, proof []byte) (bool, error) {
-		return s.VerifySingle(comm, path, value, proof)
-	})
-}
-
-// AggregateProve generates an aggregated proof.
-func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (*arcset.AggregatedProof, error) {
-	return commitment.AggregateProve(paths, func(path string) (cid.Cid, []byte, error) {
-		return s.ProveSingle(comm, arcs, path)
-	})
-}
-
-// AggregateVerify verifies an aggregated proof.
-func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
-	return commitment.AggregateVerify(aggProof, func(path string, value cid.Cid, proof []byte) (bool, error) {
-		return s.VerifySingle(comm, path, value, proof)
-	})
+	nextValues := commitment.CloneCells(entry.values)
+	nextValues[index] = commitment.NewCell(newValue)
+	return s.commitValues(nextValues)
 }
 
 // serializeProof serializes an IPA proof with index information.
 func (s *Scheme) serializeProof(proof *ipa.IPAProof, index int) ([]byte, error) {
 	numRounds := len(proof.L)
-	totalSize := 4 + (numRounds*2+1)*32 + 4 // +4 for index
+	totalSize := 4 + (numRounds*2+1)*32 + 4
 
 	result := make([]byte, totalSize)
 	binary.BigEndian.PutUint32(result[0:4], uint32(numRounds))
@@ -320,7 +193,6 @@ func (s *Scheme) serializeProof(proof *ipa.IPAProof, index int) ([]byte, error) 
 	copy(result[offset:offset+32], as[:])
 	offset += 32
 
-	// Append index as 4 bytes
 	binary.BigEndian.PutUint32(result[offset:offset+4], uint32(index))
 
 	return result, nil
@@ -328,13 +200,12 @@ func (s *Scheme) serializeProof(proof *ipa.IPAProof, index int) ([]byte, error) 
 
 // deserializeProof deserializes an IPA proof and returns the proof and index.
 func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, uint64, error) {
-	// Minimum size: 4 (numRounds) + 32 (A_scalar) + 4 (index)
 	if len(data) < 40 {
 		return nil, 0, fmt.Errorf("proof data too short")
 	}
 
 	numRounds := int(binary.BigEndian.Uint32(data[0:4]))
-	expectedSize := 4 + (numRounds*2+1)*32 + 4 // +4 for index
+	expectedSize := 4 + (numRounds*2+1)*32 + 4
 	if len(data) != expectedSize {
 		return nil, 0, fmt.Errorf("proof data has wrong size: expected %d, got %d", expectedSize, len(data))
 	}
@@ -361,20 +232,19 @@ func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, uint64, error) {
 	proof.A_scalar.SetBytesLE(data[offset : offset+32])
 	offset += 32
 
-	// Extract index
 	index := uint64(binary.BigEndian.Uint32(data[offset : offset+4]))
 
 	return proof, index, nil
 }
 
-func cidToFieldElement(c cid.Cid) fr.Element {
+func cellToFieldElement(cell commitment.Cell) fr.Element {
 	var result fr.Element
-	bytes := c.Bytes()
-	h := sha256.Sum256(bytes)
+	h := sha256.Sum256(cell)
 	result.SetBytes(h[:])
 	return result
 }
-func (s *Scheme) commitValues(paths []string, values []cid.Cid) (cid.Cid, error) {
+
+func (s *Scheme) commitValues(values []commitment.Cell) (cid.Cid, error) {
 	if len(values) > MaxValues {
 		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
 	}
@@ -385,18 +255,14 @@ func (s *Scheme) commitValues(paths []string, values []cid.Cid) (cid.Cid, error)
 	commBytes := comm.Bytes()
 	commStr := string(commBytes[:])
 
-	clonedValues := append([]cid.Cid(nil), values...)
-	clonedPaths := append([]string(nil), paths...)
-
 	s.cacheSet(commStr, &cacheEntry{
-		paths:  clonedPaths,
-		values: clonedValues,
+		values: commitment.CloneCells(values),
 	})
 
 	return codec.NewIPACid(commBytes[:])
 }
 
-func (s *Scheme) ensureState(comm cid.Cid, paths []string, values []cid.Cid) (*cacheEntry, error) {
+func (s *Scheme) ensureState(comm cid.Cid, values []commitment.Cell) (*cacheEntry, error) {
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract commitment: %w", err)
@@ -408,7 +274,7 @@ func (s *Scheme) ensureState(comm cid.Cid, paths []string, values []cid.Cid) (*c
 		if values == nil {
 			return nil, fmt.Errorf("commitment not found in cache")
 		}
-		rebuilt, err := s.commitValues(paths, values)
+		rebuilt, err := s.commitValues(values)
 		if err != nil {
 			return nil, err
 		}
@@ -453,7 +319,7 @@ func (s *Scheme) cacheSetLocked(key string, entry *cacheEntry) {
 	s.order = append(s.order, key)
 }
 
-func valuesToVector(values []cid.Cid) []fr.Element {
+func valuesToVector(values []commitment.Cell) []fr.Element {
 	vector := make([]fr.Element, MaxValues)
 	zero := fr.Element{}
 	zero.SetZero()
@@ -461,10 +327,10 @@ func valuesToVector(values []cid.Cid) []fr.Element {
 		vector[i] = zero
 	}
 	for i, value := range values {
-		vector[i] = cidToFieldElement(value)
+		vector[i] = cellToFieldElement(value)
 	}
 	return vector
 }
 
-// Ensure Scheme implements commitment.Scheme.
-var _ commitment.Scheme = (*Scheme)(nil)
+// Ensure Scheme implements commitment.IndexCommitment.
+var _ commitment.IndexCommitment = (*Scheme)(nil)
