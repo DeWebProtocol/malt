@@ -1,23 +1,25 @@
-// Package indexed implements a degenerate one-node stable-indexed list over a
-// fixed-slot backend. It is the minimal semantic implementation used to
-// exercise the list contract before the tree-shaped layout is introduced.
+// Package indexed implements the degenerate one-node stable-indexed list
+// semantic over a fixed-slot backend. Runtime operations execute directly
+// against the committed root using EAT-backed slot materialization.
 package indexed
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
+	listruntime "github.com/dewebprotocol/malt/core/structure/list/internal/runtime"
 	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
 )
 
 type Semantic struct {
-	backend commitment.ListBackend
+	scheme   commitment.Scheme
+	eat      eat.EAT
+	bucketID string
 }
 
 type proofEnvelope struct {
@@ -25,46 +27,49 @@ type proofEnvelope struct {
 	KeyProof    []byte `json:"key_proof,omitempty"`
 }
 
-func New(backend commitment.ListBackend) (*Semantic, error) {
-	if backend == nil {
-		return nil, fmt.Errorf("list backend is nil")
+func New(scheme commitment.Scheme, eat eat.EAT, bucketID string) (*Semantic, error) {
+	if err := listruntime.ValidateScheme(scheme); err != nil {
+		return nil, err
 	}
-	return &Semantic{backend: backend}, nil
+	if eat == nil {
+		return nil, fmt.Errorf("eat is nil")
+	}
+	if bucketID == "" {
+		return nil, fmt.Errorf("bucket id is empty")
+	}
+	return &Semantic{
+		scheme:   scheme,
+		eat:      eat,
+		bucketID: bucketID,
+	}, nil
 }
 
 func (s *Semantic) Commit(ctx context.Context, view list.View) (cid.Cid, error) {
-	_ = ctx
 	values, err := valuesFromView(view)
 	if err != nil {
 		return cid.Undef, err
 	}
-	backing, err := backingValues(values)
+	if len(values) > listruntime.Fanout {
+		return cid.Undef, fmt.Errorf("list length %d exceeds indexed capacity %d", len(values), listruntime.Fanout)
+	}
+
+	slots := listruntime.EmptyRootSlots()
+	lengthMarker, err := listruntime.EncodeLengthMarker(uint64(len(values)))
 	if err != nil {
 		return cid.Undef, err
 	}
-	if len(backing) > s.backend.MaxValues() {
-		return cid.Undef, fmt.Errorf("list length %d exceeds backend capacity %d", len(values), s.backend.MaxValues()-1)
-	}
-	return s.backend.CommitValues(backing)
+	slots[0] = lengthMarker
+	copy(slots[1:], values)
+	return s.commitSlots(ctx, slots)
 }
 
-func (s *Semantic) Prove(ctx context.Context, root cid.Cid, view list.View, index uint64) (list.Query, structure.Proof, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
-	if err != nil {
-		return list.Query{}, nil, err
-	}
-	backing, err := backingValues(values)
-	if err != nil {
-		return list.Query{}, nil, err
-	}
-	length := uint64(len(values))
-	lengthMarker, err := lengthCID(length)
+func (s *Semantic) Prove(ctx context.Context, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
+	slots, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
 
-	_, lengthProof, err := s.backend.ProveIndex(root, backing, 0)
+	_, lengthProof, err := listruntime.ProveSlot(s.scheme, root, slots, 0)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
@@ -73,12 +78,10 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, view list.View, inde
 	query := list.Query{Length: length}
 
 	if index < length {
-		key, keyProof, err := s.backend.ProveIndex(root, backing, index+1)
+		query.Key, envelope.KeyProof, err = listruntime.ProveSlot(s.scheme, root, slots, index+1)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
-		query.Key = key
-		envelope.KeyProof = keyProof
 	} else {
 		query.Key = cid.Undef
 	}
@@ -87,12 +90,6 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, view list.View, inde
 	if err != nil {
 		return list.Query{}, nil, err
 	}
-
-	// Force the length marker to be derivable from the query.
-	if !lengthMarker.Defined() {
-		return list.Query{}, nil, fmt.Errorf("length marker is undefined")
-	}
-
 	return query, structure.Proof(proofBytes), nil
 }
 
@@ -105,11 +102,11 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		return false, fmt.Errorf("missing length proof")
 	}
 
-	lengthMarker, err := lengthCID(expected.Length)
+	lengthMarker, err := listruntime.EncodeLengthMarker(expected.Length)
 	if err != nil {
 		return false, err
 	}
-	ok, err := s.backend.VerifyIndex(root, 0, lengthMarker, envelope.LengthProof)
+	ok, err := listruntime.VerifySlot(s.scheme, root, 0, lengthMarker, envelope.LengthProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -120,69 +117,96 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		}
 		return len(envelope.KeyProof) == 0, nil
 	}
-
 	if !expected.Key.Defined() || len(envelope.KeyProof) == 0 {
 		return false, nil
 	}
-	return s.backend.VerifyIndex(root, index+1, expected.Key, envelope.KeyProof)
+	return listruntime.VerifySlot(s.scheme, root, index+1, expected.Key, envelope.KeyProof)
 }
 
-func (s *Semantic) Replace(ctx context.Context, root cid.Cid, view list.View, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Replace(ctx context.Context, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
+	slots, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return cid.Undef, err
 	}
-	if index >= uint64(len(values)) {
+	if index >= length {
 		return cid.Undef, fmt.Errorf("index %d out of range", index)
 	}
-	if !values[index].Equals(oldKey) {
+	if !slots[index+1].Equals(oldKey) {
 		return cid.Undef, fmt.Errorf("old key mismatch at index %d", index)
 	}
-	backing, err := backingValues(values)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return s.backend.ReplaceIndex(root, backing, index+1, oldKey, newKey)
+
+	nextSlots := cloneSlots(slots)
+	nextSlots[index+1] = newKey
+	return s.commitSlots(ctx, nextSlots)
 }
 
-func (s *Semantic) Append(ctx context.Context, root cid.Cid, view list.View, key cid.Cid) (cid.Cid, uint64, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Append(ctx context.Context, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
+	slots, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return cid.Undef, 0, err
 	}
-	newIndex := uint64(len(values))
-	values = append(values, key)
-	backing, err := backingValues(values)
+	if length >= listruntime.Fanout {
+		return cid.Undef, 0, fmt.Errorf("list length %d exceeds indexed capacity %d", length, listruntime.Fanout)
+	}
+	if slots[length+1].Defined() {
+		return cid.Undef, 0, fmt.Errorf("append slot %d is already occupied", length)
+	}
+
+	nextSlots := cloneSlots(slots)
+	lengthMarker, err := listruntime.EncodeLengthMarker(length + 1)
 	if err != nil {
 		return cid.Undef, 0, err
 	}
-	if len(backing) > s.backend.MaxValues() {
-		return cid.Undef, 0, fmt.Errorf("list length %d exceeds backend capacity %d", len(values), s.backend.MaxValues()-1)
-	}
-	newRoot, err := s.backend.CommitValues(backing)
-	return newRoot, newIndex, err
+	nextSlots[0] = lengthMarker
+	nextSlots[length+1] = key
+
+	newRoot, err := s.commitSlots(ctx, nextSlots)
+	return newRoot, length, err
 }
 
-func (s *Semantic) Truncate(ctx context.Context, root cid.Cid, view list.View, newLen uint64) (cid.Cid, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Truncate(ctx context.Context, root cid.Cid, newLen uint64) (cid.Cid, error) {
+	slots, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return cid.Undef, err
 	}
-	if newLen > uint64(len(values)) {
-		return cid.Undef, fmt.Errorf("new length %d exceeds current length %d", newLen, len(values))
+	if newLen > length {
+		return cid.Undef, fmt.Errorf("new length %d exceeds current length %d", newLen, length)
 	}
-	if newLen == uint64(len(values)) {
+	if newLen == length {
 		return root, nil
 	}
-	values = values[:newLen]
-	backing, err := backingValues(values)
+
+	nextSlots := listruntime.EmptyRootSlots()
+	lengthMarker, err := listruntime.EncodeLengthMarker(newLen)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.backend.CommitValues(backing)
+	nextSlots[0] = lengthMarker
+	copy(nextSlots[1:], slots[1:1+newLen])
+	return s.commitSlots(ctx, nextSlots)
+}
+
+func (s *Semantic) loadRoot(ctx context.Context, root cid.Cid) ([]cid.Cid, uint64, error) {
+	slots, err := listruntime.LoadSlots(ctx, s.eat, s.bucketID, root, listruntime.RootWidth)
+	if err != nil {
+		return nil, 0, err
+	}
+	length, err := listruntime.DecodeLengthMarker(slots[0])
+	if err != nil {
+		return nil, 0, err
+	}
+	return slots, length, nil
+}
+
+func (s *Semantic) commitSlots(ctx context.Context, slots []cid.Cid) (cid.Cid, error) {
+	root, err := listruntime.CommitSlots(s.scheme, slots)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if err := listruntime.StoreSlots(ctx, s.eat, s.bucketID, root, slots); err != nil {
+		return cid.Undef, err
+	}
+	return root, nil
 }
 
 func valuesFromView(view list.View) ([]cid.Cid, error) {
@@ -200,26 +224,8 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 	return values, nil
 }
 
-func backingValues(values []cid.Cid) ([]cid.Cid, error) {
-	lengthMarker, err := lengthCID(uint64(len(values)))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]cid.Cid, len(values)+1)
-	out[0] = lengthMarker
-	copy(out[1:], values)
-	return out, nil
-}
-
-func lengthCID(length uint64) (cid.Cid, error) {
-	var payload [8]byte
-	binary.BigEndian.PutUint64(payload[:], length)
-	data := append([]byte("malt:list:length:"), payload[:]...)
-	sum, err := mh.Sum(data, mh.SHA2_256, -1)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return cid.NewCidV1(cid.Raw, sum), nil
+func cloneSlots(slots []cid.Cid) []cid.Cid {
+	return append([]cid.Cid(nil), slots...)
 }
 
 var _ list.Semantic = (*Semantic)(nil)

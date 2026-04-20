@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
+	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
@@ -13,6 +15,8 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
+type schemeFactory func(t *testing.T) commitment.Scheme
+
 func newPayloadCID(data []byte) cid.Cid {
 	sum, err := mh.Sum(data, mh.SHA2_256, -1)
 	if err != nil {
@@ -21,74 +25,97 @@ func newPayloadCID(data []byte) cid.Cid {
 	return cid.NewCidV1(cid.Raw, sum)
 }
 
-func listBackends(t *testing.T) map[string]commitment.ListBackend {
-	t.Helper()
-	ipaBackend, err := ipa.NewScheme()
-	if err != nil {
-		t.Fatalf("ipa.NewScheme failed: %v", err)
-	}
-	kzgBackend, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("kzg.NewScheme failed: %v", err)
-	}
-	return map[string]commitment.ListBackend{
-		"ipa": ipaBackend,
-		"kzg": kzgBackend,
+func listSchemes() map[string]schemeFactory {
+	return map[string]schemeFactory{
+		"ipa": func(t *testing.T) commitment.Scheme {
+			t.Helper()
+			scheme, err := ipa.NewScheme()
+			if err != nil {
+				t.Fatalf("ipa.NewScheme failed: %v", err)
+			}
+			return scheme
+		},
+		"kzg": func(t *testing.T) commitment.Scheme {
+			t.Helper()
+			scheme, err := kzg.NewScheme()
+			if err != nil {
+				t.Fatalf("kzg.NewScheme failed: %v", err)
+			}
+			return scheme
+		},
 	}
 }
 
-func TestIndexedListSemanticProofs(t *testing.T) {
+func newSemantic(t *testing.T, factory schemeFactory, kv *kvmemory.KV, bucketID string) *indexed.Semantic {
+	t.Helper()
+
+	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("overwrite.NewEAT failed: %v", err)
+	}
+	semantic, err := indexed.New(factory(t), e, bucketID)
+	if err != nil {
+		t.Fatalf("indexed.New failed: %v", err)
+	}
+	return semantic
+}
+
+func assertVerifiedQuery(t *testing.T, semantic *indexed.Semantic, root cid.Cid, index uint64, expected list.Query) {
+	t.Helper()
+
+	query, proof, err := semantic.Prove(context.Background(), root, index)
+	if err != nil {
+		t.Fatalf("Prove(%d) failed: %v", index, err)
+	}
+	if query.Length != expected.Length {
+		t.Fatalf("query length mismatch for %d: want %d got %d", index, expected.Length, query.Length)
+	}
+	if !query.Key.Equals(expected.Key) {
+		t.Fatalf("query key mismatch for %d: want %s got %s", index, expected.Key, query.Key)
+	}
+
+	ok, err := semantic.Verify(root, index, query, proof)
+	if err != nil {
+		t.Fatalf("Verify(%d) failed: %v", index, err)
+	}
+	if !ok {
+		t.Fatalf("Verify(%d) returned false", index)
+	}
+}
+
+func TestIndexedListSemanticRuntime(t *testing.T) {
 	ctx := context.Background()
 	values := []cid.Cid{
 		newPayloadCID([]byte("v0")),
 		newPayloadCID([]byte("v1")),
 		newPayloadCID([]byte("v2")),
 	}
-	view := list.NewViewFromSlice(values)
 
-	for name, backend := range listBackends(t) {
+	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
-			semantic, err := indexed.New(backend)
-			if err != nil {
-				t.Fatalf("indexed.New failed: %v", err)
-			}
+			kv := kvmemory.New()
+			bucketID := "indexed-runtime-" + name
 
-			root, err := semantic.Commit(ctx, view)
+			semantic := newSemantic(t, factory, kv, bucketID)
+			root, err := semantic.Commit(ctx, list.NewViewFromSlice(values))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
-			query, proof, err := semantic.Prove(ctx, root, view, 1)
-			if err != nil {
-				t.Fatalf("Prove failed: %v", err)
-			}
-			if query.Length != 3 || !query.Key.Equals(values[1]) {
-				t.Fatalf("unexpected query: %+v", query)
-			}
+			assertVerifiedQuery(t, semantic, root, 1, list.Query{
+				Key:    values[1],
+				Length: 3,
+			})
+			assertVerifiedQuery(t, semantic, root, 9, list.Query{
+				Key:    cid.Undef,
+				Length: 3,
+			})
 
-			ok, err := semantic.Verify(root, 1, query, proof)
-			if err != nil {
-				t.Fatalf("Verify failed: %v", err)
-			}
-			if !ok {
-				t.Fatal("expected present proof to verify")
-			}
-
-			absent, absentProof, err := semantic.Prove(ctx, root, view, 9)
-			if err != nil {
-				t.Fatalf("Prove absent failed: %v", err)
-			}
-			if absent.Length != 3 || absent.Key.Defined() {
-				t.Fatalf("unexpected absent query: %+v", absent)
-			}
-
-			ok, err = semantic.Verify(root, 9, absent, absentProof)
-			if err != nil {
-				t.Fatalf("Verify absent failed: %v", err)
-			}
-			if !ok {
-				t.Fatal("expected absent proof to verify")
-			}
+			restarted := newSemantic(t, factory, kv, bucketID)
+			assertVerifiedQuery(t, restarted, root, 2, list.Query{
+				Key:    values[2],
+				Length: 3,
+			})
 		})
 	}
 }
@@ -101,68 +128,52 @@ func TestIndexedListSemanticUpdates(t *testing.T) {
 		newPayloadCID([]byte("c")),
 	}
 
-	for name, backend := range listBackends(t) {
+	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
-			semantic, err := indexed.New(backend)
-			if err != nil {
-				t.Fatalf("indexed.New failed: %v", err)
-			}
+			kv := kvmemory.New()
+			bucketID := "indexed-update-" + name
 
-			view := list.NewViewFromSlice(initial)
-			root, err := semantic.Commit(ctx, view)
+			semantic := newSemantic(t, factory, kv, bucketID)
+			root, err := semantic.Commit(ctx, list.NewViewFromSlice(initial))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			replacement := newPayloadCID([]byte("b2"))
-			replacedRoot, err := semantic.Replace(ctx, root, view, 1, initial[1], replacement)
+			replacedRoot, err := semantic.Replace(ctx, root, 1, initial[1], replacement)
 			if err != nil {
 				t.Fatalf("Replace failed: %v", err)
 			}
-
-			replacedView := list.NewViewFromSlice([]cid.Cid{initial[0], replacement, initial[2]})
-			query, proof, err := semantic.Prove(ctx, replacedRoot, replacedView, 1)
-			if err != nil {
-				t.Fatalf("Prove replaced failed: %v", err)
-			}
-			ok, err := semantic.Verify(replacedRoot, 1, query, proof)
-			if err != nil || !ok {
-				t.Fatalf("Verify replaced failed: ok=%v err=%v", ok, err)
-			}
+			assertVerifiedQuery(t, semantic, replacedRoot, 1, list.Query{
+				Key:    replacement,
+				Length: 3,
+			})
 
 			appended := newPayloadCID([]byte("d"))
-			appendedRoot, newIndex, err := semantic.Append(ctx, replacedRoot, replacedView, appended)
+			appendedRoot, newIndex, err := semantic.Append(ctx, replacedRoot, appended)
 			if err != nil {
 				t.Fatalf("Append failed: %v", err)
 			}
 			if newIndex != 3 {
 				t.Fatalf("unexpected append index %d", newIndex)
 			}
+			assertVerifiedQuery(t, semantic, appendedRoot, 3, list.Query{
+				Key:    appended,
+				Length: 4,
+			})
 
-			appendedView := list.NewViewFromSlice([]cid.Cid{initial[0], replacement, initial[2], appended})
-			query, proof, err = semantic.Prove(ctx, appendedRoot, appendedView, 3)
-			if err != nil {
-				t.Fatalf("Prove appended failed: %v", err)
-			}
-			ok, err = semantic.Verify(appendedRoot, 3, query, proof)
-			if err != nil || !ok {
-				t.Fatalf("Verify appended failed: ok=%v err=%v", ok, err)
-			}
-
-			truncatedRoot, err := semantic.Truncate(ctx, appendedRoot, appendedView, 2)
+			truncatedRoot, err := semantic.Truncate(ctx, appendedRoot, 2)
 			if err != nil {
 				t.Fatalf("Truncate failed: %v", err)
 			}
-
-			truncatedView := list.NewViewFromSlice([]cid.Cid{initial[0], replacement})
-			absent, absentProof, err := semantic.Prove(ctx, truncatedRoot, truncatedView, 2)
-			if err != nil {
-				t.Fatalf("Prove truncated absence failed: %v", err)
-			}
-			ok, err = semantic.Verify(truncatedRoot, 2, absent, absentProof)
-			if err != nil || !ok {
-				t.Fatalf("Verify truncated absence failed: ok=%v err=%v", ok, err)
-			}
+			assertVerifiedQuery(t, semantic, truncatedRoot, 1, list.Query{
+				Key:    replacement,
+				Length: 2,
+			})
+			assertVerifiedQuery(t, semantic, truncatedRoot, 2, list.Query{
+				Key:    cid.Undef,
+				Length: 2,
+			})
 		})
 	}
 }

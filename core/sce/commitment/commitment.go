@@ -8,9 +8,9 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Scheme is the legacy path-oriented commitment interface still consumed by the
-// current graph/writer/resolver stack. Primitive semantic backends should
-// prefer narrower contracts such as ListBackend.
+// Scheme is the path-oriented commitment interface still consumed by the
+// current graph/writer/resolver stack. Higher semantic layers may adapt this
+// interface to their own local runtime needs.
 type Scheme interface {
 	// Commit generates a commitment to an arc set.
 	// Returns a CID with a MALT-specific codec (e.g., malt-kzg, malt-ipa).

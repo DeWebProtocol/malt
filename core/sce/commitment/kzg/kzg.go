@@ -426,5 +426,4 @@ func bitReverseRoots(roots []blsfr.Element) {
 }
 
 // Ensure Scheme implements commitment.Scheme.
-var _ commitment.ListBackend = (*Scheme)(nil)
 var _ commitment.Scheme = (*Scheme)(nil)

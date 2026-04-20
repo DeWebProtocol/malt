@@ -468,4 +468,3 @@ func valuesToVector(values []cid.Cid) []fr.Element {
 
 // Ensure Scheme implements commitment.Scheme.
 var _ commitment.Scheme = (*Scheme)(nil)
-var _ commitment.ListBackend = (*Scheme)(nil)
