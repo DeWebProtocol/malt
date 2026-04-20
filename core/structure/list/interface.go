@@ -23,11 +23,11 @@ type View interface {
 
 // Query is the verifiable result for a single list position.
 // Length is committed state so that verifiers can distinguish in-range slots
-// from out-of-range queries.
+// from out-of-range queries. For a dense stable-indexed list, index < Length
+// implies Key is defined; index >= Length implies Key must be cid.Undef.
 type Query struct {
-	Value   cid.Cid
-	Length  uint64
-	Present bool
+	Key    cid.Cid
+	Length uint64
 }
 
 // Semantic defines the public stable-indexed list contract.
@@ -39,18 +39,18 @@ type Semantic interface {
 	// Commit commits the supplied list view and returns a structure root.
 	Commit(ctx context.Context, view View) (cid.Cid, error)
 
-	// Prove proves the value (or absence) at index under root.
+	// Prove proves the key (or absence) at index under root.
 	Prove(ctx context.Context, root cid.Cid, view View, index uint64) (Query, structure.Proof, error)
 
 	// Verify verifies the proof for an index query under root.
 	Verify(root cid.Cid, index uint64, expected Query, proof structure.Proof) (bool, error)
 
 	// Replace performs an index-stable replacement at an existing position.
-	Replace(ctx context.Context, root cid.Cid, view View, index uint64, oldValue, newValue cid.Cid) (cid.Cid, error)
+	Replace(ctx context.Context, root cid.Cid, view View, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error)
 
-	// Append extends the list by one element and returns the new root and index.
-	Append(ctx context.Context, root cid.Cid, view View, value cid.Cid) (newRoot cid.Cid, newIndex uint64, err error)
+	// Append extends the list by one key and returns the new root and index.
+	Append(ctx context.Context, root cid.Cid, view View, key cid.Cid) (newRoot cid.Cid, newIndex uint64, err error)
 
-	// Truncate shortens the committed length without changing the prefix that remains.
+	// Truncate shrinks the committed length while preserving the remaining prefix.
 	Truncate(ctx context.Context, root cid.Cid, view View, newLen uint64) (cid.Cid, error)
 }

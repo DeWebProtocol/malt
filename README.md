@@ -50,7 +50,7 @@ layout/backend choices internal to each semantic implementation.
 | Layer | Question | Examples |
 | --- | --- | --- |
 | Structural Semantics | What logical structure does the application expose? | `list`, `map` |
-| Semantic Implementation | How is that semantic contract realized internally? | flat indexed list, linked/chunked list, segment-radix map, hashed-path radix map |
+| Semantic Implementation | How is that semantic contract realized internally? | tree-shaped indexed list, future keyed structures such as segment-radix or hashed-path radix |
 | Commitment Backend | What primitive authenticates already-positioned values or nodes? | KZG, IPA, hash/Merkle commitments |
 
 Under this terminology:
@@ -176,10 +176,11 @@ The long-term public abstraction should look like:
 
 - `core/structure/list`
   - public stable-indexed list semantic
-  - implementations may include flat indexed layouts backed by `IPA` or `KZG`
+  - primary implementation is a tree-shaped indexed layout backed by a fixed-slot primitive such as `IPA` or `KZG`
+  - `indexed` remains as a degenerate one-node implementation for tests and minimal baselines
 - `core/structure/map`
-  - public keyed map semantic
-  - implementations may include segment-radix or hashed-path radix layouts
+  - future keyed semantic
+  - implementation remains deferred until key-placement semantics are finalized
 - commitment backends
   - internal dependencies of structure implementations rather than the primary API surface
   - they authenticate positioned slots or nodes; they do not define public `list` / `map` semantics

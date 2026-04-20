@@ -1,4 +1,6 @@
-// Package indexed implements the stable-indexed list semantic using a fixed-slot backend.
+// Package indexed implements a degenerate one-node stable-indexed list over a
+// fixed-slot backend. It is the minimal semantic implementation used to
+// exercise the list contract before the tree-shaped layout is introduced.
 package indexed
 
 import (
@@ -20,7 +22,7 @@ type Semantic struct {
 
 type proofEnvelope struct {
 	LengthProof []byte `json:"length_proof"`
-	ValueProof  []byte `json:"value_proof,omitempty"`
+	KeyProof    []byte `json:"key_proof,omitempty"`
 }
 
 func New(backend commitment.ListBackend) (*Semantic, error) {
@@ -68,20 +70,17 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, view list.View, inde
 	}
 
 	envelope := proofEnvelope{LengthProof: lengthProof}
-	query := list.Query{
-		Length:  length,
-		Present: index < length,
-	}
+	query := list.Query{Length: length}
 
-	if query.Present {
-		value, valueProof, err := s.backend.ProveIndex(root, backing, index+1)
+	if index < length {
+		key, keyProof, err := s.backend.ProveIndex(root, backing, index+1)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
-		query.Value = value
-		envelope.ValueProof = valueProof
+		query.Key = key
+		envelope.KeyProof = keyProof
 	} else {
-		query.Value = cid.Undef
+		query.Key = cid.Undef
 	}
 
 	proofBytes, err := json.Marshal(envelope)
@@ -115,20 +114,20 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		return ok, err
 	}
 
-	if !expected.Present {
-		if index < expected.Length {
+	if index >= expected.Length {
+		if expected.Key.Defined() {
 			return false, nil
 		}
-		return len(envelope.ValueProof) == 0, nil
+		return len(envelope.KeyProof) == 0, nil
 	}
 
-	if index >= expected.Length || len(envelope.ValueProof) == 0 {
+	if !expected.Key.Defined() || len(envelope.KeyProof) == 0 {
 		return false, nil
 	}
-	return s.backend.VerifyIndex(root, index+1, expected.Value, envelope.ValueProof)
+	return s.backend.VerifyIndex(root, index+1, expected.Key, envelope.KeyProof)
 }
 
-func (s *Semantic) Replace(ctx context.Context, root cid.Cid, view list.View, index uint64, oldValue, newValue cid.Cid) (cid.Cid, error) {
+func (s *Semantic) Replace(ctx context.Context, root cid.Cid, view list.View, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
 	_ = ctx
 	values, err := valuesFromView(view)
 	if err != nil {
@@ -137,24 +136,24 @@ func (s *Semantic) Replace(ctx context.Context, root cid.Cid, view list.View, in
 	if index >= uint64(len(values)) {
 		return cid.Undef, fmt.Errorf("index %d out of range", index)
 	}
-	if !values[index].Equals(oldValue) {
-		return cid.Undef, fmt.Errorf("old value mismatch at index %d", index)
+	if !values[index].Equals(oldKey) {
+		return cid.Undef, fmt.Errorf("old key mismatch at index %d", index)
 	}
 	backing, err := backingValues(values)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.backend.ReplaceIndex(root, backing, index+1, oldValue, newValue)
+	return s.backend.ReplaceIndex(root, backing, index+1, oldKey, newKey)
 }
 
-func (s *Semantic) Append(ctx context.Context, root cid.Cid, view list.View, value cid.Cid) (cid.Cid, uint64, error) {
+func (s *Semantic) Append(ctx context.Context, root cid.Cid, view list.View, key cid.Cid) (cid.Cid, uint64, error) {
 	_ = ctx
 	values, err := valuesFromView(view)
 	if err != nil {
 		return cid.Undef, 0, err
 	}
 	newIndex := uint64(len(values))
-	values = append(values, value)
+	values = append(values, key)
 	backing, err := backingValues(values)
 	if err != nil {
 		return cid.Undef, 0, err
