@@ -1,31 +1,25 @@
 // Package tree implements the stable-indexed list semantic using a tree-shaped
-// indexed layout over a fixed-slot primitive backend.
+// fixed-slot layout. Runtime operations execute against node materialization
+// stored in EAT, so proofs and updates do not require a caller-supplied view.
 package tree
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
+	listruntime "github.com/dewebprotocol/malt/core/structure/list/internal/runtime"
 	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
-)
-
-const (
-	// Fanout is the fixed branching factor for the v1 tree-shaped list layout.
-	// Root slot 0 is reserved for the authenticated length marker, so the root
-	// stores at most Fanout children or direct keys.
-	Fanout = 255
-
-	maxUint64 = ^uint64(0)
 )
 
 type Semantic struct {
-	backend commitment.ListBackend
+	scheme   commitment.Scheme
+	eat      eat.EAT
+	bucketID string
 }
 
 type proofEnvelope struct {
@@ -38,90 +32,64 @@ type proofStep struct {
 	Proof  []byte `json:"proof"`
 }
 
-type node struct {
-	height   int
-	root     cid.Cid
-	slots    []cid.Cid
-	children []*node
-}
-
-type materializedTree struct {
-	length   uint64
-	height   int
-	root     cid.Cid
-	rootNode *node
-}
-
-func New(backend commitment.ListBackend) (*Semantic, error) {
-	if backend == nil {
-		return nil, fmt.Errorf("list backend is nil")
+func New(scheme commitment.Scheme, eat eat.EAT, bucketID string) (*Semantic, error) {
+	if err := listruntime.ValidateScheme(scheme); err != nil {
+		return nil, err
 	}
-	if backend.MaxValues() < Fanout+1 {
-		return nil, fmt.Errorf("list backend capacity %d is smaller than required root width %d", backend.MaxValues(), Fanout+1)
+	if eat == nil {
+		return nil, fmt.Errorf("eat is nil")
 	}
-	return &Semantic{backend: backend}, nil
+	if bucketID == "" {
+		return nil, fmt.Errorf("bucket id is empty")
+	}
+	return &Semantic{
+		scheme:   scheme,
+		eat:      eat,
+		bucketID: bucketID,
+	}, nil
 }
 
 func (s *Semantic) Commit(ctx context.Context, view list.View) (cid.Cid, error) {
-	_ = ctx
 	values, err := valuesFromView(view)
 	if err != nil {
 		return cid.Undef, err
 	}
-	tree, err := s.materialize(values)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return tree.root, nil
+	return s.buildFromValues(ctx, values, listruntime.RequiredHeight(uint64(len(values))), true)
 }
 
-func (s *Semantic) Prove(ctx context.Context, root cid.Cid, view list.View, index uint64) (list.Query, structure.Proof, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Prove(ctx context.Context, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
+	rootSlots, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return list.Query{}, nil, err
-	}
-	tree, err := s.materialize(values)
-	if err != nil {
-		return list.Query{}, nil, err
-	}
-	if !tree.root.Equals(root) {
-		return list.Query{}, nil, fmt.Errorf("root/view mismatch")
 	}
 
-	query := list.Query{Length: tree.length}
-
-	lengthMarker, err := lengthCID(tree.length)
+	query := list.Query{Length: length}
+	_, lengthProof, err := listruntime.ProveSlot(s.scheme, root, rootSlots, 0)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
-	_, lengthProof, err := s.backend.ProveIndex(tree.root, tree.rootNode.slots, 0)
-	if err != nil {
-		return list.Query{}, nil, err
-	}
-	if !lengthMarker.Defined() {
-		return list.Query{}, nil, fmt.Errorf("length marker is undefined")
-	}
-
 	envelope := proofEnvelope{LengthProof: lengthProof}
-	if index >= tree.length {
+
+	if index >= length {
 		query.Key = cid.Undef
 		return encodeProof(query, envelope)
 	}
 
-	digits, err := indexDigits(index, tree.height)
+	height := listruntime.RequiredHeight(length)
+	digits, err := listruntime.IndexDigits(index, height)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
-	current := tree.rootNode
 
+	currentRoot := root
+	currentSlots := rootSlots
 	for level, digit := range digits {
 		slot := uint64(digit)
 		if level == 0 {
 			slot++
 		}
 
-		target, proof, err := s.backend.ProveIndex(current.root, current.slots, slot)
+		target, proof, err := listruntime.ProveSlot(s.scheme, currentRoot, currentSlots, slot)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
@@ -129,15 +97,20 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, view list.View, inde
 
 		if level == len(digits)-1 {
 			query.Key = target
-			break
+			return encodeProof(query, envelope)
 		}
-		if digit >= len(current.children) || current.children[digit] == nil {
+		if !target.Defined() {
 			return list.Query{}, nil, fmt.Errorf("missing child at level %d digit %d", level, digit)
 		}
-		current = current.children[digit]
+
+		currentRoot = target
+		currentSlots, err = s.loadNode(ctx, currentRoot, false)
+		if err != nil {
+			return list.Query{}, nil, err
+		}
 	}
 
-	return encodeProof(query, envelope)
+	return list.Query{}, nil, fmt.Errorf("unreachable proof state")
 }
 
 func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof structure.Proof) (bool, error) {
@@ -149,11 +122,11 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		return false, fmt.Errorf("missing length proof")
 	}
 
-	lengthMarker, err := lengthCID(expected.Length)
+	lengthMarker, err := listruntime.EncodeLengthMarker(expected.Length)
 	if err != nil {
 		return false, err
 	}
-	ok, err := s.backend.VerifyIndex(root, 0, lengthMarker, envelope.LengthProof)
+	ok, err := listruntime.VerifySlot(s.scheme, root, 0, lengthMarker, envelope.LengthProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -168,15 +141,16 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		return false, nil
 	}
 
-	height := requiredHeight(expected.Length)
+	height := listruntime.RequiredHeight(expected.Length)
 	if len(envelope.Steps) != height+1 {
 		return false, nil
 	}
 
-	digits, err := indexDigits(index, height)
+	digits, err := listruntime.IndexDigits(index, height)
 	if err != nil {
 		return false, err
 	}
+
 	currentRoot := root
 	for level, digit := range digits {
 		step := envelope.Steps[level]
@@ -184,202 +158,414 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		if err != nil {
 			return false, err
 		}
+
 		slot := uint64(digit)
 		if level == 0 {
 			slot++
 		}
-		ok, err := s.backend.VerifyIndex(currentRoot, slot, target, step.Proof)
+		ok, err := listruntime.VerifySlot(s.scheme, currentRoot, slot, target, step.Proof)
 		if err != nil || !ok {
 			return ok, err
 		}
+
 		if level == len(digits)-1 {
 			return target.Equals(expected.Key), nil
 		}
 		currentRoot = target
 	}
+
 	return false, nil
 }
 
-func (s *Semantic) Replace(ctx context.Context, root cid.Cid, view list.View, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Replace(ctx context.Context, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
+	_, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return cid.Undef, err
 	}
-	tree, err := s.materialize(values)
-	if err != nil {
-		return cid.Undef, err
-	}
-	if !tree.root.Equals(root) {
-		return cid.Undef, fmt.Errorf("root/view mismatch")
-	}
-	if index >= tree.length {
+	if index >= length {
 		return cid.Undef, fmt.Errorf("index %d out of range", index)
 	}
-	if !values[index].Equals(oldKey) {
-		return cid.Undef, fmt.Errorf("old key mismatch at index %d", index)
-	}
-
-	nextValues := append([]cid.Cid(nil), values...)
-	nextValues[index] = newKey
-	return s.Commit(ctx, list.NewViewFromSlice(nextValues))
+	return s.replaceAt(ctx, root, true, listruntime.RequiredHeight(length), index, oldKey, newKey)
 }
 
-func (s *Semantic) Append(ctx context.Context, root cid.Cid, view list.View, key cid.Cid) (cid.Cid, uint64, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Append(ctx context.Context, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
+	rootSlots, length, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return cid.Undef, 0, err
-	}
-	tree, err := s.materialize(values)
-	if err != nil {
-		return cid.Undef, 0, err
-	}
-	if !tree.root.Equals(root) {
-		return cid.Undef, 0, fmt.Errorf("root/view mismatch")
 	}
 
-	newIndex := uint64(len(values))
-	nextValues := append(append([]cid.Cid(nil), values...), key)
-	newRoot, err := s.Commit(ctx, list.NewViewFromSlice(nextValues))
+	newIndex := length
+	newLength := length + 1
+	oldHeight := listruntime.RequiredHeight(length)
+	newHeight := listruntime.RequiredHeight(newLength)
+
+	if newHeight > oldHeight {
+		grownRoot, err := s.growRoot(ctx, root, oldHeight, length)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+
+		nextRootSlots := listruntime.EmptyRootSlots()
+		lengthMarker, err := listruntime.EncodeLengthMarker(newLength)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+		nextRootSlots[0] = lengthMarker
+		content := listruntime.ContentSlots(nextRootSlots, true)
+		content[0] = grownRoot
+
+		childSpan, err := listruntime.SubtreeCapacity(newHeight - 1)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+		rootDigit := int(newIndex / childSpan)
+		localIndex := newIndex % childSpan
+		childRoot, err := s.buildSparseSubtree(ctx, newHeight-1, localIndex, key)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+		content[rootDigit] = childRoot
+
+		newRoot, err := s.commitSlots(ctx, nextRootSlots)
+		return newRoot, newIndex, err
+	}
+
+	nextRootSlots := cloneSlots(rootSlots)
+	lengthMarker, err := listruntime.EncodeLengthMarker(newLength)
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+	nextRootSlots[0] = lengthMarker
+	content := listruntime.ContentSlots(nextRootSlots, true)
+
+	if oldHeight == 0 {
+		if content[newIndex].Defined() {
+			return cid.Undef, 0, fmt.Errorf("append slot %d is already occupied", newIndex)
+		}
+		content[newIndex] = key
+		newRoot, err := s.commitSlots(ctx, nextRootSlots)
+		return newRoot, newIndex, err
+	}
+
+	childSpan, err := listruntime.SubtreeCapacity(oldHeight - 1)
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+	digit := int(newIndex / childSpan)
+	localIndex := newIndex % childSpan
+
+	if content[digit].Defined() {
+		content[digit], err = s.appendInto(ctx, content[digit], oldHeight-1, localIndex, key)
+	} else {
+		content[digit], err = s.buildSparseSubtree(ctx, oldHeight-1, localIndex, key)
+	}
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+
+	newRoot, err := s.commitSlots(ctx, nextRootSlots)
 	return newRoot, newIndex, err
 }
 
-func (s *Semantic) Truncate(ctx context.Context, root cid.Cid, view list.View, newLen uint64) (cid.Cid, error) {
-	_ = ctx
-	values, err := valuesFromView(view)
+func (s *Semantic) Truncate(ctx context.Context, root cid.Cid, newLen uint64) (cid.Cid, error) {
+	_, oldLen, err := s.loadRoot(ctx, root)
 	if err != nil {
 		return cid.Undef, err
 	}
-	tree, err := s.materialize(values)
-	if err != nil {
-		return cid.Undef, err
+	if newLen > oldLen {
+		return cid.Undef, fmt.Errorf("new length %d exceeds current length %d", newLen, oldLen)
 	}
-	if !tree.root.Equals(root) {
-		return cid.Undef, fmt.Errorf("root/view mismatch")
-	}
-	if newLen > uint64(len(values)) {
-		return cid.Undef, fmt.Errorf("new length %d exceeds current length %d", newLen, len(values))
-	}
-	if newLen == uint64(len(values)) {
+	if newLen == oldLen {
 		return root, nil
 	}
-
-	nextValues := append([]cid.Cid(nil), values[:newLen]...)
-	return s.Commit(ctx, list.NewViewFromSlice(nextValues))
-}
-
-func (s *Semantic) materialize(values []cid.Cid) (*materializedTree, error) {
-	length := uint64(len(values))
-	height := requiredHeight(length)
-	rootNode, err := s.buildRoot(values, height)
-	if err != nil {
-		return nil, err
-	}
-	return &materializedTree{
-		length:   length,
-		height:   height,
-		root:     rootNode.root,
-		rootNode: rootNode,
-	}, nil
-}
-
-func (s *Semantic) buildRoot(values []cid.Cid, height int) (*node, error) {
-	lengthMarker, err := lengthCID(uint64(len(values)))
-	if err != nil {
-		return nil, err
+	if newLen == 0 {
+		return s.commitEmptyRoot(ctx)
 	}
 
-	if height == 0 {
-		slots := make([]cid.Cid, 1+len(values))
+	oldHeight := listruntime.RequiredHeight(oldLen)
+	newHeight := listruntime.RequiredHeight(newLen)
+	return s.rebuildPrefix(ctx, root, true, oldHeight, true, newHeight, newLen)
+}
+
+func (s *Semantic) buildFromValues(ctx context.Context, values []cid.Cid, height int, isRoot bool) (cid.Cid, error) {
+	var slots []cid.Cid
+	if isRoot {
+		slots = listruntime.EmptyRootSlots()
+		lengthMarker, err := listruntime.EncodeLengthMarker(uint64(len(values)))
+		if err != nil {
+			return cid.Undef, err
+		}
 		slots[0] = lengthMarker
-		copy(slots[1:], values)
-		root, err := s.backend.CommitValues(slots)
-		if err != nil {
-			return nil, err
-		}
-		return &node{
-			height: 0,
-			root:   root,
-			slots:  slots,
-		}, nil
+	} else {
+		slots = listruntime.EmptyNodeSlots()
 	}
 
-	childChunk, err := nodeCapacity(height - 1)
+	content := listruntime.ContentSlots(slots, isRoot)
+	if height == 0 {
+		copy(content, values)
+		return s.commitSlots(ctx, slots)
+	}
+
+	childSpan, err := listruntime.SubtreeCapacity(height - 1)
 	if err != nil {
-		return nil, err
+		return cid.Undef, err
 	}
-	childCount := ceilDiv(uint64(len(values)), childChunk)
-	children := make([]*node, childCount)
-	slots := make([]cid.Cid, 1+childCount)
-	slots[0] = lengthMarker
-
-	for i := 0; i < childCount; i++ {
-		start := uint64(i) * childChunk
-		end := minUint64(start+childChunk, uint64(len(values)))
-		child, err := s.buildNode(values[int(start):int(end)], height-1)
-		if err != nil {
-			return nil, err
+	for childIdx, start := 0, 0; start < len(values); childIdx++ {
+		end := start + int(childSpan)
+		if end > len(values) {
+			end = len(values)
 		}
-		children[i] = child
-		slots[1+i] = child.root
+		childRoot, err := s.buildFromValues(ctx, values[start:end], height-1, false)
+		if err != nil {
+			return cid.Undef, err
+		}
+		content[childIdx] = childRoot
+		start = end
 	}
 
-	root, err := s.backend.CommitValues(slots)
-	if err != nil {
-		return nil, err
-	}
-	return &node{
-		height:   height,
-		root:     root,
-		slots:    slots,
-		children: children,
-	}, nil
+	return s.commitSlots(ctx, slots)
 }
 
-func (s *Semantic) buildNode(values []cid.Cid, height int) (*node, error) {
+func (s *Semantic) growRoot(ctx context.Context, root cid.Cid, oldHeight int, oldLen uint64) (cid.Cid, error) {
+	return s.rebuildPrefix(ctx, root, true, oldHeight, false, oldHeight, oldLen)
+}
+
+func (s *Semantic) rebuildPrefix(
+	ctx context.Context,
+	root cid.Cid,
+	sourceRoot bool,
+	sourceHeight int,
+	targetRoot bool,
+	targetHeight int,
+	keepLen uint64,
+) (cid.Cid, error) {
+	if targetHeight > sourceHeight {
+		return cid.Undef, fmt.Errorf("target height %d exceeds source height %d", targetHeight, sourceHeight)
+	}
+	if keepLen == 0 {
+		if targetRoot {
+			return s.commitEmptyRoot(ctx)
+		}
+		return cid.Undef, nil
+	}
+
+	slots, err := s.loadNode(ctx, root, sourceRoot)
+	if err != nil {
+		return cid.Undef, err
+	}
+	content := listruntime.ContentSlots(slots, sourceRoot)
+
+	if targetHeight < sourceHeight {
+		if !content[0].Defined() {
+			return cid.Undef, fmt.Errorf("cannot descend into empty leftmost subtree")
+		}
+		return s.rebuildPrefix(ctx, content[0], false, sourceHeight-1, targetRoot, targetHeight, keepLen)
+	}
+
+	var nextSlots []cid.Cid
+	if targetRoot {
+		nextSlots = listruntime.EmptyRootSlots()
+		lengthMarker, err := listruntime.EncodeLengthMarker(keepLen)
+		if err != nil {
+			return cid.Undef, err
+		}
+		nextSlots[0] = lengthMarker
+	} else {
+		nextSlots = listruntime.EmptyNodeSlots()
+	}
+	nextContent := listruntime.ContentSlots(nextSlots, targetRoot)
+
+	if targetHeight == 0 {
+		if keepLen > uint64(len(content)) {
+			return cid.Undef, fmt.Errorf("keep length %d exceeds leaf width %d", keepLen, len(content))
+		}
+		copy(nextContent, content[:int(keepLen)])
+		return s.commitSlots(ctx, nextSlots)
+	}
+
+	childSpan, err := listruntime.SubtreeCapacity(targetHeight - 1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	fullChildren := keepLen / childSpan
+	partial := keepLen % childSpan
+
+	for i := uint64(0); i < fullChildren; i++ {
+		if !content[i].Defined() {
+			return cid.Undef, fmt.Errorf("missing child %d while rebuilding prefix", i)
+		}
+		nextContent[i] = content[i]
+	}
+	if partial > 0 {
+		if !content[fullChildren].Defined() {
+			return cid.Undef, fmt.Errorf("missing boundary child %d while rebuilding prefix", fullChildren)
+		}
+		nextContent[fullChildren], err = s.rebuildPrefix(
+			ctx,
+			content[fullChildren],
+			false,
+			targetHeight-1,
+			false,
+			targetHeight-1,
+			partial,
+		)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	return s.commitSlots(ctx, nextSlots)
+}
+
+func (s *Semantic) replaceAt(
+	ctx context.Context,
+	root cid.Cid,
+	isRoot bool,
+	height int,
+	index uint64,
+	oldKey cid.Cid,
+	newKey cid.Cid,
+) (cid.Cid, error) {
+	slots, err := s.loadNode(ctx, root, isRoot)
+	if err != nil {
+		return cid.Undef, err
+	}
+	content := listruntime.ContentSlots(slots, isRoot)
+
 	if height == 0 {
-		slots := append([]cid.Cid(nil), values...)
-		root, err := s.backend.CommitValues(slots)
-		if err != nil {
-			return nil, err
+		if index >= uint64(len(content)) {
+			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
 		}
-		return &node{
-			height: 0,
-			root:   root,
-			slots:  slots,
-		}, nil
-	}
-
-	childChunk, err := nodeCapacity(height - 1)
-	if err != nil {
-		return nil, err
-	}
-	childCount := ceilDiv(uint64(len(values)), childChunk)
-	children := make([]*node, childCount)
-	slots := make([]cid.Cid, childCount)
-
-	for i := 0; i < childCount; i++ {
-		start := uint64(i) * childChunk
-		end := minUint64(start+childChunk, uint64(len(values)))
-		child, err := s.buildNode(values[int(start):int(end)], height-1)
-		if err != nil {
-			return nil, err
+		if !content[index].Equals(oldKey) {
+			return cid.Undef, fmt.Errorf("old key mismatch at index %d", index)
 		}
-		children[i] = child
-		slots[i] = child.root
+		nextSlots := cloneSlots(slots)
+		listruntime.ContentSlots(nextSlots, isRoot)[index] = newKey
+		return s.commitSlots(ctx, nextSlots)
 	}
 
-	root, err := s.backend.CommitValues(slots)
+	childSpan, err := listruntime.SubtreeCapacity(height - 1)
 	if err != nil {
-		return nil, err
+		return cid.Undef, err
 	}
-	return &node{
-		height:   height,
-		root:     root,
-		slots:    slots,
-		children: children,
-	}, nil
+	digit := int(index / childSpan)
+	localIndex := index % childSpan
+
+	if !content[digit].Defined() {
+		return cid.Undef, fmt.Errorf("missing child at digit %d", digit)
+	}
+
+	newChild, err := s.replaceAt(ctx, content[digit], false, height-1, localIndex, oldKey, newKey)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	nextSlots := cloneSlots(slots)
+	listruntime.ContentSlots(nextSlots, isRoot)[digit] = newChild
+	return s.commitSlots(ctx, nextSlots)
+}
+
+func (s *Semantic) appendInto(ctx context.Context, root cid.Cid, height int, index uint64, key cid.Cid) (cid.Cid, error) {
+	slots, err := s.loadNode(ctx, root, false)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	if height == 0 {
+		if index >= uint64(len(slots)) {
+			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
+		}
+		if slots[index].Defined() {
+			return cid.Undef, fmt.Errorf("append slot %d is already occupied", index)
+		}
+		nextSlots := cloneSlots(slots)
+		nextSlots[index] = key
+		return s.commitSlots(ctx, nextSlots)
+	}
+
+	childSpan, err := listruntime.SubtreeCapacity(height - 1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	digit := int(index / childSpan)
+	localIndex := index % childSpan
+
+	nextSlots := cloneSlots(slots)
+	if nextSlots[digit].Defined() {
+		nextSlots[digit], err = s.appendInto(ctx, nextSlots[digit], height-1, localIndex, key)
+	} else {
+		nextSlots[digit], err = s.buildSparseSubtree(ctx, height-1, localIndex, key)
+	}
+	if err != nil {
+		return cid.Undef, err
+	}
+	return s.commitSlots(ctx, nextSlots)
+}
+
+func (s *Semantic) buildSparseSubtree(ctx context.Context, height int, index uint64, key cid.Cid) (cid.Cid, error) {
+	if height == 0 {
+		slots := listruntime.EmptyNodeSlots()
+		if index >= uint64(len(slots)) {
+			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
+		}
+		slots[index] = key
+		return s.commitSlots(ctx, slots)
+	}
+
+	childSpan, err := listruntime.SubtreeCapacity(height - 1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	digit := int(index / childSpan)
+	localIndex := index % childSpan
+
+	slots := listruntime.EmptyNodeSlots()
+	slots[digit], err = s.buildSparseSubtree(ctx, height-1, localIndex, key)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return s.commitSlots(ctx, slots)
+}
+
+func (s *Semantic) commitEmptyRoot(ctx context.Context) (cid.Cid, error) {
+	slots := listruntime.EmptyRootSlots()
+	lengthMarker, err := listruntime.EncodeLengthMarker(0)
+	if err != nil {
+		return cid.Undef, err
+	}
+	slots[0] = lengthMarker
+	return s.commitSlots(ctx, slots)
+}
+
+func (s *Semantic) loadRoot(ctx context.Context, root cid.Cid) ([]cid.Cid, uint64, error) {
+	slots, err := s.loadNode(ctx, root, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	length, err := listruntime.DecodeLengthMarker(slots[0])
+	if err != nil {
+		return nil, 0, err
+	}
+	return slots, length, nil
+}
+
+func (s *Semantic) loadNode(ctx context.Context, root cid.Cid, isRoot bool) ([]cid.Cid, error) {
+	width := listruntime.Fanout
+	if isRoot {
+		width = listruntime.RootWidth
+	}
+	return listruntime.LoadSlots(ctx, s.eat, s.bucketID, root, width)
+}
+
+func (s *Semantic) commitSlots(ctx context.Context, slots []cid.Cid) (cid.Cid, error) {
+	root, err := listruntime.CommitSlots(s.scheme, slots)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if err := listruntime.StoreSlots(ctx, s.eat, s.bucketID, root, slots); err != nil {
+		return cid.Undef, err
+	}
+	return root, nil
 }
 
 func encodeProof(query list.Query, envelope proofEnvelope) (list.Query, structure.Proof, error) {
@@ -394,6 +580,7 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 	if view == nil {
 		return nil, fmt.Errorf("list view is nil")
 	}
+
 	values := make([]cid.Cid, view.Len())
 	for i := uint64(0); i < view.Len(); i++ {
 		value, ok := view.Get(i)
@@ -403,52 +590,6 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 		values[i] = value
 	}
 	return values, nil
-}
-
-func requiredHeight(length uint64) int {
-	if length <= Fanout {
-		return 0
-	}
-	capacity := uint64(Fanout)
-	height := 0
-	for capacity < length {
-		height++
-		if capacity > maxUint64/uint64(Fanout) {
-			return height
-		}
-		capacity *= uint64(Fanout)
-	}
-	return height
-}
-
-func nodeCapacity(height int) (uint64, error) {
-	capacity := uint64(Fanout)
-	for i := 0; i < height; i++ {
-		if capacity > maxUint64/uint64(Fanout) {
-			return 0, fmt.Errorf("list capacity overflow at height %d", height)
-		}
-		capacity *= uint64(Fanout)
-	}
-	return capacity, nil
-}
-
-func indexDigits(index uint64, height int) ([]int, error) {
-	digits := make([]int, height+1)
-	remaining := index
-	for level := 0; level <= height; level++ {
-		exp := height - level
-		if exp == 0 {
-			digits[level] = int(remaining)
-			continue
-		}
-		chunk, err := nodeCapacity(exp - 1)
-		if err != nil {
-			return nil, err
-		}
-		digits[level] = int(remaining / chunk)
-		remaining %= chunk
-	}
-	return digits, nil
 }
 
 func newProofStep(target cid.Cid, proof []byte) proofStep {
@@ -468,29 +609,8 @@ func parseStepTarget(step proofStep) (cid.Cid, error) {
 	return cid.Cast(step.Target)
 }
 
-func ceilDiv(n, d uint64) int {
-	if n == 0 {
-		return 0
-	}
-	return int((n + d - 1) / d)
-}
-
-func minUint64(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func lengthCID(length uint64) (cid.Cid, error) {
-	var payload [8]byte
-	binary.BigEndian.PutUint64(payload[:], length)
-	data := append([]byte("malt:list:length:"), payload[:]...)
-	sum, err := mh.Sum(data, mh.SHA2_256, -1)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return cid.NewCidV1(cid.Raw, sum), nil
+func cloneSlots(slots []cid.Cid) []cid.Cid {
+	return append([]cid.Cid(nil), slots...)
 }
 
 var _ list.Semantic = (*Semantic)(nil)
