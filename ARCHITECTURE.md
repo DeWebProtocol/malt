@@ -112,7 +112,7 @@ The preferred conceptual split is:
   - `list` and `map`
 - semantic implementations
   - internal realizations of those contracts
-  - examples: flat indexed list, linked/chunked list, segment-radix map, hashed-path radix map
+  - examples: tree-shaped indexed list, future keyed structures such as segment-radix or hashed-path radix
 - commitment backend
   - internal authentication primitive used by an implementation
   - examples: KZG, IPA, hash/Merkle commitments
