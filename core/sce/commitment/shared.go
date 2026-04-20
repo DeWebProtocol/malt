@@ -6,7 +6,7 @@ import (
 )
 
 // ExtractSortedPathsValues extracts sorted paths and values from an arc set.
-// This is only used by legacy path-oriented wrappers.
+// This is used when higher layers need a deterministic path-to-index mapping.
 func ExtractSortedPathsValues(arcs arcset.ArcSet) ([]string, []cid.Cid) {
 	var paths []string
 	iter := arcs.Iterate()
@@ -25,4 +25,15 @@ func ExtractSortedPathsValues(arcs arcset.ArcSet) ([]string, []cid.Cid) {
 	}
 
 	return paths, values
+}
+
+// ExtractSortedPathsCells extracts sorted paths and cell-encoded values from an
+// arc set. CID-valued arcs are encoded as CID bytes.
+func ExtractSortedPathsCells(arcs arcset.ArcSet) ([]string, []Cell) {
+	paths, values := ExtractSortedPathsValues(arcs)
+	cells := make([]Cell, len(values))
+	for i, value := range values {
+		cells[i] = CellFromCID(value)
+	}
+	return paths, cells
 }

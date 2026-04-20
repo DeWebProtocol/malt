@@ -10,7 +10,7 @@ type Option func(*Options)
 
 // Options holds configuration for Graph creation.
 type Options struct {
-	Scheme          commitment.Scheme
+	Scheme          commitment.IndexCommitment
 	BucketId        string
 	LineageRecorder writer.LineageRecorder
 }
@@ -21,7 +21,7 @@ func defaultOptions() *Options {
 
 // WithCommitmentScheme sets the commitment scheme for this Graph.
 // Default: Verkle tree.
-func WithCommitmentScheme(scheme commitment.Scheme) Option {
+func WithCommitmentScheme(scheme commitment.IndexCommitment) Option {
 	return func(o *Options) {
 		o.Scheme = scheme
 	}

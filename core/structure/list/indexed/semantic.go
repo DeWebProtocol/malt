@@ -17,7 +17,7 @@ import (
 )
 
 type Semantic struct {
-	scheme   commitment.Scheme
+	scheme   commitment.IndexCommitment
 	eat      eat.EAT
 	bucketID string
 }
@@ -27,8 +27,8 @@ type proofEnvelope struct {
 	KeyProof    []byte `json:"key_proof,omitempty"`
 }
 
-func New(scheme commitment.Scheme, eat eat.EAT, bucketID string) (*Semantic, error) {
-	if err := listruntime.ValidateScheme(scheme); err != nil {
+func New(scheme commitment.IndexCommitment, eat eat.EAT, bucketID string) (*Semantic, error) {
+	if err := listruntime.ValidateCommitment(scheme); err != nil {
 		return nil, err
 	}
 	if eat == nil {
@@ -78,10 +78,15 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, index uint64) (list.
 	query := list.Query{Length: length}
 
 	if index < length {
-		query.Key, envelope.KeyProof, err = listruntime.ProveSlot(s.scheme, root, slots, index+1)
+		keyCell, keyProof, err := listruntime.ProveSlot(s.scheme, root, slots, index+1)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
+		query.Key, err = keyCell.AsCID()
+		if err != nil {
+			return list.Query{}, nil, err
+		}
+		envelope.KeyProof = keyProof
 	} else {
 		query.Key = cid.Undef
 	}
@@ -106,7 +111,7 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	if err != nil {
 		return false, err
 	}
-	ok, err := listruntime.VerifySlot(s.scheme, root, 0, lengthMarker, envelope.LengthProof)
+	ok, err := listruntime.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(lengthMarker), envelope.LengthProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -120,7 +125,7 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	if !expected.Key.Defined() || len(envelope.KeyProof) == 0 {
 		return false, nil
 	}
-	return listruntime.VerifySlot(s.scheme, root, index+1, expected.Key, envelope.KeyProof)
+	return listruntime.VerifySlot(s.scheme, root, index+1, commitment.CellFromCID(expected.Key), envelope.KeyProof)
 }
 
 func (s *Semantic) Replace(ctx context.Context, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {

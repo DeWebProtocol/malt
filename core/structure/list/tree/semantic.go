@@ -17,7 +17,7 @@ import (
 )
 
 type Semantic struct {
-	scheme   commitment.Scheme
+	scheme   commitment.IndexCommitment
 	eat      eat.EAT
 	bucketID string
 }
@@ -32,8 +32,8 @@ type proofStep struct {
 	Proof  []byte `json:"proof"`
 }
 
-func New(scheme commitment.Scheme, eat eat.EAT, bucketID string) (*Semantic, error) {
-	if err := listruntime.ValidateScheme(scheme); err != nil {
+func New(scheme commitment.IndexCommitment, eat eat.EAT, bucketID string) (*Semantic, error) {
+	if err := listruntime.ValidateCommitment(scheme); err != nil {
 		return nil, err
 	}
 	if eat == nil {
@@ -96,14 +96,20 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, index uint64) (list.
 		envelope.Steps = append(envelope.Steps, newProofStep(target, proof))
 
 		if level == len(digits)-1 {
-			query.Key = target
+			query.Key, err = target.AsCID()
+			if err != nil {
+				return list.Query{}, nil, err
+			}
 			return encodeProof(query, envelope)
 		}
 		if !target.Defined() {
 			return list.Query{}, nil, fmt.Errorf("missing child at level %d digit %d", level, digit)
 		}
 
-		currentRoot = target
+		currentRoot, err = target.AsCID()
+		if err != nil {
+			return list.Query{}, nil, err
+		}
 		currentSlots, err = s.loadNode(ctx, currentRoot, false)
 		if err != nil {
 			return list.Query{}, nil, err
@@ -126,7 +132,7 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	if err != nil {
 		return false, err
 	}
-	ok, err := listruntime.VerifySlot(s.scheme, root, 0, lengthMarker, envelope.LengthProof)
+	ok, err := listruntime.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(lengthMarker), envelope.LengthProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -169,9 +175,12 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		}
 
 		if level == len(digits)-1 {
-			return target.Equals(expected.Key), nil
+			return target.Equal(commitment.CellFromCID(expected.Key)), nil
 		}
-		currentRoot = target
+		currentRoot, err = target.AsCID()
+		if err != nil {
+			return false, err
+		}
 	}
 
 	return false, nil
@@ -592,7 +601,7 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 	return values, nil
 }
 
-func newProofStep(target cid.Cid, proof []byte) proofStep {
+func newProofStep(target commitment.Cell, proof []byte) proofStep {
 	if !target.Defined() {
 		return proofStep{Proof: proof}
 	}
@@ -602,11 +611,11 @@ func newProofStep(target cid.Cid, proof []byte) proofStep {
 	}
 }
 
-func parseStepTarget(step proofStep) (cid.Cid, error) {
+func parseStepTarget(step proofStep) (commitment.Cell, error) {
 	if len(step.Target) == 0 {
-		return cid.Undef, nil
+		return nil, nil
 	}
-	return cid.Cast(step.Target)
+	return commitment.NewCell(step.Target), nil
 }
 
 func cloneSlots(slots []cid.Cid) []cid.Cid {

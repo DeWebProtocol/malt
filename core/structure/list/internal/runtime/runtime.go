@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"strconv"
 
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
@@ -24,23 +23,14 @@ const (
 	lengthMarkerPrefix = "malt:list:length:v1:"
 )
 
-type indexedScheme interface {
-	MaxValues() int
-	CommitValues(values []cid.Cid) (cid.Cid, error)
-	ProveIndex(root cid.Cid, values []cid.Cid, index uint64) (cid.Cid, []byte, error)
-	VerifyIndex(root cid.Cid, index uint64, value cid.Cid, proof []byte) (bool, error)
-}
-
-// ValidateScheme checks whether the supplied commitment scheme can support the
-// v1 list layout. For schemes exposing native fixed-slot helpers, we enforce
-// the required root width up front; generic path-oriented schemes are accepted
-// and use the slot-path compatibility path.
-func ValidateScheme(scheme commitment.Scheme) error {
+// ValidateCommitment checks whether the supplied index commitment can support
+// the v1 list layout.
+func ValidateCommitment(scheme commitment.IndexCommitment) error {
 	if scheme == nil {
-		return fmt.Errorf("commitment scheme is nil")
+		return fmt.Errorf("index commitment is nil")
 	}
-	if indexed, ok := scheme.(indexedScheme); ok && indexed.MaxValues() < RootWidth {
-		return fmt.Errorf("commitment scheme capacity %d is smaller than required root width %d", indexed.MaxValues(), RootWidth)
+	if scheme.MaxValues() < RootWidth {
+		return fmt.Errorf("index commitment capacity %d is smaller than required root width %d", scheme.MaxValues(), RootWidth)
 	}
 	return nil
 }
@@ -122,48 +112,28 @@ func StoreSlots(ctx context.Context, e eat.EAT, bucketID string, root cid.Cid, s
 	return e.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
 }
 
-// SlotCommitmentPath returns the local path used by the generic Scheme
-// compatibility path for one committed slot within a list node.
-func SlotCommitmentPath(slot uint64) arcset.Path {
-	return arcset.CanonicalizePath("slot/" + strconv.FormatUint(slot, 10))
-}
-
-// SlotArcSet materializes the defined slots of a node as a local arc set. This
-// is used by the generic path-oriented compatibility path.
-func SlotArcSet(slots []cid.Cid) arcset.ArcSet {
-	arcs := make(map[arcset.Path]cid.Cid)
+// CellsFromSlots converts a CID slot vector into commitment cells.
+func CellsFromSlots(slots []cid.Cid) []commitment.Cell {
+	cells := make([]commitment.Cell, len(slots))
 	for i, slot := range slots {
-		if !slot.Defined() {
-			continue
-		}
-		arcs[SlotCommitmentPath(uint64(i))] = slot
+		cells[i] = commitment.CellFromCID(slot)
 	}
-	return arcset.NewSetFromPaths(arcs)
+	return cells
 }
 
-// CommitSlots commits a node slot vector using either the scheme's native
-// fixed-slot helpers or the generic path-oriented compatibility path.
-func CommitSlots(scheme commitment.Scheme, slots []cid.Cid) (cid.Cid, error) {
-	if indexed, ok := scheme.(indexedScheme); ok {
-		return indexed.CommitValues(slots)
-	}
-	return scheme.Commit(SlotArcSet(slots))
+// CommitSlots commits a node slot vector via the index commitment backend.
+func CommitSlots(scheme commitment.IndexCommitment, slots []cid.Cid) (cid.Cid, error) {
+	return scheme.CommitValues(CellsFromSlots(slots))
 }
 
 // ProveSlot proves one slot under a committed node.
-func ProveSlot(scheme commitment.Scheme, root cid.Cid, slots []cid.Cid, slot uint64) (cid.Cid, []byte, error) {
-	if indexed, ok := scheme.(indexedScheme); ok {
-		return indexed.ProveIndex(root, slots, slot)
-	}
-	return scheme.Prove(root, SlotArcSet(slots), SlotCommitmentPath(slot).String())
+func ProveSlot(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.Cid, slot uint64) (commitment.Cell, []byte, error) {
+	return scheme.ProveIndex(root, CellsFromSlots(slots), slot)
 }
 
 // VerifySlot verifies one committed slot proof.
-func VerifySlot(scheme commitment.Scheme, root cid.Cid, slot uint64, value cid.Cid, proof []byte) (bool, error) {
-	if indexed, ok := scheme.(indexedScheme); ok {
-		return indexed.VerifyIndex(root, slot, value, proof)
-	}
-	return scheme.Verify(root, SlotCommitmentPath(slot).String(), value, proof)
+func VerifySlot(scheme commitment.IndexCommitment, root cid.Cid, slot uint64, value commitment.Cell, proof []byte) (bool, error) {
+	return scheme.VerifyIndex(root, slot, value, proof)
 }
 
 // EncodeLengthMarker encodes list length as a self-describing identity CID so

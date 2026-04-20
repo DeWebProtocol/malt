@@ -1,522 +1,104 @@
 package kzg_test
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/sce/commitment"
 	"github.com/dewebprotocol/malt/core/sce/commitment/kzg"
-	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
 )
 
-// newPayloadCID creates a CID from data for testing.
-func newPayloadCID(data []byte) (cid.Cid, error) {
-	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	return cid.NewCidV1(cid.Raw, mhash), nil
-}
-
-// === Basic Functionality Tests ===
-
-func TestKZGCommitment(t *testing.T) {
-	k, err := kzg.NewScheme()
+func TestKZGProveIndexRestartSafe(t *testing.T) {
+	first, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	k1, _ := newPayloadCID([]byte("target1"))
-	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
-
-	root, err := k.Commit(arcs)
+	values := []commitment.Cell{
+		commitment.NewCell([]byte("slot0")),
+		commitment.NewCell([]byte("slot1")),
+	}
+	root, err := first.CommitValues(values)
 	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
+		t.Fatalf("CommitValues failed: %v", err)
 	}
 
-	if !root.Defined() {
-		t.Fatal("Root should be defined")
-	}
-
-	if !codec.IsMaltCid(root) {
-		t.Errorf("Expected MALT commitment CID, got codec=%x", root.Prefix().Codec)
-	}
-
-	commitment, err := codec.ExtractCommitment(root)
+	second, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("ExtractCommitment failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
-	if len(commitment) != 48 {
-		t.Errorf("Expected 48 bytes for KZG commitment, got %d", len(commitment))
+
+	value, proof, err := second.ProveIndex(root, values, 1)
+	if err != nil {
+		t.Fatalf("ProveIndex failed: %v", err)
+	}
+	if !value.Equal(values[1]) {
+		t.Fatalf("unexpected value %x", value)
+	}
+
+	ok, err := second.VerifyIndex(root, 1, values[1], proof)
+	if err != nil {
+		t.Fatalf("VerifyIndex failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected proof to verify")
+	}
+
+	wrong := commitment.NewCell([]byte("wrong"))
+	ok, err = second.VerifyIndex(root, 1, wrong, proof)
+	if err != nil {
+		t.Fatalf("VerifyIndex(wrong) failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected wrong value verification to fail")
 	}
 }
 
-func TestKZGProveAndVerify(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target, _ := newPayloadCID([]byte("my-target"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"my-arc": target})
-
-	root, _ := k.Commit(arcs)
-
-	// Prove
-	provedTarget, proof, err := k.Prove(root, arcs, "my-arc")
+func TestKZGBatchProveRestartSafe(t *testing.T) {
+	first, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("Prove failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	if !provedTarget.Equals(target) {
-		t.Error("Proved target should match original")
+	values := []commitment.Cell{
+		commitment.NewCell([]byte("slot0")),
+		commitment.NewCell([]byte("slot1")),
+		commitment.NewCell([]byte("slot2")),
 	}
-
-	if len(proof) <= kzg.ProofSize {
-		t.Errorf("Expected path-bound proof larger than primitive size %d, got %d", kzg.ProofSize, len(proof))
-	}
-
-	// Verify
-	valid, err := k.Verify(root, "my-arc", target, proof)
+	root, err := first.CommitValues(values)
 	if err != nil {
-		t.Fatalf("Verify failed: %v", err)
+		t.Fatalf("CommitValues failed: %v", err)
 	}
 
-	if !valid {
-		t.Error("Proof should be valid")
-	}
-}
-
-func TestKZGUpdate(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	oldTarget, _ := newPayloadCID([]byte("old"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"link": oldTarget})
-
-	root, _ := k.Commit(arcs)
-
-	newTarget, _ := newPayloadCID([]byte("new"))
-	newRoot, err := k.Update(root, arcs, "link", oldTarget, newTarget)
+	second, err := kzg.NewScheme()
 	if err != nil {
-		t.Fatalf("Update failed: %v", err)
+		t.Fatalf("NewScheme failed: %v", err)
 	}
 
-	if newRoot.Equals(root) {
-		t.Error("New root should differ from old root")
-	}
-
-	// Verify new root can prove the value
-	updatedArcs := arcset.NewSetFrom(map[string]cid.Cid{"link": newTarget})
-
-	proved, proof, err := k.Prove(newRoot, updatedArcs, "link")
-	if err != nil {
-		t.Fatalf("Prove after update failed: %v", err)
-	}
-
-	if !proved.Equals(newTarget) {
-		t.Error("Proved value should be new target")
-	}
-
-	valid, _ := k.Verify(newRoot, "link", newTarget, proof)
-	if !valid {
-		t.Error("Proof for new value should be valid")
-	}
-}
-
-func TestKZGBatchUpdate(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	k2, _ := newPayloadCID([]byte("target2"))
-	k3, _ := newPayloadCID([]byte("target3"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2, "c": k3})
-
-	root, _ := k.Commit(arcs)
-
-	newK1, _ := newPayloadCID([]byte("new1"))
-	newK2, _ := newPayloadCID([]byte("new2"))
-
-	updates := map[string]struct {
-		Old cid.Cid
-		New cid.Cid
-	}{
-		"a": {Old: k1, New: newK1},
-		"b": {Old: k2, New: newK2},
-	}
-
-	newRoot, err := k.BatchUpdate(root, arcs, updates)
-	if err != nil {
-		t.Fatalf("BatchUpdate failed: %v", err)
-	}
-
-	if newRoot.Equals(root) {
-		t.Error("New root should differ from old root")
-	}
-}
-
-// === Aggregation Proof Tests ===
-
-func TestKZGBatchProve(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	k2, _ := newPayloadCID([]byte("target2"))
-	k3, _ := newPayloadCID([]byte("target3"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2, "c": k3})
-
-	root, _ := k.Commit(arcs)
-
-	paths := []string{"a", "b", "c"}
-	proofs, err := k.BatchProve(root, arcs, paths)
+	indices := []uint64{1, 2}
+	proved, proof, err := second.BatchProve(root, values, indices)
 	if err != nil {
 		t.Fatalf("BatchProve failed: %v", err)
 	}
-
-	if len(proofs) != 3 {
-		t.Errorf("Expected 3 proofs, got %d", len(proofs))
+	if len(proved) != len(indices) {
+		t.Fatalf("unexpected proved length: %d", len(proved))
+	}
+	if !proved[0].Equal(values[1]) || !proved[1].Equal(values[2]) {
+		t.Fatalf("unexpected proved values: %x %x", proved[0], proved[1])
 	}
 
-	for _, path := range paths {
-		entry, ok := proofs[path]
-		if !ok {
-			t.Errorf("Missing proof for path %s", path)
-			continue
-		}
-
-		if len(entry.Proof) <= kzg.ProofSize {
-			t.Errorf("Expected path-bound proof for path %s to exceed primitive size %d, got %d", path, kzg.ProofSize, len(entry.Proof))
-		}
-	}
-}
-
-func TestKZGBatchVerify(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	k2, _ := newPayloadCID([]byte("target2"))
-	k3, _ := newPayloadCID([]byte("target3"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2, "c": k3})
-
-	root, _ := k.Commit(arcs)
-
-	paths := []string{"a", "b", "c"}
-	proofs, _ := k.BatchProve(root, arcs, paths)
-
-	valid, err := k.BatchVerify(root, proofs)
+	ok, err := second.BatchVerify(root, indices, []commitment.Cell{values[1], values[2]}, proof)
 	if err != nil {
 		t.Fatalf("BatchVerify failed: %v", err)
 	}
-
-	if !valid {
-		t.Error("Batch proofs should be valid")
-	}
-}
-
-func TestKZGBatchVerifyWithInvalidProof(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
-
-	root, _ := k.Commit(arcs)
-
-	invalidProof := make([]byte, 84)
-	for i := range invalidProof {
-		invalidProof[i] = byte(i)
+	if !ok {
+		t.Fatal("expected batch proof to verify")
 	}
 
-	proofs := map[string]arcset.BatchProofEntry{
-		"a": {
-			Target: k1,
-			Proof:  invalidProof,
-		},
-	}
-
-	valid, _ := k.BatchVerify(root, proofs)
-	if valid {
-		t.Error("Invalid batch proof should not be valid")
-	}
-}
-
-func TestKZGAggregateProve(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
-
-	root, _ := k.Commit(arcs)
-
-	paths := []string{"a", "b"}
-	aggProof, err := k.AggregateProve(root, arcs, paths)
+	ok, err = second.BatchVerify(root, indices, []commitment.Cell{values[1], commitment.NewCell([]byte("wrong"))}, proof)
 	if err != nil {
-		t.Fatalf("AggregateProve failed: %v", err)
+		t.Fatalf("BatchVerify(wrong) failed: %v", err)
 	}
-
-	if len(aggProof.Paths) != 2 {
-		t.Errorf("Expected 2 paths, got %d", len(aggProof.Paths))
-	}
-
-	if len(aggProof.Targets) != 2 {
-		t.Errorf("Expected 2 targets, got %d", len(aggProof.Targets))
-	}
-
-	if len(aggProof.Proofs) != 2 {
-		t.Errorf("Expected 2 proofs, got %d", len(aggProof.Proofs))
-	}
-	for i, proof := range aggProof.Proofs {
-		if len(proof) <= kzg.ProofSize {
-			t.Errorf("expected path-bound proof %d to exceed primitive size %d, got %d", i, kzg.ProofSize, len(proof))
-		}
-	}
-}
-
-func TestKZGAggregateVerify(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	k2, _ := newPayloadCID([]byte("target2"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1, "b": k2})
-
-	root, _ := k.Commit(arcs)
-
-	paths := []string{"a", "b"}
-	aggProof, _ := k.AggregateProve(root, arcs, paths)
-
-	valid, err := k.AggregateVerify(root, aggProof)
-	if err != nil {
-		t.Fatalf("AggregateVerify failed: %v", err)
-	}
-
-	if !valid {
-		t.Error("Aggregated proof should be valid")
-	}
-}
-
-// === Error Cases ===
-
-func TestKZGCommitEmptyArcSet(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	arcs := arcset.NewSet()
-	root, err := k.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Should handle empty arc set: %v", err)
-	}
-
-	if !root.Defined() {
-		t.Error("Should return a root for empty arc set")
-	}
-}
-
-func TestKZGProveNonExistentPath(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"exists": target})
-
-	root, _ := k.Commit(arcs)
-
-	_, _, err := k.Prove(root, arcs, "non-existent")
-	if err == nil {
-		t.Error("Should error on non-existent path")
-	}
-}
-
-func TestKZGVerifyWrongProof(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
-
-	root, _ := k.Commit(arcs)
-
-	wrongProof := make([]byte, 84)
-	for i := range wrongProof {
-		wrongProof[i] = byte(i)
-	}
-
-	// A wrong proof should cause Verify to fail (either return false or error)
-	valid, err := k.Verify(root, "a", target, wrongProof)
-	if err == nil && valid {
-		t.Error("Wrong proof should be invalid")
-	}
-	// Either err != nil (proof verification failed) or (err == nil && valid == false) is acceptable
-}
-
-func TestKZGVerifyWrongPath(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
-
-	root, _ := k.Commit(arcs)
-	_, proof, err := k.Prove(root, arcs, "a")
-	if err != nil {
-		t.Fatalf("Prove failed: %v", err)
-	}
-
-	valid, err := k.Verify(root, "b", target, proof)
-	if err == nil && valid {
-		t.Fatal("verification should fail when the requested path differs from the proved path")
-	}
-}
-
-func TestKZGVerifyShortProof(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
-
-	root, _ := k.Commit(arcs)
-
-	shortProof := []byte{1, 2, 3}
-
-	_, err := k.Verify(root, "a", target, shortProof)
-	if err == nil {
-		t.Error("Should error on short proof")
-	}
-}
-
-func TestKZGUpdateNonExistentPath(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target, _ := newPayloadCID([]byte("data"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": target})
-
-	root, _ := k.Commit(arcs)
-
-	oldKey, _ := newPayloadCID([]byte("old"))
-	newKey, _ := newPayloadCID([]byte("new"))
-
-	_, err := k.Update(root, arcs, "non-existent", oldKey, newKey)
-	if err == nil {
-		t.Error("Should error on non-existent path")
-	}
-}
-
-func TestKZGBatchProveEmptyPaths(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
-
-	root, _ := k.Commit(arcs)
-
-	_, err := k.BatchProve(root, arcs, []string{})
-	if err == nil {
-		t.Error("Should error on empty paths")
-	}
-}
-
-func TestKZGAggregateProveEmptyPaths(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
-
-	root, _ := k.Commit(arcs)
-
-	_, err := k.AggregateProve(root, arcs, []string{})
-	if err == nil {
-		t.Error("Should error on empty paths")
-	}
-}
-
-func TestKZGBatchProveNonExistentPath(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	k1, _ := newPayloadCID([]byte("target1"))
-	arcs := arcset.NewSetFrom(map[string]cid.Cid{"a": k1})
-
-	root, _ := k.Commit(arcs)
-
-	_, err := k.BatchProve(root, arcs, []string{"nonexistent"})
-	if err == nil {
-		t.Error("Should error on non-existent path")
-	}
-}
-
-// === Edge Cases ===
-
-func TestKZGLargeArcSet(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	arcsMap := make(map[string]cid.Cid)
-	for i := 0; i < 1000; i++ {
-		data := []byte{byte(i % 256), byte((i / 256) % 256)}
-		target, _ := newPayloadCID(data)
-		arcsMap[fmt.Sprintf("arc_%d", i)] = target
-	}
-	arcs := arcset.NewSetFrom(arcsMap)
-
-	root, err := k.Commit(arcs)
-	if err != nil {
-		t.Fatalf("Commit failed for large arc set: %v", err)
-	}
-
-	for _, i := range []int{0, 500, 999} {
-		path := fmt.Sprintf("arc_%d", i)
-		target, ok := arcs.Get(arcset.CanonicalizePath(path))
-		if !ok {
-			t.Fatalf("Arc %s not found", path)
-		}
-
-		_, proof, err := k.Prove(root, arcs, path)
-		if err != nil {
-			t.Errorf("Prove failed for %s: %v", path, err)
-			continue
-		}
-
-		valid, _ := k.Verify(root, path, target, proof)
-		if !valid {
-			t.Errorf("Proof invalid for %s", path)
-		}
-	}
-}
-
-func TestKZGArcSetExceedsLimit(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	arcsMap := make(map[string]cid.Cid)
-	for i := 0; i < 5000; i++ {
-		data := []byte{byte(i % 256)}
-		target, _ := newPayloadCID(data)
-		arcsMap[fmt.Sprintf("arc_%d", i)] = target
-	}
-	arcs := arcset.NewSetFrom(arcsMap)
-
-	_, err := k.Commit(arcs)
-	if err == nil {
-		t.Error("Should error when arc set exceeds limit")
-	}
-}
-
-func TestKZGMultipleCommits(t *testing.T) {
-	k, _ := kzg.NewScheme()
-
-	target1, _ := newPayloadCID([]byte("data1"))
-	arcs1 := arcset.NewSetFrom(map[string]cid.Cid{"a": target1})
-	root1, _ := k.Commit(arcs1)
-
-	target2, _ := newPayloadCID([]byte("data2"))
-	arcs2 := arcset.NewSetFrom(map[string]cid.Cid{"b": target2})
-	root2, _ := k.Commit(arcs2)
-
-	_, proof1, err := k.Prove(root1, arcs1, "a")
-	if err != nil {
-		t.Errorf("Prove root1 failed: %v", err)
-	}
-
-	_, proof2, err := k.Prove(root2, arcs2, "b")
-	if err != nil {
-		t.Errorf("Prove root2 failed: %v", err)
-	}
-
-	valid1, _ := k.Verify(root1, "a", target1, proof1)
-	valid2, _ := k.Verify(root2, "b", target2, proof2)
-
-	if !valid1 || !valid2 {
-		t.Error("Both proofs should be valid")
+	if ok {
+		t.Fatal("expected wrong batch value verification to fail")
 	}
 }

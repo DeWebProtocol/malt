@@ -1,8 +1,9 @@
-// Package kzg provides a KZG polynomial commitment implementation.
+// Package kzg provides a KZG polynomial commitment backend.
 package kzg
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"math/bits"
@@ -12,7 +13,6 @@ import (
 	gokzg4844 "github.com/crate-crypto/go-kzg-4844"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/sce/commitment"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -29,22 +29,19 @@ const (
 	MaxCacheEntries = 1024
 )
 
-// Scheme implements a primitive indexed commitment backend using KZG
-// polynomial commitments. The path-oriented Scheme methods are retained as
-// wrappers over the primitive indexed operations.
+// Scheme implements a KZG-based index commitment backend.
 type Scheme struct {
 	context      *gokzg4844.Context
 	domainPoints []gokzg4844.Scalar
 
 	mu    sync.RWMutex
 	cache map[string]*cacheEntry
-	order []string // tracks insertion order for LRU eviction
+	order []string
 }
 
 type cacheEntry struct {
 	blob   *gokzg4844.Blob
-	paths  []string
-	values []cid.Cid
+	values []commitment.Cell
 }
 
 // NewScheme creates a new KZG commitment scheme.
@@ -71,148 +68,64 @@ func (s *Scheme) MaxValues() int {
 	return MaxValues
 }
 
-// CommitValues commits a stable indexed value vector.
-func (s *Scheme) CommitValues(values []cid.Cid) (cid.Cid, error) {
-	return s.commitValues(nil, values)
-}
-
-// Commit generates a KZG commitment for the given arc set.
-func (s *Scheme) Commit(arcs arcset.ArcSet) (cid.Cid, error) {
-	paths, values := commitment.ExtractSortedPathsValues(arcs)
-	return s.commitValues(paths, values)
-}
-
-// Prove generates a KZG proof for a value at the given path.
-func (s *Scheme) Prove(comm cid.Cid, arcs arcset.ArcSet, path string) (cid.Cid, []byte, error) {
-	var (
-		paths  []string
-		values []cid.Cid
-	)
-	if arcs != nil {
-		paths, values = commitment.ExtractSortedPathsValues(arcs)
-	}
-	entry, err := s.ensureState(comm, paths, values)
-	if err != nil {
-		return cid.Cid{}, nil, err
-	}
-
-	proveIndex, ok := commitment.FindPathIndex(entry.paths, path)
-	if !ok {
-		return cid.Cid{}, nil, fmt.Errorf("path %s not found", path)
-	}
-	target, proof, err := s.ProveIndex(comm, values, uint64(proveIndex))
-	if err != nil {
-		return cid.Cid{}, nil, err
-	}
-	return target, commitment.WrapPathProof(path, proof), nil
-}
-
-// Verify verifies a KZG proof.
-func (s *Scheme) Verify(comm cid.Cid, path string, value cid.Cid, proof []byte) (bool, error) {
-	primitiveProof, err := commitment.UnwrapPathProof(path, proof)
-	if err != nil {
-		return false, err
-	}
-	_, _, index, err := deserializeProof(primitiveProof)
-	if err != nil {
-		return false, err
-	}
-	return s.VerifyIndex(comm, index, value, primitiveProof)
-}
-
-// Update updates a value in the commitment.
-func (s *Scheme) Update(comm cid.Cid, arcs arcset.ArcSet, path string, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	var (
-		paths  []string
-		values []cid.Cid
-	)
-	if arcs != nil {
-		paths, values = commitment.ExtractSortedPathsValues(arcs)
-	}
-	entry, err := s.ensureState(comm, paths, values)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-
-	updateIndex, ok := commitment.FindPathIndex(entry.paths, path)
-	if !ok {
-		return cid.Cid{}, fmt.Errorf("path %s not found", path)
-	}
-	return s.ReplaceIndex(comm, values, uint64(updateIndex), oldValue, newValue)
-}
-
-// BatchUpdate updates multiple values.
-func (s *Scheme) BatchUpdate(comm cid.Cid, arcs arcset.ArcSet, updates map[string]struct {
-	Old cid.Cid
-	New cid.Cid
-}) (cid.Cid, error) {
-	paths, values := commitment.ExtractSortedPathsValues(arcs)
-	entry, err := s.ensureState(comm, paths, values)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	nextValues := append([]cid.Cid(nil), entry.values...)
-	for path, update := range updates {
-		index, ok := commitment.FindPathIndex(entry.paths, path)
-		if !ok {
-			return cid.Cid{}, fmt.Errorf("path %s not found", path)
-		}
-		if !nextValues[index].Equals(update.Old) {
-			return cid.Cid{}, fmt.Errorf("old value mismatch for path %s", path)
-		}
-		nextValues[index] = update.New
-	}
-	return s.commitValues(entry.paths, nextValues)
-}
-
-// BatchProve generates proofs for multiple paths.
-func (s *Scheme) BatchProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (map[string]arcset.BatchProofEntry, error) {
-	return commitment.BatchProve(paths, func(path string) (cid.Cid, []byte, error) {
-		return s.Prove(comm, arcs, path)
-	})
-}
-
-// BatchVerify verifies multiple proofs.
-func (s *Scheme) BatchVerify(comm cid.Cid, proofs map[string]arcset.BatchProofEntry) (bool, error) {
-	return commitment.BatchVerify(proofs, func(path string, value cid.Cid, proof []byte) (bool, error) {
-		return s.Verify(comm, path, value, proof)
-	})
-}
-
-// AggregateProve generates an aggregated proof.
-func (s *Scheme) AggregateProve(comm cid.Cid, arcs arcset.ArcSet, paths []string) (*arcset.AggregatedProof, error) {
-	return commitment.AggregateProve(paths, func(path string) (cid.Cid, []byte, error) {
-		return s.Prove(comm, arcs, path)
-	})
-}
-
-// AggregateVerify verifies an aggregated proof.
-func (s *Scheme) AggregateVerify(comm cid.Cid, aggProof *arcset.AggregatedProof) (bool, error) {
-	return commitment.AggregateVerify(aggProof, func(path string, value cid.Cid, proof []byte) (bool, error) {
-		return s.Verify(comm, path, value, proof)
-	})
+// CommitValues commits a stable indexed cell vector.
+func (s *Scheme) CommitValues(values []commitment.Cell) (cid.Cid, error) {
+	return s.commitValues(values)
 }
 
 // ProveIndex proves the value at a stable index.
-func (s *Scheme) ProveIndex(comm cid.Cid, values []cid.Cid, index uint64) (cid.Cid, []byte, error) {
-	entry, err := s.ensureState(comm, nil, values)
+func (s *Scheme) ProveIndex(comm cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	entry, err := s.ensureState(comm, values)
 	if err != nil {
-		return cid.Cid{}, nil, err
+		return nil, nil, err
 	}
 	if index >= uint64(len(entry.values)) {
-		return cid.Cid{}, nil, fmt.Errorf("index %d out of range", index)
+		return nil, nil, fmt.Errorf("index %d out of range", index)
 	}
+	return s.proveEntryIndex(entry, index)
+}
 
+func (s *Scheme) proveEntryIndex(entry *cacheEntry, index uint64) (commitment.Cell, []byte, error) {
 	inputPoint := s.domainPoint(index)
 	proof, claimedValue, err := s.context.ComputeKZGProof(entry.blob, inputPoint, 1)
 	if err != nil {
-		return cid.Cid{}, nil, fmt.Errorf("failed to compute proof: %w", err)
+		return nil, nil, fmt.Errorf("failed to compute proof: %w", err)
 	}
-	return entry.values[index], serializeProof(proof, claimedValue, index), nil
+	return commitment.NewCell(entry.values[index]), serializeProof(proof, claimedValue, index), nil
+}
+
+// BatchProve currently concatenates single-index KZG proofs because the
+// current go-kzg-4844 dependency does not expose batch opening generation.
+// TODO: replace this looped encoding with a real KZG multiproof when the
+// backend supports batch opening generation for our index-commitment setting.
+func (s *Scheme) BatchProve(comm cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
+	entry, err := s.ensureState(comm, values)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(indices) == 0 {
+		return nil, nil, fmt.Errorf("indices must not be empty")
+	}
+
+	proved := make([]commitment.Cell, len(indices))
+	proofs := make([][]byte, len(indices))
+	for i, index := range indices {
+		if index >= uint64(len(entry.values)) {
+			return nil, nil, fmt.Errorf("index %d out of range", index)
+		}
+
+		value, proof, err := s.proveEntryIndex(entry, index)
+		if err != nil {
+			return nil, nil, err
+		}
+		proved[i] = value
+		proofs[i] = proof
+	}
+	return proved, serializeBatchProof(proofs), nil
 }
 
 // VerifyIndex verifies a proof for a stable index without cache state.
-func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []byte) (bool, error) {
+func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, proof []byte) (bool, error) {
 	kzgProof, claimedValue, proofIndex, err := deserializeProof(proof)
 	if err != nil {
 		return false, err
@@ -220,7 +133,7 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []
 	if proofIndex != index {
 		return false, nil
 	}
-	expected := cidToKZGScalar(value)
+	expected := cellToKZGScalar(value)
 	if claimedValue != expected {
 		return false, nil
 	}
@@ -239,33 +152,73 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value cid.Cid, proof []
 	return true, nil
 }
 
+// BatchVerify currently replays single-index KZG verification because the
+// current go-kzg-4844 dependency does not expose batch opening generation.
+// TODO: replace this looped verification path once BatchProve emits a real
+// KZG multiproof for our index-commitment setting.
+func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment.Cell, proof []byte) (bool, error) {
+	if len(indices) == 0 {
+		return false, fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) != len(values) {
+		return false, fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	}
+
+	proofs, err := deserializeBatchProof(proof)
+	if err != nil {
+		return false, err
+	}
+	if len(proofs) != len(indices) {
+		return false, fmt.Errorf("batch proof count mismatch: %d != %d", len(proofs), len(indices))
+	}
+
+	for i := range indices {
+		ok, err := s.VerifyIndex(comm, indices[i], values[i], proofs[i])
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// VerifyProof verifies a proof carrying its own index metadata.
+func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) (bool, error) {
+	_, _, index, err := deserializeProof(proof)
+	if err != nil {
+		return false, err
+	}
+	return s.VerifyIndex(comm, index, value, proof)
+}
+
 // ReplaceIndex performs an index-stable replacement.
-func (s *Scheme) ReplaceIndex(comm cid.Cid, values []cid.Cid, index uint64, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	entry, err := s.ensureState(comm, nil, values)
+func (s *Scheme) ReplaceIndex(comm cid.Cid, values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
+	entry, err := s.ensureState(comm, values)
 	if err != nil {
 		return cid.Cid{}, err
 	}
 	if index >= uint64(len(entry.values)) {
 		return cid.Cid{}, fmt.Errorf("index %d out of range", index)
 	}
-	if !entry.values[index].Equals(oldValue) {
+	if !entry.values[index].Equal(oldValue) {
 		return cid.Cid{}, fmt.Errorf("old value mismatch at index %d", index)
 	}
 
-	nextValues := append([]cid.Cid(nil), entry.values...)
-	nextValues[index] = newValue
-	return s.commitValues(entry.paths, nextValues)
+	nextValues := commitment.CloneCells(entry.values)
+	nextValues[index] = commitment.NewCell(newValue)
+	return s.commitValues(nextValues)
 }
 
-// cidToKZGScalar converts a CID to a KZG scalar.
-func cidToKZGScalar(c cid.Cid) gokzg4844.Scalar {
+func cellToKZGScalar(value commitment.Cell) gokzg4844.Scalar {
 	var scalar gokzg4844.Scalar
-	hash := sha256.Sum256(c.Bytes())
+	hash := sha256.Sum256(value)
 
-	value := new(big.Int).SetBytes(hash[:])
-	value.Mod(value, bls12381ScalarMod)
+	fieldValue := new(big.Int).SetBytes(hash[:])
+	fieldValue.Mod(fieldValue, bls12381ScalarMod)
 
-	result := value.FillBytes(make([]byte, 32))
+	result := fieldValue.FillBytes(make([]byte, 32))
 	copy(scalar[:], result)
 
 	return scalar
@@ -277,7 +230,6 @@ func (s *Scheme) evictLocked() {
 	if len(s.cache) < MaxCacheEntries {
 		return
 	}
-	// Evict oldest half
 	evictCount := MaxCacheEntries / 2
 	for i := 0; i < evictCount && len(s.order) > 0; i++ {
 		key := s.order[0]
@@ -286,14 +238,14 @@ func (s *Scheme) evictLocked() {
 	}
 }
 
-func (s *Scheme) commitValues(paths []string, values []cid.Cid) (cid.Cid, error) {
+func (s *Scheme) commitValues(values []commitment.Cell) (cid.Cid, error) {
 	if len(values) > MaxValues {
 		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
 	}
 
 	blob := &gokzg4844.Blob{}
 	for i, value := range values {
-		scalar := cidToKZGScalar(value)
+		scalar := cellToKZGScalar(value)
 		offset := i * gokzg4844.SerializedScalarSize
 		copy(blob[offset:offset+gokzg4844.SerializedScalarSize], scalar[:])
 	}
@@ -304,16 +256,13 @@ func (s *Scheme) commitValues(paths []string, values []cid.Cid) (cid.Cid, error)
 	}
 
 	commBytes := comm[:]
-	clonedValues := append([]cid.Cid(nil), values...)
-	clonedPaths := append([]string(nil), paths...)
 	blobCopy := *blob
 
 	s.mu.Lock()
 	s.evictLocked()
 	s.cache[string(commBytes)] = &cacheEntry{
 		blob:   &blobCopy,
-		paths:  clonedPaths,
-		values: clonedValues,
+		values: commitment.CloneCells(values),
 	}
 	s.order = append(s.order, string(commBytes))
 	s.mu.Unlock()
@@ -321,7 +270,7 @@ func (s *Scheme) commitValues(paths []string, values []cid.Cid) (cid.Cid, error)
 	return codec.NewKZGCid(commBytes)
 }
 
-func (s *Scheme) ensureState(comm cid.Cid, paths []string, values []cid.Cid) (*cacheEntry, error) {
+func (s *Scheme) ensureState(comm cid.Cid, values []commitment.Cell) (*cacheEntry, error) {
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract commitment: %w", err)
@@ -338,7 +287,7 @@ func (s *Scheme) ensureState(comm cid.Cid, paths []string, values []cid.Cid) (*c
 		return nil, fmt.Errorf("commitment not found in cache")
 	}
 
-	rebuilt, err := s.commitValues(paths, values)
+	rebuilt, err := s.commitValues(values)
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +326,37 @@ func deserializeProof(data []byte) (gokzg4844.KZGProof, gokzg4844.Scalar, uint64
 	copy(claimed[:], data[48:80])
 	index := uint64(data[80])<<24 | uint64(data[81])<<16 | uint64(data[82])<<8 | uint64(data[83])
 	return proof, claimed, index, nil
+}
+
+func serializeBatchProof(proofs [][]byte) []byte {
+	buf := make([]byte, 4+len(proofs)*ProofSize)
+	binary.BigEndian.PutUint32(buf[:4], uint32(len(proofs)))
+	offset := 4
+	for _, proof := range proofs {
+		copy(buf[offset:offset+ProofSize], proof)
+		offset += ProofSize
+	}
+	return buf
+}
+
+func deserializeBatchProof(data []byte) ([][]byte, error) {
+	if len(data) < 4 {
+		return nil, fmt.Errorf("batch proof too short: %d", len(data))
+	}
+
+	count := int(binary.BigEndian.Uint32(data[:4]))
+	expectedSize := 4 + count*ProofSize
+	if len(data) != expectedSize {
+		return nil, fmt.Errorf("batch proof has wrong size: expected %d, got %d", expectedSize, len(data))
+	}
+
+	proofs := make([][]byte, count)
+	offset := 4
+	for i := 0; i < count; i++ {
+		proofs[i] = append([]byte(nil), data[offset:offset+ProofSize]...)
+		offset += ProofSize
+	}
+	return proofs, nil
 }
 
 func buildDomainPoints(size int) ([]gokzg4844.Scalar, error) {
@@ -425,5 +405,5 @@ func bitReverseRoots(roots []blsfr.Element) {
 	}
 }
 
-// Ensure Scheme implements commitment.Scheme.
-var _ commitment.Scheme = (*Scheme)(nil)
+// Ensure Scheme implements commitment.IndexCommitment.
+var _ commitment.IndexCommitment = (*Scheme)(nil)
