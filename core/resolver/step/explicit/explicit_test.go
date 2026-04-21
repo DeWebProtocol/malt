@@ -37,7 +37,7 @@ func newTestEAT() *overwrite.EAT {
 
 // newTestComponents creates a complete set of test components:
 // EAT, mapping semantic, and KZG scheme.
-func newTestComponents() (*overwrite.EAT, mapping.Semantic, *kzg.Scheme) {
+func newTestComponents() (*overwrite.EAT, mapping.Semantics, *kzg.Scheme) {
 	e := newTestEAT()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
@@ -51,7 +51,7 @@ func newTestComponents() (*overwrite.EAT, mapping.Semantic, *kzg.Scheme) {
 }
 
 // setupArcSet commits arcs to semantic layer and stores them in EAT.
-func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantic, arcsMap map[string]cid.Cid) cid.Cid {
+func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantics, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
 	root, err := semantic.Commit(context.Background(), testBucketId, mapping.NewViewFrom(arcsMap))
 	if err != nil {

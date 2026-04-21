@@ -10,7 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/list"
-	listruntime "github.com/dewebprotocol/malt/core/structure/list/internal/runtime"
+	"github.com/dewebprotocol/malt/core/structure/list/tree/internal"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -296,14 +296,14 @@ func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
-			childRoot, err := e.Get(ctx, bucketID, cid.Undef, listruntime.NodeSlotPath(root, 2).String())
+			childRoot, err := e.Get(ctx, bucketID, cid.Undef, layout.NodeSlotPath(root, 2).String())
 			if err != nil {
 				t.Fatalf("failed to fetch child root: %v", err)
 			}
 
 			corruptValue := newPayloadCID([]byte("corrupt-child-slot"))
 			if err := e.Update(ctx, bucketID, cid.Undef, cid.Undef, map[string]cid.Cid{
-				listruntime.NodeSlotPath(childRoot, 1).String(): corruptValue,
+				layout.NodeSlotPath(childRoot, 1).String(): corruptValue,
 			}); err != nil {
 				t.Fatalf("failed to corrupt child materialization: %v", err)
 			}

@@ -30,12 +30,12 @@ type Query struct {
 	Length uint64
 }
 
-// Semantic defines the public stable-indexed list contract.
+// Semantics defines the public stable-indexed list semantics.
 //
 // Commit is the bootstrap path from a materialized list view. All other
 // runtime operations execute directly against the committed list root using the
 // supplied graph scope rather than caller-managed materialized views.
-type Semantic interface {
+type Semantics interface {
 	// Commit commits the supplied list view into the provided graph scope and
 	// returns a structure root.
 	Commit(ctx context.Context, bucketID string, view View) (cid.Cid, error)

@@ -33,8 +33,8 @@ type Binding struct {
 	Present bool
 }
 
-// Semantic defines the public keyed-map contract.
-type Semantic interface {
+// Semantics defines the public keyed-map semantics.
+type Semantics interface {
 	// Commit commits the supplied map view and returns a structure root.
 	Commit(ctx context.Context, bucketID string, view View) (cid.Cid, error)
 

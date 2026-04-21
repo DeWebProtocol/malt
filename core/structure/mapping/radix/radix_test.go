@@ -41,7 +41,7 @@ func mappingSchemes() map[string]schemeFactory {
 	}
 }
 
-func newMap(t *testing.T, factory schemeFactory, kv *kvmemory.KV) mapping.Semantic {
+func newMap(t *testing.T, factory schemeFactory, kv *kvmemory.KV) mapping.Semantics {
 	t.Helper()
 	if kv == nil {
 		kv = kvmemory.New()

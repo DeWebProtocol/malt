@@ -98,7 +98,7 @@ type LineageRecorder interface {
 //   - Resolver: (root, path) -> (target, transcript) via EAT lookup + semantic prove
 //   - Writer:   (root, path, newTarget) -> newRoot via semantic update + EAT apply + lineage
 type Writer struct {
-	semantic mapping.Semantic
+	semantic mapping.Semantics
 	eat      eat.EAT
 	rec      LineageRecorder
 }
@@ -109,7 +109,7 @@ type Writer struct {
 //   - semantic: keyed-map semantic (required)
 //   - eat: Explicit Arc Table (required)
 //   - rec: optional LineageRecorder for versioned resolution (nil to disable)
-func NewWriter(semantic mapping.Semantic, eat eat.EAT, rec LineageRecorder) *Writer {
+func NewWriter(semantic mapping.Semantics, eat eat.EAT, rec LineageRecorder) *Writer {
 	return &Writer{
 		semantic: semantic,
 		eat:      eat,

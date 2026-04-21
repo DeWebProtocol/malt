@@ -41,7 +41,7 @@ func mappingSchemes() map[string]schemeFactory {
 	}
 }
 
-func newMap(t *testing.T, factory schemeFactory) mapping.Semantic {
+func newMap(t *testing.T, factory schemeFactory) mapping.Semantics {
 	t.Helper()
 	e, err := overwrite.NewEAT(overwrite.WithKVStore(kvmemory.New()))
 	if err != nil {

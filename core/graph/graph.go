@@ -24,7 +24,7 @@ import (
 type Graph struct {
 	id              string
 	bucketId        string
-	semantic        mapping.Semantic
+	semantic        mapping.Semantics
 	resolver        *resolver.Resolver
 	wr              *writer.Writer
 	eat             eat.EAT
@@ -101,7 +101,7 @@ func (g *Graph) BucketId() string {
 }
 
 // Semantic returns the per-graph keyed-map semantic.
-func (g *Graph) Semantic() mapping.Semantic {
+func (g *Graph) Semantic() mapping.Semantics {
 	return g.semantic
 }
 

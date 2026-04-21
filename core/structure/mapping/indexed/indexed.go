@@ -431,4 +431,4 @@ func decodeIdentityPayload(value cid.Cid) ([]byte, error) {
 	return decoded.Digest, nil
 }
 
-var _ mapping.Semantic = (*Map)(nil)
+var _ mapping.Semantics = (*Map)(nil)

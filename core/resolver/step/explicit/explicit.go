@@ -29,12 +29,12 @@ const (
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
 	eat      eat.EAT
-	semantic mapping.Semantic
+	semantic mapping.Semantics
 	bucketId string
 }
 
 // NewResolver creates a new explicit arc resolver.
-func NewResolver(e eat.EAT, semantic mapping.Semantic, bucketId string) *Resolver {
+func NewResolver(e eat.EAT, semantic mapping.Semantics, bucketId string) *Resolver {
 	return &Resolver{
 		eat:      e,
 		semantic: semantic,

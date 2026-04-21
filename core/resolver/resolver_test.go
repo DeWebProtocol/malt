@@ -37,7 +37,7 @@ func newTestEAT() *overwrite.EAT {
 	return e
 }
 
-func newSemantic(t *testing.T, e *overwrite.EAT) mapping.Semantic {
+func newSemantic(t *testing.T, e *overwrite.EAT) mapping.Semantics {
 	t.Helper()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
@@ -50,7 +50,7 @@ func newSemantic(t *testing.T, e *overwrite.EAT) mapping.Semantic {
 	return semantic
 }
 
-func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantic, e *overwrite.EAT, bucketID string, arcs map[string]cid.Cid) cid.Cid {
+func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *overwrite.EAT, bucketID string, arcs map[string]cid.Cid) cid.Cid {
 	t.Helper()
 	root, err := semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcs))
 	if err != nil {

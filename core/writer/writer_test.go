@@ -17,7 +17,7 @@ import (
 
 // Test helpers.
 
-func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, mapping.Semantic, *kvg) {
+func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, mapping.Semantics, *kvg) {
 	t.Helper()
 
 	// Memory KVStore

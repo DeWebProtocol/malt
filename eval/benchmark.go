@@ -144,13 +144,13 @@ func DefaultBenchmarkConfig() *BenchmarkConfig {
 type BenchmarkRunner struct {
 	config   *BenchmarkConfig
 	eat      eat.EAT
-	semantic mapping.Semantic
+	semantic mapping.Semantics
 	cas      cas.Client
 	bucketId string
 }
 
 // NewBenchmarkRunner creates a new benchmark runner.
-func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e eat.EAT, semantic mapping.Semantic, c cas.Client) *BenchmarkRunner {
+func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e eat.EAT, semantic mapping.Semantics, c cas.Client) *BenchmarkRunner {
 	if cfg == nil {
 		cfg = DefaultBenchmarkConfig()
 	}
@@ -166,7 +166,7 @@ func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e eat.EAT, semant
 // TestComponents holds the components needed for benchmarking.
 type TestComponents struct {
 	EAT      eat.EAT
-	Semantic mapping.Semantic
+	Semantic mapping.Semantics
 	CAS      cas.Client
 	BucketID string
 }
