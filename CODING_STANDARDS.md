@@ -37,7 +37,7 @@
 - Exported concrete types must be descriptive. Avoid names like `Semantic`,
   `Manager`, or `Impl` when the package has multiple possible implementations.
 - Constructors must describe what they build. Prefer `NewList`,
-  `NewTreeList`, `NewIndexedList`, or `NewResolver` over a bare `New` when the
+  `NewTreeList` or `NewResolver` over a bare `New` when the
   call site would otherwise hide the constructed type.
 - Runtime scope such as `bucketID`, `graphID`, or request-local parameters
   should be passed into operations, not captured as long-lived semantic object

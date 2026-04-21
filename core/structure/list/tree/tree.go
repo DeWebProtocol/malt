@@ -566,7 +566,7 @@ func (s *TreeList) loadRoot(ctx context.Context, bucketID string, root cid.Cid) 
 }
 
 func (s *TreeList) loadNode(ctx context.Context, bucketID string, root cid.Cid, isRoot bool) ([]cid.Cid, error) {
-	width := listruntime.Fanout
+	width := listruntime.NodeWidth
 	if isRoot {
 		width = listruntime.RootWidth
 	}

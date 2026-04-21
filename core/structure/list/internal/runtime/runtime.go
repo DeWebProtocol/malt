@@ -14,11 +14,25 @@ import (
 )
 
 const (
-	// Fanout is the fixed branching factor for the v1 tree-shaped list runtime.
-	Fanout = 255
+	// DefaultFanout is the v1 default commitment width for list nodes.
+	// The current IPA backend supports 256 slots per commitment, so v1 fixes
+	// this value to 256.
+	DefaultFanout = 256
 
-	// RootWidth reserves slot 0 for the authenticated length marker.
-	RootWidth = Fanout + 1
+	// BranchingFactor is the number of content slots per committed list node.
+	//
+	// Slot 0 in the root node is reserved for the authenticated length marker,
+	// so the root exposes (DefaultFanout-1) content slots.
+	//
+	// For simplicity, v1 uses the same branching factor for all non-root nodes.
+	BranchingFactor = DefaultFanout - 1
+
+	// RootWidth is the fixed slot width for the committed root node.
+	// Slot 0 is the authenticated length marker.
+	RootWidth = DefaultFanout
+
+	// NodeWidth is the fixed slot width for all committed non-root nodes.
+	NodeWidth = BranchingFactor
 
 	lengthMarkerPrefix = "malt:list:length:v1:"
 )
@@ -42,7 +56,7 @@ func EmptyRootSlots() []cid.Cid {
 
 // EmptyNodeSlots allocates a zero-initialized non-root slot vector.
 func EmptyNodeSlots() []cid.Cid {
-	return make([]cid.Cid, Fanout)
+	return make([]cid.Cid, NodeWidth)
 }
 
 // ContentSlots returns the data-bearing portion of a slot vector.
@@ -193,18 +207,18 @@ func DecodeLengthMarker(marker cid.Cid) (uint64, error) {
 
 // RequiredHeight returns the minimal non-root height required for length values.
 func RequiredHeight(length uint64) int {
-	if length <= Fanout {
+	if length <= uint64(BranchingFactor) {
 		return 0
 	}
 
-	capacity := uint64(Fanout)
+	capacity := uint64(BranchingFactor)
 	height := 0
 	for capacity < length {
 		height++
-		if capacity > math.MaxUint64/uint64(Fanout) {
+		if capacity > math.MaxUint64/uint64(BranchingFactor) {
 			return height
 		}
-		capacity *= uint64(Fanout)
+		capacity *= uint64(BranchingFactor)
 	}
 	return height
 }
@@ -215,17 +229,17 @@ func SubtreeCapacity(height int) (uint64, error) {
 		return 0, fmt.Errorf("height must be non-negative")
 	}
 
-	capacity := uint64(Fanout)
+	capacity := uint64(BranchingFactor)
 	for i := 0; i < height; i++ {
-		if capacity > math.MaxUint64/uint64(Fanout) {
+		if capacity > math.MaxUint64/uint64(BranchingFactor) {
 			return 0, fmt.Errorf("list capacity overflow at height %d", height)
 		}
-		capacity *= uint64(Fanout)
+		capacity *= uint64(BranchingFactor)
 	}
 	return capacity, nil
 }
 
-// IndexDigits decomposes an index into base-Fanout digits for the target height.
+// IndexDigits decomposes an index into base-BranchingFactor digits for the target height.
 func IndexDigits(index uint64, height int) ([]int, error) {
 	if height < 0 {
 		return nil, fmt.Errorf("height must be non-negative")
