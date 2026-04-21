@@ -69,10 +69,14 @@ Under this terminology:
   - it does not define public structure semantics or a general `key -> position` rule
 
 For engineering convenience, the current codebase still exposes many of these
-choices through one `commitment.Scheme` interface under `core/commitment`.
+choices through one `commitment.IndexCommitment` interface under `core/commitment`.
 That is a legacy flattening of concerns, not the preferred conceptual layering.
 The cleaner direction is to introduce a separate `core/structure` layer with
 public `list` and `map` semantics, each with their own internal implementations.
+
+The current write-up may discuss `list` first because it is the simpler semantic
+and the current implementation is farther along there. That is only an
+exposition choice. `map` remains part of the public semantic layer.
 
 In the current prototype, hot proof/index state is typically organized in deployment-specific namespaces for performance.
 The current code often maps one namespace to one graph, but that state placement is an implementation choice, not a semantic requirement of the abstraction.

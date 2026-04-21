@@ -4,36 +4,41 @@
 
 MALT is an authenticated structure layer over immutable content-addressed storage.
 
-Its core design is:
+Its implementation should be read around one main separation:
 
 - payload remains ordinary content-addressed data
 - structure is made explicit as arcs
-- a structure root commits those arcs independently from payload
-- structural change advances the structure root without recursively rewriting unrelated payload
+- structure is exposed through semantic abstractions such as `list` and `map`
+- semantic implementations compile those abstractions into internal arcs and authenticated positions
+- primitive commitment backends authenticate those positions independently from payload
 
 MALT roots are encoded as CID-compatible identifiers, so MALT-native structures and ordinary IPLD/CAS objects can reference each other. That interoperability matters, but it is not the conceptual center of the system.
 
 This document is implementation-oriented. For the shorter system overview, see [`README.md`](./README.md).
 
-In the current prototype, hot proving/index state is colocated and organized in deployment-specific namespaces for performance.
-The current code often maps one namespace to one graph, but that placement is an implementation choice, not the core semantic definition of MALT.
+In the current prototype, hot proving/index state is colocated and organized in deployment-specific namespaces for performance. The current code often maps one namespace to one graph, but that placement is an implementation choice, not the semantic definition of MALT.
 
 ## Architectural Center
 
-The codebase should be read around six first-class concepts:
+The codebase should be read around these first-class concepts:
 
+- `Semantic Layer`
+  - the architectural center of MALT
+  - exposes `list` and `map` as the public structure semantics
+  - compiles those semantics into internal arcs and authenticated positions
+- `Commitment Backend`
+  - primitive authentication backend over already-positioned slots or nodes
+  - examples: `KZG`, `IPA`
+- `EAT`
+  - explicit arc materialization and lookup state
+- `Resolver`
+  - resolves structure from a root and returns a transcript
+- `Writer`
+  - advances structure roots through localized arc updates
 - `Graph`
   - the main runtime composition unit
   - provides the main read and write entry points
   - does not redefine the authentication boundary, which remains the structure root
-- `EAT`
-  - explicit arc materialization and lookup state
-- `SCE`
-  - stateless commitment/proof engine over caller-supplied arc views
-- `Writer`
-  - advances structure roots through localized arc updates
-- `Resolver`
-  - resolves structure from a root and returns a transcript
 - `Lineage`
   - optional version metadata for ancestry and history operations
 
@@ -41,7 +46,7 @@ Everything else in the repository should be interpreted relative to that core.
 
 ## Code Layout
 
-```
+```text
 malt/
 ├── cmd/
 │   ├── gateway/main.go
@@ -52,13 +57,13 @@ malt/
 │   ├── api/          # Node: top-level component wiring
 │   ├── cas/          # CAS clients and adapters
 │   ├── codec/        # MALT CID codecs and CID utilities
+│   ├── commitment/   # Primitive commitment backends
 │   ├── eat/          # Explicit Arc Table implementations
 │   ├── graph/        # Graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # Version lineage metadata
 │   ├── replication/  # Secondary snapshot/sync tooling
 │   ├── resolver/     # Resolution loop and step executors
-│   ├── sce/          # Structure commitment engine
 │   ├── structure/    # Public structural semantics (`list`, `map`)
 │   ├── types/        # Arc sets, evidence, proof-related types
 │   └── writer/       # Write-side structure update flow
@@ -66,23 +71,73 @@ malt/
 └── integration/
 ```
 
-## Component Responsibilities
+## Semantic Layer
 
-### Structure Roots and Payload
+The semantic layer is where MALT attaches meaning to authenticated structure.
 
-- Payload blocks remain ordinary CAS/IPLD objects.
-- Structure is represented as explicit arcs of the form `path -> target`.
-- `SCE` commits an arc set into a structure root.
-- A structure root is CID-compatible, but semantically it denotes committed structure rather than raw payload.
+The public semantic contracts are:
 
-### Operational Structure State
+- `list`
+  - ordered structure
+  - stable index semantics
+  - authenticated length/header state belongs to the committed structure state itself
+  - native operations are index proof and index-stable replacement
+  - insert/delete are higher-level rewrites above the primitive stable-index contract
+- `map`
+  - keyed structure
+  - native contract is key-based lookup plus authentication of the key-to-target binding
+  - localized maintenance should affect one logical key binding without exposing internal placement rules
 
-The main operational state of MALT lives in the explicit arc representation.
+Important implementation note:
 
-In the current implementation, this hot state is typically namespaced for locality and performance.
-The current code often uses one namespace per graph, but that organization is a deployment choice rather than a semantic requirement of the abstraction.
+- the current write-up discusses `list` first because it is the simpler semantic and the current implementation is farther along there
+- this is only an exposition and implementation-order choice
+- `map` remains part of MALT's semantic-layer model and public API surface
 
-`EAT` provides:
+The semantic layer owns:
+
+- translation from semantic objects into internal arcs
+- mapping from semantic coordinates into authenticated positions
+- calls into `EAT` for arc access
+- calls into primitive commitment backends for commit/prove/verify/update
+
+## Commitment Backends
+
+Primitive commitment backends have a narrow role:
+
+> Authenticate already-positioned slots or nodes chosen by a semantic implementation.
+
+They are responsible for:
+
+- `Commit`
+- `Prove`
+- `Verify`
+- `Update`
+
+They are not responsible for:
+
+- path semantics
+- `list` or `map` semantics
+- longest-prefix lookup
+- graph traversal policy
+
+Current design direction:
+
+- keep primitive backends under `core/commitment`
+- expose a restart-safe semantic-neutral index commitment interface
+- treat caches as performance optimizations only
+- let semantic packages own layout decisions, metadata/header state, and future key-placement logic
+
+Backend choice is workload-sensitive and layout-sensitive:
+
+- vector-like or indexed list layouts may prefer `IPA`
+- sparse or layer-composed structures may prefer `KZG`
+
+## EAT
+
+`EAT` is the explicit arc materialization and lookup layer.
+
+Its role is:
 
 - point lookup of explicit arcs
 - snapshots of the committed arc set for a root
@@ -95,63 +150,13 @@ Current implementations:
 - `versioned`
   - delta-per-version storage linked by `@previous`
 
-### Stateless Commitment Engine
+Important framing:
 
-`SCE` is the cryptographic engine of MALT.
+- `EAT` is performance state, not the trust root
+- incorrect lookup results are rejected by proof verification
+- in the current implementation, graph-scoped state is realized as bucket-scoped state, with one bucket per graph
 
-It is best understood as stateless with respect to authoritative graph state:
-
-- it computes `Commit`, `Prove`, `Verify`, and `Update`
-- it operates over inputs supplied by the caller
-- any internal cache is an optimization, not semantic system state
-
-The preferred conceptual split is:
-
-- structural semantics
-  - the public contract exposed to applications
-  - `list` and `map`
-- semantic implementations
-  - internal realizations of those contracts
-  - examples: tree-shaped indexed list, future keyed structures such as segment-radix or hashed-path radix
-- commitment backend
-  - internal authentication primitive used by an implementation
-  - examples: KZG, IPA, hash/Merkle commitments
-  - authenticates already-positioned slots or nodes
-  - does not define the public structure contract or a map key-placement rule
-
-In that model, `SCE` should not be the public semantic layer.
-The codebase is already moving in that direction with `core/structure`, while
-older code paths still route through `sce` and `commitment` for compatibility.
-
-Two semantic notes matter:
-
-- `list`
-  - stable indexed structure with committed length
-  - native operations are index proof and index-stable replacement
-  - insert/delete are derived, higher-cost rewrites built above the semantic contract
-- `map`
-  - keyed structure whose implementation chooses the internal key-placement rule
-
-The current repository still exposes many of these concerns through a single
-`commitment.Scheme` interface for engineering convenience.
-That interface should be read as a temporary code-level flattening, not as the
-preferred architecture.
-
-### Localized Write Path
-
-The write path is implemented by `writer.Writer`.
-
-For an arc update, the code follows this shape:
-
-1. read the current binding from `EAT`
-2. obtain the arc-set view or snapshot
-3. ask `SCE` to commit or update the structure root
-4. write the resulting arc state back through `EAT`
-5. optionally record lineage metadata
-
-This is the main operational realization of MALT's locality claim.
-
-### Resolution and Verification
+## Resolution and Verification
 
 `resolver.Resolver` runs the read loop and returns:
 
@@ -161,18 +166,32 @@ This is the main operational realization of MALT's locality claim.
 There are two step kinds:
 
 - explicit step
-  - uses `EAT` lookup and `SCE` proof generation
+  - uses `EAT` lookup plus semantic-layer proof generation over the selected binding
 - implicit compatibility step
   - traverses ordinary IPLD/Merkle objects through CAS
 
 The explicit step is the native MALT path.
 The implicit step exists for compatibility when traversal crosses into legacy CID space.
-In the current prototype, the runtime dispatch between these steps is surfaced mainly through `gateway`; that compatibility logic should be treated as an operational detail rather than the primary definition of MALT.
 
 Clients verify the returned transcript locally:
 
-- explicit steps verify against the structure root
+- explicit steps verify against the structure root through the semantic layer and its commitment backend
 - implicit steps verify by block hash and in-block path mapping
+
+## Localized Write Path
+
+The write path is implemented by `writer.Writer`.
+
+For an arc update, the code follows this shape:
+
+1. read the current binding from `EAT`
+2. obtain the arc-set view or snapshot
+3. ask the semantic layer to commit or update the structure root
+4. let the semantic layer use the primitive commitment backend to authenticate the affected positions
+5. write the resulting arc state back through `EAT`
+6. optionally record lineage metadata
+
+This is the main operational realization of MALT's locality claim.
 
 ## Main Runtime Objects
 
@@ -197,8 +216,7 @@ Important property:
 - the graph is stateless with respect to the current root
 - the root is always passed as an argument to read and write operations
 
-This keeps structure evolution explicit and avoids embedding mutable "current root" state inside the graph object.
-The cryptographic boundary remains the structure root itself; `Graph` is a composition and deployment construct.
+This keeps structure evolution explicit and avoids embedding mutable "current root" state inside the graph object. The cryptographic boundary remains the structure root itself; `Graph` is a composition and deployment construct.
 
 ### `lineage`
 
@@ -221,11 +239,10 @@ The main write-side code path is:
 1. `graph.Graph` receives a root-scoped update request
 2. `writer.Writer` reads the current arc binding from `EAT`
 3. `writer.Writer` obtains a snapshot or view of the current arc set
-4. `SCE` computes a new structure root from the supplied inputs
-5. `EAT` is updated to reflect the resulting structure state
-6. optional lineage metadata is recorded
-
-This flow is the implementation-level realization of localized structural evolution.
+4. the semantic layer computes a new structure root over the updated semantic state
+5. the semantic layer uses the commitment backend to authenticate the updated positions
+6. `EAT` is updated to reflect the resulting structure state
+7. optional lineage metadata is recorded
 
 ### Resolve / Verify Flow
 
@@ -240,69 +257,35 @@ The main read-side code path is:
 The explicit step is the native MALT mechanism.
 The implicit step is the interoperability path.
 
-## Interoperability
+## Deployment and Trust
 
-MALT supports mixed traversal because structure roots are CID-compatible and can coexist with ordinary IPLD/CAS objects.
+Useful deployment framing:
 
-This means:
+- hot-path state: `EAT` records plus the materialized semantic/commitment state needed for low-latency proof generation
+- cold-path state: snapshots, lineage metadata, and replicated copies used for recovery or availability
 
-- MALT roots can point to payload CIDs
-- payload objects can in principle link onward through ordinary IPLD semantics
-- the resolver can dispatch between native explicit traversal and compatibility traversal
+Correctness remains cryptographic because clients verify returned evidence locally.
+Operational components affect latency and availability, not the semantic trust base.
 
-This is an interoperability property of the runtime model, not the primary definition of MALT.
+## Implemented Semantics and Variants
 
-## Secondary Surfaces
+### Semantic Layer
 
-The following parts of the repository are useful but should be treated as secondary to the core architecture:
+- `structure/mapping`
+  - current keyed semantic used by native explicit-arc structure roots
+- `structure/list/indexed`
+  - simple indexed-list semantic
+- `structure/list/tree`
+  - tree-shaped list semantic
+- `structure/map`
+  - still conceptually part of the architecture, but detailed implementation remains deferred
 
-- `gateway/`
-  - HTTP adapter and operational entry point
-- `core/replication/`
-  - snapshot and synchronization tooling
-- `eval/`
-  - benchmark and measurement scaffolding
+### Commitment Backends
 
-## Implemented Variants
+- `commitment/kzg`
+- `commitment/ipa`
 
-### EAT
-
-- `overwrite`
-  - bucket-scoped current-view storage
-- `versioned`
-  - delta-per-version storage linked by `@previous`
-
-### SCE Schemes (Code)
-
-The current code still groups several concerns under one `Scheme` notion:
-
-- map-style implementation
-  - radix
-- fixed-slot backends used by list-like implementations
-  - KZG
-  - IPA
-
-The intended refactor direction is:
-
-- public `core/structure/list`
-- public `core/structure/map`
-- implementation subpackages below each semantic
-- internal commitment backends selected by the implementation
-
-## Verification Model
-
-MALT uses transcript-based stepwise verification.
-
-1. An untrusted resolver performs resolution.
-2. It returns a transcript containing evidence for each step.
-3. The client verifies each step locally.
-4. The overall resolution is valid only if every step verifies.
-
-This decouples execution from trust:
-
-- resolvers can be untrusted
-- lookup/index state can be operational rather than authoritative
-- correctness remains cryptographic
+These are primitive backends, not public semantic contracts.
 
 ## CAS Configuration
 

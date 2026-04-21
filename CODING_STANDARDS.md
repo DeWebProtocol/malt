@@ -223,16 +223,12 @@ malt/
 │   │       │   └── implicit.go      # Merkle DAG implicit step
 │   │       └── hamt/
 │   │           └── hamt.go          # HAMT step
-│   ├── sce/
-│   │   ├── sce.go                   # SCE Engine
-│   │   └── commitment/
-│   │       ├── commitment.go        # Commitment interface
-│   │       ├── kzg/
-│   │       │   └── kzg.go           # KZG commitment
-│   │       ├── verkle/
-│   │       │   └── verkle.go        # Verkle commitment
-│   │       └── ipa/
-│   │           └── ipa.go           # IPA commitment
+│   ├── commitment/
+│   │   ├── commitment.go            # Primitive commitment interface
+│   │   ├── kzg/
+│   │   │   └── kzg.go               # KZG backend
+│   │   └── ipa/
+│   │       └── ipa.go               # IPA backend
 │   ├── codec/
 │   │   └── codec.go                 # MALT CID codecs
 │   └── types/
