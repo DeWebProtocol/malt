@@ -35,7 +35,7 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, mapping.Semantic, *kv
 		t.Fatalf("failed to create KZG scheme: %v", err)
 	}
 
-	semantic, err := mappingindexed.NewMap(scheme)
+	semantic, err := mappingindexed.NewMap(scheme, e)
 	if err != nil {
 		t.Fatalf("failed to create mapping semantic: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestWriter_LineageRecorder(t *testing.T) {
 	kv := kvmemory.New()
 	e, _ := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	scheme, _ := kzg.NewScheme()
-	semantic, _ := mappingindexed.NewMap(scheme)
+	semantic, _ := mappingindexed.NewMap(scheme, e)
 	rec := &mockLineageRecorder{}
 	w := NewWriter(semantic, e, rec)
 

@@ -7,6 +7,8 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
+	"github.com/dewebprotocol/malt/core/eat/overwrite"
+	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -15,6 +17,8 @@ import (
 )
 
 type schemeFactory func(t *testing.T) commitment.IndexCommitment
+
+const testBucketID = "map-semantic-test"
 
 func mappingSchemes() map[string]schemeFactory {
 	return map[string]schemeFactory{
@@ -39,7 +43,11 @@ func mappingSchemes() map[string]schemeFactory {
 
 func newMap(t *testing.T, factory schemeFactory) mapping.Semantic {
 	t.Helper()
-	semantic, err := mappingindexed.NewMap(factory(t))
+	e, err := overwrite.NewEAT(overwrite.WithKVStore(kvmemory.New()))
+	if err != nil {
+		t.Fatalf("overwrite.NewEAT failed: %v", err)
+	}
+	semantic, err := mappingindexed.NewMap(factory(t), e)
 	if err != nil {
 		t.Fatalf("indexed.NewMap failed: %v", err)
 	}
@@ -66,13 +74,13 @@ func TestMapCommitProveVerify(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			semantic := newMap(t, factory)
 
-			root, err := semantic.Commit(ctx, view)
+			root, err := semantic.Commit(ctx, testBucketID, view)
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			key := arcset.CanonicalizePath("b/c")
-			binding, proof, err := semantic.Prove(ctx, root, view, key)
+			binding, proof, err := semantic.Prove(ctx, testBucketID, root, key)
 			if err != nil {
 				t.Fatalf("Prove failed: %v", err)
 			}
@@ -111,7 +119,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			semantic := newMap(t, factory)
 			initialView := mapping.NewViewFrom(initialEntries)
 
-			root, err := semantic.Commit(ctx, initialView)
+			root, err := semantic.Commit(ctx, testBucketID, initialView)
 			if err != nil {
 				t.Fatalf("Commit(initial) failed: %v", err)
 			}
@@ -119,8 +127,8 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			replacement := fakeCID("value-c2")
 			replacedRoot, err := semantic.Update(
 				ctx,
+				testBucketID,
 				root,
-				initialView,
 				arcset.CanonicalizePath("c"),
 				initialEntries["c"],
 				replacement,
@@ -133,7 +141,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 				"a": initialEntries["a"],
 				"c": replacement,
 			})
-			expectedReplacedRoot, err := semantic.Commit(ctx, replacedView)
+			expectedReplacedRoot, err := semantic.Commit(ctx, testBucketID, replacedView)
 			if err != nil {
 				t.Fatalf("Commit(replaced) failed: %v", err)
 			}
@@ -144,8 +152,8 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			inserted := fakeCID("value-b")
 			insertedRoot, err := semantic.Update(
 				ctx,
+				testBucketID,
 				replacedRoot,
-				replacedView,
 				arcset.CanonicalizePath("b"),
 				cid.Undef,
 				inserted,
@@ -159,7 +167,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 				"b": inserted,
 				"c": replacement,
 			})
-			expectedInsertedRoot, err := semantic.Commit(ctx, insertedView)
+			expectedInsertedRoot, err := semantic.Commit(ctx, testBucketID, insertedView)
 			if err != nil {
 				t.Fatalf("Commit(inserted) failed: %v", err)
 			}
@@ -169,8 +177,8 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 
 			deletedRoot, err := semantic.Update(
 				ctx,
+				testBucketID,
 				insertedRoot,
-				insertedView,
 				arcset.CanonicalizePath("a"),
 				initialEntries["a"],
 				cid.Undef,
@@ -183,7 +191,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 				"b": inserted,
 				"c": replacement,
 			})
-			expectedDeletedRoot, err := semantic.Commit(ctx, deletedView)
+			expectedDeletedRoot, err := semantic.Commit(ctx, testBucketID, deletedView)
 			if err != nil {
 				t.Fatalf("Commit(deleted) failed: %v", err)
 			}
@@ -203,15 +211,15 @@ func TestMapUpdateRejectsInconsistentOldValue(t *testing.T) {
 	for name, factory := range mappingSchemes() {
 		t.Run(name, func(t *testing.T) {
 			semantic := newMap(t, factory)
-			root, err := semantic.Commit(ctx, view)
+			root, err := semantic.Commit(ctx, testBucketID, view)
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			_, err = semantic.Update(
 				ctx,
+				testBucketID,
 				root,
-				view,
 				arcset.CanonicalizePath("a"),
 				fakeCID("wrong-old"),
 				fakeCID("value-a2"),

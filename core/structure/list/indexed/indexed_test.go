@@ -177,3 +177,47 @@ func TestIndexedListSemanticUpdates(t *testing.T) {
 		})
 	}
 }
+
+func TestIndexedListEmptyAndRegrow(t *testing.T) {
+	ctx := context.Background()
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			bucketID := "indexed-empty-" + name
+
+			semantic := newList(t, factory, kv)
+			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(nil))
+			if err != nil {
+				t.Fatalf("Commit(empty) failed: %v", err)
+			}
+
+			assertVerifiedQuery(t, semantic, bucketID, root, 0, list.Query{
+				Key:    cid.Undef,
+				Length: 0,
+			})
+
+			value := newPayloadCID([]byte("first"))
+			appendedRoot, index, err := semantic.Append(ctx, bucketID, root, value)
+			if err != nil {
+				t.Fatalf("Append(empty) failed: %v", err)
+			}
+			if index != 0 {
+				t.Fatalf("unexpected append index %d", index)
+			}
+			assertVerifiedQuery(t, semantic, bucketID, appendedRoot, 0, list.Query{
+				Key:    value,
+				Length: 1,
+			})
+
+			truncatedRoot, err := semantic.Truncate(ctx, bucketID, appendedRoot, 0)
+			if err != nil {
+				t.Fatalf("Truncate(to zero) failed: %v", err)
+			}
+			assertVerifiedQuery(t, semantic, bucketID, truncatedRoot, 0, list.Query{
+				Key:    cid.Undef,
+				Length: 0,
+			})
+		})
+	}
+}

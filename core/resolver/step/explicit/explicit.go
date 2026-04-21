@@ -76,14 +76,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 		target, err := r.eat.Get(ctx, r.bucketId, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
-			snapshot, err := r.eat.Snapshot(ctx, r.bucketId, root)
-			if err != nil {
-				logger.Error("Resolver.Resolve snapshot failed",
-					logger.String("path", candidatePath),
-					logger.Err(err))
-				return "", cid.Cid{}, nil, fmt.Errorf("failed to get snapshot: %w", err)
-			}
-			binding, proof, err := r.semantic.Prove(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), arcset.CanonicalizePath(candidatePath))
+			binding, proof, err := r.semantic.Prove(ctx, r.bucketId, root, arcset.CanonicalizePath(candidatePath))
 			if err != nil {
 				logger.Error("Resolver.Resolve prove failed",
 					logger.String("path", candidatePath),
@@ -156,17 +149,4 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 // splitPath splits a path into segments.
 func splitPath(path arcset.Path) []string {
 	return step.SplitPath(path)
-}
-
-func stringifyArcSet(arcs arcset.ArcSet) map[string]cid.Cid {
-	out := make(map[string]cid.Cid, arcs.Len())
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		out[path.String()] = target
-	}
-	return out
 }

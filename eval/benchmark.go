@@ -187,7 +187,7 @@ func NewTestComponentsWithEAT(backend BackendType, eatType EATType, bucketID str
 	if err != nil {
 		return nil, fmt.Errorf("new EAT: %w", err)
 	}
-	s, err := mappingindexed.NewMap(scheme)
+	s, err := mappingindexed.NewMap(scheme, e)
 	if err != nil {
 		return nil, fmt.Errorf("new mapping semantic: %w", err)
 	}
@@ -261,7 +261,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 		// Create snapshot for commit
 		// Commit current arc set
 		start := time.Now()
-		newRoot, err := b.semantic.Commit(ctx, mapping.NewViewFrom(currentArcsMap))
+		newRoot, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(currentArcsMap))
 		totalUpdateTime += time.Since(start)
 		if err != nil {
 			return nil, fmt.Errorf("commit failed at arc %d: %w", i, err)
@@ -277,7 +277,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	// First commit is the initial one
 	firstStart := time.Now()
-	_, _ = b.semantic.Commit(ctx, mapping.NewViewFrom(map[string]cid.Cid{}))
+	_, _ = b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(map[string]cid.Cid{}))
 	metrics.CommitTime = time.Since(firstStart)
 
 	metrics.UpdateTime = totalUpdateTime / time.Duration(arcCount)
@@ -285,13 +285,8 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation for a random arc
 	testPath := fmt.Sprintf("arc%d", r.Intn(arcCount))
 	start := time.Now()
-	snapshot, err := b.eat.Snapshot(ctx, bucketID, root)
-	metrics.EATLookupTime = time.Since(start)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot failed: %w", err)
-	}
 	start = time.Now()
-	binding, proof, err := b.semantic.Prove(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), arcset.CanonicalizePath(testPath))
+	binding, proof, err := b.semantic.Prove(ctx, bucketID, root, arcset.CanonicalizePath(testPath))
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("prove failed for %s: %w", testPath, err)
@@ -358,7 +353,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 
 	// Initial commit
 	start := time.Now()
-	root, err := b.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
+	root, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcsMap))
 	metrics.CommitTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("initial commit failed: %w", err)
@@ -386,7 +381,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		arcsMap[path] = newKey
 		// Measure commit time (MockCommitment requires full commit)
 		start = time.Now()
-		newRoot, err := b.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
+		newRoot, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcsMap))
 		roundTime := time.Since(start)
 		totalUpdateTime += roundTime
 		metrics.UpdateTimes = append(metrics.UpdateTimes, roundTime)
@@ -406,13 +401,8 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	// Measure proof generation
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	snapshot, err := b.eat.Snapshot(ctx, bucketID, root)
-	metrics.EATLookupTime = time.Since(start)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot failed: %w", err)
-	}
 	start = time.Now()
-	binding, proof, err := b.semantic.Prove(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), arcset.CanonicalizePath(testPath))
+	binding, proof, err := b.semantic.Prove(ctx, bucketID, root, arcset.CanonicalizePath(testPath))
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("prove failed: %w", err)
@@ -474,7 +464,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	}
 
 	start := time.Now()
-	root, err := b.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
+	root, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcsMap))
 	metrics.CommitTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("initial commit failed: %w", err)
@@ -509,7 +499,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 
 		// Commit updated arc set
 		start = time.Now()
-		newRoot, err := b.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
+		newRoot, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcsMap))
 		roundTime := time.Since(start)
 		totalUpdateTime += roundTime
 		metrics.UpdateTimes = append(metrics.UpdateTimes, roundTime)
@@ -528,13 +518,8 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	// Measure proof
 	testPath := paths[r.Intn(arcCount)]
 	start = time.Now()
-	snapshot, err := b.eat.Snapshot(ctx, bucketID, root)
-	metrics.EATLookupTime = time.Since(start)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot failed: %w", err)
-	}
 	start = time.Now()
-	binding, proof, err := b.semantic.Prove(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), arcset.CanonicalizePath(testPath))
+	binding, proof, err := b.semantic.Prove(ctx, bucketID, root, arcset.CanonicalizePath(testPath))
 	metrics.ProveTime = time.Since(start)
 	if err != nil {
 		return nil, fmt.Errorf("prove failed: %w", err)

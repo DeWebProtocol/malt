@@ -37,13 +37,13 @@ func newTestEAT() *overwrite.EAT {
 	return e
 }
 
-func newSemantic(t *testing.T) mapping.Semantic {
+func newSemantic(t *testing.T, e *overwrite.EAT) mapping.Semantic {
 	t.Helper()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	semantic, err := mappingindexed.NewMap(scheme)
+	semantic, err := mappingindexed.NewMap(scheme, e)
 	if err != nil {
 		t.Fatalf("indexed.NewMap failed: %v", err)
 	}
@@ -52,7 +52,7 @@ func newSemantic(t *testing.T) mapping.Semantic {
 
 func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantic, e *overwrite.EAT, bucketID string, arcs map[string]cid.Cid) cid.Cid {
 	t.Helper()
-	root, err := semantic.Commit(ctx, mapping.NewViewFrom(arcs))
+	root, err := semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcs))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -66,7 +66,7 @@ const testBucketId = "test-graph"
 
 func TestGatewayExplicitOnly(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -119,7 +119,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 
 func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -147,7 +147,7 @@ func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -174,7 +174,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 
 func TestGatewayImplicitStep(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 
 func TestGatewayTranscript(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -241,7 +241,7 @@ func TestGatewayTranscript(t *testing.T) {
 
 func TestGatewayPayloadRedirect(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -281,7 +281,7 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 
 func TestGatewayStructureOnlyNode(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	ctx := context.Background()
@@ -307,7 +307,7 @@ func TestGatewayStructureOnlyNode(t *testing.T) {
 
 func TestGatewayNonMaltEmptyPath(t *testing.T) {
 	e := newTestEAT()
-	semantic := newSemantic(t)
+	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
 	payloadCID, _ := newPayloadCID([]byte("raw-data"))

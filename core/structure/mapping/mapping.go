@@ -36,19 +36,19 @@ type Binding struct {
 // Semantic defines the public keyed-map contract.
 type Semantic interface {
 	// Commit commits the supplied map view and returns a structure root.
-	Commit(ctx context.Context, view View) (cid.Cid, error)
+	Commit(ctx context.Context, bucketID string, view View) (cid.Cid, error)
 
 	// Prove proves the existing binding for key under root.
-	// It returns an error if key is absent from the supplied view.
-	Prove(ctx context.Context, root cid.Cid, view View, key arcset.Path) (Binding, structure.Proof, error)
+	// It returns an error if key is absent from the committed runtime state.
+	Prove(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path) (Binding, structure.Proof, error)
 
 	// Verify verifies the proof for a keyed binding under root.
 	Verify(root cid.Cid, key arcset.Path, expected Binding, proof structure.Proof) (bool, error)
 
-	// Update applies insert, replace, or delete semantics over the supplied full
-	// keyed view. oldValue=cid.Undef means insert; newValue=cid.Undef means
+	// Update applies insert, replace, or delete semantics over the committed
+	// runtime state. oldValue=cid.Undef means insert; newValue=cid.Undef means
 	// delete. The current default map semantic preserves index-stable replacement
 	// for existing keys but may recommit the full keyed view for insert/delete,
 	// because canonical path order determines index positions.
-	Update(ctx context.Context, root cid.Cid, view View, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
+	Update(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
 }

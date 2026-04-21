@@ -61,7 +61,7 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 		scheme = s
 	}
 
-	semantic, err := mappingindexed.NewMap(scheme)
+	semantic, err := mappingindexed.NewMap(scheme, eat)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
 	}

@@ -197,6 +197,26 @@ func stringifyArcSet(arcs arcset.ArcSet) map[string]cid.Cid {
 	return out
 }
 
+func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
+	if arcs == nil {
+		return nil
+	}
+
+	out := make(map[string]cid.Cid)
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if path.HasPrefix(arcset.CanonicalizePath("runtime")) {
+			continue
+		}
+		out[path.String()] = target
+	}
+	return arcset.NewSetFrom(out)
+}
+
 // UpdateArc executes the unified arc update procedure.
 //
 // Given a structure root, path, and new target CID, this method:
@@ -254,7 +274,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	}
 
 	var newRoot cid.Cid
-	newRoot, err = w.semantic.Update(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), canonicalPath, oldTarget, newTarget)
+	newRoot, err = w.semantic.Update(ctx, bucketId, root, canonicalPath, oldTarget, newTarget)
 	if err != nil {
 		return nil, fmt.Errorf("semantic.Update failed for arc %s: %w", op, err)
 	}
@@ -350,8 +370,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	currentRoot := root
 	currentMap := stringifyArcSet(snapshot)
 	for path, result := range perArc {
-		currentView := mapping.NewViewFrom(currentMap)
-		currentRoot, err = w.semantic.Update(ctx, currentRoot, currentView, path, result.OldTarget, result.NewTarget)
+		currentRoot, err = w.semantic.Update(ctx, bucketId, currentRoot, path, result.OldTarget, result.NewTarget)
 		if err != nil {
 			return nil, fmt.Errorf("semantic.Update failed for %s: %w", path.String(), err)
 		}
@@ -417,7 +436,7 @@ func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcs
 	}
 
 	// Step 1: Commit arc set via semantic layer
-	root, err := w.semantic.Commit(ctx, mapping.NewViewFrom(stringifyArcSet(normalizedSnapshot)))
+	root, err := w.semantic.Commit(ctx, bucketId, mapping.NewViewFrom(stringifyArcSet(normalizedSnapshot)))
 	if err != nil {
 		return cid.Undef, fmt.Errorf("semantic.Commit failed: %w", err)
 	}
@@ -472,5 +491,5 @@ func (w *Writer) GetSnapshot(ctx context.Context, bucketId string, root cid.Cid)
 		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
 	}
 
-	return snapshot, nil
+	return filterLogicalArcSet(snapshot), nil
 }

@@ -2,55 +2,74 @@
 package indexed
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
-var pathProofMagic = [4]byte{'M', 'P', 'T', 'H'}
+const (
+	countPrefix = "malt:map:count:v1:"
+	pathPrefix  = "malt:map:path:v1:"
+)
 
-const pathProofVersion byte = 1
-const pathProofOverhead = 4 + 1 + sha256.Size
-
-// Map materializes a keyed view into a canonical-path ordered index
+// Map materializes a keyed runtime view into a canonical-path ordered binding
 // vector and delegates authentication to a primitive index commitment backend.
 type Map struct {
 	scheme commitment.IndexCommitment
+	eat    eat.EAT
+}
+
+type entry struct {
+	path  arcset.Path
+	value cid.Cid
 }
 
 // NewMap creates the default keyed-map semantic over an index-addressed
 // commitment backend. The default placement rule orders bindings by canonical
-// path and authenticates the resulting value vector.
-func NewMap(scheme commitment.IndexCommitment) (*Map, error) {
+// path and authenticates binding cells rather than bare values.
+func NewMap(scheme commitment.IndexCommitment, e eat.EAT) (*Map, error) {
 	if scheme == nil {
 		return nil, fmt.Errorf("scheme is nil")
 	}
-	return &Map{scheme: scheme}, nil
+	if e == nil {
+		return nil, fmt.Errorf("eat is nil")
+	}
+	return &Map{scheme: scheme, eat: e}, nil
 }
 
-// Commit commits the supplied keyed view and returns a structure root.
-func (s *Map) Commit(ctx context.Context, view mapping.View) (cid.Cid, error) {
-	_, cells, err := extractSortedCells(view)
+// Commit commits the supplied keyed view and materializes the runtime state in EAT.
+func (s *Map) Commit(ctx context.Context, bucketID string, view mapping.View) (cid.Cid, error) {
+	entries, cells, err := extractSortedEntries(view)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.scheme.Commit(cells)
+	root, err := s.scheme.Commit(cells)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if err := s.storeEntries(ctx, bucketID, root, entries); err != nil {
+		return cid.Undef, err
+	}
+	return root, nil
 }
 
 // Prove proves a membership binding for key under root.
-func (s *Map) Prove(ctx context.Context, root cid.Cid, view mapping.View, key arcset.Path) (mapping.Binding, structure.Proof, error) {
-	entries, cells, err := extractSortedCells(view)
+func (s *Map) Prove(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
+	entries, cells, err := s.loadEntries(ctx, bucketID, root)
 	if err != nil {
 		return mapping.Binding{}, nil, err
 	}
+
 	index, ok := findPathIndex(entries, key)
 	if !ok {
 		return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
@@ -69,13 +88,14 @@ func (s *Map) Prove(ctx context.Context, root cid.Cid, view mapping.View, key ar
 		return mapping.Binding{}, nil, err
 	}
 	if !provedRoot.Equals(root) {
-		return mapping.Binding{}, nil, fmt.Errorf("recomputed root does not match requested root")
+		return mapping.Binding{}, nil, fmt.Errorf("proved root does not match requested root")
 	}
-	value, err := proved.AsCID()
+
+	provedValue, err := decodeBindingCell(key, proved)
 	if err != nil {
-		return mapping.Binding{}, nil, fmt.Errorf("proved cell at path %s is not a CID: %w", key.String(), err)
+		return mapping.Binding{}, nil, err
 	}
-	return mapping.Binding{Value: value, Present: true}, wrapPathProof(key.String(), proof), nil
+	return mapping.Binding{Value: provedValue, Present: true}, structure.Proof(proof), nil
 }
 
 // Verify verifies a proof for a keyed binding under root.
@@ -83,19 +103,20 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 	if !expected.Present {
 		return false, fmt.Errorf("non-membership verification is not implemented by the default map semantic")
 	}
-	primitiveProof, err := unwrapPathProof(key.String(), proof)
+	cell, err := encodeBindingCell(key, expected.Value)
 	if err != nil {
 		return false, err
 	}
-	return s.scheme.VerifyProof(root, commitment.CellFromCID(expected.Value), primitiveProof)
+	return s.scheme.VerifyProof(root, cell, proof)
 }
 
-// Update applies insert, replace, or delete semantics.
-func (s *Map) Update(ctx context.Context, root cid.Cid, view mapping.View, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	entries, cells, err := extractSortedCells(view)
+// Update applies insert, replace, or delete semantics over the committed runtime state.
+func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	entries, cells, err := s.loadEntries(ctx, bucketID, root)
 	if err != nil {
 		return cid.Undef, err
 	}
+
 	recomputedRoot, err := s.scheme.Commit(cells)
 	if err != nil {
 		return cid.Undef, err
@@ -105,11 +126,6 @@ func (s *Map) Update(ctx context.Context, root cid.Cid, view mapping.View, key a
 	}
 
 	index, exists := findPathIndex(entries, key)
-	currentValue, currentOK := view.Get(key)
-	if currentOK != exists {
-		return cid.Undef, fmt.Errorf("view lookup mismatch for path %s", key.String())
-	}
-
 	switch {
 	case !oldValue.Defined() && !newValue.Defined():
 		if exists {
@@ -117,6 +133,7 @@ func (s *Map) Update(ctx context.Context, root cid.Cid, view mapping.View, key a
 		}
 		return root, nil
 	case exists:
+		currentValue := entries[index].value
 		if !oldValue.Defined() {
 			return cid.Undef, fmt.Errorf("path %s already exists", key.String())
 		}
@@ -124,11 +141,29 @@ func (s *Map) Update(ctx context.Context, root cid.Cid, view mapping.View, key a
 			return cid.Undef, fmt.Errorf("old value mismatch at path %s", key.String())
 		}
 		if !newValue.Defined() {
-			nextView := cloneEntries(view)
-			delete(nextView, key)
-			return s.Commit(ctx, mapping.NewViewFromPaths(nextView))
+			nextEntries := append([]entry(nil), entries[:index]...)
+			nextEntries = append(nextEntries, entries[index+1:]...)
+			return s.commitEntries(ctx, bucketID, nextEntries)
 		}
-		return s.scheme.Replace(cells, uint64(index), commitment.CellFromCID(oldValue), commitment.CellFromCID(newValue))
+
+		oldCell, err := encodeBindingCell(key, oldValue)
+		if err != nil {
+			return cid.Undef, err
+		}
+		newCell, err := encodeBindingCell(key, newValue)
+		if err != nil {
+			return cid.Undef, err
+		}
+		newRoot, err := s.scheme.Replace(cells, uint64(index), oldCell, newCell)
+		if err != nil {
+			return cid.Undef, err
+		}
+		nextEntries := append([]entry(nil), entries...)
+		nextEntries[index].value = newValue
+		if err := s.storeEntries(ctx, bucketID, newRoot, nextEntries); err != nil {
+			return cid.Undef, err
+		}
+		return newRoot, nil
 	default:
 		if oldValue.Defined() {
 			return cid.Undef, fmt.Errorf("path %s is absent", key.String())
@@ -136,79 +171,264 @@ func (s *Map) Update(ctx context.Context, root cid.Cid, view mapping.View, key a
 		if !newValue.Defined() {
 			return root, nil
 		}
-		nextView := cloneEntries(view)
-		nextView[key] = newValue
-		return s.Commit(ctx, mapping.NewViewFromPaths(nextView))
+		nextEntries := append([]entry(nil), entries...)
+		nextEntries = append(nextEntries, entry{})
+		copy(nextEntries[index+1:], nextEntries[index:])
+		nextEntries[index] = entry{path: key, value: newValue}
+		return s.commitEntries(ctx, bucketID, nextEntries)
 	}
 }
 
-func extractSortedCells(view mapping.View) ([]arcset.Path, []commitment.Cell, error) {
+func (s *Map) commitEntries(ctx context.Context, bucketID string, entries []entry) (cid.Cid, error) {
+	cells, err := entriesToCells(entries)
+	if err != nil {
+		return cid.Undef, err
+	}
+	root, err := s.scheme.Commit(cells)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if err := s.storeEntries(ctx, bucketID, root, entries); err != nil {
+		return cid.Undef, err
+	}
+	return root, nil
+}
+
+func extractSortedEntries(view mapping.View) ([]entry, []commitment.Cell, error) {
 	if view == nil {
 		return nil, nil, fmt.Errorf("view is nil")
 	}
-	paths := make([]arcset.Path, 0, view.Len())
-	values := make([]commitment.Cell, 0, view.Len())
+
+	entries := make([]entry, 0, view.Len())
 	iter := view.Iterate()
 	for {
 		path, value, ok := iter.Next()
 		if !ok {
 			break
 		}
-		paths = append(paths, path)
-		values = append(values, commitment.CellFromCID(value))
+		entries = append(entries, entry{path: path, value: value})
 	}
 	if err := iter.Err(); err != nil {
 		return nil, nil, err
 	}
-	if !slices.IsSorted(paths) {
+	if !slices.IsSortedFunc(entries, func(a, b entry) int {
+		switch {
+		case a.path < b.path:
+			return -1
+		case a.path > b.path:
+			return 1
+		default:
+			return 0
+		}
+	}) {
 		return nil, nil, fmt.Errorf("view iteration is not in canonical key order")
 	}
-	return paths, values, nil
+
+	cells, err := entriesToCells(entries)
+	if err != nil {
+		return nil, nil, err
+	}
+	return entries, cells, nil
 }
 
-func findPathIndex(paths []arcset.Path, path arcset.Path) (int, bool) {
-	index, ok := slices.BinarySearch(paths, path)
+func entriesToCells(entries []entry) ([]commitment.Cell, error) {
+	cells := make([]commitment.Cell, len(entries))
+	for i, ent := range entries {
+		cell, err := encodeBindingCell(ent.path, ent.value)
+		if err != nil {
+			return nil, err
+		}
+		cells[i] = cell
+	}
+	return cells, nil
+}
+
+func findPathIndex(entries []entry, path arcset.Path) (int, bool) {
+	index, ok := slices.BinarySearchFunc(entries, path, func(ent entry, key arcset.Path) int {
+		switch {
+		case ent.path < key:
+			return -1
+		case ent.path > key:
+			return 1
+		default:
+			return 0
+		}
+	})
 	return index, ok
 }
 
-func wrapPathProof(path string, primitiveProof []byte) structure.Proof {
-	pathHash := sha256.Sum256([]byte(path))
-	out := make([]byte, 0, pathProofOverhead+len(primitiveProof))
-	out = append(out, pathProofMagic[:]...)
-	out = append(out, pathProofVersion)
-	out = append(out, pathHash[:]...)
-	out = append(out, primitiveProof...)
-	return out
+func encodeBindingCell(path arcset.Path, value cid.Cid) (commitment.Cell, error) {
+	if path.IsEmpty() {
+		return nil, fmt.Errorf("path is empty")
+	}
+	if !value.Defined() {
+		return nil, fmt.Errorf("value is undefined")
+	}
+
+	pathBytes := []byte(path.String())
+	valueBytes := value.Bytes()
+	if len(pathBytes) > 0xffff {
+		return nil, fmt.Errorf("path %q is too long", path.String())
+	}
+
+	out := make([]byte, 0, 1+2+len(pathBytes)+len(valueBytes))
+	out = append(out, 1)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(pathBytes)))
+	out = append(out, pathBytes...)
+	out = append(out, valueBytes...)
+	return commitment.NewCell(out), nil
 }
 
-func unwrapPathProof(path string, proof structure.Proof) ([]byte, error) {
-	if len(proof) < pathProofOverhead {
-		return nil, fmt.Errorf("path-bound proof too short: %d", len(proof))
+func decodeBindingCell(path arcset.Path, cell commitment.Cell) (cid.Cid, error) {
+	if len(cell) < 3 {
+		return cid.Undef, fmt.Errorf("binding cell too short")
 	}
-	if !bytes.Equal(proof[:4], pathProofMagic[:]) {
-		return nil, fmt.Errorf("invalid path-bound proof magic")
+	if cell[0] != 1 {
+		return cid.Undef, fmt.Errorf("unsupported binding cell version %d", cell[0])
 	}
-	if proof[4] != pathProofVersion {
-		return nil, fmt.Errorf("unsupported path-bound proof version %d", proof[4])
+
+	pathLen := int(binary.BigEndian.Uint16(cell[1:3]))
+	if len(cell) < 3+pathLen {
+		return cid.Undef, fmt.Errorf("binding cell truncated")
 	}
-	expected := sha256.Sum256([]byte(path))
-	if !bytes.Equal(proof[5:5+sha256.Size], expected[:]) {
-		return nil, fmt.Errorf("path-bound proof does not match requested path")
+	cellPath := arcset.CanonicalizePath(string(cell[3 : 3+pathLen]))
+	if cellPath != path {
+		return cid.Undef, fmt.Errorf("binding cell path mismatch: got %s want %s", cellPath.String(), path.String())
 	}
-	return proof[pathProofOverhead:], nil
+	return cid.Cast(cell[3+pathLen:])
 }
 
-func cloneEntries(view mapping.View) map[arcset.Path]cid.Cid {
-	out := make(map[arcset.Path]cid.Cid, view.Len())
-	iter := view.Iterate()
-	for {
-		path, value, ok := iter.Next()
+func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([]entry, []commitment.Cell, error) {
+	countCID, err := s.eat.Get(ctx, bucketID, cid.Undef, countPath(root).String())
+	if err != nil {
+		return nil, nil, err
+	}
+	count, err := decodeCountMarker(countCID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if count == 0 {
+		return nil, nil, nil
+	}
+
+	paths := make([]string, 0, count*2)
+	for i := uint64(0); i < count; i++ {
+		paths = append(paths, entryKeyPath(root, i).String(), entryValuePath(root, i).String())
+	}
+	found, err := s.eat.BatchGet(ctx, bucketID, cid.Undef, paths)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	entries := make([]entry, count)
+	for i := uint64(0); i < count; i++ {
+		keyCID, ok := found[entryKeyPath(root, i).String()]
 		if !ok {
-			break
+			return nil, nil, fmt.Errorf("missing key marker at index %d", i)
 		}
-		out[path] = value
+		valueCID, ok := found[entryValuePath(root, i).String()]
+		if !ok {
+			return nil, nil, fmt.Errorf("missing value CID at index %d", i)
+		}
+		path, err := decodePathMarker(keyCID)
+		if err != nil {
+			return nil, nil, err
+		}
+		entries[i] = entry{path: path, value: valueCID}
 	}
-	return out
+
+	cells, err := entriesToCells(entries)
+	if err != nil {
+		return nil, nil, err
+	}
+	return entries, cells, nil
+}
+
+func (s *Map) storeEntries(ctx context.Context, bucketID string, root cid.Cid, entries []entry) error {
+	arcs := make(map[string]cid.Cid, 1+len(entries)*2)
+
+	countCID, err := encodeCountMarker(uint64(len(entries)))
+	if err != nil {
+		return err
+	}
+	arcs[countPath(root).String()] = countCID
+
+	for i, ent := range entries {
+		keyCID, err := encodePathMarker(ent.path)
+		if err != nil {
+			return err
+		}
+		arcs[entryKeyPath(root, uint64(i)).String()] = keyCID
+		arcs[entryValuePath(root, uint64(i)).String()] = ent.value
+	}
+
+	return s.eat.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+}
+
+func countPath(root cid.Cid) arcset.Path {
+	return arcset.CanonicalizePath(fmt.Sprintf("runtime/map/%s/count", root.String()))
+}
+
+func entryKeyPath(root cid.Cid, index uint64) arcset.Path {
+	return arcset.CanonicalizePath(fmt.Sprintf("runtime/map/%s/entries/%d/key", root.String(), index))
+}
+
+func entryValuePath(root cid.Cid, index uint64) arcset.Path {
+	return arcset.CanonicalizePath(fmt.Sprintf("runtime/map/%s/entries/%d/value", root.String(), index))
+}
+
+func encodeCountMarker(count uint64) (cid.Cid, error) {
+	payload := []byte(countPrefix + strconv.FormatUint(count, 10))
+	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, sum), nil
+}
+
+func decodeCountMarker(marker cid.Cid) (uint64, error) {
+	payload, err := decodeIdentityPayload(marker)
+	if err != nil {
+		return 0, err
+	}
+	if len(payload) < len(countPrefix) || string(payload[:len(countPrefix)]) != countPrefix {
+		return 0, fmt.Errorf("count marker prefix mismatch")
+	}
+	return strconv.ParseUint(string(payload[len(countPrefix):]), 10, 64)
+}
+
+func encodePathMarker(path arcset.Path) (cid.Cid, error) {
+	if path.IsEmpty() {
+		return cid.Undef, fmt.Errorf("path is empty")
+	}
+	payload := []byte(pathPrefix + path.String())
+	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, sum), nil
+}
+
+func decodePathMarker(marker cid.Cid) (arcset.Path, error) {
+	payload, err := decodeIdentityPayload(marker)
+	if err != nil {
+		return "", err
+	}
+	if len(payload) < len(pathPrefix) || string(payload[:len(pathPrefix)]) != pathPrefix {
+		return "", fmt.Errorf("path marker prefix mismatch")
+	}
+	return arcset.CanonicalizePath(string(payload[len(pathPrefix):])), nil
+}
+
+func decodeIdentityPayload(value cid.Cid) ([]byte, error) {
+	decoded, err := mh.Decode(value.Hash())
+	if err != nil {
+		return nil, err
+	}
+	if decoded.Code != mh.IDENTITY {
+		return nil, fmt.Errorf("marker is not identity-encoded")
+	}
+	return decoded.Digest, nil
 }
 
 var _ mapping.Semantic = (*Map)(nil)

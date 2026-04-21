@@ -43,7 +43,7 @@ func newTestComponents() (*overwrite.EAT, mapping.Semantic, *kzg.Scheme) {
 	if err != nil {
 		panic(err)
 	}
-	semantic, err := mappingindexed.NewMap(scheme)
+	semantic, err := mappingindexed.NewMap(scheme, e)
 	if err != nil {
 		panic(err)
 	}
@@ -53,7 +53,7 @@ func newTestComponents() (*overwrite.EAT, mapping.Semantic, *kzg.Scheme) {
 // setupArcSet commits arcs to semantic layer and stores them in EAT.
 func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantic, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
-	root, err := semantic.Commit(context.Background(), mapping.NewViewFrom(arcsMap))
+	root, err := semantic.Commit(context.Background(), testBucketId, mapping.NewViewFrom(arcsMap))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	semantic, err := mappingindexed.NewMap(scheme)
+	semantic, err := mappingindexed.NewMap(scheme, e)
 	if err != nil {
 		t.Fatalf("indexed.NewMap failed: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 		"data/file": target,
 	}
 
-	root, err := semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
+	root, err := semantic.Commit(ctx, bucketId, mapping.NewViewFrom(arcsMap))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
