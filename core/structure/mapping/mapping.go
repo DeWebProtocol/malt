@@ -24,9 +24,9 @@ type View interface {
 
 // Binding is the verifiable result for one keyed binding.
 //
-// The current default map semantic only emits membership proofs. Callers should
-// obtain absence through the current structure state (for example EAT lookup or
-// a supplied materialized view) rather than expecting a dedicated semantic
+// Current map semantics emit membership proofs only. Callers should obtain
+// absence through current structure state (for example EAT lookup or a
+// supplied materialized view) rather than expecting a dedicated semantic
 // non-membership proof.
 type Binding struct {
 	Value   cid.Cid
@@ -47,8 +47,6 @@ type Semantic interface {
 
 	// Update applies insert, replace, or delete semantics over the committed
 	// runtime state. oldValue=cid.Undef means insert; newValue=cid.Undef means
-	// delete. The current default map semantic preserves index-stable replacement
-	// for existing keys but may recommit the full keyed view for insert/delete,
-	// because canonical path order determines index positions.
+	// delete.
 	Update(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
 }

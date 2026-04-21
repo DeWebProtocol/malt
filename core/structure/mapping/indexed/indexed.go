@@ -1,4 +1,4 @@
-// Package indexed implements the default canonical-path ordered map semantic.
+// Package indexed implements the canonical-path ordered baseline map semantic.
 package indexed
 
 import (
