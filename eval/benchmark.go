@@ -24,6 +24,7 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
+	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -186,7 +187,7 @@ func NewTestComponentsWithEAT(backend BackendType, eatType EATType, bucketID str
 	if err != nil {
 		return nil, fmt.Errorf("new EAT: %w", err)
 	}
-	s, err := mapping.NewIndexedSemantic(scheme)
+	s, err := mappingindexed.NewMap(scheme)
 	if err != nil {
 		return nil, fmt.Errorf("new mapping semantic: %w", err)
 	}

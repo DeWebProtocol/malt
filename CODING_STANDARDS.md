@@ -25,6 +25,24 @@
 | Implementation | `descriptive.go` | `standard.go`, `cache.go` |
 | Options/Config | `options.go` or `config.go` | `options.go` |
 
+### Package Surface Naming
+
+- The primary interface or package surface file should match the package name.
+- Examples:
+  - package `list` -> `list.go`
+  - package `mapping` -> `mapping.go`
+  - package `tree` -> `tree.go`
+- Avoid generic primary implementation filenames like `semantic.go` when the
+  package already provides the semantic context.
+- Exported concrete types must be descriptive. Avoid names like `Semantic`,
+  `Manager`, or `Impl` when the package has multiple possible implementations.
+- Constructors must describe what they build. Prefer `NewList`,
+  `NewTreeList`, `NewIndexedList`, or `NewResolver` over a bare `New` when the
+  call site would otherwise hide the constructed type.
+- Runtime scope such as `bucketID`, `graphID`, or request-local parameters
+  should be passed into operations, not captured as long-lived semantic object
+  fields, unless the object is explicitly intended to be graph-bound.
+
 ## Code Style
 
 ### Go Standard Practices

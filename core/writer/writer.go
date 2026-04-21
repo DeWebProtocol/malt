@@ -202,14 +202,13 @@ func stringifyArcSet(arcs arcset.ArcSet) map[string]cid.Cid {
 // Given a structure root, path, and new target CID, this method:
 //  1. Looks up the current binding: c = EAT.Get(root, path)
 //  2. Updates the commitment: newRoot = semantic.Update(root, path, c, newTarget)
-//     or for inserts: newRoot = semantic.Commit(expanded arc set)
 //  3. Applies the update to EAT using the full new arc set for newRoot
 //  4. Records lineage: RecordLineage(newRoot, root)
 //
 // The operation covers three semantic cases:
-//   - Insert (⊥ → c): path has no current binding; recommit with expanded arc set
-//   - Replace (c -> c'): path has an existing binding; use semantic.Update
-//   - Delete (c → ⊥): newTarget is cid.Undef; recommit with reduced arc set
+//   - Insert (⊥ → c)
+//   - Replace (c -> c')
+//   - Delete (c → ⊥)
 func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, path string, newTarget cid.Cid) (*UpdateResult, error) {
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
@@ -255,42 +254,9 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	}
 
 	var newRoot cid.Cid
-
-	if isInsert || isDelete {
-		// Insert or delete: requires recommit with modified arc set because
-		// semantic.Update only supports replacing existing paths.
-		// Build modified arc set
-		arcsMap := make(map[string]cid.Cid)
-		iter := snapshot.Iterate()
-		for {
-			p, t, ok := iter.Next()
-			if !ok {
-				break
-			}
-			arcsMap[p.String()] = t
-		}
-		if iter.Err() != nil {
-			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
-		}
-
-		// Apply the change
-		if isInsert {
-			arcsMap[canonicalPath.String()] = newTarget
-		} else {
-			// isDelete
-			delete(arcsMap, canonicalPath.String())
-		}
-
-		newRoot, err = w.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
-		if err != nil {
-			return nil, fmt.Errorf("semantic.Commit failed for arc %s: %w", op, err)
-		}
-	} else {
-		// Replace: use semantic.Update for efficient in-place modification
-		newRoot, err = w.semantic.Update(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), canonicalPath, oldTarget, newTarget)
-		if err != nil {
-			return nil, fmt.Errorf("semantic.Update failed: %w", err)
-		}
+	newRoot, err = w.semantic.Update(ctx, root, mapping.NewViewFrom(stringifyArcSet(snapshot)), canonicalPath, oldTarget, newTarget)
+	if err != nil {
+		return nil, fmt.Errorf("semantic.Update failed for arc %s: %w", op, err)
 	}
 
 	oldArcs := stringifyArcSet(snapshot)
@@ -329,10 +295,9 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 //
 // Given a structure root and a map of path → newTarget, this method:
 //  1. Looks up all current bindings
-//  2. If all operations are replacements: apply semantic.Update per key
-//  3. If any insert or delete is present: recommit with modified arc set
-//  4. Applies all updates to EAT
-//  5. Records lineage: RecordLineage(newRoot, root)
+//  2. Applies semantic.Update sequentially over the current keyed view
+//  3. Applies all updates to EAT
+//  4. Records lineage: RecordLineage(newRoot, root)
 func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.Cid, updates map[string]cid.Cid) (*BatchUpdateResult, error) {
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
@@ -353,7 +318,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 
 	// Step 2: Look up all current bindings and classify operations
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
-	needsRecommit := false
 
 	for path, newTarget := range normalizedUpdates {
 		oldTarget, err := w.eat.Get(ctx, bucketId, root, path.String())
@@ -363,10 +327,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 
 		isInsert := !oldTarget.Defined() && newTarget.Defined()
 		isDelete := oldTarget.Defined() && !newTarget.Defined()
-
-		if isInsert || isDelete {
-			needsRecommit = true
-		}
 
 		var op ArcOp
 		if isInsert {
@@ -387,48 +347,21 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	}
 
 	// Step 3: Update commitment
-	var newRoot cid.Cid
-
-	if needsRecommit {
-		// Some operations are inserts or deletes; recommit with modified arc set
-		arcsMap := make(map[string]cid.Cid)
-		iter := snapshot.Iterate()
-		for {
-			p, t, ok := iter.Next()
-			if !ok {
-				break
-			}
-			arcsMap[p.String()] = t
-		}
-		if iter.Err() != nil {
-			return nil, fmt.Errorf("arc iteration error: %w", iter.Err())
-		}
-
-		for path, newTarget := range normalizedUpdates {
-			if newTarget.Defined() {
-				arcsMap[path.String()] = newTarget
-			} else {
-				delete(arcsMap, path.String())
-			}
-		}
-
-		newRoot, err = w.semantic.Commit(ctx, mapping.NewViewFrom(arcsMap))
+	currentRoot := root
+	currentMap := stringifyArcSet(snapshot)
+	for path, result := range perArc {
+		currentView := mapping.NewViewFrom(currentMap)
+		currentRoot, err = w.semantic.Update(ctx, currentRoot, currentView, path, result.OldTarget, result.NewTarget)
 		if err != nil {
-			return nil, fmt.Errorf("semantic.Commit failed for batch: %w", err)
+			return nil, fmt.Errorf("semantic.Update failed for %s: %w", path.String(), err)
 		}
-	} else {
-		currentRoot := root
-		currentMap := stringifyArcSet(snapshot)
-		for path, result := range perArc {
-			currentView := mapping.NewViewFrom(currentMap)
-			currentRoot, err = w.semantic.Update(ctx, currentRoot, currentView, path, result.OldTarget, result.NewTarget)
-			if err != nil {
-				return nil, fmt.Errorf("semantic.Update failed for %s: %w", path.String(), err)
-			}
+		if result.NewTarget.Defined() {
 			currentMap[path.String()] = result.NewTarget
+		} else {
+			delete(currentMap, path.String())
 		}
-		newRoot = currentRoot
 	}
+	newRoot := currentRoot
 
 	oldArcs := stringifyArcSet(snapshot)
 	updatedArcs := stringifyArcSet(snapshot)
