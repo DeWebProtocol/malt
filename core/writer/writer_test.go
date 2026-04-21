@@ -9,7 +9,7 @@ import (
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
-	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
+	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -35,7 +35,7 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, mapping.Semantic, *kv
 		t.Fatalf("failed to create KZG scheme: %v", err)
 	}
 
-	semantic, err := mappingindexed.NewMap(scheme, e)
+	semantic, err := mappingradix.NewMap(scheme, e)
 	if err != nil {
 		t.Fatalf("failed to create mapping semantic: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestWriter_LineageRecorder(t *testing.T) {
 	kv := kvmemory.New()
 	e, _ := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	scheme, _ := kzg.NewScheme()
-	semantic, _ := mappingindexed.NewMap(scheme, e)
+	semantic, _ := mappingradix.NewMap(scheme, e)
 	rec := &mockLineageRecorder{}
 	w := NewWriter(semantic, e, rec)
 

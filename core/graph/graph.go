@@ -13,7 +13,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
-	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
+	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/writer"
 	cid "github.com/ipfs/go-cid"
@@ -61,7 +61,7 @@ func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, e
 		scheme = s
 	}
 
-	semantic, err := mappingindexed.NewMap(scheme, eat)
+	semantic, err := mappingradix.NewMap(scheme, eat)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
 	}

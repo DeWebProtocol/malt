@@ -24,7 +24,7 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
-	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
+	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -187,7 +187,7 @@ func NewTestComponentsWithEAT(backend BackendType, eatType EATType, bucketID str
 	if err != nil {
 		return nil, fmt.Errorf("new EAT: %w", err)
 	}
-	s, err := mappingindexed.NewMap(scheme, e)
+	s, err := mappingradix.NewMap(scheme, e)
 	if err != nil {
 		return nil, fmt.Errorf("new mapping semantic: %w", err)
 	}
@@ -244,41 +244,39 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 
 	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
 
+	// Start from an empty committed structure so append workload exercises the
+	// incremental semantic update path rather than recommitting the whole view.
+	firstStart := time.Now()
+	root, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(map[string]cid.Cid{}))
+	metrics.CommitTime = time.Since(firstStart)
+	if err != nil {
+		return nil, fmt.Errorf("initial empty commit failed: %w", err)
+	}
+
 	// Track current arc set
 	currentArcsMap := make(map[string]cid.Cid)
 
 	totalUpdateTime := time.Duration(0)
-	var root cid.Cid
 
 	// Add arcs one by one (append pattern)
 	for i := range arcCount {
 		path := fmt.Sprintf("arc%d", i)
 		target, _ := newPayloadCID([]byte(fmt.Sprintf("data%d", i)))
 
-		// Add to current arc set
-		currentArcsMap[path] = target
-
-		// Create snapshot for commit
-		// Commit current arc set
 		start := time.Now()
-		newRoot, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(currentArcsMap))
-		totalUpdateTime += time.Since(start)
+		newRoot, err := b.semantic.Update(ctx, bucketID, root, arcset.CanonicalizePath(path), cid.Undef, target)
 		if err != nil {
-			return nil, fmt.Errorf("commit failed at arc %d: %w", i, err)
+			return nil, fmt.Errorf("append update failed at arc %d: %w", i, err)
 		}
 
-		// Store arcs in EAT using Update
-		if err := b.eat.Update(ctx, bucketID, newRoot, root, currentArcsMap); err != nil {
+		if err := b.eat.Update(ctx, bucketID, newRoot, root, map[string]cid.Cid{path: target}); err != nil {
 			return nil, fmt.Errorf("eat update failed at arc %d: %w", i, err)
 		}
+		totalUpdateTime += time.Since(start)
 
+		currentArcsMap[path] = target
 		root = newRoot
 	}
-
-	// First commit is the initial one
-	firstStart := time.Now()
-	_, _ = b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(map[string]cid.Cid{}))
-	metrics.CommitTime = time.Since(firstStart)
 
 	metrics.UpdateTime = totalUpdateTime / time.Duration(arcCount)
 
@@ -375,24 +373,24 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		idx := r.Intn(arcCount)
 		path := paths[idx]
 
+		oldTarget := keys[path]
 		newKey, _ := newPayloadCID([]byte(fmt.Sprintf("updated%d_%d", idx, round)))
 
-		// Update arc set
-		arcsMap[path] = newKey
-		// Measure commit time (MockCommitment requires full commit)
 		start = time.Now()
-		newRoot, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcsMap))
+		newRoot, err := b.semantic.Update(ctx, bucketID, root, arcset.CanonicalizePath(path), oldTarget, newKey)
+		if err != nil {
+			return nil, fmt.Errorf("update failed at round %d: %w", round, err)
+		}
+
+		if err := b.eat.Update(ctx, bucketID, newRoot, root, map[string]cid.Cid{path: newKey}); err != nil {
+			return nil, fmt.Errorf("eat update failed at round %d: %w", round, err)
+		}
 		roundTime := time.Since(start)
 		totalUpdateTime += roundTime
 		metrics.UpdateTimes = append(metrics.UpdateTimes, roundTime)
-		if err != nil {
-			return nil, fmt.Errorf("commit failed at round %d: %w", round, err)
-		}
-
-		// Store in EAT
-		b.eat.Update(ctx, bucketID, newRoot, root, arcsMap)
 
 		root = newRoot
+		arcsMap[path] = newKey
 		keys[path] = newKey
 	}
 
@@ -489,28 +487,33 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 			paths[i], paths[j] = paths[j], paths[i]
 		})
 
+		delta := make(map[string]cid.Cid, bulkSize)
+		currentRoot := root
+
 		// Update arcs in bulk
+		start = time.Now()
 		for i := range bulkSize {
 			path := paths[i]
+			oldTarget := keys[path]
 			newKey, _ := newPayloadCID([]byte(fmt.Sprintf("bulk%d_%d", i, round)))
+			nextRoot, err := b.semantic.Update(ctx, bucketID, currentRoot, arcset.CanonicalizePath(path), oldTarget, newKey)
+			if err != nil {
+				return nil, fmt.Errorf("bulk update failed at round %d item %d: %w", round, i, err)
+			}
+			currentRoot = nextRoot
 			arcsMap[path] = newKey
 			keys[path] = newKey
+			delta[path] = newKey
 		}
 
-		// Commit updated arc set
-		start = time.Now()
-		newRoot, err := b.semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcsMap))
+		if err := b.eat.Update(ctx, bucketID, currentRoot, root, delta); err != nil {
+			return nil, fmt.Errorf("bulk eat update failed at round %d: %w", round, err)
+		}
+
 		roundTime := time.Since(start)
 		totalUpdateTime += roundTime
 		metrics.UpdateTimes = append(metrics.UpdateTimes, roundTime)
-		if err != nil {
-			return nil, fmt.Errorf("bulk commit failed: %w", err)
-		}
-
-		// Store in EAT
-		b.eat.Update(ctx, bucketID, newRoot, root, arcsMap)
-
-		root = newRoot
+		root = currentRoot
 	}
 
 	metrics.UpdateTime = totalUpdateTime / time.Duration(b.config.UpdateRounds)
