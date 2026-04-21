@@ -38,7 +38,6 @@ func NewMap(scheme commitment.IndexCommitment) (*Map, error) {
 
 // Commit commits the supplied keyed view and returns a structure root.
 func (s *Map) Commit(ctx context.Context, view mapping.View) (cid.Cid, error) {
-	_ = ctx
 	_, cells, err := extractSortedCells(view)
 	if err != nil {
 		return cid.Undef, err
@@ -48,7 +47,6 @@ func (s *Map) Commit(ctx context.Context, view mapping.View) (cid.Cid, error) {
 
 // Prove proves a membership binding for key under root.
 func (s *Map) Prove(ctx context.Context, root cid.Cid, view mapping.View, key arcset.Path) (mapping.Binding, structure.Proof, error) {
-	_ = ctx
 	entries, cells, err := extractSortedCells(view)
 	if err != nil {
 		return mapping.Binding{}, nil, err
@@ -94,7 +92,6 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 
 // Update applies insert, replace, or delete semantics.
 func (s *Map) Update(ctx context.Context, root cid.Cid, view mapping.View, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	_ = ctx
 	entries, cells, err := extractSortedCells(view)
 	if err != nil {
 		return cid.Undef, err

@@ -210,11 +210,9 @@ func TestAPI_InsertDelete(t *testing.T) {
 	arcs := buildArcs(10)
 	snapshot := arcset.NewSetFrom(arcs)
 
-	root, err := g.Commit(ctx, snapshot)
-	if err != nil {
+	if _, err := g.Commit(ctx, snapshot); err != nil {
 		t.Fatalf("Initial commit failed: %v", err)
 	}
-	_ = root
 
 	// Insert new arc
 	newPath := "new_arc"

@@ -32,6 +32,7 @@ go.work.sum
 .idea/
 .vscode/
 .codex
+.gocache/
 
 # Built binaries
 /malt

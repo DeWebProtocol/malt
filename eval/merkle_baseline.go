@@ -173,7 +173,6 @@ func (t *MerkleDAGTree) UpdateLeaf(ctx context.Context, leafPath string, newData
 		return nil, fmt.Errorf("leaf node not found at path %s", leafPath)
 	}
 
-	_ = leafNode.CID // old CID is replaced
 	leafNode.Data = newData
 	newLeafCID, err := t.storeLeaf(ctx, newData)
 	if err != nil {

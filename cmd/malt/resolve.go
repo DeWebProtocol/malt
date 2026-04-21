@@ -103,10 +103,6 @@ func runResolve(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Println(result.Target.String())
-		if len(result.Transcript.Steps) > 0 {
-			last := result.Transcript.Steps[len(result.Transcript.Steps)-1]
-			_ = last
-		}
 		fmt.Fprintf(os.Stderr, "resolved via %d step(s)\n", len(result.Transcript.Steps))
 	}
 

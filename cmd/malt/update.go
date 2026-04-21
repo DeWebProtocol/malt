@@ -207,9 +207,7 @@ Examples:
 func runCreate(cmd *cobra.Command, args []string) error {
 	var g *graph.Graph
 	if createGraphID != "" {
-		var meta *graph.GraphMeta
-		g, meta = mustManagedGraph(createGraphID, true)
-		_ = meta
+		g, _ = mustManagedGraph(createGraphID, true)
 	} else {
 		g = mustGraph()
 	}

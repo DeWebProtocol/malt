@@ -7,8 +7,6 @@ import (
 	"os"
 	"sort"
 	"time"
-
-	"github.com/dewebprotocol/malt/core/cas/mock"
 )
 
 // BaselineReport represents a complete baseline benchmark report.
@@ -188,7 +186,6 @@ type HAMTMetrics struct {
 func runHAMTBenchmark(ctx context.Context, size int) (*HAMTMetrics, error) {
 	// Use a simple HAMT implementation based on the existing code
 	// This is a baseline comparison to show MALT's benefits
-	_ = mock.NewCAS() // CAS client for potential future use
 
 	// Build HAMT with given size
 	// For simplicity, we simulate HAMT operations and measure costs

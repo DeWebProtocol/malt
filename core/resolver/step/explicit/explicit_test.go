@@ -66,7 +66,6 @@ func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantic, arcs
 
 func TestResolve_LongestPrefixMatch(t *testing.T) {
 	e, semantic, _ := newTestComponents()
-	ctx := context.Background()
 
 	// Create target CIDs
 	target1 := makeCID(1)
@@ -154,8 +153,6 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 		t.Error("Verify should return true for valid evidence")
 	}
 
-	// Suppress unused variable warning for ctx
-	_ = ctx
 }
 
 func TestResolve_ExactMatch(t *testing.T) {

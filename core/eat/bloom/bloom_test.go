@@ -235,9 +235,11 @@ func TestBloomCacheAddAndMightContain(t *testing.T) {
 	}
 
 	// MightContain for non-existent path (may be false positive)
-	result, _ := bc.MightContain(ctx, "test-bucket", "nonexistent/path")
+	_, err = bc.MightContain(ctx, "test-bucket", "nonexistent/path")
+	if err != nil {
+		t.Fatalf("MightContain failed: %v", err)
+	}
 	// Can be true (false positive) or false (correct negative), both valid
-	_ = result
 }
 
 func TestBloomCacheMightContainBatch(t *testing.T) {
