@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"sync"
 
 	multiproof "github.com/crate-crypto/go-ipa"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
@@ -37,14 +36,6 @@ const (
 // Scheme implements an IPA-based index commitment backend.
 type Scheme struct {
 	ipaConfig *ipa.IPAConfig
-
-	mu    sync.RWMutex
-	cache map[string]*cacheEntry
-	order []string
-}
-
-type cacheEntry struct {
-	values []commitment.Cell
 }
 
 // NewScheme creates a new IPA commitment scheme.
@@ -56,8 +47,6 @@ func NewScheme() (*Scheme, error) {
 
 	return &Scheme{
 		ipaConfig: ipaConfig,
-		cache:     make(map[string]*cacheEntry),
-		order:     make([]string, 0, MaxCacheEntries),
 	}, nil
 }
 
@@ -66,79 +55,80 @@ func (s *Scheme) MaxValues() int {
 	return MaxValues
 }
 
-// CommitValues commits a stable indexed cell vector.
-func (s *Scheme) CommitValues(values []commitment.Cell) (cid.Cid, error) {
+// Commit commits a stable indexed cell vector.
+func (s *Scheme) Commit(values []commitment.Cell) (cid.Cid, error) {
 	return s.commitValues(values)
 }
 
-// ProveIndex proves the value at a stable index.
-func (s *Scheme) ProveIndex(comm cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
-	entry, err := s.ensureState(comm, values)
+// Prove proves the value at a stable index.
+func (s *Scheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitment.Cell, []byte, error) {
+	comm, err := s.commitValues(values)
 	if err != nil {
-		return nil, nil, err
+		return cid.Undef, nil, nil, err
 	}
-	if index >= uint64(len(entry.values)) {
-		return nil, nil, fmt.Errorf("index %d out of range", index)
+	if index >= uint64(len(values)) {
+		return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
 	}
-	return s.proveEntryIndex(comm, entry, index)
+	value, proof, err := s.proveValuesIndex(comm, values, index)
+	return comm, value, proof, err
 }
 
 // BatchProve proves multiple stable indices with one batch proof payload.
-func (s *Scheme) BatchProve(comm cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
-	entry, err := s.ensureState(comm, values)
+func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid, []commitment.Cell, []byte, error) {
+	comm, err := s.commitValues(values)
 	if err != nil {
-		return nil, nil, err
+		return cid.Undef, nil, nil, err
 	}
 	if len(indices) == 0 {
-		return nil, nil, fmt.Errorf("indices must not be empty")
+		return cid.Undef, nil, nil, fmt.Errorf("indices must not be empty")
 	}
 
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
+		return cid.Undef, nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
 	}
 
 	var c banderwagon.Element
 	if err := c.SetBytes(commBytes); err != nil {
-		return nil, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+		return cid.Undef, nil, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
 	}
 
-	vector := valuesToVector(entry.values)
+	vector := valuesToVector(values)
 	commitments := make([]banderwagon.Element, len(indices))
 	cs := make([]*banderwagon.Element, len(indices))
 	fs := make([][]fr.Element, len(indices))
 	zs := make([]uint8, len(indices))
 	proved := make([]commitment.Cell, len(indices))
 	for i, index := range indices {
-		if index >= uint64(len(entry.values)) {
-			return nil, nil, fmt.Errorf("index %d out of range", index)
+		if index >= uint64(len(values)) {
+			return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
 		}
 		if index >= MaxValues {
-			return nil, nil, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
+			return cid.Undef, nil, nil, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
 		}
 
 		commitments[i] = c
 		cs[i] = &commitments[i]
 		fs[i] = vector
 		zs[i] = uint8(index)
-		proved[i] = commitment.NewCell(entry.values[int(index)])
+		proved[i] = commitment.NewCell(values[int(index)])
 	}
 
 	transcript := common.NewTranscript(batchTranscriptLabel)
 	proof, err := multiproof.CreateMultiProof(transcript, s.ipaConfig, cs, fs, zs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create IPA batch proof: %w", err)
+		return cid.Undef, nil, nil, fmt.Errorf("failed to create IPA batch proof: %w", err)
 	}
 
 	proofBytes, err := serializeMultiProof(proof)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to serialize IPA batch proof: %w", err)
+		return cid.Undef, nil, nil, fmt.Errorf("failed to serialize IPA batch proof: %w", err)
 	}
-	return proved, proofBytes, nil
+	return comm, proved, proofBytes, nil
 }
 
-func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) (commitment.Cell, []byte, error) {
-	vector := valuesToVector(entry.values)
+func (s *Scheme) proveValuesIndex(comm cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	vector := valuesToVector(values)
 	commBytes, err := codec.ExtractCommitment(comm)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
@@ -165,10 +155,10 @@ func (s *Scheme) proveEntryIndex(comm cid.Cid, entry *cacheEntry, index uint64) 
 	}
 
 	valueIndex := int(index)
-	if valueIndex < 0 || valueIndex >= len(entry.values) {
+	if valueIndex < 0 || valueIndex >= len(values) {
 		return nil, nil, fmt.Errorf("index %d out of range", index)
 	}
-	return commitment.NewCell(entry.values[valueIndex]), proofBytes, nil
+	return commitment.NewCell(values[valueIndex]), proofBytes, nil
 }
 
 // VerifyIndex verifies a proof for a stable index without requiring cache state.
@@ -255,27 +245,44 @@ func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment
 
 // VerifyProof verifies a proof carrying its own index metadata.
 func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) (bool, error) {
-	_, index, err := s.deserializeProof(proof)
+	commBytes, err := codec.ExtractCommitment(comm)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+
+	ipaProof, index, err := s.deserializeProof(proof)
 	if err != nil {
 		return false, fmt.Errorf("failed to deserialize proof: %w", err)
 	}
-	return s.VerifyIndex(comm, index, value, proof)
+
+	transcript := common.NewTranscript(singleTranscriptLabel)
+
+	var c banderwagon.Element
+	if err := c.SetBytes(commBytes); err != nil {
+		return false, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	var evalPointFr fr.Element
+	evalPointFr.SetUint64(index)
+
+	output := cellToFieldElement(value)
+	ok, err := ipa.CheckIPAProof(transcript, s.ipaConfig, c, *ipaProof, evalPointFr, output)
+	if err != nil {
+		return false, fmt.Errorf("failed to check IPA proof: %w", err)
+	}
+	return ok, nil
 }
 
-// ReplaceIndex performs an index-stable replacement.
-func (s *Scheme) ReplaceIndex(comm cid.Cid, values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
-	entry, err := s.ensureState(comm, values)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	if index >= uint64(len(entry.values)) {
+// Replace performs an index-stable replacement.
+func (s *Scheme) Replace(values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
+	if index >= uint64(len(values)) {
 		return cid.Cid{}, fmt.Errorf("index %d out of range", index)
 	}
-	if !entry.values[index].Equal(oldValue) {
+	if !values[index].Equal(oldValue) {
 		return cid.Cid{}, fmt.Errorf("old value mismatch at index %d", index)
 	}
 
-	nextValues := commitment.CloneCells(entry.values)
+	nextValues := commitment.CloneCells(values)
 	nextValues[index] = commitment.NewCell(newValue)
 	return s.commitValues(nextValues)
 }
@@ -379,70 +386,7 @@ func (s *Scheme) commitValues(values []commitment.Cell) (cid.Cid, error) {
 
 	comm := s.ipaConfig.Commit(vector)
 	commBytes := comm.Bytes()
-	commStr := string(commBytes[:])
-
-	s.cacheSet(commStr, &cacheEntry{
-		values: commitment.CloneCells(values),
-	})
-
 	return codec.NewIPACid(commBytes[:])
-}
-
-func (s *Scheme) ensureState(comm cid.Cid, values []commitment.Cell) (*cacheEntry, error) {
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-	commStr := string(commBytes)
-
-	entry, ok := s.cacheGet(commStr)
-	if !ok {
-		if values == nil {
-			return nil, fmt.Errorf("commitment not found in cache")
-		}
-		rebuilt, err := s.commitValues(values)
-		if err != nil {
-			return nil, err
-		}
-		if !rebuilt.Equals(comm) {
-			return nil, fmt.Errorf("reconstructed commitment does not match expected root")
-		}
-		entry, ok = s.cacheGet(commStr)
-		if !ok {
-			return nil, fmt.Errorf("commitment not found in cache")
-		}
-	}
-	return entry, nil
-}
-
-func (s *Scheme) cacheGet(key string) (*cacheEntry, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	entry, ok := s.cache[key]
-	return entry, ok
-}
-
-func (s *Scheme) cacheSet(key string, entry *cacheEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cacheSetLocked(key, entry)
-}
-
-func (s *Scheme) cacheSetLocked(key string, entry *cacheEntry) {
-	if _, exists := s.cache[key]; exists {
-		s.cache[key] = entry
-		return
-	}
-	if len(s.cache) >= MaxCacheEntries {
-		evictCount := MaxCacheEntries / 2
-		for i := 0; i < evictCount && len(s.order) > 0; i++ {
-			oldest := s.order[0]
-			s.order = s.order[1:]
-			delete(s.cache, oldest)
-		}
-	}
-	s.cache[key] = entry
-	s.order = append(s.order, key)
 }
 
 func valuesToVector(values []commitment.Cell) []fr.Element {

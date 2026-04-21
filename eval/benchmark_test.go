@@ -13,7 +13,7 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/structure/mapping"
+	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
 	"github.com/dewebprotocol/malt/eval"
 )
 
@@ -36,9 +36,9 @@ func TestBenchmarkRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	semantic, err := mapping.NewIndexedSemantic(scheme)
+	semantic, err := mappingindexed.NewMap(scheme)
 	if err != nil {
-		t.Fatalf("NewIndexedSemantic failed: %v", err)
+		t.Fatalf("indexed.NewMap failed: %v", err)
 	}
 	c := mock.NewCAS(mock.WithoutLatency())
 
@@ -406,7 +406,7 @@ func TestGenerateLatexTable(t *testing.T) {
 func BenchmarkAppend(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
-	semantic, _ := mapping.NewIndexedSemantic(scheme)
+	semantic, _ := mappingindexed.NewMap(scheme)
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
@@ -429,7 +429,7 @@ func BenchmarkAppend(b *testing.B) {
 func BenchmarkRandom(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
-	semantic, _ := mapping.NewIndexedSemantic(scheme)
+	semantic, _ := mappingindexed.NewMap(scheme)
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{
@@ -452,7 +452,7 @@ func BenchmarkRandom(b *testing.B) {
 func BenchmarkBulk(b *testing.B) {
 	e := newTestEAT()
 	scheme, _ := kzg.NewScheme()
-	semantic, _ := mapping.NewIndexedSemantic(scheme)
+	semantic, _ := mappingindexed.NewMap(scheme)
 	c := mock.NewCAS(mock.WithoutLatency())
 
 	cfg := &eval.BenchmarkConfig{

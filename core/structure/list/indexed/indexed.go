@@ -16,10 +16,9 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-type Semantic struct {
-	scheme   commitment.IndexCommitment
-	eat      eat.EAT
-	bucketID string
+type IndexedList struct {
+	scheme commitment.IndexCommitment
+	eat    eat.EAT
 }
 
 type proofEnvelope struct {
@@ -27,24 +26,20 @@ type proofEnvelope struct {
 	KeyProof    []byte `json:"key_proof,omitempty"`
 }
 
-func New(scheme commitment.IndexCommitment, eat eat.EAT, bucketID string) (*Semantic, error) {
+func NewList(scheme commitment.IndexCommitment, eat eat.EAT) (*IndexedList, error) {
 	if err := listruntime.ValidateCommitment(scheme); err != nil {
 		return nil, err
 	}
 	if eat == nil {
 		return nil, fmt.Errorf("eat is nil")
 	}
-	if bucketID == "" {
-		return nil, fmt.Errorf("bucket id is empty")
-	}
-	return &Semantic{
-		scheme:   scheme,
-		eat:      eat,
-		bucketID: bucketID,
+	return &IndexedList{
+		scheme: scheme,
+		eat:    eat,
 	}, nil
 }
 
-func (s *Semantic) Commit(ctx context.Context, view list.View) (cid.Cid, error) {
+func (s *IndexedList) Commit(ctx context.Context, bucketID string, view list.View) (cid.Cid, error) {
 	values, err := valuesFromView(view)
 	if err != nil {
 		return cid.Undef, err
@@ -60,11 +55,11 @@ func (s *Semantic) Commit(ctx context.Context, view list.View) (cid.Cid, error) 
 	}
 	slots[0] = lengthMarker
 	copy(slots[1:], values)
-	return s.commitSlots(ctx, slots)
+	return s.commitSlots(ctx, bucketID, slots)
 }
 
-func (s *Semantic) Prove(ctx context.Context, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
-	slots, length, err := s.loadRoot(ctx, root)
+func (s *IndexedList) Prove(ctx context.Context, bucketID string, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
+	slots, length, err := s.loadRoot(ctx, bucketID, root)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
@@ -98,7 +93,7 @@ func (s *Semantic) Prove(ctx context.Context, root cid.Cid, index uint64) (list.
 	return query, structure.Proof(proofBytes), nil
 }
 
-func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof structure.Proof) (bool, error) {
+func (s *IndexedList) Verify(root cid.Cid, index uint64, expected list.Query, proof structure.Proof) (bool, error) {
 	var envelope proofEnvelope
 	if err := json.Unmarshal(proof, &envelope); err != nil {
 		return false, err
@@ -128,8 +123,8 @@ func (s *Semantic) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	return listruntime.VerifySlot(s.scheme, root, index+1, commitment.CellFromCID(expected.Key), envelope.KeyProof)
 }
 
-func (s *Semantic) Replace(ctx context.Context, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
-	slots, length, err := s.loadRoot(ctx, root)
+func (s *IndexedList) Replace(ctx context.Context, bucketID string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
+	slots, length, err := s.loadRoot(ctx, bucketID, root)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -142,11 +137,11 @@ func (s *Semantic) Replace(ctx context.Context, root cid.Cid, index uint64, oldK
 
 	nextSlots := cloneSlots(slots)
 	nextSlots[index+1] = newKey
-	return s.commitSlots(ctx, nextSlots)
+	return s.commitSlots(ctx, bucketID, nextSlots)
 }
 
-func (s *Semantic) Append(ctx context.Context, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
-	slots, length, err := s.loadRoot(ctx, root)
+func (s *IndexedList) Append(ctx context.Context, bucketID string, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
+	slots, length, err := s.loadRoot(ctx, bucketID, root)
 	if err != nil {
 		return cid.Undef, 0, err
 	}
@@ -165,12 +160,12 @@ func (s *Semantic) Append(ctx context.Context, root cid.Cid, key cid.Cid) (cid.C
 	nextSlots[0] = lengthMarker
 	nextSlots[length+1] = key
 
-	newRoot, err := s.commitSlots(ctx, nextSlots)
+	newRoot, err := s.commitSlots(ctx, bucketID, nextSlots)
 	return newRoot, length, err
 }
 
-func (s *Semantic) Truncate(ctx context.Context, root cid.Cid, newLen uint64) (cid.Cid, error) {
-	slots, length, err := s.loadRoot(ctx, root)
+func (s *IndexedList) Truncate(ctx context.Context, bucketID string, root cid.Cid, newLen uint64) (cid.Cid, error) {
+	slots, length, err := s.loadRoot(ctx, bucketID, root)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -188,11 +183,11 @@ func (s *Semantic) Truncate(ctx context.Context, root cid.Cid, newLen uint64) (c
 	}
 	nextSlots[0] = lengthMarker
 	copy(nextSlots[1:], slots[1:1+newLen])
-	return s.commitSlots(ctx, nextSlots)
+	return s.commitSlots(ctx, bucketID, nextSlots)
 }
 
-func (s *Semantic) loadRoot(ctx context.Context, root cid.Cid) ([]cid.Cid, uint64, error) {
-	slots, err := listruntime.LoadSlots(ctx, s.eat, s.bucketID, root, listruntime.RootWidth)
+func (s *IndexedList) loadRoot(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, uint64, error) {
+	slots, err := listruntime.LoadSlots(ctx, s.eat, bucketID, root, listruntime.RootWidth)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -203,12 +198,12 @@ func (s *Semantic) loadRoot(ctx context.Context, root cid.Cid) ([]cid.Cid, uint6
 	return slots, length, nil
 }
 
-func (s *Semantic) commitSlots(ctx context.Context, slots []cid.Cid) (cid.Cid, error) {
+func (s *IndexedList) commitSlots(ctx context.Context, bucketID string, slots []cid.Cid) (cid.Cid, error) {
 	root, err := listruntime.CommitSlots(s.scheme, slots)
 	if err != nil {
 		return cid.Undef, err
 	}
-	if err := listruntime.StoreSlots(ctx, s.eat, s.bucketID, root, slots); err != nil {
+	if err := listruntime.StoreSlots(ctx, s.eat, bucketID, root, slots); err != nil {
 		return cid.Undef, err
 	}
 	return root, nil
@@ -233,4 +228,4 @@ func cloneSlots(slots []cid.Cid) []cid.Cid {
 	return append([]cid.Cid(nil), slots...)
 }
 
-var _ list.Semantic = (*Semantic)(nil)
+var _ list.Semantic = (*IndexedList)(nil)

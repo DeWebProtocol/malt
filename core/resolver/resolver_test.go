@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
+	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -42,9 +43,9 @@ func newSemantic(t *testing.T) mapping.Semantic {
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	semantic, err := mapping.NewIndexedSemantic(scheme)
+	semantic, err := mappingindexed.NewMap(scheme)
 	if err != nil {
-		t.Fatalf("NewIndexedSemantic failed: %v", err)
+		t.Fatalf("indexed.NewMap failed: %v", err)
 	}
 	return semantic
 }

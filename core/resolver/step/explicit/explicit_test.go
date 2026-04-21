@@ -10,6 +10,7 @@ import (
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
+	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -42,7 +43,7 @@ func newTestComponents() (*overwrite.EAT, mapping.Semantic, *kzg.Scheme) {
 	if err != nil {
 		panic(err)
 	}
-	semantic, err := mapping.NewIndexedSemantic(scheme)
+	semantic, err := mappingindexed.NewMap(scheme)
 	if err != nil {
 		panic(err)
 	}
@@ -368,9 +369,9 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	semantic, err := mapping.NewIndexedSemantic(scheme)
+	semantic, err := mappingindexed.NewMap(scheme)
 	if err != nil {
-		t.Fatalf("NewIndexedSemantic failed: %v", err)
+		t.Fatalf("indexed.NewMap failed: %v", err)
 	}
 
 	ctx := context.Background()

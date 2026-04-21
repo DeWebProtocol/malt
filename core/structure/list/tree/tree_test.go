@@ -54,24 +54,24 @@ func makeValues(count int) []cid.Cid {
 	return values
 }
 
-func newSemantic(t *testing.T, factory schemeFactory, kv *kvmemory.KV, bucketID string) *tree.Semantic {
+func newList(t *testing.T, factory schemeFactory, kv *kvmemory.KV) *tree.TreeList {
 	t.Helper()
 
 	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
 	if err != nil {
 		t.Fatalf("overwrite.NewEAT failed: %v", err)
 	}
-	semantic, err := tree.New(factory(t), e, bucketID)
+	semantic, err := tree.NewList(factory(t), e)
 	if err != nil {
-		t.Fatalf("tree.New failed: %v", err)
+		t.Fatalf("tree.NewList failed: %v", err)
 	}
 	return semantic
 }
 
-func assertVerifiedQuery(t *testing.T, semantic *tree.Semantic, root cid.Cid, index uint64, expected list.Query) {
+func assertVerifiedQuery(t *testing.T, semantic *tree.TreeList, bucketID string, root cid.Cid, index uint64, expected list.Query) {
 	t.Helper()
 
-	query, proof, err := semantic.Prove(context.Background(), root, index)
+	query, proof, err := semantic.Prove(context.Background(), bucketID, root, index)
 	if err != nil {
 		t.Fatalf("Prove(%d) failed: %v", index, err)
 	}
@@ -100,26 +100,26 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 			kv := kvmemory.New()
 			bucketID := "tree-proof-" + name
 
-			semantic := newSemantic(t, factory, kv, bucketID)
-			root, err := semantic.Commit(ctx, list.NewViewFromSlice(values))
+			semantic := newList(t, factory, kv)
+			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(values))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			for _, index := range []uint64{0, 254, 255, 256, 299} {
-				assertVerifiedQuery(t, semantic, root, index, list.Query{
+				assertVerifiedQuery(t, semantic, bucketID, root, index, list.Query{
 					Key:    values[index],
 					Length: uint64(len(values)),
 				})
 			}
 
-			assertVerifiedQuery(t, semantic, root, 999, list.Query{
+			assertVerifiedQuery(t, semantic, bucketID, root, 999, list.Query{
 				Key:    cid.Undef,
 				Length: uint64(len(values)),
 			})
 
-			restarted := newSemantic(t, factory, kv, bucketID)
-			assertVerifiedQuery(t, restarted, root, 256, list.Query{
+			restarted := newList(t, factory, kv)
+			assertVerifiedQuery(t, restarted, bucketID, root, 256, list.Query{
 				Key:    values[256],
 				Length: uint64(len(values)),
 			})
@@ -136,54 +136,54 @@ func TestTreeListSemanticUpdates(t *testing.T) {
 			kv := kvmemory.New()
 			bucketID := "tree-update-" + name
 
-			semantic := newSemantic(t, factory, kv, bucketID)
-			root, err := semantic.Commit(ctx, list.NewViewFromSlice(initial))
+			semantic := newList(t, factory, kv)
+			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(initial))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			replacement := newPayloadCID([]byte("replacement"))
-			replacedRoot, err := semantic.Replace(ctx, root, 128, initial[128], replacement)
+			replacedRoot, err := semantic.Replace(ctx, bucketID, root, 128, initial[128], replacement)
 			if err != nil {
 				t.Fatalf("Replace failed: %v", err)
 			}
-			assertVerifiedQuery(t, semantic, replacedRoot, 128, list.Query{
+			assertVerifiedQuery(t, semantic, bucketID, replacedRoot, 128, list.Query{
 				Key:    replacement,
 				Length: uint64(len(initial)),
 			})
 
 			appended := newPayloadCID([]byte("appended"))
-			appendedRoot, newIndex, err := semantic.Append(ctx, replacedRoot, appended)
+			appendedRoot, newIndex, err := semantic.Append(ctx, bucketID, replacedRoot, appended)
 			if err != nil {
 				t.Fatalf("Append failed: %v", err)
 			}
 			if newIndex != uint64(len(initial)) {
 				t.Fatalf("unexpected append index %d", newIndex)
 			}
-			assertVerifiedQuery(t, semantic, appendedRoot, newIndex, list.Query{
+			assertVerifiedQuery(t, semantic, bucketID, appendedRoot, newIndex, list.Query{
 				Key:    appended,
 				Length: uint64(len(initial) + 1),
 			})
-			assertVerifiedQuery(t, semantic, appendedRoot, 128, list.Query{
+			assertVerifiedQuery(t, semantic, bucketID, appendedRoot, 128, list.Query{
 				Key:    replacement,
 				Length: uint64(len(initial) + 1),
 			})
 
-			truncatedRoot, err := semantic.Truncate(ctx, appendedRoot, 128)
+			truncatedRoot, err := semantic.Truncate(ctx, bucketID, appendedRoot, 128)
 			if err != nil {
 				t.Fatalf("Truncate failed: %v", err)
 			}
-			assertVerifiedQuery(t, semantic, truncatedRoot, 127, list.Query{
+			assertVerifiedQuery(t, semantic, bucketID, truncatedRoot, 127, list.Query{
 				Key:    initial[127],
 				Length: 128,
 			})
-			assertVerifiedQuery(t, semantic, truncatedRoot, 128, list.Query{
+			assertVerifiedQuery(t, semantic, bucketID, truncatedRoot, 128, list.Query{
 				Key:    cid.Undef,
 				Length: 128,
 			})
 
-			restarted := newSemantic(t, factory, kv, bucketID)
-			assertVerifiedQuery(t, restarted, truncatedRoot, 127, list.Query{
+			restarted := newList(t, factory, kv)
+			assertVerifiedQuery(t, restarted, bucketID, truncatedRoot, 127, list.Query{
 				Key:    initial[127],
 				Length: 128,
 			})

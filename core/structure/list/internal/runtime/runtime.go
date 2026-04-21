@@ -123,12 +123,19 @@ func CellsFromSlots(slots []cid.Cid) []commitment.Cell {
 
 // CommitSlots commits a node slot vector via the index commitment backend.
 func CommitSlots(scheme commitment.IndexCommitment, slots []cid.Cid) (cid.Cid, error) {
-	return scheme.CommitValues(CellsFromSlots(slots))
+	return scheme.Commit(CellsFromSlots(slots))
 }
 
 // ProveSlot proves one slot under a committed node.
 func ProveSlot(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.Cid, slot uint64) (commitment.Cell, []byte, error) {
-	return scheme.ProveIndex(root, CellsFromSlots(slots), slot)
+	provedRoot, value, proof, err := scheme.Prove(CellsFromSlots(slots), slot)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !provedRoot.Equals(root) {
+		return nil, nil, fmt.Errorf("recomputed node root does not match requested root")
+	}
+	return value, proof, nil
 }
 
 // VerifySlot verifies one committed slot proof.

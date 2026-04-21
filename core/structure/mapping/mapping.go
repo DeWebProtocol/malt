@@ -22,8 +22,12 @@ type View interface {
 	Iterate() Iterator
 }
 
-// Binding is the verifiable result for one keyed lookup.
-// Present=false encodes a non-membership result.
+// Binding is the verifiable result for one keyed binding.
+//
+// The current default map semantic only emits membership proofs. Callers should
+// obtain absence through the current structure state (for example EAT lookup or
+// a supplied materialized view) rather than expecting a dedicated semantic
+// non-membership proof.
 type Binding struct {
 	Value   cid.Cid
 	Present bool
@@ -34,13 +38,17 @@ type Semantic interface {
 	// Commit commits the supplied map view and returns a structure root.
 	Commit(ctx context.Context, view View) (cid.Cid, error)
 
-	// Prove proves the binding (or non-membership) for key under root.
+	// Prove proves the existing binding for key under root.
+	// It returns an error if key is absent from the supplied view.
 	Prove(ctx context.Context, root cid.Cid, view View, key arcset.Path) (Binding, structure.Proof, error)
 
 	// Verify verifies the proof for a keyed binding under root.
 	Verify(root cid.Cid, key arcset.Path, expected Binding, proof structure.Proof) (bool, error)
 
-	// Update applies insert, replace, or delete semantics.
-	// oldValue=cid.Undef means insert; newValue=cid.Undef means delete.
+	// Update applies insert, replace, or delete semantics over the supplied full
+	// keyed view. oldValue=cid.Undef means insert; newValue=cid.Undef means
+	// delete. The current default map semantic preserves index-stable replacement
+	// for existing keys but may recommit the full keyed view for insert/delete,
+	// because canonical path order determines index positions.
 	Update(ctx context.Context, root cid.Cid, view View, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
 }

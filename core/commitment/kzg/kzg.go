@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/big"
 	"math/bits"
-	"sync"
 
 	blsfr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	gokzg4844 "github.com/crate-crypto/go-kzg-4844"
@@ -33,15 +32,6 @@ const (
 type Scheme struct {
 	context      *gokzg4844.Context
 	domainPoints []gokzg4844.Scalar
-
-	mu    sync.RWMutex
-	cache map[string]*cacheEntry
-	order []string
-}
-
-type cacheEntry struct {
-	blob   *gokzg4844.Blob
-	values []commitment.Cell
 }
 
 // NewScheme creates a new KZG commitment scheme.
@@ -58,8 +48,6 @@ func NewScheme() (*Scheme, error) {
 	return &Scheme{
 		context:      context,
 		domainPoints: domainPoints,
-		cache:        make(map[string]*cacheEntry),
-		order:        make([]string, 0, MaxCacheEntries),
 	}, nil
 }
 
@@ -68,60 +56,62 @@ func (s *Scheme) MaxValues() int {
 	return MaxValues
 }
 
-// CommitValues commits a stable indexed cell vector.
-func (s *Scheme) CommitValues(values []commitment.Cell) (cid.Cid, error) {
+// Commit commits a stable indexed cell vector.
+func (s *Scheme) Commit(values []commitment.Cell) (cid.Cid, error) {
 	return s.commitValues(values)
 }
 
-// ProveIndex proves the value at a stable index.
-func (s *Scheme) ProveIndex(comm cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
-	entry, err := s.ensureState(comm, values)
+// Prove proves the value at a stable index.
+func (s *Scheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitment.Cell, []byte, error) {
+	comm, err := s.commitValues(values)
 	if err != nil {
-		return nil, nil, err
+		return cid.Undef, nil, nil, err
 	}
-	if index >= uint64(len(entry.values)) {
-		return nil, nil, fmt.Errorf("index %d out of range", index)
+	if index >= uint64(len(values)) {
+		return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
 	}
-	return s.proveEntryIndex(entry, index)
+	value, proof, err := s.proveValuesIndex(values, index)
+	return comm, value, proof, err
 }
 
-func (s *Scheme) proveEntryIndex(entry *cacheEntry, index uint64) (commitment.Cell, []byte, error) {
+func (s *Scheme) proveValuesIndex(values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	blob := blobFromValues(values)
 	inputPoint := s.domainPoint(index)
-	proof, claimedValue, err := s.context.ComputeKZGProof(entry.blob, inputPoint, 1)
+	proof, claimedValue, err := s.context.ComputeKZGProof(blob, inputPoint, 1)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to compute proof: %w", err)
 	}
-	return commitment.NewCell(entry.values[index]), serializeProof(proof, claimedValue, index), nil
+	return commitment.NewCell(values[index]), serializeProof(proof, claimedValue, index), nil
 }
 
 // BatchProve currently concatenates single-index KZG proofs because the
 // current go-kzg-4844 dependency does not expose batch opening generation.
 // TODO: replace this looped encoding with a real KZG multiproof when the
 // backend supports batch opening generation for our index-commitment setting.
-func (s *Scheme) BatchProve(comm cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
-	entry, err := s.ensureState(comm, values)
+func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid, []commitment.Cell, []byte, error) {
+	comm, err := s.commitValues(values)
 	if err != nil {
-		return nil, nil, err
+		return cid.Undef, nil, nil, err
 	}
 	if len(indices) == 0 {
-		return nil, nil, fmt.Errorf("indices must not be empty")
+		return cid.Undef, nil, nil, fmt.Errorf("indices must not be empty")
 	}
 
 	proved := make([]commitment.Cell, len(indices))
 	proofs := make([][]byte, len(indices))
 	for i, index := range indices {
-		if index >= uint64(len(entry.values)) {
-			return nil, nil, fmt.Errorf("index %d out of range", index)
+		if index >= uint64(len(values)) {
+			return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
 		}
 
-		value, proof, err := s.proveEntryIndex(entry, index)
+		value, proof, err := s.proveValuesIndex(values, index)
 		if err != nil {
-			return nil, nil, err
+			return cid.Undef, nil, nil, err
 		}
 		proved[i] = value
 		proofs[i] = proof
 	}
-	return proved, serializeBatchProof(proofs), nil
+	return comm, proved, serializeBatchProof(proofs), nil
 }
 
 // VerifyIndex verifies a proof for a stable index without cache state.
@@ -193,20 +183,16 @@ func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) 
 	return s.VerifyIndex(comm, index, value, proof)
 }
 
-// ReplaceIndex performs an index-stable replacement.
-func (s *Scheme) ReplaceIndex(comm cid.Cid, values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
-	entry, err := s.ensureState(comm, values)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	if index >= uint64(len(entry.values)) {
+// Replace performs an index-stable replacement.
+func (s *Scheme) Replace(values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
+	if index >= uint64(len(values)) {
 		return cid.Cid{}, fmt.Errorf("index %d out of range", index)
 	}
-	if !entry.values[index].Equal(oldValue) {
+	if !values[index].Equal(oldValue) {
 		return cid.Cid{}, fmt.Errorf("old value mismatch at index %d", index)
 	}
 
-	nextValues := commitment.CloneCells(entry.values)
+	nextValues := commitment.CloneCells(values)
 	nextValues[index] = commitment.NewCell(newValue)
 	return s.commitValues(nextValues)
 }
@@ -224,88 +210,33 @@ func cellToKZGScalar(value commitment.Cell) gokzg4844.Scalar {
 	return scalar
 }
 
-// evictLocked removes the oldest half of the cache when capacity is exceeded.
-// Must be called with s.mu held.
-func (s *Scheme) evictLocked() {
-	if len(s.cache) < MaxCacheEntries {
-		return
-	}
-	evictCount := MaxCacheEntries / 2
-	for i := 0; i < evictCount && len(s.order) > 0; i++ {
-		key := s.order[0]
-		s.order = s.order[1:]
-		delete(s.cache, key)
-	}
-}
-
 func (s *Scheme) commitValues(values []commitment.Cell) (cid.Cid, error) {
 	if len(values) > MaxValues {
 		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
 	}
 
-	blob := &gokzg4844.Blob{}
-	for i, value := range values {
-		scalar := cellToKZGScalar(value)
-		offset := i * gokzg4844.SerializedScalarSize
-		copy(blob[offset:offset+gokzg4844.SerializedScalarSize], scalar[:])
-	}
-
+	blob := blobFromValues(values)
 	comm, err := s.context.BlobToKZGCommitment(blob, 1)
 	if err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to commit: %w", err)
 	}
 
 	commBytes := comm[:]
-	blobCopy := *blob
-
-	s.mu.Lock()
-	s.evictLocked()
-	s.cache[string(commBytes)] = &cacheEntry{
-		blob:   &blobCopy,
-		values: commitment.CloneCells(values),
-	}
-	s.order = append(s.order, string(commBytes))
-	s.mu.Unlock()
-
 	return codec.NewKZGCid(commBytes)
-}
-
-func (s *Scheme) ensureState(comm cid.Cid, values []commitment.Cell) (*cacheEntry, error) {
-	commBytes, err := codec.ExtractCommitment(comm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract commitment: %w", err)
-	}
-	commStr := string(commBytes)
-
-	s.mu.RLock()
-	entry, ok := s.cache[commStr]
-	s.mu.RUnlock()
-	if ok {
-		return entry, nil
-	}
-	if values == nil {
-		return nil, fmt.Errorf("commitment not found in cache")
-	}
-
-	rebuilt, err := s.commitValues(values)
-	if err != nil {
-		return nil, err
-	}
-	if !rebuilt.Equals(comm) {
-		return nil, fmt.Errorf("reconstructed commitment does not match expected root")
-	}
-
-	s.mu.RLock()
-	entry, ok = s.cache[commStr]
-	s.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("commitment not found in cache")
-	}
-	return entry, nil
 }
 
 func (s *Scheme) domainPoint(index uint64) gokzg4844.Scalar {
 	return s.domainPoints[index]
+}
+
+func blobFromValues(values []commitment.Cell) *gokzg4844.Blob {
+	blob := &gokzg4844.Blob{}
+	for i, value := range values {
+		scalar := cellToKZGScalar(value)
+		offset := i * gokzg4844.SerializedScalarSize
+		copy(blob[offset:offset+gokzg4844.SerializedScalarSize], scalar[:])
+	}
+	return blob
 }
 
 func serializeProof(proof gokzg4844.KZGProof, claimedValue gokzg4844.Scalar, index uint64) []byte {
