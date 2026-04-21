@@ -272,13 +272,16 @@ Operational components affect latency and availability, not the semantic trust b
 ### Semantic Layer
 
 - `structure/mapping`
-  - current keyed semantic used by native explicit-arc structure roots
+  - semantic contracts and shared keyed-map types
+- `structure/mapping/radix`
+  - primary keyed-map runtime semantic
+  - digest-keyed radix placement with explicit collision handling
+- `structure/mapping/indexed`
+  - older canonical-order keyed baseline kept as a simpler comparison path
 - `structure/list/indexed`
-  - simple indexed-list semantic
+  - degenerate one-node stable-indexed variant
 - `structure/list/tree`
-  - tree-shaped list semantic
-- `structure/map`
-  - still conceptually part of the architecture, but detailed implementation remains deferred
+  - primary stable-indexed list runtime semantic
 
 ### Commitment Backends
 
