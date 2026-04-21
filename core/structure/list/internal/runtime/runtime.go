@@ -126,6 +126,18 @@ func CommitSlots(scheme commitment.IndexCommitment, slots []cid.Cid) (cid.Cid, e
 	return scheme.Commit(CellsFromSlots(slots))
 }
 
+// ValidateSlots checks that the materialized slot vector recomputes to root.
+func ValidateSlots(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.Cid) error {
+	recomputed, err := CommitSlots(scheme, slots)
+	if err != nil {
+		return err
+	}
+	if !recomputed.Equals(root) {
+		return fmt.Errorf("materialized node state does not match root %s", root.String())
+	}
+	return nil
+}
+
 // ProveSlot proves one slot under a committed node.
 func ProveSlot(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.Cid, slot uint64) (commitment.Cell, []byte, error) {
 	provedRoot, value, proof, err := scheme.Prove(CellsFromSlots(slots), slot)

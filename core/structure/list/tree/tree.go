@@ -182,6 +182,12 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 }
 
 func (s *TreeList) Replace(ctx context.Context, bucketID string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
+	if !oldKey.Defined() {
+		return cid.Undef, fmt.Errorf("old key is undefined")
+	}
+	if !newKey.Defined() {
+		return cid.Undef, fmt.Errorf("new key is undefined")
+	}
 	_, length, err := s.loadRoot(ctx, bucketID, root)
 	if err != nil {
 		return cid.Undef, err
@@ -193,6 +199,9 @@ func (s *TreeList) Replace(ctx context.Context, bucketID string, root cid.Cid, i
 }
 
 func (s *TreeList) Append(ctx context.Context, bucketID string, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
+	if !key.Defined() {
+		return cid.Undef, 0, fmt.Errorf("key is undefined")
+	}
 	rootSlots, length, err := s.loadRoot(ctx, bucketID, root)
 	if err != nil {
 		return cid.Undef, 0, err
@@ -561,7 +570,14 @@ func (s *TreeList) loadNode(ctx context.Context, bucketID string, root cid.Cid, 
 	if isRoot {
 		width = listruntime.RootWidth
 	}
-	return listruntime.LoadSlots(ctx, s.eat, bucketID, root, width)
+	slots, err := listruntime.LoadSlots(ctx, s.eat, bucketID, root, width)
+	if err != nil {
+		return nil, err
+	}
+	if err := listruntime.ValidateSlots(s.scheme, root, slots); err != nil {
+		return nil, err
+	}
+	return slots, nil
 }
 
 func (s *TreeList) commitSlots(ctx context.Context, bucketID string, slots []cid.Cid) (cid.Cid, error) {
@@ -593,6 +609,9 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 		value, ok := view.Get(i)
 		if !ok {
 			return nil, fmt.Errorf("missing value at index %d", i)
+		}
+		if !value.Defined() {
+			return nil, fmt.Errorf("value at index %d is undefined", i)
 		}
 		values[i] = value
 	}
