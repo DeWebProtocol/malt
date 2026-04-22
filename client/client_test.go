@@ -38,12 +38,18 @@ func TestClientGraphFlow(t *testing.T) {
 	if graph.ID != "demo" {
 		t.Fatalf("graph id = %q, want %q", graph.ID, "demo")
 	}
+	if graph.Root != "" {
+		t.Fatalf("graph root = %q, want empty for undefined head", graph.Root)
+	}
 	loadedGraph, err := client.GetGraph(ctx, "demo")
 	if err != nil {
 		t.Fatalf("get graph: %v", err)
 	}
 	if loadedGraph.ID != "demo" {
 		t.Fatalf("loaded graph id = %q, want %q", loadedGraph.ID, "demo")
+	}
+	if loadedGraph.Root != "" {
+		t.Fatalf("loaded graph root = %q, want empty for undefined head", loadedGraph.Root)
 	}
 
 	target := fakeCIDString("alice")
@@ -114,7 +120,10 @@ func TestClientManagedGraphStructureFlow(t *testing.T) {
 	}
 
 	target := fakeCIDString("managed-alice")
-	createResp, err := client.CreateGraphStructure(ctx, "demo", map[string]string{"name": target})
+	createResp, err := client.CreateGraphStructure(ctx, "demo", map[string]string{
+		"name":  target,
+		"/name": target,
+	})
 	if err != nil {
 		t.Fatalf("create managed graph structure: %v", err)
 	}
@@ -128,6 +137,14 @@ func TestClientManagedGraphStructureFlow(t *testing.T) {
 	}
 	if resolveResp.Target != target {
 		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, target)
+	}
+
+	meta, err := client.GetGraph(ctx, "demo")
+	if err != nil {
+		t.Fatalf("get managed graph metadata: %v", err)
+	}
+	if meta.ArcCount != 1 {
+		t.Fatalf("managed graph arc_count = %d, want 1 after canonicalization", meta.ArcCount)
 	}
 
 	updateTarget := fakeCIDString("managed-bob")
@@ -145,6 +162,9 @@ func TestClientManagedGraphStructureFlow(t *testing.T) {
 	}
 	if snapshotResp.Arcs["name"] != updateTarget {
 		t.Fatalf("snapshot target = %q, want %q", snapshotResp.Arcs["name"], updateTarget)
+	}
+	if len(snapshotResp.Arcs) != 1 {
+		t.Fatalf("snapshot arc count = %d, want 1", len(snapshotResp.Arcs))
 	}
 }
 

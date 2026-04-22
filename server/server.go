@@ -221,9 +221,13 @@ func graphToResponse(meta *graph.GraphMeta) *httpapi.Graph {
 	if meta == nil {
 		return nil
 	}
+	root := ""
+	if meta.Root.Defined() {
+		root = meta.Root.String()
+	}
 	return &httpapi.Graph{
 		ID:        meta.ID,
-		Root:      meta.Root.String(),
+		Root:      root,
 		CreatedAt: meta.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: meta.UpdatedAt.Format(time.RFC3339),
 		ArcCount:  meta.ArcCount,

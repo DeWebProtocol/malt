@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -53,12 +54,23 @@ func TestServerHealthAndGraphLifecycle(t *testing.T) {
 		t.Fatalf("create graph status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read graph response: %v", err)
+	}
+	if bytes.Contains(body, []byte(`"root":"b"`)) {
+		t.Fatalf("graph response leaked cid.Undef serialization: %s", string(body))
+	}
+
 	var graphResp httpapi.GraphResponse
-	if err := json.NewDecoder(resp.Body).Decode(&graphResp); err != nil {
+	if err := json.Unmarshal(body, &graphResp); err != nil {
 		t.Fatalf("decode graph response: %v", err)
 	}
 	if graphResp.Graph == nil || graphResp.Graph.ID != "demo" {
 		t.Fatalf("graph response = %+v, want id demo", graphResp.Graph)
+	}
+	if graphResp.Graph.Root != "" {
+		t.Fatalf("graph root = %q, want empty for undefined head", graphResp.Graph.Root)
 	}
 }
 
@@ -136,6 +148,65 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 	}
 	if !verifyResp.Valid {
 		t.Fatal("expected transcript verification to succeed")
+	}
+}
+
+func TestServerManagedGraphCreateCanonicalizesArcCount(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createGraphBody, err := json.Marshal(&httpapi.GraphCreateRequest{ID: "demo"})
+	if err != nil {
+		t.Fatalf("marshal create graph request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/api/v1/graphs", "application/json", bytes.NewReader(createGraphBody))
+	if err != nil {
+		t.Fatalf("create graph request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	target := fakeCIDString("canonical-target")
+	createStructureBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"foo/bar":   target,
+			"/foo//bar": target,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal create structure request: %v", err)
+	}
+
+	resp, err = http.Post(ts.URL+"/api/v1/graphs/demo/structure", "application/json", bytes.NewReader(createStructureBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/graphs/demo")
+	if err != nil {
+		t.Fatalf("get graph request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get graph status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var graphResp httpapi.GraphResponse
+	if err := json.NewDecoder(resp.Body).Decode(&graphResp); err != nil {
+		t.Fatalf("decode graph response: %v", err)
+	}
+	if graphResp.Graph == nil {
+		t.Fatal("expected graph payload")
+	}
+	if graphResp.Graph.ArcCount != 1 {
+		t.Fatalf("graph arc_count = %d, want 1 after canonicalization", graphResp.Graph.ArcCount)
 	}
 }
 

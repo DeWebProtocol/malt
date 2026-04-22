@@ -125,13 +125,17 @@ func (s *Server) handleGraphCreateStructure(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	snapshot := arcset.NewSetFrom(parsedArcs)
+	snapshot, arcCount, err := buildCreateSnapshot(parsedArcs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	root, err := g.Writer().CreateStructure(r.Context(), g.BucketId(), snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.updateManagedGraphHead(r.Context(), graphID, root, countDefinedTargets(parsedArcs)); err != nil {
+	if err := s.updateManagedGraphHead(r.Context(), graphID, root, arcCount); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -270,7 +274,12 @@ func (s *Server) handleRootCreateStructure(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	root, err := g.Writer().CreateStructure(r.Context(), g.BucketId(), arcset.NewSetFrom(parsedArcs))
+	snapshot, _, err := buildCreateSnapshot(parsedArcs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	root, err := g.Writer().CreateStructure(r.Context(), g.BucketId(), snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -539,6 +548,30 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 	return out, nil
 }
 
+func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {
+	canonical := make(map[string]cid.Cid, len(arcs))
+	for rawPath, target := range arcs {
+		path := arcset.CanonicalizePath(rawPath)
+		if path.IsEmpty() {
+			return nil, 0, fmt.Errorf("path must not be empty")
+		}
+
+		if existing, ok := canonical[path.String()]; ok && !existing.Equals(target) {
+			return nil, 0, fmt.Errorf("duplicate canonical path %q in arcs", path.String())
+		}
+		canonical[path.String()] = target
+	}
+
+	arcCount := 0
+	for _, target := range canonical {
+		if target.Defined() {
+			arcCount++
+		}
+	}
+
+	return arcset.NewSetFrom(canonical), arcCount, nil
+}
+
 func decodeTargetCID(raw string) cid.Cid {
 	if raw == "" {
 		return cid.Undef
@@ -627,16 +660,6 @@ func nonEmpty(primary string, fallback string) string {
 		return primary
 	}
 	return fallback
-}
-
-func countDefinedTargets(arcs map[string]cid.Cid) int {
-	count := 0
-	for _, target := range arcs {
-		if target.Defined() {
-			count++
-		}
-	}
-	return count
 }
 
 func applyArcDelta(current int, op writer.ArcOp) int {

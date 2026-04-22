@@ -49,11 +49,11 @@ type LinkInfo struct {
 
 // IPLDParser parses IPLD blocks and extracts links.
 type IPLDParser struct {
-	cas Client
+	cas Reader
 }
 
 // NewIPLDParser creates a new IPLD parser.
-func NewIPLDParser(cas Client) *IPLDParser {
+func NewIPLDParser(cas Reader) *IPLDParser {
 	return &IPLDParser{cas: cas}
 }
 

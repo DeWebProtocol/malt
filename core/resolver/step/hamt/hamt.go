@@ -64,12 +64,12 @@ func WithMaxDepth(d int) Option {
 
 // Resolver implements step.Step for HAMT data structures.
 type Resolver struct {
-	cas    cas.Client
+	cas    cas.Reader
 	config Config
 }
 
 // NewResolver creates a new HAMT resolver with default configuration.
-func NewResolver(c cas.Client, opts ...Option) *Resolver {
+func NewResolver(c cas.Reader, opts ...Option) *Resolver {
 	config := Config{
 		BitWidth: DefaultBitWidth,
 		HashFunc: murmur3Hash,
