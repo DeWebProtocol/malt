@@ -10,6 +10,7 @@
 package codec
 
 import (
+	"bytes"
 	"fmt"
 
 	cid "github.com/ipfs/go-cid"
@@ -22,6 +23,24 @@ const (
 	CodecMaltListKZG = 0x300002 // malt-list-kzg
 	CodecMaltMapIPA  = 0x300003 // malt-map-ipa
 	CodecMaltListIPA = 0x300004 // malt-list-ipa
+)
+
+// SemanticKind indicates the structural semantic encoded in the typed CID.
+type SemanticKind string
+
+const (
+	SemanticKindUnknown SemanticKind = "unknown"
+	SemanticKindMap     SemanticKind = "map"
+	SemanticKindList    SemanticKind = "list"
+)
+
+// BackendKind indicates the primitive commitment backend used by the typed CID.
+type BackendKind string
+
+const (
+	BackendKindUnknown BackendKind = "unknown"
+	BackendKindKZG     BackendKind = "kzg"
+	BackendKindIPA     BackendKind = "ipa"
 )
 
 // CodecMaltKZG is an alias for [CodecMaltMapKZG] (map roots use KZG in the current prototype).
@@ -80,6 +99,27 @@ func NewListIPACid(commitment []byte) (cid.Cid, error) {
 	return newMaltCid(CodecMaltListIPA, commitment)
 }
 
+// NewTypedCID constructs a typed MALT CID for the given semantic/backend kinds.
+func NewTypedCID(semantic SemanticKind, backend BackendKind, commitment []byte) (cid.Cid, error) {
+	switch backend {
+	case BackendKindKZG:
+		if semantic == SemanticKindList {
+			return NewListKZGCid(commitment)
+		}
+		if semantic == SemanticKindMap {
+			return NewMapKZGCid(commitment)
+		}
+	case BackendKindIPA:
+		if semantic == SemanticKindList {
+			return NewListIPACid(commitment)
+		}
+		if semantic == SemanticKindMap {
+			return NewMapIPACid(commitment)
+		}
+	}
+	return cid.Undef, fmt.Errorf("unsupported typed cid kind: semantic=%s backend=%s", semantic, backend)
+}
+
 // newMaltCid creates a CIDv1 with the given codec and commitment bytes.
 // Uses identity multihash (0x00) to store the commitment directly.
 func newMaltCid(codec uint64, commitment []byte) (cid.Cid, error) {
@@ -97,6 +137,30 @@ func IsMaltCid(c cid.Cid) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// SemanticKindOf returns the semantic kind for a typed MALT CID.
+func SemanticKindOf(c cid.Cid) SemanticKind {
+	switch c.Prefix().Codec {
+	case CodecMaltMapKZG, CodecMaltMapIPA:
+		return SemanticKindMap
+	case CodecMaltListKZG, CodecMaltListIPA:
+		return SemanticKindList
+	default:
+		return SemanticKindUnknown
+	}
+}
+
+// BackendKindOf returns the backend kind for a typed MALT CID.
+func BackendKindOf(c cid.Cid) BackendKind {
+	switch c.Prefix().Codec {
+	case CodecMaltMapKZG, CodecMaltListKZG:
+		return BackendKindKZG
+	case CodecMaltMapIPA, CodecMaltListIPA:
+		return BackendKindIPA
+	default:
+		return BackendKindUnknown
 	}
 }
 
@@ -122,6 +186,21 @@ func ExtractCommitment(c cid.Cid) ([]byte, error) {
 		return nil, fmt.Errorf("expected identity hash, got code=%x", decoded.Code)
 	}
 	return decoded.Digest, nil
+}
+
+// EqualCommitment reports whether a and b carry the same commitment bytes.
+// This is useful when comparing typed roots that differ only by semantic codec
+// (e.g., map vs list) but refer to the same primitive commitment.
+func EqualCommitment(a, b cid.Cid) (bool, error) {
+	ab, err := ExtractCommitment(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := ExtractCommitment(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(ab, bb), nil
 }
 
 // CodecName returns the locked wire name for a typed MALT multicodec.

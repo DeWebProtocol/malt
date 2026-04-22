@@ -126,6 +126,28 @@ func TestNewListKZGCid(t *testing.T) {
 	}
 }
 
+func TestEqualCommitmentAcrossSemanticCodecs(t *testing.T) {
+	commitment := make([]byte, codec.KZGCommitmentSize)
+	for i := range commitment {
+		commitment[i] = byte(i)
+	}
+	mapCID, err := codec.NewMapKZGCid(commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCID, err := codec.NewListKZGCid(commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := codec.EqualCommitment(mapCID, listCID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected EqualCommitment(map,list) to be true")
+	}
+}
+
 func TestCodecName(t *testing.T) {
 	tests := []struct {
 		codec    uint64

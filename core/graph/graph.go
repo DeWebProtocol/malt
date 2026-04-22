@@ -7,11 +7,14 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
+	"github.com/dewebprotocol/malt/core/structure/list"
+	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -24,7 +27,9 @@ import (
 type Graph struct {
 	id              string
 	bucketId        string
+	scheme          commitment.IndexCommitment
 	semantic        mapping.Semantics
+	listSemantic    list.Semantics
 	resolver        *resolver.Resolver
 	wr              *writer.Writer
 	eat             eat.EAT
@@ -65,6 +70,10 @@ func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
 	}
+	listSemantic, err := listtree.NewList(scheme, eat)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create list semantic: %w", err)
+	}
 
 	// Create per-graph explicit resolver
 	explicitStep := explicit.NewResolver(eat, semantic, bucketId)
@@ -82,7 +91,9 @@ func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, e
 	return &Graph{
 		id:              id,
 		bucketId:        bucketId,
+		scheme:          scheme,
 		semantic:        semantic,
+		listSemantic:    listSemantic,
 		resolver:        res,
 		wr:              wr,
 		eat:             eat,
@@ -103,6 +114,11 @@ func (g *Graph) BucketId() string {
 // Semantic returns the per-graph keyed-map semantic.
 func (g *Graph) Semantic() mapping.Semantics {
 	return g.semantic
+}
+
+// ListSemantic returns the per-graph list semantic.
+func (g *Graph) ListSemantic() list.Semantics {
+	return g.listSemantic
 }
 
 // Resolver returns the per-graph resolver.

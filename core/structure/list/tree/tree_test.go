@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
@@ -113,6 +114,15 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(values))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
+			}
+			if codec.SemanticKindOf(root) != codec.SemanticKindList {
+				t.Fatalf("root semantic kind = %s, want %s", codec.SemanticKindOf(root), codec.SemanticKindList)
+			}
+			if name == "kzg" && codec.BackendKindOf(root) != codec.BackendKindKZG {
+				t.Fatalf("root backend kind = %s, want %s", codec.BackendKindOf(root), codec.BackendKindKZG)
+			}
+			if name == "ipa" && codec.BackendKindOf(root) != codec.BackendKindIPA {
+				t.Fatalf("root backend kind = %s, want %s", codec.BackendKindOf(root), codec.BackendKindIPA)
 			}
 
 			for _, index := range []uint64{0, 254, 255, 256, 299} {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/structure"
@@ -585,10 +586,21 @@ func (s *TreeList) commitSlots(ctx context.Context, bucketID string, slots []cid
 	if err != nil {
 		return cid.Undef, err
 	}
-	if err := layout.StoreSlots(ctx, s.eat, bucketID, root, slots); err != nil {
+
+	// Rewrap root into the list-typed codec for the same backend.
+	commBytes, err := codec.ExtractCommitment(root)
+	if err != nil {
 		return cid.Undef, err
 	}
-	return root, nil
+	listRoot, err := codec.NewTypedCID(codec.SemanticKindList, codec.BackendKindOf(root), commBytes)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	if err := layout.StoreSlots(ctx, s.eat, bucketID, listRoot, slots); err != nil {
+		return cid.Undef, err
+	}
+	return listRoot, nil
 }
 
 func encodeProof(query list.Query, envelope proofEnvelope) (list.Query, structure.Proof, error) {

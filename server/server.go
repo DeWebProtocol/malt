@@ -70,17 +70,28 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 
-	mux.HandleFunc("POST /api/v1/graphs", s.handleGraphCreate)
-	mux.HandleFunc("GET /api/v1/graphs", s.handleGraphList)
-	mux.HandleFunc("GET /api/v1/graphs/{id}", s.handleGraphGet)
-	mux.HandleFunc("DELETE /api/v1/graphs/{id}", s.handleGraphDelete)
-	mux.HandleFunc("POST /api/v1/graphs/{id}/freeze", s.handleGraphFreeze)
-	mux.HandleFunc("POST /api/v1/graphs/{id}/structure", s.handleGraphCreateStructure)
-	mux.HandleFunc("GET /api/v1/graphs/{id}/resolve", s.handleGraphResolve)
-	mux.HandleFunc("GET /api/v1/graphs/{id}/proof", s.handleGraphProof)
-	mux.HandleFunc("GET /api/v1/graphs/{id}/snapshot", s.handleGraphSnapshot)
-	mux.HandleFunc("POST /api/v1/graphs/{id}/update", s.handleGraphUpdate)
-	mux.HandleFunc("POST /api/v1/graphs/{id}/updates:batch", s.handleGraphBatchUpdate)
+	// Bucket-first managed metadata surface (Phase 2).
+	mux.HandleFunc("POST /api/v1/buckets", s.handleBucketCreate)
+	mux.HandleFunc("GET /api/v1/buckets", s.handleBucketList)
+	mux.HandleFunc("GET /api/v1/buckets/{id}", s.handleBucketGet)
+	mux.HandleFunc("DELETE /api/v1/buckets/{id}", s.handleBucketDelete)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/freeze", s.handleBucketFreeze)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/structure", s.handleBucketCreateStructure)
+	mux.HandleFunc("PUT /api/v1/buckets/{id}/head", s.handleBucketHeadSet)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/maps", s.handleBucketMapsCreate)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/snapshot", s.handleBucketMapsSnapshot)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/resolve", s.handleBucketMapsResolve)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/update", s.handleBucketMapsUpdate)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/updates:batch", s.handleBucketMapsBatchUpdate)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/lists", s.handleBucketListsCreate)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/lists/{root}", s.handleBucketListsGet)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/stat", s.handleBucketStat)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/content", s.handleBucketContent)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/resolve", s.handleBucketResolve)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/proof", s.handleBucketProof)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/snapshot", s.handleBucketSnapshot)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/update", s.handleBucketUpdate)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/updates:batch", s.handleBucketBatchUpdate)
 
 	mux.HandleFunc("POST /api/v1/roots", s.handleRootCreateStructure)
 	mux.HandleFunc("GET /api/v1/roots/{root}/resolve", s.handleRootResolve)
@@ -217,7 +228,7 @@ func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {
 	return arcs, count, nil
 }
 
-func graphToResponse(meta *graph.GraphMeta) *httpapi.Graph {
+func bucketToResponse(meta *graph.GraphMeta) *httpapi.Bucket {
 	if meta == nil {
 		return nil
 	}
@@ -225,7 +236,7 @@ func graphToResponse(meta *graph.GraphMeta) *httpapi.Graph {
 	if meta.Root.Defined() {
 		root = meta.Root.String()
 	}
-	return &httpapi.Graph{
+	return &httpapi.Bucket{
 		ID:        meta.ID,
 		Root:      root,
 		CreatedAt: meta.CreatedAt.Format(time.RFC3339),

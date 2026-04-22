@@ -54,7 +54,14 @@ func fakeCID(seed string) cid.Cid {
 }
 
 func makeArcSet(pairs map[string]cid.Cid) *arcset.Set {
-	return arcset.NewSetFrom(pairs)
+	out := make(map[string]cid.Cid, len(pairs)+1)
+	for path, target := range pairs {
+		out[path] = target
+	}
+	if _, ok := out["@payload"]; !ok {
+		out["@payload"] = fakeCID("payload")
+	}
+	return arcset.NewSetFrom(out)
 }
 
 // mockLineageRecorder is a thread-safe mock for testing lineage recording.
@@ -448,8 +455,8 @@ func TestWriter_GetSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSnapshot failed: %v", err)
 	}
-	if snapshot.Len() != 2 {
-		t.Errorf("expected 2 arcs, got %d", snapshot.Len())
+	if snapshot.Len() != 3 {
+		t.Errorf("expected 3 arcs including @payload, got %d", snapshot.Len())
 	}
 
 	target, ok := snapshot.Get(arcset.CanonicalizePath("x"))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -146,7 +147,11 @@ func ValidateSlots(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.
 	if err != nil {
 		return err
 	}
-	if !recomputed.Equals(root) {
+	ok, err := codec.EqualCommitment(recomputed, root)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return fmt.Errorf("materialized node state does not match root %s", root.String())
 	}
 	return nil
@@ -158,7 +163,11 @@ func ProveSlot(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.Cid,
 	if err != nil {
 		return nil, nil, err
 	}
-	if !provedRoot.Equals(root) {
+	ok, err := codec.EqualCommitment(provedRoot, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
 		return nil, nil, fmt.Errorf("recomputed node root does not match requested root")
 	}
 	return value, proof, nil

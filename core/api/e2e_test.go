@@ -36,7 +36,8 @@ func newTestGraph(t *testing.T) (*Node, *graph.Graph) {
 }
 
 func buildArcs(n int) map[string]cid.Cid {
-	arcs := make(map[string]cid.Cid, n)
+	arcs := make(map[string]cid.Cid, n+1)
+	arcs["@payload"] = fakeCID("payload")
 	for i := 0; i < n; i++ {
 		arcs[fmt.Sprintf("arc%d", i)] = fakeCID(fmt.Sprintf("data%d", i))
 	}
@@ -281,8 +282,8 @@ func TestAPI_InsertDelete(t *testing.T) {
 		}
 		count++
 	}
-	if count != 10 {
-		t.Errorf("expected 10 arcs after insert+delete, got %d", count)
+	if count != 11 {
+		t.Errorf("expected 11 arcs including @payload after insert+delete, got %d", count)
 	}
 }
 

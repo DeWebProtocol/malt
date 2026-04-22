@@ -11,22 +11,22 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 	updateCmd.AddCommand(updateBatchCmd)
 	updateCmd.AddCommand(createCmd)
-	updateCmd.Flags().StringVar(&updateGraphID, "graph", "", "Update the managed graph head instead of providing an explicit root")
-	updateBatchCmd.Flags().StringVar(&batchGraphID, "graph", "", "Batch update the managed graph head instead of providing an explicit root")
-	createCmd.Flags().StringVar(&createGraphID, "graph", "", "Create or replace the managed graph head")
+	updateCmd.Flags().StringVarP(&updateBucketID, "bucket", "b", "", "Update the managed bucket head instead of providing an explicit root")
+	updateBatchCmd.Flags().StringVarP(&batchBucketID, "bucket", "b", "", "Batch update the managed bucket head instead of providing an explicit root")
+	createCmd.Flags().StringVarP(&createBucketID, "bucket", "b", "", "Create or replace the managed bucket head")
 }
 
 var (
-	updateGraphID string
-	batchGraphID  string
-	createGraphID string
+	updateBucketID string
+	batchBucketID  string
+	createBucketID string
 )
 
 var updateCmd = &cobra.Command{
 	Use:   "update [<root>] <path> <target>",
 	Short: "Update an arc in a MALT structure",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if updateGraphID != "" {
+		if updateBucketID != "" {
 			return cobra.ExactArgs(2)(cmd, args)
 		}
 		return cobra.ExactArgs(3)(cmd, args)
@@ -48,8 +48,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	)
 
-	if updateGraphID != "" {
-		out, err := client.UpdateGraph(cmd.Context(), updateGraphID, args[0], args[1])
+	if updateBucketID != "" {
+		out, err := client.UpdateBucket(cmd.Context(), updateBucketID, args[0], args[1])
 		if err != nil {
 			return daemonCommandError(err)
 		}
@@ -85,7 +85,7 @@ var updateBatchCmd = &cobra.Command{
 	Use:   "batch [<root>] <path=target>...",
 	Short: "Batch update multiple arcs",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if batchGraphID != "" {
+		if batchBucketID != "" {
 			return cobra.MinimumNArgs(1)(cmd, args)
 		}
 		return cobra.MinimumNArgs(2)(cmd, args)
@@ -96,13 +96,13 @@ var updateBatchCmd = &cobra.Command{
 func runBatchUpdate(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	updates, err := parseUpdatePairs(args, batchGraphID == "")
+	updates, err := parseUpdatePairs(args, batchBucketID == "")
 	if err != nil {
 		return err
 	}
 
-	if batchGraphID != "" {
-		result, err := client.BatchUpdateGraph(cmd.Context(), batchGraphID, updates)
+	if batchBucketID != "" {
+		result, err := client.BatchUpdateBucket(cmd.Context(), batchBucketID, updates)
 		if err != nil {
 			return daemonCommandError(err)
 		}
@@ -137,8 +137,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if createGraphID != "" {
-		resp, err := client.CreateGraphStructure(cmd.Context(), createGraphID, arcs)
+	if createBucketID != "" {
+		resp, err := client.CreateBucketStructure(cmd.Context(), createBucketID, arcs)
 		if err != nil {
 			return daemonCommandError(err)
 		}

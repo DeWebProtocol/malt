@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
@@ -279,7 +280,52 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 	}
 }
 
-func TestGatewayStructureOnlyNode(t *testing.T) {
+func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
+	e := newTestEAT()
+	semantic := newSemantic(t, e)
+	c := mock.NewCAS()
+
+	ctx := context.Background()
+	commitment := make([]byte, codec.KZGCommitmentSize)
+	for i := range commitment {
+		commitment[i] = byte(i + 1)
+	}
+	listRoot, err := codec.NewListKZGCid(commitment)
+	if err != nil {
+		t.Fatalf("NewListKZGCid failed: %v", err)
+	}
+	root := commitStructure(t, ctx, semantic, e, testBucketId, map[string]cid.Cid{
+		"file": listRoot,
+	})
+
+	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	implicitR := implicit.NewResolver(c)
+	g := resolver.NewResolver(explicitR, implicitR)
+
+	keyResult, err := g.ResolveKey(root, "file")
+	if err != nil {
+		t.Fatalf("ResolveKey failed: %v", err)
+	}
+	if !keyResult.Target.Equals(listRoot) {
+		t.Fatalf("ResolveKey target = %v, want %v", keyResult.Target, listRoot)
+	}
+	if len(keyResult.Transcript.Steps) != 1 {
+		t.Fatalf("ResolveKey steps = %d, want 1", len(keyResult.Transcript.Steps))
+	}
+
+	resolveResult, err := g.Resolve(root, "file")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !resolveResult.Target.Equals(listRoot) {
+		t.Fatalf("Resolve target = %v, want list root %v", resolveResult.Target, listRoot)
+	}
+	if len(resolveResult.Transcript.Steps) != 1 {
+		t.Fatalf("Resolve should not append @payload for list; steps = %d", len(resolveResult.Transcript.Steps))
+	}
+}
+
+func TestGatewayMissingPayloadBindingFails(t *testing.T) {
 	e := newTestEAT()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -294,14 +340,8 @@ func TestGatewayStructureOnlyNode(t *testing.T) {
 	g := resolver.NewResolver(explicitR, implicitR)
 
 	result, err := g.Resolve(root, "")
-	if err != nil {
-		t.Fatalf("Resolve with empty path failed: %v", err)
-	}
-	if !result.Target.Equals(root) {
-		t.Errorf("Empty path resolve target = %v, want structure root %v", result.Target, root)
-	}
-	if len(result.Transcript.Steps) != 0 {
-		t.Errorf("Expected 0 steps for structure-only node, got %d", len(result.Transcript.Steps))
+	if err == nil {
+		t.Fatalf("Resolve unexpectedly succeeded: %+v", result)
 	}
 }
 
