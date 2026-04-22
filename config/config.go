@@ -1,100 +1,373 @@
-// Package config provides configuration file parsing.
-// It only handles loading from file/env/flags, not component configuration.
+// Package config provides configuration loading and persistence for MALT.
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
-// Config holds raw configuration values loaded from file/env/flags.
-// Components use their own Options pattern for configuration.
+const (
+	defaultRPCListen          = "127.0.0.1:4317"
+	defaultEmbeddedMockListen = "127.0.0.1:4318"
+	defaultCASMode            = "embedded-mock"
+	defaultStructureBackend   = "kzg"
+	defaultEATType            = "versioned"
+	defaultKVStoreType        = "badger"
+	defaultLoggingLevel       = "info"
+	defaultLoggingFormat      = "json"
+	defaultCASTimeout         = "30s"
+)
+
+// Config is the root configuration for the MALT runtime.
 type Config struct {
-	CommitmentType string           `mapstructure:"commitment_type"`
-	KVStoreType    string           `mapstructure:"kvstore_type"`
-	EATType        string           `mapstructure:"eat_type"`
-	CASType        string           `mapstructure:"cas_type"`
-	KVStore        KVStoreConfig    `mapstructure:"kvstore"`
-	Commitment     CommitmentConfig `mapstructure:"commitment"`
-	CAS            CASConfig        `mapstructure:"cas"`
-	Logging        LoggingConfig    `mapstructure:"logging"`
+	RPC       RPCConfig       `json:"rpc"`
+	State     StateConfig     `json:"state"`
+	Structure StructureConfig `json:"structure"`
+	CAS       CASConfig       `json:"cas"`
+	Logging   LoggingConfig   `json:"logging"`
 }
 
+// RPCConfig configures the local daemon HTTP endpoint.
+type RPCConfig struct {
+	Listen string `json:"listen"`
+}
+
+// StateConfig configures local durable runtime state.
+type StateConfig struct {
+	RootDir string        `json:"root_dir"`
+	KVStore KVStoreConfig `json:"kvstore"`
+	EAT     EATConfig     `json:"eat"`
+	Lineage LineageConfig `json:"lineage"`
+}
+
+// KVStoreConfig configures the local KV store.
 type KVStoreConfig struct {
-	Path     string `mapstructure:"path"`
-	InMemory bool   `mapstructure:"in_memory"`
+	Type string `json:"type"`
+	Path string `json:"path"`
 }
 
-type CommitmentConfig struct {
-	VectorSize int `mapstructure:"vector_size"`
+// EATConfig configures the EAT implementation.
+type EATConfig struct {
+	Type string `json:"type"`
 }
 
+// LineageConfig configures lineage persistence.
+type LineageConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+// StructureConfig configures structure runtime defaults.
+type StructureConfig struct {
+	DefaultBackend string `json:"default_backend"`
+}
+
+// CASConfig configures the immutable content backend.
 type CASConfig struct {
-	GatewayURL  string `mapstructure:"gateway_url"`
-	Timeout     string `mapstructure:"timeout"`
-	MockLatency string `mapstructure:"mock_latency"` // mock CAS uniform latency (e.g. "100ms")
+	Mode         string             `json:"mode"`
+	BaseURL      string             `json:"base_url,omitempty"`
+	Timeout      string             `json:"timeout"`
+	EmbeddedMock EmbeddedMockConfig `json:"embedded_mock"`
 }
 
+// EmbeddedMockConfig configures the embedded mock CAS service.
+type EmbeddedMockConfig struct {
+	Enabled bool   `json:"enabled"`
+	Listen  string `json:"listen"`
+	Latency string `json:"latency,omitempty"`
+}
+
+// LoggingConfig configures runtime logging.
 type LoggingConfig struct {
-	Level  string `mapstructure:"level"`
-	Format string `mapstructure:"format"`
+	Level  string `json:"level"`
+	Format string `json:"format"`
 }
 
-// Init initializes Viper with default values.
-func Init() {
-	viper.SetDefault("commitment_type", "kzg")
-	viper.SetDefault("kvstore_type", "memory")
-	viper.SetDefault("eat_type", "versioned")
-	viper.SetDefault("cas_type", "mock")
-	viper.SetDefault("kvstore.path", "./data/malt.db")
-	viper.SetDefault("kvstore.in_memory", true)
-	viper.SetDefault("commitment.vector_size", 256)
-	viper.SetDefault("cas.gateway_url", "https://ipfs.io/ipfs")
-	viper.SetDefault("cas.timeout", "30s")
-	viper.SetDefault("logging.level", "info")
-	viper.SetDefault("logging.format", "json")
+// DefaultConfig returns the runtime default configuration.
+func DefaultConfig() *Config {
+	home, _ := os.UserHomeDir()
+	stateRoot := filepath.Join(home, ".malt", "state")
 
-	viper.SetEnvPrefix("malt")
-	viper.AutomaticEnv()
-
-	viper.SetConfigName("malt")
-	viper.SetConfigType("json")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("$HOME/.malt")
-	viper.AddConfigPath("/etc/malt/")
+	return &Config{
+		RPC: RPCConfig{
+			Listen: defaultRPCListen,
+		},
+		State: StateConfig{
+			RootDir: stateRoot,
+			KVStore: KVStoreConfig{
+				Type: defaultKVStoreType,
+				Path: "kv",
+			},
+			EAT: EATConfig{
+				Type: defaultEATType,
+			},
+			Lineage: LineageConfig{
+				Enabled: true,
+			},
+		},
+		Structure: StructureConfig{
+			DefaultBackend: defaultStructureBackend,
+		},
+		CAS: CASConfig{
+			Mode:    defaultCASMode,
+			Timeout: defaultCASTimeout,
+			EmbeddedMock: EmbeddedMockConfig{
+				Enabled: true,
+				Listen:  defaultEmbeddedMockListen,
+			},
+		},
+		Logging: LoggingConfig{
+			Level:  defaultLoggingLevel,
+			Format: defaultLoggingFormat,
+		},
+	}
 }
 
-// Load loads configuration from all sources.
-func Load() (*Config, error) {
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("error reading config file: %w", err)
+// DefaultConfigPath returns the canonical default config path.
+func DefaultConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home dir: %w", err)
+	}
+	return filepath.Join(home, ".malt", "malt.json"), nil
+}
+
+// ResolveConfigPath returns the explicit path if provided, otherwise the default path.
+func ResolveConfigPath(explicit string) (string, error) {
+	if explicit != "" {
+		return ExpandPath(explicit)
+	}
+	return DefaultConfigPath()
+}
+
+// ExpandPath expands "~" prefixes and cleans the resulting path.
+func ExpandPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("determine home dir: %w", err)
 		}
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(path, "~/"), "~\\")
+		return filepath.Clean(filepath.Join(home, trimmed)), nil
 	}
+	return filepath.Clean(path), nil
+}
 
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("unable to decode config: %w", err)
+// Load loads configuration from the default config path if it exists, otherwise returns defaults.
+func Load() (*Config, error) {
+	path, err := DefaultConfigPath()
+	if err != nil {
+		return nil, err
 	}
-
-	return &cfg, nil
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			cfg := DefaultConfig()
+			return cfg, cfg.Validate()
+		}
+		return nil, fmt.Errorf("stat config file: %w", err)
+	}
+	return LoadFromFile(path)
 }
 
 // LoadFromFile loads configuration from a specific file.
 func LoadFromFile(path string) (*Config, error) {
-	viper.SetConfigFile(path)
+	resolved, err := ExpandPath(path)
+	if err != nil {
+		return nil, err
+	}
 
-	var cfg Config
-	if err := viper.ReadInConfig(); err != nil {
+	data, err := os.ReadFile(resolved)
+	if err != nil {
 		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("unable to decode config: %w", err)
+
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
 
-	return &cfg, nil
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// WriteToFile writes the config to the given path in pretty JSON format.
+func WriteToFile(path string, cfg *Config) error {
+	resolved, err := ExpandPath(path)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := os.WriteFile(resolved, data, 0o644); err != nil {
+		return fmt.Errorf("write config file: %w", err)
+	}
+	return nil
+}
+
+func (c *Config) applyDefaults() {
+	defaults := DefaultConfig()
+	if c.RPC.Listen == "" {
+		c.RPC.Listen = defaults.RPC.Listen
+	}
+	if c.State.RootDir == "" {
+		c.State.RootDir = defaults.State.RootDir
+	}
+	if c.State.KVStore.Type == "" {
+		c.State.KVStore.Type = defaults.State.KVStore.Type
+	}
+	if c.State.KVStore.Path == "" {
+		c.State.KVStore.Path = defaults.State.KVStore.Path
+	}
+	if c.State.EAT.Type == "" {
+		c.State.EAT.Type = defaults.State.EAT.Type
+	}
+	if c.Structure.DefaultBackend == "" {
+		c.Structure.DefaultBackend = defaults.Structure.DefaultBackend
+	}
+	if c.CAS.Mode == "" {
+		c.CAS.Mode = defaults.CAS.Mode
+	}
+	if c.CAS.Timeout == "" {
+		c.CAS.Timeout = defaults.CAS.Timeout
+	}
+	if c.CAS.EmbeddedMock.Listen == "" {
+		c.CAS.EmbeddedMock.Listen = defaults.CAS.EmbeddedMock.Listen
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = defaults.Logging.Level
+	}
+	if c.Logging.Format == "" {
+		c.Logging.Format = defaults.Logging.Format
+	}
+
+	if c.CAS.Mode == "embedded-mock" {
+		c.CAS.EmbeddedMock.Enabled = true
+	}
+}
+
+// Validate validates and normalizes the config.
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	c.applyDefaults()
+
+	var err error
+	c.State.RootDir, err = ExpandPath(c.State.RootDir)
+	if err != nil {
+		return err
+	}
+
+	switch c.State.KVStore.Type {
+	case "badger", "memory":
+	default:
+		return fmt.Errorf("unsupported state.kvstore.type %q", c.State.KVStore.Type)
+	}
+
+	switch c.State.EAT.Type {
+	case "overwrite", "versioned", "simple":
+	default:
+		return fmt.Errorf("unsupported state.eat.type %q", c.State.EAT.Type)
+	}
+
+	switch c.Structure.DefaultBackend {
+	case "kzg":
+	default:
+		return fmt.Errorf("unsupported structure.default_backend %q", c.Structure.DefaultBackend)
+	}
+
+	switch c.CAS.Mode {
+	case "external", "embedded-mock":
+	default:
+		return fmt.Errorf("unsupported cas.mode %q", c.CAS.Mode)
+	}
+
+	if _, err := c.CASTimeout(); err != nil {
+		return fmt.Errorf("invalid cas.timeout: %w", err)
+	}
+
+	if c.CAS.Mode == "external" {
+		if c.CAS.BaseURL == "" {
+			return fmt.Errorf("cas.base_url is required for external mode")
+		}
+	}
+
+	if c.CAS.Mode == "embedded-mock" && c.CAS.EmbeddedMock.Listen == "" {
+		return fmt.Errorf("cas.embedded_mock.listen is required for embedded-mock mode")
+	}
+
+	if c.CAS.EmbeddedMock.Latency != "" {
+		if _, err := time.ParseDuration(c.CAS.EmbeddedMock.Latency); err != nil {
+			return fmt.Errorf("invalid cas.embedded_mock.latency: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ConfigDir returns the parent directory of the config file.
+func ConfigDir(configPath string) (string, error) {
+	resolved, err := ResolveConfigPath(configPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(resolved), nil
+}
+
+// RPCBaseURL returns the daemon base URL.
+func (c *Config) RPCBaseURL() string {
+	listen := c.RPC.Listen
+	if !strings.HasPrefix(listen, "http://") && !strings.HasPrefix(listen, "https://") {
+		return "http://" + listen
+	}
+	return listen
+}
+
+// APIBaseURL returns the fixed daemon API v1 base URL.
+func (c *Config) APIBaseURL() string {
+	return strings.TrimRight(c.RPCBaseURL(), "/") + "/api/v1"
+}
+
+// CASBaseURL returns the active CAS HTTP endpoint.
+func (c *Config) CASBaseURL() string {
+	if c.CAS.Mode == "embedded-mock" {
+		return "http://" + c.CAS.EmbeddedMock.Listen
+	}
+	return strings.TrimRight(c.CAS.BaseURL, "/")
+}
+
+// KVStorePath returns the absolute KVStore path.
+func (c *Config) KVStorePath() string {
+	if filepath.IsAbs(c.State.KVStore.Path) {
+		return c.State.KVStore.Path
+	}
+	return filepath.Join(c.State.RootDir, c.State.KVStore.Path)
 }
 
 // CASTimeout parses and returns the CAS timeout.
@@ -102,17 +375,20 @@ func (c *Config) CASTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.CAS.Timeout)
 }
 
-// CASMockLatency parses and returns the mock CAS latency.
-// Returns 0 if not set, letting the mock use its internal defaults.
-func (c *Config) CASMockLatency() (time.Duration, error) {
-	if c.CAS.MockLatency == "" {
+// EmbeddedMockLatency parses the embedded mock latency if configured.
+func (c *Config) EmbeddedMockLatency() (time.Duration, error) {
+	if c.CAS.EmbeddedMock.Latency == "" {
 		return 0, nil
 	}
-	return time.ParseDuration(c.CAS.MockLatency)
+	return time.ParseDuration(c.CAS.EmbeddedMock.Latency)
 }
 
-// String returns a string representation of the config.
+// String returns a compact string representation of the config.
 func (c *Config) String() string {
-	return fmt.Sprintf("Config{commitment=%s, kv=%s, eat=%s, cas=%s}",
-		c.CommitmentType, c.KVStoreType, c.EATType, c.CASType)
+	return fmt.Sprintf("Config{rpc=%s, state=%s, backend=%s, cas=%s}",
+		c.RPC.Listen,
+		c.State.RootDir,
+		c.Structure.DefaultBackend,
+		c.CAS.Mode,
+	)
 }

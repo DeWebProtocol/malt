@@ -6,269 +6,190 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
-// resetViper clears all global Viper state so that tests do not pollute each other.
-func resetViper(t *testing.T) {
-	t.Helper()
-	t.Cleanup(func() {
-		viper.Reset()
-	})
-}
+func TestDefaultConfig(t *testing.T) {
+	cfg := DefaultConfig()
 
-func TestInit_Defaults(t *testing.T) {
-	resetViper(t)
-
-	Init()
-
-	if got := viper.GetString("commitment_type"); got != "kzg" {
-		t.Errorf("commitment_type = %q, want %q", got, "kzg")
+	if cfg.RPC.Listen != "127.0.0.1:4317" {
+		t.Fatalf("RPC.Listen = %q", cfg.RPC.Listen)
 	}
-	if got := viper.GetString("kvstore_type"); got != "memory" {
-		t.Errorf("kvstore_type = %q, want %q", got, "memory")
+	if cfg.State.KVStore.Type != "badger" {
+		t.Fatalf("State.KVStore.Type = %q", cfg.State.KVStore.Type)
 	}
-	if got := viper.GetString("eat_type"); got != "versioned" {
-		t.Errorf("eat_type = %q, want %q", got, "versioned")
+	if cfg.State.EAT.Type != "versioned" {
+		t.Fatalf("State.EAT.Type = %q", cfg.State.EAT.Type)
 	}
-	if got := viper.GetString("cas_type"); got != "mock" {
-		t.Errorf("cas_type = %q, want %q", got, "mock")
+	if cfg.Structure.DefaultBackend != "kzg" {
+		t.Fatalf("Structure.DefaultBackend = %q", cfg.Structure.DefaultBackend)
 	}
-	if got := viper.GetString("kvstore.path"); got != "./data/malt.db" {
-		t.Errorf("kvstore.path = %q, want %q", got, "./data/malt.db")
+	if cfg.CAS.Mode != "embedded-mock" {
+		t.Fatalf("CAS.Mode = %q", cfg.CAS.Mode)
 	}
-	if got := viper.GetBool("kvstore.in_memory"); !got {
-		t.Errorf("kvstore.in_memory = %v, want true", got)
-	}
-	if got := viper.GetInt("commitment.vector_size"); got != 256 {
-		t.Errorf("commitment.vector_size = %d, want 256", got)
-	}
-	if got := viper.GetString("cas.gateway_url"); got != "https://ipfs.io/ipfs" {
-		t.Errorf("cas.gateway_url = %q, want %q", got, "https://ipfs.io/ipfs")
-	}
-	if got := viper.GetString("cas.timeout"); got != "30s" {
-		t.Errorf("cas.timeout = %q, want %q", got, "30s")
-	}
-	if got := viper.GetString("logging.level"); got != "info" {
-		t.Errorf("logging.level = %q, want %q", got, "info")
-	}
-	if got := viper.GetString("logging.format"); got != "json" {
-		t.Errorf("logging.format = %q, want %q", got, "json")
+	if !cfg.CAS.EmbeddedMock.Enabled {
+		t.Fatal("embedded mock should be enabled by default")
 	}
 }
 
-func TestLoad_NoConfigFile(t *testing.T) {
-	resetViper(t)
-
-	Init()
+func TestLoad_NoConfigFileReturnsDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
 
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("Load() returned error: %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.CommitmentType != "kzg" {
-		t.Errorf("CommitmentType = %q, want %q", cfg.CommitmentType, "kzg")
+	if cfg.CAS.Mode != "embedded-mock" {
+		t.Fatalf("CAS.Mode = %q", cfg.CAS.Mode)
 	}
-	if cfg.KVStoreType != "memory" {
-		t.Errorf("KVStoreType = %q, want %q", cfg.KVStoreType, "memory")
-	}
-	if cfg.EATType != "versioned" {
-		t.Errorf("EATType = %q, want %q", cfg.EATType, "versioned")
-	}
-	if cfg.CASType != "mock" {
-		t.Errorf("CASType = %q, want %q", cfg.CASType, "mock")
-	}
-	if cfg.KVStore.Path != "./data/malt.db" {
-		t.Errorf("KVStore.Path = %q, want %q", cfg.KVStore.Path, "./data/malt.db")
-	}
-	if !cfg.KVStore.InMemory {
-		t.Errorf("KVStore.InMemory = %v, want true", cfg.KVStore.InMemory)
-	}
-	if cfg.Commitment.VectorSize != 256 {
-		t.Errorf("Commitment.VectorSize = %d, want 256", cfg.Commitment.VectorSize)
-	}
-	if cfg.CAS.GatewayURL != "https://ipfs.io/ipfs" {
-		t.Errorf("CAS.GatewayURL = %q, want %q", cfg.CAS.GatewayURL, "https://ipfs.io/ipfs")
-	}
-	if cfg.CAS.Timeout != "30s" {
-		t.Errorf("CAS.Timeout = %q, want %q", cfg.CAS.Timeout, "30s")
-	}
-	if cfg.Logging.Level != "info" {
-		t.Errorf("Logging.Level = %q, want %q", cfg.Logging.Level, "info")
-	}
-	if cfg.Logging.Format != "json" {
-		t.Errorf("Logging.Format = %q, want %q", cfg.Logging.Format, "json")
+	expectedRoot := filepath.Join(home, ".malt", "state")
+	if cfg.State.RootDir != expectedRoot {
+		t.Fatalf("State.RootDir = %q, want %q", cfg.State.RootDir, expectedRoot)
 	}
 }
 
-func TestLoadFromFile_ValidJSON(t *testing.T) {
-	resetViper(t)
-
-	content := `{
-		"commitment_type": "ipa",
-		"kvstore_type": "badger",
-		"eat_type": "full",
-		"cas_type": "remote",
-		"kvstore": {
-			"path": "/tmp/test.db",
-			"in_memory": false
-		},
-		"commitment": {
-			"vector_size": 512
-		},
-		"cas": {
-			"gateway_url": "https://example.com/ipfs",
-			"timeout": "60s"
-		},
-		"logging": {
-			"level": "debug",
-			"format": "text"
-		}
-	}`
-
+func TestLoadFromFile_NewSchema(t *testing.T) {
 	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "test_config.json")
+	path := filepath.Join(tmpDir, "malt.json")
+	content := `{
+  "rpc": {
+    "listen": "127.0.0.1:9999"
+  },
+  "state": {
+    "root_dir": "~/custom-state",
+    "kvstore": {
+      "type": "badger",
+      "path": "kv-data"
+    },
+    "eat": {
+      "type": "overwrite"
+    },
+    "lineage": {
+      "enabled": true
+    }
+  },
+  "structure": {
+    "default_backend": "kzg"
+  },
+  "cas": {
+    "mode": "external",
+    "base_url": "http://127.0.0.1:5001",
+    "timeout": "45s",
+    "embedded_mock": {
+      "enabled": false,
+      "listen": "127.0.0.1:4318"
+    }
+  },
+  "logging": {
+    "level": "debug",
+    "format": "text"
+  }
+}`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write temp config file: %v", err)
+		t.Fatalf("write config: %v", err)
 	}
 
-	Init()
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
 
 	cfg, err := LoadFromFile(path)
 	if err != nil {
-		t.Fatalf("LoadFromFile(%q) returned error: %v", path, err)
+		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	if cfg.CommitmentType != "ipa" {
-		t.Errorf("CommitmentType = %q, want %q", cfg.CommitmentType, "ipa")
+	if cfg.RPC.Listen != "127.0.0.1:9999" {
+		t.Fatalf("RPC.Listen = %q", cfg.RPC.Listen)
 	}
-	if cfg.KVStoreType != "badger" {
-		t.Errorf("KVStoreType = %q, want %q", cfg.KVStoreType, "badger")
+	if cfg.CAS.Mode != "external" {
+		t.Fatalf("CAS.Mode = %q", cfg.CAS.Mode)
 	}
-	if cfg.EATType != "full" {
-		t.Errorf("EATType = %q, want %q", cfg.EATType, "full")
+	if cfg.CASBaseURL() != "http://127.0.0.1:5001" {
+		t.Fatalf("CASBaseURL() = %q", cfg.CASBaseURL())
 	}
-	if cfg.CASType != "remote" {
-		t.Errorf("CASType = %q, want %q", cfg.CASType, "remote")
+	if !strings.Contains(cfg.State.RootDir, "custom-state") {
+		t.Fatalf("State.RootDir = %q", cfg.State.RootDir)
 	}
-	if cfg.KVStore.Path != "/tmp/test.db" {
-		t.Errorf("KVStore.Path = %q, want %q", cfg.KVStore.Path, "/tmp/test.db")
-	}
-	if cfg.KVStore.InMemory {
-		t.Errorf("KVStore.InMemory = %v, want false", cfg.KVStore.InMemory)
-	}
-	if cfg.Commitment.VectorSize != 512 {
-		t.Errorf("Commitment.VectorSize = %d, want 512", cfg.Commitment.VectorSize)
-	}
-	if cfg.CAS.GatewayURL != "https://example.com/ipfs" {
-		t.Errorf("CAS.GatewayURL = %q, want %q", cfg.CAS.GatewayURL, "https://example.com/ipfs")
-	}
-	if cfg.CAS.Timeout != "60s" {
-		t.Errorf("CAS.Timeout = %q, want %q", cfg.CAS.Timeout, "60s")
-	}
-	if cfg.Logging.Level != "debug" {
-		t.Errorf("Logging.Level = %q, want %q", cfg.Logging.Level, "debug")
-	}
-	if cfg.Logging.Format != "text" {
-		t.Errorf("Logging.Format = %q, want %q", cfg.Logging.Format, "text")
+	if cfg.KVStorePath() != filepath.Join(cfg.State.RootDir, "kv-data") {
+		t.Fatalf("KVStorePath() = %q", cfg.KVStorePath())
 	}
 }
 
 func TestLoadFromFile_InvalidPath(t *testing.T) {
-	resetViper(t)
-
-	Init()
-
-	_, err := LoadFromFile("/nonexistent/path/config.json")
+	_, err := LoadFromFile("/nonexistent/path/malt.json")
 	if err == nil {
-		t.Fatal("LoadFromFile() with invalid path should return an error")
-	}
-	if !strings.Contains(err.Error(), "error reading config file") {
-		t.Errorf("error message = %q, should contain %q", err.Error(), "error reading config file")
+		t.Fatal("expected error")
 	}
 }
 
-func TestLoadFromFile_InvalidJSON(t *testing.T) {
-	resetViper(t)
-
-	content := `{this is not valid json!!!`
-
+func TestWriteToFileRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "bad_config.json")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write temp config file: %v", err)
+	path := filepath.Join(tmpDir, "config", "malt.json")
+
+	cfg := DefaultConfig()
+	cfg.CAS.Mode = "external"
+	cfg.CAS.BaseURL = "http://127.0.0.1:5001"
+	cfg.CAS.EmbeddedMock.Enabled = false
+
+	if err := WriteToFile(path, cfg); err != nil {
+		t.Fatalf("WriteToFile() error = %v", err)
 	}
 
-	Init()
-
-	_, err := LoadFromFile(path)
-	if err == nil {
-		t.Fatal("LoadFromFile() with invalid JSON should return an error")
-	}
-	if !strings.Contains(err.Error(), "error reading config file") {
-		t.Errorf("error message = %q, should contain %q", err.Error(), "error reading config file")
-	}
-}
-
-func TestConfig_CASTimeout(t *testing.T) {
-	tests := []struct {
-		name    string
-		timeout string
-		want    time.Duration
-	}{
-		{"30 seconds", "30s", 30 * time.Second},
-		{"1 minute", "1m", 1 * time.Minute},
-		{"2 minutes 30 seconds", "2m30s", 150 * time.Second},
-		{"1 hour", "1h", 1 * time.Hour},
-		{"500 milliseconds", "500ms", 500 * time.Millisecond},
+	loaded, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				CAS: CASConfig{
-					Timeout: tt.timeout,
-				},
-			}
-
-			dur, err := cfg.CASTimeout()
-			if err != nil {
-				t.Fatalf("CASTimeout() returned error: %v", err)
-			}
-
-			if dur != tt.want {
-				t.Errorf("CASTimeout() = %v, want %v", dur, tt.want)
-			}
-		})
+	if loaded.CAS.Mode != "external" {
+		t.Fatalf("loaded CAS.Mode = %q", loaded.CAS.Mode)
+	}
+	if loaded.CAS.BaseURL != "http://127.0.0.1:5001" {
+		t.Fatalf("loaded CAS.BaseURL = %q", loaded.CAS.BaseURL)
 	}
 }
 
-func TestConfig_CASTimeout_Invalid(t *testing.T) {
-	cfg := &Config{
-		CAS: CASConfig{
-			Timeout: "not-a-duration",
-		},
-	}
+func TestValidateRequiresExternalBaseURL(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CAS.Mode = "external"
+	cfg.CAS.BaseURL = ""
+	cfg.CAS.EmbeddedMock.Enabled = false
 
-	_, err := cfg.CASTimeout()
-	if err == nil {
-		t.Fatal("CASTimeout() with invalid duration should return an error")
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
 	}
 }
 
-func TestConfig_String(t *testing.T) {
-	cfg := &Config{
-		CommitmentType: "kzg",
-		KVStoreType:    "memory",
-		EATType:        "versioned",
-		CASType:        "mock",
-	}
+func TestCASTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CAS.Timeout = "45s"
 
-	got := cfg.String()
-	want := "Config{commitment=kzg, kv=memory, eat=versioned, cas=mock}"
-	if got != want {
-		t.Errorf("String() = %q, want %q", got, want)
+	got, err := cfg.CASTimeout()
+	if err != nil {
+		t.Fatalf("CASTimeout() error = %v", err)
+	}
+	if got != 45*time.Second {
+		t.Fatalf("CASTimeout() = %v", got)
+	}
+}
+
+func TestEmbeddedMockLatency(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CAS.EmbeddedMock.Latency = "250ms"
+
+	got, err := cfg.EmbeddedMockLatency()
+	if err != nil {
+		t.Fatalf("EmbeddedMockLatency() error = %v", err)
+	}
+	if got != 250*time.Millisecond {
+		t.Fatalf("EmbeddedMockLatency() = %v", got)
+	}
+}
+
+func TestAPIBaseURL(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := cfg.APIBaseURL(); got != "http://127.0.0.1:4317/api/v1" {
+		t.Fatalf("APIBaseURL() = %q", got)
 	}
 }

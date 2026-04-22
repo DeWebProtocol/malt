@@ -23,22 +23,27 @@ MALT changes that model:
 
 The claim is not that MALT is free. The claim is that it replaces propagation-heavy structural rewrite with localized, verifiable structure maintenance.
 
-## Target Runtime Shape
+## Runtime Shape
 
-The target product shape is a single binary named `malt`.
+The repository converges toward a single binary named `malt`.
 
-Recommended direction:
+Current runtime shape:
 
 - `malt daemon`
   - long-running local process
   - owns hot proving/index state
-- other `malt ...` commands
-  - thin local-RPC clients
-  - should not need to construct a full node in-process for every command
+- `malt graph`, `malt resolve`, `malt prove`, `malt update`, `malt verify`, `malt lineage`
+  - thin HTTP clients against the local daemon
+- `malt cas`
+  - direct convenience commands against the configured CAS endpoint
+- daemon API
+  - fixed HTTP/JSON surface at `/api/v1`
+- embedded mock CAS
+  - optional same-process second-port service
+  - fixed Kubo-compatible API at `/api/v0`
 
-This means the current standalone gateway-shaped entry point should be read as a
-transitional or evaluation-oriented server form rather than as the final product
-boundary.
+`cmd/gateway` should therefore be read only as a debug/evaluation alias for the
+same daemon server package, not as the primary product boundary.
 
 ## Data Model
 
@@ -166,9 +171,9 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
 - `Lineage`
   - optional version metadata for ancestry and history operations
 
-## Config Direction
+## Config
 
-The target operator flow is:
+Current operator flow:
 
 1. run `malt init`
 2. create `~/.malt/malt.json`
@@ -180,18 +185,37 @@ Important split:
 - config location should be stable
 - state-root placement should remain user-configurable
 
-The current flat config in code is legacy. The preferred future config should
-reflect daemon RPC, state placement, CAS endpoint selection, and structure
-defaults more directly.
+Current schema:
+
+- `rpc.listen`
+- `state.root_dir`
+- `state.kvstore`
+- `state.eat`
+- `state.lineage`
+- `structure.default_backend`
+- `cas.mode`
+- `cas.base_url`
+- `cas.timeout`
+- `cas.embedded_mock`
+- `logging`
+
+Current defaults:
+
+- daemon listen: `127.0.0.1:4317`
+- embedded mock CAS listen: `127.0.0.1:4318`
+- structure backend: `kzg`
+- EAT type: `versioned`
 
 ## Repo Layout
 
 ```text
 malt/
+├── client/          # thin daemon HTTP client
 ├── cmd/
 │   ├── gateway/main.go
 │   └── malt/
 ├── config/
+├── httpapi/         # shared daemon request/response payload types
 ├── core/
 │   ├── api/          # top-level wiring via Node
 │   ├── cas/          # CAS clients and adapters
@@ -208,6 +232,7 @@ malt/
 │   └── writer/       # write-side structure update flow
 ├── eval/
 ├── gateway/
+├── server/          # daemon HTTP server
 └── integration/
 ```
 

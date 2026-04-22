@@ -18,16 +18,16 @@ This document is implementation-oriented. For the shorter system overview, see [
 
 In the current prototype, hot proving/index state is colocated and organized in deployment-specific namespaces for performance. The current code often maps one namespace to one graph, but that placement is an implementation choice, not the semantic definition of MALT.
 
-## Target Runtime Packaging
+## Runtime Packaging
 
-The target product shape should be a single binary named `malt`.
+The product shape is a single binary named `malt`.
 
-Recommended command model:
+Current command model:
 
 - `malt daemon`
   - long-running local process
   - owns hot structure state
-  - serves local RPC/API requests
+  - serves local HTTP/JSON API requests
 - `malt ...`
   - thin client commands for inspection, mutation, and convenience workflows
 - `malt cas ...`
@@ -35,14 +35,12 @@ Recommended command model:
 
 Current code status:
 
-- `cmd/malt` still constructs much of the runtime in-process for many commands
-- `cmd/gateway` still looks like the main server-shaped entry point
-
-Target direction:
-
-- move toward `malt daemon` as the primary server mode
-- treat `cmd/gateway` as transitional or evaluation-oriented
-- keep runtime ownership in the daemon rather than in per-command process setup
+- `cmd/malt` now provides `malt init`, `malt daemon`, thin client graph/resolve/prove/update/verify/lineage commands, and `malt cas`
+- `server/` provides the daemon HTTP server
+- `client/` provides the thin daemon HTTP client
+- `httpapi/` holds the shared `/api/v1` request/response model
+- `cmd/gateway` now serves as a thin debug/evaluation alias to the same daemon server package
+- embedded mock CAS runs on a second local port and exposes a Kubo-compatible `/api/v0`
 
 ## Architectural Center
 
@@ -74,11 +72,14 @@ Everything else in the repository should be interpreted relative to that core.
 
 ```text
 malt/
+├── client/          # thin daemon HTTP client
 ├── cmd/
 │   ├── gateway/main.go
 │   └── malt/
 ├── config/
 ├── gateway/
+├── httpapi/         # shared daemon API payloads
+├── server/          # daemon HTTP server
 ├── core/
 │   ├── api/          # Node: top-level component wiring
 │   ├── cas/          # CAS clients and adapters
@@ -364,7 +365,7 @@ These are primitive backends, not public semantic contracts.
 
 ## Configuration Direction
 
-The current flat config and CLI flags are legacy.
+The legacy flat config and old CLI flag model have been replaced by the daemon-oriented runtime config.
 
 The target operator flow should be:
 
@@ -378,24 +379,32 @@ Important separation:
 - config path is stable and discoverable
 - state-root placement is user-configurable
 
-Preferred future config shape:
+Current config shape:
 
 ```json
 {
   "rpc": {
-    "listen": "127.0.0.1:4317",
-    "api_prefix": "/api/v1"
+    "listen": "127.0.0.1:4317"
   },
   "state": {
-    "root_dir": "D:/malt-state"
+    "root_dir": "D:/malt-state",
+    "kvstore": {
+      "type": "badger",
+      "path": "kv"
+    },
+    "eat": {
+      "type": "versioned"
+    },
+    "lineage": {
+      "enabled": true
+    }
   },
   "structure": {
-    "default_backend": "ipa"
+    "default_backend": "kzg"
   },
   "cas": {
     "mode": "external",
     "base_url": "http://127.0.0.1:5001",
-    "api_prefix": "/api/v0",
     "timeout": "30s",
     "embedded_mock": {
       "enabled": false,
@@ -407,9 +416,10 @@ Preferred future config shape:
 
 Interpretation:
 
-- the daemon has its own local RPC/API endpoint
+- the daemon has its own local HTTP endpoint and fixed `/api/v1` API surface
 - mutable MALT state has an explicit root directory
 - CAS can point either to an external Kubo-compatible endpoint or to an embedded mock
+- the embedded mock CAS uses a separate local port and fixed `/api/v0` Kubo-compatible API
 
 This config direction is a packaging/runtime decision and does not change the
 core MALT abstraction.

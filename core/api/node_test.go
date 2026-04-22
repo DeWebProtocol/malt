@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func newTestCID(seed string) cid.Cid {
 }
 
 func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
-	node, err := NewNode()
+	node, err := NewNode(WithConfig(testConfig(t)))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
 }
 
 func TestOpenGraphUsesStoredBackend(t *testing.T) {
-	node, err := NewNode()
+	node, err := NewNode(WithConfig(testConfig(t)))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -69,12 +70,8 @@ func TestOpenGraphUsesStoredBackend(t *testing.T) {
 }
 
 func TestOpenGraphRejectsEATMismatch(t *testing.T) {
-	node, err := NewNode(WithConfig(&config.Config{
-		CommitmentType: "kzg",
-		KVStoreType:    "memory",
-		EATType:        "versioned",
-		CASType:        "mock",
-	}))
+	cfg := testConfig(t)
+	node, err := NewNode(WithConfig(cfg))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -91,4 +88,15 @@ func TestOpenGraphRejectsEATMismatch(t *testing.T) {
 	if !strings.Contains(err.Error(), `requires eat_type "overwrite"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func testConfig(t *testing.T) *config.Config {
+	t.Helper()
+
+	cfg := config.DefaultConfig()
+	cfg.State.RootDir = t.TempDir()
+	cfg.State.KVStore.Type = "badger"
+	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
+	cfg.CAS.Mode = "mock"
+	return cfg
 }

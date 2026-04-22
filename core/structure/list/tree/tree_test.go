@@ -10,8 +10,8 @@ import (
 	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/list"
-	"github.com/dewebprotocol/malt/core/structure/list/tree/internal"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
+	"github.com/dewebprotocol/malt/core/structure/list/tree/internal"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
