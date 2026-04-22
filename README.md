@@ -50,7 +50,7 @@ layout/backend choices internal to each semantic implementation.
 | Layer | Question | Examples |
 | --- | --- | --- |
 | Structural Semantics | What logical structure does the application expose? | `list`, `map` |
-| Semantic Implementation | How is that semantic contract realized internally? | tree-shaped indexed list, future keyed structures such as segment-radix or hashed-path radix |
+| Semantic Implementation | How is that semantic contract realized internally? | tree-shaped indexed list, digest-keyed radix map, future variants such as segment-radix or hashed-path radix |
 | Commitment Backend | What primitive authenticates already-positioned values or nodes? | KZG, IPA, hash/Merkle commitments |
 
 Under this terminology:
@@ -174,17 +174,17 @@ These parts of the repo are useful, but they are not the conceptual center of MA
 - helper deployment abstractions
 - layout/backend comparisons such as radix, KZG, and IPA
 
-## Preferred Refactor Direction
+## Current Structure Layer
 
-The long-term public abstraction should look like:
+The current public structure layer should be read as:
 
 - `core/structure/list`
   - public stable-indexed list semantic
   - primary implementation is a tree-shaped indexed layout backed by a fixed-slot primitive such as `IPA` or `KZG`
-  - `indexed` remains as a degenerate one-node implementation for tests and minimal baselines
-- `core/structure/map`
-  - future keyed semantic
-  - implementation remains deferred until key-placement semantics are finalized
+  - small lists are shallow instances of the same runtime rather than a separate public `indexed` semantic
+- `core/structure/mapping`
+  - public keyed semantic
+  - current default implementation is a digest-keyed radix runtime
 - commitment backends
   - internal dependencies of structure implementations rather than the primary API surface
   - they authenticate positioned slots or nodes; they do not define public `list` / `map` semantics

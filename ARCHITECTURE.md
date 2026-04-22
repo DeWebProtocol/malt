@@ -278,7 +278,6 @@ Operational components affect latency and availability, not the semantic trust b
   - digest-keyed radix placement with explicit collision handling
 - `structure/mapping/indexed`
   - older canonical-order keyed baseline kept as a simpler comparison path
-  - degenerate one-node stable-indexed variant
 - `structure/list/tree`
   - primary stable-indexed list runtime semantic
 
