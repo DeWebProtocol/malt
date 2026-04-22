@@ -32,11 +32,15 @@ Current runtime shape:
 - `malt daemon`
   - long-running local process
   - owns hot proving/index state
-- `malt import`
+- `malt bucket`
+  - manages managed buckets and the client-side default bucket
+- `malt add`
   - client-side workflow that uploads payload directly to CAS
-  - then attaches resulting `path -> CID` bindings to a graph or root through the daemon
-- `malt graph`, `malt resolve`, `malt prove`, `malt update`, `malt verify`, `malt lineage`
-  - thin HTTP clients against the local daemon
+  - then attaches resulting `path -> CID` bindings into a bucket through the daemon
+- `malt cat`, `malt get`
+  - product file and directory read commands over bucket paths
+- `malt resolve`, `malt prove`, `malt update`, `malt verify`, `malt lineage`
+  - lower-level thin HTTP clients against the local daemon
 - `malt cas`
   - direct convenience commands against the configured CAS endpoint
 - daemon API
@@ -67,6 +71,13 @@ A structure root is CID-compatible, but it is not semantically the same thing as
 
 This distinction is central to the design.
 
+In the current bucket-first runtime, a managed bucket head is always a
+directory-shaped `map` root. Large files are represented by `list` roots inside
+that directory structure, but a `list` root is not itself a valid bucket head.
+Every MALT-native `map` root must carry a reserved `@payload` binding; empty
+payloads should still use a defined empty-block CID rather than omitting the
+binding.
+
 ## Terminology and Layers
 
 The preferred abstraction is to expose **structural semantics** publicly and keep
@@ -93,11 +104,12 @@ Under this terminology:
   - `KZG` and `IPA` belong here
   - it does not define public structure semantics or a general `key -> position` rule
 
-For engineering convenience, the current codebase still exposes many of these
-choices through one `commitment.IndexCommitment` interface under `core/commitment`.
-That is a legacy flattening of concerns, not the preferred conceptual layering.
-The cleaner direction is to introduce a separate `core/structure` layer with
-public `list` and `map` semantics, each with their own internal implementations.
+Primitive commitment backends now live under `core/commitment`, while public
+structure semantics live under `core/structure`. Some call paths still share a
+common commitment interface for engineering convenience, but the semantic
+boundary is explicit in the current codebase: `list` and `map` are the public
+structural contracts, and primitive backends remain internal dependencies of
+their implementations.
 
 The current write-up may discuss `list` first because it is the simpler semantic
 and the current implementation is farther along there. That is only an
@@ -117,6 +129,13 @@ Native MALT resolution works over explicit arcs:
 
 The explicit path is the primary path.
 
+Current terminal behavior is intentionally asymmetric:
+
+- bare `map` roots materialize through the mandatory `@payload` binding
+- `list` roots are terminal typed keys and do not auto-redirect to `@payload`
+- bucket-path misses return `not found` rather than silently returning the
+  current root
+
 ## CAS Boundary
 
 MALT is not primarily a payload-upload proxy.
@@ -130,10 +149,13 @@ Recommended boundary:
 `malt cas ...` commands are still useful convenience tooling, but they should
 not be mistaken for the conceptual center of the system.
 
-`malt import ...` is therefore best understood as a client-side orchestration convenience:
+`malt add ...` is therefore best understood as a client-side orchestration convenience:
 
 - payload publication still goes directly to CAS
 - structure attachment still goes through the daemon API
+- large files are chunked client-side and committed as `list` roots
+- directories are materialized as bucket-local `map` roots whose bindings
+  include `@payload`, direct children, and flattened descendants
 - the command only hides that two-step interaction behind one local workflow
 
 ## Interoperability
@@ -188,6 +210,7 @@ Current operator flow:
 2. create `~/.malt/malt.json`
 3. choose a local state root
 4. run `malt daemon`
+5. optionally set `client.default_bucket_id` or use `malt bucket default`
 
 Important split:
 
@@ -207,6 +230,7 @@ Current schema:
 - `cas.timeout`
 - `cas.embedded_mock`
 - `logging`
+- `client.default_bucket_id`
 
 Current defaults:
 
