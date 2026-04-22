@@ -1,5 +1,12 @@
 // Package codec defines MALT-specific multicodec constants and CID utilities.
-// MALT uses the Private Use Area (0x300000-0x3FFFFF) for commitment scheme codecs.
+// MALT uses the Private Use Area (0x300000-0x3FFFFF) for typed structure roots.
+//
+// Wire allocation (locked; see Implementation plan Phase 0):
+//
+//	malt-map-kzg  = 0x300001
+//	malt-list-kzg = 0x300002
+//	malt-map-ipa  = 0x300003
+//	malt-list-ipa = 0x300004
 package codec
 
 import (
@@ -9,12 +16,21 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-// MALT multicodec constants (Private Use Area: 0x300000-0x3FFFFF)
-// These codecs identify different commitment schemes in CID.
+// Typed MALT multicodecs (Private Use Area: 0x300000-0x3FFFFF).
 const (
-	CodecMaltKZG = 0x300001 // CodecMaltKZG is the codec for KZG polynomial commitments (48 bytes).
-	CodecMaltIPA = 0x300003 // CodecMaltIPA is the codec for Inner Product Argument commitments (32 bytes).
+	CodecMaltMapKZG  = 0x300001 // malt-map-kzg
+	CodecMaltListKZG = 0x300002 // malt-list-kzg
+	CodecMaltMapIPA  = 0x300003 // malt-map-ipa
+	CodecMaltListIPA = 0x300004 // malt-list-ipa
 )
+
+// CodecMaltKZG is an alias for [CodecMaltMapKZG] (map roots use KZG in the current prototype).
+// Deprecated: prefer CodecMaltMapKZG for new code.
+const CodecMaltKZG = CodecMaltMapKZG
+
+// CodecMaltIPA is an alias for [CodecMaltMapIPA].
+// Deprecated: prefer CodecMaltMapIPA for new code.
+const CodecMaltIPA = CodecMaltMapIPA
 
 // Commitment size constants
 const (
@@ -22,82 +38,103 @@ const (
 	IPACommitmentSize = 32 // IPACommitmentSize is the size of an IPA commitment in bytes (32 bytes).
 )
 
-// NewKZGCid creates a CID from KZG commitment bytes.
-// Uses identity multihash to store the commitment directly.
+// NewKZGCid creates a CID from KZG commitment bytes using the malt-map-kzg codec.
 func NewKZGCid(commitment []byte) (cid.Cid, error) {
 	if len(commitment) != KZGCommitmentSize {
 		return cid.Cid{}, fmt.Errorf("invalid KZG commitment size: %d, expected %d", len(commitment), KZGCommitmentSize)
 	}
-	return newMaltCid(CodecMaltKZG, commitment)
+	return newMaltCid(CodecMaltMapKZG, commitment)
 }
 
-// NewIPACid creates a CID from IPA commitment bytes.
-// Uses identity multihash to store the commitment directly.
+// NewMapKZGCid is an alias for [NewKZGCid].
+func NewMapKZGCid(commitment []byte) (cid.Cid, error) {
+	return NewKZGCid(commitment)
+}
+
+// NewListKZGCid creates a CID from KZG commitment bytes using the malt-list-kzg codec.
+func NewListKZGCid(commitment []byte) (cid.Cid, error) {
+	if len(commitment) != KZGCommitmentSize {
+		return cid.Cid{}, fmt.Errorf("invalid KZG commitment size: %d, expected %d", len(commitment), KZGCommitmentSize)
+	}
+	return newMaltCid(CodecMaltListKZG, commitment)
+}
+
+// NewIPACid creates a CID from IPA commitment bytes using the malt-map-ipa codec.
 func NewIPACid(commitment []byte) (cid.Cid, error) {
 	if len(commitment) != IPACommitmentSize {
 		return cid.Cid{}, fmt.Errorf("invalid IPA commitment size: %d, expected %d", len(commitment), IPACommitmentSize)
 	}
-	return newMaltCid(CodecMaltIPA, commitment)
+	return newMaltCid(CodecMaltMapIPA, commitment)
+}
+
+// NewMapIPACid is an alias for [NewIPACid].
+func NewMapIPACid(commitment []byte) (cid.Cid, error) {
+	return NewIPACid(commitment)
+}
+
+// NewListIPACid creates a CID from IPA commitment bytes using the malt-list-ipa codec.
+func NewListIPACid(commitment []byte) (cid.Cid, error) {
+	if len(commitment) != IPACommitmentSize {
+		return cid.Cid{}, fmt.Errorf("invalid IPA commitment size: %d, expected %d", len(commitment), IPACommitmentSize)
+	}
+	return newMaltCid(CodecMaltListIPA, commitment)
 }
 
 // newMaltCid creates a CIDv1 with the given codec and commitment bytes.
 // Uses identity multihash (0x00) to store the commitment directly.
 func newMaltCid(codec uint64, commitment []byte) (cid.Cid, error) {
-	// Create identity multihash (hash code 0x00, stores data directly)
-	// Identity multihash format: <0x00><size><data>
 	mhash, err := mh.Encode(commitment, mh.IDENTITY)
 	if err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to create identity multihash: %w", err)
 	}
-
-	// Create CIDv1 with MALT codec
 	return cid.NewCidV1(codec, mhash), nil
 }
 
-// IsMaltCid checks if a CID is a MALT commitment CID.
+// IsMaltCid checks if a CID is a typed MALT structure root (map or list, KZG or IPA).
 func IsMaltCid(c cid.Cid) bool {
-	codec := c.Prefix().Codec
-	return codec == CodecMaltKZG || codec == CodecMaltIPA
+	switch c.Prefix().Codec {
+	case CodecMaltMapKZG, CodecMaltListKZG, CodecMaltMapIPA, CodecMaltListIPA:
+		return true
+	default:
+		return false
+	}
 }
 
-// GetMaltCodec returns the MALT codec type for a CID.
-// Returns 0 if the CID is not a MALT commitment.
+// GetMaltCodec returns the MALT codec value for a CID.
+// Returns 0 if the CID is not a MALT structure root.
 func GetMaltCodec(c cid.Cid) uint64 {
-	codec := c.Prefix().Codec
 	if IsMaltCid(c) {
-		return codec
+		return c.Prefix().Codec
 	}
 	return 0
 }
 
-// ExtractCommitment extracts the raw commitment bytes from a MALT CID.
-// Returns an error if the CID is not a MALT commitment or doesn't use identity hash.
+// ExtractCommitment extracts the raw commitment bytes from a MALT structure CID.
 func ExtractCommitment(c cid.Cid) ([]byte, error) {
 	if !IsMaltCid(c) {
 		return nil, fmt.Errorf("not a MALT commitment CID: codec=%x", c.Prefix().Codec)
 	}
-
-	// Decode multihash
 	decoded, err := mh.Decode(c.Hash())
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode multihash: %w", err)
 	}
-
-	// Check it's identity hash
 	if decoded.Code != mh.IDENTITY {
 		return nil, fmt.Errorf("expected identity hash, got code=%x", decoded.Code)
 	}
-
 	return decoded.Digest, nil
 }
 
-// CodecName returns a human-readable name for a MALT codec.
+// CodecName returns the locked wire name for a typed MALT multicodec.
 func CodecName(codec uint64) string {
 	switch codec {
-	case CodecMaltKZG:
-		return "malt-kzg"
-	case CodecMaltIPA:
-		return "malt-ipa"
+	case CodecMaltMapKZG:
+		return "malt-map-kzg"
+	case CodecMaltListKZG:
+		return "malt-list-kzg"
+	case CodecMaltMapIPA:
+		return "malt-map-ipa"
+	case CodecMaltListIPA:
+		return "malt-list-ipa"
 	default:
 		return fmt.Sprintf("unknown-%x", codec)
 	}
