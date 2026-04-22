@@ -18,6 +18,32 @@ This document is implementation-oriented. For the shorter system overview, see [
 
 In the current prototype, hot proving/index state is colocated and organized in deployment-specific namespaces for performance. The current code often maps one namespace to one graph, but that placement is an implementation choice, not the semantic definition of MALT.
 
+## Target Runtime Packaging
+
+The target product shape should be a single binary named `malt`.
+
+Recommended command model:
+
+- `malt daemon`
+  - long-running local process
+  - owns hot structure state
+  - serves local RPC/API requests
+- `malt ...`
+  - thin client commands for inspection, mutation, and convenience workflows
+- `malt cas ...`
+  - convenience commands for CAS-oriented workflows
+
+Current code status:
+
+- `cmd/malt` still constructs much of the runtime in-process for many commands
+- `cmd/gateway` still looks like the main server-shaped entry point
+
+Target direction:
+
+- move toward `malt daemon` as the primary server mode
+- treat `cmd/gateway` as transitional or evaluation-oriented
+- keep runtime ownership in the daemon rather than in per-command process setup
+
 ## Architectural Center
 
 The codebase should be read around these first-class concepts:
@@ -156,6 +182,50 @@ Important framing:
 - incorrect lookup results are rejected by proof verification
 - in the current implementation, graph-scoped state is realized as bucket-scoped state, with one bucket per graph
 
+## CAS Boundary
+
+The intended boundary with CAS is asymmetric.
+
+Write path:
+
+- the client can encode immutable payload itself
+- the client can compute the payload CID itself
+- the client can publish payload directly to CAS
+
+Read path:
+
+- MALT still needs CAS to fetch immutable blocks
+- this includes bare-root `@payload` materialization
+- this also includes compatibility traversal into legacy CID space
+
+This means MALT should not be framed primarily as a payload-upload proxy.
+Its core role is structure management, authenticated resolution, and proof generation.
+
+### Mock CAS Direction
+
+The preferred integration direction is a Kubo/IPFS-compatible HTTP surface when practical.
+
+Why:
+
+- it keeps the client contract closer to real CAS deployments
+- switching between mock and real CAS should mostly change endpoint configuration rather than semantics
+
+Decision rule:
+
+- if same-process same-port embedding is non-invasive, it is acceptable
+- otherwise use the same process with a second local port
+
+### `core/cas` Scope
+
+`core/cas` should stay close to the MALT core boundary:
+
+- core-facing CAS interfaces
+- minimal immutable-block operations needed by resolver/runtime code
+
+Transport-specific integrations such as Kubo/IPFS HTTP adapters are better
+understood as adapters around that core boundary rather than as the conceptual
+center of MALT itself.
+
 ## Resolution and Verification
 
 `resolver.Resolver` runs the read loop and returns:
@@ -267,6 +337,10 @@ Useful deployment framing:
 Correctness remains cryptographic because clients verify returned evidence locally.
 Operational components affect latency and availability, not the semantic trust base.
 
+The default product interpretation should therefore be sidecar/local-daemon
+first, with gateway mode treated as a deployment variant used for controlled
+evaluation and compatibility experiments.
+
 ## Implemented Semantics and Variants
 
 ### Semantic Layer
@@ -288,19 +362,54 @@ Operational components affect latency and availability, not the semantic trust b
 
 These are primitive backends, not public semantic contracts.
 
-## CAS Configuration
+## Configuration Direction
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--ipfs-api` | (empty) | Connect to local IPFS daemon (full read+write CAS) |
-| `--mock-latency` | ProbeLab-based | Override mock CAS latency (e.g., "100ms", "5s", "0s") |
-| `--config, -c` | (none) | Load config from JSON file |
-| `--listen, -l` | `:8080` | Listen address |
+The current flat config and CLI flags are legacy.
 
-Mock CAS defaults are based on ProbeLab Kubo v0.39.0 measurements (Europe Frankfurt, DHT):
+The target operator flow should be:
 
-| Operation | Default | Source |
-|-----------|---------|--------|
-| Get | 2.1s | TTFB + provider discovery + broadcast |
-| Put | 1.4s | Add Duration (merkle-izing + block storage) |
-| Has | 100ms | Index lookup only |
+1. run `malt init`
+2. create `~/.malt/malt.json`
+3. choose a local state root
+4. start `malt daemon`
+
+Important separation:
+
+- config path is stable and discoverable
+- state-root placement is user-configurable
+
+Preferred future config shape:
+
+```json
+{
+  "rpc": {
+    "listen": "127.0.0.1:4317",
+    "api_prefix": "/api/v1"
+  },
+  "state": {
+    "root_dir": "D:/malt-state"
+  },
+  "structure": {
+    "default_backend": "ipa"
+  },
+  "cas": {
+    "mode": "external",
+    "base_url": "http://127.0.0.1:5001",
+    "api_prefix": "/api/v0",
+    "timeout": "30s",
+    "embedded_mock": {
+      "enabled": false,
+      "listen": "127.0.0.1:4318"
+    }
+  }
+}
+```
+
+Interpretation:
+
+- the daemon has its own local RPC/API endpoint
+- mutable MALT state has an explicit root directory
+- CAS can point either to an external Kubo-compatible endpoint or to an embedded mock
+
+This config direction is a packaging/runtime decision and does not change the
+core MALT abstraction.

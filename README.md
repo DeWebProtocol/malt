@@ -23,6 +23,23 @@ MALT changes that model:
 
 The claim is not that MALT is free. The claim is that it replaces propagation-heavy structural rewrite with localized, verifiable structure maintenance.
 
+## Target Runtime Shape
+
+The target product shape is a single binary named `malt`.
+
+Recommended direction:
+
+- `malt daemon`
+  - long-running local process
+  - owns hot proving/index state
+- other `malt ...` commands
+  - thin local-RPC clients
+  - should not need to construct a full node in-process for every command
+
+This means the current standalone gateway-shaped entry point should be read as a
+transitional or evaluation-oriented server form rather than as the final product
+boundary.
+
 ## Data Model
 
 MALT logically separates:
@@ -92,6 +109,19 @@ Native MALT resolution works over explicit arcs:
 
 The explicit path is the primary path.
 
+## CAS Boundary
+
+MALT is not primarily a payload-upload proxy.
+
+Recommended boundary:
+
+- immutable payload publication is primarily a client-to-CAS operation
+- MALT primarily owns structure operations, proof generation, and authenticated resolution
+- MALT still depends on CAS on the read path, including bare-root `@payload` materialization and legacy CID traversal
+
+`malt cas ...` commands are still useful convenience tooling, but they should
+not be mistaken for the conceptual center of the system.
+
 ## Interoperability
 
 MALT roots are encoded as CID-compatible identifiers.
@@ -135,6 +165,24 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
   - resolves from a structure root and returns a verifiable transcript
 - `Lineage`
   - optional version metadata for ancestry and history operations
+
+## Config Direction
+
+The target operator flow is:
+
+1. run `malt init`
+2. create `~/.malt/malt.json`
+3. choose a local state root
+4. run `malt daemon`
+
+Important split:
+
+- config location should be stable
+- state-root placement should remain user-configurable
+
+The current flat config in code is legacy. The preferred future config should
+reflect daemon RPC, state placement, CAS endpoint selection, and structure
+defaults more directly.
 
 ## Repo Layout
 
