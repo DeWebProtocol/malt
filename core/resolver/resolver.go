@@ -20,7 +20,7 @@ import (
 // path is consumed or resolution fails.
 //
 // Architecture:
-//   - MALT commitments (malt-kzg/malt-ipa) → explicitStep
+//   - typed MALT roots (map/list) → explicitStep
 //   - All other CIDs (dag-pb, dag-cbor, raw, etc.) → implicitStep
 //
 // The implicitStep internally handles different data structures:
@@ -49,13 +49,9 @@ type ResolveResult struct {
 	Transcript *Transcript
 }
 
-// Resolve resolves a path from a root CID.
-// It supports both explicit arcs (for MALT commitments) and implicit Merkle-DAG traversal (for payload CIDs).
-// The resolution continues until:
-//   - The path is fully consumed
-//   - A resolution step fails (no matching arc or link)
-//   - The target cannot be resolved further
-func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
+// ResolveKey resolves a path to its terminal typed key without terminal payload
+// materialization. For list roots, traversal is terminal (no auto @payload).
+func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error) {
 	if !root.Defined() {
 		return nil, ErrUndefinedRoot
 	}
@@ -65,14 +61,22 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 	remainingPath := arcset.CanonicalizePath(path)
 
 	for !remainingPath.IsEmpty() {
+		// Typed list roots are terminal for path traversal.
+		if codec.SemanticKindOf(currentCID) == codec.SemanticKindList {
+			return &ResolveResult{
+				Target:     currentCID,
+				Transcript: transcript,
+			}, nil
+		}
+
 		var matchedPath arcset.Path
 		var target cid.Cid
 		var ev evidence.Evidence
 		var err error
 
-		// Dispatch based on CID codec
+		// Dispatch based on key kind.
 		if codec.IsMaltCid(currentCID) {
-			// Explicit step: use explicit step executor for longest-prefix match
+			// Explicit step: use explicit step executor for longest-prefix match.
 			if r.explicitStep == nil {
 				return &ResolveResult{
 					Target:     currentCID,
@@ -81,8 +85,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 			}
 			matchedPath, target, ev, err = r.explicitStep.Resolve(currentCID, remainingPath)
 		} else {
-			// Implicit step: use implicit step executor for DAG traversal
-			// The implicit step internally handles UnixFS, HAMT, and plain DAG structures
+			// Implicit step: use implicit step executor for DAG traversal.
 			if r.implicitStep == nil {
 				return &ResolveResult{
 					Target:     currentCID,
@@ -96,7 +99,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 			return nil, fmt.Errorf("%w: %w", ErrResolutionFailed, err)
 		}
 
-		// If no path was matched, we can't continue
+		// If no path was matched, we can't continue.
 		if matchedPath.IsEmpty() {
 			return &ResolveResult{
 				Target:     currentCID,
@@ -104,17 +107,17 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 			}, nil
 		}
 
-		// Record step
+		// Record step.
 		transcript.Steps = append(transcript.Steps, StepEvidence{
 			Path:     matchedPath,
 			Target:   target,
 			Evidence: ev,
 		})
 
-		// Update current CID
+		// Update current CID.
 		currentCID = target
 
-		// Update remaining path
+		// Update remaining path.
 		nextPath, ok := remainingPath.Consume(matchedPath)
 		if !ok {
 			return nil, fmt.Errorf("%w: failed to consume matched path %q from %q", ErrResolutionFailed, matchedPath.String(), remainingPath.String())
@@ -122,29 +125,42 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 		remainingPath = nextPath
 	}
 
-	// When path is exhausted, check if current CID is a MALT commitment.
-	// If so, try to resolve @payload to materialize the object's content.
-	if codec.IsMaltCid(currentCID) && r.explicitStep != nil {
-		_, target, ev, err := r.explicitStep.Resolve(currentCID, explicit.PayloadArc)
-		if err == nil {
-			// Has @payload arc, record this step and return payload CID
-			transcript.Steps = append(transcript.Steps, StepEvidence{
-				Path:     explicit.PayloadArc,
-				Target:   target,
-				Evidence: ev,
-			})
-			return &ResolveResult{
-				Target:     target,
-				Transcript: transcript,
-			}, nil
-		}
-		// No @payload arc (structure-only node), fall through to return structure root
-	}
-
 	return &ResolveResult{
 		Target:     currentCID,
 		Transcript: transcript,
 	}, nil
+}
+
+// Resolve resolves a path from a root CID.
+// It supports both explicit arcs (for MALT commitments) and implicit Merkle-DAG traversal (for payload CIDs).
+// The resolution continues until:
+//   - The path is fully consumed
+//   - A resolution step fails (no matching arc or link)
+//   - The target cannot be resolved further
+func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
+	keyResult, err := r.ResolveKey(root, path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Terminal materialization is map-only. List roots must remain terminal.
+	if codec.SemanticKindOf(keyResult.Target) == codec.SemanticKindMap && r.explicitStep != nil {
+		_, target, ev, err := r.explicitStep.Resolve(keyResult.Target, explicit.PayloadArc)
+		if err != nil {
+			return nil, fmt.Errorf("%w: map root %s is missing mandatory @payload binding: %w", ErrResolutionFailed, keyResult.Target.String(), err)
+		}
+		keyResult.Transcript.Steps = append(keyResult.Transcript.Steps, StepEvidence{
+			Path:     explicit.PayloadArc,
+			Target:   target,
+			Evidence: ev,
+		})
+		return &ResolveResult{
+			Target:     target,
+			Transcript: keyResult.Transcript,
+		}, nil
+	}
+
+	return keyResult, nil
 }
 
 // VerifyTranscript verifies all steps in a transcript.

@@ -25,8 +25,11 @@ func TestNewKZGCid(t *testing.T) {
 	}
 
 	// Check codec
-	if c.Prefix().Codec != codec.CodecMaltKZG {
-		t.Errorf("Expected codec %x, got %x", codec.CodecMaltKZG, c.Prefix().Codec)
+	if c.Prefix().Codec != codec.CodecMaltMapKZG {
+		t.Errorf("Expected codec %x, got %x", codec.CodecMaltMapKZG, c.Prefix().Codec)
+	}
+	if codec.CodecMaltKZG != codec.CodecMaltMapKZG {
+		t.Error("CodecMaltKZG alias must equal CodecMaltMapKZG")
 	}
 
 	// Check it's a MALT CID
@@ -74,8 +77,8 @@ func TestNewIPACid(t *testing.T) {
 	}
 
 	// Check codec
-	if c.Prefix().Codec != codec.CodecMaltIPA {
-		t.Errorf("Expected codec %x, got %x", codec.CodecMaltIPA, c.Prefix().Codec)
+	if c.Prefix().Codec != codec.CodecMaltMapIPA {
+		t.Errorf("Expected codec %x, got %x", codec.CodecMaltMapIPA, c.Prefix().Codec)
 	}
 
 	// Check it's a MALT CID
@@ -97,8 +100,8 @@ func TestGetMaltCodec(t *testing.T) {
 	c, _ := codec.NewKZGCid(commitment)
 
 	codecType := codec.GetMaltCodec(c)
-	if codecType != codec.CodecMaltKZG {
-		t.Errorf("Expected codec %x, got %x", codec.CodecMaltKZG, codecType)
+	if codecType != codec.CodecMaltMapKZG {
+		t.Errorf("Expected codec %x, got %x", codec.CodecMaltMapKZG, codecType)
 	}
 
 	// Test non-MALT CID
@@ -109,13 +112,51 @@ func TestGetMaltCodec(t *testing.T) {
 	}
 }
 
+func TestNewListKZGCid(t *testing.T) {
+	commitment := make([]byte, codec.KZGCommitmentSize)
+	c, err := codec.NewListKZGCid(commitment)
+	if err != nil {
+		t.Fatalf("NewListKZGCid: %v", err)
+	}
+	if c.Prefix().Codec != codec.CodecMaltListKZG {
+		t.Errorf("codec %x, want %x", c.Prefix().Codec, codec.CodecMaltListKZG)
+	}
+	if !codec.IsMaltCid(c) {
+		t.Error("IsMaltCid should be true for list kzg")
+	}
+}
+
+func TestEqualCommitmentAcrossSemanticCodecs(t *testing.T) {
+	commitment := make([]byte, codec.KZGCommitmentSize)
+	for i := range commitment {
+		commitment[i] = byte(i)
+	}
+	mapCID, err := codec.NewMapKZGCid(commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCID, err := codec.NewListKZGCid(commitment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := codec.EqualCommitment(mapCID, listCID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected EqualCommitment(map,list) to be true")
+	}
+}
+
 func TestCodecName(t *testing.T) {
 	tests := []struct {
 		codec    uint64
 		expected string
 	}{
-		{codec.CodecMaltKZG, "malt-kzg"},
-		{codec.CodecMaltIPA, "malt-ipa"},
+		{codec.CodecMaltMapKZG, "malt-map-kzg"},
+		{codec.CodecMaltListKZG, "malt-list-kzg"},
+		{codec.CodecMaltMapIPA, "malt-map-ipa"},
+		{codec.CodecMaltListIPA, "malt-list-ipa"},
 		{0x999999, "unknown-999999"},
 	}
 

@@ -23,7 +23,17 @@ var (
 
 	// ErrEmptyPath is returned when the path is empty.
 	ErrEmptyPath = errors.New("path must not be empty")
+
+	// ErrMissingPayloadBinding is returned when a MALT-native object is missing
+	// its mandatory @payload binding.
+	ErrMissingPayloadBinding = errors.New("mandatory @payload binding is missing")
+
+	// ErrDeletingPayloadBinding is returned when an update attempts to remove the
+	// mandatory @payload binding from a MALT-native object.
+	ErrDeletingPayloadBinding = errors.New("mandatory @payload binding cannot be deleted")
 )
+
+var mandatoryPayloadPath = arcset.CanonicalizePath("@payload")
 
 // ArcOp describes the type of arc operation performed.
 type ArcOp uint8
@@ -217,6 +227,23 @@ func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
 	return arcset.NewSetFrom(out)
 }
 
+func hasDefinedPayloadBinding(arcs arcset.ArcSet) bool {
+	if arcs == nil {
+		return false
+	}
+
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			return false
+		}
+		if path == mandatoryPayloadPath && target.Defined() {
+			return true
+		}
+	}
+}
+
 // UpdateArc executes the unified arc update procedure.
 //
 // Given a structure root, path, and new target CID, this method:
@@ -237,6 +264,9 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	if canonicalPath.IsEmpty() {
 		return nil, ErrEmptyPath
 	}
+	if canonicalPath == mandatoryPayloadPath && !newTarget.Defined() {
+		return nil, ErrDeletingPayloadBinding
+	}
 
 	// Step 1: Look up current binding
 	oldTarget, err := w.eat.Get(ctx, bucketId, root, canonicalPath.String())
@@ -247,6 +277,9 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
 	if err != nil {
 		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
+	}
+	if !hasDefinedPayloadBinding(snapshot) && !(canonicalPath == mandatoryPayloadPath && newTarget.Defined()) {
+		return nil, ErrMissingPayloadBinding
 	}
 
 	// Determine operation type
@@ -329,11 +362,20 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	if err != nil {
 		return nil, err
 	}
+	if payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]; ok && !payloadTarget.Defined() {
+		return nil, ErrDeletingPayloadBinding
+	}
 
 	// Step 1: Get current arc set snapshot
 	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
 	if err != nil {
 		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
+	}
+	if !hasDefinedPayloadBinding(snapshot) {
+		payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]
+		if !ok || !payloadTarget.Defined() {
+			return nil, ErrMissingPayloadBinding
+		}
 	}
 
 	// Step 2: Look up all current bindings and classify operations
@@ -433,6 +475,9 @@ func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcs
 	normalizedSnapshot, _, err := canonicalizeSnapshot(arcs)
 	if err != nil {
 		return cid.Undef, err
+	}
+	if !hasDefinedPayloadBinding(normalizedSnapshot) {
+		return cid.Undef, ErrMissingPayloadBinding
 	}
 
 	// Step 1: Commit arc set via semantic layer

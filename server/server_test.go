@@ -11,12 +11,13 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
+	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
-func TestServerHealthAndGraphLifecycle(t *testing.T) {
+func TestServerHealthAndBucketLifecycle(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -40,37 +41,54 @@ func TestServerHealthAndGraphLifecycle(t *testing.T) {
 		t.Fatalf("health status payload = %q, want %q", health.Status, "ok")
 	}
 
-	createBody, err := json.Marshal(&httpapi.GraphCreateRequest{ID: "demo"})
+	createBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
 	if err != nil {
-		t.Fatalf("marshal create graph request: %v", err)
+		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/graphs", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBody))
 	if err != nil {
-		t.Fatalf("create graph request failed: %v", err)
+		t.Fatalf("create bucket request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create graph status = %d, want %d", resp.StatusCode, http.StatusCreated)
+		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("read graph response: %v", err)
+		t.Fatalf("read bucket response: %v", err)
 	}
 	if bytes.Contains(body, []byte(`"root":"b"`)) {
-		t.Fatalf("graph response leaked cid.Undef serialization: %s", string(body))
+		t.Fatalf("bucket response leaked cid.Undef serialization: %s", string(body))
 	}
 
-	var graphResp httpapi.GraphResponse
-	if err := json.Unmarshal(body, &graphResp); err != nil {
-		t.Fatalf("decode graph response: %v", err)
+	var bucketResp httpapi.BucketResponse
+	if err := json.Unmarshal(body, &bucketResp); err != nil {
+		t.Fatalf("decode bucket response: %v", err)
 	}
-	if graphResp.Graph == nil || graphResp.Graph.ID != "demo" {
-		t.Fatalf("graph response = %+v, want id demo", graphResp.Graph)
+	if bucketResp.Bucket == nil || bucketResp.Bucket.ID != "demo" {
+		t.Fatalf("bucket response = %+v, want id demo", bucketResp.Bucket)
 	}
-	if graphResp.Graph.Root != "" {
-		t.Fatalf("graph root = %q, want empty for undefined head", graphResp.Graph.Root)
+	if bucketResp.Bucket.Root != "" {
+		t.Fatalf("bucket root = %q, want empty for undefined head", bucketResp.Bucket.Root)
+	}
+}
+
+func TestServerLegacyGraphRoutesRemoved(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/graphs")
+	if err != nil {
+		t.Fatalf("legacy graphs request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("legacy graphs status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 }
 
@@ -82,7 +100,7 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 
 	target := fakeCIDString("alice")
 	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
-		Arcs: map[string]string{"name": target},
+		Arcs: withPayloadBinding(map[string]string{"name": target}),
 	})
 	if err != nil {
 		t.Fatalf("marshal create structure request: %v", err)
@@ -151,34 +169,34 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 	}
 }
 
-func TestServerManagedGraphCreateCanonicalizesArcCount(t *testing.T) {
+func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createGraphBody, err := json.Marshal(&httpapi.GraphCreateRequest{ID: "demo"})
+	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
 	if err != nil {
-		t.Fatalf("marshal create graph request: %v", err)
+		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/graphs", "application/json", bytes.NewReader(createGraphBody))
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
-		t.Fatalf("create graph request failed: %v", err)
+		t.Fatalf("create bucket request failed: %v", err)
 	}
 	resp.Body.Close()
 
 	target := fakeCIDString("canonical-target")
 	createStructureBody, err := json.Marshal(&httpapi.CreateStructureRequest{
-		Arcs: map[string]string{
+		Arcs: withPayloadBinding(map[string]string{
 			"foo/bar":   target,
 			"/foo//bar": target,
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
 
-	resp, err = http.Post(ts.URL+"/api/v1/graphs/demo/structure", "application/json", bytes.NewReader(createStructureBody))
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createStructureBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -188,9 +206,9 @@ func TestServerManagedGraphCreateCanonicalizesArcCount(t *testing.T) {
 		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/graphs/demo")
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
 	if err != nil {
-		t.Fatalf("get graph request failed: %v", err)
+		t.Fatalf("get bucket request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -198,15 +216,393 @@ func TestServerManagedGraphCreateCanonicalizesArcCount(t *testing.T) {
 		t.Fatalf("get graph status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var graphResp httpapi.GraphResponse
-	if err := json.NewDecoder(resp.Body).Decode(&graphResp); err != nil {
-		t.Fatalf("decode graph response: %v", err)
+	var bucketResp httpapi.BucketResponse
+	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
+		t.Fatalf("decode bucket response: %v", err)
 	}
-	if graphResp.Graph == nil {
-		t.Fatal("expected graph payload")
+	if bucketResp.Bucket == nil {
+		t.Fatal("expected bucket payload")
 	}
-	if graphResp.Graph.ArcCount != 1 {
-		t.Fatalf("graph arc_count = %d, want 1 after canonicalization", graphResp.Graph.ArcCount)
+	if bucketResp.Bucket.ArcCount != 2 {
+		t.Fatalf("bucket arc_count = %d, want 2 after canonicalization and mandatory payload", bucketResp.Bucket.ArcCount)
+	}
+}
+
+func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	// Create bucket.
+	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	if err != nil {
+		t.Fatalf("marshal create bucket request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	createMapBody, err := json.Marshal(&httpapi.BucketMapCreateRequest{
+		Bindings: withPayloadBinding(map[string]string{"file.txt": fakeCIDString("bucket-file")}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create map request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/maps", "application/json", bytes.NewReader(createMapBody))
+	if err != nil {
+		t.Fatalf("create map request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create map status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var mapResp httpapi.BucketMapCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&mapResp); err != nil {
+		t.Fatalf("decode create map response: %v", err)
+	}
+	resp.Body.Close()
+	if mapResp.Root == "" {
+		t.Fatal("expected non-empty map root")
+	}
+
+	// Set head without expected_old_root.
+	newRoot := mapResp.Root
+	setBody, err := json.Marshal(&httpapi.BucketHeadSetRequest{NewRoot: newRoot, ArcCount: 2})
+	if err != nil {
+		t.Fatalf("marshal head set request: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/buckets/demo/head", bytes.NewReader(setBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("set head request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set head status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	// Get bucket and verify head advanced.
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	if err != nil {
+		t.Fatalf("get bucket request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var getResp httpapi.BucketResponse
+	if err := json.NewDecoder(resp.Body).Decode(&getResp); err != nil {
+		t.Fatalf("decode bucket response: %v", err)
+	}
+	if getResp.Bucket == nil || getResp.Bucket.Root != newRoot {
+		t.Fatalf("bucket root = %q, want %q", getResp.Bucket.Root, newRoot)
+	}
+	if getResp.Bucket.ArcCount != 2 {
+		t.Fatalf("bucket arc_count = %d, want 2", getResp.Bucket.ArcCount)
+	}
+
+	// Non-map roots must be rejected.
+	listBody, err := json.Marshal(&httpapi.BucketListCreateRequest{
+		Chunks:    []string{fakeCIDString("chunk-a")},
+		ChunkSize: 262144,
+	})
+	if err != nil {
+		t.Fatalf("marshal list request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/lists", "application/json", bytes.NewReader(listBody))
+	if err != nil {
+		t.Fatalf("create list request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create list status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var listResp httpapi.BucketListStatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list create response: %v", err)
+	}
+	resp.Body.Close()
+
+	for _, invalidRoot := range []string{fakeCIDString("raw-root"), listResp.Root} {
+		invalidBody, err := json.Marshal(&httpapi.BucketHeadSetRequest{NewRoot: invalidRoot, ArcCount: 1})
+		if err != nil {
+			t.Fatalf("marshal invalid head set request: %v", err)
+		}
+		req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/buckets/demo/head", bytes.NewReader(invalidBody))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("invalid head set request failed: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid head set status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+		}
+	}
+
+	// Now try setting with stale expected_old_root and ensure conflict.
+	secondMapBody, err := json.Marshal(&httpapi.BucketMapCreateRequest{
+		Bindings: withPayloadBinding(map[string]string{"other.txt": fakeCIDString("other-file")}),
+	})
+	if err != nil {
+		t.Fatalf("marshal second map request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/maps", "application/json", bytes.NewReader(secondMapBody))
+	if err != nil {
+		t.Fatalf("create second map request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create second map status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var secondMapResp httpapi.BucketMapCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&secondMapResp); err != nil {
+		t.Fatalf("decode second map response: %v", err)
+	}
+	resp.Body.Close()
+
+	staleBody, err := json.Marshal(&httpapi.BucketHeadSetRequest{
+		NewRoot:         secondMapResp.Root,
+		ArcCount:        1,
+		ExpectedOldRoot: fakeCIDString("stale"),
+	})
+	if err != nil {
+		t.Fatalf("marshal stale head set request: %v", err)
+	}
+	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/buckets/demo/head", bytes.NewReader(staleBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stale head set request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("stale expected_old_root status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+}
+
+func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	if err != nil {
+		t.Fatalf("marshal create bucket request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	target := fakeCIDString("bucket-map-target")
+	createMapBody, err := json.Marshal(&httpapi.BucketMapCreateRequest{
+		Bindings: withPayloadBinding(map[string]string{"docs/readme.md": target}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create map request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/maps", "application/json", bytes.NewReader(createMapBody))
+	if err != nil {
+		t.Fatalf("create map request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create map status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createMapResp httpapi.BucketMapCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createMapResp); err != nil {
+		t.Fatalf("decode create map response: %v", err)
+	}
+	resp.Body.Close()
+	if createMapResp.Root == "" {
+		t.Fatal("expected non-empty map root")
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/maps/" + createMapResp.Root + "/resolve?path=docs/readme.md")
+	if err != nil {
+		t.Fatalf("resolve map request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve map status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var resolveResp httpapi.BucketMapResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+		t.Fatalf("decode map resolve response: %v", err)
+	}
+	resp.Body.Close()
+	if resolveResp.Key != target {
+		t.Fatalf("map resolve key = %q, want %q", resolveResp.Key, target)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/maps/" + createMapResp.Root + "/resolve?path=missing")
+	if err != nil {
+		t.Fatalf("resolve missing map request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("resolve missing map status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+
+	chunk1 := fakeCIDString("chunk1")
+	chunk2 := fakeCIDString("chunk2")
+	createListBody, err := json.Marshal(&httpapi.BucketListCreateRequest{
+		Chunks:    []string{chunk1, chunk2},
+		ChunkSize: 262144,
+	})
+	if err != nil {
+		t.Fatalf("marshal create list request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/lists", "application/json", bytes.NewReader(createListBody))
+	if err != nil {
+		t.Fatalf("create list request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create list status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createListResp httpapi.BucketListStatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createListResp); err != nil {
+		t.Fatalf("decode list create response: %v", err)
+	}
+	resp.Body.Close()
+	if createListResp.Root == "" || createListResp.ChunkCount != 2 || createListResp.ChunkSize != 262144 {
+		t.Fatalf("unexpected list create response: %+v", createListResp)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/lists/" + createListResp.Root)
+	if err != nil {
+		t.Fatalf("get list request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get list status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var statResp httpapi.BucketListStatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statResp); err != nil {
+		t.Fatalf("decode list get response: %v", err)
+	}
+	resp.Body.Close()
+	if statResp.ChunkCount != 2 || statResp.ChunkSize != 262144 {
+		t.Fatalf("unexpected list stat response: %+v", statResp)
+	}
+}
+
+func TestServerBucketStatAndContentContracts(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	// Create bucket.
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	resp.Body.Close()
+
+	// Prepare a raw file and a list-backed file in CAS.
+	rawData := []byte("hello raw")
+	rawCID, _ := fakeCID(rawData)
+	mockCAS.AddBlock(rawCID, rawData)
+
+	chunk1 := bytes.Repeat([]byte{'a'}, 262144)
+	chunk2 := []byte("ef")
+	chunk1CID, _ := fakeCID(chunk1)
+	chunk2CID, _ := fakeCID(chunk2)
+	mockCAS.AddBlock(chunk1CID, chunk1)
+	mockCAS.AddBlock(chunk2CID, chunk2)
+
+	createListBody, _ := json.Marshal(&httpapi.BucketListCreateRequest{
+		Chunks:    []string{chunk1CID.String(), chunk2CID.String()},
+		ChunkSize: 262144,
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/lists", "application/json", bytes.NewReader(createListBody))
+	if err != nil {
+		t.Fatalf("create list: %v", err)
+	}
+	var listResp httpapi.BucketListStatResponse
+	_ = json.NewDecoder(resp.Body).Decode(&listResp)
+	resp.Body.Close()
+
+	// Create bucket head bindings.
+	rootManifest := []byte(`{"entries":["large.bin","raw.txt"]}`)
+	rootManifestCID, _ := fakeCID(rootManifest)
+	mockCAS.AddBlock(rootManifestCID, rootManifest)
+	createMapBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"@payload":  rootManifestCID.String(),
+			"raw.txt":   rawCID.String(),
+			"large.bin": listResp.Root,
+		},
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createMapBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	resp.Body.Close()
+
+	// stat raw file
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=/raw.txt")
+	if err != nil {
+		t.Fatalf("stat raw: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stat raw status = %d", resp.StatusCode)
+	}
+	var rawStat httpapi.BucketStatResponse
+	_ = json.NewDecoder(resp.Body).Decode(&rawStat)
+	resp.Body.Close()
+	if rawStat.Kind != "file" || rawStat.StorageKind != "raw" || rawStat.Size == nil || *rawStat.Size != int64(len(rawData)) {
+		t.Fatalf("unexpected raw stat: %+v", rawStat)
+	}
+
+	// stat list file
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=large.bin")
+	if err != nil {
+		t.Fatalf("stat list: %v", err)
+	}
+	var listStat httpapi.BucketStatResponse
+	_ = json.NewDecoder(resp.Body).Decode(&listStat)
+	resp.Body.Close()
+	if listStat.Kind != "file" || listStat.StorageKind != "list" || listStat.Size == nil || *listStat.Size != int64(len(chunk1)+len(chunk2)) {
+		t.Fatalf("unexpected list stat: %+v", listStat)
+	}
+
+	// content raw full
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content?path=raw.txt")
+	if err != nil {
+		t.Fatalf("content raw: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != string(rawData) {
+		t.Fatalf("unexpected raw content status/body: %d %q", resp.StatusCode, string(body))
+	}
+
+	// content raw range
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/buckets/demo/content?path=raw.txt", nil)
+	req.Header.Set("Range", "bytes=0-4")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("content raw range: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent || string(body) != "hello" {
+		t.Fatalf("unexpected raw range status/body: %d %q", resp.StatusCode, string(body))
+	}
+
+	// missing path => 404
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=missing")
+	if err != nil {
+		t.Fatalf("stat missing: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing stat status = %d", resp.StatusCode)
 	}
 }
 
@@ -248,4 +644,23 @@ func fakeCIDString(seed string) string {
 		panic(err)
 	}
 	return cid.NewCidV1(cid.Raw, sum).String()
+}
+
+func withPayloadBinding(bindings map[string]string) map[string]string {
+	out := make(map[string]string, len(bindings)+1)
+	for path, target := range bindings {
+		out[path] = target
+	}
+	if _, ok := out["@payload"]; !ok {
+		out["@payload"] = fakeCIDString("payload")
+	}
+	return out
+}
+
+func fakeCID(data []byte) (cid.Cid, error) {
+	sum, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, sum), nil
 }

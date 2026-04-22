@@ -11,8 +11,8 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-// Graph describes graph metadata in daemon responses.
-type Graph struct {
+// Bucket describes bucket metadata in daemon responses.
+type Bucket struct {
 	ID        string `json:"id"`
 	Root      string `json:"root,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
@@ -23,20 +23,70 @@ type Graph struct {
 	State     string `json:"state"`
 }
 
-// GraphCreateRequest creates a managed graph.
-type GraphCreateRequest struct {
+// BucketCreateRequest creates a managed bucket.
+type BucketCreateRequest struct {
 	ID      string `json:"id"`
 	Backend string `json:"backend,omitempty"`
 }
 
-// GraphResponse wraps a single graph.
-type GraphResponse struct {
-	Graph *Graph `json:"graph"`
+// BucketResponse wraps a single bucket.
+type BucketResponse struct {
+	Bucket *Bucket `json:"bucket"`
 }
 
-// GraphListResponse wraps multiple graphs.
-type GraphListResponse struct {
-	Graphs []*Graph `json:"graphs"`
+// BucketListResponse wraps multiple buckets.
+type BucketListResponse struct {
+	Buckets []*Bucket `json:"buckets"`
+}
+
+// BucketHeadSetRequest sets a managed bucket head root.
+type BucketHeadSetRequest struct {
+	NewRoot         string `json:"new_root"`
+	ArcCount        int    `json:"arc_count"`
+	ExpectedOldRoot string `json:"expected_old_root,omitempty"`
+}
+
+// BucketMapCreateRequest creates a map root inside a bucket namespace.
+type BucketMapCreateRequest struct {
+	Bindings map[string]string `json:"bindings"`
+}
+
+// BucketMapCreateResponse returns a created map root.
+type BucketMapCreateResponse struct {
+	Root string `json:"root"`
+}
+
+// BucketMapSnapshotResponse returns a map root snapshot.
+type BucketMapSnapshotResponse struct {
+	Root     string            `json:"root"`
+	Bindings map[string]string `json:"bindings"`
+}
+
+// BucketMapResolveResponse returns a resolved key under a map root.
+type BucketMapResolveResponse struct {
+	Key string `json:"key"`
+}
+
+// BucketListCreateRequest creates a list root from ordered chunk CIDs.
+type BucketListCreateRequest struct {
+	Chunks    []string `json:"chunks"`
+	ChunkSize int      `json:"chunk_size"`
+}
+
+// BucketListStatResponse is the response shape for list create/stat.
+type BucketListStatResponse struct {
+	Root       string `json:"root"`
+	ChunkCount int    `json:"chunk_count"`
+	ChunkSize  int    `json:"chunk_size"`
+}
+
+// BucketStatResponse is the locked stat contract for bucket content inspection.
+type BucketStatResponse struct {
+	Kind        string `json:"kind"`              // file|dir
+	StorageKind string `json:"storage_kind"`      // raw|list|map
+	Key         string `json:"key"`               // terminal key CID
+	Payload     string `json:"payload,omitempty"` // directory payload CID when available
+	Size        *int64 `json:"size,omitempty"`    // required for files, omitted for directories
 }
 
 // StepEvidence is a single transcript step.
