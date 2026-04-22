@@ -1,18 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/server"
+	daemonapp "github.com/dewebprotocol/malt/daemon"
 	"github.com/spf13/cobra"
 )
 
@@ -49,75 +42,13 @@ func runGateway(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if listen != "" {
-		cfg.RPC.Listen = listen
-	}
 
-	var (
-		nodeOpts   []api.Option
-		mockSrv    *casmock.HTTPServer
-		mockSrvErr chan error
-	)
-
-	if cfg.CAS.Mode == "embedded-mock" {
-		mockOpts := []casmock.Option{}
-		if latency, err := cfg.EmbeddedMockLatency(); err == nil && latency > 0 {
-			mockOpts = append(mockOpts,
-				casmock.WithGetLatency(latency),
-				casmock.WithPutLatency(latency),
-				casmock.WithHasLatency(latency),
-			)
-		}
-		mockCAS := casmock.NewCAS(mockOpts...)
-		nodeOpts = append(nodeOpts, api.WithCAS(mockCAS))
-		mockSrv = casmock.NewHTTPServer(cfg.CAS.EmbeddedMock.Listen, mockCAS)
-		mockSrvErr = make(chan error, 1)
-		go func() {
-			if err := mockSrv.Start(); err != nil && err != http.ErrServerClosed {
-				mockSrvErr <- err
-			}
-		}()
-	}
-
-	nodeOpts = append(nodeOpts, api.WithConfig(cfg))
-	node, err := api.NewNode(nodeOpts...)
-	if err != nil {
-		return err
-	}
-	defer node.Close()
-
-	srv := server.New(node, cfg.RPC.Listen)
-	srvErr := make(chan error, 1)
-	go func() {
-		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
-			srvErr <- err
-		}
-	}()
-
-	fmt.Fprintf(os.Stdout, "malt-gateway serving daemon API on %s\n", cfg.RPC.Listen)
-	if cfg.CAS.Mode == "embedded-mock" {
-		fmt.Fprintf(os.Stdout, "embedded mock CAS listening on %s\n", cfg.CAS.EmbeddedMock.Listen)
-	}
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	select {
-	case sig := <-stop:
-		fmt.Fprintf(os.Stderr, "received signal %s, shutting down\n", sig)
-	case err := <-srvErr:
-		return fmt.Errorf("daemon server failed: %w", err)
-	case err := <-gatewayMockServerError(mockSrvErr):
-		return fmt.Errorf("embedded mock CAS failed: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if mockSrv != nil {
-		_ = mockSrv.Shutdown(ctx)
-	}
-	return srv.Shutdown(ctx)
+	return daemonapp.Run(cfg, daemonapp.RunOptions{
+		ListenOverride: listen,
+		APILabel:       "malt-gateway serving daemon API",
+		Stdout:         os.Stdout,
+		Stderr:         os.Stderr,
+	})
 }
 
 func loadConfig(explicitPath string) (*config.Config, error) {
@@ -125,12 +56,4 @@ func loadConfig(explicitPath string) (*config.Config, error) {
 		return config.Load()
 	}
 	return config.LoadFromFile(explicitPath)
-}
-
-func gatewayMockServerError(ch chan error) <-chan error {
-	if ch == nil {
-		empty := make(chan error)
-		return empty
-	}
-	return ch
 }

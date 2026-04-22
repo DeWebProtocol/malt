@@ -42,7 +42,7 @@ type Node struct {
 	// Shared components (namespace by bucketId)
 	kv           kvstore.KVStore
 	eat          eat.EAT
-	cas          cas.Client
+	cas          cas.Reader
 	graphManager *graph.Manager
 	lineageMgr   *lineage.Manager
 }
@@ -172,8 +172,8 @@ func (n *Node) initEAT() error {
 	}
 }
 
-// initCAS creates a CAS client from config.
-func (n *Node) initCAS() (cas.Client, error) {
+// initCAS creates a read-side CAS client from config.
+func (n *Node) initCAS() (cas.Reader, error) {
 	switch n.cfg.CAS.Mode {
 	case "external", "embedded-mock":
 		timeout, _ := n.cfg.CASTimeout()
@@ -302,8 +302,8 @@ func (n *Node) EAT() eat.EAT {
 	return n.eat
 }
 
-// CAS returns the CAS client.
-func (n *Node) CAS() cas.Client {
+// CAS returns the read-side CAS client.
+func (n *Node) CAS() cas.Reader {
 	return n.cas
 }
 

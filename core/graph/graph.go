@@ -37,9 +37,9 @@ type Graph struct {
 // Parameters:
 //   - id: unique graph identifier
 //   - eat: shared EAT (namespace by bucketId) — from Node
-//   - cas: shared CAS client — from Node (nil for testing/mocks)
+//   - cas: shared read-side CAS client — from Node (nil for testing/mocks)
 //   - opts: functional options (WithCommitmentScheme, WithBucketId, etc.)
-func NewGraph(id string, eat eat.EAT, cas cas.Client, opts ...Option) (*Graph, error) {
+func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)

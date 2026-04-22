@@ -30,13 +30,13 @@ import (
 // It parses one block and returns the first link found in the path.
 // Multi-hop traversal should be handled by the caller.
 type Resolver struct {
-	cas        cas.Client
+	cas        cas.Reader
 	codecs     *codec.Registry
 	hamtConfig hamt.Config
 }
 
 // NewResolver creates a new implicit resolver with default codecs.
-func NewResolver(c cas.Client) *Resolver {
+func NewResolver(c cas.Reader) *Resolver {
 	registry := codec.NewRegistry()
 	registry.Register(dagcbor.New())
 	registry.Register(dagjson.New())
@@ -54,14 +54,14 @@ func NewResolver(c cas.Client) *Resolver {
 }
 
 // NewResolverWithHAMTConfig creates a resolver with custom HAMT configuration.
-func NewResolverWithHAMTConfig(c cas.Client, cfg hamt.Config) *Resolver {
+func NewResolverWithHAMTConfig(c cas.Reader, cfg hamt.Config) *Resolver {
 	r := NewResolver(c)
 	r.hamtConfig = cfg
 	return r
 }
 
 // NewResolverWithCodecs creates a resolver with custom codecs.
-func NewResolverWithCodecs(c cas.Client, registry *codec.Registry) *Resolver {
+func NewResolverWithCodecs(c cas.Reader, registry *codec.Registry) *Resolver {
 	return &Resolver{
 		cas:    c,
 		codecs: registry,

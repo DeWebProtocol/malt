@@ -14,7 +14,7 @@ type HealthResponse struct {
 // Graph describes graph metadata in daemon responses.
 type Graph struct {
 	ID        string `json:"id"`
-	Root      string `json:"root"`
+	Root      string `json:"root,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 	ArcCount  int    `json:"arc_count"`

@@ -19,7 +19,7 @@ type options struct {
 	// Pre-built components (override config-based creation)
 	kvStore kvstore.KVStore
 	eat     eat.EAT
-	cas     cas.Client
+	cas     cas.Reader
 }
 
 func defaultOptions() *options {
@@ -54,8 +54,8 @@ func WithEAT(e eat.EAT) Option {
 	}
 }
 
-// WithCAS sets a custom CAS client.
-func WithCAS(c cas.Client) Option {
+// WithCAS sets a custom read-side CAS client.
+func WithCAS(c cas.Reader) Option {
 	return func(o *options) {
 		o.cas = c
 	}
