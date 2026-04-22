@@ -6,8 +6,10 @@ package api
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
+	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
@@ -21,7 +23,7 @@ func fakeCID(seed string) cid.Cid {
 
 func newTestGraph(t *testing.T) (*Node, *graph.Graph) {
 	t.Helper()
-	node, err := NewNode()
+	node, err := NewNode(WithConfig(testRuntimeConfig(t)))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -242,10 +244,10 @@ func TestAPI_InsertDelete(t *testing.T) {
 		t.Errorf("arc0 target mismatch: got %s", arc0Result.Target)
 	}
 
-	// Delete arc0
-	arcs["arc0"] = cid.Undef
-	snapshot3 := arcset.NewSetFrom(arcs)
-	root3, err := g.Commit(ctx, snapshot3)
+	// Delete arc0 through the update path. Full Commit creates a fresh
+	// structure from the provided snapshot, while delete semantics are carried
+	// by the unified update procedure.
+	root3, _, err := g.Update(ctx, root2, map[string]cid.Cid{"arc0": cid.Undef})
 	if err != nil {
 		t.Fatalf("Delete commit failed: %v", err)
 	}
@@ -282,4 +284,15 @@ func TestAPI_InsertDelete(t *testing.T) {
 	if count != 10 {
 		t.Errorf("expected 10 arcs after insert+delete, got %d", count)
 	}
+}
+
+func testRuntimeConfig(t *testing.T) *config.Config {
+	t.Helper()
+
+	cfg := config.DefaultConfig()
+	cfg.State.RootDir = t.TempDir()
+	cfg.State.KVStore.Type = "badger"
+	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
+	cfg.CAS.Mode = "mock"
+	return cfg
 }

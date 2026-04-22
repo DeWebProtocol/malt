@@ -1,18 +1,19 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
+	updateCmd.AddCommand(updateBatchCmd)
+	updateCmd.AddCommand(createCmd)
+	updateCmd.Flags().StringVar(&updateGraphID, "graph", "", "Update the managed graph head instead of providing an explicit root")
+	updateBatchCmd.Flags().StringVar(&batchGraphID, "graph", "", "Batch update the managed graph head instead of providing an explicit root")
+	createCmd.Flags().StringVar(&createGraphID, "graph", "", "Create or replace the managed graph head")
 }
 
 var (
@@ -24,13 +25,6 @@ var (
 var updateCmd = &cobra.Command{
 	Use:   "update [<root>] <path> <target>",
 	Short: "Update an arc in a MALT structure",
-	Long: `Update (insert/replace/delete) an arc at the given path.
-If target is empty, the arc is deleted.
-
-Examples:
-  malt update bafy... data/file.txt bafy...
-  malt update bafy... old/link ""
-  malt update --graph my-graph data/file.txt bafy...`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if updateGraphID != "" {
 			return cobra.ExactArgs(2)(cmd, args)
@@ -41,77 +35,55 @@ Examples:
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
+	client := mustDaemonClient()
+
 	var (
-		g         *graph.Graph
-		rootCid   cid.Cid
-		err       error
-		path      string
-		targetStr string
+		resp *struct {
+			OldRoot   string `json:"old_root"`
+			NewRoot   string `json:"new_root"`
+			Path      string `json:"path"`
+			OldTarget string `json:"old_target"`
+			NewTarget string `json:"new_target"`
+			Op        string `json:"op"`
+		}
 	)
 
 	if updateGraphID != "" {
-		var meta *graph.GraphMeta
-		g, meta = mustManagedGraph(updateGraphID, true)
-		rootCid, err = managedGraphHeadRoot(meta)
+		out, err := client.UpdateGraph(cmd.Context(), updateGraphID, args[0], args[1])
 		if err != nil {
-			return err
+			return daemonCommandError(err)
 		}
-		path = args[0]
-		targetStr = args[1]
+		resp = &struct {
+			OldRoot   string `json:"old_root"`
+			NewRoot   string `json:"new_root"`
+			Path      string `json:"path"`
+			OldTarget string `json:"old_target"`
+			NewTarget string `json:"new_target"`
+			Op        string `json:"op"`
+		}{out.OldRoot, out.NewRoot, out.Path, out.OldTarget, out.NewTarget, out.Op}
 	} else {
-		g = mustGraph()
-		rootCid, err = parseCID(args[0])
+		out, err := client.UpdateRoot(cmd.Context(), args[0], args[1], args[2])
 		if err != nil {
-			return err
+			return daemonCommandError(err)
 		}
-		path = args[1]
-		targetStr = args[2]
-	}
-	defer cleanupNode()
-
-	var newTarget cid.Cid
-	if targetStr != "" {
-		newTarget, err = parseCID(targetStr)
-		if err != nil {
-			return err
-		}
+		resp = &struct {
+			OldRoot   string `json:"old_root"`
+			NewRoot   string `json:"new_root"`
+			Path      string `json:"path"`
+			OldTarget string `json:"old_target"`
+			NewTarget string `json:"new_target"`
+			Op        string `json:"op"`
+		}{out.OldRoot, out.NewRoot, out.Path, out.OldTarget, out.NewTarget, out.Op}
 	}
 
-	w := g.Writer()
-	ctx := context.Background()
-
-	result, err := w.UpdateArc(ctx, g.BucketId(), rootCid, path, newTarget)
-	if err != nil {
-		return fmt.Errorf("update failed: %w", err)
-	}
-	if updateGraphID != "" {
-		if err := updateManagedGraphRoot(updateGraphID, g, result.NewRoot); err != nil {
-			return fmt.Errorf("update graph metadata: %w", err)
-		}
-	}
-
-	printJSON(map[string]interface{}{
-		"old_root":   result.OldRoot.String(),
-		"new_root":   result.NewRoot.String(),
-		"path":       result.Path,
-		"old_target": result.OldTarget.String(),
-		"new_target": result.NewTarget.String(),
-		"op":         result.Op.String(),
-	})
-
-	fmt.Fprintf(os.Stderr, "arc %q updated (op: %s)\n", path, result.Op.String())
+	printJSON(resp)
+	fmt.Fprintf(os.Stderr, "arc %q updated (op: %s)\n", resp.Path, resp.Op)
 	return nil
 }
 
 var updateBatchCmd = &cobra.Command{
 	Use:   "batch [<root>] <path=target>...",
 	Short: "Batch update multiple arcs",
-	Long: `Update multiple arcs in a single operation.
-Use path=target pairs. Empty target deletes the arc.
-
-Examples:
-  malt batch bafy... a=bafyaaa b=bafybbb c=""
-  malt batch --graph my-graph a=bafyaaa b=bafybbb`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if batchGraphID != "" {
 			return cobra.MinimumNArgs(1)(cmd, args)
@@ -122,70 +94,29 @@ Examples:
 }
 
 func runBatchUpdate(cmd *cobra.Command, args []string) error {
-	var (
-		g       *graph.Graph
-		rootCid cid.Cid
-		err     error
-		pairs   []string
-	)
+	client := mustDaemonClient()
 
-	if batchGraphID != "" {
-		var meta *graph.GraphMeta
-		g, meta = mustManagedGraph(batchGraphID, true)
-		rootCid, err = managedGraphHeadRoot(meta)
-		if err != nil {
-			return err
-		}
-		pairs = args
-	} else {
-		g = mustGraph()
-		rootCid, err = parseCID(args[0])
-		if err != nil {
-			return err
-		}
-		pairs = args[1:]
-	}
-	defer cleanupNode()
-
-	updates := make(map[string]cid.Cid)
-	for _, pair := range pairs {
-		eq := 0
-		for i := 0; i < len(pair); i++ {
-			if pair[i] == '=' {
-				eq = i
-				break
-			}
-		}
-		if eq == 0 {
-			return fmt.Errorf("invalid update pair %q, expected path=target", pair)
-		}
-		path := pair[:eq]
-		targetStr := pair[eq+1:]
-
-		if targetStr == "" {
-			updates[path] = cid.Undef
-		} else {
-			t, err := parseCID(targetStr)
-			if err != nil {
-				return err
-			}
-			updates[path] = t
-		}
-	}
-
-	w := g.Writer()
-	ctx := context.Background()
-
-	result, err := w.BatchUpdateArcs(ctx, g.BucketId(), rootCid, updates)
+	updates, err := parseUpdatePairs(args, batchGraphID == "")
 	if err != nil {
-		return fmt.Errorf("batch update failed: %w", err)
-	}
-	if batchGraphID != "" {
-		if err := updateManagedGraphRoot(batchGraphID, g, result.NewRoot); err != nil {
-			return fmt.Errorf("update graph metadata: %w", err)
-		}
+		return err
 	}
 
+	if batchGraphID != "" {
+		result, err := client.BatchUpdateGraph(cmd.Context(), batchGraphID, updates)
+		if err != nil {
+			return daemonCommandError(err)
+		}
+		fmt.Printf("old_root: %s\n", result.OldRoot)
+		fmt.Printf("new_root: %s\n", result.NewRoot)
+		fmt.Fprintf(os.Stderr, "updated %d arc(s)\n", len(result.PerArc))
+		return nil
+	}
+
+	root := args[0]
+	result, err := client.BatchUpdateRoot(cmd.Context(), root, updates)
+	if err != nil {
+		return daemonCommandError(err)
+	}
 	fmt.Printf("old_root: %s\n", result.OldRoot)
 	fmt.Printf("new_root: %s\n", result.NewRoot)
 	fmt.Fprintf(os.Stderr, "updated %d arc(s)\n", len(result.PerArc))
@@ -195,69 +126,70 @@ func runBatchUpdate(cmd *cobra.Command, args []string) error {
 var createCmd = &cobra.Command{
 	Use:   "create <path=target>...",
 	Short: "Create a new structure from arcs",
-	Long: `Create a new MALT structure from path-to-target pairs.
-
-Examples:
-  malt create data=bafyaaa meta=bafybbb
-  malt create --graph my-graph data=bafyaaa meta=bafybbb`,
-	Args: cobra.MinimumNArgs(1),
-	RunE: runCreate,
+	Args:  cobra.MinimumNArgs(1),
+	RunE:  runCreate,
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
-	var g *graph.Graph
-	if createGraphID != "" {
-		g, _ = mustManagedGraph(createGraphID, true)
-	} else {
-		g = mustGraph()
-	}
-	defer cleanupNode()
-
-	arcs := make(map[string]cid.Cid)
-	for _, pair := range args {
-		eq := 0
-		for i := 0; i < len(pair); i++ {
-			if pair[i] == '=' {
-				eq = i
-				break
-			}
-		}
-		if eq == 0 {
-			return fmt.Errorf("invalid pair %q, expected path=target", pair)
-		}
-		path := pair[:eq]
-		targetStr := pair[eq+1:]
-
-		t, err := parseCID(targetStr)
-		if err != nil {
-			return err
-		}
-		arcs[path] = t
-	}
-
-	w := g.Writer()
-	ctx := context.Background()
-	snapshot := arcset.NewSetFrom(arcs)
-
-	rootCid, err := w.CreateStructure(ctx, g.BucketId(), snapshot)
+	client := mustDaemonClient()
+	arcs, err := parseCreatePairs(args)
 	if err != nil {
-		return fmt.Errorf("create structure failed: %w", err)
-	}
-	if createGraphID != "" {
-		if err := updateManagedGraphRoot(createGraphID, g, rootCid); err != nil {
-			return fmt.Errorf("update graph metadata: %w", err)
-		}
+		return err
 	}
 
-	fmt.Println(rootCid.String())
+	if createGraphID != "" {
+		resp, err := client.CreateGraphStructure(cmd.Context(), createGraphID, arcs)
+		if err != nil {
+			return daemonCommandError(err)
+		}
+		fmt.Println(resp.Root)
+		fmt.Fprintf(os.Stderr, "structure created with %d arc(s)\n", len(arcs))
+		return nil
+	}
+
+	resp, err := client.CreateRootStructure(cmd.Context(), arcs)
+	if err != nil {
+		return daemonCommandError(err)
+	}
+	fmt.Println(resp.Root)
 	fmt.Fprintf(os.Stderr, "structure created with %d arc(s)\n", len(arcs))
 	return nil
 }
 
-func init() {
-	updateCmd.AddCommand(updateBatchCmd)
-	updateCmd.AddCommand(createCmd)
-	updateCmd.Flags().StringVar(&updateGraphID, "graph", "", "Update the managed graph head instead of providing an explicit root")
-	updateBatchCmd.Flags().StringVar(&batchGraphID, "graph", "", "Batch update the managed graph head instead of providing an explicit root")
-	createCmd.Flags().StringVar(&createGraphID, "graph", "", "Create or replace the managed graph head")
+func parseUpdatePairs(args []string, hasRoot bool) (map[string]string, error) {
+	pairs := args
+	if hasRoot {
+		pairs = args[1:]
+	}
+
+	updates := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		parts := splitPair(pair)
+		if parts == nil {
+			return nil, fmt.Errorf("invalid update pair %q, expected path=target", pair)
+		}
+		updates[parts[0]] = parts[1]
+	}
+	return updates, nil
+}
+
+func parseCreatePairs(args []string) (map[string]string, error) {
+	arcs := make(map[string]string, len(args))
+	for _, pair := range args {
+		parts := splitPair(pair)
+		if parts == nil || parts[1] == "" {
+			return nil, fmt.Errorf("invalid pair %q, expected path=target", pair)
+		}
+		arcs[parts[0]] = parts[1]
+	}
+	return arcs, nil
+}
+
+func splitPair(pair string) []string {
+	for i := 0; i < len(pair); i++ {
+		if pair[i] == '=' {
+			return []string{pair[:i], pair[i+1:]}
+		}
+	}
+	return nil
 }

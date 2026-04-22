@@ -123,7 +123,7 @@ var replicationSyncCmd = &cobra.Command{
 it into a target KVStore at the specified path. The target KVStore
 is a new BadgerDB instance created at the given path.`,
 	Args: cobra.ExactArgs(2),
-	RunE:  runReplicationSync,
+	RunE: runReplicationSync,
 }
 
 func runReplicationSync(cmd *cobra.Command, args []string) error {

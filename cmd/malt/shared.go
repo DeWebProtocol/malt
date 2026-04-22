@@ -3,39 +3,34 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
+	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
-	"github.com/spf13/viper"
 )
 
-// defaultNode and defaultGraph are lazily initialized and reused across commands.
+// defaultNode and defaultGraph are lazily initialized and reused by developer commands.
 var (
-	defaultNode  *api.Node
-	defaultGraph *graph.Graph
+	defaultNode   *api.Node
+	defaultGraph  *graph.Graph
+	defaultClient *daemonclient.Client
 )
 
-// makeNode creates and configures a MALT node from CLI flags.
+// makeNode creates and configures a MALT node from config.
 func makeNode() (*api.Node, error) {
-	var opts []api.Option
-
-	if cfgFile != "" {
-		opts = append(opts, api.WithConfigFile(cfgFile))
-	}
-
-	node, err := api.NewNode(opts...)
+	cfg, err := loadRuntimeConfig()
 	if err != nil {
-		return nil, fmt.Errorf("creating node: %w", err)
+		return nil, err
 	}
-	return node, nil
+	return api.NewNode(api.WithConfig(cfg))
 }
 
 // mustNode creates a node or exits with an error.
-// It reuses a cached defaultNode if available.
 func mustNode() *api.Node {
 	if defaultNode == nil {
 		var err error
@@ -48,7 +43,7 @@ func mustNode() *api.Node {
 	return defaultNode
 }
 
-// mustGraph returns the default graph, creating it via mustNode if needed.
+// mustGraph returns the default graph for developer commands.
 func mustGraph() *graph.Graph {
 	if defaultGraph == nil {
 		node := mustNode()
@@ -137,7 +132,22 @@ func updateManagedGraphRoot(graphID string, g *graph.Graph, newRoot cid.Cid) err
 func cleanupNode() {
 	if defaultNode != nil {
 		_ = defaultNode.Close()
+		defaultNode = nil
+		defaultGraph = nil
 	}
+	defaultClient = nil
+}
+
+func mustDaemonClient() *daemonclient.Client {
+	if defaultClient == nil {
+		cfg, err := loadRuntimeConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		defaultClient = daemonclient.New(cfg)
+	}
+	return defaultClient
 }
 
 // parseCID parses a CID string or returns an error.
@@ -156,12 +166,13 @@ func printJSON(v interface{}) {
 	_ = enc.Encode(v)
 }
 
-// loadConfig reads the config file if specified.
-func loadConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
+func daemonCommandError(err error) error {
+	if err == nil {
+		return nil
 	}
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	var apiErr *daemonclient.Error
+	if errors.As(err, &apiErr) {
+		return fmt.Errorf("daemon request failed: %s", apiErr.Message)
 	}
+	return fmt.Errorf("daemon unavailable or config invalid: %w", err)
 }

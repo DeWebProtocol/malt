@@ -1,4 +1,4 @@
-// Package main provides a CLI tool for MALT using Cobra.
+// Package main provides the primary MALT CLI.
 package main
 
 import (
@@ -13,7 +13,6 @@ import (
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -32,60 +31,37 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 
 var rootCmd = &cobra.Command{
 	Use:   "malt",
-	Short: "MALT - Mutable structure LAyer on Top",
-	Long: `MALT (Mutable structure LAyer on Top) provides verifiable, evolvable
-structures on top of content-addressed storage.
+	Short: "MALT runtime CLI",
+	Long: `MALT is an authenticated structure layer over immutable content-addressed storage.
 
-It enables mutable references on immutable content-addressed data structures,
-supporting cryptographic proofs and efficient updates.
+Primary commands:
+  init        Create ~/.malt/malt.json and choose local state paths
+  daemon      Run the local MALT daemon
+  graph       Managed graph lifecycle operations via the daemon
+  resolve     Resolve a path via the daemon
+  update      Mutate structure via the daemon
+  prove       Resolve and print transcript evidence via the daemon
+  verify      Verify a transcript via the daemon
+  lineage     Query lineage via the daemon
+  cas         Interact directly with the configured CAS endpoint
 
-Commands:
-  graph       Manage graphs (create, delete, list, freeze)
-  resolve     Resolve paths through MALT structures
-  update      Update arcs in structures
-  prove       Generate proofs for path resolution
-  verify      Verify resolution transcripts
-  benchmark   Run quick benchmarks
-  eval        Run comprehensive evaluation
-  replication Export, import, and sync graph snapshots`,
+Developer commands such as demo, benchmark, eval, and replication remain available
+for direct library-driven workflows and evaluation scaffolding.`,
 	Version: Version,
 }
 
 var demoCmd = &cobra.Command{
 	Use:   "demo",
 	Short: "Run a demo showing MALT capabilities",
-	Long: `Demonstrates the core features of MALT:
-- Creating structures with explicit arcs
-- Resolving and verifying arcs
-- Localized updates with new commitments`,
-	Run: runDemo,
+	Run:   runDemo,
 }
 
 func init() {
-	config.Init()
-
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
-	rootCmd.PersistentFlags().String("commitment", "", "commitment type: kzg")
-	rootCmd.PersistentFlags().String("kvstore", "", "KVStore type: memory/badger")
-	rootCmd.PersistentFlags().String("eat", "", "EAT type: simple/versioned")
-	rootCmd.PersistentFlags().String("cas", "", "CAS type: mock/ipfs-gateway")
-	rootCmd.PersistentFlags().String("kv-path", "", "BadgerDB database path")
-	rootCmd.PersistentFlags().String("ipfs-gateway", "", "IPFS gateway URL")
-	rootCmd.PersistentFlags().Int("vector-size", 0, "vector size for commitment schemes")
-
-	viper.BindPFlag("commitment_type", rootCmd.PersistentFlags().Lookup("commitment"))
-	viper.BindPFlag("kvstore_type", rootCmd.PersistentFlags().Lookup("kvstore"))
-	viper.BindPFlag("eat_type", rootCmd.PersistentFlags().Lookup("eat"))
-	viper.BindPFlag("cas_type", rootCmd.PersistentFlags().Lookup("cas"))
-	viper.BindPFlag("kvstore.path", rootCmd.PersistentFlags().Lookup("kv-path"))
-	viper.BindPFlag("cas.gateway_url", rootCmd.PersistentFlags().Lookup("ipfs-gateway"))
-	viper.BindPFlag("commitment.vector_size", rootCmd.PersistentFlags().Lookup("vector-size"))
-
+	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default: ~/.malt/malt.json)")
 	rootCmd.AddCommand(demoCmd)
 }
 
 func main() {
-	cobra.OnInitialize(loadConfig)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -93,22 +69,19 @@ func main() {
 }
 
 func runDemo(cmd *cobra.Command, args []string) {
-	// Build node options
-	var nodeOpts []api.Option
-
-	if cfgFile != "" {
-		nodeOpts = append(nodeOpts, api.WithConfigFile(cfgFile))
+	cfg, err := loadRuntimeConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Create node
-	node, err := api.NewNode(nodeOpts...)
+	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating node: %v\n", err)
 		os.Exit(1)
 	}
 	defer node.Close()
 
-	// Create graph
 	g, err := node.NewGraph("demo")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating graph: %v\n", err)
@@ -121,11 +94,9 @@ func runDemo(cmd *cobra.Command, args []string) {
 	fmt.Printf("Configuration: %s\n", node.Config())
 	fmt.Println()
 
-	// Create target CIDs
 	target1, _ := newPayloadCID([]byte("target1"))
 	target2, _ := newPayloadCID([]byte("target2"))
 
-	// Create structure using graph.Commit
 	snapshot := arcset.NewSetFrom(map[string]cid.Cid{
 		"link1": target1,
 		"link2": target2,
@@ -142,7 +113,6 @@ func runDemo(cmd *cobra.Command, args []string) {
 	fmt.Printf("  link2 -> %s\n", target2)
 	fmt.Println()
 
-	// Resolve
 	result, err := g.Resolver().Resolve(root, "link1")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving: %v\n", err)
@@ -154,7 +124,6 @@ func runDemo(cmd *cobra.Command, args []string) {
 	valid, _ := g.Verify(ctx, root, proof, resolved)
 	fmt.Printf("Resolved link1: %s (valid: %v)\n", resolved, valid)
 
-	// Update
 	newTarget, _ := newPayloadCID([]byte("new_target"))
 	newRoot, delta, err := g.Update(ctx, root, map[string]cid.Cid{
 		"link1": newTarget,
@@ -170,4 +139,11 @@ func runDemo(cmd *cobra.Command, args []string) {
 
 	fmt.Println()
 	fmt.Println("=== Demo Complete ===")
+}
+
+func loadRuntimeConfig() (*config.Config, error) {
+	if cfgFile != "" {
+		return config.LoadFromFile(cfgFile)
+	}
+	return config.Load()
 }

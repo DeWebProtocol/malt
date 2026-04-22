@@ -1,17 +1,33 @@
 {
-  "commitment_type": "kzg",
-  "kvstore_type": "memory",
-  "eat_type": "versioned",
-  "cas_type": "mock",
-  "kvstore": {
-    "path": "./data/malt.db",
-    "in_memory": true
+  "rpc": {
+    "listen": "127.0.0.1:4317"
   },
-  "commitment": {
-    "vector_size": 256
+  "state": {
+    "root_dir": "~/.malt/state",
+    "kvstore": {
+      "type": "badger",
+      "path": "kv"
+    },
+    "eat": {
+      "type": "versioned"
+    },
+    "lineage": {
+      "enabled": true
+    }
+  },
+  "structure": {
+    "default_backend": "kzg"
   },
   "cas": {
-    "gateway_url": "https://ipfs.io/ipfs",
-    "timeout": "30s"
+    "mode": "embedded-mock",
+    "timeout": "30s",
+    "embedded_mock": {
+      "enabled": true,
+      "listen": "127.0.0.1:4318"
+    }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json"
   }
 }

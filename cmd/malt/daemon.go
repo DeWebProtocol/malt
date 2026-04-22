@@ -9,54 +9,38 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/server"
 	"github.com/spf13/cobra"
 )
 
-var (
-	Version = "dev"
-	cfgFile string
-	listen  string
-)
-
-func main() {
-	rootCmd := &cobra.Command{
-		Use:   "malt-gateway",
-		Short: "Debug alias for the MALT daemon server",
-		Long: `malt-gateway is a thin debug alias for the MALT daemon server.
-
-It starts the same /api/v1 daemon API and optional embedded mock CAS used by
-the main "malt daemon" command. This binary remains only for evaluation and
-debugging; the primary product entrypoint is "malt daemon".`,
-		Version: Version,
-		RunE:    runGateway,
-	}
-
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file")
-	rootCmd.PersistentFlags().StringVarP(&listen, "listen", "l", "", "override daemon listen address")
-
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+func init() {
+	rootCmd.AddCommand(daemonCmd)
+	daemonCmd.Flags().String("listen", "", "override daemon listen address")
 }
 
-func runGateway(cmd *cobra.Command, args []string) error {
-	cfg, err := loadConfig(cfgFile)
+var daemonCmd = &cobra.Command{
+	Use:   "daemon",
+	Short: "Run the local MALT daemon",
+	RunE:  runDaemon,
+}
+
+func runDaemon(cmd *cobra.Command, args []string) error {
+	cfg, err := loadRuntimeConfig()
 	if err != nil {
 		return err
 	}
-	if listen != "" {
-		cfg.RPC.Listen = listen
+
+	if override, _ := cmd.Flags().GetString("listen"); override != "" {
+		cfg.RPC.Listen = override
 	}
 
 	var (
-		nodeOpts   []api.Option
-		mockSrv    *casmock.HTTPServer
-		mockSrvErr chan error
+		nodeOpts    []api.Option
+		mockSrv     *casmock.HTTPServer
+		mockSrvErr  chan error
+		mockCASInst *casmock.CAS
 	)
 
 	if cfg.CAS.Mode == "embedded-mock" {
@@ -68,9 +52,9 @@ func runGateway(cmd *cobra.Command, args []string) error {
 				casmock.WithHasLatency(latency),
 			)
 		}
-		mockCAS := casmock.NewCAS(mockOpts...)
-		nodeOpts = append(nodeOpts, api.WithCAS(mockCAS))
-		mockSrv = casmock.NewHTTPServer(cfg.CAS.EmbeddedMock.Listen, mockCAS)
+		mockCASInst = casmock.NewCAS(mockOpts...)
+		nodeOpts = append(nodeOpts, api.WithCAS(mockCASInst))
+		mockSrv = casmock.NewHTTPServer(cfg.CAS.EmbeddedMock.Listen, mockCASInst)
 		mockSrvErr = make(chan error, 1)
 		go func() {
 			if err := mockSrv.Start(); err != nil && err != http.ErrServerClosed {
@@ -94,7 +78,7 @@ func runGateway(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	fmt.Fprintf(os.Stdout, "malt-gateway serving daemon API on %s\n", cfg.RPC.Listen)
+	fmt.Fprintf(os.Stdout, "malt daemon listening on %s\n", cfg.RPC.Listen)
 	if cfg.CAS.Mode == "embedded-mock" {
 		fmt.Fprintf(os.Stdout, "embedded mock CAS listening on %s\n", cfg.CAS.EmbeddedMock.Listen)
 	}
@@ -107,7 +91,7 @@ func runGateway(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "received signal %s, shutting down\n", sig)
 	case err := <-srvErr:
 		return fmt.Errorf("daemon server failed: %w", err)
-	case err := <-gatewayMockServerError(mockSrvErr):
+	case err := <-mockServerError(mockSrvErr):
 		return fmt.Errorf("embedded mock CAS failed: %w", err)
 	}
 
@@ -117,17 +101,13 @@ func runGateway(cmd *cobra.Command, args []string) error {
 	if mockSrv != nil {
 		_ = mockSrv.Shutdown(ctx)
 	}
-	return srv.Shutdown(ctx)
-}
-
-func loadConfig(explicitPath string) (*config.Config, error) {
-	if explicitPath == "" {
-		return config.Load()
+	if err := srv.Shutdown(ctx); err != nil {
+		return err
 	}
-	return config.LoadFromFile(explicitPath)
+	return nil
 }
 
-func gatewayMockServerError(ch chan error) <-chan error {
+func mockServerError(ch chan error) <-chan error {
 	if ch == nil {
 		empty := make(chan error)
 		return empty

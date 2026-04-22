@@ -79,13 +79,11 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 		node.cfg = cfg
 	} else {
-		// Use in-process defaults consistent with config.Init().
-		node.cfg = &config.Config{
-			CommitmentType: "kzg",
-			KVStoreType:    "memory",
-			EATType:        "versioned",
-			CASType:        "mock",
+		cfg, err := config.Load()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load default config: %w", err)
 		}
+		node.cfg = cfg
 	}
 
 	// Initialize components (use provided or create from config)
@@ -129,16 +127,16 @@ func NewNode(opts ...Option) (*Node, error) {
 
 // initKVStore creates a KVStore from config.
 func (n *Node) initKVStore() (kvstore.KVStore, error) {
-	switch n.cfg.KVStoreType {
+	switch n.cfg.State.KVStore.Type {
 	case "memory":
 		return kvmemory.New(), nil
 	case "badger":
 		return badger.New(
-			badger.WithPath(n.cfg.KVStore.Path),
-			badger.WithInMemory(n.cfg.KVStore.InMemory),
+			badger.WithPath(n.cfg.KVStorePath()),
+			badger.WithInMemory(false),
 		)
 	default:
-		return nil, fmt.Errorf("unknown kvstore type: %s", n.cfg.KVStoreType)
+		return nil, fmt.Errorf("unknown kvstore type: %s", n.cfg.State.KVStore.Type)
 	}
 }
 
@@ -154,7 +152,7 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.IndexCommitment
 
 // initEAT creates an EAT from config.
 func (n *Node) initEAT() error {
-	switch n.cfg.EATType {
+	switch n.cfg.State.EAT.Type {
 	case "simple", "overwrite":
 		e, err := overwrite.NewEAT(overwrite.WithKVStore(n.kv))
 		if err != nil {
@@ -170,35 +168,24 @@ func (n *Node) initEAT() error {
 		n.eat = e
 		return nil
 	default:
-		return fmt.Errorf("unknown eat type: %s", n.cfg.EATType)
+		return fmt.Errorf("unknown eat type: %s", n.cfg.State.EAT.Type)
 	}
 }
 
 // initCAS creates a CAS client from config.
 func (n *Node) initCAS() (cas.Client, error) {
-	switch n.cfg.CASType {
-	case "mock":
-		var opts []casmock.Option
-		if n.cfg.CAS.MockLatency != "" {
-			d, err := n.cfg.CASMockLatency()
-			if err != nil {
-				return nil, fmt.Errorf("invalid mock_latency: %w", err)
-			}
-			opts = append(opts,
-				casmock.WithGetLatency(d),
-				casmock.WithPutLatency(d),
-				casmock.WithHasLatency(d),
-			)
-		}
-		return casmock.NewCAS(opts...), nil
-	case "ipfs-gateway":
+	switch n.cfg.CAS.Mode {
+	case "external", "embedded-mock":
 		timeout, _ := n.cfg.CASTimeout()
 		return ipfs.NewClient(
-			n.cfg.CAS.GatewayURL,
+			n.cfg.CASBaseURL(),
 			ipfs.WithTimeout(timeout),
 		), nil
+	case "mock":
+		// Keep this mode only for tests or direct in-process injection paths.
+		return casmock.NewCAS(casmock.WithoutLatency()), nil
 	default:
-		return nil, fmt.Errorf("unknown cas type: %s", n.cfg.CASType)
+		return nil, fmt.Errorf("unknown cas mode: %s", n.cfg.CAS.Mode)
 	}
 }
 
@@ -208,12 +195,12 @@ func (n *Node) initCAS() (cas.Client, error) {
 // are instantiated per graph.
 func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string) (*graph.GraphMeta, error) {
 	if backend == "" {
-		backend = n.cfg.CommitmentType
+		backend = n.cfg.Structure.DefaultBackend
 	}
 	if _, err := n.initCommitmentSchemeType(backend); err != nil {
 		return nil, err
 	}
-	return n.graphManager.CreateGraph(ctx, id, backend, canonicalEATType(n.cfg.EATType))
+	return n.graphManager.CreateGraph(ctx, id, backend, canonicalEATType(n.cfg.State.EAT.Type))
 }
 
 // OpenGraph opens a managed graph using the runtime profile stored in GraphMeta.
@@ -226,14 +213,14 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 	}
 
 	graphEATType := canonicalEATType(meta.EATType)
-	nodeEATType := canonicalEATType(n.cfg.EATType)
+	nodeEATType := canonicalEATType(n.cfg.State.EAT.Type)
 	if graphEATType != "" && graphEATType != nodeEATType {
-		return nil, fmt.Errorf("graph %q requires eat_type %q, node is %q", id, meta.EATType, n.cfg.EATType)
+		return nil, fmt.Errorf("graph %q requires eat_type %q, node is %q", id, meta.EATType, n.cfg.State.EAT.Type)
 	}
 
 	backend := meta.Backend
 	if backend == "" {
-		backend = n.cfg.CommitmentType
+		backend = n.cfg.Structure.DefaultBackend
 	}
 
 	scheme, err := n.initCommitmentSchemeType(backend)
@@ -269,7 +256,7 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	scheme := o.Scheme
 	if scheme == nil {
 		var err error
-		scheme, err = n.initCommitmentSchemeType(n.cfg.CommitmentType)
+		scheme, err = n.initCommitmentSchemeType(n.cfg.Structure.DefaultBackend)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create commitment scheme: %w", err)
 		}
@@ -303,7 +290,7 @@ func (a *lineageRecorderAdapter) Record(ctx context.Context, bucketId string, ne
 
 // Commitment returns the default commitment scheme type from config.
 func (n *Node) Commitment() commitment.IndexCommitment {
-	scheme, err := n.initCommitmentSchemeType(n.cfg.CommitmentType)
+	scheme, err := n.initCommitmentSchemeType(n.cfg.Structure.DefaultBackend)
 	if err != nil {
 		return nil
 	}

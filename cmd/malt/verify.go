@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/evidence"
+	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/spf13/cobra"
 )
 
@@ -49,10 +47,9 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	g := mustGraph()
-	defer cleanupNode()
+	client := mustDaemonClient()
 
-	rootCid, err := parseCID(args[0])
+	rootCID, err := parseCID(args[0])
 	if err != nil {
 		return err
 	}
@@ -72,9 +69,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing transcript: %w", err)
 	}
 
-	steps := make([]resolver.StepEvidence, len(input.Steps))
+	steps := make([]httpapi.VerifyStep, len(input.Steps))
 	for i, step := range input.Steps {
-		targetCid, err := parseCID(step.Target)
+		targetCID, err := parseCID(step.Target)
 		if err != nil {
 			return fmt.Errorf("step %d: invalid target CID: %w", i, err)
 		}
@@ -84,32 +81,29 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("step %d: invalid evidence: %w", i, err)
 		}
 
-		var ev evidence.Evidence
 		switch step.Kind {
-		case "explicit":
-			ev = evidence.NewExplicitEvidence(evBytes)
-		case "implicit":
-			ev = evidence.NewImplicitEvidence(evBytes)
-		case "hamt":
-			ev = evidence.NewHAMTEvidence(evBytes)
+		case "explicit", "implicit", "hamt":
 		default:
 			return fmt.Errorf("step %d: unknown evidence kind %q", i, step.Kind)
 		}
 
-		steps[i] = resolver.StepEvidence{
-			Path:     arcset.CanonicalizePath(step.Path),
-			Target:   targetCid,
-			Evidence: ev,
+		steps[i] = httpapi.VerifyStep{
+			Path:     step.Path,
+			Target:   targetCID.String(),
+			Evidence: base64.StdEncoding.EncodeToString(evBytes),
+			Kind:     step.Kind,
 		}
 	}
 
-	transcript := &resolver.Transcript{Steps: steps}
-	valid, err := g.Resolver().VerifyTranscript(rootCid, transcript)
+	resp, err := client.Verify(cmd.Context(), &httpapi.VerifyRequest{
+		Root:       rootCID.String(),
+		Transcript: steps,
+	})
 	if err != nil {
-		return fmt.Errorf("verification failed: %w", err)
+		return daemonCommandError(err)
 	}
 
-	if valid {
+	if resp.Valid {
 		fmt.Println("valid: true")
 		fmt.Fprintf(os.Stderr, "transcript verified successfully\n")
 	} else {
