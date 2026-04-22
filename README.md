@@ -32,6 +32,9 @@ Current runtime shape:
 - `malt daemon`
   - long-running local process
   - owns hot proving/index state
+- `malt import`
+  - client-side workflow that uploads payload directly to CAS
+  - then attaches resulting `path -> CID` bindings to a graph or root through the daemon
 - `malt graph`, `malt resolve`, `malt prove`, `malt update`, `malt verify`, `malt lineage`
   - thin HTTP clients against the local daemon
 - `malt cas`
@@ -126,6 +129,12 @@ Recommended boundary:
 
 `malt cas ...` commands are still useful convenience tooling, but they should
 not be mistaken for the conceptual center of the system.
+
+`malt import ...` is therefore best understood as a client-side orchestration convenience:
+
+- payload publication still goes directly to CAS
+- structure attachment still goes through the daemon API
+- the command only hides that two-step interaction behind one local workflow
 
 ## Interoperability
 

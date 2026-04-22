@@ -38,6 +38,7 @@ Primary commands:
   init        Create ~/.malt/malt.json and choose local state paths
   daemon      Run the local MALT daemon
   graph       Managed graph lifecycle operations via the daemon
+  import      Upload local files to CAS and attach them to MALT
   resolve     Resolve a path via the daemon
   update      Mutate structure via the daemon
   prove       Resolve and print transcript evidence via the daemon
