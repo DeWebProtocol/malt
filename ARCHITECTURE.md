@@ -28,23 +28,36 @@ Current command model:
   - long-running local process
   - owns hot structure state
   - serves local HTTP/JSON API requests
-- `malt import`
-  - client-side orchestration for file and directory import
+- `malt bucket ...`
+  - manages daemon-side buckets and the client-side default bucket
+- `malt add ...`
+  - client-side orchestration for file and directory ingestion
   - uploads payload blocks to CAS
-  - then commits the resulting bindings through the daemon API
+  - then attaches the resulting bindings into a bucket through the daemon API
+- `malt cat ...` and `malt get ...`
+  - product read paths for bucket-local files and directories
 - `malt ...`
-  - thin client commands for inspection, mutation, and convenience workflows
+  - lower-level thin client commands for inspection, mutation, proof, verification, and lineage workflows
 - `malt cas ...`
   - convenience commands for CAS-oriented workflows
 
 Current code status:
 
-- `cmd/malt` now provides `malt init`, `malt daemon`, thin client graph/import/resolve/prove/update/verify/lineage commands, and `malt cas`
+- `cmd/malt` now provides `malt init`, `malt daemon`, bucket/add/cat/get product commands, lower-level resolve/prove/update/verify/lineage commands, and `malt cas`
 - `server/` provides the daemon HTTP server
 - `client/` provides the thin daemon HTTP client
 - `httpapi/` holds the shared `/api/v1` request/response model
 - `cmd/gateway` now serves as a thin debug/evaluation alias to the same daemon server package
 - embedded mock CAS runs on a second local port and exposes a Kubo-compatible `/api/v0`
+
+Current runtime invariants:
+
+- a managed bucket head must be a `map` root because bucket heads represent directory-like structure
+- a `list` root represents file-content structure and is not a valid managed bucket head
+- every MALT-native `map` root carries the reserved `@payload` binding
+- materializing a bare `map` root means resolving `@payload` first
+- `list` roots are terminal typed keys and do not auto-redirect through `@payload`
+- bucket-path misses are reported as `not found`, not as a fallback to the current root
 
 ## Architectural Center
 
@@ -206,12 +219,12 @@ Read path:
 This means MALT should not be framed primarily as a payload-upload proxy.
 Its core role is structure management, authenticated resolution, and proof generation.
 
-`malt import ...` does not change that boundary. It is only a client-side convenience
+`malt add ...` does not change that boundary. It is only a client-side convenience
 workflow that performs:
 
 1. local file traversal
 2. direct payload upload to CAS
-3. follow-up structure attachment through the daemon
+3. follow-up structure attachment into a bucket through the daemon
 
 ### Mock CAS Direction
 
