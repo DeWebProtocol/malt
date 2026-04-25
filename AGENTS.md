@@ -10,7 +10,7 @@ For repo-level workflow, also read the parent repository `../AGENTS.md`.
 This submodule contains the Go implementation of MALT:
 
 - resolver / typed step executors
-- EAT
+- ArcTable
 - primitive commitment backends
 - graph and writer layers
 - gateway, CLI, evaluation, and replication

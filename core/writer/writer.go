@@ -1,6 +1,6 @@
 // Package writer implements the write-side API for MALT.
 // It provides the unified arc update procedure (UpdateArc) described in Sec 4.5,
-// coordinating map semantics, EAT (index), and lineage recording.
+// coordinating map semantics, ArcTable (index), and lineage recording.
 package writer
 
 import (
@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/eat"
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
@@ -101,15 +101,15 @@ type LineageRecorder interface {
 }
 
 // Writer implements the write-side API for MALT.
-// It coordinates keyed-map semantics, EAT (index), and optional lineage recording
+// It coordinates keyed-map semantics, ArcTable (index), and optional lineage recording
 // to execute the unified arc update procedure from Sec 4.5.
 //
 // Symmetric to Resolver on the read side:
-//   - Resolver: (root, path) -> (target, transcript) via EAT lookup + semantic prove
-//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + EAT apply + lineage
+//   - Resolver: (root, path) -> (target, transcript) via ArcTable lookup + semantic prove
+//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply + lineage
 type Writer struct {
 	semantic mapping.Semantics
-	eat      eat.EAT
+	arctable arctable.ArcTable
 	rec      LineageRecorder
 }
 
@@ -117,12 +117,12 @@ type Writer struct {
 //
 // Parameters:
 //   - semantic: keyed-map semantic (required)
-//   - eat: Explicit Arc Table (required)
+//   - arctable: Explicit Arc Table (required)
 //   - rec: optional LineageRecorder for versioned resolution (nil to disable)
-func NewWriter(semantic mapping.Semantics, eat eat.EAT, rec LineageRecorder) *Writer {
+func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, rec LineageRecorder) *Writer {
 	return &Writer{
 		semantic: semantic,
-		eat:      eat,
+		arctable: arctable,
 		rec:      rec,
 	}
 }
@@ -247,9 +247,9 @@ func hasDefinedPayloadBinding(arcs arcset.ArcSet) bool {
 // UpdateArc executes the unified arc update procedure.
 //
 // Given a structure root, path, and new target CID, this method:
-//  1. Looks up the current binding: c = EAT.Get(root, path)
+//  1. Looks up the current binding: c = ArcTable.Get(root, path)
 //  2. Updates the commitment: newRoot = semantic.Update(root, path, c, newTarget)
-//  3. Applies the update to EAT using the full new arc set for newRoot
+//  3. Applies the update to ArcTable using the full new arc set for newRoot
 //  4. Records lineage: RecordLineage(newRoot, root)
 //
 // The operation covers three semantic cases:
@@ -269,14 +269,14 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	}
 
 	// Step 1: Look up current binding
-	oldTarget, err := w.eat.Get(ctx, bucketId, root, canonicalPath.String())
-	if err != nil && !eat.IsNotFound(err) {
-		return nil, fmt.Errorf("EAT.Get failed: %w", err)
+	oldTarget, err := w.arctable.Get(ctx, bucketId, root, canonicalPath.String())
+	if err != nil && !arctable.IsNotFound(err) {
+		return nil, fmt.Errorf("ArcTable.Get failed: %w", err)
 	}
-	// eat.IsNotFound means oldTarget == cid.Undef, which is valid for insert
-	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
+	// arctable.IsNotFound means oldTarget == cid.Undef, which is valid for insert
+	snapshot, err := w.arctable.Snapshot(ctx, bucketId, root)
 	if err != nil {
-		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
+		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
 	if !hasDefinedPayloadBinding(snapshot) && !(canonicalPath == mandatoryPayloadPath && newTarget.Defined()) {
 		return nil, ErrMissingPayloadBinding
@@ -321,10 +321,10 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	}
 	delta := diffArcMaps(oldArcs, updatedArcs)
 
-	// Step 3: Apply update to EAT as an old->new delta. This keeps versioned EAT
+	// Step 3: Apply update to ArcTable as an old->new delta. This keeps versioned ArcTable
 	// compact while still emitting tombstones for deletions.
-	if err := w.eat.Update(ctx, bucketId, newRoot, root, delta); err != nil {
-		return nil, fmt.Errorf("EAT.Update failed: %w", err)
+	if err := w.arctable.Update(ctx, bucketId, newRoot, root, delta); err != nil {
+		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 
 	// Step 4: Record lineage
@@ -349,7 +349,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 // Given a structure root and a map of path → newTarget, this method:
 //  1. Looks up all current bindings
 //  2. Applies semantic.Update sequentially over the current keyed view
-//  3. Applies all updates to EAT
+//  3. Applies all updates to ArcTable
 //  4. Records lineage: RecordLineage(newRoot, root)
 func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.Cid, updates map[string]cid.Cid) (*BatchUpdateResult, error) {
 	if !root.Defined() {
@@ -367,9 +367,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	}
 
 	// Step 1: Get current arc set snapshot
-	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
+	snapshot, err := w.arctable.Snapshot(ctx, bucketId, root)
 	if err != nil {
-		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
+		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
 	if !hasDefinedPayloadBinding(snapshot) {
 		payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]
@@ -382,9 +382,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
 
 	for path, newTarget := range normalizedUpdates {
-		oldTarget, err := w.eat.Get(ctx, bucketId, root, path.String())
-		if err != nil && !eat.IsNotFound(err) {
-			return nil, fmt.Errorf("EAT.Get failed for %s: %w", path.String(), err)
+		oldTarget, err := w.arctable.Get(ctx, bucketId, root, path.String())
+		if err != nil && !arctable.IsNotFound(err) {
+			return nil, fmt.Errorf("ArcTable.Get failed for %s: %w", path.String(), err)
 		}
 
 		isInsert := !oldTarget.Defined() && newTarget.Defined()
@@ -436,9 +436,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 
 	delta := diffArcMaps(oldArcs, updatedArcs)
 
-	// Step 4: Apply the update delta to EAT.
-	if err := w.eat.Update(ctx, bucketId, newRoot, root, delta); err != nil {
-		return nil, fmt.Errorf("EAT.Update failed: %w", err)
+	// Step 4: Apply the update delta to ArcTable.
+	if err := w.arctable.Update(ctx, bucketId, newRoot, root, delta); err != nil {
+		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 
 	// Step 5: Record lineage
@@ -466,7 +466,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 //
 // This is the initial commitment operation:
 //  1. Commits the arc set via the semantic layer
-//  2. Stores arcs in EAT (first version, no parent)
+//  2. Stores arcs in ArcTable (first version, no parent)
 //  3. Records lineage with cid.Undef as parent
 func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
@@ -486,9 +486,9 @@ func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcs
 		return cid.Undef, fmt.Errorf("semantic.Commit failed: %w", err)
 	}
 
-	// Step 2: Store arcs in EAT (first version)
-	if err := w.eat.Update(ctx, bucketId, root, cid.Undef, stringifyArcSet(normalizedSnapshot)); err != nil {
-		return cid.Undef, fmt.Errorf("EAT.Update failed: %w", err)
+	// Step 2: Store arcs in ArcTable (first version)
+	if err := w.arctable.Update(ctx, bucketId, root, cid.Undef, stringifyArcSet(normalizedSnapshot)); err != nil {
+		return cid.Undef, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 
 	// Step 3: Record lineage (root → cid.Undef means initial creation)
@@ -503,7 +503,7 @@ func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcs
 
 // GetArc retrieves the current target CID for an arc path.
 //
-// This is a read-through operation that delegates to EAT.
+// This is a read-through operation that delegates to ArcTable.
 // Returns ErrArcNotFound if the path does not exist.
 func (w *Writer) GetArc(ctx context.Context, bucketId string, root cid.Cid, path string) (cid.Cid, error) {
 	if !root.Defined() {
@@ -514,12 +514,12 @@ func (w *Writer) GetArc(ctx context.Context, bucketId string, root cid.Cid, path
 		return cid.Undef, ErrEmptyPath
 	}
 
-	target, err := w.eat.Get(ctx, bucketId, root, canonicalPath.String())
+	target, err := w.arctable.Get(ctx, bucketId, root, canonicalPath.String())
 	if err != nil {
-		if eat.IsNotFound(err) {
+		if arctable.IsNotFound(err) {
 			return cid.Undef, fmt.Errorf("%s: %w", canonicalPath.String(), ErrArcNotFound)
 		}
-		return cid.Undef, fmt.Errorf("EAT.Get failed: %w", err)
+		return cid.Undef, fmt.Errorf("ArcTable.Get failed: %w", err)
 	}
 
 	return target, nil
@@ -531,9 +531,9 @@ func (w *Writer) GetSnapshot(ctx context.Context, bucketId string, root cid.Cid)
 		return nil, ErrInvalidRoot
 	}
 
-	snapshot, err := w.eat.Snapshot(ctx, bucketId, root)
+	snapshot, err := w.arctable.Snapshot(ctx, bucketId, root)
 	if err != nil {
-		return nil, fmt.Errorf("EAT.Snapshot failed: %w", err)
+		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
 
 	return filterLogicalArcSet(snapshot), nil

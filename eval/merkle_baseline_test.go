@@ -245,8 +245,8 @@ func TestMerkleDAGvsMALTComparison(t *testing.T) {
 		UpdateRounds: 1,
 		RandomSeed:   42,
 		Backend:      BackendKZG,
-		EATType:      EATOverwrite,
-	}, maltComponents.BucketID, maltComponents.EAT, maltComponents.Semantic, maltComponents.CAS)
+		ArcTableType: ArcTableOverwrite,
+	}, maltComponents.BucketID, maltComponents.ArcTable, maltComponents.Semantic, maltComponents.CAS)
 
 	maltResults, err := maltRunner.RunAppendBenchmark(ctx)
 	if err != nil {

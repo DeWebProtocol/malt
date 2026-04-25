@@ -8,14 +8,14 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/core/arctable"
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
+	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	"github.com/dewebprotocol/malt/core/eat/versioned"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
@@ -24,7 +24,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-func canonicalEATType(t string) string {
+func canonicalArcTableType(t string) string {
 	switch t {
 	case "simple":
 		return "overwrite"
@@ -41,7 +41,7 @@ type Node struct {
 
 	// Shared components (namespace by bucketId)
 	kv           kvstore.KVStore
-	eat          eat.EAT
+	arctable     arctable.ArcTable
 	cas          cas.Reader
 	graphManager *graph.Manager
 	lineageMgr   *lineage.Manager
@@ -99,13 +99,13 @@ func NewNode(opts ...Option) (*Node, error) {
 		}
 	}
 
-	// EAT
-	if options.eat != nil {
-		node.eat = options.eat
+	// ArcTable
+	if options.arctable != nil {
+		node.arctable = options.arctable
 	} else {
-		err = node.initEAT()
+		err = node.initArcTable()
 		if err != nil {
-			return nil, fmt.Errorf("failed to initialize EAT: %w", err)
+			return nil, fmt.Errorf("failed to initialize ArcTable: %w", err)
 		}
 	}
 
@@ -150,25 +150,25 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.IndexCommitment
 	}
 }
 
-// initEAT creates an EAT from config.
-func (n *Node) initEAT() error {
-	switch n.cfg.State.EAT.Type {
+// initArcTable creates an ArcTable from config.
+func (n *Node) initArcTable() error {
+	switch n.cfg.State.ArcTable.Type {
 	case "simple", "overwrite":
-		e, err := overwrite.NewEAT(overwrite.WithKVStore(n.kv))
+		e, err := overwrite.NewArcTable(overwrite.WithKVStore(n.kv))
 		if err != nil {
 			return err
 		}
-		n.eat = e
+		n.arctable = e
 		return nil
 	case "versioned":
-		e, err := versioned.NewEAT(versioned.WithKVStore(n.kv))
+		e, err := versioned.NewArcTable(versioned.WithKVStore(n.kv))
 		if err != nil {
 			return err
 		}
-		n.eat = e
+		n.arctable = e
 		return nil
 	default:
-		return fmt.Errorf("unknown eat type: %s", n.cfg.State.EAT.Type)
+		return fmt.Errorf("unknown arctable type: %s", n.cfg.State.ArcTable.Type)
 	}
 }
 
@@ -190,8 +190,8 @@ func (n *Node) initCAS() (cas.Reader, error) {
 }
 
 // CreateManagedGraph creates graph metadata using the node's runtime profile.
-// The EAT implementation is node-scoped, so managed graphs always persist the
-// node's active EAT type. Backend may vary per graph because commitment schemes
+// The ArcTable implementation is node-scoped, so managed graphs always persist the
+// node's active ArcTable type. Backend may vary per graph because commitment schemes
 // are instantiated per graph.
 func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string) (*graph.GraphMeta, error) {
 	if backend == "" {
@@ -200,22 +200,22 @@ func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string
 	if _, err := n.initCommitmentSchemeType(backend); err != nil {
 		return nil, err
 	}
-	return n.graphManager.CreateGraph(ctx, id, backend, canonicalEATType(n.cfg.State.EAT.Type))
+	return n.graphManager.CreateGraph(ctx, id, backend, canonicalArcTableType(n.cfg.State.ArcTable.Type))
 }
 
 // OpenGraph opens a managed graph using the runtime profile stored in GraphMeta.
-// The persisted backend selects the commitment scheme; the persisted EAT type
-// must match the node's shared EAT implementation.
+// The persisted backend selects the commitment scheme; the persisted ArcTable type
+// must match the node's shared ArcTable implementation.
 func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 	meta, err := n.graphManager.GetGraph(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	graphEATType := canonicalEATType(meta.EATType)
-	nodeEATType := canonicalEATType(n.cfg.State.EAT.Type)
-	if graphEATType != "" && graphEATType != nodeEATType {
-		return nil, fmt.Errorf("graph %q requires eat_type %q, node is %q", id, meta.EATType, n.cfg.State.EAT.Type)
+	graphArcTableType := canonicalArcTableType(meta.ArcTableType)
+	nodeArcTableType := canonicalArcTableType(n.cfg.State.ArcTable.Type)
+	if graphArcTableType != "" && graphArcTableType != nodeArcTableType {
+		return nil, fmt.Errorf("graph %q requires arctable_type %q, node is %q", id, meta.ArcTableType, n.cfg.State.ArcTable.Type)
 	}
 
 	backend := meta.Backend
@@ -235,7 +235,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
 	}
 
-	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
+	return graph.NewGraph(id, n.arctable, n.cas, graphOpts...)
 }
 
 // NewGraph creates a new ad hoc per-graph instance with its own per-graph
@@ -245,7 +245,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 //   - id: unique graph identifier
 //   - opts: functional options (graph.WithCommitmentScheme, graph.WithBucketId, etc.)
 //
-// The Node auto-injects shared infrastructure (EAT, CAS) and optional lineage recording.
+// The Node auto-injects shared infrastructure (ArcTable, CAS) and optional lineage recording.
 func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	o := &graph.Options{}
 	for _, opt := range opts {
@@ -275,7 +275,7 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	// Apply user options (they can override)
 	graphOpts = append(graphOpts, opts...)
 
-	return graph.NewGraph(id, n.eat, n.cas, graphOpts...)
+	return graph.NewGraph(id, n.arctable, n.cas, graphOpts...)
 }
 
 // lineageRecorderAdapter adapts lineage.Manager to writer.LineageRecorder.
@@ -297,9 +297,9 @@ func (n *Node) Commitment() commitment.IndexCommitment {
 	return scheme
 }
 
-// EAT returns the shared EAT.
-func (n *Node) EAT() eat.EAT {
-	return n.eat
+// ArcTable returns the shared ArcTable.
+func (n *Node) ArcTable() arctable.ArcTable {
+	return n.arctable
 }
 
 // CAS returns the read-side CAS client.
@@ -336,8 +336,8 @@ func (n *Node) Config() *config.Config {
 func (n *Node) Close() error {
 	var errs []error
 
-	if n.eat != nil {
-		if err := n.eat.Close(); err != nil {
+	if n.arctable != nil {
+		if err := n.arctable.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}

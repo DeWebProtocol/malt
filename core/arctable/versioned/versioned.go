@@ -1,4 +1,4 @@
-// Package versioned provides a versioned EAT implementation using a KVStore.
+// Package versioned provides a versioned ArcTable implementation using a KVStore.
 // Each version stores only modified arcs plus a @previous arc pointing to the parent version.
 // Resolution walks the @previous chain to find arc entries.
 //
@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/eat/bloom"
+	"github.com/dewebprotocol/malt/core/arctable"
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/logger"
@@ -26,27 +26,27 @@ const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
 )
 
-// EAT is a versioned EAT implementation with bucket-based isolation.
+// ArcTable is a versioned ArcTable implementation with bucket-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
-type EAT struct {
+type ArcTable struct {
 	kv           kvstore.KVStore
-	bloomManager *eat.BloomFilterManager
+	bloomManager *arctable.BloomFilterManager
 }
 
-// NewEAT creates a new versioned EAT with the given KVStore and optional configuration.
+// NewArcTable creates a new versioned ArcTable with the given KVStore and optional configuration.
 // Bloom filter is disabled by default; use WithBloomCache to enable it.
 //
 // Example usage:
 //
 //	// Simple: use defaults
-//	eat, _ := versioned.NewEAT(versioned.WithKVStore(kv))
+//	arctable, _ := versioned.NewArcTable(versioned.WithKVStore(kv))
 //
 //	// With bloom cache
-//	eat, _ := versioned.NewEAT(
+//	arctable, _ := versioned.NewArcTable(
 //	    versioned.WithKVStore(kv),
 //	    versioned.WithBloomCache(bloomCache),
 //	)
-func NewEAT(opts ...Option) (*EAT, error) {
+func NewArcTable(opts ...Option) (*ArcTable, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)
@@ -55,20 +55,20 @@ func NewEAT(opts ...Option) (*EAT, error) {
 	if o.kv == nil {
 		return nil, fmt.Errorf("KVStore is required")
 	}
-	return &EAT{
+	return &ArcTable{
 		kv:           o.kv,
-		bloomManager: eat.NewBloomFilterManager(o.bloomCache),
+		bloomManager: arctable.NewBloomFilterManager(o.bloomCache),
 	}, nil
 }
 
-// NewEATWithBloomCache creates a new versioned EAT with BloomCache for fast negative lookups.
-// Deprecated: Use NewEAT with WithBloomCache option instead.
-func NewEATWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*EAT, error) {
-	return NewEAT(WithKVStore(kv), WithBloomCache(bloomCache))
+// NewArcTableWithBloomCache creates a new versioned ArcTable with BloomCache for fast negative lookups.
+// Deprecated: Use NewArcTable with WithBloomCache option instead.
+func NewArcTableWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache) (*ArcTable, error) {
+	return NewArcTable(WithKVStore(kv), WithBloomCache(bloomCache))
 }
 
 // CreateBucket creates a new bucket with custom bloom configuration.
-func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
+func (e *ArcTable) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
 	if !e.bloomManager.Enabled() {
 		return fmt.Errorf("bloom cache not configured")
 	}
@@ -78,7 +78,7 @@ func (e *EAT) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.Buck
 // MightContain checks if a path might exist in a bucket using bloom filter.
 // Returns false if the path definitely doesn't exist.
 // Returns true if the path might exist (need to call Get to verify).
-func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bool {
+func (e *ArcTable) MightContain(ctx context.Context, bucketId string, path string) bool {
 	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
@@ -86,7 +86,7 @@ func (e *EAT) MightContain(ctx context.Context, bucketId string, path string) bo
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
-func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
+func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
 	result := make(map[string]bool, len(paths))
 
 	if !e.bloomManager.Enabled() {
@@ -109,12 +109,12 @@ func (e *EAT) MightContainBatch(ctx context.Context, bucketId string, paths []st
 
 // Get retrieves the target CID for a path at a specific version.
 // First checks bloom filter, then walks the @previous chain.
-func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path string) (cid.Cid, error) {
+func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, path string) (cid.Cid, error) {
 	start := time.Now()
 
 	// Quick bloom filter check
 	if !e.MightContain(ctx, bucketId, path) {
-		logger.Debug("EAT.Get bloom negative",
+		logger.Debug("ArcTable.Get bloom negative",
 			logger.String("bucket", bucketId),
 			logger.String("version", version.String()),
 			logger.String("path", path))
@@ -125,7 +125,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 	maxDepth := 1000
 	depth := 0
 
-	logger.Debug("EAT.Get started",
+	logger.Debug("ArcTable.Get started",
 		logger.String("bucket", bucketId),
 		logger.String("version", version.String()),
 		logger.String("path", path))
@@ -133,7 +133,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 	for range maxDepth {
 		depth++
 		if ctx.Err() != nil {
-			logger.Warn("EAT.Get cancelled",
+			logger.Warn("ArcTable.Get cancelled",
 				logger.String("bucket", bucketId),
 				logger.String("path", path),
 				logger.Int("depth", depth),
@@ -142,11 +142,11 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		// Try to get the arc at current version
-		key := eat.VersionedArcKey(bucketId, currentVersion, path)
+		key := arctable.VersionedArcKey(bucketId, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
 			if len(val) == 0 {
-				logger.Debug("EAT.Get found tombstone",
+				logger.Debug("ArcTable.Get found tombstone",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
 					logger.Int("depth", depth))
@@ -154,7 +154,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 			}
 			result, err := cid.Cast(val)
 			if err == nil {
-				logger.Debug("EAT.Get success",
+				logger.Debug("ArcTable.Get success",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
 					logger.String("target", result.String()),
@@ -165,7 +165,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		if err != kvstore.ErrNotFound {
-			logger.Error("EAT.Get kv error",
+			logger.Error("ArcTable.Get kv error",
 				logger.String("bucket", bucketId),
 				logger.String("path", path),
 				logger.Err(err))
@@ -173,11 +173,11 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		}
 
 		// Arc not found at this version, try parent
-		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := arctable.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
-				logger.Debug("EAT.Get not found (no parent)",
+				logger.Debug("ArcTable.Get not found (no parent)",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
 					logger.Int("depth", depth))
@@ -188,7 +188,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 
 		parentVersion, err := cid.Cast(prevVal)
 		if err != nil {
-			logger.Error("EAT.Get invalid @previous CID",
+			logger.Error("ArcTable.Get invalid @previous CID",
 				logger.String("bucket", bucketId),
 				logger.String("path", path),
 				logger.Err(err))
@@ -197,7 +197,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 		currentVersion = parentVersion
 	}
 
-	logger.Warn("EAT.Get exceeded max depth",
+	logger.Warn("ArcTable.Get exceeded max depth",
 		logger.String("bucket", bucketId),
 		logger.String("path", path),
 		logger.Int("maxDepth", maxDepth))
@@ -205,7 +205,7 @@ func (e *EAT) Get(ctx context.Context, bucketId string, version cid.Cid, path st
 }
 
 // BatchGet retrieves multiple target CIDs in a single operation.
-func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
+func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Cid, paths []string) (map[string]cid.Cid, error) {
 	start := time.Now()
 
 	// Filter paths using bloom filter
@@ -221,7 +221,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 		return map[string]cid.Cid{}, nil
 	}
 
-	logger.Debug("EAT.BatchGet started",
+	logger.Debug("ArcTable.BatchGet started",
 		logger.String("bucket", bucketId),
 		logger.String("version", version.String()),
 		logger.Int("path_count", len(paths)),
@@ -244,7 +244,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 		depth++
 
 		if ctx.Err() != nil {
-			logger.Warn("EAT.BatchGet cancelled",
+			logger.Warn("ArcTable.BatchGet cancelled",
 				logger.String("bucket", bucketId),
 				logger.Int("depth", depth),
 				logger.Err(ctx.Err()))
@@ -257,7 +257,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			if tombstones[path] {
 				continue
 			}
-			key := eat.VersionedArcKey(bucketId, currentVersion, path)
+			key := arctable.VersionedArcKey(bucketId, currentVersion, path)
 			keys = append(keys, key)
 			pathForKey[string(key)] = path
 		}
@@ -268,7 +268,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 
 		kvResults, err := e.kv.BatchGet(ctx, keys)
 		if err != nil {
-			logger.Error("EAT.BatchGet kv error",
+			logger.Error("ArcTable.BatchGet kv error",
 				logger.String("bucket", bucketId),
 				logger.Int("depth", depth),
 				logger.Err(err))
@@ -293,7 +293,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 			break
 		}
 
-		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := arctable.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -306,7 +306,7 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 		currentVersion = parentVersion
 	}
 
-	logger.Debug("EAT.BatchGet completed",
+	logger.Debug("ArcTable.BatchGet completed",
 		logger.String("bucket", bucketId),
 		logger.Int("found_count", len(results)),
 		logger.Int("depth", depth),
@@ -316,10 +316,10 @@ func (e *EAT) BatchGet(ctx context.Context, bucketId string, version cid.Cid, pa
 }
 
 // Update stores arcs at a new version and updates the bucket bloom filter.
-func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
+func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs map[string]cid.Cid) error {
 	start := time.Now()
 
-	logger.Info("EAT.Update started",
+	logger.Info("ArcTable.Update started",
 		logger.String("bucket", bucketId),
 		logger.String("new_root", newRoot.String()),
 		logger.String("parent_root", parentRoot.String()),
@@ -332,12 +332,12 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Store all arcs for this version
 	for path, target := range arcs {
-		key := eat.VersionedArcKey(bucketId, newRoot, path)
+		key := arctable.VersionedArcKey(bucketId, newRoot, path)
 		if target == cid.Undef {
 			tombstoneCount++
 			if err := batch.Put(key, []byte{}); err != nil {
 				batch.Cancel()
-				logger.Error("EAT.Update failed to add tombstone",
+				logger.Error("ArcTable.Update failed to add tombstone",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
 					logger.Err(err))
@@ -347,7 +347,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 			val := target.Bytes()
 			if err := batch.Put(key, val); err != nil {
 				batch.Cancel()
-				logger.Error("EAT.Update failed to add arc",
+				logger.Error("ArcTable.Update failed to add arc",
 					logger.String("bucket", bucketId),
 					logger.String("path", path),
 					logger.Err(err))
@@ -359,11 +359,11 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Link to parent via @previous
 	if parentRoot != cid.Undef {
-		prevKey := eat.VersionedArcKey(bucketId, newRoot, PreviousArc)
+		prevKey := arctable.VersionedArcKey(bucketId, newRoot, PreviousArc)
 		prevVal := parentRoot.Bytes()
 		if err := batch.Put(prevKey, prevVal); err != nil {
 			batch.Cancel()
-			logger.Error("EAT.Update failed to add @previous",
+			logger.Error("ArcTable.Update failed to add @previous",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
 			return fmt.Errorf("failed to add @previous to batch: %w", err)
@@ -372,7 +372,7 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 
 	// Commit the batch
 	if err := batch.Commit(ctx); err != nil {
-		logger.Error("EAT.Update commit failed",
+		logger.Error("ArcTable.Update commit failed",
 			logger.String("bucket", bucketId),
 			logger.Err(err))
 		return fmt.Errorf("failed to commit version: %w", err)
@@ -381,14 +381,14 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 	// Update bucket bloom filter
 	if e.bloomManager.Enabled() && len(addedPaths) > 0 {
 		if err := e.bloomManager.AddBatch(ctx, bucketId, addedPaths); err != nil {
-			logger.Warn("EAT.Update failed to update bloom (non-fatal)",
+			logger.Warn("ArcTable.Update failed to update bloom (non-fatal)",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
 			// Non-fatal: bloom is optional optimization
 		}
 	}
 
-	logger.Info("EAT.Update completed",
+	logger.Info("ArcTable.Update completed",
 		logger.String("bucket", bucketId),
 		logger.String("new_root", newRoot.String()),
 		logger.Int("arc_count", len(arcs)),
@@ -400,8 +400,8 @@ func (e *EAT) Update(ctx context.Context, bucketId string, newRoot, parentRoot c
 }
 
 // GetParent returns the parent version of a given version via @previous.
-func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
-	prevKey := eat.VersionedArcKey(bucketId, version, PreviousArc)
+func (e *ArcTable) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
+	prevKey := arctable.VersionedArcKey(bucketId, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -414,23 +414,23 @@ func (e *EAT) GetParent(ctx context.Context, bucketId string, version cid.Cid) (
 }
 
 // Snapshot returns an immutable snapshot of all arcs visible at the given version.
-func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.ArcSet, error) {
+func (e *ArcTable) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.ArcSet, error) {
 	start := time.Now()
 
-	logger.Debug("EAT.Snapshot started",
+	logger.Debug("ArcTable.Snapshot started",
 		logger.String("bucket", bucketId),
 		logger.String("version", version.String()))
 
 	arcs, err := e.collectFlattenedArcs(ctx, bucketId, version)
 	if err != nil {
-		logger.Error("EAT.Snapshot failed",
+		logger.Error("ArcTable.Snapshot failed",
 			logger.String("bucket", bucketId),
 			logger.String("version", version.String()),
 			logger.Err(err))
 		return nil, err
 	}
 
-	logger.Debug("EAT.Snapshot completed",
+	logger.Debug("ArcTable.Snapshot completed",
 		logger.String("bucket", bucketId),
 		logger.String("version", version.String()),
 		logger.Int("arc_count", len(arcs)),
@@ -440,7 +440,7 @@ func (e *EAT) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (a
 }
 
 // collectFlattenedArcs collects all arcs visible at a version (including ancestors).
-func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version cid.Cid) (map[string]cid.Cid, error) {
+func (e *ArcTable) collectFlattenedArcs(ctx context.Context, bucketId string, version cid.Cid) (map[string]cid.Cid, error) {
 	arcs := make(map[string]cid.Cid)
 	seen := make(map[string]bool)
 	currentVersion := version
@@ -448,13 +448,13 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 
 	for i := 0; i < maxDepth; i++ {
 		if ctx.Err() != nil {
-			logger.Warn("EAT.collectFlattenedArcs cancelled",
+			logger.Warn("ArcTable.collectFlattenedArcs cancelled",
 				logger.String("bucket", bucketId),
 				logger.Int("depth", i))
 			return nil, ctx.Err()
 		}
 
-		prefix := eat.VersionedBucketPrefix(bucketId, currentVersion)
+		prefix := arctable.VersionedBucketPrefix(bucketId, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
 		for iter.Next() {
@@ -482,14 +482,14 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 		}
 		if err := iter.Err(); err != nil {
 			iter.Close()
-			logger.Error("EAT.collectFlattenedArcs iterator error",
+			logger.Error("ArcTable.collectFlattenedArcs iterator error",
 				logger.String("bucket", bucketId),
 				logger.Err(err))
 			return nil, fmt.Errorf("iterator error: %w", err)
 		}
 		iter.Close()
 
-		prevKey := eat.VersionedArcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := arctable.VersionedArcKey(bucketId, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -506,9 +506,9 @@ func (e *EAT) collectFlattenedArcs(ctx context.Context, bucketId string, version
 }
 
 // Iterate returns a streaming iterator over all arcs visible at the given version.
-func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arcset.Iterator {
+func (e *ArcTable) Iterate(ctx context.Context, bucketId string, version cid.Cid) arcset.Iterator {
 	return &chainIterator{
-		eat:            e,
+		arctable:       e,
 		ctx:            ctx,
 		bucketId:       bucketId,
 		currentVersion: version,
@@ -518,7 +518,7 @@ func (e *EAT) Iterate(ctx context.Context, bucketId string, version cid.Cid) arc
 }
 
 // Close releases resources.
-func (e *EAT) Close() error {
+func (e *ArcTable) Close() error {
 	if bc := e.bloomManager.GetBloomCache(); bc != nil {
 		bc.Clear()
 	}
@@ -527,7 +527,7 @@ func (e *EAT) Close() error {
 
 // chainIterator walks the @previous chain to iterate all visible arcs.
 type chainIterator struct {
-	eat            *EAT
+	arctable       *ArcTable
 	ctx            context.Context
 	bucketId       string
 	currentVersion cid.Cid
@@ -564,8 +564,8 @@ func (it *chainIterator) Next() (arcset.Path, cid.Cid, bool) {
 
 	it.maxDepth--
 
-	prefix := eat.VersionedBucketPrefix(it.bucketId, it.currentVersion)
-	iter := it.eat.kv.NewIterator(it.ctx, prefix, nil)
+	prefix := arctable.VersionedBucketPrefix(it.bucketId, it.currentVersion)
+	iter := it.arctable.kv.NewIterator(it.ctx, prefix, nil)
 
 	it.currentBatch = make(map[string]cid.Cid)
 	var nextVersion cid.Cid

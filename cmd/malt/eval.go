@@ -15,34 +15,34 @@ func init() {
 
 var evalCmd = &cobra.Command{
 	Use:   "eval",
-	Short: "Run comprehensive evaluation across backends and EAT types",
-	Long: `Run the full evaluation matrix: backends x EAT types x workloads x arc counts.
+	Short: "Run comprehensive evaluation across backends and ArcTable types",
+	Long: `Run the full evaluation matrix: backends x ArcTable types x workloads x arc counts.
 Generates detailed metrics, CSV exports, and JSON results.
 
 Examples:
   malt eval
   malt eval --arcs 50,100,500 --rounds 200
-  malt eval --backend kzg --eat overwrite --workload append
+  malt eval --backend kzg --arctable overwrite --workload append
   malt eval --output results.json --csv-dir ./results`,
 	RunE: runEval,
 }
 
 var (
-	evalArcs     string
-	evalRounds   int
-	evalBackend  string
-	evalEATType  string
-	evalWorkload string
-	evalOutput   string
-	evalCSVDir   string
-	evalSeed     int64
+	evalArcs         string
+	evalRounds       int
+	evalBackend      string
+	evalArcTableType string
+	evalWorkload     string
+	evalOutput       string
+	evalCSVDir       string
+	evalSeed         int64
 )
 
 func init() {
 	evalCmd.Flags().StringVar(&evalArcs, "arcs", "50,100,200", "Arc counts to test (comma-separated)")
 	evalCmd.Flags().IntVar(&evalRounds, "rounds", 100, "Number of update rounds")
 	evalCmd.Flags().StringVar(&evalBackend, "backend", "", "Single backend (kzg), default: all")
-	evalCmd.Flags().StringVar(&evalEATType, "eat", "", "Single EAT type (overwrite/versioned/bloom), default: all")
+	evalCmd.Flags().StringVar(&evalArcTableType, "arctable", "", "Single ArcTable type (overwrite/versioned/bloom), default: all")
 	evalCmd.Flags().StringVar(&evalWorkload, "workload", "", "Single workload (append/random/bulk), default: all")
 	evalCmd.Flags().StringVar(&evalOutput, "output", "", "JSON output file path")
 	evalCmd.Flags().StringVar(&evalCSVDir, "csv-dir", "", "Directory for CSV exports")
@@ -77,10 +77,10 @@ func runEval(cmd *cobra.Command, args []string) error {
 		cfg.Backends = []eval.BackendType{bt}
 	}
 
-	// Filter EAT types
-	if evalEATType != "" {
-		et := eval.EATType(evalEATType)
-		cfg.EATTypes = []eval.EATType{et}
+	// Filter ArcTable types
+	if evalArcTableType != "" {
+		et := eval.ArcTableType(evalArcTableType)
+		cfg.ArcTableTypes = []eval.ArcTableType{et}
 	}
 
 	// Filter workloads

@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
@@ -46,9 +46,9 @@ func newMap(t *testing.T, factory schemeFactory, kv *kvmemory.KV) mapping.Semant
 	if kv == nil {
 		kv = kvmemory.New()
 	}
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("overwrite.NewEAT failed: %v", err)
+		t.Fatalf("overwrite.NewArcTable failed: %v", err)
 	}
 	semantic, err := mappingradix.NewMap(factory(t), e)
 	if err != nil {

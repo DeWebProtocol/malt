@@ -102,4 +102,3 @@ func runBucketFreeze(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "bucket %q frozen\n", args[0])
 	return nil
 }
-

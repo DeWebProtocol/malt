@@ -15,7 +15,7 @@ const (
 	defaultEmbeddedMockListen = "127.0.0.1:4318"
 	defaultCASMode            = "embedded-mock"
 	defaultStructureBackend   = "kzg"
-	defaultEATType            = "versioned"
+	defaultArcTableType       = "versioned"
 	defaultKVStoreType        = "badger"
 	defaultLoggingLevel       = "info"
 	defaultLoggingFormat      = "json"
@@ -39,10 +39,10 @@ type RPCConfig struct {
 
 // StateConfig configures local durable runtime state.
 type StateConfig struct {
-	RootDir string        `json:"root_dir"`
-	KVStore KVStoreConfig `json:"kvstore"`
-	EAT     EATConfig     `json:"eat"`
-	Lineage LineageConfig `json:"lineage"`
+	RootDir  string         `json:"root_dir"`
+	KVStore  KVStoreConfig  `json:"kvstore"`
+	ArcTable ArcTableConfig `json:"arctable"`
+	Lineage  LineageConfig  `json:"lineage"`
 }
 
 // KVStoreConfig configures the local KV store.
@@ -51,8 +51,8 @@ type KVStoreConfig struct {
 	Path string `json:"path"`
 }
 
-// EATConfig configures the EAT implementation.
-type EATConfig struct {
+// ArcTableConfig configures the ArcTable implementation.
+type ArcTableConfig struct {
 	Type string `json:"type"`
 }
 
@@ -109,8 +109,8 @@ func DefaultConfig() *Config {
 				Type: defaultKVStoreType,
 				Path: "kv",
 			},
-			EAT: EATConfig{
-				Type: defaultEATType,
+			ArcTable: ArcTableConfig{
+				Type: defaultArcTableType,
 			},
 			Lineage: LineageConfig{
 				Enabled: true,
@@ -253,8 +253,8 @@ func (c *Config) applyDefaults() {
 	if c.State.KVStore.Path == "" {
 		c.State.KVStore.Path = defaults.State.KVStore.Path
 	}
-	if c.State.EAT.Type == "" {
-		c.State.EAT.Type = defaults.State.EAT.Type
+	if c.State.ArcTable.Type == "" {
+		c.State.ArcTable.Type = defaults.State.ArcTable.Type
 	}
 	if c.Structure.DefaultBackend == "" {
 		c.Structure.DefaultBackend = defaults.Structure.DefaultBackend
@@ -299,10 +299,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unsupported state.kvstore.type %q", c.State.KVStore.Type)
 	}
 
-	switch c.State.EAT.Type {
+	switch c.State.ArcTable.Type {
 	case "overwrite", "versioned", "simple":
 	default:
-		return fmt.Errorf("unsupported state.eat.type %q", c.State.EAT.Type)
+		return fmt.Errorf("unsupported state.arctable.type %q", c.State.ArcTable.Type)
 	}
 
 	switch c.Structure.DefaultBackend {

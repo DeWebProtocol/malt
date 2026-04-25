@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/eat/bloom"
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
@@ -20,32 +20,32 @@ func newTestCID(data []byte) cid.Cid {
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
-// === Versioned EAT Tests ===
+// === Versioned ArcTable Tests ===
 
-func TestVersionedEATNew(t *testing.T) {
+func TestVersionedArcTableNew(t *testing.T) {
 	kv := memory.New()
 
 	// Valid creation
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
-	if eat == nil {
-		t.Error("eat should not be nil")
+	if arctable == nil {
+		t.Error("arctable should not be nil")
 	}
 
 	// Nil KVStore
-	_, err = NewEAT()
+	_, err = NewArcTable()
 	if err == nil {
 		t.Error("expected error for nil KVStore")
 	}
 }
 
-func TestVersionedEATUpdate(t *testing.T) {
+func TestVersionedArcTableUpdate(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -59,13 +59,13 @@ func TestVersionedEATUpdate(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	err = arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
 	// Get at root1
-	got, err := eat.Get(ctx, bucketId, root1, "a")
+	got, err := arctable.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestVersionedEATUpdate(t *testing.T) {
 		t.Error("wrong value for 'a'")
 	}
 
-	got, err = eat.Get(ctx, bucketId, root1, "b")
+	got, err = arctable.Get(ctx, bucketId, root1, "b")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -82,11 +82,11 @@ func TestVersionedEATUpdate(t *testing.T) {
 	}
 }
 
-func TestVersionedEATVersionChain(t *testing.T) {
+func TestVersionedArcTableVersionChain(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	err = arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 	if err != nil {
 		t.Fatalf("Update v1 failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	arcs2 := map[string]cid.Cid{
 		"a": target3,
 	}
-	err = eat.Update(ctx, bucketId, root2, root1, arcs2)
+	err = arctable.Update(ctx, bucketId, root2, root1, arcs2)
 	if err != nil {
 		t.Fatalf("Update v2 failed: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	arcs3 := map[string]cid.Cid{
 		"c": target3,
 	}
-	err = eat.Update(ctx, bucketId, root3, root2, arcs3)
+	err = arctable.Update(ctx, bucketId, root3, root2, arcs3)
 	if err != nil {
 		t.Fatalf("Update v3 failed: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	// Test resolution at root3
 
 	// a should resolve to target3 (overridden at v2)
-	got, err := eat.Get(ctx, bucketId, root3, "a")
+	got, err := arctable.Get(ctx, bucketId, root3, "a")
 	if err != nil {
 		t.Fatalf("Get a at root3 failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// b should resolve to target2 (from v1)
-	got, err = eat.Get(ctx, bucketId, root3, "b")
+	got, err = arctable.Get(ctx, bucketId, root3, "b")
 	if err != nil {
 		t.Fatalf("Get b at root3 failed: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// c should resolve to target3 (new at v3)
-	got, err = eat.Get(ctx, bucketId, root3, "c")
+	got, err = arctable.Get(ctx, bucketId, root3, "c")
 	if err != nil {
 		t.Fatalf("Get c at root3 failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	// Test resolution at root2
 
 	// a at root2 should be target3
-	got, err = eat.Get(ctx, bucketId, root2, "a")
+	got, err = arctable.Get(ctx, bucketId, root2, "a")
 	if err != nil {
 		t.Fatalf("Get a at root2 failed: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// b at root2 should be target2
-	got, err = eat.Get(ctx, bucketId, root2, "b")
+	got, err = arctable.Get(ctx, bucketId, root2, "b")
 	if err != nil {
 		t.Fatalf("Get b at root2 failed: %v", err)
 	}
@@ -177,14 +177,14 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 
 	// c at root2 should not exist
-	_, err = eat.Get(ctx, bucketId, root2, "c")
+	_, err = arctable.Get(ctx, bucketId, root2, "c")
 	if err == nil {
 		t.Error("c at root2 should not exist")
 	}
 
 	// Test resolution at root1
 
-	got, err = eat.Get(ctx, bucketId, root1, "a")
+	got, err = arctable.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get a at root1 failed: %v", err)
 	}
@@ -193,11 +193,11 @@ func TestVersionedEATVersionChain(t *testing.T) {
 	}
 }
 
-func TestVersionedEATGetParent(t *testing.T) {
+func TestVersionedArcTableGetParent(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -208,15 +208,15 @@ func TestVersionedEATGetParent(t *testing.T) {
 	arcs1 := map[string]cid.Cid{
 		"a": newTestCID([]byte("target1")),
 	}
-	eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 
 	arcs2 := map[string]cid.Cid{
 		"b": newTestCID([]byte("target2")),
 	}
-	eat.Update(ctx, bucketId, root2, root1, arcs2)
+	arctable.Update(ctx, bucketId, root2, root1, arcs2)
 
 	// GetParent
-	parent, err := eat.GetParent(ctx, bucketId, root2)
+	parent, err := arctable.GetParent(ctx, bucketId, root2)
 	if err != nil {
 		t.Fatalf("GetParent failed: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestVersionedEATGetParent(t *testing.T) {
 	}
 
 	// First version has no parent
-	parent, err = eat.GetParent(ctx, bucketId, root1)
+	parent, err = arctable.GetParent(ctx, bucketId, root1)
 	if err != nil {
 		t.Fatalf("GetParent root1 failed: %v", err)
 	}
@@ -234,11 +234,11 @@ func TestVersionedEATGetParent(t *testing.T) {
 	}
 }
 
-func TestVersionedEATSnapshot(t *testing.T) {
+func TestVersionedArcTableSnapshot(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -252,15 +252,15 @@ func TestVersionedEATSnapshot(t *testing.T) {
 	arcs1 := map[string]cid.Cid{
 		"a": target1,
 	}
-	eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 
 	arcs2 := map[string]cid.Cid{
 		"b": target2,
 	}
-	eat.Update(ctx, bucketId, root2, root1, arcs2)
+	arctable.Update(ctx, bucketId, root2, root1, arcs2)
 
 	// Snapshot at root2
-	snapshot, err := eat.Snapshot(ctx, bucketId, root2)
+	snapshot, err := arctable.Snapshot(ctx, bucketId, root2)
 	if err != nil {
 		t.Fatalf("Snapshot failed: %v", err)
 	}
@@ -287,11 +287,11 @@ func TestVersionedEATSnapshot(t *testing.T) {
 	}
 }
 
-func TestVersionedEATBatchGet(t *testing.T) {
+func TestVersionedArcTableBatchGet(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -302,14 +302,14 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// Setup arcs at root1
-	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
 	})
 
 	// Test: all paths found
-	results, err := eat.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
+	results, err := arctable.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet failed: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 
 	// Test: some paths not found
-	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a", "notexist", "b"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"a", "notexist", "b"})
 	if err != nil {
 		t.Fatalf("BatchGet with missing paths failed: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 
 	// Test: empty paths
-	results, err = eat.BatchGet(ctx, bucketId, root1, []string{})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{})
 	if err != nil {
 		t.Fatalf("BatchGet with empty paths failed: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 
 	// Test: all paths not found
-	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"x", "y", "z"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"x", "y", "z"})
 	if err != nil {
 		t.Fatalf("BatchGet with all missing paths failed: %v", err)
 	}
@@ -354,11 +354,11 @@ func TestVersionedEATBatchGet(t *testing.T) {
 	}
 }
 
-func TestVersionedEATBatchGetVersionChain(t *testing.T) {
+func TestVersionedArcTableBatchGetVersionChain(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -373,24 +373,24 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	target4 := newTestCID([]byte("target4"))
 
 	// v1: a, b
-	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 	})
 
 	// v2: c (new), a overridden
-	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": target3,
 		"c": target3,
 	})
 
 	// v3: d (new)
-	eat.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
 		"d": target4,
 	})
 
 	// BatchGet at root3 should find all paths
-	results, err := eat.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
+	results, err := arctable.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root3 failed: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	}
 
 	// BatchGet at root2 should not find 'd'
-	results, err = eat.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
+	results, err = arctable.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	}
 
 	// BatchGet at root1 should find original 'a'
-	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet root1 failed: %v", err)
 	}
@@ -449,11 +449,11 @@ func TestVersionedEATBatchGetVersionChain(t *testing.T) {
 	}
 }
 
-func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
+func TestVersionedArcTableBatchGetWithTombstone(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -467,25 +467,25 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// v1: a, b, c
-	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
 	})
 
 	// v2: delete 'a' (tombstone), add 'd'
-	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
 		"a": cid.Undef, // tombstone
 		"d": target3,
 	})
 
 	// v3: delete 'b' (tombstone)
-	eat.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
 		"b": cid.Undef, // tombstone
 	})
 
 	// BatchGet at root3: a and b deleted, c and d exist
-	results, err := eat.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
+	results, err := arctable.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root3 failed: %v", err)
 	}
@@ -506,7 +506,7 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	}
 
 	// BatchGet at root2: only 'a' deleted
-	results, err = eat.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
+	results, err = arctable.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	}
 
 	// BatchGet at root1: all exist
-	results, err = eat.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("BatchGet root1 failed: %v", err)
 	}
@@ -533,11 +533,11 @@ func TestVersionedEATBatchGetWithTombstone(t *testing.T) {
 	}
 }
 
-func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
+func TestVersionedArcTableBatchGetMultipleBuckets(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -547,18 +547,18 @@ func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
 	target2 := newTestCID([]byte("target2"))
 
 	// Different buckets
-	eat.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{
 		"a": target1,
 		"b": target1,
 	})
-	eat.Update(ctx, "bucket2", root1b, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, "bucket2", root1b, cid.Undef, map[string]cid.Cid{
 		"a": target2,
 		"b": target2,
 	})
 
 	// BatchGet in different buckets should be independent
-	results1, _ := eat.BatchGet(ctx, "bucket1", root1a, []string{"a", "b"})
-	results2, _ := eat.BatchGet(ctx, "bucket2", root1b, []string{"a", "b"})
+	results1, _ := arctable.BatchGet(ctx, "bucket1", root1a, []string{"a", "b"})
+	results2, _ := arctable.BatchGet(ctx, "bucket2", root1b, []string{"a", "b"})
 
 	if len(results1) != 2 || len(results2) != 2 {
 		t.Error("expected 2 results in each bucket")
@@ -572,11 +572,11 @@ func TestVersionedEATBatchGetMultipleBuckets(t *testing.T) {
 	}
 }
 
-func TestVersionedEATDeleteViaUpdate(t *testing.T) {
+func TestVersionedArcTableDeleteViaUpdate(t *testing.T) {
 	kv := memory.New()
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -593,22 +593,22 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	eat.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
 
 	// v2: delete 'a' using cid.Undef (tombstone)
 	arcs2 := map[string]cid.Cid{
 		"a": cid.Undef, // tombstone - marks 'a' as deleted
 	}
-	eat.Update(ctx, bucketId, root2, root1, arcs2)
+	arctable.Update(ctx, bucketId, root2, root1, arcs2)
 
 	// At root2, 'a' should not be found (tombstone stops the search)
-	_, err = eat.Get(ctx, bucketId, root2, "a")
+	_, err = arctable.Get(ctx, bucketId, root2, "a")
 	if err == nil {
 		t.Error("'a' should be deleted at root2")
 	}
 
 	// 'b' should still be accessible (from root1)
-	got, err := eat.Get(ctx, bucketId, root2, "b")
+	got, err := arctable.Get(ctx, bucketId, root2, "b")
 	if err != nil {
 		t.Fatalf("Get b at root2 failed: %v", err)
 	}
@@ -617,7 +617,7 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	}
 
 	// At root1, 'a' should still exist (tombstone is at root2, not root1)
-	got, err = eat.Get(ctx, bucketId, root1, "a")
+	got, err = arctable.Get(ctx, bucketId, root1, "a")
 	if err != nil {
 		t.Fatalf("Get a at root1 failed: %v", err)
 	}
@@ -629,16 +629,16 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	arcs3 := map[string]cid.Cid{
 		"c": target1,
 	}
-	eat.Update(ctx, bucketId, root3, root2, arcs3)
+	arctable.Update(ctx, bucketId, root3, root2, arcs3)
 
 	// At root3, 'a' should still not be found
-	_, err = eat.Get(ctx, bucketId, root3, "a")
+	_, err = arctable.Get(ctx, bucketId, root3, "a")
 	if err == nil {
 		t.Error("'a' should be deleted at root3")
 	}
 
 	// 'b' and 'c' should work
-	got, err = eat.Get(ctx, bucketId, root3, "b")
+	got, err = arctable.Get(ctx, bucketId, root3, "b")
 	if err != nil {
 		t.Fatalf("Get b at root3 failed: %v", err)
 	}
@@ -646,7 +646,7 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 		t.Error("b at root3 should be target2")
 	}
 
-	got, err = eat.Get(ctx, bucketId, root3, "c")
+	got, err = arctable.Get(ctx, bucketId, root3, "c")
 	if err != nil {
 		t.Fatalf("Get c at root3 failed: %v", err)
 	}
@@ -655,12 +655,12 @@ func TestVersionedEATDeleteViaUpdate(t *testing.T) {
 	}
 }
 
-func TestVersionedEATMultipleBuckets(t *testing.T) {
+func TestVersionedArcTableMultipleBuckets(t *testing.T) {
 	kv := memory.New() // Shared KVStore
 
-	eat, err := NewEAT(WithKVStore(kv))
+	arctable, err := NewArcTable(WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -671,12 +671,12 @@ func TestVersionedEATMultipleBuckets(t *testing.T) {
 	target2 := newTestCID([]byte("target2"))
 
 	// Create versions in different buckets
-	eat.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{"a": target1})
-	eat.Update(ctx, "bucket2", root2a, cid.Undef, map[string]cid.Cid{"a": target2})
+	arctable.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{"a": target1})
+	arctable.Update(ctx, "bucket2", root2a, cid.Undef, map[string]cid.Cid{"a": target2})
 
 	// Should be independent
-	got1, _ := eat.Get(ctx, "bucket1", root1a, "a")
-	got2, _ := eat.Get(ctx, "bucket2", root2a, "a")
+	got1, _ := arctable.Get(ctx, "bucket1", root1a, "a")
+	got2, _ := arctable.Get(ctx, "bucket2", root2a, "a")
 
 	if got1.Equals(got2) {
 		t.Error("different buckets should have independent values")
@@ -693,12 +693,12 @@ func TestVersionedEATMultipleBuckets(t *testing.T) {
 
 // === Bloom Filter Tests ===
 
-func TestVersionedEATWithBloomCache(t *testing.T) {
+func TestVersionedArcTableWithBloomCache(t *testing.T) {
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
-	eat, err := NewEATWithBloomCache(kv, bc)
+	arctable, err := NewArcTableWithBloomCache(kv, bc)
 	if err != nil {
-		t.Fatalf("NewEATWithBloomCache failed: %v", err)
+		t.Fatalf("NewArcTableWithBloomCache failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -707,7 +707,7 @@ func TestVersionedEATWithBloomCache(t *testing.T) {
 	target := newTestCID([]byte("target"))
 
 	// Create bucket
-	err = eat.CreateBucket(ctx, bucketId, &bloom.BucketConfig{
+	err = arctable.CreateBucket(ctx, bucketId, &bloom.BucketConfig{
 		ExpectedItems:     1000,
 		FalsePositiveRate: 0.01,
 	})
@@ -716,18 +716,18 @@ func TestVersionedEATWithBloomCache(t *testing.T) {
 	}
 
 	// Add arc
-	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"path/a": target})
+	arctable.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"path/a": target})
 
 	// MightContain should return true for existing path
-	if !eat.MightContain(ctx, bucketId, "path/a") {
+	if !arctable.MightContain(ctx, bucketId, "path/a") {
 		t.Error("MightContain should return true for existing path")
 	}
 }
 
-func TestVersionedEATMightContainBatch(t *testing.T) {
+func TestVersionedArcTableMightContainBatch(t *testing.T) {
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
-	eat, _ := NewEATWithBloomCache(kv, bc)
+	arctable, _ := NewArcTableWithBloomCache(kv, bc)
 
 	ctx := context.Background()
 	bucketId := "batch-bloom-graph"
@@ -735,7 +735,7 @@ func TestVersionedEATMightContainBatch(t *testing.T) {
 	target := newTestCID([]byte("target"))
 
 	// Create bucket
-	eat.CreateBucket(ctx, bucketId, nil)
+	arctable.CreateBucket(ctx, bucketId, nil)
 
 	// Add arcs
 	paths := []string{"a", "b", "c"}
@@ -743,10 +743,10 @@ func TestVersionedEATMightContainBatch(t *testing.T) {
 	for _, p := range paths {
 		arcs[p] = target
 	}
-	eat.Update(ctx, bucketId, root, cid.Undef, arcs)
+	arctable.Update(ctx, bucketId, root, cid.Undef, arcs)
 
 	// Batch check
-	results := eat.MightContainBatch(ctx, bucketId, []string{"a", "b", "c", "nonexistent"})
+	results := arctable.MightContainBatch(ctx, bucketId, []string{"a", "b", "c", "nonexistent"})
 	if len(results) != 4 {
 		t.Errorf("expected 4 results, got %d", len(results))
 	}
@@ -759,11 +759,11 @@ func TestVersionedEATMightContainBatch(t *testing.T) {
 	}
 }
 
-func TestVersionedEATBloomFilterOptimization(t *testing.T) {
+func TestVersionedArcTableBloomFilterOptimization(t *testing.T) {
 	// Test that bloom filter actually skips kvstore lookup for non-existent paths
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
-	eat, _ := NewEATWithBloomCache(kv, bc)
+	arctable, _ := NewArcTableWithBloomCache(kv, bc)
 
 	ctx := context.Background()
 	bucketId := "optimized-graph"
@@ -771,13 +771,13 @@ func TestVersionedEATBloomFilterOptimization(t *testing.T) {
 	target := newTestCID([]byte("target"))
 
 	// Create bucket
-	eat.CreateBucket(ctx, bucketId, nil)
+	arctable.CreateBucket(ctx, bucketId, nil)
 
 	// Add arcs
-	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"existing": target})
+	arctable.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"existing": target})
 
 	// Get for existing path should work
-	got, err := eat.Get(ctx, bucketId, root, "existing")
+	got, err := arctable.Get(ctx, bucketId, root, "existing")
 	if err != nil {
 		t.Fatalf("Get existing failed: %v", err)
 	}
@@ -787,17 +787,17 @@ func TestVersionedEATBloomFilterOptimization(t *testing.T) {
 
 	// Get for path that definitely doesn't exist (bloom says no)
 	// should return ErrNotFound without version chain walk
-	_, err = eat.Get(ctx, bucketId, root, "definitely-not-exist")
+	_, err = arctable.Get(ctx, bucketId, root, "definitely-not-exist")
 	if err == nil {
 		t.Error("expected error for non-existent path")
 	}
 }
 
-func TestVersionedEATBloomUpdateOnUpdate(t *testing.T) {
+func TestVersionedArcTableBloomUpdateOnUpdate(t *testing.T) {
 	// Test that bloom filter is updated when arcs are added
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
-	eat, _ := NewEATWithBloomCache(kv, bc)
+	arctable, _ := NewArcTableWithBloomCache(kv, bc)
 
 	ctx := context.Background()
 	bucketId := "update-bloom-graph"
@@ -806,26 +806,26 @@ func TestVersionedEATBloomUpdateOnUpdate(t *testing.T) {
 	target := newTestCID([]byte("target"))
 
 	// Create bucket
-	eat.CreateBucket(ctx, bucketId, nil)
+	arctable.CreateBucket(ctx, bucketId, nil)
 
 	// First update
-	eat.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{"a": target})
+	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{"a": target})
 
 	// Second update (adds new paths)
-	eat.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{"b": target})
+	arctable.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{"b": target})
 
 	// Both paths should be in bloom
-	if !eat.MightContain(ctx, bucketId, "a") {
+	if !arctable.MightContain(ctx, bucketId, "a") {
 		t.Error("'a' should be in bloom")
 	}
-	if !eat.MightContain(ctx, bucketId, "b") {
+	if !arctable.MightContain(ctx, bucketId, "b") {
 		t.Error("'b' should be in bloom")
 	}
 }
 
-func TestVersionedEATWithoutBloomCache(t *testing.T) {
+func TestVersionedArcTableWithoutBloomCache(t *testing.T) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 
 	ctx := context.Background()
 	bucketId := "no-bloom-graph"
@@ -833,21 +833,21 @@ func TestVersionedEATWithoutBloomCache(t *testing.T) {
 	target := newTestCID([]byte("target"))
 
 	// Add arc
-	eat.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"a": target})
+	arctable.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"a": target})
 
 	// CreateBucket should fail (no bloom cache)
-	err := eat.CreateBucket(ctx, bucketId, nil)
+	err := arctable.CreateBucket(ctx, bucketId, nil)
 	if err == nil {
 		t.Error("CreateBucket should fail without bloom cache")
 	}
 
 	// MightContain should return true (bloom disabled)
-	if !eat.MightContain(ctx, bucketId, "any-path") {
+	if !arctable.MightContain(ctx, bucketId, "any-path") {
 		t.Error("MightContain should return true when bloom disabled")
 	}
 
 	// MightContainBatch should return all true
-	results := eat.MightContainBatch(ctx, bucketId, []string{"a", "b", "c"})
+	results := arctable.MightContainBatch(ctx, bucketId, []string{"a", "b", "c"})
 	for p, v := range results {
 		if !v {
 			t.Errorf("expected true for %s when bloom disabled", p)
@@ -858,7 +858,7 @@ func TestVersionedEATWithoutBloomCache(t *testing.T) {
 // === Benchmarks ===
 
 // setupVersionChain creates a chain of versions and returns the latest root
-func setupVersionChain(ctx context.Context, eat *EAT, bucketId string, chainLength int) cid.Cid {
+func setupVersionChain(ctx context.Context, arctable *ArcTable, bucketId string, chainLength int) cid.Cid {
 	var prevRoot cid.Cid
 	var latestRoot cid.Cid
 
@@ -867,16 +867,16 @@ func setupVersionChain(ctx context.Context, eat *EAT, bucketId string, chainLeng
 		arcs := map[string]cid.Cid{
 			fmt.Sprintf("v%d_arc", i): newTestCID([]byte(fmt.Sprintf("target%d", i))),
 		}
-		eat.Update(ctx, bucketId, root, prevRoot, arcs)
+		arctable.Update(ctx, bucketId, root, prevRoot, arcs)
 		prevRoot = root
 		latestRoot = root
 	}
 	return latestRoot
 }
 
-func BenchmarkVersionedEATGet(b *testing.B) {
+func BenchmarkVersionedArcTableGet(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -884,20 +884,20 @@ func BenchmarkVersionedEATGet(b *testing.B) {
 	chainLengths := []int{1, 10, 50, 100}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, arctable, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Query an arc that exists at the first version (requires full chain walk)
-				eat.Get(ctx, bucketId, latestRoot, "v0_arc")
+				arctable.Get(ctx, bucketId, latestRoot, "v0_arc")
 			}
 		})
 	}
 }
 
-func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
+func BenchmarkVersionedArcTableGetLatestVersion(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -905,20 +905,20 @@ func BenchmarkVersionedEATGetLatestVersion(b *testing.B) {
 	chainLengths := []int{1, 10, 50, 100}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, arctable, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Query an arc at the latest version (direct lookup)
-				eat.Get(ctx, bucketId, latestRoot, fmt.Sprintf("v%d_arc", length-1))
+				arctable.Get(ctx, bucketId, latestRoot, fmt.Sprintf("v%d_arc", length-1))
 			}
 		})
 	}
 }
 
-func BenchmarkVersionedEATUpdate(b *testing.B) {
+func BenchmarkVersionedArcTableUpdate(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
@@ -930,7 +930,7 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 			initialArcs := map[string]cid.Cid{
 				"a": newTestCID([]byte("init")),
 			}
-			eat.Update(ctx, bucketId, initialRoot, cid.Undef, initialArcs)
+			arctable.Update(ctx, bucketId, initialRoot, cid.Undef, initialArcs)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -939,46 +939,46 @@ func BenchmarkVersionedEATUpdate(b *testing.B) {
 				for j := 0; j < size; j++ {
 					arcs[fmt.Sprintf("arc%d", j)] = newTestCID([]byte(fmt.Sprintf("val%d_%d", i, j)))
 				}
-				eat.Update(ctx, bucketId, newRoot, initialRoot, arcs)
+				arctable.Update(ctx, bucketId, newRoot, initialRoot, arcs)
 			}
 		})
 	}
 }
 
-func BenchmarkVersionedEATSnapshot(b *testing.B) {
+func BenchmarkVersionedArcTableSnapshot(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	chainLengths := []int{1, 10, 20}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, arctable, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				snapshot, _ := eat.Snapshot(ctx, bucketId, latestRoot)
+				snapshot, _ := arctable.Snapshot(ctx, bucketId, latestRoot)
 				snapshot.Get(arcset.CanonicalizePath("v0_arc"))
 			}
 		})
 	}
 }
 
-func BenchmarkVersionedEATIterate(b *testing.B) {
+func BenchmarkVersionedArcTableIterate(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 	ctx := context.Background()
 	bucketId := "bench-graph"
 
 	chainLengths := []int{1, 10, 20}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
-			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, arctable, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				iter := eat.Iterate(ctx, bucketId, latestRoot)
+				iter := arctable.Iterate(ctx, bucketId, latestRoot)
 				for {
 					_, _, ok := iter.Next()
 					if !ok {
@@ -991,20 +991,20 @@ func BenchmarkVersionedEATIterate(b *testing.B) {
 	}
 }
 
-func BenchmarkVersionedEATGetParent(b *testing.B) {
+func BenchmarkVersionedArcTableGetParent(b *testing.B) {
 	kv := memory.New()
-	eat, _ := NewEAT(WithKVStore(kv))
+	arctable, _ := NewArcTable(WithKVStore(kv))
 	bucketId := "bench-graph"
 
 	chainLengths := []int{10, 50, 100}
 	for _, length := range chainLengths {
 		b.Run(fmt.Sprintf("chain_%d", length), func(b *testing.B) {
 			ctx := context.Background()
-			latestRoot := setupVersionChain(ctx, eat, bucketId, length)
+			latestRoot := setupVersionChain(ctx, arctable, bucketId, length)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				eat.GetParent(ctx, bucketId, latestRoot)
+				arctable.GetParent(ctx, bucketId, latestRoot)
 			}
 		})
 	}

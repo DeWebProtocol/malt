@@ -17,8 +17,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.State.KVStore.Type != "badger" {
 		t.Fatalf("State.KVStore.Type = %q", cfg.State.KVStore.Type)
 	}
-	if cfg.State.EAT.Type != "versioned" {
-		t.Fatalf("State.EAT.Type = %q", cfg.State.EAT.Type)
+	if cfg.State.ArcTable.Type != "versioned" {
+		t.Fatalf("State.ArcTable.Type = %q", cfg.State.ArcTable.Type)
 	}
 	if cfg.Structure.DefaultBackend != "kzg" {
 		t.Fatalf("Structure.DefaultBackend = %q", cfg.Structure.DefaultBackend)
@@ -66,7 +66,7 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
       "type": "badger",
       "path": "kv-data"
     },
-    "eat": {
+    "arctable": {
       "type": "overwrite"
     },
     "lineage": {

@@ -6,10 +6,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
@@ -32,7 +32,7 @@ type Graph struct {
 	listSemantic    list.Semantics
 	resolver        *resolver.Resolver
 	wr              *writer.Writer
-	eat             eat.EAT
+	arctable        arctable.ArcTable
 	lineageRecorder writer.LineageRecorder
 }
 
@@ -41,10 +41,10 @@ type Graph struct {
 //
 // Parameters:
 //   - id: unique graph identifier
-//   - eat: shared EAT (namespace by bucketId) — from Node
+//   - arctable: shared ArcTable (namespace by bucketId) — from Node
 //   - cas: shared read-side CAS client — from Node (nil for testing/mocks)
 //   - opts: functional options (WithCommitmentScheme, WithBucketId, etc.)
-func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, error) {
+func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Option) (*Graph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)
@@ -66,17 +66,17 @@ func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, e
 		scheme = s
 	}
 
-	semantic, err := mappingradix.NewMap(scheme, eat)
+	semantic, err := mappingradix.NewMap(scheme, arctable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
 	}
-	listSemantic, err := listtree.NewList(scheme, eat)
+	listSemantic, err := listtree.NewList(scheme, arctable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create list semantic: %w", err)
 	}
 
 	// Create per-graph explicit resolver
-	explicitStep := explicit.NewResolver(eat, semantic, bucketId)
+	explicitStep := explicit.NewResolver(arctable, semantic, bucketId)
 
 	// Create per-graph implicit resolver
 	implicitStep := implicit.NewResolver(cas)
@@ -86,7 +86,7 @@ func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, e
 	res := resolver.NewResolver(explicitStep, implicitStep)
 
 	// Create per-graph writer
-	wr := writer.NewWriter(semantic, eat, o.LineageRecorder)
+	wr := writer.NewWriter(semantic, arctable, o.LineageRecorder)
 
 	return &Graph{
 		id:              id,
@@ -96,7 +96,7 @@ func NewGraph(id string, eat eat.EAT, cas cas.Reader, opts ...Option) (*Graph, e
 		listSemantic:    listSemantic,
 		resolver:        res,
 		wr:              wr,
-		eat:             eat,
+		arctable:        arctable,
 		lineageRecorder: o.LineageRecorder,
 	}, nil
 }
@@ -106,7 +106,7 @@ func (g *Graph) ID() string {
 	return g.id
 }
 
-// BucketId returns the EAT bucket namespace for this graph.
+// BucketId returns the ArcTable bucket namespace for this graph.
 func (g *Graph) BucketId() string {
 	return g.bucketId
 }

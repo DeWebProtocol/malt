@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
@@ -43,9 +43,9 @@ func mappingSchemes() map[string]schemeFactory {
 
 func newMap(t *testing.T, factory schemeFactory) mapping.Semantics {
 	t.Helper()
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kvmemory.New()))
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
 	if err != nil {
-		t.Fatalf("overwrite.NewEAT failed: %v", err)
+		t.Fatalf("overwrite.NewArcTable failed: %v", err)
 	}
 	semantic, err := mappingindexed.NewMap(factory(t), e)
 	if err != nil {

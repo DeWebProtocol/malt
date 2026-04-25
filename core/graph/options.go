@@ -27,7 +27,7 @@ func WithCommitmentScheme(scheme commitment.IndexCommitment) Option {
 	}
 }
 
-// WithBucketId sets the EAT bucket namespace for this Graph.
+// WithBucketId sets the ArcTable bucket namespace for this Graph.
 // Default: the graph's ID.
 func WithBucketId(id string) Option {
 	return func(o *Options) {

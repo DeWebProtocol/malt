@@ -1,4 +1,4 @@
-// Package bloom provides Bloom Filter implementations for EAT.
+// Package bloom provides Bloom Filter implementations for ArcTable.
 package bloom
 
 import (

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/bloom"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
@@ -25,10 +25,10 @@ func makeCID(n int) cid.Cid {
 	return cid.NewCidV1(cid.Raw, h)
 }
 
-// newTestEAT creates a fresh EAT backed by an in-memory KVStore.
-func newTestEAT() *overwrite.EAT {
+// newTestArcTable creates a fresh ArcTable backed by an in-memory KVStore.
+func newTestArcTable() *overwrite.ArcTable {
 	kv := kvmemory.New()
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	if err != nil {
 		panic(err)
 	}
@@ -36,9 +36,9 @@ func newTestEAT() *overwrite.EAT {
 }
 
 // newTestComponents creates a complete set of test components:
-// EAT, mapping semantic, and KZG scheme.
-func newTestComponents() (*overwrite.EAT, mapping.Semantics, *kzg.Scheme) {
-	e := newTestEAT()
+// ArcTable, mapping semantic, and KZG scheme.
+func newTestComponents() (*overwrite.ArcTable, mapping.Semantics, *kzg.Scheme) {
+	e := newTestArcTable()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		panic(err)
@@ -50,8 +50,8 @@ func newTestComponents() (*overwrite.EAT, mapping.Semantics, *kzg.Scheme) {
 	return e, semantic, scheme
 }
 
-// setupArcSet commits arcs to semantic layer and stores them in EAT.
-func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantics, arcsMap map[string]cid.Cid) cid.Cid {
+// setupArcSet commits arcs to semantic layer and stores them in ArcTable.
+func setupArcSet(t *testing.T, e *overwrite.ArcTable, semantic mapping.Semantics, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
 	root, err := semantic.Commit(context.Background(), testBucketId, mapping.NewViewFrom(arcsMap))
 	if err != nil {
@@ -59,7 +59,7 @@ func setupArcSet(t *testing.T, e *overwrite.EAT, semantic mapping.Semantics, arc
 	}
 	ctx := context.Background()
 	if err := e.Update(ctx, testBucketId, root, cid.Undef, arcsMap); err != nil {
-		t.Fatalf("EAT.Update failed: %v", err)
+		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 	return root
 }
@@ -354,12 +354,12 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	// Test that the resolver works correctly when a bloom filter is configured.
 	kv := kvmemory.New()
 	bloomCache := bloom.NewBloomCache(kv, 100)
-	e, err := overwrite.NewEAT(
+	e, err := overwrite.NewArcTable(
 		overwrite.WithKVStore(kv),
 		overwrite.WithBloomCache(bloomCache),
 	)
 	if err != nil {
-		t.Fatalf("NewEAT failed: %v", err)
+		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
 	scheme, err := kzg.NewScheme()
@@ -384,7 +384,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 	if err := e.Update(ctx, bucketId, root, cid.Undef, arcsMap); err != nil {
-		t.Fatalf("EAT.Update failed: %v", err)
+		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 
 	r := explicit.NewResolver(e, semantic, bucketId)

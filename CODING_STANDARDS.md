@@ -54,7 +54,7 @@
 ### Comments
 
 ```go
-// Package bloom provides Bloom Filter implementations for EAT.
+// Package bloom provides Bloom Filter implementations for ArcTable.
 // Bloom filters provide fast negative membership tests.
 package bloom
 
@@ -174,7 +174,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `chore`
 
 - Feature: `feat/bloom-cache`
 - Fix: `fix/memory-leak`
-- Refactor: `refactor/eat-architecture`
+- Refactor: `refactor/arctable-architecture`
 
 ## Checklist Before Commit
 
@@ -208,8 +208,8 @@ malt/
 │   │   │   └── mock.go              # Mock CAS impl
 │   │   └── ipfsgateway/
 │   │       └── ipfsgateway.go       # IPFS Gateway CAS impl
-│   ├── eat/
-│   │   ├── eat.go                   # EAT interface
+│   ├── arctable/
+│   │   ├── arctable.go                   # ArcTable interface
 │   │   ├── bloom/
 │   │   │   ├── bloom.go             # Bloom filter interface
 │   │   │   ├── standard.go          # StandardBloom impl
@@ -217,10 +217,10 @@ malt/
 │   │   │   ├── bloom_test.go        # Unit tests
 │   │   │   └── bloom_benchmark_test.go  # Benchmark tests
 │   │   ├── overwrite/
-│   │   │   ├── eat.go               # Overwrite EAT impl
+│   │   │   ├── arctable.go               # Overwrite ArcTable impl
 │   │   │   └── eat_test.go          # Unit tests
 │   │   └── versioned/
-│   │       ├── versioned.go         # Versioned EAT impl
+│   │       ├── versioned.go         # Versioned ArcTable impl
 │   │       └── versioned_test.go    # Unit tests
 │   ├── kvstore/
 │   │   ├── kv.go                    # KVStore interface

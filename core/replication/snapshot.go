@@ -1,5 +1,5 @@
 // Package replication provides graph-level snapshot export/import
-// and state synchronization between replicated EAT and semantic state units.
+// and state synchronization between replicated ArcTable and semantic state units.
 //
 // Replication in MALT operates at the KVStore level, exporting all
 // keys associated with a graph's bucketId and lineage records,
@@ -33,11 +33,11 @@ const (
 	GraphMetaPrefix  = "graph/meta/"
 	GraphIndexPrefix = "graph/index/"
 	LineagePrefix    = "lineage/"
-	EATKeySep        = ":"
+	ArcTableKeySep   = ":"
 )
 
 // Snapshot is a portable archive of a graph's complete state.
-// It contains all EAT entries, lineage records, and graph metadata
+// It contains all ArcTable entries, lineage records, and graph metadata
 // needed to reconstruct the graph on another node.
 type Snapshot struct {
 	// Version is the snapshot format version.
@@ -55,15 +55,15 @@ type Snapshot struct {
 	// Backend is the commitment scheme used (kzg/ipa).
 	Backend string `json:"backend"`
 
-	// EATType is the EAT implementation used (overwrite/versioned).
-	EATType string `json:"eat_type"`
+	// ArcTableType is the ArcTable implementation used (overwrite/versioned).
+	ArcTableType string `json:"arctable_type"`
 
 	// CreatedAt is when the snapshot was taken.
 	CreatedAt time.Time `json:"created_at"`
 
-	// EATEntries contains all EAT key-value pairs for this graph.
-	// Keys are in the format used by the specific EAT implementation.
-	EATEntries map[string][]byte `json:"eat_entries,omitempty"`
+	// ArcTableEntries contains all ArcTable key-value pairs for this graph.
+	// Keys are in the format used by the specific ArcTable implementation.
+	ArcTableEntries map[string][]byte `json:"arctable_entries,omitempty"`
 
 	// LineageEntries contains all lineage records as JSON.
 	// Keys are "lineage/<root_cid>".
@@ -88,25 +88,25 @@ func NewExporter(kv kvstore.KVStore) *Exporter {
 }
 
 // Export exports the complete state of a graph as a Snapshot.
-// It extracts all EAT entries, lineage records, and graph metadata.
+// It extracts all ArcTable entries, lineage records, and graph metadata.
 func (e *Exporter) Export(ctx context.Context, g *graph.GraphMeta) (*Snapshot, error) {
 	snap := &Snapshot{
-		Version:        SnapshotVersion,
-		GraphID:        g.ID,
-		RootCID:        g.Root.String(),
-		ArcCount:       g.ArcCount,
-		Backend:        g.Backend,
-		EATType:        g.EATType,
-		CreatedAt:      time.Now(),
-		EATEntries:     make(map[string][]byte),
-		LineageEntries: make(map[string][]byte),
-		COWEntries:     make(map[string][]byte),
+		Version:         SnapshotVersion,
+		GraphID:         g.ID,
+		RootCID:         g.Root.String(),
+		ArcCount:        g.ArcCount,
+		Backend:         g.Backend,
+		ArcTableType:    g.ArcTableType,
+		CreatedAt:       time.Now(),
+		ArcTableEntries: make(map[string][]byte),
+		LineageEntries:  make(map[string][]byte),
+		COWEntries:      make(map[string][]byte),
 	}
 
-	// Export EAT entries for this graph's bucket
-	// EAT keys use bucketId as namespace prefix
-	eatPrefix := []byte(g.ID + EATKeySep)
-	e.exportKeys(ctx, eatPrefix, snap.EATEntries)
+	// Export ArcTable entries for this graph's bucket
+	// ArcTable keys use bucketId as namespace prefix
+	arcTablePrefix := []byte(g.ID + ArcTableKeySep)
+	e.exportKeys(ctx, arcTablePrefix, snap.ArcTableEntries)
 
 	// Export lineage records
 	e.exportKeys(ctx, []byte(LineagePrefix), snap.LineageEntries)
@@ -171,13 +171,13 @@ func (s *Snapshot) computeChecksum() error {
 // checksumPayload returns the data to checksum (excluding the checksum field itself).
 func (s *Snapshot) checksumPayload() interface{} {
 	return struct {
-		EATEntries     map[string][]byte `json:"eat_entries"`
-		LineageEntries map[string][]byte `json:"lineage_entries"`
-		COWEntries     map[string][]byte `json:"cow_entries"`
+		ArcTableEntries map[string][]byte `json:"arctable_entries"`
+		LineageEntries  map[string][]byte `json:"lineage_entries"`
+		COWEntries      map[string][]byte `json:"cow_entries"`
 	}{
-		EATEntries:     s.EATEntries,
-		LineageEntries: s.LineageEntries,
-		COWEntries:     s.COWEntries,
+		ArcTableEntries: s.ArcTableEntries,
+		LineageEntries:  s.LineageEntries,
+		COWEntries:      s.COWEntries,
 	}
 }
 
@@ -211,7 +211,7 @@ func NewImporter(kv kvstore.KVStore) *Importer {
 }
 
 // Import imports a snapshot into the target KVStore.
-// It writes all EAT entries, lineage records, and graph metadata.
+// It writes all ArcTable entries, lineage records, and graph metadata.
 // Returns the number of entries imported.
 func (imp *Importer) Import(ctx context.Context, snap *Snapshot) (int, error) {
 	// Verify checksum before importing
@@ -221,10 +221,10 @@ func (imp *Importer) Import(ctx context.Context, snap *Snapshot) (int, error) {
 
 	count := 0
 
-	// Import EAT entries
-	for key, value := range snap.EATEntries {
+	// Import ArcTable entries
+	for key, value := range snap.ArcTableEntries {
 		if err := imp.kv.Put(ctx, []byte(key), value); err != nil {
-			return count, fmt.Errorf("import EAT entry %s: %w", key, err)
+			return count, fmt.Errorf("import ArcTable entry %s: %w", key, err)
 		}
 		count++
 	}
@@ -257,14 +257,14 @@ func (imp *Importer) Import(ctx context.Context, snap *Snapshot) (int, error) {
 	}
 
 	g := &graph.GraphMeta{
-		ID:        snap.GraphID,
-		Root:      rootCID,
-		ArcCount:  snap.ArcCount,
-		Backend:   snap.Backend,
-		EATType:   snap.EATType,
-		State:     graph.StateActive,
-		CreatedAt: snap.CreatedAt,
-		UpdatedAt: time.Now(),
+		ID:           snap.GraphID,
+		Root:         rootCID,
+		ArcCount:     snap.ArcCount,
+		Backend:      snap.Backend,
+		ArcTableType: snap.ArcTableType,
+		State:        graph.StateActive,
+		CreatedAt:    snap.CreatedAt,
+		UpdatedAt:    time.Now(),
 	}
 
 	graphData, err := json.Marshal(g)
@@ -291,13 +291,13 @@ func verifyChecksum(snap *Snapshot) error {
 		return fmt.Errorf("empty checksum")
 	}
 	payload := struct {
-		EATEntries     map[string][]byte `json:"eat_entries"`
-		LineageEntries map[string][]byte `json:"lineage_entries"`
-		COWEntries     map[string][]byte `json:"cow_entries"`
+		ArcTableEntries map[string][]byte `json:"arctable_entries"`
+		LineageEntries  map[string][]byte `json:"lineage_entries"`
+		COWEntries      map[string][]byte `json:"cow_entries"`
 	}{
-		EATEntries:     snap.EATEntries,
-		LineageEntries: snap.LineageEntries,
-		COWEntries:     snap.COWEntries,
+		ArcTableEntries: snap.ArcTableEntries,
+		LineageEntries:  snap.LineageEntries,
+		COWEntries:      snap.COWEntries,
 	}
 
 	data, err := json.Marshal(payload)

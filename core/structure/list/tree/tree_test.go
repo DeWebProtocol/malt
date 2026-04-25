@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
@@ -59,15 +59,15 @@ func makeValues(count int) []cid.Cid {
 func newList(t *testing.T, factory schemeFactory, kv *kvmemory.KV) *tree.TreeList {
 	t.Helper()
 
-	semantic, _, err := newListWithEAT(factory(t), kv)
+	semantic, _, err := newListWithArcTable(factory(t), kv)
 	if err != nil {
-		t.Fatalf("newListWithEAT failed: %v", err)
+		t.Fatalf("newListWithArcTable failed: %v", err)
 	}
 	return semantic
 }
 
-func newListWithEAT(scheme commitment.IndexCommitment, kv *kvmemory.KV) (*tree.TreeList, *overwrite.EAT, error) {
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+func newListWithArcTable(scheme commitment.IndexCommitment, kv *kvmemory.KV) (*tree.TreeList, *overwrite.ArcTable, error) {
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -296,9 +296,9 @@ func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 			kv := kvmemory.New()
 			bucketID := "tree-corrupt-" + name
 			scheme := factory(t)
-			semantic, e, err := newListWithEAT(scheme, kv)
+			semantic, e, err := newListWithArcTable(scheme, kv)
 			if err != nil {
-				t.Fatalf("newListWithEAT failed: %v", err)
+				t.Fatalf("newListWithArcTable failed: %v", err)
 			}
 
 			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(values))

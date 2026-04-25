@@ -1,6 +1,6 @@
 // Package tree implements the stable-indexed list semantic using a tree-shaped
 // fixed-slot layout. Runtime operations execute against node materialization
-// stored in EAT, so proofs and updates do not require a caller-supplied view.
+// stored in ArcTable, so proofs and updates do not require a caller-supplied view.
 package tree
 
 import (
@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/structure/list/tree/internal"
@@ -18,8 +18,8 @@ import (
 )
 
 type TreeList struct {
-	scheme commitment.IndexCommitment
-	eat    eat.EAT
+	scheme   commitment.IndexCommitment
+	arctable arctable.ArcTable
 }
 
 type proofEnvelope struct {
@@ -32,16 +32,16 @@ type proofStep struct {
 	Proof  []byte `json:"proof"`
 }
 
-func NewList(scheme commitment.IndexCommitment, eat eat.EAT) (*TreeList, error) {
+func NewList(scheme commitment.IndexCommitment, arctable arctable.ArcTable) (*TreeList, error) {
 	if err := layout.ValidateCommitment(scheme); err != nil {
 		return nil, err
 	}
-	if eat == nil {
-		return nil, fmt.Errorf("eat is nil")
+	if arctable == nil {
+		return nil, fmt.Errorf("arctable is nil")
 	}
 	return &TreeList{
-		scheme: scheme,
-		eat:    eat,
+		scheme:   scheme,
+		arctable: arctable,
 	}, nil
 }
 
@@ -571,7 +571,7 @@ func (s *TreeList) loadNode(ctx context.Context, bucketID string, root cid.Cid, 
 	if isRoot {
 		width = layout.RootWidth
 	}
-	slots, err := layout.LoadSlots(ctx, s.eat, bucketID, root, width)
+	slots, err := layout.LoadSlots(ctx, s.arctable, bucketID, root, width)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +597,7 @@ func (s *TreeList) commitSlots(ctx context.Context, bucketID string, slots []cid
 		return cid.Undef, err
 	}
 
-	if err := layout.StoreSlots(ctx, s.eat, bucketID, listRoot, slots); err != nil {
+	if err := layout.StoreSlots(ctx, s.arctable, bucketID, listRoot, slots); err != nil {
 		return cid.Undef, err
 	}
 	return listRoot, nil

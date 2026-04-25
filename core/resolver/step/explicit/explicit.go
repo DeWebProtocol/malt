@@ -1,5 +1,5 @@
 // Package explicit implements the Step interface for MALT explicit arcs.
-// It uses longest-prefix matching in EAT and generates cryptographic proof via
+// It uses longest-prefix matching in ArcTable and generates cryptographic proof via
 // keyed-map semantics.
 package explicit
 
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/eat"
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/resolver/step"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -28,24 +28,24 @@ const (
 
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
-	eat      eat.EAT
+	arctable arctable.ArcTable
 	semantic mapping.Semantics
 	bucketId string
 }
 
 // NewResolver creates a new explicit arc resolver.
-func NewResolver(e eat.EAT, semantic mapping.Semantics, bucketId string) *Resolver {
+func NewResolver(e arctable.ArcTable, semantic mapping.Semantics, bucketId string) *Resolver {
 	return &Resolver{
-		eat:      e,
+		arctable: e,
 		semantic: semantic,
 		bucketId: bucketId,
 	}
 }
 
-// Resolve finds the longest matching prefix in the EAT and generates proof.
+// Resolve finds the longest matching prefix in the ArcTable and generates proof.
 // Returns: matchedPath, target, evidence, error
 //
-// Example: if EAT contains "a/b/c" → key1 and path is "a/b/c/d/e",
+// Example: if ArcTable contains "a/b/c" → key1 and path is "a/b/c/d/e",
 // it matches "a/b/c" and returns that path with its target and evidence.
 func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	start := time.Now()
@@ -73,7 +73,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	for i := len(segments); i > 0; i-- {
 		candidatePath := strings.Join(segments[:i], "/")
 
-		target, err := r.eat.Get(ctx, r.bucketId, root, candidatePath)
+		target, err := r.arctable.Get(ctx, r.bucketId, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
 			binding, proof, err := r.semantic.Prove(ctx, r.bucketId, root, arcset.CanonicalizePath(candidatePath))

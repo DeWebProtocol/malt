@@ -10,4 +10,3 @@ var bucketCmd = &cobra.Command{
 	Use:   "bucket",
 	Short: "Manage buckets and client-side defaults",
 }
-

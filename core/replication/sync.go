@@ -1,4 +1,4 @@
-// State synchronization between EAT and commitment-backed semantic units.
+// State synchronization between ArcTable and commitment-backed semantic units.
 //
 // Sync compares snapshots between a source and target KVStore and
 // reconciles differences by importing missing entries into the target.
@@ -48,8 +48,8 @@ func (s *Syncer) Diff(ctx context.Context) (*DiffResult, error) {
 
 	// Scan all MALT key prefixes
 	prefixes := [][]byte{
-		[]byte(EATKeySep),     // EAT entries use bucketId: prefix
-		[]byte(LineagePrefix), // Lineage records
+		[]byte(ArcTableKeySep), // ArcTable entries use bucketId: prefix
+		[]byte(LineagePrefix),  // Lineage records
 		[]byte(GraphMetaPrefix),
 		[]byte(GraphIndexPrefix),
 	}

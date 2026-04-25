@@ -1,13 +1,13 @@
-// Package overwrite provides an EAT implementation with overwrite semantics.
+// Package overwrite provides an ArcTable implementation with overwrite semantics.
 
 package overwrite
 
 import (
-	"github.com/dewebprotocol/malt/core/eat/bloom"
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore"
 )
 
-// Option configures an EAT instance.
+// Option configures an ArcTable instance.
 type Option func(*options)
 
 type options struct {
@@ -15,12 +15,12 @@ type options struct {
 	bloomCache *bloom.BloomCache
 }
 
-// defaultOptions returns default EAT options.
+// defaultOptions returns default ArcTable options.
 func defaultOptions() *options {
 	return &options{}
 }
 
-// WithKVStore sets the KVStore backend for the EAT.
+// WithKVStore sets the KVStore backend for the ArcTable.
 func WithKVStore(kv kvstore.KVStore) Option {
 	return func(o *options) {
 		o.kv = kv

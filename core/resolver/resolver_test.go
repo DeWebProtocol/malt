@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
@@ -28,17 +28,17 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, mhash), nil
 }
 
-// newTestEAT creates a new EAT for testing.
-func newTestEAT() *overwrite.EAT {
+// newTestArcTable creates a new ArcTable for testing.
+func newTestArcTable() *overwrite.ArcTable {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	if err != nil {
 		panic(err)
 	}
 	return e
 }
 
-func newSemantic(t *testing.T, e *overwrite.EAT) mapping.Semantics {
+func newSemantic(t *testing.T, e *overwrite.ArcTable) mapping.Semantics {
 	t.Helper()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
@@ -51,14 +51,14 @@ func newSemantic(t *testing.T, e *overwrite.EAT) mapping.Semantics {
 	return semantic
 }
 
-func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *overwrite.EAT, bucketID string, arcs map[string]cid.Cid) cid.Cid {
+func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *overwrite.ArcTable, bucketID string, arcs map[string]cid.Cid) cid.Cid {
 	t.Helper()
 	root, err := semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcs))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
 	if err := e.Update(ctx, bucketID, root, cid.Undef, arcs); err != nil {
-		t.Fatalf("EAT.Update failed: %v", err)
+		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 	return root
 }
@@ -66,7 +66,7 @@ func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semanti
 const testBucketId = "test-graph"
 
 func TestGatewayExplicitOnly(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -119,7 +119,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 }
 
 func TestGatewayCanonicalizesResolvePath(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -147,7 +147,7 @@ func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 }
 
 func TestGatewayExplicitLongestPrefix(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -174,7 +174,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 }
 
 func TestGatewayImplicitStep(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -202,7 +202,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 }
 
 func TestGatewayTranscript(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -241,7 +241,7 @@ func TestGatewayTranscript(t *testing.T) {
 }
 
 func TestGatewayPayloadRedirect(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -281,7 +281,7 @@ func TestGatewayPayloadRedirect(t *testing.T) {
 }
 
 func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -326,7 +326,7 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 }
 
 func TestGatewayMissingPayloadBindingFails(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 
@@ -346,7 +346,7 @@ func TestGatewayMissingPayloadBindingFails(t *testing.T) {
 }
 
 func TestGatewayNonMaltEmptyPath(t *testing.T) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
 

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -68,16 +68,16 @@ func ContentSlots(slots []cid.Cid, isRoot bool) []cid.Cid {
 	return slots
 }
 
-// NodeSlotPath returns the canonical EAT key for a materialized list node slot.
+// NodeSlotPath returns the canonical ArcTable key for a materialized list node slot.
 func NodeSlotPath(root cid.Cid, slot uint64) arcset.Path {
 	return arcset.CanonicalizePath(fmt.Sprintf("nodes/%s/slots/%d", root.String(), slot))
 }
 
 // LoadSlots reconstructs a fixed-width slot vector for a committed node.
 // Missing entries are treated as cid.Undef.
-func LoadSlots(ctx context.Context, e eat.EAT, bucketID string, root cid.Cid, width int) ([]cid.Cid, error) {
+func LoadSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root cid.Cid, width int) ([]cid.Cid, error) {
 	if e == nil {
-		return nil, fmt.Errorf("eat is nil")
+		return nil, fmt.Errorf("arctable is nil")
 	}
 	if !root.Defined() {
 		return nil, fmt.Errorf("node root is undefined")
@@ -105,10 +105,10 @@ func LoadSlots(ctx context.Context, e eat.EAT, bucketID string, root cid.Cid, wi
 	return slots, nil
 }
 
-// StoreSlots materializes a committed node in EAT under its node-root namespace.
-func StoreSlots(ctx context.Context, e eat.EAT, bucketID string, root cid.Cid, slots []cid.Cid) error {
+// StoreSlots materializes a committed node in ArcTable under its node-root namespace.
+func StoreSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root cid.Cid, slots []cid.Cid) error {
 	if e == nil {
-		return fmt.Errorf("eat is nil")
+		return fmt.Errorf("arctable is nil")
 	}
 	if !root.Defined() {
 		return fmt.Errorf("node root is undefined")

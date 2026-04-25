@@ -1,6 +1,6 @@
 // Package api provides end-to-end integration tests for the MALT Go API.
 // These tests exercise the full stack: Graph Commit -> semantic layer ->
-// EAT -> Resolver -> Verify.
+// ArcTable -> Resolver -> Verify.
 package api
 
 import (
