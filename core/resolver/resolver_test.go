@@ -65,7 +65,7 @@ func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semanti
 
 const testBucketId = "test-graph"
 
-func TestGatewayExplicitOnly(t *testing.T) {
+func TestResolverExplicitOnly(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -118,7 +118,7 @@ func TestGatewayExplicitOnly(t *testing.T) {
 	}
 }
 
-func TestGatewayCanonicalizesResolvePath(t *testing.T) {
+func TestResolverCanonicalizesResolvePath(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -146,7 +146,7 @@ func TestGatewayCanonicalizesResolvePath(t *testing.T) {
 	}
 }
 
-func TestGatewayExplicitLongestPrefix(t *testing.T) {
+func TestResolverExplicitLongestPrefix(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -173,7 +173,7 @@ func TestGatewayExplicitLongestPrefix(t *testing.T) {
 	}
 }
 
-func TestGatewayImplicitStep(t *testing.T) {
+func TestResolverImplicitStep(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -201,7 +201,7 @@ func TestGatewayImplicitStep(t *testing.T) {
 	}
 }
 
-func TestGatewayTranscript(t *testing.T) {
+func TestResolverTranscript(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -240,7 +240,7 @@ func TestGatewayTranscript(t *testing.T) {
 	}
 }
 
-func TestGatewayPayloadRedirect(t *testing.T) {
+func TestResolverPayloadRedirect(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -325,7 +325,7 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 	}
 }
 
-func TestGatewayMissingPayloadBindingFails(t *testing.T) {
+func TestResolverMissingPayloadBindingFails(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()
@@ -345,7 +345,7 @@ func TestGatewayMissingPayloadBindingFails(t *testing.T) {
 	}
 }
 
-func TestGatewayNonMaltEmptyPath(t *testing.T) {
+func TestResolverNonMaltEmptyPath(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
 	c := mock.NewCAS()

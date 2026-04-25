@@ -49,9 +49,6 @@ Current runtime shape:
   - optional same-process second-port service
   - fixed Kubo-compatible API at `/api/v0`
 
-`cmd/gateway` should therefore be read only as a debug/evaluation alias for the
-same daemon server package, not as the primary product boundary.
-
 ## Data Model
 
 MALT logically separates:
@@ -87,7 +84,7 @@ layout/backend choices internal to each semantic implementation.
 | --- | --- | --- |
 | Structural Semantics | What logical structure does the application expose? | `list`, `map` |
 | Semantic Implementation | How is that semantic contract realized internally? | tree-shaped indexed list, digest-keyed radix map, future variants such as segment-radix or hashed-path radix |
-| Commitment Backend | What primitive authenticates already-positioned values or nodes? | KZG, IPA, hash/Merkle commitments |
+| Commitment Backend | What primitive authenticates already-positioned values or nodes? | KZG |
 
 Under this terminology:
 
@@ -101,7 +98,7 @@ Under this terminology:
   - implementations choose how keys are placed into authenticated positions and how conflicts are handled
 - fixed-slot commitment primitive
   - a backend that only authenticates already-positioned values
-  - `KZG` and `IPA` belong here
+  - `KZG` is the default in-tree backend; `IPA` remains available as an experimental selectable backend
   - it does not define public structure semantics or a general `key -> position` rule
 
 Primitive commitment backends now live under `core/commitment`, while public
@@ -222,9 +219,10 @@ Current schema:
 - `rpc.listen`
 - `state.root_dir`
 - `state.kvstore`
+- `state.kvstore.type` accepts `badger`, `memory`, or `fs`
 - `state.arctable`
 - `state.lineage`
-- `structure.default_backend`
+- `structure.default_backend` accepts `kzg` or `ipa`
 - `cas.mode`
 - `cas.base_url`
 - `cas.timeout`
@@ -236,7 +234,7 @@ Current defaults:
 
 - daemon listen: `127.0.0.1:4317`
 - embedded mock CAS listen: `127.0.0.1:4318`
-- structure backend: `kzg`
+- structure backend: `kzg` or `ipa`
 - ArcTable type: `versioned`
 
 ## Repo Layout
@@ -245,7 +243,6 @@ Current defaults:
 malt/
 ├── client/          # thin daemon HTTP client
 ├── cmd/
-│   ├── gateway/main.go
 │   └── malt/
 ├── config/
 ├── httpapi/         # shared daemon request/response payload types
@@ -257,14 +254,11 @@ malt/
 │   ├── graph/        # graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # version lineage metadata
-│   ├── replication/  # secondary snapshot/sync tooling
 │   ├── resolver/     # resolution loop and step executors
 │   ├── commitment/   # primitive commitment backends
 │   ├── structure/    # public structural semantics (`list`, `map`)
 │   ├── types/        # arc sets, evidence, proof-related types
 │   └── writer/       # write-side structure update flow
-├── eval/
-├── gateway/
 ├── server/          # daemon HTTP server
 └── integration/
 ```
@@ -273,12 +267,9 @@ malt/
 
 These parts of the repo are useful, but they are not the conceptual center of MALT:
 
-- gateway deployment
-- compatibility traversal machinery in the resolver/gateway path
-- replication and snapshot tooling
-- benchmark scaffolding
+- compatibility traversal machinery in the resolver path
 - helper deployment abstractions
-- layout/backend comparisons such as radix, KZG, and IPA
+- future layout/backend comparisons outside the current in-tree product path
 
 ## Current Structure Layer
 
@@ -286,7 +277,7 @@ The current public structure layer should be read as:
 
 - `core/structure/list`
   - public stable-indexed list semantic
-  - primary implementation is a tree-shaped indexed layout backed by a fixed-slot primitive such as `IPA` or `KZG`
+  - primary implementation is a tree-shaped indexed layout backed by KZG
   - small lists are shallow instances of the same runtime rather than a separate public `indexed` semantic
 - `core/structure/mapping`
   - public keyed semantic

@@ -13,7 +13,7 @@ This submodule contains the Go implementation of MALT:
 - ArcTable
 - primitive commitment backends
 - graph and writer layers
-- gateway, CLI, evaluation, and replication
+- daemon/API surface, CLI, and local CAS integration
 
 ## Current Architectural Conventions
 

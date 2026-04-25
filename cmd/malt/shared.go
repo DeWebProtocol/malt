@@ -8,18 +8,27 @@ import (
 	"os"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
+	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
-// defaultNode and defaultGraph are lazily initialized and reused by developer commands.
+// defaultNode and defaultGraph are lazily initialized and reused by commands
+// that need direct in-process graph access.
 var (
 	defaultNode   *api.Node
 	defaultGraph  *graph.Graph
 	defaultClient *daemonclient.Client
 )
+
+func loadRuntimeConfig() (*config.Config, error) {
+	if cfgFile != "" {
+		return config.LoadFromFile(cfgFile)
+	}
+	return config.Load()
+}
 
 // makeNode creates and configures a MALT node from config.
 func makeNode() (*api.Node, error) {
@@ -43,7 +52,7 @@ func mustNode() *api.Node {
 	return defaultNode
 }
 
-// mustGraph returns the default graph for developer commands.
+// mustGraph returns the default graph for direct in-process commands.
 func mustGraph() *graph.Graph {
 	if defaultGraph == nil {
 		node := mustNode()
