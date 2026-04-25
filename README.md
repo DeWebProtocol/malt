@@ -98,7 +98,7 @@ Under this terminology:
   - implementations choose how keys are placed into authenticated positions and how conflicts are handled
 - fixed-slot commitment primitive
   - a backend that only authenticates already-positioned values
-  - `KZG` is the current in-tree backend
+  - `KZG` is the default in-tree backend; `IPA` remains available as an experimental selectable backend
   - it does not define public structure semantics or a general `key -> position` rule
 
 Primitive commitment backends now live under `core/commitment`, while public
@@ -219,9 +219,10 @@ Current schema:
 - `rpc.listen`
 - `state.root_dir`
 - `state.kvstore`
+- `state.kvstore.type` accepts `badger`, `memory`, or `fs`
 - `state.arctable`
 - `state.lineage`
-- `structure.default_backend`
+- `structure.default_backend` accepts `kzg` or `ipa`
 - `cas.mode`
 - `cas.base_url`
 - `cas.timeout`
@@ -233,7 +234,7 @@ Current defaults:
 
 - daemon listen: `127.0.0.1:4317`
 - embedded mock CAS listen: `127.0.0.1:4318`
-- structure backend: `kzg`
+- structure backend: `kzg` or `ipa`
 - ArcTable type: `versioned`
 
 ## Repo Layout

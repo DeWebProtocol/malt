@@ -5,6 +5,8 @@
 //
 //	malt-map-kzg  = 0x300001
 //	malt-list-kzg = 0x300002
+//	malt-map-ipa  = 0x300003
+//	malt-list-ipa = 0x300004
 package codec
 
 import (
@@ -19,6 +21,8 @@ import (
 const (
 	CodecMaltMapKZG  = 0x300001 // malt-map-kzg
 	CodecMaltListKZG = 0x300002 // malt-list-kzg
+	CodecMaltMapIPA  = 0x300003 // malt-map-ipa
+	CodecMaltListIPA = 0x300004 // malt-list-ipa
 )
 
 // SemanticKind indicates the structural semantic encoded in the typed CID.
@@ -36,15 +40,21 @@ type BackendKind string
 const (
 	BackendKindUnknown BackendKind = "unknown"
 	BackendKindKZG     BackendKind = "kzg"
+	BackendKindIPA     BackendKind = "ipa"
 )
 
 // CodecMaltKZG is an alias for [CodecMaltMapKZG] (map roots use KZG in the current prototype).
 // Deprecated: prefer CodecMaltMapKZG for new code.
 const CodecMaltKZG = CodecMaltMapKZG
 
+// CodecMaltIPA is an alias for [CodecMaltMapIPA].
+// Deprecated: prefer CodecMaltMapIPA for new code.
+const CodecMaltIPA = CodecMaltMapIPA
+
 // Commitment size constants
 const (
 	KZGCommitmentSize = 48 // KZGCommitmentSize is the size of a KZG commitment in bytes (48 bytes).
+	IPACommitmentSize = 32 // IPACommitmentSize is the size of an IPA commitment in bytes (32 bytes).
 )
 
 // NewKZGCid creates a CID from KZG commitment bytes using the malt-map-kzg codec.
@@ -68,6 +78,27 @@ func NewListKZGCid(commitment []byte) (cid.Cid, error) {
 	return newMaltCid(CodecMaltListKZG, commitment)
 }
 
+// NewIPACid creates a CID from IPA commitment bytes using the malt-map-ipa codec.
+func NewIPACid(commitment []byte) (cid.Cid, error) {
+	if len(commitment) != IPACommitmentSize {
+		return cid.Cid{}, fmt.Errorf("invalid IPA commitment size: %d, expected %d", len(commitment), IPACommitmentSize)
+	}
+	return newMaltCid(CodecMaltMapIPA, commitment)
+}
+
+// NewMapIPACid is an alias for [NewIPACid].
+func NewMapIPACid(commitment []byte) (cid.Cid, error) {
+	return NewIPACid(commitment)
+}
+
+// NewListIPACid creates a CID from IPA commitment bytes using the malt-list-ipa codec.
+func NewListIPACid(commitment []byte) (cid.Cid, error) {
+	if len(commitment) != IPACommitmentSize {
+		return cid.Cid{}, fmt.Errorf("invalid IPA commitment size: %d, expected %d", len(commitment), IPACommitmentSize)
+	}
+	return newMaltCid(CodecMaltListIPA, commitment)
+}
+
 // NewTypedCID constructs a typed MALT CID for the given semantic/backend kinds.
 func NewTypedCID(semantic SemanticKind, backend BackendKind, commitment []byte) (cid.Cid, error) {
 	switch backend {
@@ -77,6 +108,13 @@ func NewTypedCID(semantic SemanticKind, backend BackendKind, commitment []byte) 
 		}
 		if semantic == SemanticKindMap {
 			return NewMapKZGCid(commitment)
+		}
+	case BackendKindIPA:
+		if semantic == SemanticKindList {
+			return NewListIPACid(commitment)
+		}
+		if semantic == SemanticKindMap {
+			return NewMapIPACid(commitment)
 		}
 	}
 	return cid.Undef, fmt.Errorf("unsupported typed cid kind: semantic=%s backend=%s", semantic, backend)
@@ -92,10 +130,10 @@ func newMaltCid(codec uint64, commitment []byte) (cid.Cid, error) {
 	return cid.NewCidV1(codec, mhash), nil
 }
 
-// IsMaltCid checks if a CID is a typed MALT structure root (map or list, KZG).
+// IsMaltCid checks if a CID is a typed MALT structure root (map or list, KZG or IPA).
 func IsMaltCid(c cid.Cid) bool {
 	switch c.Prefix().Codec {
-	case CodecMaltMapKZG, CodecMaltListKZG:
+	case CodecMaltMapKZG, CodecMaltListKZG, CodecMaltMapIPA, CodecMaltListIPA:
 		return true
 	default:
 		return false
@@ -105,9 +143,9 @@ func IsMaltCid(c cid.Cid) bool {
 // SemanticKindOf returns the semantic kind for a typed MALT CID.
 func SemanticKindOf(c cid.Cid) SemanticKind {
 	switch c.Prefix().Codec {
-	case CodecMaltMapKZG:
+	case CodecMaltMapKZG, CodecMaltMapIPA:
 		return SemanticKindMap
-	case CodecMaltListKZG:
+	case CodecMaltListKZG, CodecMaltListIPA:
 		return SemanticKindList
 	default:
 		return SemanticKindUnknown
@@ -119,6 +157,8 @@ func BackendKindOf(c cid.Cid) BackendKind {
 	switch c.Prefix().Codec {
 	case CodecMaltMapKZG, CodecMaltListKZG:
 		return BackendKindKZG
+	case CodecMaltMapIPA, CodecMaltListIPA:
+		return BackendKindIPA
 	default:
 		return BackendKindUnknown
 	}
@@ -170,6 +210,10 @@ func CodecName(codec uint64) string {
 		return "malt-map-kzg"
 	case CodecMaltListKZG:
 		return "malt-list-kzg"
+	case CodecMaltMapIPA:
+		return "malt-map-ipa"
+	case CodecMaltListIPA:
+		return "malt-list-ipa"
 	default:
 		return fmt.Sprintf("unknown-%x", codec)
 	}

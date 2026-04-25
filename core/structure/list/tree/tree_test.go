@@ -7,6 +7,7 @@ import (
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/list"
@@ -28,6 +29,14 @@ func newPayloadCID(data []byte) cid.Cid {
 
 func listSchemes() map[string]schemeFactory {
 	return map[string]schemeFactory{
+		"ipa": func(t *testing.T) commitment.IndexCommitment {
+			t.Helper()
+			scheme, err := ipa.NewScheme()
+			if err != nil {
+				t.Fatalf("ipa.NewScheme failed: %v", err)
+			}
+			return scheme
+		},
 		"kzg": func(t *testing.T) commitment.IndexCommitment {
 			t.Helper()
 			scheme, err := kzg.NewScheme()
@@ -111,6 +120,9 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 			}
 			if name == "kzg" && codec.BackendKindOf(root) != codec.BackendKindKZG {
 				t.Fatalf("root backend kind = %s, want %s", codec.BackendKindOf(root), codec.BackendKindKZG)
+			}
+			if name == "ipa" && codec.BackendKindOf(root) != codec.BackendKindIPA {
+				t.Fatalf("root backend kind = %s, want %s", codec.BackendKindOf(root), codec.BackendKindIPA)
 			}
 
 			for _, index := range []uint64{0, 254, 255, 256, 299} {

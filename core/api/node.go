@@ -15,10 +15,12 @@ import (
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/commitment"
+	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
+	"github.com/dewebprotocol/malt/core/kvstore/fs"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/lineage"
 	cid "github.com/ipfs/go-cid"
@@ -135,6 +137,8 @@ func (n *Node) initKVStore() (kvstore.KVStore, error) {
 			badger.WithPath(n.cfg.KVStorePath()),
 			badger.WithInMemory(false),
 		)
+	case "fs":
+		return fs.New(n.cfg.KVStorePath())
 	default:
 		return nil, fmt.Errorf("unknown kvstore type: %s", n.cfg.State.KVStore.Type)
 	}
@@ -145,6 +149,8 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.IndexCommitment
 	switch kind {
 	case "kzg":
 		return kzg.NewScheme()
+	case "ipa":
+		return ipa.NewScheme()
 	default:
 		return nil, fmt.Errorf("unknown commitment type: %s", kind)
 	}

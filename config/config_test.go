@@ -63,7 +63,7 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
   "state": {
     "root_dir": "~/custom-state",
     "kvstore": {
-      "type": "badger",
+      "type": "fs",
       "path": "kv-data"
     },
     "arctable": {
@@ -117,6 +117,16 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
 	}
 	if cfg.KVStorePath() != filepath.Join(cfg.State.RootDir, "kv-data") {
 		t.Fatalf("KVStorePath() = %q", cfg.KVStorePath())
+	}
+}
+
+func TestValidateAllowsFsAndIpa(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.State.KVStore.Type = "fs"
+	cfg.Structure.DefaultBackend = "ipa"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

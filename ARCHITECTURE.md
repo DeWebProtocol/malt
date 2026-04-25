@@ -68,7 +68,7 @@ The codebase should be read around these first-class concepts:
   - compiles those semantics into internal arcs and authenticated positions
 - `Commitment Backend`
   - primitive authentication backend over already-positioned slots or nodes
-  - current in-tree backend: `KZG`
+  - current in-tree default: `KZG`; `IPA` remains selectable for experiments
 - `ArcTable`
   - explicit arc materialization and lookup state
 - `Resolver`
@@ -168,7 +168,8 @@ Current design direction:
 - let semantic packages own layout decisions, metadata/header state, and future key-placement logic
 
 Backend choice remains workload-sensitive and layout-sensitive, but the current
-in-tree product path is KZG-only.
+in-tree default is KZG and IPA remains available as an experimental selectable
+backend.
 
 ## ArcTable
 
@@ -428,6 +429,11 @@ Current config shape:
   }
 }
 ```
+
+Allowed runtime values:
+
+- `state.kvstore.type`: `badger`, `memory`, or `fs`
+- `structure.default_backend`: `kzg` or `ipa`
 
 Interpretation:
 

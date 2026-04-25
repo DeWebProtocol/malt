@@ -19,6 +19,7 @@ var (
 	initCASBaseURL         string
 	initEmbeddedMockListen string
 	initEmbeddedMock       bool
+	initKVStoreType        string
 	initDefaultBucketID    string
 )
 
@@ -32,6 +33,7 @@ func init() {
 	initCmd.Flags().StringVar(&initCASBaseURL, "cas-base-url", "", "external CAS base URL")
 	initCmd.Flags().BoolVar(&initEmbeddedMock, "embedded-mock", true, "enable the embedded mock CAS when cas-mode is embedded-mock")
 	initCmd.Flags().StringVar(&initEmbeddedMockListen, "embedded-mock-listen", "", "embedded mock CAS listen address")
+	initCmd.Flags().StringVar(&initKVStoreType, "kvstore-type", "", "state KV store type: badger, memory, or fs")
 	initCmd.Flags().StringVar(&initDefaultBucketID, "default-bucket", "", "default bucket id for CLI commands (optional)")
 }
 
@@ -54,6 +56,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	reader := bufio.NewReader(os.Stdin)
 	cfg.State.RootDir = promptString(reader, "State root", initStateRoot, cfg.State.RootDir, initNonInteractive)
+	cfg.State.KVStore.Type = promptString(reader, "KVStore type (badger|memory|fs)", initKVStoreType, cfg.State.KVStore.Type, initNonInteractive)
 	cfg.RPC.Listen = promptString(reader, "Daemon listen", initRPCListen, cfg.RPC.Listen, initNonInteractive)
 	cfg.CAS.Mode = promptString(reader, "CAS mode (external|embedded-mock)", initCASMode, cfg.CAS.Mode, initNonInteractive)
 	cfg.Client.DefaultBucketID = promptString(reader, "Default bucket id (optional)", initDefaultBucketID, cfg.Client.DefaultBucketID, initNonInteractive)

@@ -294,7 +294,7 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.State.KVStore.Type {
-	case "badger", "memory":
+	case "badger", "memory", "fs":
 	default:
 		return fmt.Errorf("unsupported state.kvstore.type %q", c.State.KVStore.Type)
 	}
@@ -306,7 +306,7 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.Structure.DefaultBackend {
-	case "kzg":
+	case "kzg", "ipa":
 	default:
 		return fmt.Errorf("unsupported structure.default_backend %q", c.Structure.DefaultBackend)
 	}
