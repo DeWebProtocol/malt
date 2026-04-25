@@ -8,7 +8,7 @@
 |------|---------------|---------|
 | Unit Tests | `*_test.go` | `bloom_test.go` |
 | Benchmark Tests | `*_benchmark_test.go` | `bloom_benchmark_test.go` |
-| Integration Tests | `*_integration_test.go` | `eat_integration_test.go` |
+| Integration Tests | `*_integration_test.go` | `arctable_integration_test.go` |
 
 ### Why `_benchmark_test.go`?
 
@@ -41,7 +41,14 @@
   call site would otherwise hide the constructed type.
 - Runtime scope such as `bucketID`, `graphID`, or request-local parameters
   should be passed into operations, not captured as long-lived semantic object
-  fields, unless the object is explicitly intended to be graph-bound.
+  fields, unless the object is explicitly intended to be bound to that runtime
+  scope.
+- Reserve the term `graph` for the abstract authenticated read/write contract
+  unless the package explicitly documents that it is current runtime metadata or
+  compatibility code.
+- Treat `map` and `list` packages as graph implementations. Resolver and writer
+  packages may adapt those implementations, but they should not redefine their
+  read/write semantics.
 
 ## Code Style
 
@@ -178,11 +185,10 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `chore`
 
 ## Checklist Before Commit
 
-1. `go build ./...` - No compilation errors
+1. `gofmt -s -w .` - Code formatted
 2. `go test ./...` - All tests pass
-3. `go vet ./...` - No vet warnings
-4. `gofmt -s -w .` - Code formatted
-5. Commit message follows convention
+3. `go vet ./...` - No vet warnings when the touched area justifies it
+4. Commit message follows convention
 
 ## File Organization
 
@@ -190,18 +196,20 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `chore`
 malt/
 ├── cmd/
 │   ├── malt/
-│   │   └── main.go                  # CLI tool
+│   │   ├── main.go                  # CLI root
+│   │   ├── daemon.go                # Daemon command
+│   │   ├── bucket*.go               # Bucket commands
+│   │   ├── add.go                   # File/directory ingest
+│   │   ├── cat.go                   # Bucket content read
+│   │   └── get.go                   # Bucket export
 ├── config/
 │   └── config.go                    # Configuration
 ├── core/
 │   ├── api/
 │   │   ├── node.go                  # MALT Node (entry point)
 │   │   ├── options.go               # Functional options
-│   │   ├── structure.go             # Structure API
-│   │   └── structure_test.go        # Unit tests
 │   ├── cas/
 │   │   ├── cas.go                   # CAS interface
-│   │   ├── ipld.go                  # IPLD utilities
 │   │   ├── mock/
 │   │   │   └── mock.go              # Mock CAS impl
 │   │   └── ipfs/
@@ -220,14 +228,25 @@ malt/
 │   │   └── versioned/
 │   │       ├── versioned.go         # Versioned ArcTable impl
 │   │       └── versioned_test.go    # Unit tests
+│   ├── bucketpath/
+│   │   └── path.go                  # Current bucket path boundary helper
 │   ├── kvstore/
 │   │   ├── kv.go                    # KVStore interface
 │   │   ├── memory/
 │   │   │   └── memory.go            # In-memory impl
 │   │   ├── badger/
 │   │   │   └── badger.go            # BadgerDB impl
+│   │   └── fs/
+│   │       └── fs.go                # Filesystem KV impl
+│   ├── graph/
+│   │   ├── graph.go                 # Current runtime composition
+│   │   └── manager.go               # Current metadata lifecycle
+│   ├── lineage/
+│   │   └── lineage.go               # Auxiliary version-history metadata
+│   ├── manifest/
+│   │   └── directory.go             # Current directory manifest helper
 │   ├── resolver/
-│   │   ├── resolver.go              # Hybrid Resolver
+│   │   ├── resolver.go              # Current read adapter loop
 │   │   ├── resolver_test.go         # Unit tests
 │   │   └── step/
 │   │       ├── step.go              # Step interface
@@ -241,6 +260,19 @@ malt/
 │   │   ├── commitment.go            # Primitive commitment interface
 │   │   ├── kzg/
 │   │   │   └── kzg.go               # KZG backend
+│   │   └── ipa/
+│   │       └── ipa.go               # IPA backend
+│   ├── structure/
+│   │   ├── list/
+│   │   │   ├── list.go              # List graph contract
+│   │   │   └── tree/
+│   │   │       └── tree.go          # Tree list implementation
+│   │   └── mapping/
+│   │       ├── mapping.go           # Map graph contract
+│   │       ├── radix/
+│   │       │   └── radix.go         # Radix map implementation
+│   │       └── indexed/
+│   │           └── indexed.go       # Indexed baseline map
 │   ├── codec/
 │   │   └── codec.go                 # MALT CID codecs
 │   └── types/
@@ -248,6 +280,10 @@ malt/
 │       │   └── arcset.go            # Arc set types
 │       └── evidence/
 │           └── evidence.go          # Evidence types
+├── httpapi/
+│   └── types.go                     # Daemon API payload types
+├── server/
+│   └── server.go                    # Daemon HTTP server
 └── logger/
     └── logger.go                    # Logging utilities
 ```

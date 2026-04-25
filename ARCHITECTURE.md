@@ -2,21 +2,185 @@
 
 ## Overview
 
-MALT is an authenticated structure layer over immutable content-addressed storage.
+MALT is an authenticated mutable structure layer over immutable
+content-addressed storage.
 
-Its implementation should be read around one main separation:
+The architectural center is an abstract authenticated graph contract. A MALT
+graph is not a Go runtime object that merely holds dependencies. It is a
+semantic object that defines how a structure root is read, written, and
+verified.
 
-- payload remains ordinary content-addressed data
-- structure is made explicit as arcs
-- structure is exposed through semantic abstractions such as `list` and `map`
-- semantic implementations compile those abstractions into internal arcs and authenticated positions
-- primitive commitment backends authenticate those positions independently from payload
+```text
+Read(root, query) -> result + proof
+VerifyRead(root, query, result, proof) -> valid / invalid
 
-MALT roots are encoded as CID-compatible identifiers, so MALT-native structures and ordinary IPLD/CAS objects can reference each other. That interoperability matters, but it is not the conceptual center of the system.
+Write(root, mutation) -> newRoot + receipt
+VerifyWrite(root, mutation, newRoot, receipt) -> valid / invalid
+```
 
-This document is implementation-oriented. For the shorter system overview, see [`README.md`](./README.md).
+Map and list are concrete implementations of that contract:
 
-In the current prototype, hot proving/index state is colocated and organized in deployment-specific namespaces for performance. The current code often maps one namespace to one graph, but that placement is an implementation choice, not the semantic definition of MALT.
+- map graph: authenticated key-to-CID bindings
+- list graph: authenticated stable-indexed or range-addressed sequences
+
+ArcTable and commitment backends are internal mechanisms used by graph
+implementations. Resolver, writer, and current graph packages are runtime or
+compatibility adapters around those implementations.
+
+This document is implementation-oriented. For the shorter system overview, see
+[`README.md`](./README.md).
+
+## Target Core Model
+
+The target model has four distinct layers:
+
+| Layer | Responsibility |
+| --- | --- |
+| Graph contract | Abstract authenticated read/write/verify semantics |
+| Graph implementation | Concrete map/list semantics satisfying the contract |
+| Structure storage | Materialized state needed by an implementation |
+| Commitment backend | Primitive proof and verification over positioned cells |
+
+The public structure layer should expose graph implementations, not storage
+machinery.
+
+### Graph Contract
+
+The graph contract defines the shape of authenticated operations. It should be
+generic enough for map, list, and future graph implementations, but narrow
+enough that it does not erase their semantics.
+
+Conceptually:
+
+```go
+type Graph[Query any, Result any, Mutation any, Receipt any] interface {
+    Read(ctx context.Context, root cid.Cid, query Query) (Result, Proof, error)
+    VerifyRead(root cid.Cid, query Query, result Result, proof Proof) (bool, error)
+
+    Write(ctx context.Context, root cid.Cid, mutation Mutation) (cid.Cid, Receipt, error)
+    VerifyWrite(oldRoot, newRoot cid.Cid, mutation Mutation, receipt Receipt) (bool, error)
+}
+```
+
+The current code does not yet expose exactly this package-level interface. The
+documented direction is to make map/list the first graph implementations and to
+move runtime adapters around them.
+
+### Map Graph
+
+The map graph authenticates key-to-CID bindings.
+
+Native reads:
+
+- exact key lookup
+- binding proof
+- binding verification
+
+Native writes:
+
+- insert absent key
+- replace existing key
+- delete existing key
+
+The current public package is `core/structure/mapping`.
+The primary implementation is `core/structure/mapping/radix`.
+
+The current explicit resolver is best understood as a compatibility layer above
+map graph reads. It can implement longest-prefix path policy, but the map graph
+owns exact key proof generation and verification.
+
+### List Graph
+
+The list graph authenticates stable-indexed sequences.
+
+Native reads:
+
+- index query
+- range query
+- length-aware proof
+
+Native writes:
+
+- append
+- replace existing index
+- truncate
+
+List does not have path-resolution semantics. Application layouts translate
+byte ranges or file operations into list index/range operations.
+
+The current public package is `core/structure/list`.
+The primary implementation is `core/structure/list/tree`.
+
+### Structure Storage
+
+Graph implementations need materialized state in order to prove and update
+without reconstructing full payload objects.
+
+In the current implementation this role is served by ArcTable:
+
+- point lookup of materialized structure entries
+- batch lookup for implementation nodes
+- snapshots or iteration when needed
+- optional version-aware retrieval
+
+ArcTable is not the trust root. Incorrect materialized state is rejected by
+proof verification or root recomputation.
+
+### Commitment Backend
+
+Primitive commitment backends authenticate already-positioned values selected
+by a graph implementation.
+
+They are responsible for:
+
+- commit
+- prove
+- verify
+- update when the backend supports efficient local updates
+
+They are not responsible for:
+
+- map key semantics
+- list range semantics
+- path resolution
+- application layout
+- graph lifecycle
+
+Current in-tree backends:
+
+- `commitment/kzg`
+- `commitment/ipa` for experimental selectable runs
+
+## Current Implementation Status
+
+Some package names still reflect an older runtime-first design. Interpret them
+as follows:
+
+- `core/structure/mapping`
+  - target public map graph contract and shared types
+- `core/structure/mapping/radix`
+  - primary map graph implementation
+- `core/structure/list`
+  - target public list graph contract and shared types
+- `core/structure/list/tree`
+  - primary list graph implementation
+- `core/arctable`
+  - storage/materialization support for graph implementations
+- `core/commitment`
+  - primitive commitment backends
+- `core/resolver`
+  - current runtime read loop and compatibility adapters
+- `core/writer`
+  - current concrete map/arcs write adapter, not the target abstract writer
+- `core/graph`
+  - current graph metadata and runtime composition, not the target graph
+    contract
+- `core/lineage`
+  - auxiliary version-history metadata, pending redesign with MVCC and
+    versioned ArcTable
+- `core/bucketpath` and `core/manifest`
+  - current file/bucket layout helpers, candidates to move under a dedicated
+    UnixFS-style layout package
 
 ## Runtime Packaging
 
@@ -31,168 +195,190 @@ Current command model:
 - `malt bucket ...`
   - manages daemon-side buckets and the client-side default bucket
 - `malt add ...`
-  - client-side orchestration for file and directory ingestion
+  - client-side file and directory ingestion
   - uploads payload blocks to CAS
-  - then attaches the resulting bindings into a bucket through the daemon API
+  - commits structure through map/list graph implementations
 - `malt cat ...` and `malt get ...`
   - product read paths for bucket-local files and directories
-- `malt ...`
-  - lower-level thin client commands for inspection, mutation, proof, verification, and lineage workflows
+- lower-level commands
+  - resolve, prove, update, verify, and lineage inspection
 - `malt cas ...`
   - convenience commands for CAS-oriented workflows
 
-Current code status:
-
-- `cmd/malt` now provides `malt init`, `malt daemon`, bucket/add/cat/get product commands, lower-level resolve/prove/update/verify/lineage commands, and `malt cas`
-- `server/` provides the daemon HTTP server
-- `client/` provides the thin daemon HTTP client
-- `httpapi/` holds the shared `/api/v1` request/response model
-- embedded mock CAS runs on a second local port and exposes a Kubo-compatible `/api/v0`
-
 Current runtime invariants:
 
-- a managed bucket head must be a `map` root because bucket heads represent directory-like structure
-- a `list` root represents file-content structure and is not a valid managed bucket head
-- every MALT-native `map` root carries the reserved `@payload` binding
-- materializing a bare `map` root means resolving `@payload` first
-- `list` roots are terminal typed keys and do not auto-redirect through `@payload`
-- bucket-path misses are reported as `not found`, not as a fallback to the current root
+- a managed bucket head is a directory-shaped map root
+- a list root represents file-content structure and is not a valid managed
+  bucket head
+- every MALT-native map root carries the reserved `@payload` binding
+- materializing a bare map root means resolving `@payload` first
+- list roots are terminal typed keys and do not auto-redirect through
+  `@payload`
+- bucket-path misses are reported as `not found`
 
-## Architectural Center
-
-The codebase should be read around these first-class concepts:
-
-- `Semantic Layer`
-  - the architectural center of MALT
-  - exposes `list` and `map` as the public structure semantics
-  - compiles those semantics into internal arcs and authenticated positions
-- `Commitment Backend`
-  - primitive authentication backend over already-positioned slots or nodes
-  - current in-tree default: `KZG`; `IPA` remains selectable for experiments
-- `ArcTable`
-  - explicit arc materialization and lookup state
-- `Resolver`
-  - resolves structure from a root and returns a transcript
-- `Writer`
-  - advances structure roots through localized arc updates
-- `Graph`
-  - the main runtime composition unit
-  - provides the main read and write entry points
-  - does not redefine the authentication boundary, which remains the structure root
-- `Lineage`
-  - optional version metadata for ancestry and history operations
-
-Everything else in the repository should be interpreted relative to that core.
+These are file-layout and product-runtime invariants. They should not be
+confused with the core MALT graph contract.
 
 ## Code Layout
 
 ```text
 malt/
-├── client/          # thin daemon HTTP client
-├── cmd/
-│   └── malt/
-├── config/
-├── httpapi/         # shared daemon API payloads
-├── server/          # daemon HTTP server
-├── core/
-│   ├── api/          # Node: top-level component wiring
-│   ├── cas/          # CAS clients and adapters
-│   ├── codec/        # MALT CID codecs and CID utilities
-│   ├── commitment/   # Primitive commitment backends
-│   ├── arctable/          # Explicit Arc Table implementations
-│   ├── graph/        # Graph metadata and runtime composition
-│   ├── kvstore/      # KV backends
-│   ├── lineage/      # Version lineage metadata
-│   ├── resolver/     # Resolution loop and step executors
-│   ├── structure/    # Public structural semantics (`list`, `map`)
-│   ├── types/        # Arc sets, evidence, proof-related types
-│   └── writer/       # Write-side structure update flow
-└── integration/
+|-- client/          # thin daemon HTTP client
+|-- cmd/
+|   `-- malt/
+|-- config/
+|-- httpapi/         # shared daemon API payloads
+|-- server/          # daemon HTTP server
+|-- core/
+|   |-- api/          # Node: top-level component wiring
+|   |-- arctable/     # graph-state materialization and lookup support
+|   |-- bucketpath/   # current bucket path boundary helper
+|   |-- cas/          # CAS clients and adapters
+|   |-- codec/        # MALT CID codecs and CID utilities
+|   |-- commitment/   # primitive commitment backends
+|   |-- graph/        # current metadata/runtime composition
+|   |-- kvstore/      # KV backends
+|   |-- lineage/      # auxiliary version-history metadata
+|   |-- manifest/     # current directory-manifest helper
+|   |-- resolver/     # current read compatibility adapters
+|   |-- structure/    # map/list graph contracts and implementations
+|   |-- types/        # arc sets, evidence, proof-related types
+|   `-- writer/       # current concrete write adapter
+`-- integration/
 ```
 
-## Semantic Layer
+## Map Graph Implementation
 
-The semantic layer is where MALT attaches meaning to authenticated structure.
+`core/structure/mapping` defines the public keyed-map interface.
 
-The public semantic contracts are:
-
-- `list`
-  - ordered structure
-  - stable index semantics
-  - authenticated length/header state belongs to the committed structure state itself
-  - native operations are index proof and index-stable replacement
-  - insert/delete are higher-level rewrites above the primitive stable-index contract
-- `map`
-  - keyed structure
-  - native contract is key-based lookup plus authentication of the key-to-target binding
-  - localized maintenance should affect one logical key binding without exposing internal placement rules
-
-Important implementation note:
-
-- the current write-up discusses `list` first because it is the simpler semantic and the current implementation is farther along there
-- this is only an exposition and implementation-order choice
-- `map` remains part of MALT's semantic-layer model and public API surface
-
-The semantic layer owns:
-
-- translation from semantic objects into internal arcs
-- mapping from semantic coordinates into authenticated positions
-- calls into `ArcTable` for arc access
-- calls into primitive commitment backends for commit/prove/verify/update
-
-## Commitment Backends
-
-Primitive commitment backends have a narrow role:
-
-> Authenticate already-positioned slots or nodes chosen by a semantic implementation.
-
-They are responsible for:
+The current interface exposes:
 
 - `Commit`
 - `Prove`
 - `Verify`
 - `Update`
 
-They are not responsible for:
+This already approximates the target graph shape:
 
-- path semantics
-- `list` or `map` semantics
-- longest-prefix lookup
-- graph traversal policy
+- `Prove` is the map read path for exact keys
+- `Verify` validates read proof
+- `Update` is the map write path
+- `Commit` bootstraps a root from a materialized view
 
-Current design direction:
+The primary implementation, `mapping/radix`, uses a digest-keyed radix layout.
+It owns:
 
-- keep primitive backends under `core/commitment`
-- expose a restart-safe semantic-neutral index commitment interface
-- treat caches as performance optimizations only
-- let semantic packages own layout decisions, metadata/header state, and future key-placement logic
+- key hashing and placement
+- collision handling
+- node materialization through ArcTable
+- commitment proof construction
+- root update computation
 
-Backend choice remains workload-sensitive and layout-sensitive, but the current
-in-tree default is KZG and IPA remains available as an experimental selectable
-backend.
+No external writer should redefine map semantics. A writer adapter may only
+orchestrate calls into map graph operations.
 
-## ArcTable
+## List Graph Implementation
 
-`ArcTable` is the explicit arc materialization and lookup layer.
+`core/structure/list` defines the public stable-indexed list interface.
 
-Its role is:
+The current interface exposes:
 
-- point lookup of explicit arcs
-- snapshots of the committed arc set for a root
-- optional version-aware retrieval
+- `Commit`
+- `Prove`
+- `Verify`
+- `Replace`
+- `Append`
+- `Truncate`
+
+This already approximates the target graph shape:
+
+- `Prove` is the list read path for index queries
+- future `Range` should be added for file range workloads
+- `Verify` validates read proof
+- `Append`, `Replace`, and `Truncate` are list write operations
+
+The primary implementation, `list/tree`, uses a tree-shaped fixed-slot layout.
+It owns:
+
+- committed length/header state
+- index-to-slot layout
+- node materialization through ArcTable
+- commitment proof construction
+- root update computation
+
+List should not be forced through path-based resolution.
+
+## Resolver and Writer Adapters
+
+The old architecture treated resolver and writer as central runtime layers.
+The new interpretation is narrower:
+
+- resolver adapters translate application or compatibility reads into graph
+  reads
+- writer adapters translate application mutations into graph writes
+- neither adapter owns the semantic definition of map or list
+
+The explicit resolver is a map compatibility adapter:
+
+1. apply path policy, such as longest-prefix matching
+2. call map graph proof generation for the selected exact key
+3. wrap the map proof as resolver evidence
+
+The current concrete `writer.Writer` should be treated as transitional. It
+combines map mutation, `@payload` policy, ArcTable delta handling, and lineage
+recording. Those responsibilities should be separated when the graph contract is
+implemented directly.
+
+## Flattened UnixFS-Style Layout
+
+The first target application layout should be a pure MALT structure UnixFS-like
+layout.
+
+Suggested interpretation:
+
+- directory nodes are map graph roots
+- file content is represented by list graph roots
+- payload blocks and chunks remain ordinary CAS CIDs
+- path lookup composes map graph reads
+- range load translates byte ranges to list ranges
+- file and directory mutation composes map/list graph writes
+
+This layout is not the definition of MALT. It is an application model that
+demonstrates that the graph contract can express practical file-system
+semantics.
+
+It also gives the benchmark target:
+
+- pure MALT structure UnixFS
+- IPLD UnixFS/HAMT baseline
+
+Metrics:
+
+- path lookup latency
+- range read latency
+- chunk update cost
+- directory mutation cost
+- proof size
+- write amplification
+
+## ArcTable and Versioning
+
+ArcTable currently provides materialization and lookup support.
 
 Current implementations:
 
 - `overwrite`
-  - bucket-scoped current-view storage
+  - current-view storage
 - `versioned`
   - delta-per-version storage linked by `@previous`
 
-Important framing:
+The `@previous` chain and MVCC behavior should be treated as versioning and
+optimization concerns. They are not part of the minimal graph read/write
+contract.
 
-- `ArcTable` is performance state, not the trust root
-- incorrect lookup results are rejected by proof verification
-- in the current implementation, graph-scoped state is realized as bucket-scoped state, with one bucket per graph
+The separate `lineage` package duplicates part of this conceptual space. Until
+the MVCC and bucket-based ArcTable design is settled, lineage should be treated
+as auxiliary and removable from the core narrative.
 
 ## CAS Boundary
 
@@ -206,194 +392,33 @@ Write path:
 
 Read path:
 
-- MALT still needs CAS to fetch immutable blocks
-- this includes bare-root `@payload` materialization
-- this also includes compatibility traversal into legacy CID space
+- MALT may need CAS to materialize payloads
+- application layouts may fetch chunks or directory manifests
+- compatibility traversal may read ordinary IPLD blocks
 
-This means MALT should not be framed primarily as a payload-upload proxy.
-Its core role is structure management, authenticated resolution, and proof generation.
+MALT should not be framed primarily as a payload-upload proxy. Its core role is
+authenticated structure management and proof generation.
 
-`malt add ...` does not change that boundary. It is only a client-side convenience
-workflow that performs:
+## Trust Model
 
-1. local file traversal
-2. direct payload upload to CAS
-3. follow-up structure attachment into a bucket through the daemon
+Correctness is cryptographic:
 
-### Mock CAS Direction
+- clients verify proofs or receipts against roots
+- daemon, resolver adapters, ArcTable, caches, and lineage metadata are
+  untrusted execution state
+- bad state can affect latency or availability, but not accepted correctness
 
-The preferred integration direction is a Kubo/IPFS-compatible HTTP surface when practical.
-
-Why:
-
-- it keeps the client contract closer to real CAS deployments
-- switching between mock and real CAS should mostly change endpoint configuration rather than semantics
-
-Decision rule:
-
-- if same-process same-port embedding is non-invasive, it is acceptable
-- otherwise use the same process with a second local port
-
-### `core/cas` Scope
-
-`core/cas` should stay close to the MALT core boundary:
-
-- core-facing CAS interfaces
-- minimal immutable-block operations needed by resolver/runtime code
-
-Transport-specific integrations such as Kubo/IPFS HTTP adapters are better
-understood as adapters around that core boundary rather than as the conceptual
-center of MALT itself.
-
-## Resolution and Verification
-
-`resolver.Resolver` runs the read loop and returns:
-
-- the resolved target
-- a transcript of step evidence
-
-There are two step kinds:
-
-- explicit step
-  - uses `ArcTable` lookup plus semantic-layer proof generation over the selected binding
-- implicit compatibility step
-  - traverses ordinary IPLD/Merkle objects through CAS
-
-The explicit step is the native MALT path.
-The implicit step exists for compatibility when traversal crosses into legacy CID space.
-
-Clients verify the returned transcript locally:
-
-- explicit steps verify against the structure root through the semantic layer and its commitment backend
-- implicit steps verify by block hash and in-block path mapping
-
-## Localized Write Path
-
-The write path is implemented by `writer.Writer`.
-
-For an arc update, the code follows this shape:
-
-1. read the current binding from `ArcTable`
-2. obtain the arc-set view or snapshot
-3. ask the semantic layer to commit or update the structure root
-4. let the semantic layer use the primitive commitment backend to authenticate the affected positions
-5. write the resulting arc state back through `ArcTable`
-6. optionally record lineage metadata
-
-This is the main operational realization of MALT's locality claim.
-
-## Main Runtime Objects
-
-### `api.Node`
-
-`api.Node` is the top-level wiring point for shared infrastructure:
-
-- KV store
-- ArcTable implementation
-- CAS client
-- graph manager
-- optional lineage manager
-
-It is not itself the graph abstraction. It constructs per-graph instances.
-
-### `graph.Graph`
-
-`Graph` is the main runtime MALT unit.
-
-Important property:
-
-- the graph is stateless with respect to the current root
-- the root is always passed as an argument to read and write operations
-
-This keeps structure evolution explicit and avoids embedding mutable "current root" state inside the graph object. The cryptographic boundary remains the structure root itself; `Graph` is a composition and deployment construct.
-
-### `lineage`
-
-`lineage` is an auxiliary metadata layer that tracks root ancestry.
-
-It is useful for:
-
-- history queries
-- version navigation
-- future version-management optimizations
-
-It is not part of the cryptographic trust base.
-
-## Code-Level Flow
-
-### Commit / Update Flow
-
-The main write-side code path is:
-
-1. `graph.Graph` receives a root-scoped update request
-2. `writer.Writer` reads the current arc binding from `ArcTable`
-3. `writer.Writer` obtains a snapshot or view of the current arc set
-4. the semantic layer computes a new structure root over the updated semantic state
-5. the semantic layer uses the commitment backend to authenticate the updated positions
-6. `ArcTable` is updated to reflect the resulting structure state
-7. optional lineage metadata is recorded
-
-### Resolve / Verify Flow
-
-The main read-side code path is:
-
-1. `resolver.Resolver` starts from a root and remaining path
-2. if the current identifier is a MALT structure root, it uses the explicit step executor
-3. if the current identifier is an ordinary CID, it uses the compatibility step executor
-4. each step appends evidence to the transcript
-5. the client verifies the transcript step by step
-
-The explicit step is the native MALT mechanism.
-The implicit step is the interoperability path.
-
-## Deployment and Trust
-
-Useful deployment framing:
-
-- hot-path state: `ArcTable` records plus the materialized semantic/commitment state needed for low-latency proof generation
-- cold-path state: snapshots, lineage metadata, and replicated copies used for recovery or availability
-
-Correctness remains cryptographic because clients verify returned evidence locally.
-Operational components affect latency and availability, not the semantic trust base.
-
-The default product interpretation should therefore be sidecar/local-daemon
-first.
-
-## Implemented Semantics and Variants
-
-### Semantic Layer
-
-- `structure/mapping`
-  - semantic contracts and shared keyed-map types
-- `structure/mapping/radix`
-  - primary keyed-map runtime semantic
-  - digest-keyed radix placement with explicit collision handling
-- `structure/mapping/indexed`
-  - older canonical-order keyed baseline kept as a simpler comparison path
-- `structure/list/tree`
-  - primary stable-indexed list runtime semantic
-
-### Commitment Backends
-
-- `commitment/kzg`
-
-These are primitive backends, not public semantic contracts.
+Freshness, root publication, and multi-writer arbitration remain application or
+deployment policies unless the system explicitly extends the graph contract.
 
 ## Configuration Direction
 
-The legacy flat config and old CLI flag model have been replaced by the daemon-oriented runtime config.
-
-The target operator flow should be:
+The target operator flow is:
 
 1. run `malt init`
 2. create `~/.malt/malt.json`
 3. choose a local state root
 4. start `malt daemon`
-
-Important separation:
-
-- config path is stable and discoverable
-- state-root placement is user-configurable
 
 Current config shape:
 
@@ -435,12 +460,5 @@ Allowed runtime values:
 - `state.kvstore.type`: `badger`, `memory`, or `fs`
 - `structure.default_backend`: `kzg` or `ipa`
 
-Interpretation:
-
-- the daemon has its own local HTTP endpoint and fixed `/api/v1` API surface
-- mutable MALT state has an explicit root directory
-- CAS can point either to an external Kubo-compatible endpoint or to an embedded mock
-- the embedded mock CAS uses a separate local port and fixed `/api/v0` Kubo-compatible API
-
-This config direction is a packaging/runtime decision and does not change the
-core MALT abstraction.
+This config is a packaging and runtime decision. It does not define the core
+MALT graph abstraction.

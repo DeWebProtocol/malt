@@ -9,10 +9,10 @@ For repo-level workflow, also read the parent repository `../AGENTS.md`.
 
 This submodule contains the Go implementation of MALT:
 
-- resolver / typed step executors
-- ArcTable
+- authenticated graph contracts and map/list graph implementations
+- ArcTable-backed structure materialization
 - primitive commitment backends
-- graph and writer layers
+- runtime adapters for current resolver / writer / graph packages
 - daemon/API surface, CLI, and local CAS integration
 
 ## Current Architectural Conventions
@@ -21,9 +21,14 @@ This submodule contains the Go implementation of MALT:
 - Canonicalization happens at read/write boundaries, not inside every backend.
 - `arcset.ArcSet` is the interface for immutable arc-set views.
 - `arcset.Set` is the default in-memory implementation.
-- `Hybrid Resolver` is the upper resolution loop.
-- explicit / implicit components are lower typed step executors.
-- `graph-scoped` is the semantic unit; in current code this maps to one bucket per graph.
+- `graph` means an abstract authenticated read/write/verify contract.
+- `map` and `list` are concrete graph implementations.
+- current `core/graph` code is runtime metadata/composition, not the target graph abstraction.
+- current `resolver` and `writer` code is adapter/runtime machinery, not the semantic owner.
+- explicit resolution is a compatibility layer above map graph reads.
+- list semantics use index/range reads and append/replace/truncate writes, not path resolution.
+- `bucketpath` and `manifest` are current bucket/file layout helpers and should not leak into core graph semantics.
+- lineage/MVCC/versioned ArcTable concerns are pending design topics outside the minimal graph contract.
 
 ## Go Workflow
 

@@ -1,31 +1,61 @@
 # MALT
 
-MALT is an authenticated structure layer over immutable content-addressed storage.
+MALT is an authenticated mutable structure layer over immutable
+content-addressed storage.
 
-Its purpose is to separate structure from payload:
+Payload remains ordinary CAS content identified by CID. MALT defines how
+mutable structure above those payload CIDs is read, written, and verified.
 
-- payload remains ordinary content-addressed data
-- structure is represented explicitly as arcs
-- a structure root commits those arcs independently from payload
-- structural change advances the structure root without recursively rewriting unrelated payload
+## Core Idea
+
+The conceptual center is an abstract authenticated graph contract:
+
+```text
+Read(root, query) -> result + proof
+VerifyRead(root, query, result, proof) -> valid / invalid
+
+Write(root, mutation) -> newRoot + receipt
+VerifyWrite(root, mutation, newRoot, receipt) -> valid / invalid
+```
+
+A data structure is a MALT graph only if it satisfies that contract. The graph
+is not a runtime object that merely contains helper components. It is the
+abstract authenticated read/write semantics.
+
+Current core graph implementations are:
+
+- `map`
+  - query: key or path-like key
+  - mutation: insert, replace, or delete a binding
+  - use case: directory-like metadata, object fields, path indexes
+- `list`
+  - query: index or range
+  - mutation: append, replace, or truncate
+  - use case: chunk sequences for large or mutable files
+
+Both implementations may use ArcTable and primitive commitment backends
+internally. Those mechanisms are implementation details of graph
+implementations, not the public graph abstraction.
 
 ## What MALT Changes
 
-Traditional Merkle-DAG traversal commits structure implicitly in parent content.
-That makes structural evolution ancestor-dependent: changing a relation often forces rootward rewrite.
+Traditional Merkle-DAG traversal commits structure implicitly in parent
+content. A local structural change can force rootward object rewrite.
 
-MALT changes that model:
+MALT changes the boundary:
 
-- structure is committed explicitly
-- updates are expressed as changes to explicit arcs
-- the system maintains a new structure root plus local proof/index maintenance
-- unrelated payload blocks do not need to be rewritten
+- payload is still immutable CAS data
+- structure is authenticated by independent structure roots
+- map/list graph implementations define typed read and write semantics
+- local structure changes advance structure roots without rewriting unrelated
+  payload blocks
 
-The claim is not that MALT is free. The claim is that it replaces propagation-heavy structural rewrite with localized, verifiable structure maintenance.
+The claim is not that MALT makes updates free. The claim is that it replaces
+implicit ancestor-rewrite costs with explicit, verifiable structure maintenance.
 
 ## Runtime Shape
 
-The repository converges toward a single binary named `malt`.
+The current prototype is packaged as a single binary named `malt`.
 
 Current runtime shape:
 
@@ -33,10 +63,10 @@ Current runtime shape:
   - long-running local process
   - owns hot proving/index state
 - `malt bucket`
-  - manages managed buckets and the client-side default bucket
+  - manages daemon-side buckets and the client-side default bucket
 - `malt add`
-  - client-side workflow that uploads payload directly to CAS
-  - then attaches resulting `path -> CID` bindings into a bucket through the daemon
+  - uploads payload directly to CAS
+  - commits file and directory structure through MALT graph implementations
 - `malt cat`, `malt get`
   - product file and directory read commands over bucket paths
 - `malt resolve`, `malt prove`, `malt update`, `malt verify`, `malt lineage`
@@ -49,89 +79,106 @@ Current runtime shape:
   - optional same-process second-port service
   - fixed Kubo-compatible API at `/api/v0`
 
+The bucket/file commands are the current product layout built above MALT. They
+are not the definition of the MALT graph contract.
+
 ## Data Model
 
-MALT logically separates:
+MALT separates:
 
 - payload content
-- explicit outgoing structure
+- authenticated mutable structure
 
-Payload stays in ordinary CAS/IPLD blocks.
-Structure is committed independently as a structure root.
+Payload CIDs identify immutable CAS blocks.
+Structure roots identify committed map/list graph state.
 
-A structure root is CID-compatible, but it is not semantically the same thing as a payload CID:
+In the current bucket-first prototype:
 
-- payload CID
-  - identifies immutable content
-- structure root
-  - identifies a committed explicit arc set
+- a managed bucket head is a directory-shaped `map` root
+- large files are represented by `list` roots referenced from map bindings
+- every MALT-native `map` root carries a reserved `@payload` binding
+- empty payloads should use a defined empty-block CID rather than omitting
+  `@payload`
 
-This distinction is central to the design.
-
-In the current bucket-first runtime, a managed bucket head is always a
-directory-shaped `map` root. Large files are represented by `list` roots inside
-that directory structure, but a `list` root is not itself a valid bucket head.
-Every MALT-native `map` root must carry a reserved `@payload` binding; empty
-payloads should still use a defined empty-block CID rather than omitting the
-binding.
+These bucket rules belong to the current file-system layout. The core MALT
+layer only requires graph implementations to expose authenticated read/write
+semantics over roots.
 
 ## Terminology and Layers
 
-The preferred abstraction is to expose **structural semantics** publicly and keep
-layout/backend choices internal to each semantic implementation.
-
-| Layer | Question | Examples |
+| Layer | Role | Examples |
 | --- | --- | --- |
-| Structural Semantics | What logical structure does the application expose? | `list`, `map` |
-| Semantic Implementation | How is that semantic contract realized internally? | tree-shaped indexed list, digest-keyed radix map, future variants such as segment-radix or hashed-path radix |
-| Commitment Backend | What primitive authenticates already-positioned values or nodes? | KZG |
+| Graph Contract | Abstract authenticated read/write/verify semantics | read proof, write receipt |
+| Graph Implementation | Concrete semantics satisfying the graph contract | `map`, `list` |
+| Structure Storage | Materialized graph state used by implementations | ArcTable records, node slots |
+| Commitment Backend | Primitive authentication over positioned values | KZG, IPA |
+| Application Layout | Product data model built above graph implementations | flattened UnixFS-style bucket layout |
 
 Under this terminology:
 
-- `list`
-  - a stable indexed structure
-  - native operations are index-based proof and index-stable replacement
-  - length must be committed as part of the structure state
-  - insert/delete are not primitive operations; they can be implemented above the semantic layer as expensive shift-and-rewrite sequences
-- `map`
-  - a keyed structure
-  - implementations choose how keys are placed into authenticated positions and how conflicts are handled
-- fixed-slot commitment primitive
-  - a backend that only authenticates already-positioned values
-  - `KZG` is the default in-tree backend; `IPA` remains available as an experimental selectable backend
-  - it does not define public structure semantics or a general `key -> position` rule
+- `map` and `list` are graph implementations.
+- ArcTable is materialization and lookup state used by implementations.
+- Commitment backends authenticate positioned cells or nodes.
+- Resolver and writer code paths are runtime adapters, not the core semantic
+  definition of MALT.
+- The current `core/graph` package is runtime metadata/composition code; it is
+  not the target abstract graph contract.
 
-Primitive commitment backends now live under `core/commitment`, while public
-structure semantics live under `core/structure`. Some call paths still share a
-common commitment interface for engineering convenience, but the semantic
-boundary is explicit in the current codebase: `list` and `map` are the public
-structural contracts, and primitive backends remain internal dependencies of
-their implementations.
+## Map Graph
 
-The current write-up may discuss `list` first because it is the simpler semantic
-and the current implementation is farther along there. That is only an
-exposition choice. `map` remains part of the public semantic layer.
+The map graph implements authenticated key-to-CID bindings.
 
-In the current prototype, hot proof/index state is typically organized in deployment-specific namespaces for performance.
-The current code often maps one namespace to one graph, but that state placement is an implementation choice, not a semantic requirement of the abstraction.
+Native operations:
 
-## Native Resolution
+- read one key and return the target binding plus proof
+- verify a key binding under a root
+- insert, replace, or delete a binding to produce a new root
 
-Native MALT resolution works over explicit arcs:
+The current default implementation is `core/structure/mapping/radix`, a
+digest-keyed radix map over an index commitment backend. The older
+`core/structure/mapping/indexed` package remains as a simpler comparison path.
 
-1. look up the relevant arc in `ArcTable`
-2. obtain a root-scoped arc view
-3. generate a proof using the semantic layer and primitive commitment backend
-4. return a transcript that the client can verify locally
+The explicit path resolver should be understood as a compatibility layer above
+map graph reads. It may implement longest-prefix path matching, but map itself
+owns exact key lookup and proof generation.
 
-The explicit path is the primary path.
+## List Graph
 
-Current terminal behavior is intentionally asymmetric:
+The list graph implements authenticated stable-indexed sequences.
 
-- bare `map` roots materialize through the mandatory `@payload` binding
-- `list` roots are terminal typed keys and do not auto-redirect to `@payload`
-- bucket-path misses return `not found` rather than silently returning the
-  current root
+Native operations:
+
+- read an index or range and return keys plus proof
+- verify an index or range query under a root
+- append a key
+- replace an existing key
+- truncate the sequence
+
+List does not have path-resolution semantics. File reads use an application
+layout that maps byte ranges to list index ranges, then calls the list graph.
+
+The current implementation is `core/structure/list/tree`, a tree-shaped
+stable-indexed layout over the same primitive commitment interface.
+
+## Flattened UnixFS-Style Layout
+
+The next product-level layout should be a pure MALT structure version of
+UnixFS-like file and directory semantics:
+
+- directories use map graphs
+- file chunk sequences use list graphs
+- payload and chunks remain CAS CIDs
+- path lookup composes map graph reads
+- file range reads compose list graph range reads
+- file and directory mutation composes map/list graph writes
+
+This layout gives a clean benchmark target:
+
+- pure MALT structure UnixFS
+- IPLD UnixFS/HAMT baseline
+
+The comparison should measure path lookup, range read, chunk update, directory
+mutation, proof size, and write amplification.
 
 ## CAS Boundary
 
@@ -140,64 +187,61 @@ MALT is not primarily a payload-upload proxy.
 Recommended boundary:
 
 - immutable payload publication is primarily a client-to-CAS operation
-- MALT primarily owns structure operations, proof generation, and authenticated resolution
-- MALT still depends on CAS on the read path, including bare-root `@payload` materialization and legacy CID traversal
+- MALT owns authenticated structure operations and proof generation
+- MALT may still fetch CAS blocks on read paths when an application layout needs
+  payload materialization or legacy compatibility traversal
 
-`malt cas ...` commands are still useful convenience tooling, but they should
-not be mistaken for the conceptual center of the system.
+`malt add ...` is a client-side orchestration convenience:
 
-`malt add ...` is therefore best understood as a client-side orchestration convenience:
-
-- payload publication still goes directly to CAS
-- structure attachment still goes through the daemon API
-- large files are chunked client-side and committed as `list` roots
-- directories are materialized as bucket-local `map` roots whose bindings
-  include `@payload`, direct children, and flattened descendants
-- the command only hides that two-step interaction behind one local workflow
+- publish payload to CAS
+- build map/list roots
+- attach resulting roots into the selected bucket layout
 
 ## Interoperability
 
-MALT roots are encoded as CID-compatible identifiers.
-That means MALT-native structures and ordinary IPLD/CAS objects can reference each other.
+MALT roots are CID-compatible identifiers. MALT-native structures and ordinary
+IPLD/CAS objects can reference each other.
 
-As a result, the resolver can cross between:
-
-- explicit MALT structure traversal
-- ordinary IPLD/Merkle traversal
-
-This mixed traversal is an interoperability feature.
-It is not the primary definition of MALT.
+Compatibility traversal through IPLD blocks is useful, but it is not the primary
+definition of MALT. The primary definition is the authenticated graph contract
+implemented by map/list.
 
 ## Verification
 
-MALT uses transcript-based stepwise verification:
+Verification is local to the client:
 
-1. an untrusted resolver executes the lookup
-2. it returns per-step evidence
-3. the client verifies each step locally
-4. the lookup is valid only if every step verifies
-
-This keeps correctness cryptographic even when lookup/index infrastructure is not trusted.
+1. a service executes a graph read or write
+2. it returns a result plus proof or receipt
+3. the client verifies against the relevant root
+4. correctness does not depend on trusting the daemon, resolver, ArcTable, or
+   cache state
 
 ## Core Components
 
-- `Graph`
-  - runtime composition unit and main read/write entry point
-  - the authentication boundary remains the structure root, not the graph object
-- `Structure`
-  - preferred semantic layer for public `list` and `map` contracts
-  - now lives under `core/structure`
-  - commitment backends now live under `core/commitment`
-- `ArcTable`
-  - explicit arc materialization and lookup state
-- `Commitment Backend`
-  - stateless primitive commitment/proof engine over caller-supplied indexed views
-- `Writer`
-  - advances structure roots through localized arc updates
-- `Resolver`
-  - resolves from a structure root and returns a verifiable transcript
-- `Lineage`
-  - optional version metadata for ancestry and history operations
+- `core/structure/mapping`
+  - public keyed map graph contract and shared map types
+- `core/structure/mapping/radix`
+  - primary map graph implementation
+- `core/structure/list`
+  - public stable-indexed list graph contract and shared list types
+- `core/structure/list/tree`
+  - primary list graph implementation
+- `core/commitment`
+  - primitive commitment backends used by graph implementations
+- `core/arctable`
+  - graph-state materialization and lookup support
+- `core/resolver`
+  - current runtime compatibility/read adapter code
+- `core/writer`
+  - current concrete map/arcs write adapter, not the target abstract writer
+- `core/graph`
+  - current runtime metadata/composition package, not the target graph contract
+- `core/lineage`
+  - auxiliary version-history metadata; pending redesign with MVCC and
+    versioned ArcTable
+- `core/bucketpath` and `core/manifest`
+  - current bucket/file layout helpers; candidates to move under a dedicated
+    UnixFS or bucket layout package
 
 ## Config
 
@@ -208,11 +252,6 @@ Current operator flow:
 3. choose a local state root
 4. run `malt daemon`
 5. optionally set `client.default_bucket_id` or use `malt bucket default`
-
-Important split:
-
-- config location should be stable
-- state-root placement should remain user-configurable
 
 Current schema:
 
@@ -234,58 +273,38 @@ Current defaults:
 
 - daemon listen: `127.0.0.1:4317`
 - embedded mock CAS listen: `127.0.0.1:4318`
-- structure backend: `kzg` or `ipa`
+- structure backend: `kzg`
 - ArcTable type: `versioned`
 
 ## Repo Layout
 
 ```text
 malt/
-├── client/          # thin daemon HTTP client
-├── cmd/
-│   └── malt/
-├── config/
-├── httpapi/         # shared daemon request/response payload types
-├── core/
-│   ├── api/          # top-level wiring via Node
-│   ├── cas/          # CAS clients and adapters
-│   ├── codec/        # MALT CID codecs and CID utilities
-│   ├── arctable/          # explicit arc table implementations
-│   ├── graph/        # graph metadata and runtime composition
-│   ├── kvstore/      # KV backends
-│   ├── lineage/      # version lineage metadata
-│   ├── resolver/     # resolution loop and step executors
-│   ├── commitment/   # primitive commitment backends
-│   ├── structure/    # public structural semantics (`list`, `map`)
-│   ├── types/        # arc sets, evidence, proof-related types
-│   └── writer/       # write-side structure update flow
-├── server/          # daemon HTTP server
-└── integration/
+|-- client/          # thin daemon HTTP client
+|-- cmd/
+|   `-- malt/
+|-- config/
+|-- httpapi/         # shared daemon request/response payload types
+|-- core/
+|   |-- api/          # top-level wiring via Node
+|   |-- arctable/     # graph-state materialization and lookup support
+|   |-- bucketpath/   # current bucket path boundary helper
+|   |-- cas/          # CAS clients and adapters
+|   |-- codec/        # MALT CID codecs and CID utilities
+|   |-- commitment/   # primitive commitment backends
+|   |-- graph/        # current runtime metadata/composition
+|   |-- kvstore/      # KV backends
+|   |-- lineage/      # auxiliary version-history metadata
+|   |-- manifest/     # current directory-manifest helper
+|   |-- resolver/     # current read compatibility adapters
+|   |-- structure/    # map/list graph contracts and implementations
+|   |-- types/        # arc sets, evidence, proof-related types
+|   `-- writer/       # current concrete write adapter
+|-- server/          # daemon HTTP server
+`-- integration/
 ```
-
-## What Is Secondary
-
-These parts of the repo are useful, but they are not the conceptual center of MALT:
-
-- compatibility traversal machinery in the resolver path
-- helper deployment abstractions
-- future layout/backend comparisons outside the current in-tree product path
-
-## Current Structure Layer
-
-The current public structure layer should be read as:
-
-- `core/structure/list`
-  - public stable-indexed list semantic
-  - primary implementation is a tree-shaped indexed layout backed by KZG
-  - small lists are shallow instances of the same runtime rather than a separate public `indexed` semantic
-- `core/structure/mapping`
-  - public keyed semantic
-  - current default implementation is a digest-keyed radix runtime
-- commitment backends
-  - internal dependencies of structure implementations rather than the primary API surface
-  - they authenticate positioned slots or nodes; they do not define public `list` / `map` semantics
 
 ## More Detail
 
-For implementation structure and code-level control flow, see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+For implementation structure and code-level control flow, see
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
