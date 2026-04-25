@@ -6,7 +6,6 @@ import (
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
@@ -22,14 +21,6 @@ const testBucketID = "map-radix-semantic-test"
 
 func mappingSchemes() map[string]schemeFactory {
 	return map[string]schemeFactory{
-		"ipa": func(t *testing.T) commitment.IndexCommitment {
-			t.Helper()
-			scheme, err := ipa.NewScheme()
-			if err != nil {
-				t.Fatalf("ipa.NewScheme failed: %v", err)
-			}
-			return scheme
-		},
 		"kzg": func(t *testing.T) commitment.IndexCommitment {
 			t.Helper()
 			scheme, err := kzg.NewScheme()

@@ -47,7 +47,6 @@ Current code status:
 - `server/` provides the daemon HTTP server
 - `client/` provides the thin daemon HTTP client
 - `httpapi/` holds the shared `/api/v1` request/response model
-- `cmd/gateway` now serves as a thin debug/evaluation alias to the same daemon server package
 - embedded mock CAS runs on a second local port and exposes a Kubo-compatible `/api/v0`
 
 Current runtime invariants:
@@ -69,7 +68,7 @@ The codebase should be read around these first-class concepts:
   - compiles those semantics into internal arcs and authenticated positions
 - `Commitment Backend`
   - primitive authentication backend over already-positioned slots or nodes
-  - examples: `KZG`, `IPA`
+  - current in-tree backend: `KZG`
 - `ArcTable`
   - explicit arc materialization and lookup state
 - `Resolver`
@@ -91,10 +90,8 @@ Everything else in the repository should be interpreted relative to that core.
 malt/
 ├── client/          # thin daemon HTTP client
 ├── cmd/
-│   ├── gateway/main.go
 │   └── malt/
 ├── config/
-├── gateway/
 ├── httpapi/         # shared daemon API payloads
 ├── server/          # daemon HTTP server
 ├── core/
@@ -106,12 +103,10 @@ malt/
 │   ├── graph/        # Graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # Version lineage metadata
-│   ├── replication/  # Secondary snapshot/sync tooling
 │   ├── resolver/     # Resolution loop and step executors
 │   ├── structure/    # Public structural semantics (`list`, `map`)
 │   ├── types/        # Arc sets, evidence, proof-related types
 │   └── writer/       # Write-side structure update flow
-├── eval/
 └── integration/
 ```
 
@@ -172,10 +167,8 @@ Current design direction:
 - treat caches as performance optimizations only
 - let semantic packages own layout decisions, metadata/header state, and future key-placement logic
 
-Backend choice is workload-sensitive and layout-sensitive:
-
-- vector-like or indexed list layouts may prefer `IPA`
-- sparse or layer-composed structures may prefer `KZG`
+Backend choice remains workload-sensitive and layout-sensitive, but the current
+in-tree product path is KZG-only.
 
 ## ArcTable
 
@@ -363,8 +356,7 @@ Correctness remains cryptographic because clients verify returned evidence local
 Operational components affect latency and availability, not the semantic trust base.
 
 The default product interpretation should therefore be sidecar/local-daemon
-first, with gateway mode treated as a deployment variant used for controlled
-evaluation and compatibility experiments.
+first.
 
 ## Implemented Semantics and Variants
 
@@ -383,7 +375,6 @@ evaluation and compatibility experiments.
 ### Commitment Backends
 
 - `commitment/kzg`
-- `commitment/ipa`
 
 These are primitive backends, not public semantic contracts.
 

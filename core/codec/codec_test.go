@@ -64,29 +64,6 @@ func TestNewKZGCidInvalidSize(t *testing.T) {
 	}
 }
 
-func TestNewIPACid(t *testing.T) {
-	// Create a valid IPA commitment (32 bytes)
-	commitment := make([]byte, codec.IPACommitmentSize)
-	for i := range commitment {
-		commitment[i] = byte(i)
-	}
-
-	c, err := codec.NewIPACid(commitment)
-	if err != nil {
-		t.Fatalf("NewIPACid failed: %v", err)
-	}
-
-	// Check codec
-	if c.Prefix().Codec != codec.CodecMaltMapIPA {
-		t.Errorf("Expected codec %x, got %x", codec.CodecMaltMapIPA, c.Prefix().Codec)
-	}
-
-	// Check it's a MALT CID
-	if !codec.IsMaltCid(c) {
-		t.Error("Expected IsMaltCid to return true")
-	}
-}
-
 func TestIsMaltCidFalse(t *testing.T) {
 	// Create a regular CID (not MALT)
 	c := cid.NewCidV1(cid.Raw, nil)
@@ -155,8 +132,6 @@ func TestCodecName(t *testing.T) {
 	}{
 		{codec.CodecMaltMapKZG, "malt-map-kzg"},
 		{codec.CodecMaltListKZG, "malt-list-kzg"},
-		{codec.CodecMaltMapIPA, "malt-map-ipa"},
-		{codec.CodecMaltListIPA, "malt-list-ipa"},
 		{0x999999, "unknown-999999"},
 	}
 

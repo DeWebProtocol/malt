@@ -16,7 +16,7 @@ import (
 
 const (
 	// DefaultFanout is the v1 default commitment width for list nodes.
-	// The current IPA backend supports 256 slots per commitment, so v1 fixes
+	// The current KZG backend supports 256 slots per commitment, so v1 fixes
 	// this value to 256.
 	DefaultFanout = 256
 

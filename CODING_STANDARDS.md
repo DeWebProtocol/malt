@@ -191,8 +191,6 @@ malt/
 ├── cmd/
 │   ├── malt/
 │   │   └── main.go                  # CLI tool
-│   └── gateway/
-│       └── main.go                  # HTTP Gateway
 ├── config/
 │   └── config.go                    # Configuration
 ├── core/
@@ -206,8 +204,8 @@ malt/
 │   │   ├── ipld.go                  # IPLD utilities
 │   │   ├── mock/
 │   │   │   └── mock.go              # Mock CAS impl
-│   │   └── ipfsgateway/
-│   │       └── ipfsgateway.go       # IPFS Gateway CAS impl
+│   │   └── ipfs/
+│   │       └── ipfs.go              # IPFS/Kubo HTTP CAS adapter
 │   ├── arctable/
 │   │   ├── arctable.go                   # ArcTable interface
 │   │   ├── bloom/
@@ -218,7 +216,7 @@ malt/
 │   │   │   └── bloom_benchmark_test.go  # Benchmark tests
 │   │   ├── overwrite/
 │   │   │   ├── arctable.go               # Overwrite ArcTable impl
-│   │   │   └── eat_test.go          # Unit tests
+│   │   │   └── arctable_test.go     # Unit tests
 │   │   └── versioned/
 │   │       ├── versioned.go         # Versioned ArcTable impl
 │   │       └── versioned_test.go    # Unit tests
@@ -228,8 +226,6 @@ malt/
 │   │   │   └── memory.go            # In-memory impl
 │   │   ├── badger/
 │   │   │   └── badger.go            # BadgerDB impl
-│   │   └── fs/
-│   │       └── fs.go                # Filesystem impl
 │   ├── resolver/
 │   │   ├── resolver.go              # Hybrid Resolver
 │   │   ├── resolver_test.go         # Unit tests
@@ -245,8 +241,6 @@ malt/
 │   │   ├── commitment.go            # Primitive commitment interface
 │   │   ├── kzg/
 │   │   │   └── kzg.go               # KZG backend
-│   │   └── ipa/
-│   │       └── ipa.go               # IPA backend
 │   ├── codec/
 │   │   └── codec.go                 # MALT CID codecs
 │   └── types/
@@ -254,11 +248,6 @@ malt/
 │       │   └── arcset.go            # Arc set types
 │       └── evidence/
 │           └── evidence.go          # Evidence types
-├── eval/
-│   └── benchmark.go                 # Evaluation benchmarks
-├── examples/
-│   └── basic/
-│       └── main.go                  # Basic usage example
 └── logger/
     └── logger.go                    # Logging utilities
 ```

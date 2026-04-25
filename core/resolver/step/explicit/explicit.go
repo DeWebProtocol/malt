@@ -21,8 +21,8 @@ import (
 // Reserved arc paths for MALT structures
 const (
 	// PayloadArc is the reserved path that binds a structure root to its payload CID.
-	// When resolving a MALT object with an empty path, Gateway automatically redirects
-	// to this arc to materialize the payload.
+	// When resolving a MALT object with an empty path, the upper resolver loop
+	// redirects to this arc to materialize the payload.
 	PayloadArc arcset.Path = "@payload"
 )
 
