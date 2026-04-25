@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/arctable"
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
+	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat"
-	"github.com/dewebprotocol/malt/core/eat/bloom"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
-	"github.com/dewebprotocol/malt/core/eat/versioned"
 	"github.com/dewebprotocol/malt/core/kvstore"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
@@ -42,32 +42,32 @@ func AllBackends() []BackendType {
 	return []BackendType{BackendKZG}
 }
 
-// EATType selects the EAT implementation.
-type EATType string
+// ArcTableType selects the ArcTable implementation.
+type ArcTableType string
 
 const (
-	EATOverwrite EATType = "overwrite"
-	EATVersioned EATType = "versioned"
-	EATBloom     EATType = "bloom"
+	ArcTableOverwrite ArcTableType = "overwrite"
+	ArcTableVersioned ArcTableType = "versioned"
+	ArcTableBloom     ArcTableType = "bloom"
 )
 
-// AllEATTypes returns all available EAT types.
-func AllEATTypes() []EATType {
-	return []EATType{EATOverwrite, EATVersioned, EATBloom}
+// AllArcTableTypes returns all available ArcTable types.
+func AllArcTableTypes() []ArcTableType {
+	return []ArcTableType{ArcTableOverwrite, ArcTableVersioned, ArcTableBloom}
 }
 
-// NewEAT creates an eat.EAT for the given EAT type.
-func NewEAT(t EATType, kv kvstore.KVStore) (eat.EAT, error) {
+// NewArcTable creates an arctable.ArcTable for the given ArcTable type.
+func NewArcTable(t ArcTableType, kv kvstore.KVStore) (arctable.ArcTable, error) {
 	switch t {
-	case EATOverwrite:
-		return overwrite.NewEAT(overwrite.WithKVStore(kv))
-	case EATVersioned:
-		return versioned.NewEAT(versioned.WithKVStore(kv))
-	case EATBloom:
+	case ArcTableOverwrite:
+		return overwrite.NewArcTable(overwrite.WithKVStore(kv))
+	case ArcTableVersioned:
+		return versioned.NewArcTable(versioned.WithKVStore(kv))
+	case ArcTableBloom:
 		bloomCache := bloom.NewBloomCache(kv, 16*1024*1024) // 16MB default
-		return versioned.NewEAT(versioned.WithKVStore(kv), versioned.WithBloomCache(bloomCache))
+		return versioned.NewArcTable(versioned.WithKVStore(kv), versioned.WithBloomCache(bloomCache))
 	default:
-		return nil, fmt.Errorf("unknown EAT type: %s", t)
+		return nil, fmt.Errorf("unknown ArcTable type: %s", t)
 	}
 }
 
@@ -86,16 +86,16 @@ type Metrics struct {
 	// Backend used
 	Backend BackendType
 
-	// EAT type used
-	EATType EATType
+	// ArcTable type used
+	ArcTableType ArcTableType
 
 	// Operation timing
-	CommitTime      time.Duration
-	ProveTime       time.Duration
-	VerifyTime      time.Duration
-	UpdateTime      time.Duration
-	EATLookupTime   time.Duration // time for EAT Get/Snapshot
-	EndToEndLatency time.Duration // full resolve: EAT + Prove + Verify
+	CommitTime         time.Duration
+	ProveTime          time.Duration
+	VerifyTime         time.Duration
+	UpdateTime         time.Duration
+	ArcTableLookupTime time.Duration // time for ArcTable Get/Snapshot
+	EndToEndLatency    time.Duration // full resolve: ArcTable + Prove + Verify
 
 	// Per-round timing (for workloads with multiple rounds)
 	UpdateTimes []time.Duration // individual update times
@@ -125,8 +125,8 @@ type BenchmarkConfig struct {
 	// Backend selects the commitment scheme (default: kzg).
 	Backend BackendType
 
-	// EATType selects the EAT implementation (default: overwrite).
-	EATType EATType
+	// ArcTableType selects the ArcTable implementation (default: overwrite).
+	ArcTableType ArcTableType
 }
 
 // DefaultBenchmarkConfig returns default benchmark configuration.
@@ -136,28 +136,28 @@ func DefaultBenchmarkConfig() *BenchmarkConfig {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      BackendKZG,
-		EATType:      EATOverwrite,
+		ArcTableType: ArcTableOverwrite,
 	}
 }
 
 // BenchmarkRunner runs MALT benchmarks.
 type BenchmarkRunner struct {
 	config   *BenchmarkConfig
-	eat      eat.EAT
+	arctable arctable.ArcTable
 	semantic mapping.Semantics
 	cas      cas.Client
 	bucketId string
 }
 
 // NewBenchmarkRunner creates a new benchmark runner.
-func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e eat.EAT, semantic mapping.Semantics, c cas.Client) *BenchmarkRunner {
+func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e arctable.ArcTable, semantic mapping.Semantics, c cas.Client) *BenchmarkRunner {
 	if cfg == nil {
 		cfg = DefaultBenchmarkConfig()
 	}
 	return &BenchmarkRunner{
 		config:   cfg,
 		bucketId: bucketId,
-		eat:      e,
+		arctable: e,
 		semantic: semantic,
 		cas:      c,
 	}
@@ -165,7 +165,7 @@ func NewBenchmarkRunner(cfg *BenchmarkConfig, bucketId string, e eat.EAT, semant
 
 // TestComponents holds the components needed for benchmarking.
 type TestComponents struct {
-	EAT      eat.EAT
+	ArcTable arctable.ArcTable
 	Semantic mapping.Semantics
 	CAS      cas.Client
 	BucketID string
@@ -173,19 +173,19 @@ type TestComponents struct {
 
 // NewTestComponents creates a fresh set of benchmark components for the given backend.
 func NewTestComponents(backend BackendType, bucketID string) (*TestComponents, error) {
-	return NewTestComponentsWithEAT(backend, EATOverwrite, bucketID)
+	return NewTestComponentsWithArcTable(backend, ArcTableOverwrite, bucketID)
 }
 
-// NewTestComponentsWithEAT creates benchmark components with a specific EAT type.
-func NewTestComponentsWithEAT(backend BackendType, eatType EATType, bucketID string) (*TestComponents, error) {
+// NewTestComponentsWithArcTable creates benchmark components with a specific ArcTable type.
+func NewTestComponentsWithArcTable(backend BackendType, arcTableType ArcTableType, bucketID string) (*TestComponents, error) {
 	scheme, err := NewScheme(backend)
 	if err != nil {
 		return nil, fmt.Errorf("new scheme: %w", err)
 	}
 	kv := kvstore_memory.New()
-	e, err := NewEAT(eatType, kv)
+	e, err := NewArcTable(arcTableType, kv)
 	if err != nil {
-		return nil, fmt.Errorf("new EAT: %w", err)
+		return nil, fmt.Errorf("new ArcTable: %w", err)
 	}
 	s, err := mappingradix.NewMap(scheme, e)
 	if err != nil {
@@ -193,7 +193,7 @@ func NewTestComponentsWithEAT(backend BackendType, eatType EATType, bucketID str
 	}
 	c := mock.NewCAS()
 	return &TestComponents{
-		EAT:      e,
+		ArcTable: e,
 		Semantic: s,
 		CAS:      c,
 		BucketID: bucketID,
@@ -242,7 +242,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
 	bucketID := fmt.Sprintf("%s-append-%d", b.bucketId, arcCount)
 
-	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
+	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, ArcTableType: b.config.ArcTableType}
 
 	// Start from an empty committed structure so append workload exercises the
 	// incremental semantic update path rather than recommitting the whole view.
@@ -269,8 +269,8 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 			return nil, fmt.Errorf("append update failed at arc %d: %w", i, err)
 		}
 
-		if err := b.eat.Update(ctx, bucketID, newRoot, root, map[string]cid.Cid{path: target}); err != nil {
-			return nil, fmt.Errorf("eat update failed at arc %d: %w", i, err)
+		if err := b.arctable.Update(ctx, bucketID, newRoot, root, map[string]cid.Cid{path: target}); err != nil {
+			return nil, fmt.Errorf("arctable update failed at arc %d: %w", i, err)
 		}
 		totalUpdateTime += time.Since(start)
 
@@ -296,7 +296,7 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 	metrics.RootSize = len(root.Bytes())
 
 	// Measure verification
-	target, _ := b.eat.Get(ctx, bucketID, root, testPath)
+	target, _ := b.arctable.Get(ctx, bucketID, root, testPath)
 	start = time.Now()
 	valid, err := b.semantic.Verify(root, arcset.CanonicalizePath(testPath), mapping.Binding{Value: target, Present: true}, proof)
 	metrics.VerifyTime = time.Since(start)
@@ -307,8 +307,8 @@ func (b *BenchmarkRunner) runAppendWorkload(ctx context.Context, arcCount int) (
 		return nil, fmt.Errorf("proof invalid")
 	}
 
-	// End-to-end latency: EAT lookup + Prove + Verify
-	metrics.EndToEndLatency = metrics.EATLookupTime + metrics.ProveTime + metrics.VerifyTime
+	// End-to-end latency: ArcTable lookup + Prove + Verify
+	metrics.EndToEndLatency = metrics.ArcTableLookupTime + metrics.ProveTime + metrics.VerifyTime
 
 	// Rewrite amp = 1.0 for MALT (localized updates)
 	metrics.RewriteAmp = 1.0
@@ -336,7 +336,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
 	bucketID := fmt.Sprintf("%s-random-%d", b.bucketId, arcCount)
 
-	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
+	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, ArcTableType: b.config.ArcTableType}
 
 	// Create initial structure with all arcs
 	arcsMap := make(map[string]cid.Cid)
@@ -357,8 +357,8 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 		return nil, fmt.Errorf("initial commit failed: %w", err)
 	}
 
-	// Store in EAT
-	b.eat.Update(ctx, bucketID, root, cid.Undef, arcsMap)
+	// Store in ArcTable
+	b.arctable.Update(ctx, bucketID, root, cid.Undef, arcsMap)
 
 	// Perform random updates
 	totalUpdateTime := time.Duration(0)
@@ -382,8 +382,8 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 			return nil, fmt.Errorf("update failed at round %d: %w", round, err)
 		}
 
-		if err := b.eat.Update(ctx, bucketID, newRoot, root, map[string]cid.Cid{path: newKey}); err != nil {
-			return nil, fmt.Errorf("eat update failed at round %d: %w", round, err)
+		if err := b.arctable.Update(ctx, bucketID, newRoot, root, map[string]cid.Cid{path: newKey}); err != nil {
+			return nil, fmt.Errorf("arctable update failed at round %d: %w", round, err)
 		}
 		roundTime := time.Since(start)
 		totalUpdateTime += roundTime
@@ -421,7 +421,7 @@ func (b *BenchmarkRunner) runRandomWorkload(ctx context.Context, arcCount int) (
 	}
 
 	// End-to-end latency
-	metrics.EndToEndLatency = metrics.EATLookupTime + metrics.ProveTime + metrics.VerifyTime
+	metrics.EndToEndLatency = metrics.ArcTableLookupTime + metrics.ProveTime + metrics.VerifyTime
 
 	metrics.RewriteAmp = 1.0 // MALT localized updates
 
@@ -448,7 +448,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	r := rand.New(rand.NewSource(b.config.RandomSeed))
 	bucketID := fmt.Sprintf("%s-bulk-%d", b.bucketId, arcCount)
 
-	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, EATType: b.config.EATType}
+	metrics := &Metrics{ArcCount: arcCount, Backend: b.config.Backend, ArcTableType: b.config.ArcTableType}
 
 	// Create initial structure
 	arcsMap := make(map[string]cid.Cid)
@@ -468,8 +468,8 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 		return nil, fmt.Errorf("initial commit failed: %w", err)
 	}
 
-	// Store in EAT
-	b.eat.Update(ctx, bucketID, root, cid.Undef, arcsMap)
+	// Store in ArcTable
+	b.arctable.Update(ctx, bucketID, root, cid.Undef, arcsMap)
 
 	// Bulk update: update 10% of arcs at once
 	bulkSize := max(1, arcCount/10)
@@ -506,8 +506,8 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 			delta[path] = newKey
 		}
 
-		if err := b.eat.Update(ctx, bucketID, currentRoot, root, delta); err != nil {
-			return nil, fmt.Errorf("bulk eat update failed at round %d: %w", round, err)
+		if err := b.arctable.Update(ctx, bucketID, currentRoot, root, delta); err != nil {
+			return nil, fmt.Errorf("bulk arctable update failed at round %d: %w", round, err)
 		}
 
 		roundTime := time.Since(start)
@@ -542,7 +542,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 	}
 
 	// End-to-end latency
-	metrics.EndToEndLatency = metrics.EATLookupTime + metrics.ProveTime + metrics.VerifyTime
+	metrics.EndToEndLatency = metrics.ArcTableLookupTime + metrics.ProveTime + metrics.VerifyTime
 
 	metrics.RewriteAmp = float64(bulkSize) // Each bulk update touches bulkSize arcs
 
@@ -552,7 +552,7 @@ func (b *BenchmarkRunner) runBulkWorkload(ctx context.Context, arcCount int) (*M
 // PrintResults prints benchmark results in a formatted table.
 func PrintResults(results map[int]*Metrics, workload string) {
 	fmt.Printf("\n=== %s Benchmark Results ===\n", workload)
-	fmt.Println("Backend  | EATType    | ArcCount | Commit(ms) | Update(ms) | EATLookup(ms) | Prove(ms) | Verify(ms) | EndToEnd(ms) | ProofSize | RewriteAmp")
+	fmt.Println("Backend  | ArcTableType    | ArcCount | Commit(ms) | Update(ms) | ArcTableLookup(ms) | Prove(ms) | Verify(ms) | EndToEnd(ms) | ProofSize | RewriteAmp")
 	fmt.Println("---------|------------|----------|------------|------------|---------------|-----------|------------|--------------|-----------|------------")
 
 	// Sort by arcCount for consistent output
@@ -571,11 +571,11 @@ func PrintResults(results map[int]*Metrics, workload string) {
 	for _, e := range entries {
 		fmt.Printf("%-8s | %-10s | %8d | %10.2f | %10.2f | %13.2f | %9.2f | %10.2f | %12.2f | %9d | %10.2f\n",
 			e.m.Backend,
-			e.m.EATType,
+			e.m.ArcTableType,
 			e.arcCount,
 			float64(e.m.CommitTime.Milliseconds()),
 			float64(e.m.UpdateTime.Milliseconds()),
-			float64(e.m.EATLookupTime.Milliseconds()),
+			float64(e.m.ArcTableLookupTime.Milliseconds()),
 			float64(e.m.ProveTime.Milliseconds()),
 			float64(e.m.VerifyTime.Milliseconds()),
 			float64(e.m.EndToEndLatency.Milliseconds()),
@@ -597,10 +597,10 @@ func (b *BenchmarkRunner) RunAllBackends(ctx context.Context, workload string) (
 
 		cfg := *b.config
 		cfg.Backend = backend
-		if cfg.EATType == "" {
-			cfg.EATType = EATOverwrite
+		if cfg.ArcTableType == "" {
+			cfg.ArcTableType = ArcTableOverwrite
 		}
-		runner := NewBenchmarkRunner(&cfg, tc.BucketID, tc.EAT, tc.Semantic, tc.CAS)
+		runner := NewBenchmarkRunner(&cfg, tc.BucketID, tc.ArcTable, tc.Semantic, tc.CAS)
 
 		var results map[int]*Metrics
 		switch workload {
@@ -624,7 +624,7 @@ func (b *BenchmarkRunner) RunAllBackends(ctx context.Context, workload string) (
 // PrintBackendComparison prints multi-backend comparison results.
 func PrintBackendComparison(allResults map[BackendType]map[int]*Metrics, workload string) {
 	fmt.Printf("\n=== %s Benchmark: Backend Comparison ===\n", workload)
-	fmt.Println("Backend  | EATType    | ArcCount | Commit(ms) | Update(ms) | EATLookup(ms) | Prove(ms) | Verify(ms) | EndToEnd(ms) | ProofSize | RewriteAmp")
+	fmt.Println("Backend  | ArcTableType    | ArcCount | Commit(ms) | Update(ms) | ArcTableLookup(ms) | Prove(ms) | Verify(ms) | EndToEnd(ms) | ProofSize | RewriteAmp")
 	fmt.Println("---------|------------|----------|------------|------------|---------------|-----------|------------|--------------|-----------|------------")
 
 	for _, backend := range AllBackends() {
@@ -648,11 +648,11 @@ func PrintBackendComparison(allResults map[BackendType]map[int]*Metrics, workloa
 		for _, e := range entries {
 			fmt.Printf("%-8s | %-10s | %8d | %10.2f | %10.2f | %13.2f | %9.2f | %10.2f | %12.2f | %9d | %10.2f\n",
 				e.m.Backend,
-				e.m.EATType,
+				e.m.ArcTableType,
 				e.arcCount,
 				float64(e.m.CommitTime.Milliseconds()),
 				float64(e.m.UpdateTime.Milliseconds()),
-				float64(e.m.EATLookupTime.Milliseconds()),
+				float64(e.m.ArcTableLookupTime.Milliseconds()),
 				float64(e.m.ProveTime.Milliseconds()),
 				float64(e.m.VerifyTime.Milliseconds()),
 				float64(e.m.EndToEndLatency.Milliseconds()),
@@ -664,7 +664,7 @@ func PrintBackendComparison(allResults map[BackendType]map[int]*Metrics, workloa
 
 // ExportCSV writes all metrics to a CSV file for further analysis.
 // Returns the number of rows written.
-func ExportCSV(results map[int]*Metrics, workload string, backend BackendType, eatType EATType, path string) (int, error) {
+func ExportCSV(results map[int]*Metrics, workload string, backend BackendType, arcTableType ArcTableType, path string) (int, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return 0, fmt.Errorf("create file: %w", err)
@@ -676,8 +676,8 @@ func ExportCSV(results map[int]*Metrics, workload string, backend BackendType, e
 
 	// Header
 	header := []string{
-		"workload", "backend", "eat_type", "arc_count",
-		"commit_ms", "update_ms", "eat_lookup_ms", "prove_ms",
+		"workload", "backend", "arctable_type", "arc_count",
+		"commit_ms", "update_ms", "arctable_lookup_ms", "prove_ms",
 		"verify_ms", "end_to_end_ms", "proof_size", "root_size", "rewrite_amp",
 	}
 	if err := w.Write(header); err != nil {
@@ -689,11 +689,11 @@ func ExportCSV(results map[int]*Metrics, workload string, backend BackendType, e
 		record := []string{
 			workload,
 			string(backend),
-			string(eatType),
+			string(arcTableType),
 			strconv.Itoa(arcCount),
 			strconv.FormatInt(m.CommitTime.Milliseconds(), 10),
 			strconv.FormatInt(m.UpdateTime.Milliseconds(), 10),
-			strconv.FormatInt(m.EATLookupTime.Microseconds(), 10),
+			strconv.FormatInt(m.ArcTableLookupTime.Microseconds(), 10),
 			strconv.FormatInt(m.ProveTime.Microseconds(), 10),
 			strconv.FormatInt(m.VerifyTime.Microseconds(), 10),
 			strconv.FormatInt(m.EndToEndLatency.Microseconds(), 10),
@@ -723,8 +723,8 @@ type EvalConfig struct {
 	// Backends to test (default: all)
 	Backends []BackendType
 
-	// EATTypes to test (default: all)
-	EATTypes []EATType
+	// ArcTableTypes to test (default: all)
+	ArcTableTypes []ArcTableType
 
 	// Workloads to run (default: all)
 	Workloads []string
@@ -736,16 +736,16 @@ type EvalConfig struct {
 // DefaultEvalConfig returns default evaluation configuration.
 func DefaultEvalConfig() *EvalConfig {
 	return &EvalConfig{
-		ArcCounts:    []int{50, 100, 200},
-		UpdateRounds: 100,
-		RandomSeed:   42,
-		Backends:     AllBackends(),
-		EATTypes:     AllEATTypes(),
-		Workloads:    []string{"append", "random", "bulk"},
+		ArcCounts:     []int{50, 100, 200},
+		UpdateRounds:  100,
+		RandomSeed:    42,
+		Backends:      AllBackends(),
+		ArcTableTypes: AllArcTableTypes(),
+		Workloads:     []string{"append", "random", "bulk"},
 	}
 }
 
-// EvalRunner runs comprehensive evaluation across all backends, EAT types, and workloads.
+// EvalRunner runs comprehensive evaluation across all backends, ArcTable types, and workloads.
 type EvalRunner struct {
 	config   *EvalConfig
 	bucketId string
@@ -759,8 +759,8 @@ func NewEvalRunner(cfg *EvalConfig, bucketId string) *EvalRunner {
 	if cfg.Backends == nil {
 		cfg.Backends = AllBackends()
 	}
-	if cfg.EATTypes == nil {
-		cfg.EATTypes = AllEATTypes()
+	if cfg.ArcTableTypes == nil {
+		cfg.ArcTableTypes = AllArcTableTypes()
 	}
 	if cfg.Workloads == nil {
 		cfg.Workloads = []string{"append", "random", "bulk"}
@@ -771,32 +771,32 @@ func NewEvalRunner(cfg *EvalConfig, bucketId string) *EvalRunner {
 	}
 }
 
-// RunAll runs the full evaluation matrix: backends x EAT types x workloads x arc counts.
-// Returns results as map[BackendType]map[EATType]map[workload]map[ArcCount]*Metrics.
-func (e *EvalRunner) RunAll(ctx context.Context) (map[BackendType]map[EATType]map[string]map[int]*Metrics, error) {
-	allResults := make(map[BackendType]map[EATType]map[string]map[int]*Metrics)
+// RunAll runs the full evaluation matrix: backends x ArcTable types x workloads x arc counts.
+// Returns results as map[BackendType]map[ArcTableType]map[workload]map[ArcCount]*Metrics.
+func (e *EvalRunner) RunAll(ctx context.Context) (map[BackendType]map[ArcTableType]map[string]map[int]*Metrics, error) {
+	allResults := make(map[BackendType]map[ArcTableType]map[string]map[int]*Metrics)
 
-	totalConfigs := len(e.config.Backends) * len(e.config.EATTypes) * len(e.config.Workloads)
+	totalConfigs := len(e.config.Backends) * len(e.config.ArcTableTypes) * len(e.config.Workloads)
 	current := 0
 
 	for _, backend := range e.config.Backends {
-		for _, eatType := range e.config.EATTypes {
+		for _, arcTableType := range e.config.ArcTableTypes {
 			if _, ok := allResults[backend]; !ok {
-				allResults[backend] = make(map[EATType]map[string]map[int]*Metrics)
+				allResults[backend] = make(map[ArcTableType]map[string]map[int]*Metrics)
 			}
-			if _, ok := allResults[backend][eatType]; !ok {
-				allResults[backend][eatType] = make(map[string]map[int]*Metrics)
+			if _, ok := allResults[backend][arcTableType]; !ok {
+				allResults[backend][arcTableType] = make(map[string]map[int]*Metrics)
 			}
 
-			tc, err := NewTestComponentsWithEAT(backend, eatType, e.bucketId)
+			tc, err := NewTestComponentsWithArcTable(backend, arcTableType, e.bucketId)
 			if err != nil {
-				return nil, fmt.Errorf("create components for %s/%s: %w", backend, eatType, err)
+				return nil, fmt.Errorf("create components for %s/%s: %w", backend, arcTableType, err)
 			}
 
 			for _, workload := range e.config.Workloads {
 				current++
 				fmt.Printf("[%d/%d] Running %s / %s / %s (arcs: %v, rounds: %d)\n",
-					current, totalConfigs, backend, eatType, workload,
+					current, totalConfigs, backend, arcTableType, workload,
 					e.config.ArcCounts, e.config.UpdateRounds)
 
 				cfg := &BenchmarkConfig{
@@ -804,10 +804,10 @@ func (e *EvalRunner) RunAll(ctx context.Context) (map[BackendType]map[EATType]ma
 					UpdateRounds: e.config.UpdateRounds,
 					RandomSeed:   e.config.RandomSeed,
 					Backend:      backend,
-					EATType:      eatType,
+					ArcTableType: arcTableType,
 				}
 
-				runner := NewBenchmarkRunner(cfg, tc.BucketID, tc.EAT, tc.Semantic, tc.CAS)
+				runner := NewBenchmarkRunner(cfg, tc.BucketID, tc.ArcTable, tc.Semantic, tc.CAS)
 
 				var results map[int]*Metrics
 				switch workload {
@@ -821,17 +821,17 @@ func (e *EvalRunner) RunAll(ctx context.Context) (map[BackendType]map[EATType]ma
 					return nil, fmt.Errorf("unknown workload: %s", workload)
 				}
 				if err != nil {
-					return nil, fmt.Errorf("%s benchmark for %s/%s: %w", workload, backend, eatType, err)
+					return nil, fmt.Errorf("%s benchmark for %s/%s: %w", workload, backend, arcTableType, err)
 				}
 
-				allResults[backend][eatType][workload] = results
+				allResults[backend][arcTableType][workload] = results
 
 				// Write CSV if directory specified
 				if e.config.CSVDir != "" {
-					filename := fmt.Sprintf("%s/%s_%s_%s.csv", e.config.CSVDir, backend, eatType, workload)
-					rows, err := ExportCSV(results, workload, backend, eatType, filename)
+					filename := fmt.Sprintf("%s/%s_%s_%s.csv", e.config.CSVDir, backend, arcTableType, workload)
+					rows, err := ExportCSV(results, workload, backend, arcTableType, filename)
 					if err != nil {
-						fmt.Printf("  Warning: failed to export CSV for %s/%s/%s: %v\n", backend, eatType, workload, err)
+						fmt.Printf("  Warning: failed to export CSV for %s/%s/%s: %v\n", backend, arcTableType, workload, err)
 					} else {
 						fmt.Printf("  CSV: %s (%d rows)\n", filename, rows)
 					}
@@ -844,7 +844,7 @@ func (e *EvalRunner) RunAll(ctx context.Context) (map[BackendType]map[EATType]ma
 }
 
 // PrintFullResults prints the complete evaluation results.
-func PrintFullResults(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics) {
+func PrintFullResults(allResults map[BackendType]map[ArcTableType]map[string]map[int]*Metrics) {
 	fmt.Println("\n" + "=" + strings.Repeat("=", 79))
 	fmt.Println("  FULL EVALUATION RESULTS")
 	fmt.Println("=" + strings.Repeat("=", 79))
@@ -857,13 +857,13 @@ func PrintFullResults(allResults map[BackendType]map[EATType]map[string]map[int]
 
 		fmt.Printf("\n%s Backend %s%s\n", strings.Repeat("=", 40), backend, strings.Repeat("=", 40))
 
-		for _, eatType := range AllEATTypes() {
-			eatResults, ok := backendResults[eatType]
+		for _, arcTableType := range AllArcTableTypes() {
+			eatResults, ok := backendResults[arcTableType]
 			if !ok {
 				continue
 			}
 
-			fmt.Printf("\n  EAT: %s\n", eatType)
+			fmt.Printf("\n  ArcTable: %s\n", arcTableType)
 
 			for _, workload := range []string{"append", "random", "bulk"} {
 				results, ok := eatResults[workload]
@@ -871,7 +871,7 @@ func PrintFullResults(allResults map[BackendType]map[EATType]map[string]map[int]
 					continue
 				}
 
-				PrintResults(results, fmt.Sprintf("%s %s/%s", workload, backend, eatType))
+				PrintResults(results, fmt.Sprintf("%s %s/%s", workload, backend, arcTableType))
 			}
 		}
 	}
@@ -942,30 +942,30 @@ func computeStats(durations []time.Duration) DurationStats {
 
 // MetricsSummary holds the summary statistics for all timing metrics.
 type MetricsSummary struct {
-	Backend    BackendType   `json:"backend"`
-	EATType    EATType       `json:"eat_type"`
-	ArcCount   int           `json:"arc_count"`
-	Workload   string        `json:"workload"`
-	Commit     DurationStats `json:"commit"`
-	Update     DurationStats `json:"update"`
-	EATLookup  DurationStats `json:"eat_lookup"`
-	Prove      DurationStats `json:"prove"`
-	Verify     DurationStats `json:"verify"`
-	EndToEnd   DurationStats `json:"end_to_end"`
-	ProofSize  int           `json:"proof_size"`
-	RootSize   int           `json:"root_size"`
-	RewriteAmp float64       `json:"rewrite_amp"`
+	Backend        BackendType   `json:"backend"`
+	ArcTableType   ArcTableType  `json:"arctable_type"`
+	ArcCount       int           `json:"arc_count"`
+	Workload       string        `json:"workload"`
+	Commit         DurationStats `json:"commit"`
+	Update         DurationStats `json:"update"`
+	ArcTableLookup DurationStats `json:"arctable_lookup"`
+	Prove          DurationStats `json:"prove"`
+	Verify         DurationStats `json:"verify"`
+	EndToEnd       DurationStats `json:"end_to_end"`
+	ProofSize      int           `json:"proof_size"`
+	RootSize       int           `json:"root_size"`
+	RewriteAmp     float64       `json:"rewrite_amp"`
 }
 
 // ComputeSummaryStats computes summary statistics from metrics.
 func ComputeSummaryStats(m *Metrics) *MetricsSummary {
 	s := &MetricsSummary{
-		Backend:    m.Backend,
-		EATType:    m.EATType,
-		ArcCount:   m.ArcCount,
-		ProofSize:  m.ProofSize,
-		RootSize:   m.RootSize,
-		RewriteAmp: m.RewriteAmp,
+		Backend:      m.Backend,
+		ArcTableType: m.ArcTableType,
+		ArcCount:     m.ArcCount,
+		ProofSize:    m.ProofSize,
+		RootSize:     m.RootSize,
+		RewriteAmp:   m.RewriteAmp,
 	}
 
 	if len(m.UpdateTimes) > 0 {
@@ -980,7 +980,7 @@ func ComputeSummaryStats(m *Metrics) *MetricsSummary {
 
 	// Single-point metrics (commit, prove, verify, lookup, end-to-end from final proof)
 	s.Commit = DurationStats{Avg: m.CommitTime, Min: m.CommitTime, Max: m.CommitTime}
-	s.EATLookup = DurationStats{Avg: m.EATLookupTime, Min: m.EATLookupTime, Max: m.EATLookupTime}
+	s.ArcTableLookup = DurationStats{Avg: m.ArcTableLookupTime, Min: m.ArcTableLookupTime, Max: m.ArcTableLookupTime}
 	s.Prove.Avg = max(s.Prove.Avg, m.ProveTime)
 	s.Prove.Min = min(s.Prove.Min, m.ProveTime)
 	s.Prove.Max = max(s.Prove.Max, m.ProveTime)
@@ -993,7 +993,7 @@ func ComputeSummaryStats(m *Metrics) *MetricsSummary {
 }
 
 // ExportJSON writes all results to a JSON file.
-func ExportJSON(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics, path string) error {
+func ExportJSON(allResults map[BackendType]map[ArcTableType]map[string]map[int]*Metrics, path string) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
@@ -1001,24 +1001,24 @@ func ExportJSON(allResults map[BackendType]map[EATType]map[string]map[int]*Metri
 	defer f.Close()
 
 	type resultEntry struct {
-		Backend  BackendType     `json:"backend"`
-		EATType  EATType         `json:"eat_type"`
-		Workload string          `json:"workload"`
-		ArcCount int             `json:"arc_count"`
-		Metrics  *MetricsSummary `json:"metrics"`
+		Backend      BackendType     `json:"backend"`
+		ArcTableType ArcTableType    `json:"arctable_type"`
+		Workload     string          `json:"workload"`
+		ArcCount     int             `json:"arc_count"`
+		Metrics      *MetricsSummary `json:"metrics"`
 	}
 
 	var results []resultEntry
 	for backend, eatMap := range allResults {
-		for eatType, workMap := range eatMap {
+		for arcTableType, workMap := range eatMap {
 			for workload, arcMap := range workMap {
 				for arcCount, m := range arcMap {
 					results = append(results, resultEntry{
-						Backend:  backend,
-						EATType:  eatType,
-						Workload: workload,
-						ArcCount: arcCount,
-						Metrics:  ComputeSummaryStats(m),
+						Backend:      backend,
+						ArcTableType: arcTableType,
+						Workload:     workload,
+						ArcCount:     arcCount,
+						Metrics:      ComputeSummaryStats(m),
 					})
 				}
 			}
@@ -1030,8 +1030,8 @@ func ExportJSON(allResults map[BackendType]map[EATType]map[string]map[int]*Metri
 		if results[i].Backend != results[j].Backend {
 			return results[i].Backend < results[j].Backend
 		}
-		if results[i].EATType != results[j].EATType {
-			return results[i].EATType < results[j].EATType
+		if results[i].ArcTableType != results[j].ArcTableType {
+			return results[i].ArcTableType < results[j].ArcTableType
 		}
 		if results[i].Workload != results[j].Workload {
 			return results[i].Workload < results[j].Workload
@@ -1045,17 +1045,17 @@ func ExportJSON(allResults map[BackendType]map[EATType]map[string]map[int]*Metri
 }
 
 // PrintSummaryStats prints summary statistics in a compact table.
-func PrintSummaryStats(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics) {
+func PrintSummaryStats(allResults map[BackendType]map[ArcTableType]map[string]map[int]*Metrics) {
 	fmt.Println("\n=== Summary Statistics (Update Time Distribution) ===")
-	fmt.Println("Backend  | EATType    | Workload | ArcCount | Avg(ms) | P95(ms) | Median(ms) | Min(ms) | Max(ms)")
+	fmt.Println("Backend  | ArcTableType    | Workload | ArcCount | Avg(ms) | P95(ms) | Median(ms) | Min(ms) | Max(ms)")
 	fmt.Println("---------|------------|----------|----------|---------|---------|------------|---------|--------")
 
 	type entry struct {
-		backend  BackendType
-		eatType  EATType
-		workload string
-		arcCount int
-		stats    DurationStats
+		backend      BackendType
+		arcTableType ArcTableType
+		workload     string
+		arcCount     int
+		stats        DurationStats
 	}
 	var entries []entry
 
@@ -1064,8 +1064,8 @@ func PrintSummaryStats(allResults map[BackendType]map[EATType]map[string]map[int
 		if !ok {
 			continue
 		}
-		for _, eatType := range AllEATTypes() {
-			workMap, ok := eatMap[eatType]
+		for _, arcTableType := range AllArcTableTypes() {
+			workMap, ok := eatMap[arcTableType]
 			if !ok {
 				continue
 			}
@@ -1073,11 +1073,11 @@ func PrintSummaryStats(allResults map[BackendType]map[EATType]map[string]map[int
 				for arcCount, m := range arcMap {
 					if len(m.UpdateTimes) > 0 {
 						entries = append(entries, entry{
-							backend:  backend,
-							eatType:  eatType,
-							workload: workload,
-							arcCount: arcCount,
-							stats:    computeStats(m.UpdateTimes),
+							backend:      backend,
+							arcTableType: arcTableType,
+							workload:     workload,
+							arcCount:     arcCount,
+							stats:        computeStats(m.UpdateTimes),
 						})
 					}
 				}
@@ -1097,7 +1097,7 @@ func PrintSummaryStats(allResults map[BackendType]map[EATType]map[string]map[int
 
 	for _, e := range entries {
 		fmt.Printf("%-8s | %-10s | %-8s | %8d | %7.2f | %7.2f | %10.2f | %7.2f | %6.2f\n",
-			e.backend, e.eatType, e.workload, e.arcCount,
+			e.backend, e.arcTableType, e.workload, e.arcCount,
 			float64(e.stats.Avg.Milliseconds()),
 			float64(e.stats.P95.Milliseconds()),
 			float64(e.stats.Median.Milliseconds()),
@@ -1107,7 +1107,7 @@ func PrintSummaryStats(allResults map[BackendType]map[EATType]map[string]map[int
 }
 
 // GenerateLatexTable generates a LaTeX table for the paper.
-func GenerateLatexTable(allResults map[BackendType]map[EATType]map[string]map[int]*Metrics, workload string) string {
+func GenerateLatexTable(allResults map[BackendType]map[ArcTableType]map[string]map[int]*Metrics, workload string) string {
 	var sb strings.Builder
 	sb.WriteString("\\begin{table}[htbp]\n")
 	sb.WriteString("\\centering\n")
@@ -1115,7 +1115,7 @@ func GenerateLatexTable(allResults map[BackendType]map[EATType]map[string]map[in
 	sb.WriteString("\\label{tab:" + workload + "}\n")
 	sb.WriteString("\\begin{tabular}{lrrrrrr}\n")
 	sb.WriteString("\\toprule\n")
-	sb.WriteString("Backend & EAT & Arcs & Update (ms) & Prove (ms) & Verify (ms) & Proof Size (B) \\\\\n")
+	sb.WriteString("Backend & ArcTable & Arcs & Update (ms) & Prove (ms) & Verify (ms) & Proof Size (B) \\\\\n")
 	sb.WriteString("\\midrule\n")
 
 	for _, backend := range AllBackends() {
@@ -1123,8 +1123,8 @@ func GenerateLatexTable(allResults map[BackendType]map[EATType]map[string]map[in
 		if !ok {
 			continue
 		}
-		for _, eatType := range AllEATTypes() {
-			workMap, ok := eatMap[eatType]
+		for _, arcTableType := range AllArcTableTypes() {
+			workMap, ok := eatMap[arcTableType]
 			if !ok {
 				continue
 			}
@@ -1134,7 +1134,7 @@ func GenerateLatexTable(allResults map[BackendType]map[EATType]map[string]map[in
 			}
 			for arcCount, m := range results {
 				sb.WriteString(fmt.Sprintf("%s & %s & %d & %.2f & %.2f & %.2f & %d \\\\\n",
-					backend, eatType, arcCount,
+					backend, arcTableType, arcCount,
 					float64(m.UpdateTime.Microseconds())/1000.0,
 					float64(m.ProveTime.Microseconds())/1000.0,
 					float64(m.VerifyTime.Microseconds())/1000.0,

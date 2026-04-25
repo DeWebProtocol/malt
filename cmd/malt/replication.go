@@ -74,8 +74,8 @@ func runReplicationExport(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "Exported graph %q to %s\n", g.ID, outFile)
-	fmt.Fprintf(os.Stdout, "  Entries: %d EAT, %d lineage, %d COW\n",
-		len(snap.EATEntries), len(snap.LineageEntries), len(snap.COWEntries))
+	fmt.Fprintf(os.Stdout, "  Entries: %d ArcTable, %d lineage, %d COW\n",
+		len(snap.ArcTableEntries), len(snap.LineageEntries), len(snap.COWEntries))
 	fmt.Fprintf(os.Stdout, "  Checksum: %s\n", snap.Checksum)
 	return nil
 }
@@ -156,7 +156,7 @@ func runReplicationSync(cmd *cobra.Command, args []string) error {
 	_, err = tgtMgr.GetGraph(ctx, graphID)
 	if err != nil {
 		// Create it with same config
-		_, err := tgtMgr.CreateGraph(ctx, graphID, srcGraph.Backend, srcGraph.EATType)
+		_, err := tgtMgr.CreateGraph(ctx, graphID, srcGraph.Backend, srcGraph.ArcTableType)
 		if err != nil && err != graph.ErrAlreadyExists {
 			return fmt.Errorf("create target graph: %w", err)
 		}

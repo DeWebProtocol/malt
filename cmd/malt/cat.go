@@ -43,4 +43,3 @@ func runCat(cmd *cobra.Command, args []string) error {
 	_, err = io.Copy(os.Stdout, body)
 	return err
 }
-

@@ -70,7 +70,7 @@ The codebase should be read around these first-class concepts:
 - `Commitment Backend`
   - primitive authentication backend over already-positioned slots or nodes
   - examples: `KZG`, `IPA`
-- `EAT`
+- `ArcTable`
   - explicit arc materialization and lookup state
 - `Resolver`
   - resolves structure from a root and returns a transcript
@@ -102,7 +102,7 @@ malt/
 │   ├── cas/          # CAS clients and adapters
 │   ├── codec/        # MALT CID codecs and CID utilities
 │   ├── commitment/   # Primitive commitment backends
-│   ├── eat/          # Explicit Arc Table implementations
+│   ├── arctable/          # Explicit Arc Table implementations
 │   ├── graph/        # Graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # Version lineage metadata
@@ -142,7 +142,7 @@ The semantic layer owns:
 
 - translation from semantic objects into internal arcs
 - mapping from semantic coordinates into authenticated positions
-- calls into `EAT` for arc access
+- calls into `ArcTable` for arc access
 - calls into primitive commitment backends for commit/prove/verify/update
 
 ## Commitment Backends
@@ -177,9 +177,9 @@ Backend choice is workload-sensitive and layout-sensitive:
 - vector-like or indexed list layouts may prefer `IPA`
 - sparse or layer-composed structures may prefer `KZG`
 
-## EAT
+## ArcTable
 
-`EAT` is the explicit arc materialization and lookup layer.
+`ArcTable` is the explicit arc materialization and lookup layer.
 
 Its role is:
 
@@ -196,7 +196,7 @@ Current implementations:
 
 Important framing:
 
-- `EAT` is performance state, not the trust root
+- `ArcTable` is performance state, not the trust root
 - incorrect lookup results are rejected by proof verification
 - in the current implementation, graph-scoped state is realized as bucket-scoped state, with one bucket per graph
 
@@ -261,7 +261,7 @@ center of MALT itself.
 There are two step kinds:
 
 - explicit step
-  - uses `EAT` lookup plus semantic-layer proof generation over the selected binding
+  - uses `ArcTable` lookup plus semantic-layer proof generation over the selected binding
 - implicit compatibility step
   - traverses ordinary IPLD/Merkle objects through CAS
 
@@ -279,11 +279,11 @@ The write path is implemented by `writer.Writer`.
 
 For an arc update, the code follows this shape:
 
-1. read the current binding from `EAT`
+1. read the current binding from `ArcTable`
 2. obtain the arc-set view or snapshot
 3. ask the semantic layer to commit or update the structure root
 4. let the semantic layer use the primitive commitment backend to authenticate the affected positions
-5. write the resulting arc state back through `EAT`
+5. write the resulting arc state back through `ArcTable`
 6. optionally record lineage metadata
 
 This is the main operational realization of MALT's locality claim.
@@ -295,7 +295,7 @@ This is the main operational realization of MALT's locality claim.
 `api.Node` is the top-level wiring point for shared infrastructure:
 
 - KV store
-- EAT implementation
+- ArcTable implementation
 - CAS client
 - graph manager
 - optional lineage manager
@@ -332,11 +332,11 @@ It is not part of the cryptographic trust base.
 The main write-side code path is:
 
 1. `graph.Graph` receives a root-scoped update request
-2. `writer.Writer` reads the current arc binding from `EAT`
+2. `writer.Writer` reads the current arc binding from `ArcTable`
 3. `writer.Writer` obtains a snapshot or view of the current arc set
 4. the semantic layer computes a new structure root over the updated semantic state
 5. the semantic layer uses the commitment backend to authenticate the updated positions
-6. `EAT` is updated to reflect the resulting structure state
+6. `ArcTable` is updated to reflect the resulting structure state
 7. optional lineage metadata is recorded
 
 ### Resolve / Verify Flow
@@ -356,7 +356,7 @@ The implicit step is the interoperability path.
 
 Useful deployment framing:
 
-- hot-path state: `EAT` records plus the materialized semantic/commitment state needed for low-latency proof generation
+- hot-path state: `ArcTable` records plus the materialized semantic/commitment state needed for low-latency proof generation
 - cold-path state: snapshots, lineage metadata, and replicated copies used for recovery or availability
 
 Correctness remains cryptographic because clients verify returned evidence locally.
@@ -416,7 +416,7 @@ Current config shape:
       "type": "badger",
       "path": "kv"
     },
-    "eat": {
+    "arctable": {
       "type": "versioned"
     },
     "lineage": {

@@ -2,9 +2,9 @@
 // It records parent-child relationships between structure roots,
 // enabling ancestry traversal and depth tracking.
 //
-// The lineage module coordinates with the versioned EAT's @previous chain:
-// the EAT stores @previous as an arc within each version, while the lineage
-// module maintains an independent index for fast lookups without EAT resolution.
+// The lineage module coordinates with the versioned ArcTable's @previous chain:
+// the ArcTable stores @previous as an arc within each version, while the lineage
+// module maintains an independent index for fast lookups without ArcTable resolution.
 package lineage
 
 import (

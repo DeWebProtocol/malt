@@ -13,14 +13,14 @@ type HealthResponse struct {
 
 // Bucket describes bucket metadata in daemon responses.
 type Bucket struct {
-	ID        string `json:"id"`
-	Root      string `json:"root,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-	ArcCount  int    `json:"arc_count"`
-	Backend   string `json:"backend"`
-	EATType   string `json:"eat_type"`
-	State     string `json:"state"`
+	ID           string `json:"id"`
+	Root         string `json:"root,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
+	ArcCount     int    `json:"arc_count"`
+	Backend      string `json:"backend"`
+	ArcTableType string `json:"arctable_type"`
+	State        string `json:"state"`
 }
 
 // BucketCreateRequest creates a managed bucket.

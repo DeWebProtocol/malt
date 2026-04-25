@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -25,8 +25,8 @@ const (
 // Map materializes a keyed runtime view into a canonical-path ordered binding
 // vector and delegates authentication to a primitive index commitment backend.
 type Map struct {
-	scheme commitment.IndexCommitment
-	eat    eat.EAT
+	scheme   commitment.IndexCommitment
+	arctable arctable.ArcTable
 }
 
 type entry struct {
@@ -37,17 +37,17 @@ type entry struct {
 // NewMap creates the default keyed-map semantic over an index-addressed
 // commitment backend. The default placement rule orders bindings by canonical
 // path and authenticates binding cells rather than bare values.
-func NewMap(scheme commitment.IndexCommitment, e eat.EAT) (*Map, error) {
+func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error) {
 	if scheme == nil {
 		return nil, fmt.Errorf("scheme is nil")
 	}
 	if e == nil {
-		return nil, fmt.Errorf("eat is nil")
+		return nil, fmt.Errorf("arctable is nil")
 	}
-	return &Map{scheme: scheme, eat: e}, nil
+	return &Map{scheme: scheme, arctable: e}, nil
 }
 
-// Commit commits the supplied keyed view and materializes the runtime state in EAT.
+// Commit commits the supplied keyed view and materializes the runtime state in ArcTable.
 func (s *Map) Commit(ctx context.Context, bucketID string, view mapping.View) (cid.Cid, error) {
 	entries, cells, err := extractSortedEntries(view)
 	if err != nil {
@@ -299,7 +299,7 @@ func decodeBindingCell(path arcset.Path, cell commitment.Cell) (cid.Cid, error) 
 }
 
 func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([]entry, []commitment.Cell, error) {
-	countCID, err := s.eat.Get(ctx, bucketID, cid.Undef, countPath(root).String())
+	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, countPath(root).String())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -315,7 +315,7 @@ func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([
 	for i := uint64(0); i < count; i++ {
 		paths = append(paths, entryKeyPath(root, i).String(), entryValuePath(root, i).String())
 	}
-	found, err := s.eat.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -362,7 +362,7 @@ func (s *Map) storeEntries(ctx context.Context, bucketID string, root cid.Cid, e
 		arcs[entryValuePath(root, uint64(i)).String()] = ent.value
 	}
 
-	return s.eat.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
 }
 
 func countPath(root cid.Cid) arcset.Path {

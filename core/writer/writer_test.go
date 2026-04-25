@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
@@ -17,16 +17,16 @@ import (
 
 // Test helpers.
 
-func newTestWriter(t *testing.T) (*Writer, *overwrite.EAT, mapping.Semantics, *kvg) {
+func newTestWriter(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantics, *kvg) {
 	t.Helper()
 
 	// Memory KVStore
 	kv := kvmemory.New()
 
-	// Overwrite EAT
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	// Overwrite ArcTable
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	if err != nil {
-		t.Fatalf("failed to create EAT: %v", err)
+		t.Fatalf("failed to create ArcTable: %v", err)
 	}
 
 	// KZG commitment scheme
@@ -471,7 +471,7 @@ func TestWriter_GetSnapshot(t *testing.T) {
 func TestWriter_LineageRecorder(t *testing.T) {
 	// Memory KVStore
 	kv := kvmemory.New()
-	e, _ := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	e, _ := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	scheme, _ := kzg.NewScheme()
 	semantic, _ := mappingradix.NewMap(scheme, e)
 	rec := &mockLineageRecorder{}

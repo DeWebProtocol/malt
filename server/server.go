@@ -237,13 +237,13 @@ func bucketToResponse(meta *graph.GraphMeta) *httpapi.Bucket {
 		root = meta.Root.String()
 	}
 	return &httpapi.Bucket{
-		ID:        meta.ID,
-		Root:      root,
-		CreatedAt: meta.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: meta.UpdatedAt.Format(time.RFC3339),
-		ArcCount:  meta.ArcCount,
-		Backend:   meta.Backend,
-		EATType:   meta.EATType,
-		State:     string(meta.State),
+		ID:           meta.ID,
+		Root:         root,
+		CreatedAt:    meta.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:    meta.UpdatedAt.Format(time.RFC3339),
+		ArcCount:     meta.ArcCount,
+		Backend:      meta.Backend,
+		ArcTableType: meta.ArcTableType,
+		State:        string(meta.State),
 	}
 }

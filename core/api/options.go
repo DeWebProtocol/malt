@@ -3,8 +3,8 @@ package api
 
 import (
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/kvstore"
 )
 
@@ -17,9 +17,9 @@ type options struct {
 	config     *config.Config
 
 	// Pre-built components (override config-based creation)
-	kvStore kvstore.KVStore
-	eat     eat.EAT
-	cas     cas.Reader
+	kvStore  kvstore.KVStore
+	arctable arctable.ArcTable
+	cas      cas.Reader
 }
 
 func defaultOptions() *options {
@@ -47,10 +47,10 @@ func WithKVStore(store kvstore.KVStore) Option {
 	}
 }
 
-// WithEAT sets a custom EAT implementation.
-func WithEAT(e eat.EAT) Option {
+// WithArcTable sets a custom ArcTable implementation.
+func WithArcTable(e arctable.ArcTable) Option {
 	return func(o *options) {
-		o.eat = e
+		o.arctable = e
 	}
 }
 

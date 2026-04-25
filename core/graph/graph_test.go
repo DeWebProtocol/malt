@@ -30,11 +30,11 @@ func TestStoreCreateAndGet(t *testing.T) {
 	s := newTestStore()
 
 	g := &GraphMeta{
-		ID:      "test-graph",
-		Root:    newTestCID([]byte("root1")),
-		State:   StateActive,
-		Backend: "kzg",
-		EATType: "overwrite",
+		ID:           "test-graph",
+		Root:         newTestCID([]byte("root1")),
+		State:        StateActive,
+		Backend:      "kzg",
+		ArcTableType: "overwrite",
 	}
 
 	if err := s.Create(ctx, g); err != nil {

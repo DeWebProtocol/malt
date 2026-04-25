@@ -122,7 +122,7 @@ The current code often maps one namespace to one graph, but that state placement
 
 Native MALT resolution works over explicit arcs:
 
-1. look up the relevant arc in `EAT`
+1. look up the relevant arc in `ArcTable`
 2. obtain a root-scoped arc view
 3. generate a proof using the semantic layer and primitive commitment backend
 4. return a transcript that the client can verify locally
@@ -191,7 +191,7 @@ This keeps correctness cryptographic even when lookup/index infrastructure is no
   - preferred semantic layer for public `list` and `map` contracts
   - now lives under `core/structure`
   - commitment backends now live under `core/commitment`
-- `EAT`
+- `ArcTable`
   - explicit arc materialization and lookup state
 - `Commitment Backend`
   - stateless primitive commitment/proof engine over caller-supplied indexed views
@@ -222,7 +222,7 @@ Current schema:
 - `rpc.listen`
 - `state.root_dir`
 - `state.kvstore`
-- `state.eat`
+- `state.arctable`
 - `state.lineage`
 - `structure.default_backend`
 - `cas.mode`
@@ -237,7 +237,7 @@ Current defaults:
 - daemon listen: `127.0.0.1:4317`
 - embedded mock CAS listen: `127.0.0.1:4318`
 - structure backend: `kzg`
-- EAT type: `versioned`
+- ArcTable type: `versioned`
 
 ## Repo Layout
 
@@ -253,7 +253,7 @@ malt/
 │   ├── api/          # top-level wiring via Node
 │   ├── cas/          # CAS clients and adapters
 │   ├── codec/        # MALT CID codecs and CID utilities
-│   ├── eat/          # explicit arc table implementations
+│   ├── arctable/          # explicit arc table implementations
 │   ├── graph/        # graph metadata and runtime composition
 │   ├── kvstore/      # KV backends
 │   ├── lineage/      # version lineage metadata

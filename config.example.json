@@ -8,7 +8,7 @@
       "type": "badger",
       "path": "kv"
     },
-    "eat": {
+    "arctable": {
       "type": "versioned"
     },
     "lineage": {

@@ -36,8 +36,8 @@ func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
 	if meta.Backend != "kzg" {
 		t.Fatalf("backend = %q, want %q", meta.Backend, "kzg")
 	}
-	if meta.EATType != "versioned" {
-		t.Fatalf("eat_type = %q, want %q", meta.EATType, "versioned")
+	if meta.ArcTableType != "versioned" {
+		t.Fatalf("arctable_type = %q, want %q", meta.ArcTableType, "versioned")
 	}
 }
 
@@ -70,7 +70,7 @@ func TestOpenGraphUsesStoredBackend(t *testing.T) {
 	}
 }
 
-func TestOpenGraphRejectsEATMismatch(t *testing.T) {
+func TestOpenGraphRejectsArcTableMismatch(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := NewNode(WithConfig(cfg))
 	if err != nil {
@@ -84,9 +84,9 @@ func TestOpenGraphRejectsEATMismatch(t *testing.T) {
 
 	_, err = node.OpenGraph(context.Background(), "legacy")
 	if err == nil {
-		t.Fatal("OpenGraph should reject EAT mismatch")
+		t.Fatal("OpenGraph should reject ArcTable mismatch")
 	}
-	if !strings.Contains(err.Error(), `requires eat_type "overwrite"`) {
+	if !strings.Contains(err.Error(), `requires arctable_type "overwrite"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

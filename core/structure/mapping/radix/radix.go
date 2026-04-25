@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/eat"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -28,8 +28,8 @@ const (
 )
 
 type Map struct {
-	scheme commitment.IndexCommitment
-	eat    eat.EAT
+	scheme   commitment.IndexCommitment
+	arctable arctable.ArcTable
 }
 
 type leafBinding struct {
@@ -52,17 +52,17 @@ type bucketWitness struct {
 	Proof []byte `json:"proof"`
 }
 
-func NewMap(scheme commitment.IndexCommitment, e eat.EAT) (*Map, error) {
+func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error) {
 	if scheme == nil {
 		return nil, fmt.Errorf("scheme is nil")
 	}
 	if e == nil {
-		return nil, fmt.Errorf("eat is nil")
+		return nil, fmt.Errorf("arctable is nil")
 	}
 	if scheme.MaxValues() < fanout {
 		return nil, fmt.Errorf("index commitment capacity %d is smaller than radix fanout %d", scheme.MaxValues(), fanout)
 	}
-	return &Map{scheme: scheme, eat: e}, nil
+	return &Map{scheme: scheme, arctable: e}, nil
 }
 
 func (s *Map) Commit(ctx context.Context, bucketID string, view mapping.View) (cid.Cid, error) {
@@ -624,7 +624,7 @@ func (s *Map) loadNodeSlots(ctx context.Context, bucketID string, root cid.Cid) 
 	for i := 0; i < fanout; i++ {
 		paths[i] = nodeSlotPath(root, byte(i)).String()
 	}
-	found, err := s.eat.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -649,11 +649,11 @@ func (s *Map) storeNodeSlots(ctx context.Context, bucketID string, root cid.Cid,
 	if len(arcs) == 0 {
 		return nil
 	}
-	return s.eat.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
 }
 
 func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, error) {
-	countCID, err := s.eat.Get(ctx, bucketID, cid.Undef, bucketCountPath(root).String())
+	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, bucketCountPath(root).String())
 	if err != nil {
 		return nil, err
 	}
@@ -666,7 +666,7 @@ func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.C
 	for i := uint64(0); i < count; i++ {
 		paths[i] = bucketEntryPath(root, i).String()
 	}
-	found, err := s.eat.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +692,7 @@ func (s *Map) storeBucketEntries(ctx context.Context, bucketID string, root cid.
 	for i, marker := range markers {
 		arcs[bucketEntryPath(root, uint64(i)).String()] = marker
 	}
-	return s.eat.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
 }
 
 func cellsFromCIDs(values []cid.Cid) []commitment.Cell {

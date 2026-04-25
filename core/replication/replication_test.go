@@ -29,14 +29,14 @@ func setupTestGraph(t *testing.T, kv kvstore.KVStore, ctx context.Context, id st
 		t.Fatalf("create graph: %v", err)
 	}
 
-	// Add some EAT entries
+	// Add some ArcTable entries
 	eatKey := id + ":test/path/1"
 	if err := kv.Put(ctx, []byte(eatKey), []byte("target1")); err != nil {
-		t.Fatalf("put eat entry: %v", err)
+		t.Fatalf("put arctable entry: %v", err)
 	}
 	eatKey2 := id + ":test/path/2"
 	if err := kv.Put(ctx, []byte(eatKey2), []byte("target2")); err != nil {
-		t.Fatalf("put eat entry: %v", err)
+		t.Fatalf("put arctable entry: %v", err)
 	}
 
 	// Add lineage entry
@@ -77,8 +77,8 @@ func TestExporter_Export(t *testing.T) {
 	if snap.GraphID != "test-graph-1" {
 		t.Errorf("expected graph_id test-graph-1, got %s", snap.GraphID)
 	}
-	if len(snap.EATEntries) != 2 {
-		t.Errorf("expected 2 EAT entries, got %d", len(snap.EATEntries))
+	if len(snap.ArcTableEntries) != 2 {
+		t.Errorf("expected 2 ArcTable entries, got %d", len(snap.ArcTableEntries))
 	}
 	if len(snap.LineageEntries) != 2 { // includes the COW entry since it also has lineage/ prefix
 		t.Errorf("expected 2 lineage entries, got %d", len(snap.LineageEntries))
@@ -148,7 +148,7 @@ func TestImporter_Import(t *testing.T) {
 	// Verify entries were imported
 	has, _ := tgtKV.Has(ctx, []byte("import-test:test/path/1"))
 	if !has {
-		t.Error("expected EAT entry to be imported")
+		t.Error("expected ArcTable entry to be imported")
 	}
 
 	has, _ = tgtKV.Has(ctx, []byte("lineage/root1"))
@@ -195,8 +195,8 @@ func TestSnapshot_MarshalUnmarshal(t *testing.T) {
 	if snap2.Checksum != snap.Checksum {
 		t.Errorf("checksum mismatch: %s != %s", snap2.Checksum, snap.Checksum)
 	}
-	if len(snap2.EATEntries) != len(snap.EATEntries) {
-		t.Errorf("EAT entry count mismatch: %d != %d", len(snap2.EATEntries), len(snap.EATEntries))
+	if len(snap2.ArcTableEntries) != len(snap.ArcTableEntries) {
+		t.Errorf("ArcTable entry count mismatch: %d != %d", len(snap2.ArcTableEntries), len(snap.ArcTableEntries))
 	}
 }
 
@@ -217,7 +217,7 @@ func TestSnapshot_VerifyChecksum(t *testing.T) {
 	}
 
 	// Tampered data
-	snap.EATEntries["tampered"] = []byte("bad data")
+	snap.ArcTableEntries["tampered"] = []byte("bad data")
 	if err := snap.VerifyChecksum(); err == nil {
 		t.Error("expected checksum mismatch after tampering")
 	}
@@ -344,7 +344,7 @@ func TestSyncGraphs(t *testing.T) {
 	// Verify target has the data
 	has, _ := tgtKV.Has(ctx, []byte("sync-graphs-test:test/path/1"))
 	if !has {
-		t.Error("expected EAT entry after sync")
+		t.Error("expected ArcTable entry after sync")
 	}
 }
 
@@ -364,8 +364,8 @@ func TestExporter_EmptyGraph(t *testing.T) {
 	if snap.GraphID != "empty-graph" {
 		t.Errorf("expected graph_id empty-graph, got %s", snap.GraphID)
 	}
-	if len(snap.EATEntries) != 0 {
-		t.Errorf("expected 0 EAT entries, got %d", len(snap.EATEntries))
+	if len(snap.ArcTableEntries) != 0 {
+		t.Errorf("expected 0 ArcTable entries, got %d", len(snap.ArcTableEntries))
 	}
 }
 
@@ -475,6 +475,6 @@ func TestBadgerPersistence(t *testing.T) {
 
 	has, _ := reopenedKV.Has(ctx, []byte("badger-test:test/path/1"))
 	if !has {
-		t.Error("expected EAT entry to persist in BadgerDB")
+		t.Error("expected ArcTable entry to persist in BadgerDB")
 	}
 }

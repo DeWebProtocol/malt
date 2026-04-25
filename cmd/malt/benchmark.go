@@ -28,19 +28,19 @@ Examples:
 }
 
 var (
-	benchArcs    string
-	benchRounds  int
-	benchBackend string
-	benchEATType string
-	benchCSV     string
-	benchSeed    int64
+	benchArcs         string
+	benchRounds       int
+	benchBackend      string
+	benchArcTableType string
+	benchCSV          string
+	benchSeed         int64
 )
 
 func init() {
 	benchmarkCmd.Flags().StringVar(&benchArcs, "arcs", "100,1000", "Arc counts (comma-separated)")
 	benchmarkCmd.Flags().IntVar(&benchRounds, "rounds", 100, "Number of update rounds")
 	benchmarkCmd.Flags().StringVar(&benchBackend, "backend", "kzg", "Backend type (kzg)")
-	benchmarkCmd.Flags().StringVar(&benchEATType, "eat", "overwrite", "EAT type (overwrite/versioned/bloom)")
+	benchmarkCmd.Flags().StringVar(&benchArcTableType, "arctable", "overwrite", "ArcTable type (overwrite/versioned/bloom)")
 	benchmarkCmd.Flags().StringVar(&benchCSV, "csv", "", "Export results to CSV file")
 	benchmarkCmd.Flags().Int64Var(&benchSeed, "seed", 42, "Random seed")
 }
@@ -59,9 +59,9 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create benchmark components
-	tc, err := eval.NewTestComponentsWithEAT(
+	tc, err := eval.NewTestComponentsWithArcTable(
 		eval.BackendType(benchBackend),
-		eval.EATType(benchEATType),
+		eval.ArcTableType(benchArcTableType),
 		"bench",
 	)
 	if err != nil {
@@ -73,14 +73,14 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 		UpdateRounds: benchRounds,
 		RandomSeed:   benchSeed,
 		Backend:      eval.BackendType(benchBackend),
-		EATType:      eval.EATType(benchEATType),
+		ArcTableType: eval.ArcTableType(benchArcTableType),
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, tc.BucketID, tc.EAT, tc.Semantic, tc.CAS)
+	runner := eval.NewBenchmarkRunner(cfg, tc.BucketID, tc.ArcTable, tc.Semantic, tc.CAS)
 	ctx := context.Background()
 
-	fmt.Printf("Running %s benchmark: backend=%s, eat=%s, arcs=%v, rounds=%d\n\n",
-		workload, cfg.Backend, cfg.EATType, arcCounts, benchRounds)
+	fmt.Printf("Running %s benchmark: backend=%s, arctable=%s, arcs=%v, rounds=%d\n\n",
+		workload, cfg.Backend, cfg.ArcTableType, arcCounts, benchRounds)
 
 	var results map[int]*eval.Metrics
 	switch workload {
@@ -101,7 +101,7 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 
 	// Export CSV if requested
 	if benchCSV != "" {
-		rows, err := eval.ExportCSV(results, workload, cfg.Backend, cfg.EATType, benchCSV)
+		rows, err := eval.ExportCSV(results, workload, cfg.Backend, cfg.ArcTableType, benchCSV)
 		if err != nil {
 			return fmt.Errorf("export CSV: %w", err)
 		}

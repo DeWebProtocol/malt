@@ -18,14 +18,14 @@ import (
 
 // GraphMeta represents a MALT graph with metadata.
 type GraphMeta struct {
-	ID        string     `json:"id"`
-	Root      cid.Cid    `json:"root"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	ArcCount  int        `json:"arc_count"`
-	Backend   string     `json:"backend"`  // per-graph commitment scheme used when reopening the graph
-	EATType   string     `json:"eat_type"` // node-scoped EAT compatibility requirement for this graph
-	State     GraphState `json:"state"`
+	ID           string     `json:"id"`
+	Root         cid.Cid    `json:"root"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ArcCount     int        `json:"arc_count"`
+	Backend      string     `json:"backend"`       // per-graph commitment scheme used when reopening the graph
+	ArcTableType string     `json:"arctable_type"` // node-scoped ArcTable compatibility requirement for this graph
+	State        GraphState `json:"state"`
 }
 
 // IsActive returns true if the graph is in active state.
@@ -190,7 +190,7 @@ func (s *Store) List(ctx context.Context) ([]*GraphMeta, error) {
 }
 
 // Manager manages graph lifecycle: creation, access, state transitions.
-// It coordinates graph metadata with EAT namespaces and commitment backend selection.
+// It coordinates graph metadata with ArcTable namespaces and commitment backend selection.
 type Manager struct {
 	store  *Store
 	mu     sync.RWMutex
@@ -207,7 +207,7 @@ func NewManager(store *Store) *Manager {
 
 // CreateGraph creates a new graph metadata entry with the given runtime profile.
 // The graph starts in the "active" state with an undefined root.
-func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, eatType string) (*GraphMeta, error) {
+func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, arcTableType string) (*GraphMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -227,14 +227,14 @@ func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, ea
 
 	now := time.Now()
 	g := &GraphMeta{
-		ID:        id,
-		Root:      cid.Undef,
-		CreatedAt: now,
-		UpdatedAt: now,
-		ArcCount:  0,
-		Backend:   backend,
-		EATType:   eatType,
-		State:     StateActive,
+		ID:           id,
+		Root:         cid.Undef,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		ArcCount:     0,
+		Backend:      backend,
+		ArcTableType: arcTableType,
+		State:        StateActive,
 	}
 
 	if err := m.store.Create(ctx, g); err != nil {

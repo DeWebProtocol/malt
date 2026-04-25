@@ -1,4 +1,4 @@
-// Package bloom provides Bloom Filter implementations for EAT.
+// Package bloom provides Bloom Filter implementations for ArcTable.
 // Bloom filters provide fast negative membership tests.
 //
 // Bloom Filter properties:

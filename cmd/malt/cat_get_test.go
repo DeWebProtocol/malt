@@ -163,4 +163,3 @@ func TestWriteBucketFileSmallAndLarge(t *testing.T) {
 		t.Fatalf("large output len = %d, want %d", len(gotLarge), len(large))
 	}
 }
-

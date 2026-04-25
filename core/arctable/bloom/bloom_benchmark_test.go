@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/eat/bloom"
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
 )
 

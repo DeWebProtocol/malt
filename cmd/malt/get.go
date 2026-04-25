@@ -195,4 +195,3 @@ func writeBucketFile(ctx context.Context, client *daemonclient.Client, bucketID 
 	}
 	return nil
 }
-

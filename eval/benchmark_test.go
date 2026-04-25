@@ -9,18 +9,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
-	"github.com/dewebprotocol/malt/core/eat/overwrite"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/eval"
 )
 
-// newTestEAT creates a new EAT for testing.
-func newTestEAT() *overwrite.EAT {
+// newTestArcTable creates a new ArcTable for testing.
+func newTestArcTable() *overwrite.ArcTable {
 	kv := kvstore_memory.New()
-	e, err := overwrite.NewEAT(overwrite.WithKVStore(kv))
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
 	if err != nil {
 		panic(err)
 	}
@@ -31,7 +31,7 @@ const testBucketId = "test-graph"
 
 func TestBenchmarkRunner(t *testing.T) {
 	// Create components
-	e := newTestEAT()
+	e := newTestArcTable()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
@@ -48,7 +48,7 @@ func TestBenchmarkRunner(t *testing.T) {
 		UpdateRounds: 10,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
-		EATType:      eval.EATOverwrite,
+		ArcTableType: eval.ArcTableOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
@@ -115,7 +115,7 @@ func TestAllBackends(t *testing.T) {
 		RandomSeed:   42,
 	}
 
-	runner := eval.NewBenchmarkRunner(cfg, testBucketId, newTestEAT(), nil, nil)
+	runner := eval.NewBenchmarkRunner(cfg, testBucketId, newTestArcTable(), nil, nil)
 
 	allResults, err := runner.RunAllBackends(ctx, "append")
 	if err != nil {
@@ -154,8 +154,8 @@ func TestNewTestComponents(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewTestComponents(%s) failed: %v", backend, err)
 		}
-		if tc.EAT == nil {
-			t.Errorf("EAT is nil for %s", backend)
+		if tc.ArcTable == nil {
+			t.Errorf("ArcTable is nil for %s", backend)
 		}
 		if tc.Semantic == nil {
 			t.Errorf("Semantic is nil for %s", backend)
@@ -186,35 +186,35 @@ func TestNewScheme(t *testing.T) {
 	}
 }
 
-func TestAllEATTypes(t *testing.T) {
-	for _, eatType := range eval.AllEATTypes() {
-		tc, err := eval.NewTestComponentsWithEAT(eval.BackendKZG, eatType, "test-bucket")
+func TestAllArcTableTypes(t *testing.T) {
+	for _, arcTableType := range eval.AllArcTableTypes() {
+		tc, err := eval.NewTestComponentsWithArcTable(eval.BackendKZG, arcTableType, "test-bucket")
 		if err != nil {
-			t.Fatalf("NewTestComponentsWithEAT(kzg, %s) failed: %v", eatType, err)
+			t.Fatalf("NewTestComponentsWithArcTable(kzg, %s) failed: %v", arcTableType, err)
 		}
-		if tc.EAT == nil {
-			t.Errorf("EAT is nil for %s", eatType)
+		if tc.ArcTable == nil {
+			t.Errorf("ArcTable is nil for %s", arcTableType)
 		}
 		if tc.Semantic == nil {
-			t.Errorf("Semantic is nil for %s", eatType)
+			t.Errorf("Semantic is nil for %s", arcTableType)
 		}
 	}
 
-	_, err := eval.NewEAT("invalid", nil)
+	_, err := eval.NewArcTable("invalid", nil)
 	if err == nil {
-		t.Error("NewEAT should fail for invalid EAT type")
+		t.Error("NewArcTable should fail for invalid ArcTable type")
 	}
 }
 
 func TestEvalRunner(t *testing.T) {
 	ctx := context.Background()
 	cfg := &eval.EvalConfig{
-		ArcCounts:    []int{10},
-		UpdateRounds: 5,
-		RandomSeed:   42,
-		Backends:     []eval.BackendType{eval.BackendKZG},
-		EATTypes:     []eval.EATType{eval.EATOverwrite},
-		Workloads:    []string{"append"},
+		ArcCounts:     []int{10},
+		UpdateRounds:  5,
+		RandomSeed:    42,
+		Backends:      []eval.BackendType{eval.BackendKZG},
+		ArcTableTypes: []eval.ArcTableType{eval.ArcTableOverwrite},
+		Workloads:     []string{"append"},
 	}
 
 	runner := eval.NewEvalRunner(cfg, "test-eval-bucket")
@@ -223,7 +223,7 @@ func TestEvalRunner(t *testing.T) {
 		t.Fatalf("RunAll failed: %v", err)
 	}
 
-	m, ok := results[eval.BackendKZG][eval.EATOverwrite]["append"]
+	m, ok := results[eval.BackendKZG][eval.ArcTableOverwrite]["append"]
 	if !ok {
 		t.Fatal("Missing results for kzg/overwrite/append")
 	}
@@ -237,8 +237,8 @@ func TestEvalRunner(t *testing.T) {
 		if metrics.Backend != eval.BackendKZG {
 			t.Errorf("Backend mismatch: got %q", metrics.Backend)
 		}
-		if metrics.EATType != eval.EATOverwrite {
-			t.Errorf("EATType mismatch: got %q", metrics.EATType)
+		if metrics.ArcTableType != eval.ArcTableOverwrite {
+			t.Errorf("ArcTableType mismatch: got %q", metrics.ArcTableType)
 		}
 		if metrics.EndToEndLatency <= 0 {
 			t.Errorf("EndToEndLatency should be positive: %v", metrics.EndToEndLatency)
@@ -252,7 +252,7 @@ func TestEvalRunner_DefaultConfig(t *testing.T) {
 	cfg.ArcCounts = []int{5}
 	cfg.UpdateRounds = 2
 	cfg.Backends = []eval.BackendType{eval.BackendKZG}
-	cfg.EATTypes = []eval.EATType{eval.EATOverwrite}
+	cfg.ArcTableTypes = []eval.ArcTableType{eval.ArcTableOverwrite}
 	cfg.Workloads = []string{"append"}
 
 	runner := eval.NewEvalRunner(cfg, "test-default")
@@ -268,7 +268,7 @@ func TestEvalRunner_DefaultConfig(t *testing.T) {
 func TestComputeSummaryStats(t *testing.T) {
 	m := &eval.Metrics{
 		Backend:         eval.BackendKZG,
-		EATType:         eval.EATOverwrite,
+		ArcTableType:    eval.ArcTableOverwrite,
 		ArcCount:        100,
 		CommitTime:      10 * time.Millisecond,
 		ProveTime:       80 * time.Millisecond,
@@ -304,12 +304,12 @@ func TestComputeSummaryStats(t *testing.T) {
 func TestExportJSON(t *testing.T) {
 	ctx := context.Background()
 	cfg := &eval.EvalConfig{
-		ArcCounts:    []int{10},
-		UpdateRounds: 5,
-		RandomSeed:   42,
-		Backends:     []eval.BackendType{eval.BackendKZG},
-		EATTypes:     []eval.EATType{eval.EATOverwrite},
-		Workloads:    []string{"append"},
+		ArcCounts:     []int{10},
+		UpdateRounds:  5,
+		RandomSeed:    42,
+		Backends:      []eval.BackendType{eval.BackendKZG},
+		ArcTableTypes: []eval.ArcTableType{eval.ArcTableOverwrite},
+		Workloads:     []string{"append"},
 	}
 
 	runner := eval.NewEvalRunner(cfg, "test-json")
@@ -333,11 +333,11 @@ func TestExportJSON(t *testing.T) {
 	defer f.Close()
 
 	var parsed []struct {
-		Backend  eval.BackendType     `json:"backend"`
-		EATType  eval.EATType         `json:"eat_type"`
-		Workload string               `json:"workload"`
-		ArcCount int                  `json:"arc_count"`
-		Metrics  *eval.MetricsSummary `json:"metrics"`
+		Backend      eval.BackendType     `json:"backend"`
+		ArcTableType eval.ArcTableType    `json:"arctable_type"`
+		Workload     string               `json:"workload"`
+		ArcCount     int                  `json:"arc_count"`
+		Metrics      *eval.MetricsSummary `json:"metrics"`
 	}
 	if err := json.NewDecoder(f).Decode(&parsed); err != nil {
 		t.Fatalf("Cannot parse JSON file: %v", err)
@@ -357,12 +357,12 @@ func TestExportJSON(t *testing.T) {
 func TestGenerateLatexTable(t *testing.T) {
 	ctx := context.Background()
 	cfg := &eval.EvalConfig{
-		ArcCounts:    []int{10},
-		UpdateRounds: 5,
-		RandomSeed:   42,
-		Backends:     []eval.BackendType{eval.BackendKZG},
-		EATTypes:     []eval.EATType{eval.EATOverwrite},
-		Workloads:    []string{"append"},
+		ArcCounts:     []int{10},
+		UpdateRounds:  5,
+		RandomSeed:    42,
+		Backends:      []eval.BackendType{eval.BackendKZG},
+		ArcTableTypes: []eval.ArcTableType{eval.ArcTableOverwrite},
+		Workloads:     []string{"append"},
 	}
 
 	runner := eval.NewEvalRunner(cfg, "test-latex")
@@ -404,7 +404,7 @@ func TestGenerateLatexTable(t *testing.T) {
 }
 
 func BenchmarkAppend(b *testing.B) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	scheme, _ := kzg.NewScheme()
 	semantic, _ := mappingradix.NewMap(scheme, e)
 	c := mock.NewCAS(mock.WithoutLatency())
@@ -414,7 +414,7 @@ func BenchmarkAppend(b *testing.B) {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
-		EATType:      eval.EATOverwrite,
+		ArcTableType: eval.ArcTableOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
@@ -427,7 +427,7 @@ func BenchmarkAppend(b *testing.B) {
 }
 
 func BenchmarkRandom(b *testing.B) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	scheme, _ := kzg.NewScheme()
 	semantic, _ := mappingradix.NewMap(scheme, e)
 	c := mock.NewCAS(mock.WithoutLatency())
@@ -437,7 +437,7 @@ func BenchmarkRandom(b *testing.B) {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
-		EATType:      eval.EATOverwrite,
+		ArcTableType: eval.ArcTableOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)
@@ -450,7 +450,7 @@ func BenchmarkRandom(b *testing.B) {
 }
 
 func BenchmarkBulk(b *testing.B) {
-	e := newTestEAT()
+	e := newTestArcTable()
 	scheme, _ := kzg.NewScheme()
 	semantic, _ := mappingradix.NewMap(scheme, e)
 	c := mock.NewCAS(mock.WithoutLatency())
@@ -460,7 +460,7 @@ func BenchmarkBulk(b *testing.B) {
 		UpdateRounds: 100,
 		RandomSeed:   42,
 		Backend:      eval.BackendKZG,
-		EATType:      eval.EATOverwrite,
+		ArcTableType: eval.ArcTableOverwrite,
 	}
 
 	runner := eval.NewBenchmarkRunner(cfg, testBucketId, e, semantic, c)

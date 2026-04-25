@@ -1,16 +1,16 @@
-// Package eat provides the Explicit Arc Table (EAT) abstraction.
-// This file contains common utilities and interfaces shared by EAT implementations.
-package eat
+// Package arctable provides the Explicit Arc Table (ArcTable) abstraction.
+// This file contains common utilities and interfaces shared by ArcTable implementations.
+package arctable
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/eat/bloom"
+	"github.com/dewebprotocol/malt/core/arctable/bloom"
 	cid "github.com/ipfs/go-cid"
 )
 
-// BloomFilterManager provides unified bloom filter management across EAT implementations.
+// BloomFilterManager provides unified bloom filter management across ArcTable implementations.
 type BloomFilterManager struct {
 	bloomCache *bloom.BloomCache
 }
@@ -90,7 +90,7 @@ func (bfm *BloomFilterManager) MightContainBatch(ctx context.Context, bucketId s
 }
 
 // GetBloomCache returns the underlying BloomCache for advanced operations.
-// This is intended for internal use by EAT implementations that need direct access.
+// This is intended for internal use by ArcTable implementations that need direct access.
 func (bfm *BloomFilterManager) GetBloomCache() *bloom.BloomCache {
 	return bfm.bloomCache
 }
@@ -98,35 +98,35 @@ func (bfm *BloomFilterManager) GetBloomCache() *bloom.BloomCache {
 // Helper function for common key generation patterns
 
 // DefaultArcKey generates the standard arc key format.
-// Used by overwrite EAT implementation.
+// Used by overwrite ArcTable implementation.
 func DefaultArcKey(bucketId, path string) []byte {
 	// Format: bucketId:path
 	return []byte(bucketId + ":" + path)
 }
 
 // DefaultBucketPrefix generates the standard bucket prefix format.
-// Used by overwrite EAT implementation.
+// Used by overwrite ArcTable implementation.
 func DefaultBucketPrefix(bucketId string) []byte {
 	// Format: bucketId:
 	return []byte(bucketId + ":")
 }
 
 // VersionedArcKey generates a versioned arc key format.
-// Used by versioned EAT implementation to include version information.
+// Used by versioned ArcTable implementation to include version information.
 func VersionedArcKey(bucketId string, version cid.Cid, path string) []byte {
 	// Format: bucketId:version:path
 	return []byte(bucketId + ":" + version.String() + ":" + path)
 }
 
 // VersionedBucketPrefix generates a versioned bucket prefix format.
-// Used by versioned EAT implementation to include version information.
+// Used by versioned ArcTable implementation to include version information.
 func VersionedBucketPrefix(bucketId string, version cid.Cid) []byte {
 	// Format: bucketId:version:
 	return []byte(bucketId + ":" + version.String() + ":")
 }
 
 // RootKeyFormat generates the key for root->bucketId mapping.
-// This is shared across all EAT implementations.
+// This is shared across all ArcTable implementations.
 func RootKeyFormat(root cid.Cid) []byte {
 	// Format: root:{cid}
 	return []byte("root:" + root.String())
