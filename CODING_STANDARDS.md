@@ -43,12 +43,12 @@
   should be passed into operations, not captured as long-lived semantic object
   fields, unless the object is explicitly intended to be bound to that runtime
   scope.
-- Reserve the term `graph` for the abstract authenticated read/write contract
-  unless the package explicitly documents that it is current runtime metadata or
+- Reserve the term `graph` for graph-node and graph-relation concepts unless
+  the package explicitly documents that it is current runtime metadata or
   compatibility code.
-- Treat `map` and `list` packages as graph implementations. Resolver and writer
-  packages may adapt those implementations, but they should not redefine their
-  read/write semantics.
+- Treat `map` and `list` packages as semantic abstractions. Resolver and writer
+  packages may adapt those semantics, but they should not redefine their
+  read/write behavior.
 
 ## Code Style
 
@@ -268,11 +268,11 @@ malt/
 │   │       └── ipa.go               # IPA backend
 │   ├── structure/
 │   │   ├── list/
-│   │   │   ├── list.go              # List graph contract
+│   │   │   ├── list.go              # List semantic interface
 │   │   │   └── tree/
 │   │   │       └── tree.go          # Tree list implementation
 │   │   └── mapping/
-│   │       ├── mapping.go           # Map graph contract
+│   │       ├── mapping.go           # Map semantic interface
 │   │       ├── radix/
 │   │       │   └── radix.go         # Radix map implementation
 │   │       └── indexed/

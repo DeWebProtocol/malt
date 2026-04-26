@@ -9,10 +9,10 @@ For repo-level workflow, also read the parent repository `../AGENTS.md`.
 
 This submodule contains the Go implementation of MALT:
 
-- authenticated graph contracts and map/list graph implementations
-- ArcTable-backed structure materialization
-- primitive commitment backends
-- the current `core/layout/unixfs` prototype built directly over map/list semantics
+- list/map semantic abstractions over immutable CAS payloads
+- Bucket-based ArcTable-backed arcset persistence/materialization
+- stateless primitive commitment backends
+- the current `core/layout/unixfs` prototype built from list/map/CAS blob composition
 - runtime adapters for current resolver / writer / graph packages
 - daemon/API surface, CLI, and local CAS integration
 
@@ -22,16 +22,17 @@ This submodule contains the Go implementation of MALT:
 - Canonicalization happens at read/write boundaries, not inside every backend.
 - `arcset.ArcSet` is the interface for immutable arc-set views.
 - `arcset.Set` is the default in-memory implementation.
-- `graph` means an abstract authenticated read/write/verify contract.
-- `map` and `list` are concrete graph implementations.
-- current `core/graph` code is runtime metadata/composition, not the target graph abstraction.
+- `list` and `map` are semantic abstractions, not merely concrete implementations.
+- `list` describes complex graph nodes with indexed/ranged child references.
+- `map` describes authenticated relations among graph nodes.
+- current `core/graph` code is runtime metadata/composition, not the target semantic abstraction.
 - current `resolver` and `writer` code is adapter/runtime machinery, not the semantic owner.
-- explicit resolution is a compatibility layer above map graph reads.
+- explicit resolution is a compatibility layer above map reads.
 - list semantics use index/range reads and append/replace/truncate writes, not path resolution.
-- `core/layout/unixfs` is the current application-layout prototype; it should not be treated as the final graph interface.
+- `core/layout/unixfs` is the current application-layout prototype; it should not be treated as the core semantic abstraction.
 - unresolved graph-node, arc, resolver, and UnixFS runtime-integration questions should be tracked as TODOs for later design discussion.
-- `bucketpath` and `manifest` are current bucket/file layout helpers and should not leak into core graph semantics.
-- lineage/MVCC/versioned ArcTable concerns are pending design topics outside the minimal graph contract.
+- `bucketpath` and `manifest` are current bucket/file layout helpers and should not leak into core semantic rules.
+- overwrite ArcTable is the simple current-state implementation; versioned ArcTable is the default MVCC-style implementation.
 
 ## Go Workflow
 
