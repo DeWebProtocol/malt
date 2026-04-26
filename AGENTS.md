@@ -43,9 +43,16 @@ This submodule contains the Go implementation of MALT:
 
 ## Git Workflow Inside The Submodule
 
-- For feature work, use a feature branch.
-- For bug fixes or small changes, direct changes on `main` are allowed.
-- Commit and push the submodule before updating the parent repo pointer.
+- Follow the parent repository coordinator workflow in `../AGENTS.md`.
+- Worker sessions must create their own `feature/`, `refactor/`, or `bugfix/`
+  branch for submodule work.
+- Worker sessions must not commit directly to `main`.
+- Worker sessions must not merge PRs into `main`.
+- Worker sessions should target the current coordinator branch for PRs unless
+  the user explicitly requests a different target.
+- The coordinator session must not merge branches or PRs unless the user
+  explicitly instructs it to do so.
+- Commit and push the submodule branch before updating the parent repo pointer.
 
 ## Naming And Package Guidance
 

@@ -359,13 +359,16 @@ semantics.
 
 Current boundary:
 
-- The package is a library/prototype and is not yet wired into `malt add`,
-  `malt cat`, `malt get`, daemon routes, or managed buckets.
-- It directly injects `mapping.Semantics`, `list.Semantics`, and `cas.Client`.
-- It intentionally bypasses current `core/graph`, `core/writer`, and
-  `core/resolver` while the graph-node and resolver boundaries remain open.
-- The unresolved pieces are tracked as TODO items, not as a change to the core
-  semantic-layer direction.
+- The package remains the direct map/list/CAS library layer for the
+  UnixFS-style layout.
+- Managed buckets now expose this layout through daemon routes for UnixFS file
+  and directory writes, path stat, and content reads. The `malt add`,
+  `malt cat`, and `malt get` commands use those bucket APIs.
+- The package still directly injects `mapping.Semantics`, `list.Semantics`,
+  and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
+  remain runtime and compatibility adapters rather than semantic owners.
+- Resolver transcript unification, write receipts, graph-node terminology, and
+  benchmark-facing proof reporting remain open TODO items.
 
 It also gives the benchmark target:
 
@@ -391,8 +394,8 @@ Open TODOs for the next discussion:
   lookup and terminal payload materialization
 - decide whether UnixFS reads should call current `core/resolver` or keep a
   layout-local resolver
-- decide how UnixFS writes should integrate with managed bucket heads and daemon
-  APIs
+- define the final UnixFS write receipt, bucket-head advancement, and
+  concurrency contract for the already-wired managed bucket APIs
 - decide whether list needs a first-class range proof API or whether composed
   index proofs are sufficient for the first benchmark
 

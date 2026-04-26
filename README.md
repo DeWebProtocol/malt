@@ -185,12 +185,16 @@ mutation, proof size, and write amplification.
 
 Current boundary:
 
-- `core/layout/unixfs` is a library/prototype layer, not the daemon or CLI path.
-- It depends directly on `mapping.Semantics`, `list.Semantics`, and `cas.Client`.
-- It does not route through current `core/graph`, `core/writer`, or
-  `core/resolver`.
-- Graph-level node/arc modeling, resolver integration, and runtime exposure are
-  explicit TODO items rather than settled implementation details.
+- `core/layout/unixfs` remains the direct map/list/CAS library layer for the
+  UnixFS-style layout.
+- The managed bucket runtime now exposes this layout through daemon routes for
+  UnixFS file and directory writes, path stat, and content reads, and the
+  `malt add`, `malt cat`, and `malt get` commands use those bucket APIs.
+- The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
+  and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
+  `core/resolver` the semantic owners.
+- Graph-level node/arc terminology, resolver transcript unification, write
+  receipts, and benchmark-facing proof reporting remain explicit TODO items.
 
 ## CAS Boundary
 
