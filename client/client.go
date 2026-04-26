@@ -44,7 +44,7 @@ func NewWithBaseURL(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 5 * time.Minute,
 		},
 	}
 }
@@ -187,6 +187,27 @@ func (c *Client) SetBucketHead(ctx context.Context, id string, newRoot string, a
 		ExpectedOldRoot: expectedOldRoot,
 	}
 	return c.do(ctx, http.MethodPut, "/buckets/"+url.PathEscape(id)+"/head", nil, req, nil)
+}
+
+func (c *Client) AddBucketUnixFSDirectory(ctx context.Context, id string, p string) (*httpapi.BucketUnixFSWriteResponse, error) {
+	query := map[string]string{}
+	if p != "" {
+		query["path"] = p
+	}
+	var resp httpapi.BucketUnixFSWriteResponse
+	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/unixfs/directories", query, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) AddBucketUnixFSFile(ctx context.Context, id string, p string, data []byte) (*httpapi.BucketUnixFSWriteResponse, error) {
+	query := map[string]string{"path": p}
+	var resp httpapi.BucketUnixFSWriteResponse
+	if err := c.doRaw(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/unixfs/files", query, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (c *Client) CreateBucketMap(ctx context.Context, id string, bindings map[string]string) (*httpapi.BucketMapCreateResponse, error) {
@@ -420,6 +441,48 @@ func (c *Client) do(ctx context.Context, method string, route string, query map[
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	if out == nil {
+		io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) doRaw(ctx context.Context, method string, route string, query map[string]string, contentType string, body io.Reader, out any) error {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return err
+	}
+	u.Path = path.Join(u.Path, route)
+	values := u.Query()
+	for key, value := range query {
+		values.Set(key, value)
+	}
+	u.RawQuery = values.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	resp, err := c.http.Do(req)

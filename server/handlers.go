@@ -9,14 +9,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/bucketpath"
+	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/graph"
+	"github.com/dewebprotocol/malt/core/layout/unixfs"
 	"github.com/dewebprotocol/malt/core/lineage"
+	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/structure/list"
@@ -186,12 +190,14 @@ func (s *Server) handleBucketHeadSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := mandatoryMapPayload(r.Context(), g, newRoot); err != nil {
-		if errors.Is(err, writer.ErrArcNotFound) {
-			writeError(w, http.StatusBadRequest, "new_root must resolve to a map root in this bucket with a mandatory @payload binding")
+		if !s.validUnixFSRoot(r.Context(), g, newRoot) {
+			if errors.Is(err, writer.ErrArcNotFound) {
+				writeError(w, http.StatusBadRequest, "new_root must resolve to a map root in this bucket with a mandatory @payload binding")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
 	}
 
 	if req.ExpectedOldRoot != "" {
@@ -471,6 +477,118 @@ func (s *Server) handleBucketListsGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleBucketUnixFSFile(w http.ResponseWriter, r *http.Request) {
+	graphID := r.PathValue("id")
+	meta, g, err := s.openManagedGraph(r.Context(), graphID, true)
+	if err != nil {
+		writeManagedGraphError(w, err)
+		return
+	}
+
+	p := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	if p == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
+		return
+	}
+
+	layout, err := s.unixFSLayout(g)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	oldRoot := cid.Undef
+	if meta != nil {
+		oldRoot = meta.Root
+	}
+	baseRoot, err := s.prepareUnixFSRoot(r.Context(), g, layout, oldRoot)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	newRoot, err := layout.AddFile(r.Context(), baseRoot, p, data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	arcCount := s.unixFSArcCount(r.Context(), layout, newRoot)
+	if err := s.updateManagedGraphHead(r.Context(), graphID, newRoot, arcCount); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if lm := s.node.LineageManager(); lm != nil {
+		_ = lm.Record(r.Context(), newRoot, oldRoot, arcCount)
+	}
+
+	resp := &httpapi.BucketUnixFSWriteResponse{
+		Bucket:   graphID,
+		Path:     p,
+		Kind:     "file",
+		NewRoot:  newRoot.String(),
+		ArcCount: arcCount,
+	}
+	if oldRoot.Defined() {
+		resp.OldRoot = oldRoot.String()
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) handleBucketUnixFSDirectory(w http.ResponseWriter, r *http.Request) {
+	graphID := r.PathValue("id")
+	meta, g, err := s.openManagedGraph(r.Context(), graphID, true)
+	if err != nil {
+		writeManagedGraphError(w, err)
+		return
+	}
+
+	p := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	layout, err := s.unixFSLayout(g)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	oldRoot := cid.Undef
+	if meta != nil {
+		oldRoot = meta.Root
+	}
+	baseRoot, err := s.prepareUnixFSRoot(r.Context(), g, layout, oldRoot)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	newRoot, err := layout.AddDirectory(r.Context(), baseRoot, p)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	arcCount := s.unixFSArcCount(r.Context(), layout, newRoot)
+	if err := s.updateManagedGraphHead(r.Context(), graphID, newRoot, arcCount); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if lm := s.node.LineageManager(); lm != nil {
+		_ = lm.Record(r.Context(), newRoot, oldRoot, arcCount)
+	}
+
+	resp := &httpapi.BucketUnixFSWriteResponse{
+		Bucket:   graphID,
+		Path:     p,
+		Kind:     "dir",
+		NewRoot:  newRoot.String(),
+		ArcCount: arcCount,
+	}
+	if oldRoot.Defined() {
+		resp.OldRoot = oldRoot.String()
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
 func (s *Server) handleBucketStat(w http.ResponseWriter, r *http.Request) {
 	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
 	if err != nil {
@@ -577,7 +695,7 @@ func (s *Server) handleBucketResolve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	s.resolveAndWrite(w, g, root, r.URL.Query().Get("path"))
+	s.resolveAndWrite(w, r.Context(), g, root, r.URL.Query().Get("path"))
 }
 
 func (s *Server) handleBucketProof(w http.ResponseWriter, r *http.Request) {
@@ -729,7 +847,7 @@ func (s *Server) handleRootResolve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.resolveAndWrite(w, g, root, r.URL.Query().Get("path"))
+	s.resolveAndWrite(w, r.Context(), g, root, r.URL.Query().Get("path"))
 }
 
 func (s *Server) handleRootProof(w http.ResponseWriter, r *http.Request) {
@@ -935,8 +1053,13 @@ func (s *Server) handleLineageCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.CountResponse{Count: s.node.LineageManager().Count(r.Context())})
 }
 
-func (s *Server) resolveAndWrite(w http.ResponseWriter, g *graph.Graph, root cid.Cid, path string) {
-	result, err := g.Resolver().Resolve(root, path)
+func (s *Server) resolveAndWrite(w http.ResponseWriter, ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string) {
+	if resp, err := s.unixFSResolve(ctx, g, root, rawPath); err == nil {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	result, err := g.Resolver().Resolve(root, rawPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -967,6 +1090,13 @@ func (s *Server) writeSnapshot(w http.ResponseWriter, ctx context.Context, g *gr
 var errPathNotFound = errors.New("path not found")
 
 func (s *Server) bucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.BucketStatResponse, error) {
+	if stat, err := s.unixFSBucketStat(ctx, g, root, path); err == nil {
+		return stat, nil
+	}
+	return s.legacyBucketStat(ctx, g, root, path)
+}
+
+func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.BucketStatResponse, error) {
 	keyResult, err := g.Resolver().ResolveKey(root, path)
 	if err != nil {
 		return nil, err
@@ -1018,6 +1148,233 @@ func (s *Server) bucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, p
 			Key:         key.String(),
 			Size:        &size,
 		}, nil
+	}
+}
+
+func (s *Server) unixFSLayout(g *graph.Graph) (*unixfs.Layout, error) {
+	blocks, ok := s.node.CAS().(cas.Client)
+	if !ok {
+		return nil, fmt.Errorf("configured CAS does not support writes")
+	}
+	return unixfs.New(unixfs.Options{
+		BucketID:  g.BucketId(),
+		ChunkSize: fixedBucketListChunkSize,
+		Map:       g.Semantic(),
+		List:      g.ListSemantic(),
+		Blocks:    blocks,
+	})
+}
+
+func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, root cid.Cid) (cid.Cid, error) {
+	if !root.Defined() {
+		return cid.Undef, nil
+	}
+	if stat, err := layout.Stat(ctx, root, ""); err == nil && stat.Kind == "directory" {
+		return root, nil
+	}
+	return s.migrateLegacyTreeToUnixFS(ctx, g, layout, root)
+}
+
+func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
+	return s.copyLegacyPathToUnixFS(ctx, g, layout, legacyRoot, "", cid.Undef, "")
+}
+
+func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
+	stat, err := s.legacyBucketStat(ctx, g, legacyRoot, legacyPath)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("migrate legacy path %q: %w", legacyPath, err)
+	}
+
+	switch stat.Kind {
+	case "dir":
+		unixRoot, err = layout.AddDirectory(ctx, unixRoot, unixPath)
+		if err != nil {
+			return cid.Undef, err
+		}
+		entries, err := s.directoryEntriesFromStat(ctx, stat)
+		if err != nil {
+			return cid.Undef, fmt.Errorf("read legacy directory %q: %w", legacyPath, err)
+		}
+		for _, entry := range entries {
+			childLegacyPath := entry
+			if legacyPath != "" {
+				childLegacyPath = path.Join(legacyPath, entry)
+			}
+			childUnixPath := entry
+			if unixPath != "" {
+				childUnixPath = path.Join(unixPath, entry)
+			}
+			unixRoot, err = s.copyLegacyPathToUnixFS(ctx, g, layout, legacyRoot, childLegacyPath, unixRoot, childUnixPath)
+			if err != nil {
+				return cid.Undef, err
+			}
+		}
+		return unixRoot, nil
+	case "file":
+		if unixPath == "" {
+			return cid.Undef, fmt.Errorf("legacy root file cannot be migrated into a UnixFS bucket root")
+		}
+		data, err := s.readStatFile(ctx, g, stat)
+		if err != nil {
+			return cid.Undef, fmt.Errorf("read legacy file %q: %w", legacyPath, err)
+		}
+		return layout.AddFile(ctx, unixRoot, unixPath, data)
+	default:
+		return cid.Undef, fmt.Errorf("unsupported legacy path kind %q", stat.Kind)
+	}
+}
+
+func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.BucketStatResponse) ([]string, error) {
+	if stat == nil || stat.Kind != "dir" {
+		return nil, fmt.Errorf("directory stat is required")
+	}
+	if stat.Entries != nil {
+		return stat.Entries, nil
+	}
+	if stat.Payload == "" {
+		return nil, nil
+	}
+	payloadCID, err := cid.Decode(stat.Payload)
+	if err != nil {
+		return nil, err
+	}
+	data, err := s.node.CAS().Get(ctx, payloadCID)
+	if err != nil {
+		return nil, err
+	}
+	m, err := manifest.ParseDirectoryJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	return m.Entries, nil
+}
+
+func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi.BucketStatResponse) ([]byte, error) {
+	if stat == nil || stat.Kind != "file" {
+		return nil, fmt.Errorf("file stat is required")
+	}
+	key, err := decodeCID(stat.Key)
+	if err != nil {
+		return nil, err
+	}
+	switch stat.StorageKind {
+	case "raw":
+		return s.node.CAS().Get(ctx, key)
+	case "list":
+		size := int64(0)
+		if stat.Size != nil {
+			size = *stat.Size
+		} else {
+			size, _, err = s.listFileSize(ctx, g, key)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return s.readListRange(ctx, g, key, 0, size)
+	default:
+		return nil, fmt.Errorf("unsupported file storage kind %q", stat.StorageKind)
+	}
+}
+
+func (s *Server) unixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
+	layout, err := s.unixFSLayout(g)
+	if err != nil {
+		return nil, err
+	}
+	stat, err := layout.Stat(ctx, root, p)
+	if err != nil {
+		return nil, err
+	}
+
+	switch stat.Kind {
+	case "directory":
+		return &httpapi.BucketStatResponse{
+			Kind:        "dir",
+			StorageKind: "map",
+			Key:         stat.NodeRoot.String(),
+			Payload:     stat.Payload.String(),
+			Entries:     stat.Entries,
+		}, nil
+	case "file":
+		size := int64(stat.Size)
+		return &httpapi.BucketStatResponse{
+			Kind:        "file",
+			StorageKind: stat.StorageKind,
+			Key:         stat.Payload.String(),
+			Payload:     stat.Payload.String(),
+			Size:        &size,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported unixfs node kind %q", stat.Kind)
+	}
+}
+
+func (s *Server) unixFSResolve(ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string) (*httpapi.ResolveResponse, error) {
+	layout, err := s.unixFSLayout(g)
+	if err != nil {
+		return nil, err
+	}
+	resolution, err := layout.Resolve(ctx, root, bucketpath.CanonicalizeQueryPath(rawPath))
+	if err != nil {
+		return nil, err
+	}
+
+	steps := make([]httpapi.StepEvidence, len(resolution.Steps))
+	for i, step := range resolution.Steps {
+		steps[i] = httpapi.StepEvidence{
+			Path:     step.Path.String(),
+			Target:   step.Target.String(),
+			Evidence: base64.StdEncoding.EncodeToString([]byte(step.Proof)),
+			Kind:     "explicit",
+		}
+	}
+	return &httpapi.ResolveResponse{
+		Target:     resolution.Payload.String(),
+		Transcript: steps,
+	}, nil
+}
+
+func (s *Server) validUnixFSRoot(ctx context.Context, g *graph.Graph, root cid.Cid) bool {
+	layout, err := s.unixFSLayout(g)
+	if err != nil {
+		return false
+	}
+	stat, err := layout.Stat(ctx, root, "")
+	return err == nil && stat.Kind == "directory"
+}
+
+func (s *Server) unixFSArcCount(ctx context.Context, layout *unixfs.Layout, root cid.Cid) int {
+	count, err := unixFSArcCountAt(ctx, layout, root, "")
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func unixFSArcCountAt(ctx context.Context, layout *unixfs.Layout, root cid.Cid, p string) (int, error) {
+	stat, err := layout.Stat(ctx, root, p)
+	if err != nil {
+		return 0, err
+	}
+	switch stat.Kind {
+	case "file":
+		return 4, nil
+	case "directory":
+		count := 2 + len(stat.Entries)
+		for _, entry := range stat.Entries {
+			childPath := entry
+			if p != "" {
+				childPath = path.Join(p, entry)
+			}
+			childCount, err := unixFSArcCountAt(ctx, layout, root, childPath)
+			if err != nil {
+				return 0, err
+			}
+			count += childCount
+		}
+		return count, nil
+	default:
+		return 0, fmt.Errorf("unsupported unixfs node kind %q", stat.Kind)
 	}
 }
 

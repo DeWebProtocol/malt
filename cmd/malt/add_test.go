@@ -281,6 +281,160 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 	}
 }
 
+func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	bucketID := "unixfs-demo"
+
+	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+
+	inputRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(inputRoot, "empty"), 0o755); err != nil {
+		t.Fatalf("mkdir empty: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(inputRoot, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "nested", "small.txt"), []byte("hello unixfs"), 0o644); err != nil {
+		t.Fatalf("write small: %v", err)
+	}
+	large := make([]byte, addFixedChunkSize+23)
+	for i := range large {
+		large[i] = byte('a' + (i % 13))
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "nested", "large.bin"), large, 0o644); err != nil {
+		t.Fatalf("write large: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, bucketID, []string{inputRoot}, addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add with unixfs: %v", err)
+	}
+	if result.Files != 2 {
+		t.Fatalf("files = %d, want 2", result.Files)
+	}
+	if result.NewRoot == "" {
+		t.Fatal("new root should not be empty")
+	}
+
+	meta, err := daemon.GetBucket(ctx, bucketID)
+	if err != nil {
+		t.Fatalf("get bucket: %v", err)
+	}
+	if meta.Root != result.NewRoot {
+		t.Fatalf("bucket root = %q, want %q", meta.Root, result.NewRoot)
+	}
+
+	base := filepath.Base(inputRoot)
+	emptyStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/empty")
+	if err != nil {
+		t.Fatalf("stat empty: %v", err)
+	}
+	if emptyStat.Kind != "dir" {
+		t.Fatalf("empty kind = %q, want dir", emptyStat.Kind)
+	}
+
+	smallStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/small.txt")
+	if err != nil {
+		t.Fatalf("stat small: %v", err)
+	}
+	if smallStat.Kind != "file" || smallStat.StorageKind != "raw" {
+		t.Fatalf("unexpected small stat: %+v", smallStat)
+	}
+	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/nested/small.txt", "")
+	if err != nil {
+		t.Fatalf("get small content: status=%d err=%v", status, err)
+	}
+	if string(body) != "hello unixfs" {
+		t.Fatalf("small body = %q", string(body))
+	}
+
+	largeStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/large.bin")
+	if err != nil {
+		t.Fatalf("stat large: %v", err)
+	}
+	if largeStat.Kind != "file" || largeStat.StorageKind != "list" {
+		t.Fatalf("unexpected large stat: %+v", largeStat)
+	}
+	largeBody, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/nested/large.bin", "")
+	if err != nil {
+		t.Fatalf("get large content: status=%d err=%v", status, err)
+	}
+	if len(largeBody) != len(large) || string(largeBody[:64]) != string(large[:64]) {
+		t.Fatal("large body mismatch")
+	}
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	rootStat, err := daemon.StatBucketPath(ctx, bucketID, base)
+	if err != nil {
+		t.Fatalf("stat root: %v", err)
+	}
+	if err := exportBucketDirectory(ctx, daemon, casClient, bucketID, base, outDir, rootStat); err != nil {
+		t.Fatalf("export unixfs directory: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(outDir, "empty")); err != nil || !info.IsDir() {
+		t.Fatalf("expected exported empty directory, err=%v", err)
+	}
+}
+
+func TestAddInputsWithUnixFSMigratesLegacyBucket(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	bucketID := "unixfs-migrate"
+
+	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+
+	legacyRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(legacyRoot, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir legacy docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, "docs", "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("write legacy file: %v", err)
+	}
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{legacyRoot}, addBuildOptions{})
+	if err != nil {
+		t.Fatalf("build legacy staging: %v", err)
+	}
+	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, mergeAddNodes(newDirNode(), staged.Root))
+	if err != nil {
+		t.Fatalf("materialize legacy root: %v", err)
+	}
+	if err := daemon.SetBucketHead(ctx, bucketID, mat.Key.String(), mat.ArcCount, ""); err != nil {
+		t.Fatalf("set legacy head: %v", err)
+	}
+
+	nextRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(nextRoot, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir next docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nextRoot, "docs", "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write next file: %v", err)
+	}
+	if _, err := addInputsWithUnixFS(ctx, daemon, bucketID, []string{nextRoot}, addBuildOptions{}); err != nil {
+		t.Fatalf("add with unixfs over legacy bucket: %v", err)
+	}
+
+	base := filepath.Base(legacyRoot)
+	oldBody, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/docs/old.txt", "")
+	if err != nil {
+		t.Fatalf("read migrated old file: status=%d err=%v", status, err)
+	}
+	if string(oldBody) != "old" {
+		t.Fatalf("old body = %q", string(oldBody))
+	}
+	newBody, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/docs/new.txt", "")
+	if err != nil {
+		t.Fatalf("read new file: status=%d err=%v", status, err)
+	}
+	if string(newBody) != "new" {
+		t.Fatalf("new body = %q", string(newBody))
+	}
+}
+
 func TestAddWorkflowMergesExistingTree(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
@@ -373,7 +527,7 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 func newAddTestClients(t *testing.T) (*daemonclient.Client, *ipfs.Client) {
 	t.Helper()
 
-	mockCAS := casmock.NewCAS()
+	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
 	mockHTTP := casmock.NewHTTPServer("127.0.0.1:0", mockCAS)
 	casTS := httptest.NewServer(mockHTTP.Handler())
 	t.Cleanup(casTS.Close)

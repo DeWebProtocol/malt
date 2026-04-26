@@ -13,11 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
@@ -82,6 +84,17 @@ type Resolution struct {
 	Steps    []Step
 }
 
+// Stat describes a UnixFS layout node.
+type Stat struct {
+	Kind        string
+	NodeRoot    cid.Cid
+	Payload     cid.Cid
+	StorageKind string
+	Size        uint64
+	ChunkSize   uint64
+	Entries     []string
+}
+
 type fileInfo struct {
 	nodeRoot  cid.Cid
 	payload   cid.Cid
@@ -127,9 +140,13 @@ func (l *Layout) EmptyDirectory(ctx context.Context) (cid.Cid, error) {
 	if err != nil {
 		return cid.Undef, err
 	}
+	payload, err := l.commitDirectoryManifest(ctx, nil)
+	if err != nil {
+		return cid.Undef, err
+	}
 	entries := map[arcset.Path]cid.Cid{
 		typePath:    dirMarker,
-		payloadPath: dirMarker,
+		payloadPath: payload,
 	}
 	return l.maps.Commit(ctx, l.bucketID, mapping.NewViewFromPaths(entries))
 }
@@ -202,6 +219,56 @@ func (l *Layout) Resolve(ctx context.Context, root cid.Cid, path string) (*Resol
 	}, nil
 }
 
+// Stat resolves path and returns UnixFS node metadata.
+func (l *Layout) Stat(ctx context.Context, root cid.Cid, path string) (*Stat, error) {
+	nodeRoot, _, err := l.resolveNode(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+
+	kind, err := l.nodeType(ctx, nodeRoot)
+	if err != nil {
+		return nil, err
+	}
+	payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
+	}
+
+	switch kind {
+	case typeDirectory:
+		entries, err := l.loadDirectoryManifest(ctx, payload)
+		if err != nil {
+			return nil, err
+		}
+		return &Stat{
+			Kind:        typeDirectory,
+			NodeRoot:    nodeRoot,
+			Payload:     payload,
+			StorageKind: "map",
+			Entries:     entries,
+		}, nil
+	case typeFile:
+		info, err := l.fileInfo(ctx, nodeRoot, payload)
+		if err != nil {
+			return nil, err
+		}
+		return &Stat{
+			Kind:        typeFile,
+			NodeRoot:    nodeRoot,
+			Payload:     payload,
+			StorageKind: storageKind(info.payload),
+			Size:        info.size,
+			ChunkSize:   info.chunkSize,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported unixfs node kind %q", kind)
+	}
+}
+
 // ReadFile reads the complete file payload at path.
 func (l *Layout) ReadFile(ctx context.Context, root cid.Cid, path string) ([]byte, error) {
 	info, err := l.resolveFile(ctx, root, path)
@@ -262,7 +329,7 @@ func (l *Layout) ensureDirectory(ctx context.Context, root cid.Cid, segments []s
 	if err != nil {
 		return cid.Undef, err
 	}
-	return l.set(ctx, root, key, oldChild, nextChild)
+	return l.setChild(ctx, root, key, oldChild, nextChild)
 }
 
 func (l *Layout) addFile(ctx context.Context, root cid.Cid, segments []string, data []byte) (cid.Cid, error) {
@@ -286,7 +353,7 @@ func (l *Layout) addFile(ctx context.Context, root cid.Cid, segments []string, d
 		if err != nil {
 			return cid.Undef, err
 		}
-		return l.set(ctx, root, key, oldChild, fileRoot)
+		return l.setChild(ctx, root, key, oldChild, fileRoot)
 	}
 
 	child, _, ok, err := l.lookup(ctx, root, key)
@@ -314,7 +381,7 @@ func (l *Layout) addFile(ctx context.Context, root cid.Cid, segments []string, d
 	if err != nil {
 		return cid.Undef, err
 	}
-	return l.set(ctx, root, key, oldChild, nextChild)
+	return l.setChild(ctx, root, key, oldChild, nextChild)
 }
 
 func (l *Layout) commitFile(ctx context.Context, data []byte) (cid.Cid, error) {
@@ -418,6 +485,10 @@ func (l *Layout) resolveFile(ctx context.Context, root cid.Cid, path string) (*f
 		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
 	}
 
+	return l.fileInfo(ctx, nodeRoot, payload)
+}
+
+func (l *Layout) fileInfo(ctx context.Context, nodeRoot cid.Cid, payload cid.Cid) (*fileInfo, error) {
 	sizeCID, _, ok, err := l.lookup(ctx, nodeRoot, sizePath)
 	if err != nil {
 		return nil, err
@@ -565,6 +636,58 @@ func (l *Layout) set(ctx context.Context, root cid.Cid, key arcset.Path, oldValu
 	return l.maps.Update(ctx, l.bucketID, root, key, oldValue, newValue)
 }
 
+func (l *Layout) setChild(ctx context.Context, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	nextRoot, err := l.set(ctx, root, key, oldValue, newValue)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.addDirectoryEntry(ctx, nextRoot, key.String())
+}
+
+func (l *Layout) addDirectoryEntry(ctx context.Context, root cid.Cid, name string) (cid.Cid, error) {
+	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if !ok {
+		return cid.Undef, fmt.Errorf("%w: missing directory @payload", ErrNotFound)
+	}
+	entries, err := l.loadDirectoryManifest(ctx, payload)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if slices.Contains(entries, name) {
+		return root, nil
+	}
+	entries = append(entries, name)
+	nextPayload, err := l.commitDirectoryManifest(ctx, entries)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.set(ctx, root, payloadPath, payload, nextPayload)
+}
+
+func (l *Layout) commitDirectoryManifest(ctx context.Context, entries []string) (cid.Cid, error) {
+	m := manifest.Normalize(&manifest.DirectoryManifest{Entries: entries})
+	payload, err := m.MarshalJSON()
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.blocks.Put(ctx, payload)
+}
+
+func (l *Layout) loadDirectoryManifest(ctx context.Context, payload cid.Cid) ([]string, error) {
+	data, err := l.blocks.Get(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	m, err := manifest.ParseDirectoryJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(m.Entries), nil
+}
+
 func splitRelativePath(path string) ([]string, error) {
 	canonical := arcset.CanonicalizePath(path)
 	if canonical.IsEmpty() {
@@ -646,4 +769,15 @@ func cloneBytes(data []byte) []byte {
 	out := make([]byte, len(data))
 	copy(out, data)
 	return out
+}
+
+func storageKind(c cid.Cid) string {
+	switch codec.SemanticKindOf(c) {
+	case codec.SemanticKindList:
+		return "list"
+	case codec.SemanticKindMap:
+		return "map"
+	default:
+		return "raw"
+	}
 }

@@ -93,6 +93,12 @@ type addMaterializeResult struct {
 	Descendants map[string]cid.Cid
 }
 
+type addUnixFSResult struct {
+	Files   int
+	Bytes   int64
+	NewRoot string
+}
+
 type addCASClient interface {
 	Put(ctx context.Context, data []byte) (cid.Cid, error)
 	Get(ctx context.Context, c cid.Cid) ([]byte, error)
@@ -115,77 +121,29 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return daemonCommandError(err)
 	}
 
-	casClient, err := makeCASClient()
-	if err != nil {
-		return err
-	}
-
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, args, addBuildOptions{
+	oldRoot := strings.TrimSpace(meta.Root)
+	result, err := addInputsWithUnixFS(ctx, daemon, bucketID, args, addBuildOptions{
 		Prefix:   addPrefixFlag,
 		Wrap:     addWrapFlag,
 		WrapName: addWrapNameFlag,
 	})
 	if err != nil {
+		var apiErr *daemonclient.Error
+		if errors.As(err, &apiErr) {
+			return daemonCommandError(err)
+		}
 		return err
 	}
-
-	existingRoot := newDirNode()
-	oldRoot := strings.TrimSpace(meta.Root)
-	if oldRoot != "" {
-		loaded, err := loadExistingBucketTree(ctx, daemon, casClient, bucketID, oldRoot)
-		if err != nil {
-			return daemonCommandError(err)
-		}
-		existingRoot = loaded
-	}
-
-	merged := mergeAddNodes(existingRoot, staged.Root)
-	if merged == nil || merged.Kind != "dir" {
-		return fmt.Errorf("internal error: merged root is not a directory")
-	}
-
-	oldRootCID := cid.Undef
-	if oldRoot != "" {
-		parsedOldRoot, err := cid.Decode(oldRoot)
-		if err != nil {
-			return fmt.Errorf("decode existing bucket root: %w", err)
-		}
-		oldRootCID = parsedOldRoot
-	}
-	var (
-		newRootCID cid.Cid
-		arcCount   int
-	)
-	if !merged.Changed && oldRootCID.Defined() {
-		newRootCID = oldRootCID
-		arcCount = meta.ArcCount
-	} else {
-		mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, merged)
-		if err != nil {
-			return daemonCommandError(err)
-		}
-		newRootCID = mat.Key
-		arcCount = mat.ArcCount
-	}
-
-	if !newRootCID.Defined() {
+	if result.NewRoot == "" {
 		return fmt.Errorf("failed to materialize a new bucket root")
-	}
-
-	expectedOldRoot := ""
-	if oldRootCID.Defined() {
-		expectedOldRoot = oldRootCID.String()
-	}
-	if err := daemon.SetBucketHead(ctx, bucketID, newRootCID.String(), arcCount, expectedOldRoot); err != nil {
-		return daemonCommandError(err)
 	}
 
 	printJSON(&addSummary{
 		Bucket:      bucketID,
-		OldRoot:     expectedOldRoot,
-		NewRoot:     newRootCID.String(),
-		Files:       staged.Files,
-		Bytes:       staged.Bytes,
+		OldRoot:     oldRoot,
+		NewRoot:     result.NewRoot,
+		Files:       result.Files,
+		Bytes:       result.Bytes,
 		AutoCreated: autoCreated,
 	})
 	return nil
@@ -195,6 +153,131 @@ type addBuildOptions struct {
 	Prefix   string
 	Wrap     bool
 	WrapName string
+}
+
+func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
+	inputs, err := collectAddInputs(rawInputs)
+	if err != nil {
+		return nil, err
+	}
+	mounted, err := mountAddInputs(inputs, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &addUnixFSResult{}
+	for _, item := range mounted {
+		if item.Input.Info.IsDir() {
+			files, bytesUploaded, root, err := addDirectoryWithUnixFS(ctx, daemon, bucketID, item)
+			if err != nil {
+				return nil, err
+			}
+			result.Files += files
+			result.Bytes += bytesUploaded
+			result.NewRoot = root
+			continue
+		}
+		bytesUploaded, root, err := addFileWithUnixFS(ctx, daemon, bucketID, item.Input.AbsPath, item.MountBase)
+		if err != nil {
+			return nil, err
+		}
+		result.Files++
+		result.Bytes += bytesUploaded
+		result.NewRoot = root
+	}
+	return result, nil
+}
+
+func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, item addMountedInput) (int, int64, string, error) {
+	mountBase := canonicalAddPath(item.MountBase)
+	if mountBase == "" {
+		return 0, 0, "", fmt.Errorf("directory mount path must not be empty")
+	}
+
+	resp, err := daemon.AddBucketUnixFSDirectory(ctx, bucketID, mountBase)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	lastRoot := resp.NewRoot
+	var files int
+	var bytesUploaded int64
+
+	err = filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current != item.Input.AbsPath && d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("symlink is not supported: %s", current)
+		}
+
+		rel, err := filepath.Rel(item.Input.AbsPath, current)
+		if err != nil {
+			return fmt.Errorf("compute relative path %q: %w", current, err)
+		}
+		if rel == "." {
+			return nil
+		}
+
+		targetPath := canonicalAddPath(path.Join(mountBase, filepath.ToSlash(rel)))
+		if targetPath == "" {
+			return nil
+		}
+
+		if d.IsDir() {
+			resp, err := daemon.AddBucketUnixFSDirectory(ctx, bucketID, targetPath)
+			if err != nil {
+				return err
+			}
+			lastRoot = resp.NewRoot
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", current, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("non-regular file is not supported: %s", current)
+		}
+
+		bytesWritten, root, err := addFileWithUnixFS(ctx, daemon, bucketID, current, targetPath)
+		if err != nil {
+			return err
+		}
+		files++
+		bytesUploaded += bytesWritten
+		lastRoot = root
+		return nil
+	})
+	if err != nil {
+		return 0, 0, "", err
+	}
+	return files, bytesUploaded, lastRoot, nil
+}
+
+func addFileWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, localPath string, targetPath string) (int64, string, error) {
+	targetPath = canonicalAddPath(targetPath)
+	if targetPath == "" {
+		return 0, "", fmt.Errorf("target path must not be empty")
+	}
+
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return 0, "", fmt.Errorf("stat %s: %w", localPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("not a regular file: %s", localPath)
+	}
+
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return 0, "", fmt.Errorf("read %s: %w", localPath, err)
+	}
+	resp, err := daemon.AddBucketUnixFSFile(ctx, bucketID, targetPath, data)
+	if err != nil {
+		return 0, "", err
+	}
+	return info.Size(), resp.NewRoot, nil
 }
 
 func resolveAddBucketID(defaultBucketID string, flagBucketID string) (string, error) {

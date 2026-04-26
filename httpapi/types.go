@@ -82,11 +82,22 @@ type BucketListStatResponse struct {
 
 // BucketStatResponse is the locked stat contract for bucket content inspection.
 type BucketStatResponse struct {
-	Kind        string `json:"kind"`              // file|dir
-	StorageKind string `json:"storage_kind"`      // raw|list|map
-	Key         string `json:"key"`               // terminal key CID
-	Payload     string `json:"payload,omitempty"` // directory payload CID when available
-	Size        *int64 `json:"size,omitempty"`    // required for files, omitted for directories
+	Kind        string   `json:"kind"`              // file|dir
+	StorageKind string   `json:"storage_kind"`      // raw|list|map
+	Key         string   `json:"key"`               // terminal key CID
+	Payload     string   `json:"payload,omitempty"` // directory payload CID when available
+	Size        *int64   `json:"size,omitempty"`    // required for files, omitted for directories
+	Entries     []string `json:"entries,omitempty"` // directory entries when available
+}
+
+// BucketUnixFSWriteResponse returns the result of a UnixFS layout mutation.
+type BucketUnixFSWriteResponse struct {
+	Bucket   string `json:"bucket"`
+	Path     string `json:"path"`
+	Kind     string `json:"kind"`
+	OldRoot  string `json:"old_root,omitempty"`
+	NewRoot  string `json:"new_root"`
+	ArcCount int    `json:"arc_count"`
 }
 
 // StepEvidence is a single transcript step.

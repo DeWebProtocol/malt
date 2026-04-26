@@ -141,6 +141,9 @@ func directoryEntriesFromStatPayload(ctx context.Context, casClient addCASClient
 	if stat == nil || stat.Kind != "dir" {
 		return nil, fmt.Errorf("directory stat is required")
 	}
+	if stat.Entries != nil {
+		return stat.Entries, nil
+	}
 	if stat.Payload == "" {
 		return []string{}, nil
 	}
