@@ -36,7 +36,7 @@ Current core semantics are:
   - mutation: insert, replace, or delete a binding
   - use case: directory-like metadata, object fields, path indexes
 
-Both semantics use ArcTable for Bucket-based arcset persistence/materialization
+Both semantics use ArcTable for bucket/namespace-scoped arcset persistence/materialization
 and stateless commitment backends for proofs.
 
 ## What MALT Changes
@@ -106,12 +106,18 @@ These bucket rules belong to the current file-system layout. The core MALT
 layer only requires list/map semantics to expose authenticated read/write
 semantics over roots.
 
+Bucket is an operational namespace and collection boundary for state placement,
+replication, migration, GC, indexing configuration, and optional head pointers.
+It is not part of the core list/map semantics. Applications decide which root
+becomes a published head, how freshness is communicated, and whether concurrent
+roots are merged.
+
 ## Terminology and Layers
 
 | Layer | Role | Examples |
 | --- | --- | --- |
 | Semantic Layer | Abstract list/map semantics | `list`, `map` |
-| ArcTable | Bucket-based arcset persistence/materialization | overwrite, versioned |
+| ArcTable | Bucket/namespace-scoped arcset persistence/materialization | overwrite, versioned |
 | Commitment Backend | Stateless primitive authentication | KZG, IPA |
 | Application Layout | Product data model built above semantic layer | flattened UnixFS-style bucket layout |
 
@@ -245,7 +251,7 @@ Verification is local to the client:
 - `core/commitment`
   - stateless primitive commitment backends
 - `core/arctable`
-  - Bucket-based arcset persistence/materialization
+  - bucket/namespace-scoped arcset persistence/materialization
 - `core/layout/unixfs`
   - current pure MALT UnixFS-style layout prototype over map/list semantics
 - `core/resolver`
@@ -305,7 +311,7 @@ malt/
 |-- httpapi/         # shared daemon request/response payload types
 |-- core/
 |   |-- api/          # top-level wiring via Node
-|   |-- arctable/     # Bucket-based arcset persistence/materialization
+|   |-- arctable/     # bucket/namespace-scoped arcset persistence/materialization
 |   |-- bucketpath/   # current bucket path boundary helper
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities

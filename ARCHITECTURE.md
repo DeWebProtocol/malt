@@ -24,7 +24,7 @@ List and map are semantic abstractions:
   child references
 - map semantic: authenticated keyed/path-like relations among graph nodes
 
-ArcTable is Bucket-based arcset persistence/materialization. Commitment
+ArcTable is bucket/namespace-scoped arcset persistence/materialization. Commitment
 backends are stateless primitives used to authenticate semantic-layer
 representations. Resolver, writer, and current graph packages are runtime or
 compatibility adapters around those semantics.
@@ -39,7 +39,7 @@ The target model has four distinct layers:
 | Layer | Responsibility |
 | --- | --- |
 | Semantic layer | Abstract list/map semantics |
-| ArcTable | Bucket-based arcset persistence/materialization |
+| ArcTable | Bucket/namespace-scoped arcset persistence/materialization |
 | Commitment backend | Stateless proof and verification over semantic-layer representations |
 | Application layout | Product data model built above list/map/CAS blobs |
 
@@ -119,7 +119,8 @@ owns exact key proof generation and verification.
 List/map semantics need materialized arcset state in order to prove and update
 without reconstructing full payload objects.
 
-In the current implementation this role is served by Bucket-based ArcTable:
+In the current implementation this role is served by bucket/namespace-scoped
+ArcTable:
 
 - point lookup of materialized structure entries
 - batch lookup for implementation nodes
@@ -129,6 +130,12 @@ In the current implementation this role is served by Bucket-based ArcTable:
 
 ArcTable is not the trust root. Incorrect materialized state is rejected by
 proof verification or root recomputation.
+
+The bucket identifier is an operational namespace and collection boundary for
+state placement, replication, migration, GC, bloom/index configuration, and
+optional head publication. It is not part of the mathematical list/map
+semantics, and it does not decide which root should become an application's
+current head.
 
 ### Commitment Backend
 
@@ -169,7 +176,7 @@ as follows:
 - `core/structure/list/tree`
   - primary list implementation
 - `core/arctable`
-  - Bucket-based arcset persistence/materialization
+  - bucket/namespace-scoped arcset persistence/materialization
 - `core/commitment`
   - stateless primitive commitment backends
 - `core/layout/unixfs`
@@ -238,7 +245,7 @@ malt/
 |-- server/          # daemon HTTP server
 |-- core/
 |   |-- api/          # Node: top-level component wiring
-|   |-- arctable/     # Bucket-based arcset persistence/materialization
+|   |-- arctable/     # bucket/namespace-scoped arcset persistence/materialization
 |   |-- bucketpath/   # current bucket path boundary helper
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities
@@ -412,11 +419,13 @@ Current implementations:
 
 The `@previous` chain and MVCC behavior should be treated as versioning and
 optimization concerns. They are not part of the minimal semantic read/write
-interface.
+interface. Versioned ArcTable can preserve concurrent roots without overwriting
+each other, but choosing which root becomes a published head is an application
+or deployment policy.
 
 The separate `lineage` package duplicates part of this conceptual space. Until
-the MVCC and bucket-based ArcTable design is settled, lineage should be treated
-as auxiliary and removable from the core narrative.
+the MVCC and namespace-scoped ArcTable design is settled, lineage should be
+treated as auxiliary and removable from the core narrative.
 
 ## CAS Boundary
 
