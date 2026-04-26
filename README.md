@@ -162,15 +162,16 @@ stable-indexed layout over the same primitive commitment interface.
 
 ## Flattened UnixFS-Style Layout
 
-The next product-level layout should be a pure MALT structure version of
-UnixFS-like file and directory semantics:
+The current prototype includes a first pure MALT structure version of
+UnixFS-like file and directory semantics in `core/layout/unixfs`.
 
-- directories use map graphs
-- file chunk sequences use list graphs
+- directories and files are committed as map roots
+- directory entries are map bindings from path segment to child root
+- file `@payload` bindings point to a raw CAS CID for small files
+- large file `@payload` bindings point to a list root of chunk CIDs
 - payload and chunks remain CAS CIDs
-- path lookup composes map graph reads
-- file range reads compose list graph range reads
-- file and directory mutation composes map/list graph writes
+- path lookup composes map reads
+- file range reads map byte ranges to list index reads
 
 This layout gives a clean benchmark target:
 
@@ -179,6 +180,15 @@ This layout gives a clean benchmark target:
 
 The comparison should measure path lookup, range read, chunk update, directory
 mutation, proof size, and write amplification.
+
+Current boundary:
+
+- `core/layout/unixfs` is a library/prototype layer, not the daemon or CLI path.
+- It depends directly on `mapping.Semantics`, `list.Semantics`, and `cas.Client`.
+- It does not route through current `core/graph`, `core/writer`, or
+  `core/resolver`.
+- Graph-level node/arc modeling, resolver integration, and runtime exposure are
+  explicit TODO items rather than settled implementation details.
 
 ## CAS Boundary
 
@@ -230,6 +240,8 @@ Verification is local to the client:
   - primitive commitment backends used by graph implementations
 - `core/arctable`
   - graph-state materialization and lookup support
+- `core/layout/unixfs`
+  - current pure MALT UnixFS-style layout prototype over map/list semantics
 - `core/resolver`
   - current runtime compatibility/read adapter code
 - `core/writer`

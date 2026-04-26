@@ -168,6 +168,9 @@ as follows:
   - storage/materialization support for graph implementations
 - `core/commitment`
   - primitive commitment backends
+- `core/layout/unixfs`
+  - current pure MALT UnixFS-style layout prototype built directly over
+    `mapping.Semantics`, `list.Semantics`, and CAS
 - `core/resolver`
   - current runtime read loop and compatibility adapters
 - `core/writer`
@@ -238,6 +241,8 @@ malt/
 |   |-- commitment/   # primitive commitment backends
 |   |-- graph/        # current metadata/runtime composition
 |   |-- kvstore/      # KV backends
+|   |-- layout/
+|   |   `-- unixfs/    # current map/list-based UnixFS layout prototype
 |   |-- lineage/      # auxiliary version-history metadata
 |   |-- manifest/     # current directory-manifest helper
 |   |-- resolver/     # current read compatibility adapters
@@ -293,7 +298,7 @@ The current interface exposes:
 This already approximates the target graph shape:
 
 - `Prove` is the list read path for index queries
-- future `Range` should be added for file range workloads
+- first-class `Range` proof support remains a TODO for file range workloads
 - `Verify` validates read proof
 - `Append`, `Replace`, and `Truncate` are list write operations
 
@@ -331,21 +336,32 @@ implemented directly.
 
 ## Flattened UnixFS-Style Layout
 
-The first target application layout should be a pure MALT structure UnixFS-like
-layout.
+The current code includes a first pure MALT structure UnixFS-like layout in
+`core/layout/unixfs`.
 
-Suggested interpretation:
+Current implementation:
 
-- directory nodes are map graph roots
-- file content is represented by list graph roots
+- directories and files are committed as map roots
+- directory entries are map bindings from one path segment to a child root
+- file `@payload` points to a raw CAS CID for small files
+- large-file `@payload` points to a list root of chunk CIDs
 - payload blocks and chunks remain ordinary CAS CIDs
-- path lookup composes map graph reads
-- range load translates byte ranges to list ranges
-- file and directory mutation composes map/list graph writes
+- path lookup composes exact map reads
+- range load translates byte ranges to list index reads
 
 This layout is not the definition of MALT. It is an application model that
 demonstrates that the graph contract can express practical file-system
 semantics.
+
+Current boundary:
+
+- The package is a library/prototype and is not yet wired into `malt add`,
+  `malt cat`, `malt get`, daemon routes, or managed buckets.
+- It directly injects `mapping.Semantics`, `list.Semantics`, and `cas.Client`.
+- It intentionally bypasses current `core/graph`, `core/writer`, and
+  `core/resolver` while the graph-node and resolver boundaries remain open.
+- The unresolved pieces are tracked as TODO items, not as a change to the core
+  graph direction.
 
 It also gives the benchmark target:
 
@@ -360,6 +376,21 @@ Metrics:
 - directory mutation cost
 - proof size
 - write amplification
+
+Open TODOs for the next discussion:
+
+- define graph node and arc terminology precisely enough to map onto current
+  map/list semantics
+- decide whether `@payload` belongs only to resolver/runtime policy or also to
+  graph-node invariants
+- decide how `core/layout/unixfs` should expose proof transcripts for path
+  lookup and terminal payload materialization
+- decide whether UnixFS reads should call current `core/resolver` or keep a
+  layout-local resolver
+- decide how UnixFS writes should integrate with managed bucket heads and daemon
+  APIs
+- decide whether list needs a first-class range proof API or whether composed
+  index proofs are sufficient for the first benchmark
 
 ## ArcTable and Versioning
 

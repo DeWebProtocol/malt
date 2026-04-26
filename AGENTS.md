@@ -12,6 +12,7 @@ This submodule contains the Go implementation of MALT:
 - authenticated graph contracts and map/list graph implementations
 - ArcTable-backed structure materialization
 - primitive commitment backends
+- the current `core/layout/unixfs` prototype built directly over map/list semantics
 - runtime adapters for current resolver / writer / graph packages
 - daemon/API surface, CLI, and local CAS integration
 
@@ -27,6 +28,8 @@ This submodule contains the Go implementation of MALT:
 - current `resolver` and `writer` code is adapter/runtime machinery, not the semantic owner.
 - explicit resolution is a compatibility layer above map graph reads.
 - list semantics use index/range reads and append/replace/truncate writes, not path resolution.
+- `core/layout/unixfs` is the current application-layout prototype; it should not be treated as the final graph interface.
+- unresolved graph-node, arc, resolver, and UnixFS runtime-integration questions should be tracked as TODOs for later design discussion.
 - `bucketpath` and `manifest` are current bucket/file layout helpers and should not leak into core graph semantics.
 - lineage/MVCC/versioned ArcTable concerns are pending design topics outside the minimal graph contract.
 
