@@ -186,7 +186,7 @@ stable-indexed layout over the same primitive commitment interface.
 ## Flattened UnixFS-Style Layout
 
 The current prototype includes a first pure MALT structure version of
-UnixFS-like file and directory semantics in `core/layout/unixfs`.
+UnixFS-like file and directory semantics in `core/layout/malt/unixfs`.
 
 - directories and files are committed as map roots
 - directory entries are map bindings from path segment to child root
@@ -206,7 +206,7 @@ mutation, proof size, and write amplification.
 
 Current boundary:
 
-- `core/layout/unixfs` remains the direct map/list/CAS library layer for the
+- `core/layout/malt/unixfs` remains the direct map/list/CAS library layer for the
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
 - The managed bucket runtime now exposes this layout through daemon routes for
@@ -269,7 +269,7 @@ Verification is local to the client:
   - stateless primitive commitment backends
 - `core/arctable`
   - bucket/namespace-scoped arcset persistence/materialization
-- `core/layout/unixfs`
+- `core/layout/malt/unixfs`
   - current pure MALT UnixFS-style layout prototype over map/list semantics
 - `core/resolver`
   - current runtime compatibility/read adapter code

@@ -18,7 +18,7 @@ import (
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/layout/unixfs"
+	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/resolver"

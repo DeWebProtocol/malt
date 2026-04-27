@@ -12,7 +12,7 @@ This submodule contains the Go implementation of MALT:
 - list/map semantic abstractions over immutable CAS payloads
 - bucket/namespace-scoped ArcTable-backed arcset persistence/materialization
 - stateless primitive commitment backends
-- the current `core/layout/unixfs` prototype built from list/map/CAS blob composition
+- the current `core/layout/malt/unixfs` prototype built from list/map/CAS blob composition
 - runtime adapters for current resolver / writer / graph packages
 - daemon/API surface, CLI, and local CAS integration
 
@@ -32,7 +32,7 @@ This submodule contains the Go implementation of MALT:
 - every map semantic object carries reserved `@payload` as its terminal materialization binding.
 - layouts translate source-domain data into MALT semantic mutations.
 - the gateway accepts converted semantic mutations and returns `result + ProofList` for standardized reads.
-- `core/layout/unixfs` is the current application-layout prototype; it should not be treated as the core semantic abstraction.
+- `core/layout/malt/unixfs` is the current application-layout prototype; it should not be treated as the core semantic abstraction.
 - unresolved graph-node, arc, resolver, and UnixFS runtime-integration questions should be tracked as TODOs for later design discussion.
 - `bucket` is an operational namespace/collection boundary for runtime state, not a core list/map or arcset semantic.
 - `bucketpath` and `manifest` are current bucket/file layout helpers and should not leak into core semantic rules.

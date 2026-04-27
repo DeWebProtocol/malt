@@ -181,7 +181,7 @@ as follows:
   - bucket/namespace-scoped arcset persistence/materialization
 - `core/commitment`
   - stateless primitive commitment backends
-- `core/layout/unixfs`
+- `core/layout/malt/unixfs`
   - current pure MALT UnixFS-style layout prototype built directly over
     `mapping.Semantics`, `list.Semantics`, and CAS
 - `core/resolver`
@@ -359,7 +359,7 @@ target binding proofs from the queried root to the destination.
 ## Flattened UnixFS-Style Layout
 
 The current code includes a first pure MALT structure UnixFS-like layout in
-`core/layout/unixfs`.
+`core/layout/malt/unixfs`.
 
 Current implementation:
 
@@ -409,7 +409,7 @@ Open TODOs for the next discussion:
 - define graph node and arc terminology precisely enough to map onto current
   map/list semantics
 - define the gateway semantic-mutation schema
-- define how `core/layout/unixfs` should expose or produce semantic mutations
+- define how `core/layout/malt/unixfs` should expose or produce semantic mutations
 - define the `ProofList` schema for path lookup, terminal `@payload`, blob
   bindings, and list range reads
 - decide how UnixFS reads should map onto gateway read queries and `ProofList`

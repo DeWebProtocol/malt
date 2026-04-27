@@ -11,7 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/layout/unixfs"
+	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	cid "github.com/ipfs/go-cid"
