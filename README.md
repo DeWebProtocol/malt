@@ -9,19 +9,25 @@ authenticated, read, written, and verified.
 
 ## Core Idea
 
-The conceptual center is a list/map semantic layer over immutable CAS payloads:
+MALT core consists of ArcTable, stateless commitment backends, and the list/map
+semantic layer over immutable CAS payloads. ArcTable stores and materializes
+arcsets for fast lookup, but does not provide correctness. Commitment backends
+are stateless vector-commitment proof primitives. The list/map layer is the
+semantic abstraction exposed above them.
+
+Gateway reads use the standard shape:
 
 ```text
-Read(root, query) -> result + proof
-VerifyRead(root, query, result, proof) -> valid / invalid
-
-Write(root, mutation) -> newRoot + receipt
-VerifyWrite(root, mutation, newRoot, receipt) -> valid / invalid
+Read(root, query) -> result + ProofList
+VerifyRead(root, query, result, ProofList) -> valid / invalid
 ```
 
 A structure root exposes authenticated read/write semantics, but those
 semantics are owned by `list` and `map`, not by the current runtime `graph`
-object.
+object. Gateway writes accept semantic mutations produced by layouts, rather
+than raw source-domain data. In the HTTP deployment, blob reads may carry
+`ProofList` in response metadata/header; large-file range reads return selected
+bytes plus the corresponding `ProofList`.
 
 Current core semantics are:
 
@@ -35,6 +41,7 @@ Current core semantics are:
   - query: key or path-like key
   - mutation: insert, replace, or delete a binding
   - use case: directory-like metadata, object fields, path indexes
+  - every map semantic object carries the reserved `@payload` binding
 
 Both semantics use ArcTable for bucket/namespace-scoped arcset persistence/materialization
 and stateless commitment backends for proofs.
@@ -98,13 +105,15 @@ In the current bucket-first prototype:
 
 - a managed bucket head is a directory-shaped `map` root
 - large files are represented by `list` roots referenced from map bindings
-- every MALT-native `map` root carries a reserved `@payload` binding
+- every MALT-native `map` root carries a reserved `@payload` binding as a map
+  semantic invariant
 - empty payloads should use a defined empty-block CID rather than omitting
   `@payload`
 
-These bucket rules belong to the current file-system layout. The core MALT
-layer only requires list/map semantics to expose authenticated read/write
-semantics over roots.
+The managed bucket head is a product/runtime pointer. The `@payload` binding is
+not merely a bucket rule: it is reserved by map semantic objects for terminal
+materialization. List roots are terminal typed keys and do not auto-redirect
+through `@payload`.
 
 Bucket is an operational namespace and collection boundary for state placement,
 replication, migration, GC, indexing configuration, and optional head pointers.
@@ -119,6 +128,7 @@ roots are merged.
 | Semantic Layer | Abstract list/map semantics | `list`, `map` |
 | ArcTable | Bucket/namespace-scoped arcset persistence/materialization | overwrite, versioned |
 | Commitment Backend | Stateless primitive authentication | KZG, IPA |
+| Gateway | Deployment surface for semantic mutations and verifiable reads | daemon HTTP API |
 | Application Layout | Product data model built above semantic layer | flattened UnixFS-style bucket layout |
 
 Under this terminology:
@@ -126,6 +136,9 @@ Under this terminology:
 - `list` and `map` are semantic abstractions.
 - ArcTable is materialization and lookup state used by those semantics.
 - Commitment backends authenticate semantic-layer arcset/cell/node representations.
+- Layouts translate source-domain data into MALT semantic mutations.
+- The gateway accepts those semantic mutations and returns `result + ProofList`
+  on reads.
 - Resolver and writer code paths are runtime adapters, not the core semantic
   definition of MALT.
 - The current `core/graph` package is runtime metadata/composition code; it is
@@ -140,6 +153,8 @@ Native operations:
 - read one key and return the target binding plus proof
 - verify a key binding under a root
 - insert, replace, or delete a binding to produce a new root
+- reserve `@payload` as the terminal materialization binding for every map
+  semantic object
 
 The current default implementation is `core/structure/mapping/radix`, a
 digest-keyed radix map over an index commitment backend. The older
@@ -192,15 +207,17 @@ mutation, proof size, and write amplification.
 Current boundary:
 
 - `core/layout/unixfs` remains the direct map/list/CAS library layer for the
-  UnixFS-style layout.
+  UnixFS-style layout and translates source-domain file/directory data into
+  MALT semantic mutations.
 - The managed bucket runtime now exposes this layout through daemon routes for
   UnixFS file and directory writes, path stat, and content reads, and the
   `malt add`, `malt cat`, and `malt get` commands use those bucket APIs.
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
   `core/resolver` the semantic owners.
-- Graph-level node/arc terminology, resolver transcript unification, write
-  receipts, and benchmark-facing proof reporting remain explicit TODO items.
+- Graph-level node/arc terminology, gateway semantic-mutation schema,
+  `ProofList`, write receipts, and benchmark-facing proof reporting remain
+  explicit TODO items.
 
 ## CAS Boundary
 
@@ -233,8 +250,8 @@ CAS payloads.
 Verification is local to the client:
 
 1. a service executes a graph read or write
-2. it returns a result plus proof or receipt
-3. the client verifies against the relevant root
+2. reads return `result + ProofList`
+3. the client verifies the ProofList against the relevant root
 4. correctness does not depend on trusting the daemon, resolver, ArcTable, or
    cache state
 

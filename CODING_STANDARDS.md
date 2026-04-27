@@ -49,6 +49,11 @@
 - Treat `map` and `list` packages as semantic abstractions. Resolver and writer
   packages may adapt those semantics, but they should not redefine their
   read/write behavior.
+- Treat `@payload` as a reserved binding on map semantic objects, not as a
+  layout-local convention.
+- Layout packages should translate source-domain data into semantic mutations;
+  gateway-facing code should accept those mutations and return
+  `result + ProofList` for reads.
 
 ## Code Style
 

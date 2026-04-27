@@ -29,6 +29,9 @@ This submodule contains the Go implementation of MALT:
 - current `resolver` and `writer` code is adapter/runtime machinery, not the semantic owner.
 - explicit resolution is a compatibility layer above map reads.
 - list semantics use index/range reads and append/replace/truncate writes, not path resolution.
+- every map semantic object carries reserved `@payload` as its terminal materialization binding.
+- layouts translate source-domain data into MALT semantic mutations.
+- the gateway accepts converted semantic mutations and returns `result + ProofList` for standardized reads.
 - `core/layout/unixfs` is the current application-layout prototype; it should not be treated as the core semantic abstraction.
 - unresolved graph-node, arc, resolver, and UnixFS runtime-integration questions should be tracked as TODOs for later design discussion.
 - `bucket` is an operational namespace/collection boundary for runtime state, not a core list/map or arcset semantic.

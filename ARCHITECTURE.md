@@ -5,17 +5,17 @@
 MALT is an authenticated mutable structure layer over immutable
 content-addressed storage.
 
-The architectural center is the list/map semantic layer over immutable CAS
-payloads. A MALT graph is not a Go runtime object that merely holds
-dependencies. It is the authenticated structure induced by list/map semantics,
-ArcTable arcset persistence, and stateless commitment proofs.
+MALT core consists of ArcTable, stateless commitment backends, and the list/map
+semantic layer over immutable CAS payloads. A MALT graph is not a Go runtime
+object that merely holds dependencies. It is the authenticated structure induced
+by list/map semantics, ArcTable arcset persistence, and stateless commitment
+proofs.
 
 ```text
-Read(root, query) -> result + proof
-VerifyRead(root, query, result, proof) -> valid / invalid
+GatewayRead(root, query) -> result + ProofList
+VerifyRead(root, query, result, ProofList) -> valid / invalid
 
-Write(root, mutation) -> newRoot + receipt
-VerifyWrite(root, mutation, newRoot, receipt) -> valid / invalid
+GatewayWrite(root, semantic mutation) -> newRoot + write metadata
 ```
 
 List and map are semantic abstractions:
@@ -24,10 +24,13 @@ List and map are semantic abstractions:
   child references
 - map semantic: authenticated keyed/path-like relations among graph nodes
 
-ArcTable is bucket/namespace-scoped arcset persistence/materialization. Commitment
-backends are stateless primitives used to authenticate semantic-layer
-representations. Resolver, writer, and current graph packages are runtime or
-compatibility adapters around those semantics.
+ArcTable is bucket/namespace-scoped arcset persistence/materialization and does
+not provide correctness by itself. Commitment backends are stateless
+vector-commitment primitives used to authenticate semantic-layer
+representations. Layouts translate source-domain data into semantic mutations;
+the gateway accepts those mutations and returns `result + ProofList` on reads.
+Resolver, writer, and current graph packages are runtime or compatibility
+adapters around those semantics.
 
 This document is implementation-oriented. For the shorter system overview, see
 [`README.md`](./README.md).
@@ -41,6 +44,7 @@ The target model has four distinct layers:
 | Semantic layer | Abstract list/map semantics |
 | ArcTable | Bucket/namespace-scoped arcset persistence/materialization |
 | Commitment backend | Stateless proof and verification over semantic-layer representations |
+| Gateway | Runtime surface accepting semantic mutations and returning ProofLists |
 | Application layout | Product data model built above list/map/CAS blobs |
 
 The public structure layer should expose list/map semantics, not storage
@@ -52,21 +56,14 @@ The semantic layer defines the shape of authenticated operations. It should be
 generic enough for list, map, and future semantics, but narrow enough that it
 does not erase their differences.
 
-Conceptually:
-
-```go
-type Graph[Query any, Result any, Mutation any, Receipt any] interface {
-    Read(ctx context.Context, root cid.Cid, query Query) (Result, Proof, error)
-    VerifyRead(root cid.Cid, query Query, result Result, proof Proof) (bool, error)
-
-    Write(ctx context.Context, root cid.Cid, mutation Mutation) (cid.Cid, Receipt, error)
-    VerifyWrite(oldRoot, newRoot cid.Cid, mutation Mutation, receipt Receipt) (bool, error)
-}
-```
-
-The current code does not yet expose exactly this package-level interface. The
-documented direction is to make list/map the first semantic abstractions and to
-move runtime adapters around them.
+Conceptually, gateway reads return `result + ProofList`, where the ProofList is
+the vector-commitment proof chain from root to destination. Gateway writes
+accept semantic mutations that have already been produced by a layout. The
+HTTP gateway may return blob content with ProofList metadata in response
+headers, and may return large-file byte ranges with ProofLists covering the
+selected list entries. The current code does not yet expose this exact
+boundary. The documented direction is to make list/map the first semantic
+abstractions and to move runtime adapters around them.
 
 ### List Semantic
 
@@ -106,6 +103,7 @@ Native writes:
 - insert absent key
 - replace existing key
 - delete existing key
+- reserved `@payload` binding for every map semantic object
 
 The current public package is `core/structure/mapping`.
 The primary implementation is `core/structure/mapping/radix`.
@@ -113,6 +111,10 @@ The primary implementation is `core/structure/mapping/radix`.
 The current explicit resolver is best understood as a compatibility layer above
 map reads. It can implement longest-prefix path policy, but the map semantic
 owns exact key proof generation and verification.
+
+`@payload` is not a UnixFS-only convention. It is the reserved terminal
+materialization binding for map semantic objects. List semantic objects do not
+implicitly redirect through `@payload`.
 
 ### ArcTable
 
@@ -224,14 +226,15 @@ Current runtime invariants:
 - a managed bucket head is a directory-shaped map root
 - a list root represents file-content structure and is not a valid managed
   bucket head
-- every MALT-native map root carries the reserved `@payload` binding
+- every MALT-native map root carries the reserved `@payload` binding as a map
+  semantic invariant
 - materializing a bare map root means resolving `@payload` first
 - list roots are terminal typed keys and do not auto-redirect through
   `@payload`
 - bucket-path misses are reported as `not found`
 
-These are file-layout and product-runtime invariants. They should not be
-confused with the core MALT semantic layer.
+Bucket heads and path-miss behavior are file-layout and product-runtime
+invariants. The reserved `@payload` binding belongs to map semantic objects.
 
 ## Code Layout
 
@@ -290,8 +293,9 @@ It owns:
 - commitment proof construction
 - root update computation
 
-No external writer should redefine map semantics. A writer adapter may only
-orchestrate calls into map semantic operations.
+No external writer should redefine map semantics. A layout or write adapter may
+only produce semantic mutations and orchestrate calls into map semantic
+operations.
 
 ## List Semantic Implementation
 
@@ -324,14 +328,17 @@ It owns:
 
 List should not be forced through path-based resolution.
 
-## Resolver and Writer Adapters
+## Gateway, Layout, and Adapters
 
-The old architecture treated resolver and writer as central runtime layers.
-The new interpretation is narrower:
+The old architecture treated resolver and writer as central runtime layers. The
+new interpretation is narrower and introduces a clearer gateway boundary:
 
+- layouts translate source-domain data into MALT semantic mutations
+- the gateway accepts converted semantic mutations and submits them through
+  list/map semantic operations
+- gateway reads return `result + ProofList`
 - resolver adapters translate application or compatibility reads into semantic
-  reads
-- writer adapters translate application mutations into semantic writes
+  reads and proof chains
 - neither adapter owns the semantic definition of map or list
 
 The explicit resolver is a map compatibility adapter:
@@ -341,9 +348,13 @@ The explicit resolver is a map compatibility adapter:
 3. wrap the map proof as resolver evidence
 
 The current concrete `writer.Writer` should be treated as transitional. It
-combines map mutation, `@payload` policy, ArcTable delta handling, and lineage
-recording. Those responsibilities should be separated when the semantic layer is
-implemented directly.
+combines map mutation, ArcTable delta handling, and lineage recording.
+Those responsibilities should converge toward layout-produced semantic
+mutations accepted by the gateway.
+
+`ProofList` is the standard verifier-facing read artifact. It should cover map
+step proofs, terminal `@payload` proofs, list index/range proofs, and blob
+target binding proofs from the queried root to the destination.
 
 ## Flattened UnixFS-Style Layout
 
@@ -367,15 +378,17 @@ semantics.
 Current boundary:
 
 - The package remains the direct map/list/CAS library layer for the
-  UnixFS-style layout.
+  UnixFS-style layout and translates source-domain file/directory data into
+  MALT semantic mutations.
 - Managed buckets now expose this layout through daemon routes for UnixFS file
   and directory writes, path stat, and content reads. The `malt add`,
   `malt cat`, and `malt get` commands use those bucket APIs.
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
   remain runtime and compatibility adapters rather than semantic owners.
-- Resolver transcript unification, write receipts, graph-node terminology, and
-  benchmark-facing proof reporting remain open TODO items.
+- The concrete semantic-mutation schema, `ProofList`, write metadata,
+  graph-node terminology, and benchmark-facing proof reporting remain open TODO
+  items.
 
 It also gives the benchmark target:
 
@@ -395,12 +408,11 @@ Open TODOs for the next discussion:
 
 - define graph node and arc terminology precisely enough to map onto current
   map/list semantics
-- decide whether `@payload` belongs only to resolver/runtime policy or also to
-  graph-node invariants
-- decide how `core/layout/unixfs` should expose proof transcripts for path
-  lookup and terminal payload materialization
-- decide whether UnixFS reads should call current `core/resolver` or keep a
-  layout-local resolver
+- define the gateway semantic-mutation schema
+- define how `core/layout/unixfs` should expose or produce semantic mutations
+- define the `ProofList` schema for path lookup, terminal `@payload`, blob
+  bindings, and list range reads
+- decide how UnixFS reads should map onto gateway read queries and `ProofList`
 - define the final UnixFS write receipt, bucket-head advancement, and
   concurrency contract for the already-wired managed bucket APIs
 - decide whether list needs a first-class range proof API or whether composed
