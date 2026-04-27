@@ -1,6 +1,7 @@
 package arcset
 
 import (
+	"fmt"
 	"slices"
 
 	cid "github.com/ipfs/go-cid"
@@ -18,8 +19,40 @@ func NewSet() *Set {
 	return &Set{arcs: make(map[Path]cid.Cid)}
 }
 
+// NewArcSet creates an immutable arc set from path strings.
+// Input paths are canonicalized before insertion. Empty canonical paths and
+// conflicting duplicate canonical paths are reported as errors.
+func NewArcSet(arcs map[string]cid.Cid) (ArcSet, error) {
+	out := make(map[Path]cid.Cid, len(arcs))
+	for rawPath, target := range arcs {
+		path, err := NewPath(rawPath)
+		if err != nil {
+			return nil, err
+		}
+		if existing, ok := out[path]; ok && !cidEqual(existing, target) {
+			return nil, &PathError{Path: rawPath, Err: fmt.Errorf("%w %q", ErrDuplicatePath, path.String())}
+		}
+		out[path] = target
+	}
+	return &Set{arcs: out}, nil
+}
+
+// NewArcSetFromPaths creates an immutable arc set from canonical paths.
+func NewArcSetFromPaths(arcs map[Path]cid.Cid) (ArcSet, error) {
+	out := make(map[Path]cid.Cid, len(arcs))
+	for path, target := range arcs {
+		if path.IsEmpty() {
+			return nil, &PathError{Err: ErrEmptyPath}
+		}
+		out[path] = target
+	}
+	return &Set{arcs: out}, nil
+}
+
 // NewSetFrom creates an in-memory arc set from path strings.
 // Input paths are canonicalized before insertion.
+//
+// Deprecated: use NewArcSet so malformed input is reported.
 func NewSetFrom(arcs map[string]cid.Cid) *Set {
 	out := make(map[Path]cid.Cid, len(arcs))
 	for path, target := range arcs {
@@ -30,7 +63,11 @@ func NewSetFrom(arcs map[string]cid.Cid) *Set {
 
 // NewSetFromPaths creates an in-memory arc set from canonical paths.
 func NewSetFromPaths(arcs map[Path]cid.Cid) *Set {
-	return &Set{arcs: arcs}
+	out := make(map[Path]cid.Cid, len(arcs))
+	for path, target := range arcs {
+		out[path] = target
+	}
+	return &Set{arcs: out}
 }
 
 // Get retrieves the target CID for a path.
@@ -78,3 +115,50 @@ func (it *memoryIterator) Err() error { return nil }
 func (it *memoryIterator) Close() {}
 
 var _ ArcSet = (*Set)(nil)
+
+// ToPathMap clones an arc set into its canonical path map form.
+func ToPathMap(arcs ArcSet) (map[Path]cid.Cid, error) {
+	if arcs == nil {
+		return nil, fmt.Errorf("arc set is nil")
+	}
+
+	out := make(map[Path]cid.Cid, arcs.Len())
+	iter := arcs.Iterate()
+	for {
+		path, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if path.IsEmpty() {
+			return nil, &PathError{Err: ErrEmptyPath}
+		}
+		if existing, ok := out[path]; ok && !cidEqual(existing, target) {
+			return nil, &PathError{Path: path.String(), Err: fmt.Errorf("%w %q", ErrDuplicatePath, path.String())}
+		}
+		out[path] = target
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ToStringMap clones an arc set into a canonical string-keyed map.
+func ToStringMap(arcs ArcSet) (map[string]cid.Cid, error) {
+	pathMap, err := ToPathMap(arcs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]cid.Cid, len(pathMap))
+	for path, target := range pathMap {
+		out[path.String()] = target
+	}
+	return out, nil
+}
+
+func cidEqual(a, b cid.Cid) bool {
+	if !a.Defined() && !b.Defined() {
+		return true
+	}
+	return a.Equals(b)
+}

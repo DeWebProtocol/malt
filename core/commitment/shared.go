@@ -21,7 +21,7 @@ func ExtractSortedPathsValues(arcs arcset.ArcSet) ([]string, []cid.Cid) {
 
 	values := make([]cid.Cid, len(paths))
 	for i, path := range paths {
-		values[i], _ = arcs.Get(arcset.CanonicalizePath(path))
+		values[i], _ = arcs.Get(arcset.Path(path))
 	}
 
 	return paths, values

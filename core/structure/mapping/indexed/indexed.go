@@ -299,7 +299,7 @@ func decodeBindingCell(path arcset.Path, cell commitment.Cell) (cid.Cid, error) 
 }
 
 func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([]entry, []commitment.Cell, error) {
-	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, countPath(root).String())
+	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, countPath(root))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -311,9 +311,9 @@ func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([
 		return nil, nil, nil
 	}
 
-	paths := make([]string, 0, count*2)
+	paths := make([]arcset.Path, 0, count*2)
 	for i := uint64(0); i < count; i++ {
-		paths = append(paths, entryKeyPath(root, i).String(), entryValuePath(root, i).String())
+		paths = append(paths, entryKeyPath(root, i), entryValuePath(root, i))
 	}
 	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
 	if err != nil {
@@ -322,11 +322,11 @@ func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([
 
 	entries := make([]entry, count)
 	for i := uint64(0); i < count; i++ {
-		keyCID, ok := found[entryKeyPath(root, i).String()]
+		keyCID, ok := found[entryKeyPath(root, i)]
 		if !ok {
 			return nil, nil, fmt.Errorf("missing key marker at index %d", i)
 		}
-		valueCID, ok := found[entryValuePath(root, i).String()]
+		valueCID, ok := found[entryValuePath(root, i)]
 		if !ok {
 			return nil, nil, fmt.Errorf("missing value CID at index %d", i)
 		}
@@ -345,24 +345,28 @@ func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([
 }
 
 func (s *Map) storeEntries(ctx context.Context, bucketID string, root cid.Cid, entries []entry) error {
-	arcs := make(map[string]cid.Cid, 1+len(entries)*2)
+	arcs := make(map[arcset.Path]cid.Cid, 1+len(entries)*2)
 
 	countCID, err := encodeCountMarker(uint64(len(entries)))
 	if err != nil {
 		return err
 	}
-	arcs[countPath(root).String()] = countCID
+	arcs[countPath(root)] = countCID
 
 	for i, ent := range entries {
 		keyCID, err := encodePathMarker(ent.path)
 		if err != nil {
 			return err
 		}
-		arcs[entryKeyPath(root, uint64(i)).String()] = keyCID
-		arcs[entryValuePath(root, uint64(i)).String()] = ent.value
+		arcs[entryKeyPath(root, uint64(i))] = keyCID
+		arcs[entryValuePath(root, uint64(i))] = ent.value
 	}
 
-	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	snapshot, err := arcset.NewArcSetFromPaths(arcs)
+	if err != nil {
+		return err
+	}
+	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
 }
 
 func countPath(root cid.Cid) arcset.Path {

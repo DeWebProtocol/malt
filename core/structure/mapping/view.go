@@ -21,6 +21,15 @@ func NewViewFrom(entries map[string]cid.Cid) *SetView {
 	return &SetView{entries: out}
 }
 
+// NewViewFromArcSet creates an immutable keyed view from a canonical arc set.
+func NewViewFromArcSet(arcs arcset.ArcSet) (*SetView, error) {
+	entries, err := arcset.ToPathMap(arcs)
+	if err != nil {
+		return nil, err
+	}
+	return NewViewFromPaths(entries), nil
+}
+
 // NewViewFromPaths creates an immutable keyed view from canonical paths.
 func NewViewFromPaths(entries map[arcset.Path]cid.Cid) *SetView {
 	out := make(map[arcset.Path]cid.Cid, len(entries))

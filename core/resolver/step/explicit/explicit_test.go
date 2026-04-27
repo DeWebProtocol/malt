@@ -11,6 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -58,7 +59,7 @@ func setupArcSet(t *testing.T, e *overwrite.ArcTable, semantic mapping.Semantics
 		t.Fatalf("Commit failed: %v", err)
 	}
 	ctx := context.Background()
-	if err := e.Update(ctx, testBucketId, root, cid.Undef, arcsMap); err != nil {
+	if err := e.Update(ctx, testBucketId, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
 		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 	return root
@@ -383,7 +384,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if err := e.Update(ctx, bucketId, root, cid.Undef, arcsMap); err != nil {
+	if err := e.Update(ctx, bucketId, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
 		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 

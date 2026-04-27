@@ -74,16 +74,16 @@ func (e *ArcTable) CreateBucket(ctx context.Context, bucketId string, cfg *bloom
 // MightContain checks if a path might exist in the bucket using bloom filter.
 // Returns false if the path definitely doesn't exist (can skip KVStore lookup).
 // Returns true if the path might exist (need to call Get to verify).
-func (e *ArcTable) MightContain(ctx context.Context, bucketId string, path string) bool {
+func (e *ArcTable) MightContain(ctx context.Context, bucketId string, path arcset.Path) bool {
 	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
-	return e.bloomManager.MightContain(bucketId, path)
+	return e.bloomManager.MightContain(bucketId, path.String())
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
-func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths []string) map[string]bool {
-	result := make(map[string]bool, len(paths))
+func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths []arcset.Path) map[arcset.Path]bool {
+	result := make(map[arcset.Path]bool, len(paths))
 
 	if !e.bloomManager.Enabled() {
 		for _, p := range paths {
@@ -92,7 +92,11 @@ func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths
 		return result
 	}
 
-	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, paths)
+	pathStrings := make([]string, len(paths))
+	for i, path := range paths {
+		pathStrings[i] = path.String()
+	}
+	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, pathStrings)
 	if err != nil {
 		for _, p := range paths {
 			result[p] = true
@@ -100,24 +104,27 @@ func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths
 		return result
 	}
 
-	return batchResult
+	for _, path := range paths {
+		result[path] = batchResult[path.String()]
+	}
+	return result
 }
 
 // Get retrieves the target CID for a path within a bucket.
 // First checks bloom filter, then queries KVStore.
-func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path string) (cid.Cid, error) {
+func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("ArcTable.Get started",
 		logger.String("bucket", bucketId),
 		logger.String("root", root.String()),
-		logger.String("path", path))
+		logger.String("path", path.String()))
 
 	// Quick bloom filter check
 	if !e.MightContain(ctx, bucketId, path) {
 		logger.Debug("ArcTable.Get bloom negative",
 			logger.String("bucket", bucketId),
-			logger.String("path", path))
+			logger.String("path", path.String()))
 		return cid.Cid{}, arcset.ErrNotFound
 	}
 
@@ -156,12 +163,12 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path 
 		if err == kvstore.ErrNotFound {
 			logger.Debug("ArcTable.Get arc not found",
 				logger.String("bucket", bucketId),
-				logger.String("path", path))
+				logger.String("path", path.String()))
 			return cid.Cid{}, arcset.ErrNotFound
 		}
 		logger.Error("ArcTable.Get failed to get arc",
 			logger.String("bucket", bucketId),
-			logger.String("path", path),
+			logger.String("path", path.String()),
 			logger.Err(err))
 		return cid.Cid{}, fmt.Errorf("failed to get arc: %w", err)
 	}
@@ -170,7 +177,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path 
 	if err == nil {
 		logger.Debug("ArcTable.Get success",
 			logger.String("bucket", bucketId),
-			logger.String("path", path),
+			logger.String("path", path.String()),
 			logger.String("target", result.String()),
 			logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 	}
@@ -179,7 +186,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path 
 
 // BatchGet retrieves multiple target CIDs in a single operation.
 // Uses bloom filter to filter out definitely-not-present paths.
-func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []string) (map[string]cid.Cid, error) {
+func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("ArcTable.BatchGet started",
@@ -189,7 +196,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 
 	// Filter paths using bloom filter
 	mightExist := e.MightContainBatch(ctx, bucketId, paths)
-	filteredPaths := make([]string, 0, len(paths))
+	filteredPaths := make([]arcset.Path, 0, len(paths))
 	for _, p := range paths {
 		if mightExist[p] {
 			filteredPaths = append(filteredPaths, p)
@@ -199,7 +206,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 	if len(filteredPaths) == 0 {
 		logger.Debug("ArcTable.BatchGet all filtered by bloom",
 			logger.String("bucket", bucketId))
-		return map[string]cid.Cid{}, nil
+		return map[arcset.Path]cid.Cid{}, nil
 	}
 
 	// Validate root if provided
@@ -230,7 +237,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 
 	// Build keys for batch get
 	keys := make([][]byte, len(filteredPaths))
-	pathToKey := make(map[string]string, len(filteredPaths))
+	pathToKey := make(map[string]arcset.Path, len(filteredPaths))
 	for i, path := range filteredPaths {
 		key := arctable.DefaultArcKey(bucketId, path)
 		keys[i] = key
@@ -247,7 +254,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 	}
 
 	// Convert results to CID map
-	results := make(map[string]cid.Cid)
+	results := make(map[arcset.Path]cid.Cid)
 	for keyStr, val := range kvResults {
 		path := pathToKey[keyStr]
 		if c, err := cid.Cast(val); err == nil {
@@ -267,14 +274,18 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 
 // Update stores arc entries with a new commitment root.
 // Updates the bucket bloom filter incrementally.
-func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs map[string]cid.Cid) error {
+func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	arcMap, err := arcset.ToPathMap(arcs)
+	if err != nil {
+		return err
+	}
 	start := time.Now()
 
 	logger.Info("ArcTable.Update started",
 		logger.String("bucket", bucketId),
 		logger.String("new_root", newRoot.String()),
 		logger.String("old_root", oldRoot.String()),
-		logger.Int("arc_count", len(arcs)))
+		logger.Int("arc_count", len(arcMap)))
 
 	batch := e.kv.Batch()
 
@@ -308,7 +319,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 	var addedPaths []string
 
 	// Add/Update/Delete arcs
-	for path, target := range arcs {
+	for path, target := range arcMap {
 		key := arctable.DefaultArcKey(bucketId, path)
 		if target == cid.Undef {
 			// Delete the arc
@@ -316,21 +327,21 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 				batch.Cancel()
 				logger.Error("ArcTable.Update failed to delete arc",
 					logger.String("bucket", bucketId),
-					logger.String("path", path),
+					logger.String("path", path.String()),
 					logger.Err(err))
-				return fmt.Errorf("failed to delete arc %s: %w", path, err)
+				return fmt.Errorf("failed to delete arc %s: %w", path.String(), err)
 			}
 		} else {
-			addedPaths = append(addedPaths, path)
+			addedPaths = append(addedPaths, path.String())
 			// Add/Update the arc
 			val := target.Bytes()
 			if err := batch.Put(key, val); err != nil {
 				batch.Cancel()
 				logger.Error("ArcTable.Update failed to put arc",
 					logger.String("bucket", bucketId),
-					logger.String("path", path),
+					logger.String("path", path.String()),
 					logger.Err(err))
-				return fmt.Errorf("failed to put arc %s: %w", path, err)
+				return fmt.Errorf("failed to put arc %s: %w", path.String(), err)
 			}
 		}
 	}
@@ -355,7 +366,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 	logger.Info("ArcTable.Update completed",
 		logger.String("bucket", bucketId),
 		logger.String("new_root", newRoot.String()),
-		logger.Int("arc_count", len(arcs)),
+		logger.Int("arc_count", len(arcMap)),
 		logger.Int("added_count", len(addedPaths)),
 		logger.Bool("invalidated_old_root", oldRoot != cid.Undef),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
@@ -393,7 +404,11 @@ func (e *ArcTable) Snapshot(ctx context.Context, bucketId string, root cid.Cid) 
 		return nil, fmt.Errorf("iterator error: %w", err)
 	}
 
-	return arcset.NewSetFrom(arcs), nil
+	snapshot, err := arcset.NewArcSet(arcs)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 // Iterate returns a streaming iterator over all arcs in the bucket.

@@ -49,6 +49,7 @@ var (
 	ErrNotDirectory = errors.New("unixfs path is not a directory")
 	ErrNotFile      = errors.New("unixfs path is not a file")
 	ErrReservedPath = errors.New("unixfs path uses a reserved segment")
+	ErrInvalidPath  = errors.New("unixfs path contains an unsupported segment")
 )
 
 // Options configures a UnixFS layout instance.
@@ -698,8 +699,28 @@ func splitRelativePath(path string) ([]string, error) {
 		if strings.HasPrefix(segment, "@") {
 			return nil, fmt.Errorf("%w: %s", ErrReservedPath, segment)
 		}
+		if !isPortableUnixFSSegment(segment) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidPath, segment)
+		}
 	}
 	return segments, nil
+}
+
+func isPortableUnixFSSegment(segment string) bool {
+	if segment == "" || segment == "." || segment == ".." {
+		return false
+	}
+	for _, r := range segment {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func isMapAbsent(err error) bool {

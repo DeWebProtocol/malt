@@ -86,9 +86,9 @@ func LoadSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root c
 		return nil, fmt.Errorf("width must be positive")
 	}
 
-	paths := make([]string, width)
+	paths := make([]arcset.Path, width)
 	for i := range paths {
-		paths[i] = NodeSlotPath(root, uint64(i)).String()
+		paths[i] = NodeSlotPath(root, uint64(i))
 	}
 
 	found, err := e.BatchGet(ctx, bucketID, cid.Undef, paths)
@@ -114,17 +114,21 @@ func StoreSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root 
 		return fmt.Errorf("node root is undefined")
 	}
 
-	arcs := make(map[string]cid.Cid)
+	arcs := make(map[arcset.Path]cid.Cid)
 	for i, slot := range slots {
 		if !slot.Defined() {
 			continue
 		}
-		arcs[NodeSlotPath(root, uint64(i)).String()] = slot
+		arcs[NodeSlotPath(root, uint64(i))] = slot
 	}
 	if len(arcs) == 0 {
 		return nil
 	}
-	return e.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	snapshot, err := arcset.NewArcSetFromPaths(arcs)
+	if err != nil {
+		return err
+	}
+	return e.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
 }
 
 // CellsFromSlots converts a CID slot vector into commitment cells.
