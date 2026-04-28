@@ -702,6 +702,20 @@ func (s *Server) handleBucketProof(w http.ResponseWriter, r *http.Request) {
 	s.handleBucketResolve(w, r)
 }
 
+func (s *Server) handleBucketProofList(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+	if err != nil {
+		writeManagedGraphError(w, err)
+		return
+	}
+	root, err := graphHead(meta)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.proofListAndWrite(w, r.Context(), g, root, r.URL.Query().Get("path"))
+}
+
 func (s *Server) handleBucketSnapshot(w http.ResponseWriter, r *http.Request) {
 	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
 	if err != nil {
@@ -852,6 +866,20 @@ func (s *Server) handleRootResolve(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRootProof(w http.ResponseWriter, r *http.Request) {
 	s.handleRootResolve(w, r)
+}
+
+func (s *Server) handleRootProofList(w http.ResponseWriter, r *http.Request) {
+	g, err := s.getGraph(r.Context(), defaultRootGraphID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	root, err := decodeCID(r.PathValue("root"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.proofListAndWrite(w, r.Context(), g, root, r.URL.Query().Get("path"))
 }
 
 func (s *Server) handleRootSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1067,6 +1095,24 @@ func (s *Server) resolveAndWrite(w http.ResponseWriter, ctx context.Context, g *
 	writeJSON(w, http.StatusOK, &httpapi.ResolveResponse{
 		Target:     result.Target.String(),
 		Transcript: encodeTranscript(result.Transcript),
+	})
+}
+
+func (s *Server) proofListAndWrite(w http.ResponseWriter, ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string) {
+	result, err := g.Resolver().Resolve(root, rawPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	pl, err := resolver.ProofListFromTranscript(root, result.Transcript)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	pl.Query = bucketpath.CanonicalizeQueryPath(rawPath)
+	writeJSON(w, http.StatusOK, &httpapi.ProofListResponse{
+		Target:    result.Target.String(),
+		ProofList: *pl,
 	})
 }
 

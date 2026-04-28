@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/manifest"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/dewebprotocol/malt/server"
 	cid "github.com/ipfs/go-cid"
@@ -170,6 +171,71 @@ func TestClientManagedBucketStructureFlow(t *testing.T) {
 	}
 	if len(snapshotResp.Arcs) != 2 {
 		t.Fatalf("snapshot arc count = %d, want 2", len(snapshotResp.Arcs))
+	}
+}
+
+func TestClientProofListReads(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+	ctx := context.Background()
+
+	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+
+	target := fakeCIDString("client-prooflist-target")
+	payload := fakeCIDString("client-prooflist-payload")
+	_, err = client.CreateBucketStructure(ctx, "demo", map[string]string{
+		"@payload": payload,
+		"name":     target,
+	})
+	if err != nil {
+		t.Fatalf("create bucket structure: %v", err)
+	}
+
+	bucketProof, err := client.ProofListBucket(ctx, "demo", "name")
+	if err != nil {
+		t.Fatalf("ProofListBucket: %v", err)
+	}
+	if bucketProof.Target != target {
+		t.Fatalf("bucket prooflist target = %q, want %q", bucketProof.Target, target)
+	}
+	if len(bucketProof.ProofList.Steps) == 0 {
+		t.Fatal("expected non-empty bucket prooflist")
+	}
+
+	rootPayload := fakeCIDString("client-root-prooflist-payload")
+	rootCreateResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
+		"@payload": rootPayload,
+	}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	rootProof, err := client.ProofListRoot(ctx, rootCreateResp.Root, "")
+	if err != nil {
+		t.Fatalf("ProofListRoot: %v", err)
+	}
+	if rootProof.Target != rootPayload {
+		t.Fatalf("root prooflist target = %q, want %q", rootProof.Target, rootPayload)
+	}
+	if len(rootProof.ProofList.Steps) != 1 {
+		t.Fatalf("root prooflist steps = %d, want 1", len(rootProof.ProofList.Steps))
+	}
+	if rootProof.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
+		t.Fatalf("root prooflist step kind = %q, want %q", rootProof.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
 	}
 }
 
