@@ -314,6 +314,50 @@ func (c *Client) GetBucketContent(ctx context.Context, id string, p string, rang
 	return data, status, headers, nil
 }
 
+// GetBucketContentProof reads bucket content as JSON with range metadata and a
+// ProofList for the same path/range.
+func (c *Client) GetBucketContentProof(ctx context.Context, id string, p string, rangeHeader string) (*httpapi.BucketContentProofResponse, error) {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = path.Join(u.Path, "/buckets/"+url.PathEscape(id)+"/content:proof")
+	values := u.Query()
+	if p != "" {
+		values.Set("path", p)
+	}
+	u.RawQuery = values.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return nil, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	var out httpapi.BucketContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // OpenBucketContent opens a streaming response body for bucket content.
 // Callers must close the returned ReadCloser.
 func (c *Client) OpenBucketContent(ctx context.Context, id string, p string, rangeHeader string) (io.ReadCloser, int, http.Header, error) {

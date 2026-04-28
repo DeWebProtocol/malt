@@ -92,6 +92,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/directories", s.handleBucketUnixFSDirectory)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/stat", s.handleBucketStat)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/content", s.handleBucketContent)
+	mux.HandleFunc("GET /api/v1/buckets/{id}/content:proof", s.handleBucketContentProof)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/resolve", s.handleBucketResolve)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/proof", s.handleBucketProof)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/prooflist", s.handleBucketProofList)

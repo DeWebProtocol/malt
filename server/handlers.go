@@ -27,6 +27,7 @@ import (
 	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/core/writer"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
@@ -744,22 +745,9 @@ func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload []byte
-	switch stat.StorageKind {
-	case "raw":
-		raw, err := s.node.CAS().Get(r.Context(), key)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		payload = raw[start:endExclusive]
-	case "list":
-		payload, err = s.readListRange(r.Context(), g, key, start, endExclusive)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	default:
-		writeError(w, http.StatusInternalServerError, "unsupported storage kind for content")
+	payload, err = s.readBucketContentPayload(r.Context(), g, stat, key, start, endExclusive)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -771,6 +759,72 @@ func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
 	_, _ = io.Copy(w, bytes.NewReader(payload))
+}
+
+func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+	if err != nil {
+		writeManagedGraphError(w, err)
+		return
+	}
+	if meta == nil || !meta.Root.Defined() {
+		writeError(w, http.StatusNotFound, "path not found")
+		return
+	}
+
+	queryPath := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	stat, err := s.bucketStat(r.Context(), g, meta.Root, queryPath)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	if stat.Kind != "file" {
+		writeError(w, httpapi.StatusBucketContentIsDirectory, "content proof is only valid for file targets")
+		return
+	}
+	key, err := decodeCID(stat.Key)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totalSize := int64(0)
+	if stat.Size != nil {
+		totalSize = *stat.Size
+	}
+
+	start, endExclusive, partial, err := parseRangeHeader(r.Header.Get("Range"), totalSize)
+	if err != nil {
+		writeError(w, httpapi.StatusBucketRangeNotSatisfiable, err.Error())
+		return
+	}
+	payload, err := s.readBucketContentPayload(r.Context(), g, stat, key, start, endExclusive)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	pl, err := s.contentProofList(r.Context(), g, meta.Root, queryPath, stat, start, endExclusive)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) || errors.Is(err, unixfs.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	w.Header().Set("Accept-Ranges", "bytes")
+	writeJSON(w, http.StatusOK, &httpapi.BucketContentProofResponse{
+		Path:        queryPath,
+		StorageKind: stat.StorageKind,
+		Key:         stat.Key,
+		Content:     payload,
+		Range:       contentRangeMetadata(start, endExclusive, totalSize, partial),
+		ProofList:   *pl,
+	})
 }
 
 func (s *Server) handleBucketResolve(w http.ResponseWriter, r *http.Request) {
@@ -1462,6 +1516,80 @@ func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi
 	}
 }
 
+func (s *Server) readBucketContentPayload(ctx context.Context, g *graph.Graph, stat *httpapi.BucketStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
+	switch stat.StorageKind {
+	case "raw":
+		raw, err := s.node.CAS().Get(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		return raw[start:endExclusive], nil
+	case "list":
+		return s.readListRange(ctx, g, key, start, endExclusive)
+	default:
+		return nil, fmt.Errorf("unsupported storage kind for content")
+	}
+}
+
+func (s *Server) contentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.BucketStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
+	if layout, err := s.unixFSLayout(g); err == nil {
+		if unixStat, statErr := layout.Stat(ctx, root, queryPath); statErr == nil && unixStat.Kind == "file" {
+			return s.unixFSContentProofList(ctx, layout, root, queryPath, stat, start, endExclusive)
+		}
+	}
+	return s.legacyContentProofList(ctx, g, root, queryPath, stat, start, endExclusive)
+}
+
+func (s *Server) unixFSContentProofList(ctx context.Context, layout *unixfs.Layout, root cid.Cid, queryPath string, stat *httpapi.BucketStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
+	resolution, err := layout.Resolve(ctx, root, queryPath)
+	if err != nil {
+		return nil, err
+	}
+	pl, err := unixfs.ProofListFromSteps(root, queryPath, resolution.Steps)
+	if err != nil {
+		return nil, err
+	}
+	if stat.StorageKind == "list" && endExclusive > start {
+		steps, err := layout.ListIndexStepsForFileRange(ctx, root, queryPath, uint64(start), uint64(endExclusive-start))
+		if err != nil {
+			return nil, err
+		}
+		if err := unixfs.AppendListIndexSteps(pl, queryPath, steps); err != nil {
+			return nil, err
+		}
+	}
+	return pl, nil
+}
+
+func (s *Server) legacyContentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.BucketStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
+	result, err := g.Resolver().Resolve(root, queryPath)
+	if err != nil {
+		return nil, err
+	}
+	if resolveMiss(root, queryPath, result) {
+		return nil, errPathNotFound
+	}
+	pl, err := resolver.ProofListFromTranscript(root, result.Transcript)
+	if err != nil {
+		return nil, err
+	}
+	pl.Query = queryPath
+	if stat.StorageKind == "list" && endExclusive > start {
+		listRoot, err := decodeCID(stat.Key)
+		if err != nil {
+			return nil, err
+		}
+		steps, err := s.listIndexStepsForRange(ctx, g, listRoot, start, endExclusive)
+		if err != nil {
+			return nil, err
+		}
+		if err := unixfs.AppendListIndexSteps(pl, queryPath, steps); err != nil {
+			return nil, err
+		}
+	}
+	return pl, nil
+}
+
 func (s *Server) unixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
@@ -1619,6 +1747,57 @@ func (s *Server) readListRange(ctx context.Context, g *graph.Graph, listRoot cid
 		out.Write(chunk[localStart:localEnd])
 	}
 	return out.Bytes(), nil
+}
+
+func (s *Server) listIndexStepsForRange(ctx context.Context, g *graph.Graph, listRoot cid.Cid, start, endExclusive int64) ([]unixfs.ListIndexStep, error) {
+	if endExclusive <= start {
+		return nil, nil
+	}
+	first := uint64(start / fixedBucketListChunkSize)
+	last := uint64((endExclusive - 1) / fixedBucketListChunkSize)
+	steps := make([]unixfs.ListIndexStep, 0, last-first+1)
+	for index := first; index <= last; index++ {
+		query, proof, err := g.ListSemantic().Prove(ctx, g.BucketId(), listRoot, index)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := g.ListSemantic().Verify(listRoot, index, query, proof)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("list proof failed at index %d", index)
+		}
+		if !query.Key.Defined() {
+			return nil, fmt.Errorf("missing chunk %d", index)
+		}
+		steps = append(steps, unixfs.ListIndexStep{
+			Root:   listRoot,
+			Index:  index,
+			Target: query.Key,
+			Proof:  proof,
+		})
+	}
+	return steps, nil
+}
+
+func contentRangeMetadata(start, endExclusive, totalSize int64, partial bool) httpapi.BucketContentRange {
+	statusCode := http.StatusOK
+	contentRange := ""
+	if partial {
+		statusCode = http.StatusPartialContent
+		contentRange = fmt.Sprintf("bytes %d-%d/%d", start, endExclusive-1, totalSize)
+	}
+	return httpapi.BucketContentRange{
+		Start:         start,
+		EndExclusive:  endExclusive,
+		ContentLength: endExclusive - start,
+		TotalSize:     totalSize,
+		Partial:       partial,
+		StatusCode:    statusCode,
+		AcceptRanges:  "bytes",
+		ContentRange:  contentRange,
+	}
 }
 
 func parseRangeHeader(raw string, size int64) (start int64, endExclusive int64, partial bool, err error) {

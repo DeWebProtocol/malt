@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -496,6 +497,52 @@ func TestClientBucketStatAndContent(t *testing.T) {
 	}
 	if status != 206 || string(body) != "bcd" {
 		t.Fatalf("unexpected status/body: %d %q", status, string(body))
+	}
+}
+
+func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+	ctx := context.Background()
+
+	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	if _, err := client.AddBucketUnixFSFile(ctx, "demo", "f.txt", []byte("abcdef")); err != nil {
+		t.Fatalf("add unixfs file: %v", err)
+	}
+
+	resp, err := client.GetBucketContentProof(ctx, "demo", "f.txt", "bytes=1-3")
+	if err != nil {
+		t.Fatalf("GetBucketContentProof: %v", err)
+	}
+	if string(resp.Content) != "bcd" {
+		t.Fatalf("content = %q, want bcd", resp.Content)
+	}
+	if resp.Range.StatusCode != http.StatusPartialContent || resp.Range.ContentRange != "bytes 1-3/6" {
+		t.Fatalf("range metadata = %+v, want status 206 content-range bytes 1-3/6", resp.Range)
+	}
+	if resp.Range.Start != 1 || resp.Range.EndExclusive != 4 || resp.Range.ContentLength != 3 || resp.Range.TotalSize != 6 {
+		t.Fatalf("unexpected byte range metadata: %+v", resp.Range)
+	}
+	if err := resp.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("prooflist shape: %v", err)
+	}
+	last := resp.ProofList.Steps[len(resp.ProofList.Steps)-1]
+	if last.Kind != prooflist.KindPayloadBinding || last.Path != "@payload" {
+		t.Fatalf("last proof step = %q/%q, want payload binding @payload", last.Kind, last.Path)
 	}
 }
 

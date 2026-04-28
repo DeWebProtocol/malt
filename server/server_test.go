@@ -1177,6 +1177,150 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	}
 }
 
+func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	resp.Body.Close()
+
+	fileBody := []byte("hello content proof")
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content?path=docs/readme.txt")
+	if err != nil {
+		t.Fatalf("raw content request: %v", err)
+	}
+	rawBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !bytes.Equal(rawBody, fileBody) {
+		t.Fatalf("raw content status/body = %d %q, want %d %q", resp.StatusCode, rawBody, http.StatusOK, fileBody)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content:proof?path=docs/readme.txt")
+	if err != nil {
+		t.Fatalf("content proof request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var proofResp httpapi.BucketContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+		t.Fatalf("decode content proof response: %v", err)
+	}
+	if !bytes.Equal(proofResp.Content, fileBody) {
+		t.Fatalf("content = %q, want %q", proofResp.Content, fileBody)
+	}
+	if proofResp.Range.StatusCode != http.StatusOK || proofResp.Range.ContentLength != int64(len(fileBody)) || proofResp.Range.TotalSize != int64(len(fileBody)) {
+		t.Fatalf("unexpected range metadata: %+v", proofResp.Range)
+	}
+	if proofResp.Range.Partial || proofResp.Range.ContentRange != "" || proofResp.Range.AcceptRanges != "bytes" {
+		t.Fatalf("unexpected full-read range metadata: %+v", proofResp.Range)
+	}
+	if proofResp.ProofList.Query != "docs/readme.txt" {
+		t.Fatalf("proof query = %q, want docs/readme.txt", proofResp.ProofList.Query)
+	}
+	if err := proofResp.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("prooflist shape: %v", err)
+	}
+	if len(proofResp.ProofList.Steps) == 0 {
+		t.Fatal("expected prooflist steps")
+	}
+	last := proofResp.ProofList.Steps[len(proofResp.ProofList.Steps)-1]
+	if last.Kind != prooflist.KindPayloadBinding || last.Path != "@payload" {
+		t.Fatalf("last proof step = %q/%q, want payload binding @payload", last.Kind, last.Path)
+	}
+	for i, step := range proofResp.ProofList.Steps {
+		if step.Kind == prooflist.KindListIndex {
+			t.Fatalf("small raw file included list-index step at %d: %+v", i, step)
+		}
+	}
+}
+
+func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	resp.Body.Close()
+
+	fileBody := append(bytes.Repeat([]byte{'a'}, fixedBucketListChunkSize), []byte("bcdef")...)
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=large.bin", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs large file: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs large file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/buckets/demo/content:proof?path=large.bin", nil)
+	req.Header.Set("Range", "bytes=262142-262145")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("content proof range request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var proofResp httpapi.BucketContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+		t.Fatalf("decode content proof response: %v", err)
+	}
+	if string(proofResp.Content) != "aabc" {
+		t.Fatalf("content range = %q, want aabc", proofResp.Content)
+	}
+	wantContentRange := "bytes 262142-262145/262149"
+	if proofResp.Range.StatusCode != http.StatusPartialContent || proofResp.Range.ContentRange != wantContentRange {
+		t.Fatalf("range metadata = %+v, want status 206 content-range %q", proofResp.Range, wantContentRange)
+	}
+	if proofResp.Range.Start != 262142 || proofResp.Range.EndExclusive != 262146 || proofResp.Range.ContentLength != 4 || !proofResp.Range.Partial {
+		t.Fatalf("unexpected byte range metadata: %+v", proofResp.Range)
+	}
+	if err := proofResp.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("prooflist shape: %v", err)
+	}
+
+	var indexes []uint64
+	for _, step := range proofResp.ProofList.Steps {
+		if step.Kind == prooflist.KindListIndex {
+			if step.Index == nil {
+				t.Fatalf("list-index step missing index: %+v", step)
+			}
+			indexes = append(indexes, *step.Index)
+			if step.EvidenceBackend != "list" {
+				t.Fatalf("list-index evidence backend = %q, want list", step.EvidenceBackend)
+			}
+		}
+	}
+	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
+		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	}
+}
+
 func newTestNode(t *testing.T) *api.Node {
 	t.Helper()
 
