@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -166,6 +167,110 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 	}
 	if !verifyResp.Valid {
 		t.Fatal("expected transcript verification to succeed")
+	}
+}
+
+func TestServerProofListReadEndpoints(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	if err != nil {
+		t.Fatalf("marshal create bucket request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	target := fakeCIDString("prooflist-target")
+	payload := fakeCIDString("prooflist-payload")
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"@payload": payload,
+			"name":     target,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal create structure request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create bucket structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create bucket structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/prooflist?path=name")
+	if err != nil {
+		t.Fatalf("bucket prooflist request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("bucket prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var bucketResp httpapi.ProofListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
+		t.Fatalf("decode bucket prooflist response: %v", err)
+	}
+	resp.Body.Close()
+	if bucketResp.Target != target {
+		t.Fatalf("bucket prooflist target = %q, want %q", bucketResp.Target, target)
+	}
+	if len(bucketResp.ProofList.Steps) == 0 {
+		t.Fatal("expected non-empty bucket prooflist")
+	}
+
+	rootPayload := fakeCIDString("root-prooflist-payload")
+	createRootBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{
+			"@payload": rootPayload,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create root structure request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createRootBody))
+	if err != nil {
+		t.Fatalf("create root structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var rootCreateResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rootCreateResp); err != nil {
+		t.Fatalf("decode root create response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(ts.URL + "/api/v1/roots/" + rootCreateResp.Root + "/prooflist")
+	if err != nil {
+		t.Fatalf("root prooflist request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("root prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var rootResp httpapi.ProofListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rootResp); err != nil {
+		t.Fatalf("decode root prooflist response: %v", err)
+	}
+	resp.Body.Close()
+	if rootResp.Target != rootPayload {
+		t.Fatalf("root prooflist target = %q, want %q", rootResp.Target, rootPayload)
+	}
+	if len(rootResp.ProofList.Steps) != 1 {
+		t.Fatalf("root prooflist steps = %d, want 1", len(rootResp.ProofList.Steps))
+	}
+	if rootResp.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
+		t.Fatalf("root prooflist step kind = %q, want %q", rootResp.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
 	}
 }
 

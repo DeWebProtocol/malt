@@ -1,6 +1,8 @@
 // Package httpapi defines the daemon HTTP API payloads shared by server and client.
 package httpapi
 
+import "github.com/dewebprotocol/malt/core/types/prooflist"
+
 // ErrorResponse represents a structured API error.
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -112,6 +114,12 @@ type StepEvidence struct {
 type ResolveResponse struct {
 	Target     string         `json:"target"`
 	Transcript []StepEvidence `json:"transcript"`
+}
+
+// ProofListResponse returns a resolved target plus verifier-facing ProofList.
+type ProofListResponse struct {
+	Target    string              `json:"target"`
+	ProofList prooflist.ProofList `json:"prooflist"`
 }
 
 // UpdateRequest updates a single binding.

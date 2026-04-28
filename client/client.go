@@ -116,6 +116,16 @@ func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi
 	return c.resolve(ctx, "/roots/"+url.PathEscape(root)+"/proof", p)
 }
 
+// ProofListBucket returns a ProofList read result from a managed bucket head.
+func (c *Client) ProofListBucket(ctx context.Context, id string, p string) (*httpapi.ProofListResponse, error) {
+	return c.proofList(ctx, "/buckets/"+url.PathEscape(id)+"/prooflist", p)
+}
+
+// ProofListRoot returns a ProofList read result from an explicit root.
+func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
+	return c.proofList(ctx, "/roots/"+url.PathEscape(root)+"/prooflist", p)
+}
+
 // SnapshotBucket returns the managed bucket head snapshot.
 func (c *Client) SnapshotBucket(ctx context.Context, id string) (*httpapi.SnapshotResponse, error) {
 	var resp httpapi.SnapshotResponse
@@ -408,6 +418,18 @@ func (c *Client) resolve(ctx context.Context, route string, p string) (*httpapi.
 		query["path"] = p
 	}
 	var resp httpapi.ResolveResponse
+	if err := c.do(ctx, http.MethodGet, route, query, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) proofList(ctx context.Context, route string, p string) (*httpapi.ProofListResponse, error) {
+	query := map[string]string{}
+	if p != "" {
+		query["path"] = p
+	}
+	var resp httpapi.ProofListResponse
 	if err := c.do(ctx, http.MethodGet, route, query, nil, &resp); err != nil {
 		return nil, err
 	}
