@@ -2,12 +2,16 @@
 
 ## Scope
 
-This file defines implementation-specific rules for the `malt/` Go submodule.
-For repo-level workflow, also read the parent repository `../AGENTS.md`.
+This file defines implementation-specific rules for the MALT Go repository.
+
+This repository is independent. It is not a submodule of the documents
+repository. For workspace-level coordination, also read `../AGENTS.md` when it
+exists. For paper, planning, and TODO context, read the sibling documents
+repository at `../documents`.
 
 ## Implementation Focus
 
-This submodule contains the Go implementation of MALT:
+This repository contains the Go implementation of MALT:
 
 - list/map semantic abstractions over immutable CAS payloads
 - bucket/namespace-scoped ArcTable-backed arcset persistence/materialization
@@ -15,6 +19,14 @@ This submodule contains the Go implementation of MALT:
 - the current `core/layout/malt/unixfs` prototype built from list/map/CAS blob composition
 - runtime adapters for current resolver / writer / graph packages
 - daemon/API surface, CLI, and local CAS integration
+
+## Adjacent Repositories
+
+- `../documents` is the paper, notes, planning, and TODO repository.
+- `../worktrees` is reserved for linked worktrees created from this implementation repository.
+- Do not add this repository back as a submodule of `../documents`.
+- Do not update documents-repo submodule pointers; there are no submodule pointers in the new workflow.
+- When documents need to reference an implementation version, use this repository's commit SHA or tag.
 
 ## Current Architectural Conventions
 
@@ -41,23 +53,38 @@ This submodule contains the Go implementation of MALT:
 
 ## Go Workflow
 
-- Run Go commands from `malt/`.
+- Run Go commands from this repository root.
 - After Go code changes, run:
   - `go test ./...`
 - Run targeted additional checks when the changed area justifies them.
+- Documentation-only changes in this repository do not require Go tests.
 
-## Git Workflow Inside The Submodule
+## Git Workflow
 
-- Follow the parent repository coordinator workflow in `../AGENTS.md`.
-- Worker sessions must create their own `feature/`, `refactor/`, or `bugfix/`
-  branch for submodule work.
-- Worker sessions must not commit directly to `main`.
-- Worker sessions must not merge PRs into `main`.
-- Worker sessions should target the current coordinator branch for PRs unless
-  the user explicitly requests a different target.
-- The coordinator session must not merge branches or PRs unless the user
-  explicitly instructs it to do so.
-- Commit and push the submodule branch before updating the parent repo pointer.
+- `main` is the integration branch for implementation work.
+- Do not commit implementation changes directly to `main` unless the user explicitly asks for that exact action.
+- Implementation work must happen on one-time branches and linked worktrees.
+- Use branch names with this pattern:
+  - `codex/one-time/feature/<slug>`
+  - `codex/one-time/refactor/<slug>`
+  - `codex/one-time/bugfix/<slug>`
+- Create linked worktrees under `../worktrees`.
+- Worker sessions must commit their changes, push their branch, open a PR targeting `main`, and then stop or archive the worker session.
+- Worker sessions must not merge PRs or push directly to `main`.
+- The coordinator or merge session may merge PRs into `main` after explicit user instruction.
+- After a one-time PR is merged or explicitly abandoned, the coordinator may delete the one-time branch and remove its worktree after verifying the worktree has no uncommitted changes.
+- Keep `main` and remote `origin/main` synchronized before creating new worker branches.
+
+## Commit Policy
+
+- Commit messages should use Conventional Commits style.
+- Include a complete commit message, not a placeholder title.
+- Commit messages must follow this format:
+  - first line: summary in Conventional Commits style, 50 characters or fewer
+  - second line: blank
+  - remaining lines: detailed explanation of what changed and why
+- The body should explain both the concrete changes and the rationale.
+- Include `Co-authored-by: Codex <codex@openai.com>` or the current agent equivalent when the agent authors the change.
 
 ## Naming And Package Guidance
 
