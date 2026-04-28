@@ -58,6 +58,25 @@ func (c *Client) Health(ctx context.Context) (*httpapi.HealthResponse, error) {
 	return &resp, nil
 }
 
+// MetricsSnapshot returns node-local daemon evaluation counters.
+func (c *Client) MetricsSnapshot(ctx context.Context) (*httpapi.MetricsResponse, error) {
+	var resp httpapi.MetricsResponse
+	if err := c.do(ctx, http.MethodGet, "/metrics", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ResetMetrics clears node-local daemon evaluation counters and returns the
+// post-reset snapshot.
+func (c *Client) ResetMetrics(ctx context.Context) (*httpapi.MetricsResponse, error) {
+	var resp httpapi.MetricsResponse
+	if err := c.do(ctx, http.MethodPost, "/metrics:reset", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // CreateBucket creates a managed bucket.
 func (c *Client) CreateBucket(ctx context.Context, id string, backend string) (*httpapi.Bucket, error) {
 	req := &httpapi.BucketCreateRequest{ID: id, Backend: backend}
