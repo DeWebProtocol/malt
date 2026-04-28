@@ -88,6 +88,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/updates:batch", s.handleBucketMapsBatchUpdate)
 	mux.HandleFunc("POST /api/v1/buckets/{id}/lists", s.handleBucketListsCreate)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/lists/{root}", s.handleBucketListsGet)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs:batch", s.handleBucketUnixFSBatch)
 	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/files", s.handleBucketUnixFSFile)
 	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/directories", s.handleBucketUnixFSDirectory)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/stat", s.handleBucketStat)

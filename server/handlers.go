@@ -25,6 +25,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/structure/list"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
@@ -679,6 +680,91 @@ func (s *Server) handleBucketUnixFSDirectory(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+func (s *Server) handleBucketUnixFSBatch(w http.ResponseWriter, r *http.Request) {
+	bucketID := r.PathValue("id")
+	meta, g, err := s.openManagedGraph(r.Context(), bucketID, true)
+	if err != nil {
+		writeManagedGraphError(w, err)
+		return
+	}
+
+	var req httpapi.BucketUnixFSBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+	if len(req.Entries) == 0 {
+		writeError(w, http.StatusBadRequest, "entries are required")
+		return
+	}
+
+	oldRoot := cid.Undef
+	if meta != nil {
+		oldRoot = meta.Root
+	}
+	if req.BaseRoot != "" {
+		baseRoot, err := decodeCID(req.BaseRoot)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if oldRoot != baseRoot {
+			writeError(w, http.StatusConflict, "stale base_root")
+			return
+		}
+	}
+
+	bindings, err := s.existingFlatUnixFSBindings(r.Context(), g, oldRoot)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := s.applyFlatUnixFSBatchEntries(r.Context(), g, bindings, req.Entries); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rootPayload, err := s.putDirectoryManifest(r.Context(), topLevelNames(bindings))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bindings[explicit.PayloadArc] = rootPayload
+
+	snapshot, err := arcset.NewArcSetFromPaths(bindings)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	root, err := g.Semantic().Commit(r.Context(), bucketID, mapping.NewViewFromPaths(bindings))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.node.ArcTable().Update(r.Context(), bucketID, root, cid.Undef, snapshot); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	arcCount := countDefinedCIDBindings(bindings)
+	if err := s.updateManagedGraphHead(r.Context(), bucketID, root, arcCount); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if lm := s.node.LineageManager(); lm != nil {
+		_ = lm.Record(r.Context(), root, oldRoot, arcCount)
+	}
+
+	resp := &httpapi.BucketUnixFSBatchResponse{
+		Bucket:   bucketID,
+		NewRoot:  root.String(),
+		PutCount: 1,
+		ArcCount: arcCount,
+	}
+	if oldRoot.Defined() {
+		resp.OldRoot = oldRoot.String()
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
 func (s *Server) handleBucketStat(w http.ResponseWriter, r *http.Request) {
 	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
 	if err != nil {
@@ -1278,13 +1364,93 @@ func (s *Server) writeSnapshot(w http.ResponseWriter, ctx context.Context, g *gr
 	})
 }
 
-var errPathNotFound = errors.New("path not found")
+var (
+	errPathNotFound  = errors.New("path not found")
+	errNotFlatUnixFS = errors.New("not a flat unixfs root")
+)
 
 func (s *Server) bucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.BucketStatResponse, error) {
+	if stat, err := s.flatUnixFSBucketStat(ctx, g, root, path); err == nil {
+		return stat, nil
+	} else if errors.Is(err, errPathNotFound) {
+		return nil, err
+	}
 	if stat, err := s.unixFSBucketStat(ctx, g, root, path); err == nil {
 		return stat, nil
 	}
 	return s.legacyBucketStat(ctx, g, root, path)
+}
+
+func (s *Server) flatUnixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
+	if codec.SemanticKindOf(root) != codec.SemanticKindMap {
+		return nil, errNotFlatUnixFS
+	}
+	rootPayload, payloadErr := s.node.ArcTable().Get(ctx, g.BucketId(), root, explicit.PayloadArc)
+	if payloadErr != nil || codec.SemanticKindOf(rootPayload) != codec.SemanticKindManifest {
+		return nil, errNotFlatUnixFS
+	}
+	var target cid.Cid
+	var err error
+	if bucketpath.CanonicalizeQueryPath(p) == "" {
+		target = rootPayload
+	} else {
+		target, err = s.node.ArcTable().Get(ctx, g.BucketId(), root, arcset.CanonicalizePath(p))
+	}
+	if err != nil || !target.Defined() {
+		return nil, errPathNotFound
+	}
+	return s.statFromFlatTarget(ctx, g, target)
+}
+
+func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target cid.Cid) (*httpapi.BucketStatResponse, error) {
+	switch codec.SemanticKindOf(target) {
+	case codec.SemanticKindManifest:
+		entries, err := s.readDirectoryManifest(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		return &httpapi.BucketStatResponse{
+			Kind:        "dir",
+			StorageKind: "manifest",
+			Key:         target.String(),
+			Payload:     target.String(),
+			Entries:     entries,
+		}, nil
+	case codec.SemanticKindMap:
+		payload, err := mandatoryMapPayload(ctx, g, target)
+		if err != nil {
+			return nil, err
+		}
+		return &httpapi.BucketStatResponse{
+			Kind:        "dir",
+			StorageKind: "map",
+			Key:         target.String(),
+			Payload:     payload.String(),
+		}, nil
+	case codec.SemanticKindList:
+		size, _, err := s.listFileSize(ctx, g, target)
+		if err != nil {
+			return nil, err
+		}
+		return &httpapi.BucketStatResponse{
+			Kind:        "file",
+			StorageKind: "list",
+			Key:         target.String(),
+			Size:        &size,
+		}, nil
+	default:
+		data, err := s.node.CAS().Get(ctx, target)
+		if err != nil {
+			return nil, errPathNotFound
+		}
+		size := int64(len(data))
+		return &httpapi.BucketStatResponse{
+			Kind:        "file",
+			StorageKind: "raw",
+			Key:         target.String(),
+			Size:        &size,
+		}, nil
+	}
 }
 
 func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.BucketStatResponse, error) {
@@ -1303,6 +1469,8 @@ func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.
 	}
 
 	switch codec.SemanticKindOf(key) {
+	case codec.SemanticKindManifest:
+		return s.statFromFlatTarget(ctx, g, key)
 	case codec.SemanticKindMap:
 		payload, err := mandatoryMapPayload(ctx, g, key)
 		if err != nil {
@@ -1354,6 +1522,181 @@ func (s *Server) unixFSLayout(g *graph.Graph) (*unixfs.Layout, error) {
 		List:      g.ListSemantic(),
 		Blocks:    blocks,
 	})
+}
+
+func (s *Server) existingFlatUnixFSBindings(ctx context.Context, g *graph.Graph, root cid.Cid) (map[arcset.Path]cid.Cid, error) {
+	out := make(map[arcset.Path]cid.Cid)
+	if !root.Defined() {
+		return out, nil
+	}
+	if codec.SemanticKindOf(root) != codec.SemanticKindMap {
+		return nil, fmt.Errorf("bucket root must be a map root")
+	}
+	snapshot, err := g.Snapshot(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	iter := snapshot.Iterate()
+	for {
+		p, target, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if p.String() == "@type" {
+			continue
+		}
+		out[p] = target
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Server) applyFlatUnixFSBatchEntries(ctx context.Context, g *graph.Graph, bindings map[arcset.Path]cid.Cid, entries []httpapi.BucketUnixFSBatchEntry) error {
+	for _, entry := range entries {
+		p := arcset.CanonicalizePath(bucketpath.CanonicalizeQueryPath(entry.Path))
+		if p.IsEmpty() {
+			return fmt.Errorf("entry path is required")
+		}
+		target, err := s.flatUnixFSBatchTarget(ctx, g, entry)
+		if err != nil {
+			return fmt.Errorf("%s: %w", p.String(), err)
+		}
+		if codec.SemanticKindOf(target) == codec.SemanticKindManifest {
+			if existing, ok := bindings[p]; ok && codec.SemanticKindOf(existing) == codec.SemanticKindManifest {
+				target, err = s.mergeDirectoryManifests(ctx, existing, target)
+				if err != nil {
+					return fmt.Errorf("%s: %w", p.String(), err)
+				}
+			} else if ok && codec.SemanticKindOf(existing) == codec.SemanticKindMap {
+				payload, err := mandatoryMapPayload(ctx, g, existing)
+				if err != nil {
+					removeFlatSubtree(bindings, p)
+				} else {
+					target, err = s.mergeDirectoryManifests(ctx, payload, target)
+					if err != nil {
+						return fmt.Errorf("%s: %w", p.String(), err)
+					}
+				}
+			} else if ok {
+				removeFlatSubtree(bindings, p)
+			}
+		} else {
+			removeFlatSubtree(bindings, p)
+		}
+		bindings[p] = target
+	}
+	return nil
+}
+
+func (s *Server) flatUnixFSBatchTarget(ctx context.Context, g *graph.Graph, entry httpapi.BucketUnixFSBatchEntry) (cid.Cid, error) {
+	if entry.Target != "" && len(entry.Chunks) > 0 {
+		return cid.Undef, fmt.Errorf("target and chunks are mutually exclusive")
+	}
+	if entry.Target != "" {
+		return decodeCID(entry.Target)
+	}
+	if len(entry.Chunks) == 0 {
+		return cid.Undef, fmt.Errorf("target or chunks are required")
+	}
+	chunks := make([]cid.Cid, 0, len(entry.Chunks))
+	for i, raw := range entry.Chunks {
+		chunk, err := decodeCID(raw)
+		if err != nil {
+			return cid.Undef, fmt.Errorf("invalid chunk %d: %w", i, err)
+		}
+		chunks = append(chunks, chunk)
+	}
+	return g.ListSemantic().Commit(ctx, g.BucketId(), list.NewViewFromSlice(chunks))
+}
+
+func removeFlatSubtree(bindings map[arcset.Path]cid.Cid, p arcset.Path) {
+	prefix := p.String() + "/"
+	for existing := range bindings {
+		if strings.HasPrefix(existing.String(), prefix) {
+			delete(bindings, existing)
+		}
+	}
+}
+
+func (s *Server) mergeDirectoryManifests(ctx context.Context, oldCID cid.Cid, newCID cid.Cid) (cid.Cid, error) {
+	oldEntries, err := s.readDirectoryManifest(ctx, oldCID)
+	if err != nil {
+		return cid.Undef, err
+	}
+	newEntries, err := s.readDirectoryManifest(ctx, newCID)
+	if err != nil {
+		return cid.Undef, err
+	}
+	seen := make(map[string]struct{}, len(oldEntries)+len(newEntries))
+	merged := make([]string, 0, len(oldEntries)+len(newEntries))
+	for _, name := range oldEntries {
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			merged = append(merged, name)
+		}
+	}
+	for _, name := range newEntries {
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			merged = append(merged, name)
+		}
+	}
+	return s.putDirectoryManifest(ctx, merged)
+}
+
+func (s *Server) readDirectoryManifest(ctx context.Context, manifestCID cid.Cid) ([]string, error) {
+	data, err := s.node.CAS().Get(ctx, manifestCID)
+	if err != nil {
+		return nil, err
+	}
+	m, err := manifest.ParseDirectoryJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	return m.Entries, nil
+}
+
+func (s *Server) putDirectoryManifest(ctx context.Context, entries []string) (cid.Cid, error) {
+	typed, ok := s.node.CAS().(cas.TypedWriter)
+	if !ok {
+		return cid.Undef, fmt.Errorf("configured CAS does not support typed manifest writes")
+	}
+	payload, err := manifest.Normalize(&manifest.DirectoryManifest{Entries: entries}).MarshalJSON()
+	if err != nil {
+		return cid.Undef, err
+	}
+	return typed.PutWithCodec(ctx, payload, codec.CodecMaltManifest)
+}
+
+func topLevelNames(bindings map[arcset.Path]cid.Cid) []string {
+	seen := make(map[string]struct{})
+	for p := range bindings {
+		if p.String() == explicit.PayloadArc.String() || strings.HasPrefix(p.String(), "@") {
+			continue
+		}
+		segments := p.Segments()
+		if len(segments) == 0 {
+			continue
+		}
+		seen[segments[0]] = struct{}{}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	return names
+}
+
+func countDefinedCIDBindings(bindings map[arcset.Path]cid.Cid) int {
+	count := 0
+	for _, target := range bindings {
+		if target.Defined() {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, root cid.Cid) (cid.Cid, error) {

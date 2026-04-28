@@ -248,6 +248,14 @@ func (c *Client) AddBucketUnixFSFile(ctx context.Context, id string, p string, d
 	return &resp, nil
 }
 
+func (c *Client) ApplyBucketUnixFSBatch(ctx context.Context, id string, req *httpapi.BucketUnixFSBatchRequest) (*httpapi.BucketUnixFSBatchResponse, error) {
+	var resp httpapi.BucketUnixFSBatchResponse
+	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/unixfs:batch", nil, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) CreateBucketMap(ctx context.Context, id string, bindings map[string]string) (*httpapi.BucketMapCreateResponse, error) {
 	var resp httpapi.BucketMapCreateResponse
 	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/maps", nil, &httpapi.BucketMapCreateRequest{Bindings: bindings}, &resp); err != nil {

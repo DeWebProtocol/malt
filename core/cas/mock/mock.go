@@ -155,6 +155,11 @@ func (m *CAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
 
 // Put stores a block in mock storage.
 func (m *CAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	return m.PutWithCodec(ctx, data, cid.Raw)
+}
+
+// PutWithCodec stores a block under the requested CID codec.
+func (m *CAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
 	m.stats.RecordPutCall()
 	simulateLatency(m.putLatency, m.jitter)
 
@@ -162,7 +167,7 @@ func (m *CAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	if err != nil {
 		return cid.Cid{}, err
 	}
-	c := cid.NewCidV1(cid.Raw, mhash)
+	c := cid.NewCidV1(codec, mhash)
 
 	if err := m.kv.Put(ctx, blockKey(c), data); err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to store block: %w", err)

@@ -10,6 +10,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/cas"
@@ -88,7 +90,25 @@ func (c *Client) Get(ctx context.Context, cID cid.Cid) ([]byte, error) {
 
 // Put stores a block to the local IPFS node.
 func (c *Client) Put(ctx context.Context, data []byte) (cid.Cid, error) {
-	url := fmt.Sprintf("%s/api/v0/block/put", c.apiURL)
+	return c.putWithFormat(ctx, data, "")
+}
+
+// PutWithCodec stores a block under the requested CID codec.
+func (c *Client) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	if codec == cid.Raw {
+		return c.Put(ctx, data)
+	}
+	return c.putWithFormat(ctx, data, strconv.FormatUint(codec, 10))
+}
+
+func (c *Client) putWithFormat(ctx context.Context, data []byte, format string) (cid.Cid, error) {
+	apiURL := fmt.Sprintf("%s/api/v0/block/put", c.apiURL)
+	if format != "" {
+		values := url.Values{}
+		values.Set("format", format)
+		values.Set("mhtype", "sha2-256")
+		apiURL += "?" + values.Encode()
+	}
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -103,7 +123,7 @@ func (c *Client) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 		return cid.Cid{}, fmt.Errorf("failed to close writer: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, body)
 	if err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to create request: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/dewebprotocol/malt/core/cas"
@@ -85,7 +86,22 @@ func (s *HTTPServer) handleBlockPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockCID, err := s.cas.Put(r.Context(), data)
+	codec, err := blockPutCodec(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var blockCID cid.Cid
+	if codec == cid.Raw {
+		blockCID, err = s.cas.Put(r.Context(), data)
+	} else {
+		if typed, ok := s.cas.(cas.TypedWriter); ok {
+			blockCID, err = typed.PutWithCodec(r.Context(), data, codec)
+		} else {
+			err = fmt.Errorf("configured CAS does not support typed writes")
+		}
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -100,6 +116,18 @@ func (s *HTTPServer) handleBlockPut(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func blockPutCodec(r *http.Request) (uint64, error) {
+	raw := r.URL.Query().Get("format")
+	if raw == "" || raw == "raw" {
+		return cid.Raw, nil
+	}
+	codec, err := strconv.ParseUint(raw, 0, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid block format %q: %w", raw, err)
+	}
+	return codec, nil
 }
 
 func (s *HTTPServer) handleBlockStat(w http.ResponseWriter, r *http.Request) {

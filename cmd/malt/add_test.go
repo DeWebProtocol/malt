@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/server"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -308,7 +309,7 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 		t.Fatalf("write large: %v", err)
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, bucketID, []string{inputRoot}, addBuildOptions{})
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{inputRoot}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("add with unixfs: %v", err)
 	}
@@ -328,12 +329,32 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 	}
 
 	base := filepath.Base(inputRoot)
+	snapshot, err := daemon.SnapshotBucketMap(ctx, bucketID, result.NewRoot)
+	if err != nil {
+		t.Fatalf("snapshot bucket root: %v", err)
+	}
+	for _, p := range []string{base, base + "/empty", base + "/nested", base + "/nested/small.txt", base + "/nested/large.bin"} {
+		if snapshot.Bindings[p] == "" {
+			t.Fatalf("root map missing flat binding for %q: %+v", p, snapshot.Bindings)
+		}
+	}
+	baseCID, err := cid.Decode(snapshot.Bindings[base])
+	if err != nil {
+		t.Fatalf("decode base binding: %v", err)
+	}
+	if codec.SemanticKindOf(baseCID) != codec.SemanticKindManifest {
+		t.Fatalf("base binding kind = %s, want manifest", codec.SemanticKindOf(baseCID))
+	}
+	if _, err := daemon.StatBucketPath(ctx, bucketID, base+"/missing.txt"); err == nil {
+		t.Fatal("missing child under manifest directory should not stat successfully")
+	}
+
 	emptyStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/empty")
 	if err != nil {
 		t.Fatalf("stat empty: %v", err)
 	}
-	if emptyStat.Kind != "dir" {
-		t.Fatalf("empty kind = %q, want dir", emptyStat.Kind)
+	if emptyStat.Kind != "dir" || emptyStat.StorageKind != "manifest" {
+		t.Fatalf("unexpected empty stat: %+v", emptyStat)
 	}
 
 	smallStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/small.txt")
@@ -414,7 +435,7 @@ func TestAddInputsWithUnixFSMigratesLegacyBucket(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nextRoot, "docs", "new.txt"), []byte("new"), 0o644); err != nil {
 		t.Fatalf("write next file: %v", err)
 	}
-	if _, err := addInputsWithUnixFS(ctx, daemon, bucketID, []string{nextRoot}, addBuildOptions{}); err != nil {
+	if _, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{nextRoot}, addBuildOptions{}); err != nil {
 		t.Fatalf("add with unixfs over legacy bucket: %v", err)
 	}
 

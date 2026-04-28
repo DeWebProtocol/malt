@@ -22,6 +22,11 @@ type Writer interface {
 	Put(ctx context.Context, data []byte) (cid.Cid, error)
 }
 
+// TypedWriter stores blocks under an explicit CID codec.
+type TypedWriter interface {
+	PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error)
+}
+
 // Client provides full read/write access to content-addressable storage.
 type Client interface {
 	Reader

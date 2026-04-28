@@ -126,6 +126,23 @@ func TestNewListKZGCid(t *testing.T) {
 	}
 }
 
+func TestNewManifestCID(t *testing.T) {
+	payload := []byte(`{"entries":["docs","readme.md"]}`)
+	c, err := codec.NewManifestCID(payload)
+	if err != nil {
+		t.Fatalf("NewManifestCID: %v", err)
+	}
+	if c.Prefix().Codec != codec.CodecMaltManifest {
+		t.Fatalf("codec %x, want %x", c.Prefix().Codec, codec.CodecMaltManifest)
+	}
+	if codec.SemanticKindOf(c) != codec.SemanticKindManifest {
+		t.Fatalf("semantic kind = %s, want %s", codec.SemanticKindOf(c), codec.SemanticKindManifest)
+	}
+	if codec.IsMaltCid(c) {
+		t.Fatal("manifest payload CIDs must not be treated as traversable MALT structure roots")
+	}
+}
+
 func TestEqualCommitmentAcrossSemanticCodecs(t *testing.T) {
 	commitment := make([]byte, codec.KZGCommitmentSize)
 	for i := range commitment {
@@ -157,6 +174,7 @@ func TestCodecName(t *testing.T) {
 		{codec.CodecMaltListKZG, "malt-list-kzg"},
 		{codec.CodecMaltMapIPA, "malt-map-ipa"},
 		{codec.CodecMaltListIPA, "malt-list-ipa"},
+		{codec.CodecMaltManifest, "malt-manifest"},
 		{0x999999, "unknown-999999"},
 	}
 

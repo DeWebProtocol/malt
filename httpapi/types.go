@@ -164,6 +164,28 @@ type BucketUnixFSWriteResponse struct {
 	ArcCount int    `json:"arc_count"`
 }
 
+// BucketUnixFSBatchRequest applies a flat UnixFS path-map mutation.
+type BucketUnixFSBatchRequest struct {
+	BaseRoot string                   `json:"base_root,omitempty"`
+	Entries  []BucketUnixFSBatchEntry `json:"entries"`
+}
+
+// BucketUnixFSBatchEntry binds one bucket path to a payload CID or chunk list.
+type BucketUnixFSBatchEntry struct {
+	Path   string   `json:"path"`
+	Target string   `json:"target,omitempty"`
+	Chunks []string `json:"chunks,omitempty"`
+}
+
+// BucketUnixFSBatchResponse returns the result of a flat UnixFS batch write.
+type BucketUnixFSBatchResponse struct {
+	Bucket   string `json:"bucket"`
+	OldRoot  string `json:"old_root,omitempty"`
+	NewRoot  string `json:"new_root"`
+	PutCount int    `json:"put_count"`
+	ArcCount int    `json:"arc_count"`
+}
+
 // StepEvidence is a single transcript step.
 type StepEvidence struct {
 	Path     string `json:"path"`

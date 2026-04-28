@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
@@ -58,6 +59,7 @@ type addNode struct {
 	Kind        string
 	StorageKind string
 	Key         cid.Cid
+	Chunks      []cid.Cid
 	Children    map[string]*addNode
 	Changed     bool
 }
@@ -101,6 +103,7 @@ type addUnixFSResult struct {
 
 type addCASClient interface {
 	Put(ctx context.Context, data []byte) (cid.Cid, error)
+	PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error)
 	Get(ctx context.Context, c cid.Cid) ([]byte, error)
 }
 
@@ -122,7 +125,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	oldRoot := strings.TrimSpace(meta.Root)
-	result, err := addInputsWithUnixFS(ctx, daemon, bucketID, args, addBuildOptions{
+	casClient, err := makeCASClient()
+	if err != nil {
+		return err
+	}
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, args, addBuildOptions{
 		Prefix:   addPrefixFlag,
 		Wrap:     addWrapFlag,
 		WrapName: addWrapNameFlag,
@@ -155,7 +162,7 @@ type addBuildOptions struct {
 	WrapName string
 }
 
-func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
 	inputs, err := collectAddInputs(rawInputs)
 	if err != nil {
 		return nil, err
@@ -165,27 +172,231 @@ func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucke
 		return nil, err
 	}
 
+	root := newDirNode()
 	result := &addUnixFSResult{}
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
-			files, bytesUploaded, root, err := addDirectoryWithUnixFS(ctx, daemon, bucketID, item)
+			files, bytesUploaded, err := stageFlatUnixFSDirectory(ctx, root, casClient, item)
 			if err != nil {
 				return nil, err
 			}
 			result.Files += files
 			result.Bytes += bytesUploaded
-			result.NewRoot = root
 			continue
 		}
-		bytesUploaded, root, err := addFileWithUnixFS(ctx, daemon, bucketID, item.Input.AbsPath, item.MountBase)
+		bytesUploaded, err := stageFlatUnixFSFile(ctx, root, casClient, item.Input.AbsPath, item.MountBase)
 		if err != nil {
 			return nil, err
 		}
 		result.Files++
 		result.Bytes += bytesUploaded
-		result.NewRoot = root
 	}
+
+	entries, err := flatUnixFSBatchEntries(ctx, casClient, root)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := daemon.GetBucket(ctx, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := daemon.ApplyBucketUnixFSBatch(ctx, bucketID, &httpapi.BucketUnixFSBatchRequest{
+		BaseRoot: meta.Root,
+		Entries:  entries,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.NewRoot = resp.NewRoot
 	return result, nil
+}
+
+func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addCASClient, item addMountedInput) (int, int64, error) {
+	mountBase := canonicalAddPath(item.MountBase)
+	if mountBase == "" {
+		return 0, 0, fmt.Errorf("directory mount path must not be empty")
+	}
+	ensureDirNode(root, mountBase)
+
+	var files int
+	var bytesUploaded int64
+	err := filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current != item.Input.AbsPath && d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("symlink is not supported: %s", current)
+		}
+		rel, err := filepath.Rel(item.Input.AbsPath, current)
+		if err != nil {
+			return fmt.Errorf("compute relative path %q: %w", current, err)
+		}
+		if rel == "." {
+			return nil
+		}
+		targetPath := canonicalAddPath(path.Join(mountBase, filepath.ToSlash(rel)))
+		if targetPath == "" {
+			return nil
+		}
+		if d.IsDir() {
+			ensureDirNode(root, targetPath)
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", current, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("non-regular file is not supported: %s", current)
+		}
+		fileBytes, err := stageFlatUnixFSFile(ctx, root, casClient, current, targetPath)
+		if err != nil {
+			return err
+		}
+		files++
+		bytesUploaded += fileBytes
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return files, bytesUploaded, nil
+}
+
+func stageFlatUnixFSFile(ctx context.Context, root *addNode, casClient addCASClient, localPath string, targetPath string) (int64, error) {
+	targetPath = canonicalAddPath(targetPath)
+	if targetPath == "" {
+		return 0, fmt.Errorf("target path must not be empty")
+	}
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return 0, fmt.Errorf("stat %s: %w", localPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("not a regular file: %s", localPath)
+	}
+	node := ensureFileNode(root, targetPath)
+	if info.Size() <= addFixedChunkSize {
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			return 0, fmt.Errorf("read %s: %w", localPath, err)
+		}
+		blockCID, err := casClient.Put(ctx, data)
+		if err != nil {
+			return 0, fmt.Errorf("upload %s to CAS: %w", localPath, err)
+		}
+		node.Key = blockCID
+		node.Chunks = nil
+		return info.Size(), nil
+	}
+	chunks, err := uploadFlatChunks(ctx, casClient, localPath)
+	if err != nil {
+		return 0, err
+	}
+	node.Key = cid.Undef
+	node.Chunks = chunks
+	return info.Size(), nil
+}
+
+func uploadFlatChunks(ctx context.Context, casClient addCASClient, localPath string) ([]cid.Cid, error) {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	chunks := make([]cid.Cid, 0)
+	buf := make([]byte, addFixedChunkSize)
+	for {
+		n, readErr := io.ReadFull(f, buf)
+		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+			return nil, fmt.Errorf("read %s: %w", localPath, readErr)
+		}
+		if n > 0 {
+			chunkCID, err := casClient.Put(ctx, slices.Clone(buf[:n]))
+			if err != nil {
+				return nil, fmt.Errorf("upload chunk for %s: %w", localPath, err)
+			}
+			chunks = append(chunks, chunkCID)
+		}
+		if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
+			break
+		}
+	}
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("empty chunk sequence for %s", localPath)
+	}
+	return chunks, nil
+}
+
+func flatUnixFSBatchEntries(ctx context.Context, casClient addCASClient, root *addNode) ([]httpapi.BucketUnixFSBatchEntry, error) {
+	entries := make([]httpapi.BucketUnixFSBatchEntry, 0)
+	var walk func(prefix string, node *addNode) error
+	walk = func(prefix string, node *addNode) error {
+		if node == nil {
+			return nil
+		}
+		if prefix != "" {
+			switch node.Kind {
+			case "dir":
+				manifestCID, err := putAddDirectoryManifest(ctx, casClient, node)
+				if err != nil {
+					return err
+				}
+				entries = append(entries, httpapi.BucketUnixFSBatchEntry{
+					Path:   prefix,
+					Target: manifestCID.String(),
+				})
+			case "file":
+				entry := httpapi.BucketUnixFSBatchEntry{Path: prefix}
+				if len(node.Chunks) > 0 {
+					entry.Chunks = make([]string, len(node.Chunks))
+					for i, chunk := range node.Chunks {
+						entry.Chunks[i] = chunk.String()
+					}
+				} else {
+					entry.Target = node.Key.String()
+				}
+				entries = append(entries, entry)
+				return nil
+			}
+		}
+		names := make([]string, 0, len(node.Children))
+		for name := range node.Children {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			childPath := name
+			if prefix != "" {
+				childPath = path.Join(prefix, name)
+			}
+			if err := walk(childPath, node.Children[name]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk("", root); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func putAddDirectoryManifest(ctx context.Context, casClient addCASClient, node *addNode) (cid.Cid, error) {
+	names := make([]string, 0, len(node.Children))
+	for name := range node.Children {
+		names = append(names, name)
+	}
+	payload, err := manifest.Normalize(&manifest.DirectoryManifest{Entries: names}).MarshalJSON()
+	if err != nil {
+		return cid.Undef, fmt.Errorf("marshal directory manifest: %w", err)
+	}
+	manifestCID, err := casClient.PutWithCodec(ctx, payload, codec.CodecMaltManifest)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("upload directory manifest: %w", err)
+	}
+	return manifestCID, nil
 }
 
 func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, item addMountedInput) (int, int64, string, error) {
@@ -591,6 +802,27 @@ func setFileNode(root *addNode, p string, key cid.Cid) error {
 	}
 	parent.Changed = true
 	return nil
+}
+
+func ensureFileNode(root *addNode, p string) *addNode {
+	segments := splitAddPath(p)
+	if len(segments) == 0 {
+		return nil
+	}
+	parentPath := path.Dir(p)
+	if parentPath == "." {
+		parentPath = ""
+	}
+	parent := ensureDirNode(root, parentPath)
+	name := segments[len(segments)-1]
+	node := &addNode{
+		Kind:        "file",
+		StorageKind: "raw",
+		Changed:     true,
+	}
+	parent.Children[name] = node
+	parent.Changed = true
+	return node
 }
 
 func mergeAddNodes(existing *addNode, staged *addNode) *addNode {

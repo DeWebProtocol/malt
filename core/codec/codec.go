@@ -7,6 +7,7 @@
 //	malt-list-kzg = 0x300002
 //	malt-map-ipa  = 0x300003
 //	malt-list-ipa = 0x300004
+//	malt-manifest = 0x300005
 package codec
 
 import (
@@ -19,19 +20,21 @@ import (
 
 // Typed MALT multicodecs (Private Use Area: 0x300000-0x3FFFFF).
 const (
-	CodecMaltMapKZG  = 0x300001 // malt-map-kzg
-	CodecMaltListKZG = 0x300002 // malt-list-kzg
-	CodecMaltMapIPA  = 0x300003 // malt-map-ipa
-	CodecMaltListIPA = 0x300004 // malt-list-ipa
+	CodecMaltMapKZG   = 0x300001 // malt-map-kzg
+	CodecMaltListKZG  = 0x300002 // malt-list-kzg
+	CodecMaltMapIPA   = 0x300003 // malt-map-ipa
+	CodecMaltListIPA  = 0x300004 // malt-list-ipa
+	CodecMaltManifest = 0x300005 // malt-manifest
 )
 
 // SemanticKind indicates the structural semantic encoded in the typed CID.
 type SemanticKind string
 
 const (
-	SemanticKindUnknown SemanticKind = "unknown"
-	SemanticKindMap     SemanticKind = "map"
-	SemanticKindList    SemanticKind = "list"
+	SemanticKindUnknown  SemanticKind = "unknown"
+	SemanticKindMap      SemanticKind = "map"
+	SemanticKindList     SemanticKind = "list"
+	SemanticKindManifest SemanticKind = "manifest"
 )
 
 // BackendKind indicates the primitive commitment backend used by the typed CID.
@@ -99,6 +102,15 @@ func NewListIPACid(commitment []byte) (cid.Cid, error) {
 	return newMaltCid(CodecMaltListIPA, commitment)
 }
 
+// NewManifestCID creates a CID for a directory manifest payload.
+func NewManifestCID(payload []byte) (cid.Cid, error) {
+	mhash, err := mh.Sum(payload, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("failed to create manifest multihash: %w", err)
+	}
+	return cid.NewCidV1(CodecMaltManifest, mhash), nil
+}
+
 // NewTypedCID constructs a typed MALT CID for the given semantic/backend kinds.
 func NewTypedCID(semantic SemanticKind, backend BackendKind, commitment []byte) (cid.Cid, error) {
 	switch backend {
@@ -147,6 +159,8 @@ func SemanticKindOf(c cid.Cid) SemanticKind {
 		return SemanticKindMap
 	case CodecMaltListKZG, CodecMaltListIPA:
 		return SemanticKindList
+	case CodecMaltManifest:
+		return SemanticKindManifest
 	default:
 		return SemanticKindUnknown
 	}
@@ -214,6 +228,8 @@ func CodecName(codec uint64) string {
 		return "malt-map-ipa"
 	case CodecMaltListIPA:
 		return "malt-list-ipa"
+	case CodecMaltManifest:
+		return "malt-manifest"
 	default:
 		return fmt.Sprintf("unknown-%x", codec)
 	}
