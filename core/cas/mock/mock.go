@@ -18,6 +18,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/metrics"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -38,7 +39,11 @@ type CAS struct {
 	putLatency time.Duration
 	hasLatency time.Duration
 	jitter     time.Duration
+	stats      metrics.CASStatsRecorder
 }
+
+// CASStats is a point-in-time snapshot of mock CAS counters.
+type CASStats = metrics.CASStats
 
 // Option configures a mock CAS.
 type Option func(*options)
@@ -137,17 +142,20 @@ func blockKey(c cid.Cid) []byte {
 
 // Get retrieves a block from mock storage.
 func (m *CAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
+	m.stats.RecordGetCall()
 	simulateLatency(m.getLatency, m.jitter)
 
 	data, err := m.kv.Get(ctx, blockKey(c))
 	if err != nil {
 		return nil, fmt.Errorf("block not found: %s", c.String())
 	}
+	m.stats.RecordGetBytes(len(data))
 	return data, nil
 }
 
 // Put stores a block in mock storage.
 func (m *CAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	m.stats.RecordPutCall()
 	simulateLatency(m.putLatency, m.jitter)
 
 	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
@@ -159,11 +167,13 @@ func (m *CAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	if err := m.kv.Put(ctx, blockKey(c), data); err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to store block: %w", err)
 	}
+	m.stats.RecordPutBytes(len(data))
 	return c, nil
 }
 
 // Has checks if a block exists in mock storage.
 func (m *CAS) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	m.stats.RecordHasCall()
 	simulateLatency(m.hasLatency, m.jitter)
 
 	exists, err := m.kv.Has(ctx, blockKey(c))
@@ -176,6 +186,16 @@ func (m *CAS) Has(ctx context.Context, c cid.Cid) (bool, error) {
 // AddBlock adds a pre-existing block to mock storage without latency.
 func (m *CAS) AddBlock(c cid.Cid, data []byte) {
 	_ = m.kv.Put(context.Background(), blockKey(c), data)
+}
+
+// SnapshotStats returns the current mock CAS counters.
+func (m *CAS) SnapshotStats() CASStats {
+	return m.stats.Snapshot()
+}
+
+// ResetStats clears mock CAS counters.
+func (m *CAS) ResetStats() {
+	m.stats.Reset()
 }
 
 // Ensure CAS implements cas.Client.
