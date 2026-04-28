@@ -1317,8 +1317,10 @@ func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string
 		Puts:     make([]gateway.ArcSetPut, 0, len(plan.Puts)),
 	}
 	for _, put := range plan.Puts {
+		// UnixFS replay rematerializes deterministic roots; do not treat the
+		// already-materialized object as a versioned ArcTable parent.
 		mut.Puts = append(mut.Puts, gateway.ArcSetPut{
-			Object: put.Object,
+			Object: cid.Undef,
 			Kind:   put.Kind,
 			ArcSet: put.ArcSet,
 		})

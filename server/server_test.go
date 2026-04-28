@@ -11,6 +11,7 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
@@ -878,6 +879,49 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !bytes.Equal(got, fileBody) {
 		t.Fatalf("content status/body = %d %q, want %d %q", resp.StatusCode, string(got), http.StatusOK, string(fileBody))
+	}
+}
+
+func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
+	node := newTestNode(t)
+	arcs, ok := node.ArcTable().(*versioned.ArcTable)
+	if !ok {
+		t.Fatalf("test node ArcTable = %T, want *versioned.ArcTable", node.ArcTable())
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatalf("create unixfs file request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var writeResp httpapi.BucketUnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode unixfs write response: %v", err)
+	}
+	resp.Body.Close()
+
+	root, err := cid.Decode(writeResp.NewRoot)
+	if err != nil {
+		t.Fatalf("decode unixfs write root: %v", err)
+	}
+	parent, err := arcs.GetParent(t.Context(), "demo", root)
+	if err != nil {
+		t.Fatalf("read gateway root parent: %v", err)
+	}
+	if parent.Equals(root) {
+		t.Fatalf("gateway root self-parented: %s", root)
 	}
 }
 
