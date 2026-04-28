@@ -14,16 +14,19 @@ import (
 // ErrBucketCreatorUnsupported is returned when a wrapped ArcTable cannot create buckets.
 var ErrBucketCreatorUnsupported = errors.New("wrapped arctable does not support bucket creation")
 
+// ErrParentLookupUnsupported is returned when a wrapped ArcTable cannot read root parents.
+var ErrParentLookupUnsupported = errors.New("wrapped arctable does not support parent lookup")
+
 // ArcTableStats is a point-in-time snapshot of ArcTable operation counters.
 type ArcTableStats struct {
-	GetCount          uint64
-	BatchGetCount     uint64
-	BatchGetPathCount uint64
-	UpdateCount       uint64
-	UpdateArcCount    uint64
-	SnapshotCount     uint64
-	SnapshotArcCount  uint64
-	IterateCount      uint64
+	GetCount          uint64 `json:"get_count"`
+	BatchGetCount     uint64 `json:"batch_get_count"`
+	BatchGetPathCount uint64 `json:"batch_get_path_count"`
+	UpdateCount       uint64 `json:"update_count"`
+	UpdateArcCount    uint64 `json:"update_arc_count"`
+	SnapshotCount     uint64 `json:"snapshot_count"`
+	SnapshotArcCount  uint64 `json:"snapshot_arc_count"`
+	IterateCount      uint64 `json:"iterate_count"`
 }
 
 type arcTableStatsRecorder struct {
@@ -70,6 +73,11 @@ type ArcTable struct {
 // NewArcTable wraps base with ArcTable operation counters.
 func NewArcTable(base arctable.ArcTable) *ArcTable {
 	return &ArcTable{base: base}
+}
+
+// Base returns the wrapped ArcTable implementation.
+func (m *ArcTable) Base() arctable.ArcTable {
+	return m.base
 }
 
 // SnapshotStats returns the current ArcTable counters.
@@ -132,6 +140,17 @@ func (m *ArcTable) CreateBucket(ctx context.Context, bucketId string, cfg *bloom
 		return ErrBucketCreatorUnsupported
 	}
 	return creator.CreateBucket(ctx, bucketId, cfg)
+}
+
+// GetParent forwards version-parent lookups when the wrapped ArcTable supports it.
+func (m *ArcTable) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
+	reader, ok := m.base.(interface {
+		GetParent(context.Context, string, cid.Cid) (cid.Cid, error)
+	})
+	if !ok {
+		return cid.Undef, ErrParentLookupUnsupported
+	}
+	return reader.GetParent(ctx, bucketId, version)
 }
 
 var _ arctable.ArcTable = (*ArcTable)(nil)

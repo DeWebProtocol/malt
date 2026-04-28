@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
-	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
@@ -92,6 +92,135 @@ func TestServerLegacyGraphRoutesRemoved(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("legacy graphs status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	rawData := []byte("metrics raw content")
+	rawCID, err := mockCAS.Put(t.Context(), rawData)
+	if err != nil {
+		t.Fatalf("put raw content: %v", err)
+	}
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "metrics"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"@payload": rawCID.String(),
+			"file.txt": rawCID.String(),
+		},
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/metrics/structure", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/metrics/content?path=file.txt")
+	if err != nil {
+		t.Fatalf("content request failed: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/metrics/prooflist?path=file.txt")
+	if err != nil {
+		t.Fatalf("prooflist request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/metrics")
+	if err != nil {
+		t.Fatalf("metrics request failed: %v", err)
+	}
+	var metricsResp httpapi.MetricsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&metricsResp); err != nil {
+		t.Fatalf("decode metrics response: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	snapshot := metricsResp.Snapshot
+	if snapshot.CAS.PutCount != 1 {
+		t.Fatalf("CAS PutCount = %d, want 1", snapshot.CAS.PutCount)
+	}
+	if snapshot.CAS.GetCount < 2 {
+		t.Fatalf("CAS GetCount = %d, want at least 2", snapshot.CAS.GetCount)
+	}
+	if snapshot.CAS.BytesGet < uint64(len(rawData)*2) {
+		t.Fatalf("CAS BytesGet = %d, want at least %d", snapshot.CAS.BytesGet, len(rawData)*2)
+	}
+	if snapshot.ArcTable.UpdateCount == 0 {
+		t.Fatalf("ArcTable UpdateCount = %d, want > 0", snapshot.ArcTable.UpdateCount)
+	}
+	if snapshot.ArcTable.GetCount == 0 {
+		t.Fatalf("ArcTable GetCount = %d, want > 0", snapshot.ArcTable.GetCount)
+	}
+	if snapshot.Proof.ProofListCount != 1 {
+		t.Fatalf("ProofListCount = %d, want 1", snapshot.Proof.ProofListCount)
+	}
+	if snapshot.Proof.StepCount == 0 || snapshot.Proof.TotalBytes == 0 {
+		t.Fatalf("Proof stats = %+v, want steps and byte accounting", snapshot.Proof)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/metrics:reset", nil)
+	if err != nil {
+		t.Fatalf("new reset request: %v", err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("reset request failed: %v", err)
+	}
+	var resetResp httpapi.MetricsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resetResp); err != nil {
+		t.Fatalf("decode reset response: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reset status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if resetResp.Snapshot.CAS.GetCount != 0 || resetResp.Snapshot.ArcTable.UpdateCount != 0 || resetResp.Snapshot.Proof.ProofListCount != 0 {
+		t.Fatalf("reset response snapshot = %+v, want zero counters", resetResp.Snapshot)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/metrics")
+	if err != nil {
+		t.Fatalf("metrics after reset request failed: %v", err)
+	}
+	var afterReset httpapi.MetricsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&afterReset); err != nil {
+		t.Fatalf("decode metrics after reset response: %v", err)
+	}
+	resp.Body.Close()
+	if afterReset.Snapshot.CAS.GetCount != 0 || afterReset.Snapshot.ArcTable.GetCount != 0 || afterReset.Snapshot.Proof.ProofListCount != 0 {
+		t.Fatalf("metrics after reset = %+v, want zero counters", afterReset.Snapshot)
 	}
 }
 
@@ -884,9 +1013,11 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 
 func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	node := newTestNode(t)
-	arcs, ok := node.ArcTable().(*versioned.ArcTable)
+	arcs, ok := node.ArcTable().(interface {
+		GetParent(context.Context, string, cid.Cid) (cid.Cid, error)
+	})
 	if !ok {
-		t.Fatalf("test node ArcTable = %T, want *versioned.ArcTable", node.ArcTable())
+		t.Fatalf("test node ArcTable = %T, want parent lookup support", node.ArcTable())
 	}
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())

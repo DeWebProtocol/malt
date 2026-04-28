@@ -69,6 +69,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
+	mux.HandleFunc("POST /api/v1/metrics:reset", s.handleMetricsReset)
 
 	// Bucket-first managed metadata surface (Phase 2).
 	mux.HandleFunc("POST /api/v1/buckets", s.handleBucketCreate)

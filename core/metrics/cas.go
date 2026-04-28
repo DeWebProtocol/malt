@@ -4,11 +4,11 @@ import "sync/atomic"
 
 // CASStats is a point-in-time snapshot of CAS operation counters.
 type CASStats struct {
-	PutCount uint64
-	GetCount uint64
-	HasCount uint64
-	BytesPut uint64
-	BytesGet uint64
+	PutCount uint64 `json:"put_count"`
+	GetCount uint64 `json:"get_count"`
+	HasCount uint64 `json:"has_count"`
+	BytesPut uint64 `json:"bytes_put"`
+	BytesGet uint64 `json:"bytes_get"`
 }
 
 // CASStatsRecorder records CAS counters with atomic updates.
