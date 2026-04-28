@@ -114,6 +114,36 @@ func TestDirectoryMutationPlanSortsEntriesAndRejectsReservedPath(t *testing.T) {
 	}
 }
 
+func TestRootMutationPlanIncludesDescendantsBeforeRoot(t *testing.T) {
+	ctx := context.Background()
+	layout := newLayout(t, 4)
+
+	root, err := layout.AddFile(ctx, cid.Undef, "docs/readme.txt", []byte("hello world"))
+	if err != nil {
+		t.Fatalf("AddFile failed: %v", err)
+	}
+
+	plan, err := layout.MutationPlanForRoot(ctx, cid.Undef, root)
+	if err != nil {
+		t.Fatalf("MutationPlanForRoot failed: %v", err)
+	}
+	if !plan.BaseRoot.Equals(cid.Undef) {
+		t.Fatalf("plan BaseRoot = %s, want undefined", plan.BaseRoot)
+	}
+	if len(plan.Puts) != 4 {
+		t.Fatalf("put count = %d, want 4", len(plan.Puts))
+	}
+	if plan.Puts[0].Kind != arcset.KindList {
+		t.Fatalf("put 0 kind = %q, want list payload first", plan.Puts[0].Kind)
+	}
+	if plan.Puts[len(plan.Puts)-1].Kind != arcset.KindMap {
+		t.Fatalf("last put kind = %q, want root map", plan.Puts[len(plan.Puts)-1].Kind)
+	}
+	if !plan.Puts[len(plan.Puts)-1].Object.Equals(root) {
+		t.Fatalf("last put object = %s, want root %s", plan.Puts[len(plan.Puts)-1].Object, root)
+	}
+}
+
 func hasEntry(set *arcset.CanonicalArcSet, coordinate string, targetKind arcset.TargetKind) bool {
 	for _, entry := range set.Entries() {
 		if entry.Coordinate.String() == coordinate && entry.Target.Kind() == targetKind {

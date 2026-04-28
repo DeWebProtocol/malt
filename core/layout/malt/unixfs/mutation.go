@@ -91,6 +91,94 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	return plan, nil
 }
 
+// MutationPlanForRoot exposes canonical map/list arcsets for the complete
+// UnixFS tree rooted at root. Child payloads and maps are emitted before their
+// parent directories so the final put is the canonical bucket-head map.
+func (l *Layout) MutationPlanForRoot(ctx context.Context, baseRoot cid.Cid, root cid.Cid) (*MutationPlan, error) {
+	if !root.Defined() {
+		return nil, fmt.Errorf("root is undefined")
+	}
+
+	plan := &MutationPlan{
+		BucketID: l.bucketID,
+		BaseRoot: baseRoot,
+	}
+	if err := l.appendRootMutationPuts(ctx, plan, root); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan, nodeRoot cid.Cid) error {
+	kind, err := l.nodeType(ctx, nodeRoot)
+	if err != nil {
+		return err
+	}
+
+	switch kind {
+	case typeDirectory:
+		payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: missing @payload", ErrNotFound)
+		}
+		names, err := l.loadDirectoryManifest(ctx, payload)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			child, _, ok, err := l.lookup(ctx, nodeRoot, arcset.CanonicalizePath(name))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("%w: missing directory entry %s", ErrNotFound, name)
+			}
+			if err := l.appendRootMutationPuts(ctx, plan, child); err != nil {
+				return err
+			}
+		}
+	case typeFile:
+		payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: missing @payload", ErrNotFound)
+		}
+		if codec.SemanticKindOf(payload) == codec.SemanticKindList {
+			info, err := l.fileInfo(ctx, nodeRoot, payload)
+			if err != nil {
+				return err
+			}
+			listArcSet, err := l.canonicalListArcSet(ctx, payload, chunkCount(info.size, info.chunkSize))
+			if err != nil {
+				return err
+			}
+			plan.Puts = append(plan.Puts, MutationPut{
+				Object: payload,
+				Kind:   arcset.KindList,
+				ArcSet: listArcSet,
+			})
+		}
+	default:
+		return fmt.Errorf("unsupported unixfs node kind %q", kind)
+	}
+
+	nodeArcSet, err := l.canonicalNodeArcSet(ctx, nodeRoot, kind)
+	if err != nil {
+		return err
+	}
+	plan.Puts = append(plan.Puts, MutationPut{
+		Object: nodeRoot,
+		Kind:   arcset.KindMap,
+		ArcSet: nodeArcSet,
+	})
+	return nil
+}
+
 func (l *Layout) canonicalNodeArcSet(ctx context.Context, nodeRoot cid.Cid, kind string) (*arcset.CanonicalArcSet, error) {
 	typeCID, _, ok, err := l.lookup(ctx, nodeRoot, typePath)
 	if err != nil {

@@ -594,21 +594,22 @@ func (s *Server) handleBucketUnixFSFile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	arcCount := s.unixFSArcCount(r.Context(), layout, newRoot)
-	if err := s.updateManagedGraphHead(r.Context(), graphID, newRoot, arcCount); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), graphID, g, layout, oldRoot, newRoot)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if lm := s.node.LineageManager(); lm != nil {
-		_ = lm.Record(r.Context(), newRoot, oldRoot, arcCount)
+	if err := s.publishUnixFSReceipt(r.Context(), graphID, oldRoot, receipt); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	resp := &httpapi.BucketUnixFSWriteResponse{
 		Bucket:   graphID,
 		Path:     p,
 		Kind:     "file",
-		NewRoot:  newRoot.String(),
-		ArcCount: arcCount,
+		NewRoot:  receipt.NewRoot.String(),
+		ArcCount: receipt.ArcCount,
 	}
 	if oldRoot.Defined() {
 		resp.OldRoot = oldRoot.String()
@@ -645,21 +646,22 @@ func (s *Server) handleBucketUnixFSDirectory(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	arcCount := s.unixFSArcCount(r.Context(), layout, newRoot)
-	if err := s.updateManagedGraphHead(r.Context(), graphID, newRoot, arcCount); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), graphID, g, layout, oldRoot, newRoot)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if lm := s.node.LineageManager(); lm != nil {
-		_ = lm.Record(r.Context(), newRoot, oldRoot, arcCount)
+	if err := s.publishUnixFSReceipt(r.Context(), graphID, oldRoot, receipt); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	resp := &httpapi.BucketUnixFSWriteResponse{
 		Bucket:   graphID,
 		Path:     p,
 		Kind:     "dir",
-		NewRoot:  newRoot.String(),
-		ArcCount: arcCount,
+		NewRoot:  receipt.NewRoot.String(),
+		ArcCount: receipt.ArcCount,
 	}
 	if oldRoot.Defined() {
 		resp.OldRoot = oldRoot.String()
@@ -1297,6 +1299,54 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *
 		return root, nil
 	}
 	return s.migrateLegacyTreeToUnixFS(ctx, g, layout, root)
+}
+
+func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
+	baseRoot := oldRoot
+	if !baseRoot.Defined() {
+		baseRoot = newRoot
+	}
+
+	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
+	if err != nil {
+		return gateway.WriteReceipt{}, err
+	}
+	mut := gateway.SemanticMutation{
+		BucketID: bucketID,
+		BaseRoot: baseRoot,
+		Puts:     make([]gateway.ArcSetPut, 0, len(plan.Puts)),
+	}
+	for _, put := range plan.Puts {
+		mut.Puts = append(mut.Puts, gateway.ArcSetPut{
+			Object: put.Object,
+			Kind:   put.Kind,
+			ArcSet: put.ArcSet,
+		})
+	}
+
+	exec := gateway.Executor{
+		Maps:     g.Semantic(),
+		Lists:    g.ListSemantic(),
+		ArcTable: s.node.ArcTable(),
+	}
+	receipt, err := exec.Apply(ctx, mut)
+	if err != nil {
+		return gateway.WriteReceipt{}, err
+	}
+	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
+		return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map bucket head")
+	}
+	return receipt, nil
+}
+
+func (s *Server) publishUnixFSReceipt(ctx context.Context, graphID string, oldRoot cid.Cid, receipt gateway.WriteReceipt) error {
+	if err := s.updateManagedGraphHead(ctx, graphID, receipt.NewRoot, receipt.ArcCount); err != nil {
+		return err
+	}
+	if lm := s.node.LineageManager(); lm != nil {
+		_ = lm.Record(ctx, receipt.NewRoot, oldRoot, receipt.ArcCount)
+	}
+	return nil
 }
 
 func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
