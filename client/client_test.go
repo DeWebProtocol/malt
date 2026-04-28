@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/manifest"
+	"github.com/dewebprotocol/malt/core/metrics"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/dewebprotocol/malt/server"
@@ -237,6 +239,64 @@ func TestClientProofListReads(t *testing.T) {
 	}
 	if rootProof.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
 		t.Fatalf("root prooflist step kind = %q, want %q", rootProof.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
+	}
+}
+
+func TestClientMetricsSnapshotAndReset(t *testing.T) {
+	seen := make(chan string, 2)
+	snapshotResp := httpapi.MetricsResponse{
+		Snapshot: metrics.Snapshot{
+			CAS: metrics.CASStats{
+				GetCount: 7,
+				BytesGet: 11,
+			},
+			ArcTable: metrics.ArcTableStats{
+				SnapshotCount: 2,
+			},
+			Proof: metrics.ProofStats{
+				ProofListCount: 3,
+				StepCount:      5,
+				TotalBytes:     13,
+			},
+		},
+	}
+	resetResp := httpapi.MetricsResponse{}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/metrics":
+			_ = json.NewEncoder(w).Encode(&snapshotResp)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/metrics:reset":
+			_ = json.NewEncoder(w).Encode(&resetResp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	client := NewWithBaseURL(ts.URL + "/api/v1")
+	snapshot, err := client.MetricsSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("MetricsSnapshot: %v", err)
+	}
+	if got := <-seen; got != "GET /api/v1/metrics" {
+		t.Fatalf("MetricsSnapshot request = %q, want GET /api/v1/metrics", got)
+	}
+	if snapshot.Snapshot.CAS.GetCount != 7 || snapshot.Snapshot.ArcTable.SnapshotCount != 2 || snapshot.Snapshot.Proof.ProofListCount != 3 {
+		t.Fatalf("decoded metrics snapshot = %+v", snapshot.Snapshot)
+	}
+
+	reset, err := client.ResetMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("ResetMetrics: %v", err)
+	}
+	if got := <-seen; got != "POST /api/v1/metrics:reset" {
+		t.Fatalf("ResetMetrics request = %q, want POST /api/v1/metrics:reset", got)
+	}
+	if reset.Snapshot != (metrics.Snapshot{}) {
+		t.Fatalf("decoded reset snapshot = %+v, want zero counters", reset.Snapshot)
 	}
 }
 
