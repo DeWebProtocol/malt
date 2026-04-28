@@ -11,7 +11,9 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
@@ -771,6 +773,155 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 				t.Fatalf("bucket root changed to %q, want %q", bucketResp.Bucket.Root, createResp.Root)
 			}
 		})
+	}
+}
+
+func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/directories?path=docs", "application/json", nil)
+	if err != nil {
+		t.Fatalf("create unixfs directory request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs directory status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	resp.Body.Close()
+
+	fileBody := []byte("hello from gateway unixfs")
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var writeResp httpapi.BucketUnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode unixfs write response: %v", err)
+	}
+	resp.Body.Close()
+	if writeResp.Bucket != "demo" || writeResp.Path != "docs/readme.txt" || writeResp.Kind != "file" {
+		t.Fatalf("unexpected unixfs write response: %+v", writeResp)
+	}
+	if writeResp.NewRoot == "" || writeResp.ArcCount == 0 {
+		t.Fatalf("unixfs write root=%q arc_count=%d, want defined", writeResp.NewRoot, writeResp.ArcCount)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	if err != nil {
+		t.Fatalf("get bucket request failed: %v", err)
+	}
+	var bucketResp httpapi.BucketResponse
+	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
+		t.Fatalf("decode bucket response: %v", err)
+	}
+	resp.Body.Close()
+	if bucketResp.Bucket.Root != writeResp.NewRoot || bucketResp.Bucket.ArcCount != writeResp.ArcCount {
+		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=%d", bucketResp.Bucket.Root, bucketResp.Bucket.ArcCount, writeResp.NewRoot, writeResp.ArcCount)
+	}
+
+	rootCID, err := cid.Decode(writeResp.NewRoot)
+	if err != nil {
+		t.Fatalf("decode write root: %v", err)
+	}
+	if payload, err := node.ArcTable().Get(t.Context(), "demo", rootCID, arcset.CanonicalizePath("@payload")); err != nil || !payload.Defined() {
+		t.Fatalf("root @payload from arctable = %s, err %v; want defined", payload, err)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/prooflist?path=docs/readme.txt")
+	if err != nil {
+		t.Fatalf("prooflist request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var proofResp httpapi.ProofListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+		t.Fatalf("decode prooflist response: %v", err)
+	}
+	resp.Body.Close()
+	if proofResp.Target == "" || len(proofResp.ProofList.Steps) == 0 {
+		t.Fatalf("unexpected prooflist response: %+v", proofResp)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=docs/readme.txt")
+	if err != nil {
+		t.Fatalf("stat request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stat status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var statResp httpapi.BucketStatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statResp); err != nil {
+		t.Fatalf("decode stat response: %v", err)
+	}
+	resp.Body.Close()
+	if statResp.Kind != "file" || statResp.Size == nil || *statResp.Size != int64(len(fileBody)) {
+		t.Fatalf("unexpected stat response: %+v", statResp)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content?path=docs/readme.txt")
+	if err != nil {
+		t.Fatalf("content request failed: %v", err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !bytes.Equal(got, fileBody) {
+		t.Fatalf("content status/body = %d %q, want %d %q", resp.StatusCode, string(got), http.StatusOK, string(fileBody))
+	}
+}
+
+func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
+	node := newTestNode(t)
+	arcs, ok := node.ArcTable().(*versioned.ArcTable)
+	if !ok {
+		t.Fatalf("test node ArcTable = %T, want *versioned.ArcTable", node.ArcTable())
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatalf("create unixfs file request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var writeResp httpapi.BucketUnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode unixfs write response: %v", err)
+	}
+	resp.Body.Close()
+
+	root, err := cid.Decode(writeResp.NewRoot)
+	if err != nil {
+		t.Fatalf("decode unixfs write root: %v", err)
+	}
+	parent, err := arcs.GetParent(t.Context(), "demo", root)
+	if err != nil {
+		t.Fatalf("read gateway root parent: %v", err)
+	}
+	if parent.Equals(root) {
+		t.Fatalf("gateway root self-parented: %s", root)
 	}
 }
 
