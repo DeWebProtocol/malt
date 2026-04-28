@@ -485,6 +485,190 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 	}
 }
 
+func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	initialPayload := fakeCIDString("initial-payload")
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"@payload": initialPayload,
+			"name":     fakeCIDString("initial-name"),
+		},
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	nextPayload := fakeCIDString("next-payload")
+	nextName := fakeCIDString("next-name")
+	mutationBody, _ := json.Marshal(&httpapi.BucketSemanticMutationRequest{
+		Puts: []httpapi.SemanticMutationPut{{
+			Object: createResp.Root,
+			Kind:   "map",
+			Entries: []httpapi.SemanticMutationEntry{
+				{Path: "@payload", Target: nextPayload},
+				{Path: "name", Target: nextName},
+			},
+		}},
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/semantic-mutations", "application/json", bytes.NewReader(mutationBody))
+	if err != nil {
+		t.Fatalf("semantic mutation request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("semantic mutation status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var mutationResp httpapi.BucketSemanticMutationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&mutationResp); err != nil {
+		t.Fatalf("decode semantic mutation response: %v", err)
+	}
+	resp.Body.Close()
+	if mutationResp.Bucket != "demo" {
+		t.Fatalf("bucket = %q, want demo", mutationResp.Bucket)
+	}
+	if mutationResp.BaseRoot != createResp.Root {
+		t.Fatalf("base_root = %q, want %q", mutationResp.BaseRoot, createResp.Root)
+	}
+	if mutationResp.NewRoot == "" || mutationResp.NewRoot == createResp.Root {
+		t.Fatalf("new_root = %q, want a new defined root", mutationResp.NewRoot)
+	}
+	if mutationResp.PutCount != 1 || mutationResp.ArcCount != 2 {
+		t.Fatalf("receipt counts = puts %d arcs %d, want 1/2", mutationResp.PutCount, mutationResp.ArcCount)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	if err != nil {
+		t.Fatalf("get bucket request failed: %v", err)
+	}
+	var bucketResp httpapi.BucketResponse
+	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
+		t.Fatalf("decode bucket response: %v", err)
+	}
+	resp.Body.Close()
+	if bucketResp.Bucket.Root != mutationResp.NewRoot || bucketResp.Bucket.ArcCount != 2 {
+		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", bucketResp.Bucket.Root, bucketResp.Bucket.ArcCount, mutationResp.NewRoot)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/resolve?path=name")
+	if err != nil {
+		t.Fatalf("resolve request failed: %v", err)
+	}
+	var resolveResp httpapi.ResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	resp.Body.Close()
+	if resolveResp.Target != nextName {
+		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, nextName)
+	}
+}
+
+func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	if err != nil {
+		t.Fatalf("create bucket request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": fakeCIDString("initial-name")}),
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	index := uint64(0)
+	tests := []struct {
+		name string
+		req  httpapi.BucketSemanticMutationRequest
+	}{
+		{
+			name: "list only root",
+			req: httpapi.BucketSemanticMutationRequest{
+				Puts: []httpapi.SemanticMutationPut{{
+					Object: createResp.Root,
+					Kind:   "list",
+					Entries: []httpapi.SemanticMutationEntry{{
+						Index:  &index,
+						Target: fakeCIDString("chunk"),
+					}},
+				}},
+			},
+		},
+		{
+			name: "map missing payload",
+			req: httpapi.BucketSemanticMutationRequest{
+				Puts: []httpapi.SemanticMutationPut{{
+					Object: createResp.Root,
+					Kind:   "map",
+					Entries: []httpapi.SemanticMutationEntry{{
+						Path:   "name",
+						Target: fakeCIDString("next-name"),
+					}},
+				}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(&tt.req)
+			resp, err := http.Post(ts.URL+"/api/v1/buckets/demo/semantic-mutations", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("semantic mutation request failed: %v", err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("semantic mutation status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+			}
+
+			resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+			if err != nil {
+				t.Fatalf("get bucket request failed: %v", err)
+			}
+			var bucketResp httpapi.BucketResponse
+			if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
+				t.Fatalf("decode bucket response: %v", err)
+			}
+			resp.Body.Close()
+			if bucketResp.Bucket.Root != createResp.Root {
+				t.Fatalf("bucket root changed to %q, want %q", bucketResp.Bucket.Root, createResp.Root)
+			}
+		})
+	}
+}
+
 func TestServerBucketStatAndContentContracts(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)

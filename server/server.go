@@ -78,6 +78,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/buckets/{id}/freeze", s.handleBucketFreeze)
 	mux.HandleFunc("POST /api/v1/buckets/{id}/structure", s.handleBucketCreateStructure)
 	mux.HandleFunc("PUT /api/v1/buckets/{id}/head", s.handleBucketHeadSet)
+	mux.HandleFunc("POST /api/v1/buckets/{id}/semantic-mutations", s.handleBucketSemanticMutation)
 	mux.HandleFunc("POST /api/v1/buckets/{id}/maps", s.handleBucketMapsCreate)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/snapshot", s.handleBucketMapsSnapshot)
 	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/resolve", s.handleBucketMapsResolve)

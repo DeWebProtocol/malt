@@ -318,6 +318,71 @@ func TestClientBucketScopedMapAndListAPIs(t *testing.T) {
 	}
 }
 
+func TestClientBucketSemanticMutation(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+	ctx := context.Background()
+
+	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	createResp, err := client.CreateBucketStructure(ctx, "demo", withPayloadBinding(map[string]string{
+		"name": fakeCIDString("initial-name"),
+	}))
+	if err != nil {
+		t.Fatalf("create bucket structure: %v", err)
+	}
+
+	nextName := fakeCIDString("next-name")
+	resp, err := client.ApplyBucketSemanticMutation(ctx, "demo", &httpapi.BucketSemanticMutationRequest{
+		Puts: []httpapi.SemanticMutationPut{{
+			Object: createResp.Root,
+			Kind:   "map",
+			Entries: []httpapi.SemanticMutationEntry{
+				{Path: "@payload", Target: fakeCIDString("next-payload")},
+				{Path: "name", Target: nextName},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyBucketSemanticMutation: %v", err)
+	}
+	if resp.Bucket != "demo" || resp.BaseRoot != createResp.Root || resp.NewRoot == "" {
+		t.Fatalf("unexpected semantic mutation response: %+v", resp)
+	}
+	if resp.PutCount != 1 || resp.ArcCount != 2 {
+		t.Fatalf("semantic mutation counts = puts %d arcs %d, want 1/2", resp.PutCount, resp.ArcCount)
+	}
+
+	meta, err := client.GetBucket(ctx, "demo")
+	if err != nil {
+		t.Fatalf("get bucket: %v", err)
+	}
+	if meta.Root != resp.NewRoot || meta.ArcCount != 2 {
+		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", meta.Root, meta.ArcCount, resp.NewRoot)
+	}
+
+	resolved, err := client.ResolveBucket(ctx, "demo", "name")
+	if err != nil {
+		t.Fatalf("resolve bucket: %v", err)
+	}
+	if resolved.Target != nextName {
+		t.Fatalf("resolved target = %q, want %q", resolved.Target, nextName)
+	}
+}
+
 func TestClientBucketStatAndContent(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
