@@ -17,6 +17,7 @@ import (
 	"github.com/dewebprotocol/malt/core/bucketpath"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/gateway"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/lineage"
@@ -225,6 +226,83 @@ func (s *Server) handleBucketHeadSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Request) {
+	bucketID := r.PathValue("id")
+	meta, g, err := s.openManagedGraph(r.Context(), bucketID, true)
+	if err != nil {
+		writeManagedGraphError(w, err)
+		return
+	}
+
+	var req httpapi.BucketSemanticMutationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	baseRoot := meta.Root
+	if req.BaseRoot != "" {
+		baseRoot, err = decodeCID(req.BaseRoot)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if meta.Root != baseRoot {
+			writeError(w, http.StatusConflict, "stale base_root")
+			return
+		}
+	}
+
+	mut, err := semanticMutationFromRequest(bucketID, baseRoot, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(mut.Puts) == 0 || mut.Puts[len(mut.Puts)-1].Kind != arcset.KindMap {
+		writeError(w, http.StatusBadRequest, "semantic mutation result must be a map bucket head")
+		return
+	}
+
+	exec := gateway.Executor{
+		Maps:     g.Semantic(),
+		Lists:    g.ListSemantic(),
+		ArcTable: s.node.ArcTable(),
+	}
+	receipt, err := exec.Apply(r.Context(), mut)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
+		writeError(w, http.StatusBadRequest, "semantic mutation result must be a map bucket head")
+		return
+	}
+	if _, err := mandatoryMapPayload(r.Context(), g, receipt.NewRoot); err != nil {
+		if errors.Is(err, writer.ErrArcNotFound) {
+			writeError(w, http.StatusBadRequest, "semantic mutation result must include a mandatory @payload binding")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := s.updateManagedGraphHead(r.Context(), bucketID, receipt.NewRoot, receipt.ArcCount); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if lm := s.node.LineageManager(); lm != nil {
+		_ = lm.Record(r.Context(), receipt.NewRoot, receipt.BaseRoot, receipt.ArcCount)
+	}
+
+	writeJSON(w, http.StatusCreated, &httpapi.BucketSemanticMutationResponse{
+		Bucket:   receipt.BucketID,
+		BaseRoot: receipt.BaseRoot.String(),
+		NewRoot:  receipt.NewRoot.String(),
+		PutCount: receipt.PutCount,
+		ArcCount: receipt.ArcCount,
+	})
 }
 
 func (s *Server) handleBucketMapsCreate(w http.ResponseWriter, r *http.Request) {
@@ -1556,6 +1634,114 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 		out[path] = parsed
 	}
 	return out, nil
+}
+
+func semanticMutationFromRequest(bucketID string, baseRoot cid.Cid, req *httpapi.BucketSemanticMutationRequest) (gateway.SemanticMutation, error) {
+	if req == nil {
+		return gateway.SemanticMutation{}, fmt.Errorf("request is required")
+	}
+
+	puts := make([]gateway.ArcSetPut, 0, len(req.Puts))
+	for i, putReq := range req.Puts {
+		put, err := semanticPutFromRequest(putReq)
+		if err != nil {
+			return gateway.SemanticMutation{}, fmt.Errorf("put %d: %w", i, err)
+		}
+		puts = append(puts, put)
+	}
+
+	return gateway.SemanticMutation{
+		BucketID: bucketID,
+		BaseRoot: baseRoot,
+		Puts:     puts,
+	}, nil
+}
+
+func semanticPutFromRequest(req httpapi.SemanticMutationPut) (gateway.ArcSetPut, error) {
+	object := cid.Undef
+	if req.Object != "" {
+		parsed, err := decodeCID(req.Object)
+		if err != nil {
+			return gateway.ArcSetPut{}, fmt.Errorf("invalid object: %w", err)
+		}
+		object = parsed
+	}
+
+	kind := arcset.Kind(req.Kind)
+	entries := make([]arcset.ArcEntry, 0, len(req.Entries))
+	for i, entryReq := range req.Entries {
+		entry, err := semanticEntryFromRequest(kind, entryReq)
+		if err != nil {
+			return gateway.ArcSetPut{}, fmt.Errorf("entry %d: %w", i, err)
+		}
+		entries = append(entries, entry)
+	}
+
+	set, err := arcset.NewCanonicalArcSet(kind, entries)
+	if err != nil {
+		return gateway.ArcSetPut{}, err
+	}
+	return gateway.ArcSetPut{
+		Object: object,
+		Kind:   kind,
+		ArcSet: set,
+	}, nil
+}
+
+func semanticEntryFromRequest(kind arcset.Kind, req httpapi.SemanticMutationEntry) (arcset.ArcEntry, error) {
+	target, err := decodeCID(req.Target)
+	if err != nil {
+		return arcset.ArcEntry{}, fmt.Errorf("invalid target: %w", err)
+	}
+
+	targetRef, err := semanticTargetRef(req.TargetKind, target)
+	if err != nil {
+		return arcset.ArcEntry{}, err
+	}
+
+	var coord arcset.CanonicalCoordinate
+	switch kind {
+	case arcset.KindMap:
+		if req.Path == "" {
+			return arcset.ArcEntry{}, fmt.Errorf("path is required for map entries")
+		}
+		coord, err = arcset.NewMapCoordinate(req.Path)
+	case arcset.KindList:
+		if req.Index == nil {
+			return arcset.ArcEntry{}, fmt.Errorf("index is required for list entries")
+		}
+		if *req.Index > uint64(1<<63-1) {
+			return arcset.ArcEntry{}, fmt.Errorf("index is too large")
+		}
+		coord, err = arcset.NewListCoordinate(int64(*req.Index))
+	default:
+		return arcset.ArcEntry{}, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, kind)
+	}
+	if err != nil {
+		return arcset.ArcEntry{}, err
+	}
+
+	return arcset.ArcEntry{
+		Coordinate: coord,
+		Target:     targetRef,
+	}, nil
+}
+
+func semanticTargetRef(kind string, target cid.Cid) (arcset.TargetRef, error) {
+	switch arcset.TargetKind(kind) {
+	case "":
+		return arcset.NewCIDTarget(target), nil
+	case arcset.TargetKindUnknown:
+		return arcset.NewUnknownTarget(target), nil
+	case arcset.TargetKindCAS:
+		return arcset.NewCASTarget(target), nil
+	case arcset.TargetKindMap:
+		return arcset.NewMapTarget(target), nil
+	case arcset.TargetKindList:
+		return arcset.NewListTarget(target), nil
+	default:
+		return arcset.TargetRef{}, fmt.Errorf("%w: %q", arcset.ErrInvalidTargetKind, kind)
+	}
 }
 
 func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {

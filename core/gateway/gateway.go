@@ -131,6 +131,15 @@ func (e Executor) commitPut(ctx context.Context, bucketID string, put ArcSetPut)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
+		if e.ArcTable != nil {
+			snapshot, err := canonicalMapSnapshot(put.ArcSet)
+			if err != nil {
+				return cid.Undef, 0, err
+			}
+			if err := e.ArcTable.Update(ctx, bucketID, root, put.Object, snapshot); err != nil {
+				return cid.Undef, 0, err
+			}
+		}
 		return root, put.ArcSet.Len(), nil
 	case arcset.KindList:
 		if e.Lists == nil {
@@ -160,6 +169,18 @@ func canonicalMapView(set *arcset.CanonicalArcSet) (mapping.View, error) {
 		entries[path] = entry.Target.CID()
 	}
 	return mapping.NewViewFromPaths(entries), nil
+}
+
+func canonicalMapSnapshot(set *arcset.CanonicalArcSet) (arcset.ArcSet, error) {
+	entries := make(map[arcset.Path]cid.Cid, set.Len())
+	for _, entry := range set.Entries() {
+		path := arcset.CanonicalizePath(entry.Coordinate.String())
+		if path.IsEmpty() || path.String() != entry.Coordinate.String() {
+			return nil, fmt.Errorf("invalid canonical map coordinate %q", entry.Coordinate.String())
+		}
+		entries[path] = entry.Target.CID()
+	}
+	return arcset.NewArcSetFromPaths(entries)
 }
 
 func canonicalListView(set *arcset.CanonicalArcSet) (list.View, error) {

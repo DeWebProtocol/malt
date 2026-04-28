@@ -48,6 +48,36 @@ type BucketHeadSetRequest struct {
 	ExpectedOldRoot string `json:"expected_old_root,omitempty"`
 }
 
+// BucketSemanticMutationRequest applies a semantic mutation to a managed bucket head.
+type BucketSemanticMutationRequest struct {
+	BaseRoot string                `json:"base_root,omitempty"`
+	Puts     []SemanticMutationPut `json:"puts"`
+}
+
+// SemanticMutationPut replaces one semantic object's full canonical arc set.
+type SemanticMutationPut struct {
+	Object  string                  `json:"object,omitempty"`
+	Kind    string                  `json:"kind"`
+	Entries []SemanticMutationEntry `json:"entries"`
+}
+
+// SemanticMutationEntry is one canonical coordinate-to-target binding.
+type SemanticMutationEntry struct {
+	Path       string  `json:"path,omitempty"`
+	Index      *uint64 `json:"index,omitempty"`
+	Target     string  `json:"target"`
+	TargetKind string  `json:"target_kind,omitempty"`
+}
+
+// BucketSemanticMutationResponse returns the gateway write receipt after publication.
+type BucketSemanticMutationResponse struct {
+	Bucket   string `json:"bucket"`
+	BaseRoot string `json:"base_root"`
+	NewRoot  string `json:"new_root"`
+	PutCount int    `json:"put_count"`
+	ArcCount int    `json:"arc_count"`
+}
+
 // BucketMapCreateRequest creates a map root inside a bucket namespace.
 type BucketMapCreateRequest struct {
 	Bindings map[string]string `json:"bindings"`

@@ -199,6 +199,15 @@ func (c *Client) SetBucketHead(ctx context.Context, id string, newRoot string, a
 	return c.do(ctx, http.MethodPut, "/buckets/"+url.PathEscape(id)+"/head", nil, req, nil)
 }
 
+// ApplyBucketSemanticMutation applies a gateway semantic mutation and advances the bucket head.
+func (c *Client) ApplyBucketSemanticMutation(ctx context.Context, id string, req *httpapi.BucketSemanticMutationRequest) (*httpapi.BucketSemanticMutationResponse, error) {
+	var resp httpapi.BucketSemanticMutationResponse
+	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/semantic-mutations", nil, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) AddBucketUnixFSDirectory(ctx context.Context, id string, p string) (*httpapi.BucketUnixFSWriteResponse, error) {
 	query := map[string]string{}
 	if p != "" {
