@@ -22,7 +22,7 @@ var (
 	ErrInvalidRoot = errors.New("invalid structure root")
 
 	// ErrEmptyPath is returned when the path is empty.
-	ErrEmptyPath = errors.New("path must not be empty")
+	ErrEmptyPath = arcset.ErrEmptyPath
 
 	// ErrMissingPayloadBinding is returned when a MALT-native object is missing
 	// its mandatory @payload binding.
@@ -128,18 +128,11 @@ func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, rec Linea
 }
 
 func canonicalizeUpdateMap(updates map[string]cid.Cid) (map[arcset.Path]cid.Cid, error) {
-	out := make(map[arcset.Path]cid.Cid, len(updates))
-	for path, target := range updates {
-		canonical := arcset.CanonicalizePath(path)
-		if canonical.IsEmpty() {
-			return nil, ErrEmptyPath
-		}
-		if existing, ok := out[canonical]; ok && !existing.Equals(target) {
-			return nil, fmt.Errorf("duplicate canonical path %q in updates", canonical.String())
-		}
-		out[canonical] = target
+	snapshot, err := arcset.NewArcSet(updates)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	return arcset.ToPathMap(snapshot)
 }
 
 func canonicalizeSnapshot(arcs arcset.ArcSet) (arcset.ArcSet, map[arcset.Path]cid.Cid, error) {
@@ -148,35 +141,36 @@ func canonicalizeSnapshot(arcs arcset.ArcSet) (arcset.ArcSet, map[arcset.Path]ci
 	}
 
 	arcsMap := make(map[arcset.Path]cid.Cid, arcs.Len())
-	stringMap := make(map[string]cid.Cid, arcs.Len())
 	iter := arcs.Iterate()
 	for {
 		path, target, ok := iter.Next()
 		if !ok {
 			break
 		}
-		canonical := path
-		if canonical.IsEmpty() {
+		if path.IsEmpty() {
 			return nil, nil, ErrEmptyPath
 		}
 		if !target.Defined() {
 			continue
 		}
-		if existing, ok := arcsMap[canonical]; ok && !existing.Equals(target) {
-			return nil, nil, fmt.Errorf("duplicate canonical path %q in arc set", canonical.String())
+		if existing, ok := arcsMap[path]; ok && !existing.Equals(target) {
+			return nil, nil, fmt.Errorf("duplicate canonical path %q in arc set", path.String())
 		}
-		arcsMap[canonical] = target
-		stringMap[canonical.String()] = target
+		arcsMap[path] = target
 	}
 	if iter.Err() != nil {
 		return nil, nil, fmt.Errorf("arc iteration error: %w", iter.Err())
 	}
 
-	return arcset.NewSetFrom(stringMap), arcsMap, nil
+	normalized, err := arcset.NewArcSetFromPaths(arcsMap)
+	if err != nil {
+		return nil, nil, err
+	}
+	return normalized, arcsMap, nil
 }
 
-func diffArcMaps(oldArcs, newArcs map[string]cid.Cid) map[string]cid.Cid {
-	diff := make(map[string]cid.Cid)
+func diffArcMaps(oldArcs, newArcs map[arcset.Path]cid.Cid) (arcset.ArcSet, error) {
+	diff := make(map[arcset.Path]cid.Cid)
 
 	for path, newTarget := range newArcs {
 		oldTarget, ok := oldArcs[path]
@@ -191,20 +185,7 @@ func diffArcMaps(oldArcs, newArcs map[string]cid.Cid) map[string]cid.Cid {
 		}
 	}
 
-	return diff
-}
-
-func stringifyArcSet(arcs arcset.ArcSet) map[string]cid.Cid {
-	out := make(map[string]cid.Cid, arcs.Len())
-	iter := arcs.Iterate()
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			break
-		}
-		out[path.String()] = target
-	}
-	return out
+	return arcset.NewArcSetFromPaths(diff)
 }
 
 func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
@@ -212,7 +193,7 @@ func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
 		return nil
 	}
 
-	out := make(map[string]cid.Cid)
+	out := make(map[arcset.Path]cid.Cid)
 	iter := arcs.Iterate()
 	for {
 		path, target, ok := iter.Next()
@@ -222,9 +203,13 @@ func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
 		if path.HasPrefix(arcset.CanonicalizePath("runtime")) {
 			continue
 		}
-		out[path.String()] = target
+		out[path] = target
 	}
-	return arcset.NewSetFrom(out)
+	filtered, err := arcset.NewArcSetFromPaths(out)
+	if err != nil {
+		return arcset.NewSet()
+	}
+	return filtered
 }
 
 func hasDefinedPayloadBinding(arcs arcset.ArcSet) bool {
@@ -269,7 +254,7 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 	}
 
 	// Step 1: Look up current binding
-	oldTarget, err := w.arctable.Get(ctx, bucketId, root, canonicalPath.String())
+	oldTarget, err := w.arctable.Get(ctx, bucketId, root, canonicalPath)
 	if err != nil && !arctable.IsNotFound(err) {
 		return nil, fmt.Errorf("ArcTable.Get failed: %w", err)
 	}
@@ -312,14 +297,23 @@ func (w *Writer) UpdateArc(ctx context.Context, bucketId string, root cid.Cid, p
 		return nil, fmt.Errorf("semantic.Update failed for arc %s: %w", op, err)
 	}
 
-	oldArcs := stringifyArcSet(snapshot)
-	updatedArcs := stringifyArcSet(snapshot)
-	if newTarget.Defined() {
-		updatedArcs[canonicalPath.String()] = newTarget
-	} else {
-		delete(updatedArcs, canonicalPath.String())
+	oldArcs, err := arcset.ToPathMap(snapshot)
+	if err != nil {
+		return nil, err
 	}
-	delta := diffArcMaps(oldArcs, updatedArcs)
+	updatedArcs := make(map[arcset.Path]cid.Cid, len(oldArcs)+1)
+	for path, target := range oldArcs {
+		updatedArcs[path] = target
+	}
+	if newTarget.Defined() {
+		updatedArcs[canonicalPath] = newTarget
+	} else {
+		delete(updatedArcs, canonicalPath)
+	}
+	delta, err := diffArcMaps(oldArcs, updatedArcs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 3: Apply update to ArcTable as an old->new delta. This keeps versioned ArcTable
 	// compact while still emitting tombstones for deletions.
@@ -382,7 +376,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
 
 	for path, newTarget := range normalizedUpdates {
-		oldTarget, err := w.arctable.Get(ctx, bucketId, root, path.String())
+		oldTarget, err := w.arctable.Get(ctx, bucketId, root, path)
 		if err != nil && !arctable.IsNotFound(err) {
 			return nil, fmt.Errorf("ArcTable.Get failed for %s: %w", path.String(), err)
 		}
@@ -410,31 +404,34 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, bucketId string, root cid.
 
 	// Step 3: Update commitment
 	currentRoot := root
-	currentMap := stringifyArcSet(snapshot)
 	for path, result := range perArc {
 		currentRoot, err = w.semantic.Update(ctx, bucketId, currentRoot, path, result.OldTarget, result.NewTarget)
 		if err != nil {
 			return nil, fmt.Errorf("semantic.Update failed for %s: %w", path.String(), err)
 		}
-		if result.NewTarget.Defined() {
-			currentMap[path.String()] = result.NewTarget
-		} else {
-			delete(currentMap, path.String())
-		}
 	}
 	newRoot := currentRoot
 
-	oldArcs := stringifyArcSet(snapshot)
-	updatedArcs := stringifyArcSet(snapshot)
+	oldArcs, err := arcset.ToPathMap(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	updatedArcs := make(map[arcset.Path]cid.Cid, len(oldArcs)+len(normalizedUpdates))
+	for path, target := range oldArcs {
+		updatedArcs[path] = target
+	}
 	for path, newTarget := range normalizedUpdates {
 		if newTarget.Defined() {
-			updatedArcs[path.String()] = newTarget
+			updatedArcs[path] = newTarget
 		} else {
-			delete(updatedArcs, path.String())
+			delete(updatedArcs, path)
 		}
 	}
 
-	delta := diffArcMaps(oldArcs, updatedArcs)
+	delta, err := diffArcMaps(oldArcs, updatedArcs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 4: Apply the update delta to ArcTable.
 	if err := w.arctable.Update(ctx, bucketId, newRoot, root, delta); err != nil {
@@ -481,13 +478,17 @@ func (w *Writer) CreateStructure(ctx context.Context, bucketId string, arcs arcs
 	}
 
 	// Step 1: Commit arc set via semantic layer
-	root, err := w.semantic.Commit(ctx, bucketId, mapping.NewViewFrom(stringifyArcSet(normalizedSnapshot)))
+	view, err := mapping.NewViewFromArcSet(normalizedSnapshot)
+	if err != nil {
+		return cid.Undef, err
+	}
+	root, err := w.semantic.Commit(ctx, bucketId, view)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("semantic.Commit failed: %w", err)
 	}
 
 	// Step 2: Store arcs in ArcTable (first version)
-	if err := w.arctable.Update(ctx, bucketId, root, cid.Undef, stringifyArcSet(normalizedSnapshot)); err != nil {
+	if err := w.arctable.Update(ctx, bucketId, root, cid.Undef, normalizedSnapshot); err != nil {
 		return cid.Undef, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 
@@ -514,7 +515,7 @@ func (w *Writer) GetArc(ctx context.Context, bucketId string, root cid.Cid, path
 		return cid.Undef, ErrEmptyPath
 	}
 
-	target, err := w.arctable.Get(ctx, bucketId, root, canonicalPath.String())
+	target, err := w.arctable.Get(ctx, bucketId, root, canonicalPath)
 	if err != nil {
 		if arctable.IsNotFound(err) {
 			return cid.Undef, fmt.Errorf("%s: %w", canonicalPath.String(), ErrArcNotFound)

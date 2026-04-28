@@ -1513,24 +1513,19 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 }
 
 func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {
-	canonical := make(map[string]cid.Cid, len(arcs))
-	payloadPresent := false
-	for rawPath, target := range arcs {
-		path := arcset.CanonicalizePath(rawPath)
-		if path.IsEmpty() {
-			return nil, 0, fmt.Errorf("path must not be empty")
-		}
-
-		if existing, ok := canonical[path.String()]; ok && !existing.Equals(target) {
-			return nil, 0, fmt.Errorf("duplicate canonical path %q in arcs", path.String())
-		}
-		canonical[path.String()] = target
-		if path == explicit.PayloadArc && target.Defined() {
-			payloadPresent = true
-		}
+	snapshot, err := arcset.NewArcSet(arcs)
+	if err != nil {
+		return nil, 0, err
 	}
-	if !payloadPresent {
+
+	payload, ok := snapshot.Get(explicit.PayloadArc)
+	if !ok || !payload.Defined() {
 		return nil, 0, fmt.Errorf("@payload binding is required")
+	}
+
+	canonical, err := arcset.ToPathMap(snapshot)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	arcCount := 0
@@ -1540,7 +1535,7 @@ func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {
 		}
 	}
 
-	return arcset.NewSetFrom(canonical), arcCount, nil
+	return snapshot, arcCount, nil
 }
 
 func decodeTargetCID(raw string) cid.Cid {

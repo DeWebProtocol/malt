@@ -14,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -57,7 +58,7 @@ func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semanti
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if err := e.Update(ctx, bucketID, root, cid.Undef, arcs); err != nil {
+	if err := e.Update(ctx, bucketID, root, cid.Undef, arcset.NewSetFrom(arcs)); err != nil {
 		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 	return root

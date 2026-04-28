@@ -71,15 +71,15 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 
 	// Try from longest to shortest
 	for i := len(segments); i > 0; i-- {
-		candidatePath := strings.Join(segments[:i], "/")
+		candidatePath := arcset.Path(strings.Join(segments[:i], "/"))
 
 		target, err := r.arctable.Get(ctx, r.bucketId, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
-			binding, proof, err := r.semantic.Prove(ctx, r.bucketId, root, arcset.CanonicalizePath(candidatePath))
+			binding, proof, err := r.semantic.Prove(ctx, r.bucketId, root, candidatePath)
 			if err != nil {
 				logger.Error("Resolver.Resolve prove failed",
-					logger.String("path", candidatePath),
+					logger.String("path", candidatePath.String()),
 					logger.Err(err))
 				return "", cid.Cid{}, nil, fmt.Errorf("failed to generate proof: %w", err)
 			}
@@ -88,15 +88,15 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 				logger.String("bucket", r.bucketId),
 				logger.String("root", root.String()),
 				logger.String("requested_path", path.String()),
-				logger.String("matched_path", candidatePath),
+				logger.String("matched_path", candidatePath.String()),
 				logger.String("target", target.String()),
 				logger.Int("segment_depth", len(segments)-i),
 				logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
 
 			if !binding.Present || !binding.Value.Equals(target) {
-				return "", cid.Cid{}, nil, fmt.Errorf("semantic proof binding mismatch for path: %s", candidatePath)
+				return "", cid.Cid{}, nil, fmt.Errorf("semantic proof binding mismatch for path: %s", candidatePath.String())
 			}
-			return arcset.Path(candidatePath), target, evidence.NewExplicitEvidence(proof), nil
+			return candidatePath, target, evidence.NewExplicitEvidence(proof), nil
 		}
 	}
 

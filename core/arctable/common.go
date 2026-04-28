@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/arctable/bloom"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -99,9 +100,9 @@ func (bfm *BloomFilterManager) GetBloomCache() *bloom.BloomCache {
 
 // DefaultArcKey generates the standard arc key format.
 // Used by overwrite ArcTable implementation.
-func DefaultArcKey(bucketId, path string) []byte {
+func DefaultArcKey(bucketId string, path arcset.Path) []byte {
 	// Format: bucketId:path
-	return []byte(bucketId + ":" + path)
+	return []byte(bucketId + ":" + path.String())
 }
 
 // DefaultBucketPrefix generates the standard bucket prefix format.
@@ -113,9 +114,9 @@ func DefaultBucketPrefix(bucketId string) []byte {
 
 // VersionedArcKey generates a versioned arc key format.
 // Used by versioned ArcTable implementation to include version information.
-func VersionedArcKey(bucketId string, version cid.Cid, path string) []byte {
+func VersionedArcKey(bucketId string, version cid.Cid, path arcset.Path) []byte {
 	// Format: bucketId:version:path
-	return []byte(bucketId + ":" + version.String() + ":" + path)
+	return []byte(bucketId + ":" + version.String() + ":" + path.String())
 }
 
 // VersionedBucketPrefix generates a versioned bucket prefix format.

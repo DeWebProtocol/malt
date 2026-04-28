@@ -13,6 +13,7 @@ import (
 	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/list/tree/internal"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -306,15 +307,15 @@ func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
-			childRoot, err := e.Get(ctx, bucketID, cid.Undef, layout.NodeSlotPath(root, 2).String())
+			childRoot, err := e.Get(ctx, bucketID, cid.Undef, arcset.CanonicalizePath(layout.NodeSlotPath(root, 2).String()))
 			if err != nil {
 				t.Fatalf("failed to fetch child root: %v", err)
 			}
 
 			corruptValue := newPayloadCID([]byte("corrupt-child-slot"))
-			if err := e.Update(ctx, bucketID, cid.Undef, cid.Undef, map[string]cid.Cid{
+			if err := e.Update(ctx, bucketID, cid.Undef, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 				layout.NodeSlotPath(childRoot, 1).String(): corruptValue,
-			}); err != nil {
+			})); err != nil {
 				t.Fatalf("failed to corrupt child materialization: %v", err)
 			}
 

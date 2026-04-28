@@ -20,6 +20,14 @@ func newTestCID(data []byte) cid.Cid {
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
+func testPathSlice(paths []string) []arcset.Path {
+	out := make([]arcset.Path, len(paths))
+	for i, path := range paths {
+		out[i] = arcset.CanonicalizePath(path)
+	}
+	return out
+}
+
 // === Versioned ArcTable Tests ===
 
 func TestVersionedArcTableNew(t *testing.T) {
@@ -59,13 +67,13 @@ func TestVersionedArcTableUpdate(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	err = arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(arcs1))
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
 	// Get at root1
-	got, err := arctable.Get(ctx, bucketId, root1, "a")
+	got, err := arctable.Get(ctx, bucketId, root1, arcset.CanonicalizePath("a"))
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -73,7 +81,7 @@ func TestVersionedArcTableUpdate(t *testing.T) {
 		t.Error("wrong value for 'a'")
 	}
 
-	got, err = arctable.Get(ctx, bucketId, root1, "b")
+	got, err = arctable.Get(ctx, bucketId, root1, arcset.CanonicalizePath("b"))
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -104,7 +112,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	err = arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	err = arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(arcs1))
 	if err != nil {
 		t.Fatalf("Update v1 failed: %v", err)
 	}
@@ -113,7 +121,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	arcs2 := map[string]cid.Cid{
 		"a": target3,
 	}
-	err = arctable.Update(ctx, bucketId, root2, root1, arcs2)
+	err = arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(arcs2))
 	if err != nil {
 		t.Fatalf("Update v2 failed: %v", err)
 	}
@@ -122,7 +130,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	arcs3 := map[string]cid.Cid{
 		"c": target3,
 	}
-	err = arctable.Update(ctx, bucketId, root3, root2, arcs3)
+	err = arctable.Update(ctx, bucketId, root3, root2, arcset.NewSetFrom(arcs3))
 	if err != nil {
 		t.Fatalf("Update v3 failed: %v", err)
 	}
@@ -130,7 +138,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	// Test resolution at root3
 
 	// a should resolve to target3 (overridden at v2)
-	got, err := arctable.Get(ctx, bucketId, root3, "a")
+	got, err := arctable.Get(ctx, bucketId, root3, arcset.CanonicalizePath("a"))
 	if err != nil {
 		t.Fatalf("Get a at root3 failed: %v", err)
 	}
@@ -139,7 +147,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	}
 
 	// b should resolve to target2 (from v1)
-	got, err = arctable.Get(ctx, bucketId, root3, "b")
+	got, err = arctable.Get(ctx, bucketId, root3, arcset.CanonicalizePath("b"))
 	if err != nil {
 		t.Fatalf("Get b at root3 failed: %v", err)
 	}
@@ -148,7 +156,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	}
 
 	// c should resolve to target3 (new at v3)
-	got, err = arctable.Get(ctx, bucketId, root3, "c")
+	got, err = arctable.Get(ctx, bucketId, root3, arcset.CanonicalizePath("c"))
 	if err != nil {
 		t.Fatalf("Get c at root3 failed: %v", err)
 	}
@@ -159,7 +167,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	// Test resolution at root2
 
 	// a at root2 should be target3
-	got, err = arctable.Get(ctx, bucketId, root2, "a")
+	got, err = arctable.Get(ctx, bucketId, root2, arcset.CanonicalizePath("a"))
 	if err != nil {
 		t.Fatalf("Get a at root2 failed: %v", err)
 	}
@@ -168,7 +176,7 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	}
 
 	// b at root2 should be target2
-	got, err = arctable.Get(ctx, bucketId, root2, "b")
+	got, err = arctable.Get(ctx, bucketId, root2, arcset.CanonicalizePath("b"))
 	if err != nil {
 		t.Fatalf("Get b at root2 failed: %v", err)
 	}
@@ -177,14 +185,14 @@ func TestVersionedArcTableVersionChain(t *testing.T) {
 	}
 
 	// c at root2 should not exist
-	_, err = arctable.Get(ctx, bucketId, root2, "c")
+	_, err = arctable.Get(ctx, bucketId, root2, arcset.CanonicalizePath("c"))
 	if err == nil {
 		t.Error("c at root2 should not exist")
 	}
 
 	// Test resolution at root1
 
-	got, err = arctable.Get(ctx, bucketId, root1, "a")
+	got, err = arctable.Get(ctx, bucketId, root1, arcset.CanonicalizePath("a"))
 	if err != nil {
 		t.Fatalf("Get a at root1 failed: %v", err)
 	}
@@ -208,12 +216,12 @@ func TestVersionedArcTableGetParent(t *testing.T) {
 	arcs1 := map[string]cid.Cid{
 		"a": newTestCID([]byte("target1")),
 	}
-	arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(arcs1))
 
 	arcs2 := map[string]cid.Cid{
 		"b": newTestCID([]byte("target2")),
 	}
-	arctable.Update(ctx, bucketId, root2, root1, arcs2)
+	arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(arcs2))
 
 	// GetParent
 	parent, err := arctable.GetParent(ctx, bucketId, root2)
@@ -252,12 +260,12 @@ func TestVersionedArcTableSnapshot(t *testing.T) {
 	arcs1 := map[string]cid.Cid{
 		"a": target1,
 	}
-	arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(arcs1))
 
 	arcs2 := map[string]cid.Cid{
 		"b": target2,
 	}
-	arctable.Update(ctx, bucketId, root2, root1, arcs2)
+	arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(arcs2))
 
 	// Snapshot at root2
 	snapshot, err := arctable.Snapshot(ctx, bucketId, root2)
@@ -302,14 +310,14 @@ func TestVersionedArcTableBatchGet(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// Setup arcs at root1
-	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
-	})
+	}))
 
 	// Test: all paths found
-	results, err := arctable.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
+	results, err := arctable.BatchGet(ctx, bucketId, root1, testPathSlice([]string{"a", "b", "c"}))
 	if err != nil {
 		t.Fatalf("BatchGet failed: %v", err)
 	}
@@ -327,7 +335,7 @@ func TestVersionedArcTableBatchGet(t *testing.T) {
 	}
 
 	// Test: some paths not found
-	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"a", "notexist", "b"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, testPathSlice([]string{"a", "notexist", "b"}))
 	if err != nil {
 		t.Fatalf("BatchGet with missing paths failed: %v", err)
 	}
@@ -336,7 +344,7 @@ func TestVersionedArcTableBatchGet(t *testing.T) {
 	}
 
 	// Test: empty paths
-	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, testPathSlice([]string{}))
 	if err != nil {
 		t.Fatalf("BatchGet with empty paths failed: %v", err)
 	}
@@ -345,7 +353,7 @@ func TestVersionedArcTableBatchGet(t *testing.T) {
 	}
 
 	// Test: all paths not found
-	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"x", "y", "z"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, testPathSlice([]string{"x", "y", "z"}))
 	if err != nil {
 		t.Fatalf("BatchGet with all missing paths failed: %v", err)
 	}
@@ -373,24 +381,24 @@ func TestVersionedArcTableBatchGetVersionChain(t *testing.T) {
 	target4 := newTestCID([]byte("target4"))
 
 	// v1: a, b
-	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
-	})
+	}))
 
 	// v2: c (new), a overridden
-	arctable.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": target3,
 		"c": target3,
-	})
+	}))
 
 	// v3: d (new)
-	arctable.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root3, root2, arcset.NewSetFrom(map[string]cid.Cid{
 		"d": target4,
-	})
+	}))
 
 	// BatchGet at root3 should find all paths
-	results, err := arctable.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
+	results, err := arctable.BatchGet(ctx, bucketId, root3, testPathSlice([]string{"a", "b", "c", "d"}))
 	if err != nil {
 		t.Fatalf("BatchGet root3 failed: %v", err)
 	}
@@ -419,7 +427,7 @@ func TestVersionedArcTableBatchGetVersionChain(t *testing.T) {
 	}
 
 	// BatchGet at root2 should not find 'd'
-	results, err = arctable.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
+	results, err = arctable.BatchGet(ctx, bucketId, root2, testPathSlice([]string{"a", "b", "c", "d"}))
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -431,7 +439,7 @@ func TestVersionedArcTableBatchGetVersionChain(t *testing.T) {
 	}
 
 	// BatchGet at root1 should find original 'a'
-	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, testPathSlice([]string{"a", "b", "c"}))
 	if err != nil {
 		t.Fatalf("BatchGet root1 failed: %v", err)
 	}
@@ -467,25 +475,25 @@ func TestVersionedArcTableBatchGetWithTombstone(t *testing.T) {
 	target3 := newTestCID([]byte("target3"))
 
 	// v1: a, b, c
-	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": target1,
 		"b": target2,
 		"c": target3,
-	})
+	}))
 
 	// v2: delete 'a' (tombstone), add 'd'
-	arctable.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": cid.Undef, // tombstone
 		"d": target3,
-	})
+	}))
 
 	// v3: delete 'b' (tombstone)
-	arctable.Update(ctx, bucketId, root3, root2, map[string]cid.Cid{
+	arctable.Update(ctx, bucketId, root3, root2, arcset.NewSetFrom(map[string]cid.Cid{
 		"b": cid.Undef, // tombstone
-	})
+	}))
 
 	// BatchGet at root3: a and b deleted, c and d exist
-	results, err := arctable.BatchGet(ctx, bucketId, root3, []string{"a", "b", "c", "d"})
+	results, err := arctable.BatchGet(ctx, bucketId, root3, testPathSlice([]string{"a", "b", "c", "d"}))
 	if err != nil {
 		t.Fatalf("BatchGet root3 failed: %v", err)
 	}
@@ -506,7 +514,7 @@ func TestVersionedArcTableBatchGetWithTombstone(t *testing.T) {
 	}
 
 	// BatchGet at root2: only 'a' deleted
-	results, err = arctable.BatchGet(ctx, bucketId, root2, []string{"a", "b", "c", "d"})
+	results, err = arctable.BatchGet(ctx, bucketId, root2, testPathSlice([]string{"a", "b", "c", "d"}))
 	if err != nil {
 		t.Fatalf("BatchGet root2 failed: %v", err)
 	}
@@ -521,7 +529,7 @@ func TestVersionedArcTableBatchGetWithTombstone(t *testing.T) {
 	}
 
 	// BatchGet at root1: all exist
-	results, err = arctable.BatchGet(ctx, bucketId, root1, []string{"a", "b", "c"})
+	results, err = arctable.BatchGet(ctx, bucketId, root1, testPathSlice([]string{"a", "b", "c"}))
 	if err != nil {
 		t.Fatalf("BatchGet root1 failed: %v", err)
 	}
@@ -547,18 +555,18 @@ func TestVersionedArcTableBatchGetMultipleBuckets(t *testing.T) {
 	target2 := newTestCID([]byte("target2"))
 
 	// Different buckets
-	arctable.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{
+	arctable.Update(ctx, "bucket1", root1a, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": target1,
 		"b": target1,
-	})
-	arctable.Update(ctx, "bucket2", root1b, cid.Undef, map[string]cid.Cid{
+	}))
+	arctable.Update(ctx, "bucket2", root1b, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 		"a": target2,
 		"b": target2,
-	})
+	}))
 
 	// BatchGet in different buckets should be independent
-	results1, _ := arctable.BatchGet(ctx, "bucket1", root1a, []string{"a", "b"})
-	results2, _ := arctable.BatchGet(ctx, "bucket2", root1b, []string{"a", "b"})
+	results1, _ := arctable.BatchGet(ctx, "bucket1", root1a, testPathSlice([]string{"a", "b"}))
+	results2, _ := arctable.BatchGet(ctx, "bucket2", root1b, testPathSlice([]string{"a", "b"}))
 
 	if len(results1) != 2 || len(results2) != 2 {
 		t.Error("expected 2 results in each bucket")
@@ -593,22 +601,22 @@ func TestVersionedArcTableDeleteViaUpdate(t *testing.T) {
 		"a": target1,
 		"b": target2,
 	}
-	arctable.Update(ctx, bucketId, root1, cid.Undef, arcs1)
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(arcs1))
 
 	// v2: delete 'a' using cid.Undef (tombstone)
 	arcs2 := map[string]cid.Cid{
 		"a": cid.Undef, // tombstone - marks 'a' as deleted
 	}
-	arctable.Update(ctx, bucketId, root2, root1, arcs2)
+	arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(arcs2))
 
 	// At root2, 'a' should not be found (tombstone stops the search)
-	_, err = arctable.Get(ctx, bucketId, root2, "a")
+	_, err = arctable.Get(ctx, bucketId, root2, arcset.CanonicalizePath("a"))
 	if err == nil {
 		t.Error("'a' should be deleted at root2")
 	}
 
 	// 'b' should still be accessible (from root1)
-	got, err := arctable.Get(ctx, bucketId, root2, "b")
+	got, err := arctable.Get(ctx, bucketId, root2, arcset.CanonicalizePath("b"))
 	if err != nil {
 		t.Fatalf("Get b at root2 failed: %v", err)
 	}
@@ -617,7 +625,7 @@ func TestVersionedArcTableDeleteViaUpdate(t *testing.T) {
 	}
 
 	// At root1, 'a' should still exist (tombstone is at root2, not root1)
-	got, err = arctable.Get(ctx, bucketId, root1, "a")
+	got, err = arctable.Get(ctx, bucketId, root1, arcset.CanonicalizePath("a"))
 	if err != nil {
 		t.Fatalf("Get a at root1 failed: %v", err)
 	}
@@ -629,16 +637,16 @@ func TestVersionedArcTableDeleteViaUpdate(t *testing.T) {
 	arcs3 := map[string]cid.Cid{
 		"c": target1,
 	}
-	arctable.Update(ctx, bucketId, root3, root2, arcs3)
+	arctable.Update(ctx, bucketId, root3, root2, arcset.NewSetFrom(arcs3))
 
 	// At root3, 'a' should still not be found
-	_, err = arctable.Get(ctx, bucketId, root3, "a")
+	_, err = arctable.Get(ctx, bucketId, root3, arcset.CanonicalizePath("a"))
 	if err == nil {
 		t.Error("'a' should be deleted at root3")
 	}
 
 	// 'b' and 'c' should work
-	got, err = arctable.Get(ctx, bucketId, root3, "b")
+	got, err = arctable.Get(ctx, bucketId, root3, arcset.CanonicalizePath("b"))
 	if err != nil {
 		t.Fatalf("Get b at root3 failed: %v", err)
 	}
@@ -646,7 +654,7 @@ func TestVersionedArcTableDeleteViaUpdate(t *testing.T) {
 		t.Error("b at root3 should be target2")
 	}
 
-	got, err = arctable.Get(ctx, bucketId, root3, "c")
+	got, err = arctable.Get(ctx, bucketId, root3, arcset.CanonicalizePath("c"))
 	if err != nil {
 		t.Fatalf("Get c at root3 failed: %v", err)
 	}
@@ -671,12 +679,12 @@ func TestVersionedArcTableMultipleBuckets(t *testing.T) {
 	target2 := newTestCID([]byte("target2"))
 
 	// Create versions in different buckets
-	arctable.Update(ctx, "bucket1", root1a, cid.Undef, map[string]cid.Cid{"a": target1})
-	arctable.Update(ctx, "bucket2", root2a, cid.Undef, map[string]cid.Cid{"a": target2})
+	arctable.Update(ctx, "bucket1", root1a, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{"a": target1}))
+	arctable.Update(ctx, "bucket2", root2a, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{"a": target2}))
 
 	// Should be independent
-	got1, _ := arctable.Get(ctx, "bucket1", root1a, "a")
-	got2, _ := arctable.Get(ctx, "bucket2", root2a, "a")
+	got1, _ := arctable.Get(ctx, "bucket1", root1a, arcset.CanonicalizePath("a"))
+	got2, _ := arctable.Get(ctx, "bucket2", root2a, arcset.CanonicalizePath("a"))
 
 	if got1.Equals(got2) {
 		t.Error("different buckets should have independent values")
@@ -716,10 +724,10 @@ func TestVersionedArcTableWithBloomCache(t *testing.T) {
 	}
 
 	// Add arc
-	arctable.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"path/a": target})
+	arctable.Update(ctx, bucketId, root, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{"path/a": target}))
 
 	// MightContain should return true for existing path
-	if !arctable.MightContain(ctx, bucketId, "path/a") {
+	if !arctable.MightContain(ctx, bucketId, arcset.CanonicalizePath("path/a")) {
 		t.Error("MightContain should return true for existing path")
 	}
 }
@@ -743,17 +751,17 @@ func TestVersionedArcTableMightContainBatch(t *testing.T) {
 	for _, p := range paths {
 		arcs[p] = target
 	}
-	arctable.Update(ctx, bucketId, root, cid.Undef, arcs)
+	arctable.Update(ctx, bucketId, root, cid.Undef, arcset.NewSetFrom(arcs))
 
 	// Batch check
-	results := arctable.MightContainBatch(ctx, bucketId, []string{"a", "b", "c", "nonexistent"})
+	results := arctable.MightContainBatch(ctx, bucketId, testPathSlice([]string{"a", "b", "c", "nonexistent"}))
 	if len(results) != 4 {
 		t.Errorf("expected 4 results, got %d", len(results))
 	}
 
 	// Existing paths should return true
 	for _, p := range paths {
-		if !results[p] {
+		if !results[arcset.CanonicalizePath(p)] {
 			t.Errorf("expected true for %s", p)
 		}
 	}
@@ -774,10 +782,10 @@ func TestVersionedArcTableBloomFilterOptimization(t *testing.T) {
 	arctable.CreateBucket(ctx, bucketId, nil)
 
 	// Add arcs
-	arctable.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"existing": target})
+	arctable.Update(ctx, bucketId, root, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{"existing": target}))
 
 	// Get for existing path should work
-	got, err := arctable.Get(ctx, bucketId, root, "existing")
+	got, err := arctable.Get(ctx, bucketId, root, arcset.CanonicalizePath("existing"))
 	if err != nil {
 		t.Fatalf("Get existing failed: %v", err)
 	}
@@ -787,7 +795,7 @@ func TestVersionedArcTableBloomFilterOptimization(t *testing.T) {
 
 	// Get for path that definitely doesn't exist (bloom says no)
 	// should return ErrNotFound without version chain walk
-	_, err = arctable.Get(ctx, bucketId, root, "definitely-not-exist")
+	_, err = arctable.Get(ctx, bucketId, root, arcset.CanonicalizePath("definitely-not-exist"))
 	if err == nil {
 		t.Error("expected error for non-existent path")
 	}
@@ -809,16 +817,16 @@ func TestVersionedArcTableBloomUpdateOnUpdate(t *testing.T) {
 	arctable.CreateBucket(ctx, bucketId, nil)
 
 	// First update
-	arctable.Update(ctx, bucketId, root1, cid.Undef, map[string]cid.Cid{"a": target})
+	arctable.Update(ctx, bucketId, root1, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{"a": target}))
 
 	// Second update (adds new paths)
-	arctable.Update(ctx, bucketId, root2, root1, map[string]cid.Cid{"b": target})
+	arctable.Update(ctx, bucketId, root2, root1, arcset.NewSetFrom(map[string]cid.Cid{"b": target}))
 
 	// Both paths should be in bloom
-	if !arctable.MightContain(ctx, bucketId, "a") {
+	if !arctable.MightContain(ctx, bucketId, arcset.CanonicalizePath("a")) {
 		t.Error("'a' should be in bloom")
 	}
-	if !arctable.MightContain(ctx, bucketId, "b") {
+	if !arctable.MightContain(ctx, bucketId, arcset.CanonicalizePath("b")) {
 		t.Error("'b' should be in bloom")
 	}
 }
@@ -833,7 +841,7 @@ func TestVersionedArcTableWithoutBloomCache(t *testing.T) {
 	target := newTestCID([]byte("target"))
 
 	// Add arc
-	arctable.Update(ctx, bucketId, root, cid.Undef, map[string]cid.Cid{"a": target})
+	arctable.Update(ctx, bucketId, root, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{"a": target}))
 
 	// CreateBucket should fail (no bloom cache)
 	err := arctable.CreateBucket(ctx, bucketId, nil)
@@ -842,12 +850,12 @@ func TestVersionedArcTableWithoutBloomCache(t *testing.T) {
 	}
 
 	// MightContain should return true (bloom disabled)
-	if !arctable.MightContain(ctx, bucketId, "any-path") {
+	if !arctable.MightContain(ctx, bucketId, arcset.CanonicalizePath("any-path")) {
 		t.Error("MightContain should return true when bloom disabled")
 	}
 
 	// MightContainBatch should return all true
-	results := arctable.MightContainBatch(ctx, bucketId, []string{"a", "b", "c"})
+	results := arctable.MightContainBatch(ctx, bucketId, testPathSlice([]string{"a", "b", "c"}))
 	for p, v := range results {
 		if !v {
 			t.Errorf("expected true for %s when bloom disabled", p)
@@ -867,7 +875,7 @@ func setupVersionChain(ctx context.Context, arctable *ArcTable, bucketId string,
 		arcs := map[string]cid.Cid{
 			fmt.Sprintf("v%d_arc", i): newTestCID([]byte(fmt.Sprintf("target%d", i))),
 		}
-		arctable.Update(ctx, bucketId, root, prevRoot, arcs)
+		arctable.Update(ctx, bucketId, root, prevRoot, arcset.NewSetFrom(arcs))
 		prevRoot = root
 		latestRoot = root
 	}
@@ -889,7 +897,7 @@ func BenchmarkVersionedArcTableGet(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Query an arc that exists at the first version (requires full chain walk)
-				arctable.Get(ctx, bucketId, latestRoot, "v0_arc")
+				arctable.Get(ctx, bucketId, latestRoot, arcset.CanonicalizePath("v0_arc"))
 			}
 		})
 	}
@@ -910,7 +918,7 @@ func BenchmarkVersionedArcTableGetLatestVersion(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Query an arc at the latest version (direct lookup)
-				arctable.Get(ctx, bucketId, latestRoot, fmt.Sprintf("v%d_arc", length-1))
+				arctable.Get(ctx, bucketId, latestRoot, arcset.CanonicalizePath(fmt.Sprintf("v%d_arc", length-1)))
 			}
 		})
 	}
@@ -930,7 +938,7 @@ func BenchmarkVersionedArcTableUpdate(b *testing.B) {
 			initialArcs := map[string]cid.Cid{
 				"a": newTestCID([]byte("init")),
 			}
-			arctable.Update(ctx, bucketId, initialRoot, cid.Undef, initialArcs)
+			arctable.Update(ctx, bucketId, initialRoot, cid.Undef, arcset.NewSetFrom(initialArcs))
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -939,7 +947,7 @@ func BenchmarkVersionedArcTableUpdate(b *testing.B) {
 				for j := 0; j < size; j++ {
 					arcs[fmt.Sprintf("arc%d", j)] = newTestCID([]byte(fmt.Sprintf("val%d_%d", i, j)))
 				}
-				arctable.Update(ctx, bucketId, newRoot, initialRoot, arcs)
+				arctable.Update(ctx, bucketId, newRoot, initialRoot, arcset.NewSetFrom(arcs))
 			}
 		})
 	}

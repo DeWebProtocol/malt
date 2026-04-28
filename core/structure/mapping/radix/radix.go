@@ -620,9 +620,9 @@ func (s *Map) loadValidatedNode(ctx context.Context, bucketID string, root cid.C
 }
 
 func (s *Map) loadNodeSlots(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, error) {
-	paths := make([]string, fanout)
+	paths := make([]arcset.Path, fanout)
 	for i := 0; i < fanout; i++ {
-		paths[i] = nodeSlotPath(root, byte(i)).String()
+		paths[i] = nodeSlotPath(root, byte(i))
 	}
 	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
 	if err != nil {
@@ -639,21 +639,25 @@ func (s *Map) loadNodeSlots(ctx context.Context, bucketID string, root cid.Cid) 
 }
 
 func (s *Map) storeNodeSlots(ctx context.Context, bucketID string, root cid.Cid, slots []cid.Cid) error {
-	arcs := make(map[string]cid.Cid)
+	arcs := make(map[arcset.Path]cid.Cid)
 	for i, slot := range slots {
 		if !slot.Defined() {
 			continue
 		}
-		arcs[nodeSlotPath(root, byte(i)).String()] = slot
+		arcs[nodeSlotPath(root, byte(i))] = slot
 	}
 	if len(arcs) == 0 {
 		return nil
 	}
-	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	snapshot, err := arcset.NewArcSetFromPaths(arcs)
+	if err != nil {
+		return err
+	}
+	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
 }
 
 func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, error) {
-	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, bucketCountPath(root).String())
+	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, bucketCountPath(root))
 	if err != nil {
 		return nil, err
 	}
@@ -662,9 +666,9 @@ func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.C
 		return nil, err
 	}
 
-	paths := make([]string, count)
+	paths := make([]arcset.Path, count)
 	for i := uint64(0); i < count; i++ {
-		paths[i] = bucketEntryPath(root, i).String()
+		paths[i] = bucketEntryPath(root, i)
 	}
 	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
 	if err != nil {
@@ -683,16 +687,20 @@ func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.C
 }
 
 func (s *Map) storeBucketEntries(ctx context.Context, bucketID string, root cid.Cid, markers []cid.Cid) error {
-	arcs := make(map[string]cid.Cid, len(markers)+1)
+	arcs := make(map[arcset.Path]cid.Cid, len(markers)+1)
 	countMarker, err := encodeBucketCountMarker(uint64(len(markers)))
 	if err != nil {
 		return err
 	}
-	arcs[bucketCountPath(root).String()] = countMarker
+	arcs[bucketCountPath(root)] = countMarker
 	for i, marker := range markers {
-		arcs[bucketEntryPath(root, uint64(i)).String()] = marker
+		arcs[bucketEntryPath(root, uint64(i))] = marker
 	}
-	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, arcs)
+	snapshot, err := arcset.NewArcSetFromPaths(arcs)
+	if err != nil {
+		return err
+	}
+	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
 }
 
 func cellsFromCIDs(values []cid.Cid) []commitment.Cell {

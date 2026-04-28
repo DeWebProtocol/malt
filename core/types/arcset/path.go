@@ -1,6 +1,44 @@
 package arcset
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+var (
+	// ErrEmptyPath is returned when a raw binding path canonicalizes to the
+	// empty path. Empty paths are valid for traversal state, but not for an arc
+	// binding key.
+	ErrEmptyPath = errors.New("path must not be empty")
+
+	// ErrDuplicatePath is returned when two raw paths canonicalize to the same
+	// path but carry different targets.
+	ErrDuplicatePath = errors.New("duplicate canonical path")
+)
+
+// PathError describes a raw path that cannot be used as an arc binding key.
+type PathError struct {
+	Path string
+	Err  error
+}
+
+func (e *PathError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	if e.Path == "" {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("%q: %v", e.Path, e.Err)
+}
+
+func (e *PathError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // Path is a canonical arc path used inside MALT core components.
 // The zero value represents an empty path.
@@ -22,6 +60,15 @@ func CanonicalizePath(path string) Path {
 		filtered = append(filtered, part)
 	}
 	return Path(strings.Join(filtered, "/"))
+}
+
+// NewPath canonicalizes a raw path for use as an arc binding key.
+func NewPath(raw string) (Path, error) {
+	canonical := CanonicalizePath(raw)
+	if canonical.IsEmpty() {
+		return "", &PathError{Path: raw, Err: ErrEmptyPath}
+	}
+	return canonical, nil
 }
 
 // String returns the canonical string form of the path.
