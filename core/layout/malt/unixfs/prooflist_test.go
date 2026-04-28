@@ -2,6 +2,7 @@ package unixfs_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
@@ -66,5 +67,89 @@ func TestProofListFromStepsClassifiesTerminalPayloadBinding(t *testing.T) {
 	}
 	if !bytes.Equal(pl.Steps[1].Proof, []byte("payload proof")) {
 		t.Fatalf("terminal proof bytes were not preserved")
+	}
+}
+
+func TestAppendListIndexStepsClassifiesKnownListQueries(t *testing.T) {
+	root := testCID(t, "root")
+	listRoot := testCID(t, "list")
+	chunk0 := testCID(t, "chunk-0")
+	chunk1 := testCID(t, "chunk-1")
+
+	pl, err := unixfs.ProofListFromSteps(root, "blob.bin[0:8]", nil)
+	if err != nil {
+		t.Fatalf("ProofListFromSteps failed: %v", err)
+	}
+	err = unixfs.AppendListIndexSteps(pl, "blob.bin[0:8]", []unixfs.ListIndexStep{
+		{
+			Root:   listRoot,
+			Index:  0,
+			Target: chunk0,
+			Proof:  []byte("index 0 proof"),
+		},
+		{
+			Root:   listRoot,
+			Index:  1,
+			Target: chunk1,
+			Proof:  []byte("index 1 proof"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendListIndexSteps failed: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("ValidateShape failed: %v", err)
+	}
+	if len(pl.Steps) != 2 {
+		t.Fatalf("steps len = %d, want 2", len(pl.Steps))
+	}
+	for i, step := range pl.Steps {
+		if step.Kind != prooflist.KindListIndex {
+			t.Fatalf("step %d kind = %q, want %q", i, step.Kind, prooflist.KindListIndex)
+		}
+		if step.Index == nil || *step.Index != uint64(i) {
+			t.Fatalf("step %d index = %v, want %d", i, step.Index, i)
+		}
+		if step.Coordinate != string(rune('0'+i)) {
+			t.Fatalf("step %d coordinate = %q, want %d", i, step.Coordinate, i)
+		}
+		if step.EvidenceKind != "structure" || step.EvidenceBackend != "list" {
+			t.Fatalf("step %d evidence labels = %q/%q, want structure/list", i, step.EvidenceKind, step.EvidenceBackend)
+		}
+	}
+	if !bytes.Equal(pl.Steps[1].Proof, []byte("index 1 proof")) {
+		t.Fatalf("list index proof bytes were not preserved")
+	}
+}
+
+func TestListIndexStepsForFileRangeReturnsComposedIndexEvidence(t *testing.T) {
+	ctx := context.Background()
+	layout := newLayout(t, 4)
+
+	root, err := layout.AddFile(ctx, cid.Undef, "blob.bin", []byte("abcdefghijkl"))
+	if err != nil {
+		t.Fatalf("AddFile failed: %v", err)
+	}
+
+	steps, err := layout.ListIndexStepsForFileRange(ctx, root, "blob.bin", 3, 6)
+	if err != nil {
+		t.Fatalf("ListIndexStepsForFileRange failed: %v", err)
+	}
+	if len(steps) != 3 {
+		t.Fatalf("steps len = %d, want 3", len(steps))
+	}
+	for i, step := range steps {
+		if step.Index != uint64(i) {
+			t.Fatalf("step %d index = %d, want %d", i, step.Index, i)
+		}
+		if !step.Root.Defined() {
+			t.Fatalf("step %d root is undefined", i)
+		}
+		if !step.Target.Defined() {
+			t.Fatalf("step %d target is undefined", i)
+		}
+		if len(step.Proof) == 0 {
+			t.Fatalf("step %d proof is empty", i)
+		}
 	}
 }

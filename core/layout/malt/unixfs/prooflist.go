@@ -1,11 +1,25 @@
 package unixfs
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 
+	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	cid "github.com/ipfs/go-cid"
 )
+
+// ListIndexStep records one list index proof used by a UnixFS large-file
+// payload read. Multiple ListIndexStep values compose range evidence; they do
+// not claim a first-class range proof.
+type ListIndexStep struct {
+	Root   cid.Cid
+	Index  uint64
+	Target cid.Cid
+	Proof  structure.Proof
+}
 
 // ProofListFromSteps converts UnixFS layout resolution steps into the
 // verifier-facing ProofList schema. It is an adapter over existing layout
@@ -34,6 +48,85 @@ func ProofListFromSteps(root cid.Cid, queriedPath string, steps []Step) (*proofl
 		})
 	}
 	return pl, nil
+}
+
+// AppendListIndexSteps appends typed list-index evidence to an existing
+// ProofList. This is intended for large-file range reads that are currently
+// represented as composed index proofs.
+func AppendListIndexSteps(pl *prooflist.ProofList, queriedPath string, steps []ListIndexStep) error {
+	if pl == nil {
+		return fmt.Errorf("prooflist is nil")
+	}
+	for _, layoutStep := range steps {
+		if !layoutStep.Root.Defined() {
+			return fmt.Errorf("list step root is undefined")
+		}
+		if !layoutStep.Target.Defined() {
+			return fmt.Errorf("list step target is undefined")
+		}
+		index := layoutStep.Index
+		pl.Steps = append(pl.Steps, prooflist.Step{
+			Kind:            prooflist.KindListIndex,
+			From:            layoutStep.Root,
+			Query:           queriedPath,
+			Coordinate:      strconv.FormatUint(layoutStep.Index, 10),
+			Index:           &index,
+			Target:          layoutStep.Target,
+			EvidenceKind:    "structure",
+			EvidenceBackend: "list",
+			Proof:           cloneProofBytes(layoutStep.Proof),
+		})
+	}
+	return nil
+}
+
+// ListIndexStepsForFileRange returns composed list-index proof steps for a
+// large-file range. Small raw-payload files return no list steps.
+func (l *Layout) ListIndexStepsForFileRange(ctx context.Context, root cid.Cid, path string, offset, length uint64) ([]ListIndexStep, error) {
+	if length == 0 {
+		return nil, nil
+	}
+	info, err := l.resolveFile(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+	if codec.SemanticKindOf(info.payload) != codec.SemanticKindList {
+		return nil, nil
+	}
+	if offset >= info.size {
+		return nil, nil
+	}
+	if length > info.size-offset {
+		length = info.size - offset
+	}
+
+	startIndex := offset / info.chunkSize
+	endOffset := offset + length
+	endIndex := (endOffset - 1) / info.chunkSize
+	steps := make([]ListIndexStep, 0, endIndex-startIndex+1)
+	for index := startIndex; index <= endIndex; index++ {
+		query, proof, err := l.lists.Prove(ctx, l.bucketID, info.payload, index)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := l.lists.Verify(info.payload, index, query, proof)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("list proof failed at index %d", index)
+		}
+		if !query.Key.Defined() {
+			return nil, fmt.Errorf("%w: missing chunk %d", ErrNotFound, index)
+		}
+		steps = append(steps, ListIndexStep{
+			Root:   info.payload,
+			Index:  index,
+			Target: query.Key,
+			Proof:  proof,
+		})
+	}
+	return steps, nil
 }
 
 func unixFSStepKind(path string) prooflist.StepKind {
