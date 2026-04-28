@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	evalReadBucket     = readbench.DefaultBucket
+	evalReadBucket     = ""
 	evalReadDepth      = readbench.DefaultDirectoryDepth
 	evalReadSmallBytes = readbench.DefaultSmallFileBytes
 	evalReadLargeBytes = readbench.DefaultLargeFileBytes
@@ -18,7 +18,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(evalReadCmd)
-	evalReadCmd.Flags().StringVar(&evalReadBucket, "bucket", evalReadBucket, "bucket id for the deterministic read fixture")
+	evalReadCmd.Flags().StringVar(&evalReadBucket, "bucket", evalReadBucket, "bucket id for the deterministic read fixture (defaults to a fresh readbench-* bucket)")
 	evalReadCmd.Flags().IntVar(&evalReadDepth, "depth", evalReadDepth, "directory depth for fixture paths")
 	evalReadCmd.Flags().IntVar(&evalReadSmallBytes, "small-bytes", evalReadSmallBytes, "small raw file size in bytes")
 	evalReadCmd.Flags().IntVar(&evalReadLargeBytes, "large-bytes", evalReadLargeBytes, "large list-backed file size in bytes")

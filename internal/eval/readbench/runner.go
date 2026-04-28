@@ -4,21 +4,19 @@ package readbench
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/core/metrics"
-	"github.com/dewebprotocol/malt/httpapi"
 )
 
 const (
+	// DefaultBucket is the prefix used for generated benchmark fixture buckets.
 	DefaultBucket         = "readbench"
 	DefaultDirectoryDepth = 2
 	DefaultSmallFileBytes = 64
@@ -28,6 +26,8 @@ const (
 
 	minListBackedFileBytes = 256*1024 + 1
 )
+
+var generatedBucketCounter atomic.Uint64
 
 // OperationKind identifies the measured read operation.
 type OperationKind string
@@ -83,22 +83,18 @@ type operation struct {
 
 // Runner drives fixture setup and measured daemon reads.
 type Runner struct {
-	baseURL string
-	client  *daemonclient.Client
-	http    *http.Client
+	client *daemonclient.Client
 }
 
 // NewRunner creates a benchmark runner for a daemon API v1 base URL.
 func NewRunner(baseURL string) *Runner {
 	trimmed := strings.TrimRight(baseURL, "/")
 	return &Runner{
-		baseURL: trimmed,
-		client:  daemonclient.NewWithBaseURL(trimmed),
-		http:    &http.Client{Timeout: 5 * time.Minute},
+		client: daemonclient.NewWithBaseURL(trimmed),
 	}
 }
 
-// PrepareFixture creates or updates a deterministic MALT-only read fixture.
+// PrepareFixture creates a deterministic MALT-only read fixture in a fresh bucket.
 func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixture, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("read benchmark runner is nil")
@@ -108,7 +104,7 @@ func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixtur
 		return nil, err
 	}
 
-	if _, err := r.client.CreateBucket(ctx, normalized.Bucket, ""); err != nil && !isDaemonStatus(err, http.StatusConflict) {
+	if _, err := r.client.CreateBucket(ctx, normalized.Bucket, ""); err != nil {
 		return nil, fmt.Errorf("create bucket %q: %w", normalized.Bucket, err)
 	}
 
@@ -219,54 +215,29 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, bucket str
 }
 
 func (r *Runner) resetMetrics(ctx context.Context) error {
-	_, err := r.doMetrics(ctx, http.MethodPost, "/metrics:reset")
+	if r == nil || r.client == nil {
+		return fmt.Errorf("read benchmark runner is nil")
+	}
+	_, err := r.client.ResetMetrics(ctx)
 	return err
 }
 
 func (r *Runner) metricsSnapshot(ctx context.Context) (metrics.Snapshot, error) {
-	return r.doMetrics(ctx, http.MethodGet, "/metrics")
-}
-
-func (r *Runner) doMetrics(ctx context.Context, method string, route string) (metrics.Snapshot, error) {
 	var zero metrics.Snapshot
-	if r == nil || r.baseURL == "" {
-		return zero, fmt.Errorf("daemon API base URL is empty")
+	if r == nil || r.client == nil {
+		return zero, fmt.Errorf("read benchmark runner is nil")
 	}
-	u, err := url.Parse(r.baseURL)
+	resp, err := r.client.MetricsSnapshot(ctx)
 	if err != nil {
 		return zero, err
 	}
-	u.Path = path.Join(u.Path, route)
-
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
-	if err != nil {
-		return zero, err
-	}
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return zero, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(resp.Body)
-		return zero, fmt.Errorf("daemon metrics endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
-	}
-
-	var out httpapi.MetricsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return zero, err
-	}
-	return out.Snapshot, nil
+	return resp.Snapshot, nil
 }
 
 func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 	fixture, err := normalizeFixtureConfig(cfg.Fixture)
 	if err != nil {
 		return RunConfig{}, err
-	}
-	if cfg.Iterations == 0 {
-		cfg.Iterations = DefaultIterations
 	}
 	if cfg.Iterations < 0 {
 		return RunConfig{}, fmt.Errorf("iterations must be non-negative")
@@ -279,8 +250,10 @@ func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 }
 
 func normalizeFixtureConfig(cfg FixtureConfig) (FixtureConfig, error) {
-	if strings.TrimSpace(cfg.Bucket) == "" {
-		cfg.Bucket = DefaultBucket
+	if bucket := strings.TrimSpace(cfg.Bucket); bucket == "" {
+		cfg.Bucket = defaultFixtureBucket()
+	} else {
+		cfg.Bucket = bucket
 	}
 	if cfg.DirectoryDepth < 0 {
 		return FixtureConfig{}, fmt.Errorf("directory depth must be non-negative")
@@ -298,6 +271,10 @@ func normalizeFixtureConfig(cfg FixtureConfig) (FixtureConfig, error) {
 		return FixtureConfig{}, fmt.Errorf("large file bytes must be at least %d for list-backed storage", minListBackedFileBytes)
 	}
 	return cfg, nil
+}
+
+func defaultFixtureBucket() string {
+	return fmt.Sprintf("%s-%d-%d", DefaultBucket, time.Now().UTC().UnixNano(), generatedBucketCounter.Add(1))
 }
 
 func fixturePath(depth int, filename string) string {
@@ -322,9 +299,4 @@ func deterministicBytes(label string, size int) []byte {
 		out[i] = byte('a' + ((int(seed[i%len(seed)]) + i) % 26))
 	}
 	return out
-}
-
-func isDaemonStatus(err error, status int) bool {
-	var apiErr *daemonclient.Error
-	return errors.As(err, &apiErr) && apiErr.StatusCode == status
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
@@ -79,6 +80,54 @@ func TestPrepareFixtureSupportsZeroDirectoryDepth(t *testing.T) {
 	}
 	if fixture.LargePath != "large.bin" {
 		t.Fatalf("large path = %q, want root-level large.bin", fixture.LargePath)
+	}
+}
+
+func TestPrepareFixtureGeneratesUniqueBucketWhenOmitted(t *testing.T) {
+	ctx := context.Background()
+	runner := NewRunner(newTestDaemon(t))
+
+	cfg := FixtureConfig{
+		DirectoryDepth: 1,
+		SmallFileBytes: 8,
+		LargeFileBytes: 300 * 1024,
+	}
+	first, err := runner.PrepareFixture(ctx, cfg)
+	if err != nil {
+		t.Fatalf("first PrepareFixture() error = %v", err)
+	}
+	second, err := runner.PrepareFixture(ctx, cfg)
+	if err != nil {
+		t.Fatalf("second PrepareFixture() error = %v", err)
+	}
+
+	if first.Bucket == second.Bucket {
+		t.Fatalf("generated bucket reused %q", first.Bucket)
+	}
+	for _, bucket := range []string{first.Bucket, second.Bucket} {
+		if !strings.HasPrefix(bucket, DefaultBucket+"-") {
+			t.Fatalf("generated bucket = %q, want %q prefix", bucket, DefaultBucket+"-")
+		}
+	}
+}
+
+func TestPrepareFixtureRejectsExistingBucket(t *testing.T) {
+	ctx := context.Background()
+	baseURL := newTestDaemon(t)
+	client := daemonclient.NewWithBaseURL(baseURL)
+	if _, err := client.CreateBucket(ctx, "readbench-existing", ""); err != nil {
+		t.Fatalf("create existing bucket: %v", err)
+	}
+
+	runner := NewRunner(baseURL)
+	_, err := runner.PrepareFixture(ctx, FixtureConfig{
+		Bucket:         "readbench-existing",
+		DirectoryDepth: 1,
+		SmallFileBytes: 8,
+		LargeFileBytes: 300 * 1024,
+	})
+	if err == nil {
+		t.Fatal("PrepareFixture() succeeded with an existing bucket")
 	}
 }
 
@@ -156,6 +205,28 @@ func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 	}
 	if rangeRead.CAS.GetCount == 0 || rangeRead.CAS.BytesGet == 0 {
 		t.Fatalf("content range CAS metrics should include bytes fetched: %+v", rangeRead.CAS)
+	}
+}
+
+func TestRunJSONLAllowsZeroIterations(t *testing.T) {
+	ctx := context.Background()
+	runner := NewRunner(newTestDaemon(t))
+
+	var out bytes.Buffer
+	err := runner.RunJSONL(ctx, RunConfig{
+		Fixture: FixtureConfig{
+			Bucket:         "readbench-zero-iterations",
+			DirectoryDepth: 1,
+			SmallFileBytes: 8,
+			LargeFileBytes: 300 * 1024,
+		},
+		Iterations: 0,
+	}, &out)
+	if err != nil {
+		t.Fatalf("RunJSONL() error = %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("RunJSONL() wrote %q, want no records", out.String())
 	}
 }
 
