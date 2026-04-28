@@ -122,6 +122,30 @@ type BucketStatResponse struct {
 	Entries     []string `json:"entries,omitempty"` // directory entries when available
 }
 
+// BucketContentRange describes the HTTP-equivalent byte range metadata for a
+// proof-bearing JSON content read.
+type BucketContentRange struct {
+	Start         int64  `json:"start"`
+	EndExclusive  int64  `json:"end_exclusive"`
+	ContentLength int64  `json:"content_length"`
+	TotalSize     int64  `json:"total_size"`
+	Partial       bool   `json:"partial"`
+	StatusCode    int    `json:"status_code"`
+	AcceptRanges  string `json:"accept_ranges"`
+	ContentRange  string `json:"content_range,omitempty"`
+}
+
+// BucketContentProofResponse returns content bytes with range metadata and the
+// verifier-facing ProofList for the same read.
+type BucketContentProofResponse struct {
+	Path        string              `json:"path,omitempty"`
+	StorageKind string              `json:"storage_kind"`
+	Key         string              `json:"key"`
+	Content     []byte              `json:"content"`
+	Range       BucketContentRange  `json:"range"`
+	ProofList   prooflist.ProofList `json:"prooflist"`
+}
+
 // BucketUnixFSWriteResponse returns the result of a UnixFS layout mutation.
 type BucketUnixFSWriteResponse struct {
 	Bucket   string `json:"bucket"`
