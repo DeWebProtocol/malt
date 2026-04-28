@@ -155,6 +155,15 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
+	resp, err = http.Get(ts.URL + "/api/v1/buckets/metrics/content:proof?path=file.txt")
+	if err != nil {
+		t.Fatalf("content proof request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
 	resp, err = http.Get(ts.URL + "/api/v1/metrics")
 	if err != nil {
 		t.Fatalf("metrics request failed: %v", err)
@@ -183,8 +192,8 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 	if snapshot.ArcTable.GetCount == 0 {
 		t.Fatalf("ArcTable GetCount = %d, want > 0", snapshot.ArcTable.GetCount)
 	}
-	if snapshot.Proof.ProofListCount != 1 {
-		t.Fatalf("ProofListCount = %d, want 1", snapshot.Proof.ProofListCount)
+	if snapshot.Proof.ProofListCount != 2 {
+		t.Fatalf("ProofListCount = %d, want 2", snapshot.Proof.ProofListCount)
 	}
 	if snapshot.Proof.StepCount == 0 || snapshot.Proof.TotalBytes == 0 {
 		t.Fatalf("Proof stats = %+v, want steps and byte accounting", snapshot.Proof)

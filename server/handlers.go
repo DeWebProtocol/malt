@@ -817,6 +817,7 @@ func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Accept-Ranges", "bytes")
+	s.node.RecordProofList(*pl)
 	writeJSON(w, http.StatusOK, &httpapi.BucketContentProofResponse{
 		Path:        queryPath,
 		StorageKind: stat.StorageKind,
