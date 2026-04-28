@@ -23,6 +23,8 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/fs"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/lineage"
+	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -47,6 +49,9 @@ type Node struct {
 	cas          cas.Reader
 	graphManager *graph.Manager
 	lineageMgr   *lineage.Manager
+
+	metricsArcTable *metrics.ArcTable
+	proofStats      metrics.ProofStatsRecorder
 }
 
 // NewNode creates a new MALT node with the given options.
@@ -110,6 +115,7 @@ func NewNode(opts ...Option) (*Node, error) {
 			return nil, fmt.Errorf("failed to initialize ArcTable: %w", err)
 		}
 	}
+	node.installMetricsArcTable()
 
 	// Graph Manager
 	node.graphManager = graph.NewManager(graph.NewStore(node.kv))
@@ -125,6 +131,19 @@ func NewNode(opts ...Option) (*Node, error) {
 	}
 
 	return node, nil
+}
+
+func (n *Node) installMetricsArcTable() {
+	if n.arctable == nil {
+		return
+	}
+	if wrapped, ok := n.arctable.(*metrics.ArcTable); ok {
+		n.metricsArcTable = wrapped
+		return
+	}
+	wrapped := metrics.NewArcTable(n.arctable)
+	n.arctable = wrapped
+	n.metricsArcTable = wrapped
 }
 
 // initKVStore creates a KVStore from config.
@@ -336,6 +355,47 @@ func (n *Node) KVStore() kvstore.KVStore {
 // Config returns the node configuration.
 func (n *Node) Config() *config.Config {
 	return n.cfg
+}
+
+// MetricsSnapshot returns the current node-local evaluation counters.
+func (n *Node) MetricsSnapshot() metrics.Snapshot {
+	var snapshot metrics.Snapshot
+	if n.cas != nil {
+		if source, ok := n.cas.(interface{ SnapshotStats() metrics.CASStats }); ok {
+			snapshot.CAS = source.SnapshotStats()
+		}
+	}
+	if n.metricsArcTable != nil {
+		snapshot.ArcTable = n.metricsArcTable.SnapshotStats()
+	} else if n.arctable != nil {
+		if source, ok := n.arctable.(interface{ SnapshotStats() metrics.ArcTableStats }); ok {
+			snapshot.ArcTable = source.SnapshotStats()
+		}
+	}
+	snapshot.Proof = n.proofStats.Snapshot()
+	return snapshot
+}
+
+// ResetMetrics clears node-local evaluation counters where supported.
+func (n *Node) ResetMetrics() {
+	if n.cas != nil {
+		if resetter, ok := n.cas.(interface{ ResetStats() }); ok {
+			resetter.ResetStats()
+		}
+	}
+	if n.metricsArcTable != nil {
+		n.metricsArcTable.ResetStats()
+	} else if n.arctable != nil {
+		if resetter, ok := n.arctable.(interface{ ResetStats() }); ok {
+			resetter.ResetStats()
+		}
+	}
+	n.proofStats.Reset()
+}
+
+// RecordProofList records byte accounting for a verifier-facing proof artifact.
+func (n *Node) RecordProofList(pl prooflist.ProofList) {
+	n.proofStats.RecordProofList(pl)
 }
 
 // Close releases all resources.

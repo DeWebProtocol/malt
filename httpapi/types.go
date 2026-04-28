@@ -1,7 +1,10 @@
 // Package httpapi defines the daemon HTTP API payloads shared by server and client.
 package httpapi
 
-import "github.com/dewebprotocol/malt/core/types/prooflist"
+import (
+	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
+)
 
 // ErrorResponse represents a structured API error.
 type ErrorResponse struct {
@@ -11,6 +14,11 @@ type ErrorResponse struct {
 // HealthResponse is returned by the daemon health endpoint.
 type HealthResponse struct {
 	Status string `json:"status"`
+}
+
+// MetricsResponse wraps a node-local metrics snapshot.
+type MetricsResponse struct {
+	Snapshot metrics.Snapshot `json:"snapshot"`
 }
 
 // Bucket describes bucket metadata in daemon responses.

@@ -38,6 +38,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.HealthResponse{Status: "ok"})
 }
 
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, &httpapi.MetricsResponse{Snapshot: s.node.MetricsSnapshot()})
+}
+
+func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
+	s.node.ResetMetrics()
+	writeJSON(w, http.StatusOK, &httpapi.MetricsResponse{Snapshot: s.node.MetricsSnapshot()})
+}
+
 func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
 	var req httpapi.BucketCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1190,6 +1199,7 @@ func (s *Server) proofListAndWrite(w http.ResponseWriter, ctx context.Context, g
 		return
 	}
 	pl.Query = bucketpath.CanonicalizeQueryPath(rawPath)
+	s.node.RecordProofList(*pl)
 	writeJSON(w, http.StatusOK, &httpapi.ProofListResponse{
 		Target:    result.Target.String(),
 		ProofList: *pl,
