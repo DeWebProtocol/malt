@@ -5,6 +5,7 @@ go 1.24.6
 require (
 	github.com/bits-and-blooms/bitset v1.7.0
 	github.com/consensys/gnark-crypto v0.13.0
+	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c
 	github.com/crate-crypto/go-kzg-4844 v1.1.0
 	github.com/dgraph-io/badger/v4 v4.2.0
@@ -25,7 +26,6 @@ require (
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/consensys/bavard v0.1.13 // indirect
-	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf // indirect
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/gammazero/chanqueue v1.1.1 // indirect
