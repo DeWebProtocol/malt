@@ -285,6 +285,67 @@ func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 	}
 }
 
+func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	bucketID := "hierarchical-symlink-dir"
+	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+
+	root := t.TempDir()
+	targetDir := filepath.Join(root, "target")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "note.txt"), []byte("via symlink"), 0o644); err != nil {
+		t.Fatalf("write symlink target file: %v", err)
+	}
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(targetDir, link); err != nil {
+		t.Skipf("symlink not supported in test environment: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{link}, addBuildOptions{
+		Target: addTargetMALT,
+		Model:  addModelUnixFS,
+		Layout: addLayoutHierarchical,
+	})
+	if err != nil {
+		t.Fatalf("add hierarchical unixfs with symlink dir: %v", err)
+	}
+	if result.Files != 1 {
+		t.Fatalf("files = %d, want 1", result.Files)
+	}
+
+	snapshot, err := daemon.SnapshotBucketMap(ctx, bucketID, result.NewRoot)
+	if err != nil {
+		t.Fatalf("snapshot root: %v", err)
+	}
+	linkBinding := snapshot.Bindings["linked"]
+	if linkBinding == "" {
+		t.Fatalf("root map missing symlink-dir boundary: %+v", snapshot.Bindings)
+	}
+	linkCID, err := cid.Decode(linkBinding)
+	if err != nil {
+		t.Fatalf("decode symlink-dir binding: %v", err)
+	}
+	if codec.SemanticKindOf(linkCID) != codec.SemanticKindMap {
+		t.Fatalf("symlink-dir binding kind = %s, want map", codec.SemanticKindOf(linkCID))
+	}
+	if snapshot.Bindings["linked/note.txt"] != "" {
+		t.Fatalf("root should not contain symlink-dir descendants: %+v", snapshot.Bindings)
+	}
+
+	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, "linked/note.txt", "")
+	if err != nil {
+		t.Fatalf("read symlink target content: status=%d err=%v", status, err)
+	}
+	if string(body) != "via symlink" {
+		t.Fatalf("symlink target body = %q", string(body))
+	}
+}
+
 func TestAddInputsWithUnixFSMerkleDAGTarget(t *testing.T) {
 	ctx := context.Background()
 	casClient := casmock.NewCAS(casmock.WithoutLatency())
