@@ -29,10 +29,15 @@ const (
 
 	addModelUnixFS = "unixfs"
 
-	addLayoutFlat          = "flat"
-	addLayoutCompositional = "compositional"
-	addLayoutHAMT          = "hamt"
-	addLayoutBalanced      = "balanced"
+	addLayoutFlat         = "flat"
+	addLayoutHierarchical = "hierarchical"
+
+	addFileLayoutBalanced = "balanced"
+	addFileLayoutTrickle  = "trickle"
+
+	addDirLayoutBasic    = "basic"
+	addDirLayoutHAMT     = "hamt"
+	addDirLayoutAdaptive = "adaptive"
 )
 
 var (
@@ -44,6 +49,8 @@ var (
 	addTargetFlag       string
 	addModelFlag        string
 	addLayoutFlag       string
+	addFileLayoutFlag   string
+	addDirLayoutFlag    string
 )
 
 func init() {
@@ -55,7 +62,9 @@ func init() {
 	addCmd.Flags().StringVar(&addWrapNameFlag, "wrap-name", "", "Wrapper directory name (required for multi-input --wrap)")
 	addCmd.Flags().StringVar(&addTargetFlag, "target", addTargetMALT, "Authenticated target substrate: malt or merkle-dag")
 	addCmd.Flags().StringVar(&addModelFlag, "model", addModelUnixFS, "Source data model/schema")
-	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "Target-specific layout (malt: flat/compositional; merkle-dag: hamt/balanced)")
+	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT materialization layout: flat or hierarchical")
+	addCmd.Flags().StringVar(&addFileLayoutFlag, "file-layout", "", "Merkle DAG UnixFS file layout: balanced or trickle")
+	addCmd.Flags().StringVar(&addDirLayoutFlag, "dir-layout", "", "Merkle DAG UnixFS directory layout: basic, hamt, or adaptive")
 }
 
 var addCmd = &cobra.Command{
@@ -69,6 +78,8 @@ type addSummary struct {
 	Target      string `json:"target,omitempty"`
 	Model       string `json:"model,omitempty"`
 	Layout      string `json:"layout,omitempty"`
+	FileLayout  string `json:"file_layout,omitempty"`
+	DirLayout   string `json:"dir_layout,omitempty"`
 	Bucket      string `json:"bucket,omitempty"`
 	OldRoot     string `json:"old_root,omitempty"`
 	NewRoot     string `json:"new_root"`
@@ -137,12 +148,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts, err := normalizeAddBuildOptions(addBuildOptions{
-		Prefix:   addPrefixFlag,
-		Wrap:     addWrapFlag,
-		WrapName: addWrapNameFlag,
-		Target:   addTargetFlag,
-		Model:    addModelFlag,
-		Layout:   addLayoutFlag,
+		Prefix:     addPrefixFlag,
+		Wrap:       addWrapFlag,
+		WrapName:   addWrapNameFlag,
+		Target:     addTargetFlag,
+		Model:      addModelFlag,
+		Layout:     addLayoutFlag,
+		FileLayout: addFileLayoutFlag,
+		DirLayout:  addDirLayoutFlag,
 	})
 	if err != nil {
 		return err
@@ -186,6 +199,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Target:      opts.Target,
 		Model:       opts.Model,
 		Layout:      opts.Layout,
+		FileLayout:  opts.FileLayout,
+		DirLayout:   opts.DirLayout,
 		Bucket:      bucketID,
 		OldRoot:     oldRoot,
 		NewRoot:     result.NewRoot,
@@ -197,12 +212,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 }
 
 type addBuildOptions struct {
-	Prefix   string
-	Wrap     bool
-	WrapName string
-	Target   string
-	Model    string
-	Layout   string
+	Prefix     string
+	Wrap       bool
+	WrapName   string
+	Target     string
+	Model      string
+	Layout     string
+	FileLayout string
+	DirLayout  string
 }
 
 func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
@@ -215,8 +232,8 @@ func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casCl
 		switch normalized.Layout {
 		case addLayoutFlat:
 			return addInputsWithMALTFlatUnixFS(ctx, daemon, casClient, bucketID, rawInputs, normalized)
-		case addLayoutCompositional:
-			return addInputsWithMALTCompositionalUnixFS(ctx, daemon, casClient, bucketID, rawInputs, normalized)
+		case addLayoutHierarchical:
+			return addInputsWithMALTHierarchicalUnixFS(ctx, daemon, casClient, bucketID, rawInputs, normalized)
 		}
 	case addTargetMerkleDAG:
 		return addInputsWithMerkleDAGUnixFS(ctx, casClient, rawInputs, normalized)
@@ -228,6 +245,8 @@ func normalizeAddBuildOptions(opts addBuildOptions) (addBuildOptions, error) {
 	opts.Target = normalizeAddToken(opts.Target)
 	opts.Model = normalizeAddToken(opts.Model)
 	opts.Layout = normalizeAddToken(opts.Layout)
+	opts.FileLayout = normalizeAddToken(opts.FileLayout)
+	opts.DirLayout = normalizeAddToken(opts.DirLayout)
 	if opts.Target == "" {
 		opts.Target = addTargetMALT
 	}
@@ -245,15 +264,27 @@ func normalizeAddBuildOptions(opts addBuildOptions) (addBuildOptions, error) {
 		if opts.Layout == "" {
 			opts.Layout = addLayoutFlat
 		}
-		if opts.Layout != addLayoutFlat && opts.Layout != addLayoutCompositional {
+		if opts.Layout != addLayoutFlat && opts.Layout != addLayoutHierarchical {
 			return opts, fmt.Errorf("unsupported malt unixfs layout %q", opts.Layout)
 		}
-	case addTargetMerkleDAG:
-		if opts.Layout == "" {
-			opts.Layout = addLayoutHAMT
+		if opts.FileLayout != "" || opts.DirLayout != "" {
+			return opts, fmt.Errorf("--file-layout and --dir-layout are only supported with --target merkle-dag")
 		}
-		if opts.Layout != addLayoutHAMT && opts.Layout != addLayoutBalanced {
-			return opts, fmt.Errorf("unsupported merkle-dag unixfs layout %q", opts.Layout)
+	case addTargetMerkleDAG:
+		if opts.Layout != "" {
+			return opts, fmt.Errorf("--layout is only supported with --target malt; use --file-layout and --dir-layout for merkle-dag")
+		}
+		if opts.FileLayout == "" {
+			opts.FileLayout = addFileLayoutBalanced
+		}
+		if opts.DirLayout == "" {
+			opts.DirLayout = addDirLayoutAdaptive
+		}
+		if opts.FileLayout != addFileLayoutBalanced && opts.FileLayout != addFileLayoutTrickle {
+			return opts, fmt.Errorf("unsupported merkle-dag unixfs file layout %q", opts.FileLayout)
+		}
+		if opts.DirLayout != addDirLayoutBasic && opts.DirLayout != addDirLayoutHAMT && opts.DirLayout != addDirLayoutAdaptive {
+			return opts, fmt.Errorf("unsupported merkle-dag unixfs directory layout %q", opts.DirLayout)
 		}
 	default:
 		return opts, fmt.Errorf("unsupported add target %q", opts.Target)
@@ -329,7 +360,7 @@ func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Clien
 	return result, nil
 }
 
-func addInputsWithMALTCompositionalUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTHierarchicalUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if daemon == nil {
 		return nil, fmt.Errorf("malt target requires daemon client")
 	}
@@ -367,9 +398,10 @@ func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, r
 		return nil, fmt.Errorf("merkle-dag target expects exactly one local path")
 	}
 	result, err := merkledagimport.ImportPath(ctx, casClient, rawInputs[0], merkledagimport.Options{
-		Model:     opts.Model,
-		Layout:    opts.Layout,
-		ChunkSize: addFixedChunkSize,
+		Model:      opts.Model,
+		FileLayout: opts.FileLayout,
+		DirLayout:  opts.DirLayout,
+		ChunkSize:  addFixedChunkSize,
 	})
 	if err != nil {
 		return nil, err
@@ -534,7 +566,7 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclie
 		return cid.Undef, 0, 0, fmt.Errorf("symlink target is not a directory: %s", localPath)
 	}
 	staged := newDirNode()
-	files, bytesUploaded, err := stageCompositionalDirectoryChildren(ctx, staged, casClient, daemon, bucketID, localPath, "", make(map[string]struct{}))
+	files, bytesUploaded, err := stageHierarchicalDirectoryChildren(ctx, staged, casClient, daemon, bucketID, localPath, "", make(map[string]struct{}))
 	if err != nil {
 		return cid.Undef, 0, 0, err
 	}
@@ -545,7 +577,7 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclie
 	return mat.Key, files, bytesUploaded, nil
 }
 
-func stageCompositionalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, localDir string, mountBase string, seen map[string]struct{}) (int, int64, error) {
+func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, localDir string, mountBase string, seen map[string]struct{}) (int, int64, error) {
 	cycleKey, err := filepath.EvalSymlinks(localDir)
 	if err != nil {
 		cycleKey, err = filepath.Abs(localDir)
@@ -574,7 +606,7 @@ func stageCompositionalDirectoryChildren(ctx context.Context, root *addNode, cas
 		}
 		if info.IsDir() {
 			ensureDirNode(root, childPath)
-			childFiles, childBytes, err := stageCompositionalDirectoryChildren(ctx, root, casClient, daemon, bucketID, childLocal, childPath, seen)
+			childFiles, childBytes, err := stageHierarchicalDirectoryChildren(ctx, root, casClient, daemon, bucketID, childLocal, childPath, seen)
 			if err != nil {
 				return 0, 0, err
 			}

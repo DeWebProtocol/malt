@@ -12,6 +12,7 @@ import (
 	merkledag "github.com/ipfs/boxo/ipld/merkledag"
 	balanced "github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	helpers "github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
+	trickle "github.com/ipfs/boxo/ipld/unixfs/importer/trickle"
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
 	blocks "github.com/ipfs/go-block-format"
 	cid "github.com/ipfs/go-cid"
@@ -22,8 +23,12 @@ import (
 const (
 	ModelUnixFS = "unixfs"
 
-	LayoutBalanced = "balanced"
-	LayoutHAMT     = "hamt"
+	FileLayoutBalanced = "balanced"
+	FileLayoutTrickle  = "trickle"
+
+	DirLayoutBasic    = "basic"
+	DirLayoutHAMT     = "hamt"
+	DirLayoutAdaptive = "adaptive"
 )
 
 const defaultChunkSize = 262144
@@ -32,6 +37,8 @@ const defaultChunkSize = 262144
 type Options struct {
 	Model       string
 	Layout      string
+	FileLayout  string
+	DirLayout   string
 	ChunkSize   int
 	HAMTFanout  int
 	RawFileLeaf bool
@@ -57,8 +64,14 @@ func ImportPath(ctx context.Context, store Store, localPath string, opts Options
 	if opts.Model != ModelUnixFS {
 		return nil, fmt.Errorf("unsupported merkle-dag model %q", opts.Model)
 	}
-	if opts.Layout != LayoutBalanced && opts.Layout != LayoutHAMT {
-		return nil, fmt.Errorf("unsupported merkle-dag unixfs layout %q", opts.Layout)
+	if opts.Layout != "" {
+		return nil, fmt.Errorf("merkle-dag uses file-layout and dir-layout, not top-level layout %q", opts.Layout)
+	}
+	if opts.FileLayout != FileLayoutBalanced && opts.FileLayout != FileLayoutTrickle {
+		return nil, fmt.Errorf("unsupported merkle-dag unixfs file layout %q", opts.FileLayout)
+	}
+	if opts.DirLayout != DirLayoutBasic && opts.DirLayout != DirLayoutHAMT && opts.DirLayout != DirLayoutAdaptive {
+		return nil, fmt.Errorf("unsupported merkle-dag unixfs directory layout %q", opts.DirLayout)
 	}
 
 	abs, err := filepath.Abs(localPath)
@@ -86,8 +99,11 @@ func normalizeOptions(opts Options) Options {
 	if opts.Model == "" {
 		opts.Model = ModelUnixFS
 	}
-	if opts.Layout == "" {
-		opts.Layout = LayoutHAMT
+	if opts.FileLayout == "" {
+		opts.FileLayout = FileLayoutBalanced
+	}
+	if opts.DirLayout == "" {
+		opts.DirLayout = DirLayoutAdaptive
 	}
 	if opts.ChunkSize <= 0 {
 		opts.ChunkSize = defaultChunkSize
@@ -142,7 +158,15 @@ func (i *pathImporter) importFile(ctx context.Context, localPath string, info fs
 	if err != nil {
 		return nil, fmt.Errorf("create unixfs dag builder for %s: %w", localPath, err)
 	}
-	root, err := balanced.Layout(db)
+	var root ipld.Node
+	switch i.opts.FileLayout {
+	case FileLayoutBalanced:
+		root, err = balanced.Layout(db)
+	case FileLayoutTrickle:
+		root, err = trickle.Layout(db)
+	default:
+		return nil, fmt.Errorf("unsupported merkle-dag unixfs file layout %q", i.opts.FileLayout)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("build unixfs file dag for %s: %w", localPath, err)
 	}
@@ -202,10 +226,16 @@ func (i *pathImporter) newDirectory() (unixfsio.Directory, error) {
 		unixfsio.WithCidBuilder(i.build),
 		unixfsio.WithMaxHAMTFanout(i.opts.HAMTFanout),
 	}
-	if i.opts.Layout == LayoutHAMT {
+	switch i.opts.DirLayout {
+	case DirLayoutHAMT:
 		return unixfsio.NewHAMTDirectory(i.dag, 0, opts...)
+	case DirLayoutBasic:
+		return unixfsio.NewBasicDirectory(i.dag, opts...)
+	case DirLayoutAdaptive:
+		return unixfsio.NewDirectory(i.dag, opts...)
+	default:
+		return nil, fmt.Errorf("unsupported merkle-dag unixfs directory layout %q", i.opts.DirLayout)
 	}
-	return unixfsio.NewDirectory(i.dag, opts...)
 }
 
 type casDAGService struct {

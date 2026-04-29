@@ -19,9 +19,10 @@ func TestImportFileStoresUnixFSDAG(t *testing.T) {
 	}
 
 	result, err := ImportPath(ctx, casClient, file, Options{
-		Model:     ModelUnixFS,
-		Layout:    LayoutBalanced,
-		ChunkSize: 4,
+		Model:      ModelUnixFS,
+		FileLayout: FileLayoutBalanced,
+		DirLayout:  DirLayoutBasic,
+		ChunkSize:  4,
 	})
 	if err != nil {
 		t.Fatalf("import file: %v", err)
@@ -59,9 +60,10 @@ func TestImportDirectoryStoresHAMTUnixFSDAG(t *testing.T) {
 	}
 
 	result, err := ImportPath(ctx, casClient, root, Options{
-		Model:     ModelUnixFS,
-		Layout:    LayoutHAMT,
-		ChunkSize: 4,
+		Model:      ModelUnixFS,
+		FileLayout: FileLayoutBalanced,
+		DirLayout:  DirLayoutHAMT,
+		ChunkSize:  4,
 	})
 	if err != nil {
 		t.Fatalf("import directory: %v", err)
@@ -81,5 +83,21 @@ func TestImportDirectoryStoresHAMTUnixFSDAG(t *testing.T) {
 	}
 	if _, err := casClient.Get(ctx, rootCID); err != nil {
 		t.Fatalf("directory root should be stored in CAS: %v", err)
+	}
+}
+
+func TestImportRejectsTopLevelLayout(t *testing.T) {
+	ctx := context.Background()
+	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	file := filepath.Join(t.TempDir(), "hello.txt")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if _, err := ImportPath(ctx, casClient, file, Options{
+		Model:  ModelUnixFS,
+		Layout: "balanced",
+	}); err == nil {
+		t.Fatal("expected top-level layout to be rejected")
 	}
 }

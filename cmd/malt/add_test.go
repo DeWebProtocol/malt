@@ -94,12 +94,14 @@ func TestMountAddInputsPathModes(t *testing.T) {
 
 func TestNormalizeAddBuildOptions(t *testing.T) {
 	tests := []struct {
-		name       string
-		in         addBuildOptions
-		wantTarget string
-		wantModel  string
-		wantLayout string
-		wantErr    bool
+		name           string
+		in             addBuildOptions
+		wantTarget     string
+		wantModel      string
+		wantLayout     string
+		wantFileLayout string
+		wantDirLayout  string
+		wantErr        bool
 	}{
 		{
 			name:       "defaults to malt unixfs flat",
@@ -108,37 +110,39 @@ func TestNormalizeAddBuildOptions(t *testing.T) {
 			wantLayout: addLayoutFlat,
 		},
 		{
-			name: "malt compositional",
+			name: "malt hierarchical",
 			in: addBuildOptions{
 				Target: addTargetMALT,
 				Model:  addModelUnixFS,
-				Layout: addLayoutCompositional,
+				Layout: addLayoutHierarchical,
 			},
 			wantTarget: addTargetMALT,
 			wantModel:  addModelUnixFS,
-			wantLayout: addLayoutCompositional,
+			wantLayout: addLayoutHierarchical,
 		},
 		{
-			name: "merkle dag defaults to hamt",
+			name: "merkle dag defaults split file and dir layout",
 			in: addBuildOptions{
 				Target: addTargetMerkleDAG,
 				Model:  addModelUnixFS,
 			},
-			wantTarget: addTargetMerkleDAG,
-			wantModel:  addModelUnixFS,
-			wantLayout: addLayoutHAMT,
+			wantTarget:     addTargetMerkleDAG,
+			wantModel:      addModelUnixFS,
+			wantLayout:     "",
+			wantFileLayout: addFileLayoutBalanced,
+			wantDirLayout:  addDirLayoutAdaptive,
 		},
 		{
 			name: "rejects malt hamt",
 			in: addBuildOptions{
 				Target: addTargetMALT,
 				Model:  addModelUnixFS,
-				Layout: addLayoutHAMT,
+				Layout: "hamt",
 			},
 			wantErr: true,
 		},
 		{
-			name: "rejects merkle dag flat",
+			name: "rejects merkle dag top-level layout",
 			in: addBuildOptions{
 				Target: addTargetMerkleDAG,
 				Model:  addModelUnixFS,
@@ -171,6 +175,9 @@ func TestNormalizeAddBuildOptions(t *testing.T) {
 			}
 			if got.Target != tt.wantTarget || got.Model != tt.wantModel || got.Layout != tt.wantLayout {
 				t.Fatalf("got target/model/layout = %q/%q/%q", got.Target, got.Model, got.Layout)
+			}
+			if got.FileLayout != tt.wantFileLayout || got.DirLayout != tt.wantDirLayout {
+				t.Fatalf("got file/dir layout = %q/%q", got.FileLayout, got.DirLayout)
 			}
 		})
 	}
@@ -287,9 +294,10 @@ func TestAddInputsWithUnixFSMerkleDAGTarget(t *testing.T) {
 	}
 
 	result, err := addInputsWithUnixFS(ctx, nil, casClient, "", []string{file}, addBuildOptions{
-		Target: addTargetMerkleDAG,
-		Model:  addModelUnixFS,
-		Layout: addLayoutBalanced,
+		Target:     addTargetMerkleDAG,
+		Model:      addModelUnixFS,
+		FileLayout: addFileLayoutBalanced,
+		DirLayout:  addDirLayoutBasic,
 	})
 	if err != nil {
 		t.Fatalf("add merkle-dag target: %v", err)
