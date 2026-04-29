@@ -92,7 +92,98 @@ func TestMountAddInputsPathModes(t *testing.T) {
 	}
 }
 
-func TestCollectAddInputsRejectsSymlink(t *testing.T) {
+func TestNormalizeAddBuildOptions(t *testing.T) {
+	tests := []struct {
+		name           string
+		in             addBuildOptions
+		wantTarget     string
+		wantModel      string
+		wantLayout     string
+		wantFileLayout string
+		wantDirLayout  string
+		wantErr        bool
+	}{
+		{
+			name:       "defaults to malt unixfs flat",
+			wantTarget: addTargetMALT,
+			wantModel:  addModelUnixFS,
+			wantLayout: addLayoutFlat,
+		},
+		{
+			name: "malt hierarchical",
+			in: addBuildOptions{
+				Target: addTargetMALT,
+				Model:  addModelUnixFS,
+				Layout: addLayoutHierarchical,
+			},
+			wantTarget: addTargetMALT,
+			wantModel:  addModelUnixFS,
+			wantLayout: addLayoutHierarchical,
+		},
+		{
+			name: "merkle dag defaults split file and dir layout",
+			in: addBuildOptions{
+				Target: addTargetMerkleDAG,
+				Model:  addModelUnixFS,
+			},
+			wantTarget:     addTargetMerkleDAG,
+			wantModel:      addModelUnixFS,
+			wantLayout:     "",
+			wantFileLayout: addFileLayoutBalanced,
+			wantDirLayout:  addDirLayoutAdaptive,
+		},
+		{
+			name: "rejects malt hamt",
+			in: addBuildOptions{
+				Target: addTargetMALT,
+				Model:  addModelUnixFS,
+				Layout: "hamt",
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects merkle dag top-level layout",
+			in: addBuildOptions{
+				Target: addTargetMerkleDAG,
+				Model:  addModelUnixFS,
+				Layout: addLayoutFlat,
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects unknown model",
+			in: addBuildOptions{
+				Target: addTargetMALT,
+				Model:  "posix",
+				Layout: addLayoutFlat,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeAddBuildOptions(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if got.Target != tt.wantTarget || got.Model != tt.wantModel || got.Layout != tt.wantLayout {
+				t.Fatalf("got target/model/layout = %q/%q/%q", got.Target, got.Model, got.Layout)
+			}
+			if got.FileLayout != tt.wantFileLayout || got.DirLayout != tt.wantDirLayout {
+				t.Fatalf("got file/dir layout = %q/%q", got.FileLayout, got.DirLayout)
+			}
+		})
+	}
+}
+
+func TestCollectAddInputsFollowsSymlink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.txt")
 	link := filepath.Join(root, "target-link.txt")
@@ -103,46 +194,126 @@ func TestCollectAddInputsRejectsSymlink(t *testing.T) {
 		t.Skipf("symlink not supported in test environment: %v", err)
 	}
 
-	if _, err := collectAddInputs([]string{link}); err == nil {
-		t.Fatal("expected symlink input to be rejected")
+	inputs, err := collectAddInputs([]string{link})
+	if err != nil {
+		t.Fatalf("collect symlink input: %v", err)
+	}
+	if len(inputs) != 1 {
+		t.Fatalf("inputs = %d, want 1", len(inputs))
+	}
+	if inputs[0].BaseName != filepath.Base(link) {
+		t.Fatalf("base name = %q, want symlink basename %q", inputs[0].BaseName, filepath.Base(link))
+	}
+	if !inputs[0].Info.Mode().IsRegular() {
+		t.Fatalf("symlink target mode = %v, want regular file", inputs[0].Info.Mode())
 	}
 }
 
-func TestStageDirectoryInputRejectsNestedSymlink(t *testing.T) {
-	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatalf("mkdir src: %v", err)
-	}
-	target := filepath.Join(root, "target.txt")
-	if err := os.WriteFile(target, []byte("hello"), 0o644); err != nil {
-		t.Fatalf("write target: %v", err)
-	}
-	link := filepath.Join(src, "link.txt")
-	if err := os.Symlink(target, link); err != nil {
-		t.Skipf("symlink not supported in test environment: %v", err)
-	}
-
-	info, err := os.Stat(src)
-	if err != nil {
-		t.Fatalf("stat src: %v", err)
-	}
+func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
+	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	if _, err := daemon.CreateBucket(context.Background(), "demo", ""); err != nil {
+	bucketID := "flat-symlink-dir"
+	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
-	_, _, err = stageDirectoryInput(context.Background(), newDirNode(), casClient, daemon, "demo", addMountedInput{
-		Input: addInput{
-			Original: src,
-			AbsPath:  src,
-			BaseName: filepath.Base(src),
-			Info:     info,
-		},
-		MountBase: "src",
+	root := t.TempDir()
+	inputRoot := filepath.Join(root, "repo")
+	targetDir := filepath.Join(root, "target")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir input root: %v", err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "note.txt"), []byte("via symlink"), 0o644); err != nil {
+		t.Fatalf("write symlink target file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "plain.txt"), []byte("plain"), 0o644); err != nil {
+		t.Fatalf("write plain file: %v", err)
+	}
+	link := filepath.Join(inputRoot, "linked")
+	if err := os.Symlink(targetDir, link); err != nil {
+		t.Skipf("symlink not supported in test environment: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{inputRoot}, addBuildOptions{
+		Target: addTargetMALT,
+		Model:  addModelUnixFS,
+		Layout: addLayoutFlat,
 	})
-	if err == nil {
-		t.Fatal("expected nested symlink to be rejected")
+	if err != nil {
+		t.Fatalf("add flat unixfs with symlink dir: %v", err)
+	}
+	if result.Files != 2 {
+		t.Fatalf("files = %d, want 2", result.Files)
+	}
+
+	base := filepath.Base(inputRoot)
+	snapshot, err := daemon.SnapshotBucketMap(ctx, bucketID, result.NewRoot)
+	if err != nil {
+		t.Fatalf("snapshot root: %v", err)
+	}
+	linkBinding := snapshot.Bindings[base+"/linked"]
+	if linkBinding == "" {
+		t.Fatalf("root map missing symlink-dir boundary: %+v", snapshot.Bindings)
+	}
+	linkCID, err := cid.Decode(linkBinding)
+	if err != nil {
+		t.Fatalf("decode symlink-dir binding: %v", err)
+	}
+	if codec.SemanticKindOf(linkCID) != codec.SemanticKindMap {
+		t.Fatalf("symlink-dir binding kind = %s, want map", codec.SemanticKindOf(linkCID))
+	}
+	if snapshot.Bindings[base+"/linked/note.txt"] != "" {
+		t.Fatalf("flat root should not contain symlink-dir descendants: %+v", snapshot.Bindings)
+	}
+
+	linkStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/linked")
+	if err != nil {
+		t.Fatalf("stat symlink dir: %v", err)
+	}
+	if linkStat.Kind != "dir" || linkStat.StorageKind != "map" {
+		t.Fatalf("unexpected symlink dir stat: %+v", linkStat)
+	}
+	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/linked/note.txt", "")
+	if err != nil {
+		t.Fatalf("read symlink target content: status=%d err=%v", status, err)
+	}
+	if string(body) != "via symlink" {
+		t.Fatalf("symlink target body = %q", string(body))
+	}
+}
+
+func TestAddInputsWithUnixFSMerkleDAGTarget(t *testing.T) {
+	ctx := context.Background()
+	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	file := filepath.Join(t.TempDir(), "hello.txt")
+	if err := os.WriteFile(file, []byte("hello merkle target"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, nil, casClient, "", []string{file}, addBuildOptions{
+		Target:     addTargetMerkleDAG,
+		Model:      addModelUnixFS,
+		FileLayout: addFileLayoutBalanced,
+		DirLayout:  addDirLayoutBasic,
+	})
+	if err != nil {
+		t.Fatalf("add merkle-dag target: %v", err)
+	}
+	if result.NewRoot == "" {
+		t.Fatal("new root should not be empty")
+	}
+	if result.Files != 1 {
+		t.Fatalf("files = %d, want 1", result.Files)
+	}
+	root, err := cid.Decode(result.NewRoot)
+	if err != nil {
+		t.Fatalf("decode root: %v", err)
+	}
+	if _, err := casClient.Get(ctx, root); err != nil {
+		t.Fatalf("root block should be present in CAS: %v", err)
 	}
 }
 
