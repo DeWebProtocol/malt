@@ -834,6 +834,18 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
+			if item.Input.Symlink {
+				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, bucketID, item.Input.AbsPath)
+				if err != nil {
+					return nil, err
+				}
+				if err := setMapDirNode(root, item.MountBase, key); err != nil {
+					return nil, err
+				}
+				files += dirFiles
+				bytesUploaded += dirBytes
+				continue
+			}
 			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, bucketID, item)
 			if err != nil {
 				return nil, err
