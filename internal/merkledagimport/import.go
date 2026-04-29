@@ -42,6 +42,14 @@ type Options struct {
 	ChunkSize   int
 	HAMTFanout  int
 	RawFileLeaf bool
+	Ignore      PathFilter
+}
+
+// PathFilter lets callers apply local import policy without storing that policy
+// in the resulting Merkle DAG.
+type PathFilter interface {
+	LoadDirectoryRules(localDir string) error
+	Ignored(localPath string, isDir bool) (bool, error)
 }
 
 // Result describes the imported Merkle DAG root and local input stats.
@@ -195,11 +203,25 @@ func (i *pathImporter) importDirectory(ctx context.Context, localPath string) (i
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("read directory %s: %w", localPath, err)
 	}
+	if i.opts.Ignore != nil {
+		if err := i.opts.Ignore.LoadDirectoryRules(localPath); err != nil {
+			return nil, 0, 0, err
+		}
+	}
 
 	var files int
 	var bytesUploaded int64
 	for _, entry := range entries {
 		childPath := filepath.Join(localPath, entry.Name())
+		if i.opts.Ignore != nil {
+			ignored, err := i.opts.Ignore.Ignored(childPath, entry.IsDir())
+			if err != nil {
+				return nil, 0, 0, err
+			}
+			if ignored {
+				continue
+			}
+		}
 		child, childFiles, childBytes, err := i.importPath(ctx, childPath)
 		if err != nil {
 			return nil, 0, 0, err

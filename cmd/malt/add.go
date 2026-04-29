@@ -51,6 +51,9 @@ var (
 	addLayoutFlag       string
 	addFileLayoutFlag   string
 	addDirLayoutFlag    string
+	addNoGitignoreFlag  bool
+	addNoMaltignoreFlag bool
+	addIgnoreFileFlags  []string
 )
 
 func init() {
@@ -65,6 +68,9 @@ func init() {
 	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT materialization layout: flat or hierarchical")
 	addCmd.Flags().StringVar(&addFileLayoutFlag, "file-layout", "", "Merkle DAG UnixFS file layout: balanced or trickle")
 	addCmd.Flags().StringVar(&addDirLayoutFlag, "dir-layout", "", "Merkle DAG UnixFS directory layout: basic, hamt, or adaptive")
+	addCmd.Flags().BoolVar(&addNoGitignoreFlag, "no-gitignore", false, "Do not read .gitignore files while adding directories")
+	addCmd.Flags().BoolVar(&addNoMaltignoreFlag, "no-maltignore", false, "Do not read .maltignore files while adding directories")
+	addCmd.Flags().StringArrayVar(&addIgnoreFileFlags, "ignore-file", nil, "Additional gitignore-style ignore file to apply while adding directories")
 }
 
 var addCmd = &cobra.Command{
@@ -156,6 +162,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Layout:     addLayoutFlag,
 		FileLayout: addFileLayoutFlag,
 		DirLayout:  addDirLayoutFlag,
+		Ignore: addIgnoreOptions{
+			NoGitignore:  addNoGitignoreFlag,
+			NoMaltignore: addNoMaltignoreFlag,
+			IgnoreFiles:  addIgnoreFileFlags,
+		},
 	})
 	if err != nil {
 		return err
@@ -220,6 +231,7 @@ type addBuildOptions struct {
 	Layout     string
 	FileLayout string
 	DirLayout  string
+	Ignore     addIgnoreOptions
 }
 
 func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
@@ -325,7 +337,7 @@ func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Clien
 				result.Bytes += bytesUploaded
 				continue
 			}
-			files, bytesUploaded, err := stageFlatUnixFSDirectory(ctx, root, casClient, daemon, bucketID, item)
+			files, bytesUploaded, err := stageFlatUnixFSDirectory(ctx, root, casClient, daemon, bucketID, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
@@ -397,11 +409,16 @@ func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, r
 	if len(rawInputs) != 1 {
 		return nil, fmt.Errorf("merkle-dag target expects exactly one local path")
 	}
+	ignoreFilter, err := newAddIgnoreFilter(rawInputs[0], opts.Ignore)
+	if err != nil {
+		return nil, err
+	}
 	result, err := merkledagimport.ImportPath(ctx, casClient, rawInputs[0], merkledagimport.Options{
 		Model:      opts.Model,
 		FileLayout: opts.FileLayout,
 		DirLayout:  opts.DirLayout,
 		ChunkSize:  addFixedChunkSize,
+		Ignore:     ignoreFilter,
 	})
 	if err != nil {
 		return nil, err
@@ -409,18 +426,39 @@ func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, r
 	return &addUnixFSResult{Files: result.Files, Bytes: result.Bytes, NewRoot: result.Root}, nil
 }
 
-func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, item addMountedInput) (int, int64, error) {
+func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
 	mountBase := canonicalAddPath(item.MountBase)
 	if mountBase == "" {
 		return 0, 0, fmt.Errorf("directory mount path must not be empty")
 	}
 	ensureDirNode(root, mountBase)
+	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	var files int
 	var bytesUploaded int64
-	err := filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if current != item.Input.AbsPath {
+			ignored, err := ignoreFilter.Ignored(current, d.IsDir())
+			if err != nil {
+				return err
+			}
+			if ignored {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		if d.IsDir() {
+			if err := ignoreFilter.LoadDirectoryRules(current); err != nil {
+				return err
+			}
 		}
 		if current != item.Input.AbsPath && d.Type()&fs.ModeSymlink != 0 {
 			rel, err := filepath.Rel(item.Input.AbsPath, current)
@@ -703,10 +741,14 @@ func putAddDirectoryManifest(ctx context.Context, casClient addCASClient, node *
 	return manifestCID, nil
 }
 
-func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, item addMountedInput) (int, int64, string, error) {
+func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, string, error) {
 	mountBase := canonicalAddPath(item.MountBase)
 	if mountBase == "" {
 		return 0, 0, "", fmt.Errorf("directory mount path must not be empty")
+	}
+	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
+	if err != nil {
+		return 0, 0, "", err
 	}
 
 	resp, err := daemon.AddBucketUnixFSDirectory(ctx, bucketID, mountBase)
@@ -720,6 +762,23 @@ func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bu
 	err = filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if current != item.Input.AbsPath {
+			ignored, err := ignoreFilter.Ignored(current, d.IsDir())
+			if err != nil {
+				return err
+			}
+			if ignored {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		if d.IsDir() {
+			if err := ignoreFilter.LoadDirectoryRules(current); err != nil {
+				return err
+			}
 		}
 		if current != item.Input.AbsPath && d.Type()&fs.ModeSymlink != 0 {
 			return fmt.Errorf("symlink is not supported: %s", current)
@@ -846,7 +905,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 				bytesUploaded += dirBytes
 				continue
 			}
-			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, bucketID, item)
+			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, bucketID, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
@@ -940,15 +999,36 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 	return out, nil
 }
 
-func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, item addMountedInput) (int, int64, error) {
+func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
 	mountBase := item.MountBase
 	ensureDirNode(root, mountBase)
+	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	var files int
 	var bytesUploaded int64
-	err := filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if current != item.Input.AbsPath {
+			ignored, err := ignoreFilter.Ignored(current, d.IsDir())
+			if err != nil {
+				return err
+			}
+			if ignored {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		if d.IsDir() {
+			if err := ignoreFilter.LoadDirectoryRules(current); err != nil {
+				return err
+			}
 		}
 		if current != item.Input.AbsPath {
 			if d.Type()&fs.ModeSymlink != 0 {
