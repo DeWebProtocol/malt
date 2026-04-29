@@ -1397,9 +1397,27 @@ func (s *Server) flatUnixFSBucketStat(ctx context.Context, g *graph.Graph, root 
 		target, err = s.node.ArcTable().Get(ctx, g.BucketId(), root, arcset.CanonicalizePath(p))
 	}
 	if err != nil || !target.Defined() {
-		return nil, errPathNotFound
+		return s.flatUnixFSMapBoundaryStat(ctx, g, root, p)
 	}
 	return s.statFromFlatTarget(ctx, g, target)
+}
+
+func (s *Server) flatUnixFSMapBoundaryStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
+	clean := bucketpath.CanonicalizeQueryPath(p)
+	if clean == "" {
+		return nil, errPathNotFound
+	}
+	parts := strings.Split(clean, "/")
+	for i := len(parts) - 1; i > 0; i-- {
+		prefix := strings.Join(parts[:i], "/")
+		suffix := strings.Join(parts[i:], "/")
+		target, err := s.node.ArcTable().Get(ctx, g.BucketId(), root, arcset.CanonicalizePath(prefix))
+		if err != nil || codec.SemanticKindOf(target) != codec.SemanticKindMap {
+			continue
+		}
+		return s.legacyBucketStat(ctx, g, target, suffix)
+	}
+	return nil, errPathNotFound
 }
 
 func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target cid.Cid) (*httpapi.BucketStatResponse, error) {
