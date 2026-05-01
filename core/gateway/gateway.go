@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	// ErrInvalidBucket is returned when a semantic mutation has no bucket ID.
-	ErrInvalidBucket = errors.New("invalid bucket")
+	// ErrInvalidNamespace is returned when an executor has no internal materialization namespace.
+	ErrInvalidNamespace = errors.New("invalid materialization namespace")
 
 	// ErrInvalidBaseRoot is returned when an update mutation has no base root.
 	ErrInvalidBaseRoot = errors.New("invalid base root")
@@ -34,7 +34,6 @@ var (
 
 // SemanticMutation is the gateway write boundary emitted by application layouts.
 type SemanticMutation struct {
-	BucketID string
 	BaseRoot cid.Cid
 	Puts     []ArcSetPut
 }
@@ -48,7 +47,6 @@ type ArcSetPut struct {
 
 // WriteReceipt records the library-level outcome of applying a semantic mutation.
 type WriteReceipt struct {
-	BucketID string
 	BaseRoot cid.Cid
 	NewRoot  cid.Cid
 	PutCount int
@@ -57,16 +55,14 @@ type WriteReceipt struct {
 
 // Executor submits semantic mutations to the current map/list semantic backends.
 type Executor struct {
-	Maps     mapping.Semantics
-	Lists    list.Semantics
-	ArcTable arctable.ArcTable
+	Namespace string
+	Maps      mapping.Semantics
+	Lists     list.Semantics
+	ArcTable  arctable.ArcTable
 }
 
 // ValidateSemanticMutation validates the shape of an update semantic mutation.
 func ValidateSemanticMutation(mut SemanticMutation) error {
-	if mut.BucketID == "" {
-		return ErrInvalidBucket
-	}
 	if !mut.BaseRoot.Defined() {
 		return ErrInvalidBaseRoot
 	}
@@ -93,6 +89,9 @@ func ValidateSemanticMutation(mut SemanticMutation) error {
 // validation purposes only. It does not publish heads, arbitrate freshness, or
 // merge concurrent roots.
 func (e Executor) Apply(ctx context.Context, mut SemanticMutation) (WriteReceipt, error) {
+	if e.Namespace == "" {
+		return WriteReceipt{}, ErrInvalidNamespace
+	}
 	if err := ValidateSemanticMutation(mut); err != nil {
 		return WriteReceipt{}, err
 	}
@@ -100,7 +99,7 @@ func (e Executor) Apply(ctx context.Context, mut SemanticMutation) (WriteReceipt
 	var newRoot cid.Cid
 	arcCount := 0
 	for i, put := range mut.Puts {
-		root, count, err := e.commitPut(ctx, mut.BucketID, put)
+		root, count, err := e.commitPut(ctx, e.Namespace, put)
 		if err != nil {
 			return WriteReceipt{}, fmt.Errorf("put %d: %w", i, err)
 		}
@@ -109,7 +108,6 @@ func (e Executor) Apply(ctx context.Context, mut SemanticMutation) (WriteReceipt
 	}
 
 	return WriteReceipt{
-		BucketID: mut.BucketID,
 		BaseRoot: mut.BaseRoot,
 		NewRoot:  newRoot,
 		PutCount: len(mut.Puts),

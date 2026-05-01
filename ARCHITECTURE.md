@@ -15,7 +15,7 @@ proofs.
 GatewayRead(root, query) -> result + ProofList
 VerifyRead(root, query, result, ProofList) -> valid / invalid
 
-GatewayWrite(root, semantic mutation) -> newRoot + write metadata
+Materialize(baseRoot, semantic mutation) -> newRoot + materializationReceipt
 ```
 
 List and map are semantic abstractions:
@@ -57,13 +57,14 @@ generic enough for list, map, and future semantics, but narrow enough that it
 does not erase their differences.
 
 Conceptually, gateway reads return `result + ProofList`, where the ProofList is
-the vector-commitment proof chain from root to destination. Gateway writes
-accept semantic mutations that have already been produced by a layout. The
+the vector-commitment proof chain from root to destination. Root-centric
+gateway materialization accepts semantic mutations that have already been
+produced by a layout and returns an operational receipt without publishing a
+managed bucket head. The
 HTTP gateway may return blob content with ProofList metadata in response
 headers, and may return large-file byte ranges with ProofLists covering the
-selected list entries. The current code does not yet expose this exact
-boundary. The documented direction is to make list/map the first semantic
-abstractions and to move runtime adapters around them.
+selected list entries. Bucket routes remain compatibility/product surfaces
+around the same internal materialization namespace.
 
 ### List Semantic
 
@@ -334,8 +335,8 @@ The old architecture treated resolver and writer as central runtime layers. The
 new interpretation is narrower and introduces a clearer gateway boundary:
 
 - layouts translate source-domain data into MALT semantic mutations
-- the gateway accepts converted semantic mutations and submits them through
-  list/map semantic operations
+- the root-centric gateway materializes converted semantic mutations through
+  list/map semantic operations and returns a materialization receipt
 - gateway reads return `result + ProofList`
 - resolver adapters translate application or compatibility reads into semantic
   reads and proof chains

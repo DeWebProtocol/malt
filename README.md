@@ -24,8 +24,10 @@ VerifyRead(root, query, result, ProofList) -> valid / invalid
 
 A structure root exposes authenticated read/write semantics, but those
 semantics are owned by `list` and `map`, not by the current runtime `graph`
-object. Gateway writes accept semantic mutations produced by layouts, rather
-than raw source-domain data. In the HTTP deployment, blob reads may carry
+object. Root-centric gateway materialization accepts semantic mutations
+produced by layouts and returns an operational receipt; managed bucket heads
+remain product/runtime publication pointers, not the gateway correctness
+interface. In the HTTP deployment, blob reads may carry
 `ProofList` in response metadata/header; large-file range reads return selected
 bytes plus the corresponding `ProofList`.
 

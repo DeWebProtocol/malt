@@ -227,6 +227,15 @@ func (c *Client) ApplyBucketSemanticMutation(ctx context.Context, id string, req
 	return &resp, nil
 }
 
+// ApplyRootSemanticMutation materializes a root-centric semantic mutation without publishing a bucket head.
+func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.RootSemanticMutationRequest) (*httpapi.RootSemanticMutationResponse, error) {
+	var resp httpapi.RootSemanticMutationResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/semantic-mutations", nil, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) AddBucketUnixFSDirectory(ctx context.Context, id string, p string) (*httpapi.BucketUnixFSWriteResponse, error) {
 	query := map[string]string{}
 	if p != "" {

@@ -914,6 +914,85 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 	}
 }
 
+func TestServerRootSemanticMutationMaterializesWithoutBucketHead(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{
+			"name": fakeCIDString("initial-name"),
+		}),
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root response: %v", err)
+	}
+	resp.Body.Close()
+
+	nextName := fakeCIDString("root-next-name")
+	mutationBody, _ := json.Marshal(map[string]any{
+		"puts": []map[string]any{{
+			"object": createResp.Root,
+			"kind":   "map",
+			"entries": []map[string]string{
+				{"path": "@payload", "target": fakeCIDString("root-next-payload")},
+				{"path": "name", "target": nextName},
+			},
+		}},
+	})
+	resp, err = http.Post(ts.URL+"/api/v1/roots/"+createResp.Root+"/semantic-mutations", "application/json", bytes.NewReader(mutationBody))
+	if err != nil {
+		t.Fatalf("root semantic mutation request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("root semantic mutation status = %d, want %d: %s", resp.StatusCode, http.StatusCreated, string(body))
+	}
+	var mutationResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&mutationResp); err != nil {
+		t.Fatalf("decode root semantic mutation response: %v", err)
+	}
+	resp.Body.Close()
+	if _, ok := mutationResp["bucket"]; ok {
+		t.Fatalf("root semantic mutation response leaked bucket: %+v", mutationResp)
+	}
+	if mutationResp["base_root"] != createResp.Root {
+		t.Fatalf("base_root = %v, want %q", mutationResp["base_root"], createResp.Root)
+	}
+	newRoot, ok := mutationResp["new_root"].(string)
+	if !ok || newRoot == "" || newRoot == createResp.Root {
+		t.Fatalf("new_root = %v, want a new defined root", mutationResp["new_root"])
+	}
+
+	resp, err = http.Get(ts.URL + "/api/v1/roots/" + newRoot + "/resolve?path=name")
+	if err != nil {
+		t.Fatalf("resolve root request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("resolve root status = %d, want %d: %s", resp.StatusCode, http.StatusOK, string(body))
+	}
+	var resolveResp httpapi.ResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	resp.Body.Close()
+	if resolveResp.Target != nextName {
+		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, nextName)
+	}
+}
+
 func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	node := newTestNode(t)
 

@@ -29,21 +29,8 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 		want error
 	}{
 		{
-			name: "missing bucket",
-			mut: gateway.SemanticMutation{
-				BaseRoot: root,
-				Puts: []gateway.ArcSetPut{{
-					Object: root,
-					Kind:   arcset.KindMap,
-					ArcSet: mapSet,
-				}},
-			},
-			want: gateway.ErrInvalidBucket,
-		},
-		{
 			name: "missing base root",
 			mut: gateway.SemanticMutation{
-				BucketID: "bucket",
 				Puts: []gateway.ArcSetPut{{
 					Object: root,
 					Kind:   arcset.KindMap,
@@ -55,7 +42,6 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 		{
 			name: "empty puts",
 			mut: gateway.SemanticMutation{
-				BucketID: "bucket",
 				BaseRoot: root,
 			},
 			want: gateway.ErrEmptyPuts,
@@ -63,7 +49,6 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 		{
 			name: "nil arcset",
 			mut: gateway.SemanticMutation{
-				BucketID: "bucket",
 				BaseRoot: root,
 				Puts: []gateway.ArcSetPut{{
 					Object: root,
@@ -75,7 +60,6 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 		{
 			name: "put kind mismatch",
 			mut: gateway.SemanticMutation{
-				BucketID: "bucket",
 				BaseRoot: root,
 				Puts: []gateway.ArcSetPut{{
 					Object: root,
@@ -88,7 +72,6 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 		{
 			name: "object kind mismatch",
 			mut: gateway.SemanticMutation{
-				BucketID: "bucket",
 				BaseRoot: root,
 				Puts: []gateway.ArcSetPut{{
 					Object: mustTypedRoot(t, codec.SemanticKindList),
@@ -110,6 +93,24 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 	}
 }
 
+func TestValidateSemanticMutationIsRootCentric(t *testing.T) {
+	root := testCID("root-centric-base")
+	payload := testCID("root-centric-payload")
+	set := mustCanonicalMap(t, map[string]cid.Cid{"@payload": payload})
+
+	err := gateway.ValidateSemanticMutation(gateway.SemanticMutation{
+		BaseRoot: root,
+		Puts: []gateway.ArcSetPut{{
+			Object: root,
+			Kind:   arcset.KindMap,
+			ArcSet: set,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ValidateSemanticMutation failed without bucket id: %v", err)
+	}
+}
+
 func TestCanonicalMapWithoutPayloadIsRejected(t *testing.T) {
 	_, err := arcset.NewCanonicalMapArcSet(map[string]cid.Cid{
 		"child": testCID("child"),
@@ -122,7 +123,6 @@ func TestCanonicalMapWithoutPayloadIsRejected(t *testing.T) {
 func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 	ctx := context.Background()
 	exec := newExecutor(t)
-	bucketID := "gateway-map-replacement"
 	baseRoot := testCID("base")
 	payload := testCID("payload")
 	child := testCID("child")
@@ -132,7 +132,6 @@ func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 	})
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
-		BucketID: bucketID,
 		BaseRoot: baseRoot,
 		Puts: []gateway.ArcSetPut{{
 			Object: baseRoot,
@@ -142,9 +141,6 @@ func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
-	}
-	if receipt.BucketID != bucketID {
-		t.Fatalf("receipt bucket = %q, want %q", receipt.BucketID, bucketID)
 	}
 	if !receipt.BaseRoot.Equals(baseRoot) {
 		t.Fatalf("receipt base root = %s, want %s", receipt.BaseRoot, baseRoot)
@@ -160,7 +156,7 @@ func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 	}
 
 	key := arcset.CanonicalizePath("child")
-	binding, proof, err := exec.Maps.Prove(ctx, bucketID, receipt.NewRoot, key)
+	binding, proof, err := exec.Maps.Prove(ctx, exec.Namespace, receipt.NewRoot, key)
 	if err != nil {
 		t.Fatalf("Prove failed: %v", err)
 	}
@@ -179,14 +175,12 @@ func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
 	ctx := context.Background()
 	exec := newExecutor(t)
-	bucketID := "gateway-list-replacement"
 	baseRoot := testCID("base")
 	first := testCID("first")
 	second := testCID("second")
 	set := mustCanonicalList(t, []cid.Cid{first, second})
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
-		BucketID: bucketID,
 		BaseRoot: baseRoot,
 		Puts: []gateway.ArcSetPut{{
 			Object: baseRoot,
@@ -207,7 +201,7 @@ func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
 		t.Fatalf("arc count = %d, want 2", receipt.ArcCount)
 	}
 
-	query, proof, err := exec.Lists.Prove(ctx, bucketID, receipt.NewRoot, 1)
+	query, proof, err := exec.Lists.Prove(ctx, exec.Namespace, receipt.NewRoot, 1)
 	if err != nil {
 		t.Fatalf("Prove failed: %v", err)
 	}
@@ -226,7 +220,6 @@ func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
 func TestExecutorAppliesPutsInOrderAndUsesFinalRoot(t *testing.T) {
 	ctx := context.Background()
 	exec := newExecutor(t)
-	bucketID := "gateway-ordered-replacements"
 	baseRoot := testCID("base")
 	mapSet := mustCanonicalMap(t, map[string]cid.Cid{
 		"@payload": testCID("payload"),
@@ -234,7 +227,6 @@ func TestExecutorAppliesPutsInOrderAndUsesFinalRoot(t *testing.T) {
 	listSet := mustCanonicalList(t, []cid.Cid{testCID("chunk")})
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
-		BucketID: bucketID,
 		BaseRoot: baseRoot,
 		Puts: []gateway.ArcSetPut{
 			{Object: baseRoot, Kind: arcset.KindMap, ArcSet: mapSet},
@@ -275,9 +267,10 @@ func newExecutor(t *testing.T) gateway.Executor {
 		t.Fatalf("tree.NewList failed: %v", err)
 	}
 	return gateway.Executor{
-		Maps:     maps,
-		Lists:    lists,
-		ArcTable: arcs,
+		Namespace: "gateway-test",
+		Maps:      maps,
+		Lists:     lists,
+		ArcTable:  arcs,
 	}
 }
 

@@ -266,7 +266,7 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	mut, err := semanticMutationFromRequest(bucketID, baseRoot, &req)
+	mut, err := semanticMutationFromRequest(baseRoot, req.Puts)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -277,9 +277,10 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 	}
 
 	exec := gateway.Executor{
-		Maps:     g.Semantic(),
-		Lists:    g.ListSemantic(),
-		ArcTable: s.node.ArcTable(),
+		Namespace: bucketID,
+		Maps:      g.Semantic(),
+		Lists:     g.ListSemantic(),
+		ArcTable:  s.node.ArcTable(),
 	}
 	receipt, err := exec.Apply(r.Context(), mut)
 	if err != nil {
@@ -308,7 +309,54 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusCreated, &httpapi.BucketSemanticMutationResponse{
-		Bucket:   receipt.BucketID,
+		Bucket:   bucketID,
+		BaseRoot: receipt.BaseRoot.String(),
+		NewRoot:  receipt.NewRoot.String(),
+		PutCount: receipt.PutCount,
+		ArcCount: receipt.ArcCount,
+	})
+}
+
+func (s *Server) handleRootSemanticMutation(w http.ResponseWriter, r *http.Request) {
+	g, err := s.getGraph(r.Context(), defaultRootGraphID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	baseRoot, err := decodeCID(r.PathValue("root"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req httpapi.RootSemanticMutationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	mut, err := semanticMutationFromRequest(baseRoot, req.Puts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	exec := gateway.Executor{
+		Namespace: g.BucketId(),
+		Maps:      g.Semantic(),
+		Lists:     g.ListSemantic(),
+		ArcTable:  s.node.ArcTable(),
+	}
+	receipt, err := exec.Apply(r.Context(), mut)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if lm := s.node.LineageManager(); lm != nil {
+		_ = lm.Record(r.Context(), receipt.NewRoot, receipt.BaseRoot, receipt.ArcCount)
+	}
+
+	writeJSON(w, http.StatusCreated, &httpapi.RootSemanticMutationResponse{
 		BaseRoot: receipt.BaseRoot.String(),
 		NewRoot:  receipt.NewRoot.String(),
 		PutCount: receipt.PutCount,
@@ -1738,7 +1786,6 @@ func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string
 		return gateway.WriteReceipt{}, err
 	}
 	mut := gateway.SemanticMutation{
-		BucketID: bucketID,
 		BaseRoot: baseRoot,
 		Puts:     make([]gateway.ArcSetPut, 0, len(plan.Puts)),
 	}
@@ -1753,9 +1800,10 @@ func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string
 	}
 
 	exec := gateway.Executor{
-		Maps:     g.Semantic(),
-		Lists:    g.ListSemantic(),
-		ArcTable: s.node.ArcTable(),
+		Namespace: bucketID,
+		Maps:      g.Semantic(),
+		Lists:     g.ListSemantic(),
+		ArcTable:  s.node.ArcTable(),
 	}
 	receipt, err := exec.Apply(ctx, mut)
 	if err != nil {
@@ -2239,13 +2287,9 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 	return out, nil
 }
 
-func semanticMutationFromRequest(bucketID string, baseRoot cid.Cid, req *httpapi.BucketSemanticMutationRequest) (gateway.SemanticMutation, error) {
-	if req == nil {
-		return gateway.SemanticMutation{}, fmt.Errorf("request is required")
-	}
-
-	puts := make([]gateway.ArcSetPut, 0, len(req.Puts))
-	for i, putReq := range req.Puts {
+func semanticMutationFromRequest(baseRoot cid.Cid, putRequests []httpapi.SemanticMutationPut) (gateway.SemanticMutation, error) {
+	puts := make([]gateway.ArcSetPut, 0, len(putRequests))
+	for i, putReq := range putRequests {
 		put, err := semanticPutFromRequest(putReq)
 		if err != nil {
 			return gateway.SemanticMutation{}, fmt.Errorf("put %d: %w", i, err)
@@ -2254,7 +2298,6 @@ func semanticMutationFromRequest(bucketID string, baseRoot cid.Cid, req *httpapi
 	}
 
 	return gateway.SemanticMutation{
-		BucketID: bucketID,
 		BaseRoot: baseRoot,
 		Puts:     puts,
 	}, nil

@@ -12,9 +12,9 @@ import (
 
 // MutationPlan is a layout-produced semantic mutation snapshot for one
 // UnixFS node. It is an adapter artifact for gateway-style consumers; the
-// gateway remains responsible for owning write execution and publication.
+// gateway materializes the plan, while root publication remains application
+// policy.
 type MutationPlan struct {
-	BucketID string
 	BaseRoot cid.Cid
 	Puts     []MutationPut
 }
@@ -49,7 +49,6 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 		return nil, err
 	}
 	plan := &MutationPlan{
-		BucketID: l.bucketID,
 		BaseRoot: root,
 		Puts: []MutationPut{
 			{
@@ -100,7 +99,6 @@ func (l *Layout) MutationPlanForRoot(ctx context.Context, baseRoot cid.Cid, root
 	}
 
 	plan := &MutationPlan{
-		BucketID: l.bucketID,
 		BaseRoot: baseRoot,
 	}
 	if err := l.appendRootMutationPuts(ctx, plan, root); err != nil {
