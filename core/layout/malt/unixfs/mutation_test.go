@@ -24,9 +24,6 @@ func TestSmallFileMutationPlanIncludesMapPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MutationPlanForPath failed: %v", err)
 	}
-	if plan.BucketID == "" {
-		t.Fatal("plan BucketID is empty")
-	}
 	if !plan.BaseRoot.Equals(root) {
 		t.Fatalf("plan BaseRoot = %s, want %s", plan.BaseRoot, root)
 	}

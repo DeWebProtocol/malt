@@ -62,6 +62,12 @@ type BucketSemanticMutationRequest struct {
 	Puts     []SemanticMutationPut `json:"puts"`
 }
 
+// RootSemanticMutationRequest materializes a root-relative semantic mutation
+// without publishing a managed bucket head.
+type RootSemanticMutationRequest struct {
+	Puts []SemanticMutationPut `json:"puts"`
+}
+
 // SemanticMutationPut replaces one semantic object's full canonical arc set.
 type SemanticMutationPut struct {
 	Object  string                  `json:"object,omitempty"`
@@ -80,6 +86,14 @@ type SemanticMutationEntry struct {
 // BucketSemanticMutationResponse returns the gateway write receipt after publication.
 type BucketSemanticMutationResponse struct {
 	Bucket   string `json:"bucket"`
+	BaseRoot string `json:"base_root"`
+	NewRoot  string `json:"new_root"`
+	PutCount int    `json:"put_count"`
+	ArcCount int    `json:"arc_count"`
+}
+
+// RootSemanticMutationResponse returns a root-centric gateway materialization receipt.
+type RootSemanticMutationResponse struct {
 	BaseRoot string `json:"base_root"`
 	NewRoot  string `json:"new_root"`
 	PutCount int    `json:"put_count"`

@@ -510,6 +510,60 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 	}
 }
 
+func TestClientRootSemanticMutation(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+	ctx := context.Background()
+
+	createResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
+		"name": fakeCIDString("initial-name"),
+	}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	nextName := fakeCIDString("root-next-name")
+	resp, err := client.ApplyRootSemanticMutation(ctx, createResp.Root, &httpapi.RootSemanticMutationRequest{
+		Puts: []httpapi.SemanticMutationPut{{
+			Object: createResp.Root,
+			Kind:   "map",
+			Entries: []httpapi.SemanticMutationEntry{
+				{Path: "@payload", Target: fakeCIDString("root-next-payload")},
+				{Path: "name", Target: nextName},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ApplyRootSemanticMutation: %v", err)
+	}
+	if resp.BaseRoot != createResp.Root || resp.NewRoot == "" || resp.NewRoot == createResp.Root {
+		t.Fatalf("unexpected root semantic mutation response: %+v", resp)
+	}
+	if resp.PutCount != 1 || resp.ArcCount != 2 {
+		t.Fatalf("semantic mutation counts = puts %d arcs %d, want 1/2", resp.PutCount, resp.ArcCount)
+	}
+
+	resolved, err := client.ResolveRoot(ctx, resp.NewRoot, "name")
+	if err != nil {
+		t.Fatalf("resolve root: %v", err)
+	}
+	if resolved.Target != nextName {
+		t.Fatalf("resolved target = %q, want %q", resolved.Target, nextName)
+	}
+}
+
 func TestClientBucketStatAndContent(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))

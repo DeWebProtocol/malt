@@ -106,6 +106,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/roots/{root}/proof", s.handleRootProof)
 	mux.HandleFunc("GET /api/v1/roots/{root}/prooflist", s.handleRootProofList)
 	mux.HandleFunc("GET /api/v1/roots/{root}/snapshot", s.handleRootSnapshot)
+	mux.HandleFunc("POST /api/v1/roots/{root}/semantic-mutations", s.handleRootSemanticMutation)
 	mux.HandleFunc("POST /api/v1/roots/{root}/update", s.handleRootUpdate)
 	mux.HandleFunc("POST /api/v1/roots/{root}/updates:batch", s.handleRootBatchUpdate)
 

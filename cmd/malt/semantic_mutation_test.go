@@ -10,16 +10,16 @@ import (
 )
 
 func TestSemanticMutationValidatesRequiredFlags(t *testing.T) {
-	semanticMutationBucketID = ""
+	semanticMutationRoot = ""
 	semanticMutationFile = ""
-	if err := runSemanticMutation(semanticMutationCmd, nil); err == nil || !strings.Contains(err.Error(), "--bucket is required") {
-		t.Fatalf("missing bucket error = %v", err)
+	if err := runSemanticMutation(semanticMutationCmd, nil); err == nil || !strings.Contains(err.Error(), "--root is required") {
+		t.Fatalf("missing root error = %v", err)
 	}
 
-	semanticMutationBucketID = "demo"
+	semanticMutationRoot = fakeAddCID("semantic-base").String()
 	semanticMutationFile = ""
 	t.Cleanup(func() {
-		semanticMutationBucketID = ""
+		semanticMutationRoot = ""
 		semanticMutationFile = ""
 	})
 	if err := runSemanticMutation(semanticMutationCmd, nil); err == nil || !strings.Contains(err.Error(), "--file is required") {
@@ -33,10 +33,10 @@ func TestSemanticMutationRejectsMalformedJSON(t *testing.T) {
 		t.Fatalf("write bad json: %v", err)
 	}
 
-	semanticMutationBucketID = "demo"
+	semanticMutationRoot = fakeAddCID("semantic-base").String()
 	semanticMutationFile = badFile
 	t.Cleanup(func() {
-		semanticMutationBucketID = ""
+		semanticMutationRoot = ""
 		semanticMutationFile = ""
 	})
 
@@ -51,11 +51,8 @@ func TestSemanticMutationPrintsIndentedJSON(t *testing.T) {
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	if _, err := daemon.CreateBucket(ctx, "demo", ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
-	}
 	initialPayload := fakeAddCID("semantic-initial").String()
-	initial, err := daemon.CreateBucketStructure(ctx, "demo", map[string]string{"@payload": initialPayload, "name": initialPayload})
+	initial, err := daemon.CreateRootStructure(ctx, map[string]string{"@payload": initialPayload, "name": initialPayload})
 	if err != nil {
 		t.Fatalf("create initial structure: %v", err)
 	}
@@ -66,10 +63,10 @@ func TestSemanticMutationPrintsIndentedJSON(t *testing.T) {
 		t.Fatalf("write request: %v", err)
 	}
 
-	semanticMutationBucketID = "demo"
+	semanticMutationRoot = initial.Root
 	semanticMutationFile = reqFile
 	t.Cleanup(func() {
-		semanticMutationBucketID = ""
+		semanticMutationRoot = ""
 		semanticMutationFile = ""
 	})
 	out := captureStdout(t, func() {
@@ -78,15 +75,15 @@ func TestSemanticMutationPrintsIndentedJSON(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(out, "\n  \"bucket\"") || !strings.Contains(out, "\n  \"new_root\"") {
+	if strings.Contains(out, "\n  \"bucket\"") || !strings.Contains(out, "\n  \"new_root\"") {
 		t.Fatalf("semantic mutation output is not indented JSON:\n%s", out)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatalf("decode semantic mutation output: %v\n%s", err, out)
 	}
-	if payload["bucket"] != "demo" {
-		t.Fatalf("bucket = %v, want demo", payload["bucket"])
+	if payload["base_root"] != initial.Root {
+		t.Fatalf("base_root = %v, want %s", payload["base_root"], initial.Root)
 	}
 	if payload["new_root"] == "" {
 		t.Fatal("new_root should be present")
