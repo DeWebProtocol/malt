@@ -20,7 +20,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-func TestServerHealthAndBucketLifecycle(t *testing.T) {
+func TestServerHealthAndCurrentRootLifecycle(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -46,35 +46,32 @@ func TestServerHealthAndBucketLifecycle(t *testing.T) {
 
 	createBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
-		t.Fatalf("marshal create bucket request: %v", err)
+		t.Fatalf("marshal root request: %v", err)
 	}
 	resp, err = http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusOK)
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("read bucket response: %v", err)
+		t.Fatalf("read root response: %v", err)
 	}
 	if bytes.Contains(body, []byte(`"root":"b"`)) {
-		t.Fatalf("bucket response leaked cid.Undef serialization: %s", string(body))
+		t.Fatalf("root response leaked cid.Undef serialization: %s", string(body))
 	}
 
-	var bucketResp httpapi.CurrentRootResponse
-	if err := json.Unmarshal(body, &bucketResp); err != nil {
-		t.Fatalf("decode bucket response: %v", err)
+	var rootResp httpapi.CurrentRootResponse
+	if err := json.Unmarshal(body, &rootResp); err != nil {
+		t.Fatalf("decode root response: %v", err)
 	}
-	if false {
-		t.Fatalf("bucket response = %+v, want id demo", bucketResp)
-	}
-	if bucketResp.Root != "" {
-		t.Fatalf("bucket root = %q, want empty for undefined head", bucketResp.Root)
+	if rootResp.Root != "" {
+		t.Fatalf("root = %q, want empty for undefined head", rootResp.Root)
 	}
 }
 
@@ -111,14 +108,14 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("put raw content: %v", err)
 	}
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusOK)
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
@@ -316,13 +313,13 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, err := json.Marshal(&map[string]string{})
+	rootBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
-		t.Fatalf("marshal create bucket request: %v", err)
+		t.Fatalf("marshal root request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -339,10 +336,10 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createBody))
 	if err != nil {
-		t.Fatalf("create bucket structure request failed: %v", err)
+		t.Fatalf("create root structure request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create bucket structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+		t.Fatalf("create root structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 	var createResp httpapi.CreateStructureResponse
 	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
@@ -352,21 +349,21 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 
 	resp, err = http.Get(ts.URL + "/api/v1/current/prooflist?path=name")
 	if err != nil {
-		t.Fatalf("bucket prooflist request failed: %v", err)
+		t.Fatalf("root prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("bucket prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
+		t.Fatalf("root prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var bucketResp httpapi.ProofListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
-		t.Fatalf("decode bucket prooflist response: %v", err)
+	var currentResp httpapi.ProofListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&currentResp); err != nil {
+		t.Fatalf("decode root prooflist response: %v", err)
 	}
 	resp.Body.Close()
-	if bucketResp.Target != target {
-		t.Fatalf("bucket prooflist target = %q, want %q", bucketResp.Target, target)
+	if currentResp.Target != target {
+		t.Fatalf("root prooflist target = %q, want %q", currentResp.Target, target)
 	}
-	if len(bucketResp.ProofList.Steps) == 0 {
-		t.Fatal("expected non-empty bucket prooflist")
+	if len(currentResp.ProofList.Steps) == 0 {
+		t.Fatal("expected non-empty root prooflist")
 	}
 
 	rootPayload := fakeCIDString("root-prooflist-payload")
@@ -414,19 +411,19 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 }
 
-func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
+func TestServerManagedRootCreateCanonicalizesArcCount(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, err := json.Marshal(&map[string]string{})
+	rootBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
-		t.Fatalf("marshal create bucket request: %v", err)
+		t.Fatalf("marshal root request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -453,7 +450,7 @@ func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 
 	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
-		t.Fatalf("get bucket request failed: %v", err)
+		t.Fatalf("get root request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -461,32 +458,29 @@ func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 		t.Fatalf("get graph status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var bucketResp httpapi.CurrentRootResponse
-	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
-		t.Fatalf("decode bucket response: %v", err)
+	var rootResp httpapi.CurrentRootResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rootResp); err != nil {
+		t.Fatalf("decode root response: %v", err)
 	}
-	if false {
-		t.Fatal("expected current root payload")
-	}
-	if bucketResp.ArcCount != 2 {
-		t.Fatalf("bucket arc_count = %d, want 2 after canonicalization and mandatory payload", bucketResp.ArcCount)
+	if rootResp.ArcCount != 2 {
+		t.Fatalf("root arc_count = %d, want 2 after canonicalization and mandatory payload", rootResp.ArcCount)
 	}
 }
 
-func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
+func TestServerRootSet_ExpectedOldRoot(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	// Create bucket.
-	createBucketBody, err := json.Marshal(&map[string]string{})
+	// Create root.
+	rootBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
-		t.Fatalf("marshal create bucket request: %v", err)
+		t.Fatalf("marshal root request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -529,21 +523,21 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 		t.Fatalf("set head status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	// Get bucket and verify head advanced.
+	// Get root and verify it advanced.
 	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
-		t.Fatalf("get bucket request failed: %v", err)
+		t.Fatalf("get root request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	var getResp httpapi.CurrentRootResponse
 	if err := json.NewDecoder(resp.Body).Decode(&getResp); err != nil {
-		t.Fatalf("decode bucket response: %v", err)
+		t.Fatalf("decode root response: %v", err)
 	}
 	if getResp.Root != newRoot {
-		t.Fatalf("bucket root = %q, want %q", getResp.Root, newRoot)
+		t.Fatalf("root = %q, want %q", getResp.Root, newRoot)
 	}
 	if getResp.ArcCount != 2 {
-		t.Fatalf("bucket arc_count = %d, want 2", getResp.ArcCount)
+		t.Fatalf("root arc_count = %d, want 2", getResp.ArcCount)
 	}
 
 	// Non-map roots must be rejected.
@@ -624,19 +618,19 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 	}
 }
 
-func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
+func TestServerCurrentRootScopedMapAndListAPIs(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, err := json.Marshal(&map[string]string{})
+	rootBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
-		t.Fatalf("marshal create bucket request: %v", err)
+		t.Fatalf("marshal root request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -730,16 +724,16 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 	}
 }
 
-func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
+func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -787,9 +781,6 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 		t.Fatalf("decode semantic mutation response: %v", err)
 	}
 	resp.Body.Close()
-	if false {
-		t.Fatalf("bucket = %q, want demo", "")
-	}
 	if mutationResp.BaseRoot != createResp.Root {
 		t.Fatalf("base_root = %q, want %q", mutationResp.BaseRoot, createResp.Root)
 	}
@@ -802,15 +793,15 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 
 	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
-		t.Fatalf("get bucket request failed: %v", err)
+		t.Fatalf("get root request failed: %v", err)
 	}
-	var bucketResp httpapi.CurrentRootResponse
-	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
-		t.Fatalf("decode bucket response: %v", err)
+	var rootResp httpapi.CurrentRootResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rootResp); err != nil {
+		t.Fatalf("decode root response: %v", err)
 	}
 	resp.Body.Close()
-	if bucketResp.Root != mutationResp.NewRoot || bucketResp.ArcCount != 2 {
-		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", bucketResp.Root, bucketResp.ArcCount, mutationResp.NewRoot)
+	if rootResp.Root != mutationResp.NewRoot || rootResp.ArcCount != 2 {
+		t.Fatalf("root=%q arcs=%d, want root=%q arcs=2", rootResp.Root, rootResp.ArcCount, mutationResp.NewRoot)
 	}
 
 	resp, err = http.Get(ts.URL + "/api/v1/current/resolve?path=name")
@@ -827,16 +818,16 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 	}
 }
 
-func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
+func TestServerSemanticMutationRejectsInvalidRoot(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -900,21 +891,21 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 
 			resp, err = http.Get(ts.URL + "/api/v1/current/root")
 			if err != nil {
-				t.Fatalf("get bucket request failed: %v", err)
+				t.Fatalf("get root request failed: %v", err)
 			}
-			var bucketResp httpapi.CurrentRootResponse
-			if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
-				t.Fatalf("decode bucket response: %v", err)
+			var rootResp httpapi.CurrentRootResponse
+			if err := json.NewDecoder(resp.Body).Decode(&rootResp); err != nil {
+				t.Fatalf("decode root response: %v", err)
 			}
 			resp.Body.Close()
-			if bucketResp.Root != createResp.Root {
-				t.Fatalf("bucket root changed to %q, want %q", bucketResp.Root, createResp.Root)
+			if rootResp.Root != createResp.Root {
+				t.Fatalf("root changed to %q, want %q", rootResp.Root, createResp.Root)
 			}
 		})
 	}
 }
 
-func TestServerRootSemanticMutationMaterializesWithoutBucketHead(t *testing.T) {
+func TestServerRootSemanticMutationMaterializesWithoutPublishingRoot(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -964,7 +955,7 @@ func TestServerRootSemanticMutationMaterializesWithoutBucketHead(t *testing.T) {
 	}
 	resp.Body.Close()
 	if _, ok := mutationResp["bucket"]; ok {
-		t.Fatalf("root semantic mutation response leaked bucket: %+v", mutationResp)
+		t.Fatalf("root semantic mutation response leaked root field: %+v", mutationResp)
 	}
 	if mutationResp["base_root"] != createResp.Root {
 		t.Fatalf("base_root = %v, want %q", mutationResp["base_root"], createResp.Root)
@@ -999,10 +990,10 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -1037,15 +1028,15 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 
 	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
-		t.Fatalf("get bucket request failed: %v", err)
+		t.Fatalf("get root request failed: %v", err)
 	}
-	var bucketResp httpapi.CurrentRootResponse
-	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
-		t.Fatalf("decode bucket response: %v", err)
+	var rootResp httpapi.CurrentRootResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rootResp); err != nil {
+		t.Fatalf("decode root response: %v", err)
 	}
 	resp.Body.Close()
-	if bucketResp.Root != writeResp.NewRoot || bucketResp.ArcCount != writeResp.ArcCount {
-		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=%d", bucketResp.Root, bucketResp.ArcCount, writeResp.NewRoot, writeResp.ArcCount)
+	if rootResp.Root != writeResp.NewRoot || rootResp.ArcCount != writeResp.ArcCount {
+		t.Fatalf("root=%q arcs=%d, want root=%q arcs=%d", rootResp.Root, rootResp.ArcCount, writeResp.NewRoot, writeResp.ArcCount)
 	}
 
 	rootCID, err := cid.Decode(writeResp.NewRoot)
@@ -1111,10 +1102,10 @@ func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket request failed: %v", err)
+		t.Fatalf("create root request failed: %v", err)
 	}
 	resp.Body.Close()
 
@@ -1144,7 +1135,7 @@ func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	}
 }
 
-func TestServerBucketStatAndContentContracts(t *testing.T) {
+func TestServerStatAndContentContracts(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)
 	if !ok {
@@ -1154,11 +1145,11 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	// Create bucket.
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	// Create root.
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 	resp.Body.Close()
 
@@ -1186,7 +1177,7 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&listResp)
 	resp.Body.Close()
 
-	// Create bucket head bindings.
+	// Create root bindings.
 	rootManifest := []byte(`{"entries":["large.bin","raw.txt"]}`)
 	rootManifestCID, _ := fakeCID(rootManifest)
 	mockCAS.AddBlock(rootManifestCID, rootManifest)
@@ -1271,10 +1262,10 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 	resp.Body.Close()
 
@@ -1346,10 +1337,10 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&map[string]string{})
-	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
+	rootBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(rootBody))
 	if err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 	resp.Body.Close()
 

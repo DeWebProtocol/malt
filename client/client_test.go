@@ -118,7 +118,7 @@ func TestClientCurrentStructureFlow(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 
 	target := fakeCIDString("managed-alice")
@@ -128,7 +128,7 @@ func TestClientCurrentStructureFlow(t *testing.T) {
 		"/name":    target,
 	})
 	if err != nil {
-		t.Fatalf("create managed bucket structure: %v", err)
+		t.Fatalf("create root structure: %v", err)
 	}
 	if createResp.Root == "" {
 		t.Fatal("expected non-empty managed graph root")
@@ -136,7 +136,7 @@ func TestClientCurrentStructureFlow(t *testing.T) {
 
 	resolveResp, err := client.ResolveCurrent(ctx, "name")
 	if err != nil {
-		t.Fatalf("resolve managed bucket: %v", err)
+		t.Fatalf("resolve root: %v", err)
 	}
 	if resolveResp.Target != target {
 		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, target)
@@ -144,24 +144,24 @@ func TestClientCurrentStructureFlow(t *testing.T) {
 
 	meta, err := client.GetCurrentRoot(ctx)
 	if err != nil {
-		t.Fatalf("get managed bucket metadata: %v", err)
+		t.Fatalf("get root metadata: %v", err)
 	}
 	if meta.ArcCount != 2 {
-		t.Fatalf("managed bucket arc_count = %d, want 2 after canonicalization and mandatory payload", meta.ArcCount)
+		t.Fatalf("root arc_count = %d, want 2 after canonicalization and mandatory payload", meta.ArcCount)
 	}
 
 	updateTarget := fakeCIDString("managed-bob")
 	updateResp, err := client.UpdateCurrent(ctx, "name", updateTarget)
 	if err != nil {
-		t.Fatalf("update managed bucket: %v", err)
+		t.Fatalf("update root: %v", err)
 	}
 	if updateResp.NewRoot == createResp.Root {
-		t.Fatal("expected managed bucket update to advance the head root")
+		t.Fatal("expected root update to advance the head root")
 	}
 
 	snapshotResp, err := client.SnapshotCurrent(ctx)
 	if err != nil {
-		t.Fatalf("snapshot managed bucket: %v", err)
+		t.Fatalf("snapshot root: %v", err)
 	}
 	if snapshotResp.Arcs["name"] != updateTarget {
 		t.Fatalf("snapshot target = %q, want %q", snapshotResp.Arcs["name"], updateTarget)
@@ -189,7 +189,7 @@ func TestClientProofListReads(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 
 	target := fakeCIDString("client-prooflist-target")
@@ -199,18 +199,18 @@ func TestClientProofListReads(t *testing.T) {
 		"name":     target,
 	})
 	if err != nil {
-		t.Fatalf("create bucket structure: %v", err)
+		t.Fatalf("create root structure: %v", err)
 	}
 
-	bucketProof, err := client.ProofListCurrent(ctx, "name")
+	rootProof, err := client.ProofListCurrent(ctx, "name")
 	if err != nil {
 		t.Fatalf("ProofListCurrent: %v", err)
 	}
-	if bucketProof.Target != target {
-		t.Fatalf("bucket prooflist target = %q, want %q", bucketProof.Target, target)
+	if rootProof.Target != target {
+		t.Fatalf("root prooflist target = %q, want %q", rootProof.Target, target)
 	}
-	if len(bucketProof.ProofList.Steps) == 0 {
-		t.Fatal("expected non-empty bucket prooflist")
+	if len(rootProof.ProofList.Steps) == 0 {
+		t.Fatal("expected non-empty root prooflist")
 	}
 
 	rootPayload := fakeCIDString("client-root-prooflist-payload")
@@ -221,7 +221,7 @@ func TestClientProofListReads(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	rootProof, err := client.ProofListRoot(ctx, rootCreateResp.Root, "")
+	rootProof, err = client.ProofListRoot(ctx, rootCreateResp.Root, "")
 	if err != nil {
 		t.Fatalf("ProofListRoot: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestClientReturnsStructuredAPIError(t *testing.T) {
 
 	_, err = client.ResolveCurrent(context.Background(), "missing")
 	if err == nil {
-		t.Fatal("expected GetBucket to fail for missing bucket")
+		t.Fatal("expected ResolveCurrent to fail for missing current root")
 	}
 
 	apiErr, ok := err.(*Error)
@@ -324,7 +324,7 @@ func TestClientReturnsStructuredAPIError(t *testing.T) {
 	}
 }
 
-func TestClientBucketHeadSet(t *testing.T) {
+func TestClientRootSet(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -342,7 +342,7 @@ func TestClientBucketHeadSet(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 
 	root1Resp, err := client.CreateCurrentMap(ctx, withPayloadBinding(map[string]string{
@@ -358,7 +358,7 @@ func TestClientBucketHeadSet(t *testing.T) {
 
 	meta, err := client.GetCurrentRoot(ctx)
 	if err != nil {
-		t.Fatalf("get bucket: %v", err)
+		t.Fatalf("get root: %v", err)
 	}
 	if meta.Root != root1 || meta.ArcCount != 2 {
 		t.Fatalf("meta root=%q arcs=%d", meta.Root, meta.ArcCount)
@@ -370,7 +370,7 @@ func TestClientBucketHeadSet(t *testing.T) {
 	}
 }
 
-func TestClientBucketScopedMapAndListAPIs(t *testing.T) {
+func TestClientScopedMapAndListAPIs(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -388,7 +388,7 @@ func TestClientBucketScopedMapAndListAPIs(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 
 	target := fakeCIDString("bucket-map-target")
@@ -439,7 +439,7 @@ func TestClientBucketScopedMapAndListAPIs(t *testing.T) {
 	}
 }
 
-func TestClientBucketSemanticMutation(t *testing.T) {
+func TestClientSemanticMutation(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -457,13 +457,13 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 	createResp, err := client.CreateCurrentStructure(ctx, withPayloadBinding(map[string]string{
 		"name": fakeCIDString("initial-name"),
 	}))
 	if err != nil {
-		t.Fatalf("create bucket structure: %v", err)
+		t.Fatalf("create root structure: %v", err)
 	}
 
 	nextName := fakeCIDString("next-name")
@@ -478,7 +478,7 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 		}},
 	})
 	if err != nil {
-		t.Fatalf("ApplyBucketSemanticMutation: %v", err)
+		t.Fatalf("ApplyCurrentSemanticMutation: %v", err)
 	}
 	if resp.BaseRoot != createResp.Root || resp.NewRoot == "" {
 		t.Fatalf("unexpected semantic mutation response: %+v", resp)
@@ -489,15 +489,15 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 
 	meta, err := client.GetCurrentRoot(ctx)
 	if err != nil {
-		t.Fatalf("get bucket: %v", err)
+		t.Fatalf("get root: %v", err)
 	}
 	if meta.Root != resp.NewRoot || meta.ArcCount != 2 {
-		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", meta.Root, meta.ArcCount, resp.NewRoot)
+		t.Fatalf("root=%q arcs=%d, want root=%q arcs=2", meta.Root, meta.ArcCount, resp.NewRoot)
 	}
 
 	resolved, err := client.ResolveCurrent(ctx, "name")
 	if err != nil {
-		t.Fatalf("resolve bucket: %v", err)
+		t.Fatalf("resolve root: %v", err)
 	}
 	if resolved.Target != nextName {
 		t.Fatalf("resolved target = %q, want %q", resolved.Target, nextName)
@@ -558,7 +558,7 @@ func TestClientRootSemanticMutation(t *testing.T) {
 	}
 }
 
-func TestClientBucketStatAndContent(t *testing.T) {
+func TestClientStatAndContent(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -580,7 +580,7 @@ func TestClientBucketStatAndContent(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 
 	raw := []byte("abcdef")
@@ -626,7 +626,7 @@ func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 	if _, err := client.AddCurrentUnixFSFile(ctx, "f.txt", []byte("abcdef")); err != nil {
 		t.Fatalf("add unixfs file: %v", err)
@@ -654,7 +654,7 @@ func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
 	}
 }
 
-func TestClientBucketRestartSafety(t *testing.T) {
+func TestClientRestartSafety(t *testing.T) {
 	cfg, casClient := persistentTestConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -666,7 +666,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := client.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("create root: %v", err)
 	}
 
 	chunk1 := bytes.Repeat([]byte{'x'}, 262144)
@@ -681,7 +681,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	}
 	listResp, err := client.CreateCurrentList(ctx, []string{chunk1CID.String(), chunk2CID.String()}, 262144)
 	if err != nil {
-		t.Fatalf("create bucket list: %v", err)
+		t.Fatalf("create root list: %v", err)
 	}
 
 	noteData := []byte("note after restart")
@@ -709,7 +709,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 		t.Fatalf("create root map: %v", err)
 	}
 	if err := client.SetCurrentRoot(ctx, rootResp.Root, 4, ""); err != nil {
-		t.Fatalf("set bucket head: %v", err)
+		t.Fatalf("set root: %v", err)
 	}
 
 	ts.Close()
@@ -731,10 +731,10 @@ func TestClientBucketRestartSafety(t *testing.T) {
 
 	meta, err := restartedClient.GetCurrentRoot(ctx)
 	if err != nil {
-		t.Fatalf("get bucket after restart: %v", err)
+		t.Fatalf("get root after restart: %v", err)
 	}
 	if meta.Root != rootResp.Root {
-		t.Fatalf("bucket root after restart = %q, want %q", meta.Root, rootResp.Root)
+		t.Fatalf("root after restart = %q, want %q", meta.Root, rootResp.Root)
 	}
 
 	body, status, _, err := restartedClient.GetCurrentContent(ctx, "large.bin", "")
