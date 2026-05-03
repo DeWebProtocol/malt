@@ -102,6 +102,26 @@ func newEvalReadTestConfig(t *testing.T) (string, string) {
 
 	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
 
+	ctx := context.Background()
+
+	// Create a proper fixture root with a valid @payload in CAS.
+	manifestData := []byte(`{"entries":["dummy"]}`)
+	manifestCID, err := mockCAS.Put(ctx, manifestData)
+	if err != nil {
+		t.Fatalf("put manifest: %v", err)
+	}
+	dummyData := []byte("dummy")
+	dummyCID, err := mockCAS.Put(ctx, dummyData)
+	if err != nil {
+		t.Fatalf("put dummy: %v", err)
+	}
+	oldArcs := evalReadArcs
+	evalReadArcs = map[string]string{
+		"@payload": manifestCID.String(),
+		"dummy":    dummyCID.String(),
+	}
+	t.Cleanup(func() { evalReadArcs = oldArcs })
+
 	cfg := config.DefaultConfig()
 	cfg.RPC.Listen = ""
 	cfg.State.RootDir = t.TempDir()

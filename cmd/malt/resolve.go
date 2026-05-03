@@ -12,44 +12,23 @@ import (
 func init() {
 	rootCmd.AddCommand(resolveCmd)
 	resolveCmd.Flags().BoolP("verbose", "v", false, "Show resolution transcript")
-	resolveCmd.Flags().BoolVar(&resolveCurrent, "current", false, "Resolve from the current root instead of an explicit root")
 }
 
-var resolveCurrent bool
-
 var resolveCmd = &cobra.Command{
-	Use:   "resolve [<root>] [path]",
+	Use:   "resolve <root> [path]",
 	Short: "Resolve a path through a MALT structure",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if resolveCurrent {
-			return cobra.RangeArgs(0, 1)(cmd, args)
-		}
-		return cobra.RangeArgs(1, 2)(cmd, args)
-	},
-	RunE: runResolve,
+	Args:  cobra.RangeArgs(1, 2),
+	RunE:  runResolve,
 }
 
 func runResolve(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	var (
-		result *httpapi.ResolveResponse
-		err    error
-	)
-
-	if resolveCurrent {
-		path := ""
-		if len(args) > 0 {
-			path = args[0]
-		}
-		result, err = client.ResolveCurrent(cmd.Context(), path)
-	} else {
-		path := ""
-		if len(args) > 1 {
-			path = args[1]
-		}
-		result, err = client.ResolveRoot(cmd.Context(), args[0], path)
+	path := ""
+	if len(args) > 1 {
+		path = args[1]
 	}
+	result, err := client.ResolveRoot(cmd.Context(), args[0], path)
 	if err != nil {
 		return daemonCommandError(err)
 	}

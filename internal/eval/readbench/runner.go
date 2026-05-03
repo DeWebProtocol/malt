@@ -43,6 +43,9 @@ type FixtureConfig struct {
 	DirectoryDepth int
 	SmallFileBytes int
 	LargeFileBytes int
+	// Arcs is passed to CreateRootStructure. It must be non-empty and include
+	// a valid @payload CID that already exists in the daemon's CAS.
+	Arcs map[string]string
 }
 
 // RunConfig controls one JSONL benchmark run.
@@ -57,6 +60,7 @@ type Fixture struct {
 	FixtureName string
 	SmallPath   string
 	LargePath   string
+	Root        string
 }
 
 // Result is one benchmark JSONL record.
@@ -84,6 +88,7 @@ type operation struct {
 // Runner drives fixture setup and measured daemon reads.
 type Runner struct {
 	client *daemonclient.Client
+	root   string
 }
 
 // NewRunner creates a benchmark runner for a daemon API v1 base URL.
@@ -94,7 +99,7 @@ func NewRunner(baseURL string) *Runner {
 	}
 }
 
-// PrepareFixture creates a deterministic MALT-only read fixture under the current root.
+// PrepareFixture creates a deterministic MALT-only read fixture under an explicit root.
 func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixture, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("read benchmark runner is nil")
@@ -104,19 +109,33 @@ func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixtur
 		return nil, err
 	}
 
+	if len(cfg.Arcs) == 0 {
+		return nil, fmt.Errorf("create root structure: Arcs is required in FixtureConfig")
+	}
+	rootResp, err := r.client.CreateRootStructure(ctx, cfg.Arcs)
+	if err != nil {
+		return nil, fmt.Errorf("create root structure: %w", err)
+	}
+	r.root = rootResp.Root
+
 	smallPath := fixturePath(normalized.DirectoryDepth, "small.txt")
 	largePath := fixturePath(normalized.DirectoryDepth, "large.bin")
-	if _, err := r.client.AddCurrentUnixFSFile(ctx, smallPath, deterministicBytes("small", normalized.SmallFileBytes)); err != nil {
+	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, smallPath, deterministicBytes("small", normalized.SmallFileBytes)); err != nil {
 		return nil, fmt.Errorf("write small fixture: %w", err)
+	} else {
+		r.root = writeResp.NewRoot
 	}
-	if _, err := r.client.AddCurrentUnixFSFile(ctx, largePath, deterministicBytes("large", normalized.LargeFileBytes)); err != nil {
+	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, largePath, deterministicBytes("large", normalized.LargeFileBytes)); err != nil {
 		return nil, fmt.Errorf("write large fixture: %w", err)
+	} else {
+		r.root = writeResp.NewRoot
 	}
 
 	return &Fixture{
 		FixtureName: normalized.FixtureName,
 		SmallPath:   smallPath,
 		LargePath:   largePath,
+		Root:        r.root,
 	}, nil
 }
 
@@ -169,14 +188,14 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 	)
 	switch op.kind {
 	case OperationProofListPath:
-		resp, err := r.client.ProofListCurrent(ctx, op.path)
+		resp, err := r.client.ProofList(ctx, r.root, op.path)
 		if err != nil {
 			return nil, fmt.Errorf("prooflist read %q: %w", op.path, err)
 		}
 		target = resp.Target
 		stepCount = len(resp.ProofList.Steps)
 	case OperationContentRange:
-		resp, err := r.client.GetCurrentContentProof(ctx, op.path, op.rangeHeader)
+		resp, err := r.client.ContentProof(ctx, r.root, op.path, op.rangeHeader)
 		if err != nil {
 			return nil, fmt.Errorf("content range read %q: %w", op.path, err)
 		}

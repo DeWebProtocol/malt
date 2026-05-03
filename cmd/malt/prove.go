@@ -5,52 +5,31 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/spf13/cobra"
 )
 
 func init() {
 	rootCmd.AddCommand(proveCmd)
 	proveCmd.Flags().BoolP("json", "j", false, "Output as JSON")
-	proveCmd.Flags().BoolVar(&proveCurrent, "current", false, "Generate a proof from the current root instead of an explicit root")
 }
 
-var proveCurrent bool
-
 var proveCmd = &cobra.Command{
-	Use:   "prove [<root>] <path>",
+	Use:   "prove <root> <path>",
 	Short: "Generate a proof for a path resolution",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if proveCurrent {
-			return cobra.ExactArgs(1)(cmd, args)
-		}
-		return cobra.ExactArgs(2)(cmd, args)
-	},
-	RunE: runProve,
+	Args:  cobra.ExactArgs(2),
+	RunE:  runProve,
 }
 
 func runProve(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	var (
-		root   string
-		path   string
-		result *httpapi.ResolveResponse
-		err    error
-	)
-
-	if proveCurrent {
-		path = args[0]
-		result, err = client.ProveCurrent(cmd.Context(), path)
-		root = "<current-root>"
-	} else {
-		root = args[0]
-		path = args[1]
-		result, err = client.ProveRoot(cmd.Context(), root, path)
-	}
+	result, err := client.ProveRoot(cmd.Context(), args[0], args[1])
 	if err != nil {
 		return daemonCommandError(err)
 	}
+
+	root := args[0]
+	path := args[1]
 
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if jsonOutput {

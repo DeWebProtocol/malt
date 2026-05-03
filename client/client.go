@@ -77,239 +77,77 @@ func (c *Client) ResetMetrics(ctx context.Context) (*httpapi.MetricsResponse, er
 	return &resp, nil
 }
 
-// GetCurrentRoot returns the daemon-managed current root pointer.
-func (c *Client) GetCurrentRoot(ctx context.Context) (*httpapi.CurrentRootResponse, error) {
-	var resp httpapi.CurrentRootResponse
-	if err := c.do(ctx, http.MethodGet, "/current/root", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ResolveCurrent resolves a path from a current root.
-func (c *Client) ResolveCurrent(ctx context.Context, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/current/resolve", p)
-}
-
 // ResolveRoot resolves a path from an explicit root.
 func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/roots/"+url.PathEscape(root)+"/resolve", p)
-}
-
-// ProveCurrent returns the transcript for a current-root path.
-func (c *Client) ProveCurrent(ctx context.Context, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/current/proof", p)
+	return c.resolve(ctx, "/resolve/"+url.PathEscape(root)+"/"+p, "")
 }
 
 // ProveRoot returns the transcript for an explicit root path.
 func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/roots/"+url.PathEscape(root)+"/proof", p)
-}
-
-// ProofListCurrent returns a ProofList read result from a current root.
-func (c *Client) ProofListCurrent(ctx context.Context, p string) (*httpapi.ProofListResponse, error) {
-	return c.proofList(ctx, "/current/prooflist", p)
+	return c.resolve(ctx, "/proof/"+url.PathEscape(root)+"/"+p, "")
 }
 
 // ProofListRoot returns a ProofList read result from an explicit root.
 func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
-	return c.proofList(ctx, "/roots/"+url.PathEscape(root)+"/prooflist", p)
+	return c.proofList(ctx, "/prooflist/"+url.PathEscape(root)+"/"+p, "")
 }
 
-// SnapshotCurrent returns the current root snapshot.
-func (c *Client) SnapshotCurrent(ctx context.Context) (*httpapi.SnapshotResponse, error) {
-	var resp httpapi.SnapshotResponse
-	if err := c.do(ctx, http.MethodGet, "/current/snapshot", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+// Resolve resolves a path relative to a root CID.
+func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
+	return c.resolve(ctx, "/resolve/"+url.PathEscape(root)+"/"+rawPath, "")
 }
 
-// SnapshotRoot returns the snapshot for an explicit root.
-func (c *Client) SnapshotRoot(ctx context.Context, root string) (*httpapi.SnapshotResponse, error) {
-	var resp httpapi.SnapshotResponse
-	if err := c.do(ctx, http.MethodGet, "/roots/"+url.PathEscape(root)+"/snapshot", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+// ProofList resolves a path and returns a verifier-facing ProofList.
+func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.ProofListResponse, error) {
+	return c.proofList(ctx, "/prooflist/"+url.PathEscape(root)+"/"+rawPath, "")
 }
 
-// UpdateCurrent updates a single path on a current root.
-func (c *Client) UpdateCurrent(ctx context.Context, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/current/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// UpdateRoot updates a single path under an explicit root.
-func (c *Client) UpdateRoot(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// BatchUpdateCurrent performs a batch update on a current root.
-func (c *Client) BatchUpdateCurrent(ctx context.Context, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/current/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// BatchUpdateRoot performs a batch update under an explicit root.
-func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// CreateCurrentStructure creates a structure and advances the current root.
-func (c *Client) CreateCurrentStructure(ctx context.Context, arcs map[string]string) (*httpapi.CreateStructureResponse, error) {
-	var resp httpapi.CreateStructureResponse
-	if err := c.do(ctx, http.MethodPost, "/current/structure", nil, &httpapi.CreateStructureRequest{Arcs: arcs}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// SetCurrentRoot sets the current root root.
-func (c *Client) SetCurrentRoot(ctx context.Context, newRoot string, arcCount int, expectedOldRoot string) error {
-	req := &httpapi.CurrentRootSetRequest{
-		NewRoot:         newRoot,
-		ArcCount:        arcCount,
-		ExpectedOldRoot: expectedOldRoot,
-	}
-	return c.do(ctx, http.MethodPut, "/current/root", nil, req, nil)
-}
-
-// ApplyCurrentSemanticMutation applies a gateway semantic mutation and advances the current root head.
-func (c *Client) ApplyCurrentSemanticMutation(ctx context.Context, req *httpapi.CurrentSemanticMutationRequest) (*httpapi.CurrentSemanticMutationResponse, error) {
-	var resp httpapi.CurrentSemanticMutationResponse
-	if err := c.do(ctx, http.MethodPost, "/current/semantic-mutations", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ApplyRootSemanticMutation materializes a root-centric semantic mutation without publishing a current root head.
-func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.RootSemanticMutationRequest) (*httpapi.RootSemanticMutationResponse, error) {
-	var resp httpapi.RootSemanticMutationResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/semantic-mutations", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) AddCurrentUnixFSDirectory(ctx context.Context, p string) (*httpapi.UnixFSWriteResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.UnixFSWriteResponse
-	if err := c.do(ctx, http.MethodPost, "/current/unixfs/directories", query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) AddCurrentUnixFSFile(ctx context.Context, p string, data []byte) (*httpapi.UnixFSWriteResponse, error) {
-	query := map[string]string{"path": p}
-	var resp httpapi.UnixFSWriteResponse
-	if err := c.doRaw(ctx, http.MethodPost, "/current/unixfs/files", query, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) ApplyCurrentUnixFSBatch(ctx context.Context, req *httpapi.UnixFSBatchRequest) (*httpapi.UnixFSBatchResponse, error) {
-	var resp httpapi.UnixFSBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/current/unixfs:batch", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) CreateCurrentMap(ctx context.Context, bindings map[string]string) (*httpapi.MapCreateResponse, error) {
-	var resp httpapi.MapCreateResponse
-	if err := c.do(ctx, http.MethodPost, "/current/maps", nil, &httpapi.MapCreateRequest{Bindings: bindings}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) SnapshotCurrentMap(ctx context.Context, root string) (*httpapi.MapSnapshotResponse, error) {
-	var resp httpapi.MapSnapshotResponse
-	if err := c.do(ctx, http.MethodGet, "/current/maps/"+url.PathEscape(root)+"/snapshot", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) ResolveCurrentMap(ctx context.Context, root string, p string) (*httpapi.MapResolveResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.MapResolveResponse
-	if err := c.do(ctx, http.MethodGet, "/current/maps/"+url.PathEscape(root)+"/resolve", query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) UpdateCurrentMap(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/current/maps/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) BatchUpdateCurrentMap(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/current/maps/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) CreateCurrentList(ctx context.Context, chunks []string, chunkSize int) (*httpapi.ListStatResponse, error) {
-	var resp httpapi.ListStatResponse
-	if err := c.do(ctx, http.MethodPost, "/current/lists", nil, &httpapi.ListCreateRequest{Chunks: chunks, ChunkSize: chunkSize}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) GetCurrentList(ctx context.Context, root string) (*httpapi.ListStatResponse, error) {
-	var resp httpapi.ListStatResponse
-	if err := c.do(ctx, http.MethodGet, "/current/lists/"+url.PathEscape(root), nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) StatCurrentPath(ctx context.Context, p string) (*httpapi.PathStatResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
+// Stat returns the locked stat contract for a path under a root CID.
+func (c *Client) Stat(ctx context.Context, root, rawPath string) (*httpapi.PathStatResponse, error) {
 	var resp httpapi.PathStatResponse
-	if err := c.do(ctx, http.MethodGet, "/current/stat", query, nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/stat/%s/%s", url.PathEscape(root), rawPath), nil, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-func (c *Client) GetCurrentContent(ctx context.Context, p string, rangeHeader string) ([]byte, int, http.Header, error) {
-	body, status, headers, err := c.OpenCurrentContent(ctx, p, rangeHeader)
+// Content reads raw content bytes for a path under a root CID.
+func (c *Client) Content(ctx context.Context, root, rawPath, rangeHeader string) (io.ReadCloser, int, http.Header, error) {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	u.Path = path.Join(u.Path, fmt.Sprintf("/content/%s/%s", url.PathEscape(root), rawPath))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	return resp.Body, resp.StatusCode, resp.Header, nil
+}
+
+// GetContent reads all content bytes for a path under a root CID.
+func (c *Client) GetContent(ctx context.Context, root, rawPath, rangeHeader string) ([]byte, int, http.Header, error) {
+	body, status, headers, err := c.Content(ctx, root, rawPath, rangeHeader)
 	if err != nil {
 		return nil, status, headers, err
 	}
@@ -321,19 +159,13 @@ func (c *Client) GetCurrentContent(ctx context.Context, p string, rangeHeader st
 	return data, status, headers, nil
 }
 
-// GetCurrentContentProof reads current-root content as JSON with range metadata and a
-// ProofList for the same path/range.
-func (c *Client) GetCurrentContentProof(ctx context.Context, p string, rangeHeader string) (*httpapi.ContentProofResponse, error) {
+// ContentProof reads content with a content-range and ProofList for a root CID path.
+func (c *Client) ContentProof(ctx context.Context, root, rawPath, rangeHeader string) (*httpapi.ContentProofResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, err
 	}
-	u.Path = path.Join(u.Path, "/current/content:proof")
-	values := u.Query()
-	if p != "" {
-		values.Set("path", p)
-	}
-	u.RawQuery = values.Encode()
+	u.Path = path.Join(u.Path, fmt.Sprintf("/content-proof/%s/%s", url.PathEscape(root), rawPath))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -365,44 +197,49 @@ func (c *Client) GetCurrentContentProof(ctx context.Context, p string, rangeHead
 	return &out, nil
 }
 
-// OpenCurrentContent opens a streaming response body for current-root content.
-// Callers must close the returned ReadCloser.
-func (c *Client) OpenCurrentContent(ctx context.Context, p string, rangeHeader string) (io.ReadCloser, int, http.Header, error) {
-	u, err := url.Parse(c.baseURL)
-	if err != nil {
-		return nil, 0, nil, err
+// UpdateRoot updates a single path under an explicit root.
+func (c *Client) UpdateRoot(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
+	var resp httpapi.WriteUpdateResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
+		return nil, err
 	}
-	u.Path = path.Join(u.Path, "/current/content")
-	values := u.Query()
-	if p != "" {
-		values.Set("path", p)
-	}
-	u.RawQuery = values.Encode()
+	return &resp, nil
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, 0, nil, err
+// BatchUpdateRoot performs a batch update under an explicit root.
+func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
+	var resp httpapi.WriteBatchResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
+		return nil, err
 	}
-	if rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
+	return &resp, nil
+}
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, 0, nil, err
+// ApplyRootSemanticMutation materializes a semantic mutation under an explicit root.
+func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.SemanticMutationRequest) (*httpapi.SemanticMutationResponse, error) {
+	var resp httpapi.SemanticMutationResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/semantic-mutations", nil, req, &resp); err != nil {
+		return nil, err
 	}
+	return &resp, nil
+}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr httpapi.ErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
-			_ = resp.Body.Close()
-			return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
-		}
-		payload, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+// AddUnixFSFile uploads a file into a root's UnixFS tree.
+func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data []byte) (*httpapi.UnixFSWriteResponse, error) {
+	var resp httpapi.UnixFSWriteResponse
+	if err := c.doRaw(ctx, http.MethodPost, fmt.Sprintf("/roots/%s/unixfs/file/%s", url.PathEscape(root), rawPath), nil, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
+		return nil, err
 	}
-	return resp.Body, resp.StatusCode, resp.Header, nil
+	return &resp, nil
+}
+
+// AddUnixFSDirectory creates a directory node in a root's UnixFS tree.
+func (c *Client) AddUnixFSDirectory(ctx context.Context, root, rawPath string) (*httpapi.UnixFSWriteResponse, error) {
+	var resp httpapi.UnixFSWriteResponse
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/roots/%s/unixfs/directory/%s", url.PathEscape(root), rawPath), nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // CreateRootStructure creates a root-scoped structure.
@@ -412,6 +249,17 @@ func (c *Client) CreateRootStructure(ctx context.Context, arcs map[string]string
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// CreatePayloadRoot creates a minimal valid map root with an empty @payload and
+// optional extra bindings. It is a convenience helper for tests and bootstrapping.
+func (c *Client) CreatePayloadRoot(ctx context.Context, extras map[string]string) (*httpapi.CreateStructureResponse, error) {
+	arcs := make(map[string]string, len(extras)+1)
+	for k, v := range extras {
+		arcs[k] = v
+	}
+	arcs["@payload"] = "bafkqaaa"
+	return c.CreateRootStructure(ctx, arcs)
 }
 
 // Verify verifies a transcript under a root.

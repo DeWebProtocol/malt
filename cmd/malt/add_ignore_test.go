@@ -99,9 +99,6 @@ func TestAddIgnoreFilterAlwaysExcludesGitDirectory(t *testing.T) {
 func TestStageDirectoryInputPrunesIgnoredDirectories(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create current root: %v", err)
-	}
 
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
@@ -127,9 +124,8 @@ func TestStageDirectoryInputPrunesIgnoredDirectories(t *testing.T) {
 func TestStageFlatUnixFSDirectoryAppliesMaltignore(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create current root: %v", err)
-	}
+
+	root := newTestRoot(ctx, t, daemon, casClient)
 
 	rootDir := t.TempDir()
 	repo := filepath.Join(rootDir, "repo")
@@ -137,7 +133,7 @@ func TestStageFlatUnixFSDirectoryAppliesMaltignore(t *testing.T) {
 	writeAddIgnoreTestFile(t, repo, "secret.txt", "secret")
 	writeAddIgnoreTestFile(t, repo, "keep.txt", "keep")
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{repo}, addBuildOptions{
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{repo}, root, addBuildOptions{
 		Target: addTargetMALT,
 		Model:  addModelUnixFS,
 		Layout: addLayoutFlat,
@@ -150,10 +146,10 @@ func TestStageFlatUnixFSDirectoryAppliesMaltignore(t *testing.T) {
 	}
 
 	base := filepath.Base(repo)
-	if _, err := daemon.StatCurrentPath(ctx, base+"/secret.txt"); err == nil {
+	if _, err := daemon.Stat(ctx, result.NewRoot, base+"/secret.txt"); err == nil {
 		t.Fatal("secret.txt should be ignored")
 	}
-	if _, err := daemon.StatCurrentPath(ctx, base+"/keep.txt"); err != nil {
+	if _, err := daemon.Stat(ctx, result.NewRoot, base+"/keep.txt"); err != nil {
 		t.Fatalf("keep.txt should be present: %v", err)
 	}
 }
@@ -167,7 +163,7 @@ func TestAddInputsMerkleDAGAppliesIgnoreFilter(t *testing.T) {
 	writeAddIgnoreTestFile(t, repo, "ignored/file.txt", "ignored")
 	writeAddIgnoreTestFile(t, repo, "keep/file.txt", "keep")
 
-	result, err := addInputsWithUnixFS(ctx, nil, casClient, []string{repo}, addBuildOptions{
+	result, err := addInputsWithUnixFS(ctx, nil, casClient, []string{repo}, "", addBuildOptions{
 		Target:     addTargetMerkleDAG,
 		Model:      addModelUnixFS,
 		FileLayout: addFileLayoutBalanced,

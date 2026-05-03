@@ -14,6 +14,7 @@ var (
 	evalReadLargeBytes = readbench.DefaultLargeFileBytes
 	evalReadRange      = readbench.DefaultRangeHeader
 	evalReadIterations = readbench.DefaultIterations
+	evalReadArcs       map[string]string
 )
 
 func init() {
@@ -40,13 +41,17 @@ func runEvalRead(cmd *cobra.Command, args []string) error {
 	}
 
 	runner := readbench.NewRunner(cfg.APIBaseURL())
+	fixtureConfig := readbench.FixtureConfig{
+		FixtureName:    evalReadFixture,
+		DirectoryDepth: evalReadDepth,
+		SmallFileBytes: evalReadSmallBytes,
+		LargeFileBytes: evalReadLargeBytes,
+	}
+	if len(evalReadArcs) > 0 {
+		fixtureConfig.Arcs = evalReadArcs
+	}
 	return runner.RunJSONL(cmd.Context(), readbench.RunConfig{
-		Fixture: readbench.FixtureConfig{
-			FixtureName:    evalReadFixture,
-			DirectoryDepth: evalReadDepth,
-			SmallFileBytes: evalReadSmallBytes,
-			LargeFileBytes: evalReadLargeBytes,
-		},
+		Fixture:     fixtureConfig,
 		RangeHeader: evalReadRange,
 		Iterations:  evalReadIterations,
 	}, os.Stdout)

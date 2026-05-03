@@ -37,45 +37,35 @@ func TestResolveGetOutputPathRules(t *testing.T) {
 func TestGetExportDirectoryMixedTree(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create current root: %v", err)
-	}
 
-	source := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(filepath.Join(source, "dir", "empty"), 0o755); err != nil {
-		t.Fatalf("mkdir source dirs: %v", err)
+	root := newTestRoot(ctx, t, daemon, casClient)
+
+	// Chain UnixFS operations: each returns a new root.
+	resp1, err := daemon.AddUnixFSDirectory(ctx, root, "dir/empty")
+	if err != nil {
+		t.Fatalf("create empty dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "root.txt"), []byte("root"), 0o644); err != nil {
+	resp2, err := daemon.AddUnixFSFile(ctx, resp1.NewRoot, "root.txt", []byte("root"))
+	if err != nil {
 		t.Fatalf("write root file: %v", err)
 	}
 	large := make([]byte, addFixedChunkSize+33)
 	for i := range large {
 		large[i] = byte('k' + (i % 11))
 	}
-	if err := os.WriteFile(filepath.Join(source, "dir", "large.bin"), large, 0o644); err != nil {
+	resp3, err := daemon.AddUnixFSFile(ctx, resp2.NewRoot, "dir/large.bin", large)
+	if err != nil {
 		t.Fatalf("write large file: %v", err)
 	}
+	finalRoot := resp3.NewRoot
 
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, []string{source}, addBuildOptions{})
+	rootStat, err := daemon.Stat(ctx, finalRoot, "")
 	if err != nil {
-		t.Fatalf("build staging: %v", err)
-	}
-	merged := mergeAddNodes(newDirNode(), staged.Root)
-	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
-	if err != nil {
-		t.Fatalf("materialize root: %v", err)
-	}
-	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, ""); err != nil {
-		t.Fatalf("set bucket head: %v", err)
+		t.Fatalf("stat root: %v", err)
 	}
 
-	base := filepath.Base(source)
-	rootStat, err := daemon.StatCurrentPath(ctx, base)
-	if err != nil {
-		t.Fatalf("stat exported root: %v", err)
-	}
 	outDir := filepath.Join(t.TempDir(), "out")
-	if err := exportCurrentDirectory(ctx, daemon, casClient, base, outDir, rootStat); err != nil {
+	if err := exportDirectory(ctx, daemon, casClient, finalRoot, "", outDir, rootStat); err != nil {
 		t.Fatalf("export directory: %v", err)
 	}
 
@@ -104,42 +94,26 @@ func TestGetExportDirectoryMixedTree(t *testing.T) {
 func TestWriteBucketFileSmallAndLarge(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
-		t.Fatalf("create current root: %v", err)
-	}
 
-	source := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(source, 0o755); err != nil {
-		t.Fatalf("mkdir source: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(source, "small.txt"), []byte("hello-cat"), 0o644); err != nil {
+	root := newTestRoot(ctx, t, daemon, casClient)
+
+	resp1, err := daemon.AddUnixFSFile(ctx, root, "small.txt", []byte("hello-cat"))
+	if err != nil {
 		t.Fatalf("write small file: %v", err)
 	}
 	large := make([]byte, addFixedChunkSize+5)
 	for i := range large {
 		large[i] = byte('a' + (i % 5))
 	}
-	if err := os.WriteFile(filepath.Join(source, "large.bin"), large, 0o644); err != nil {
+	resp2, err := daemon.AddUnixFSFile(ctx, resp1.NewRoot, "large.bin", large)
+	if err != nil {
 		t.Fatalf("write large file: %v", err)
 	}
+	finalRoot := resp2.NewRoot
 
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, []string{source}, addBuildOptions{})
-	if err != nil {
-		t.Fatalf("build staging: %v", err)
-	}
-	merged := mergeAddNodes(newDirNode(), staged.Root)
-	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
-	if err != nil {
-		t.Fatalf("materialize root: %v", err)
-	}
-	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, ""); err != nil {
-		t.Fatalf("set bucket head: %v", err)
-	}
-
-	base := filepath.Base(source)
 	outSmall := filepath.Join(t.TempDir(), "small.out")
-	if err := writeCurrentFile(ctx, daemon, base+"/small.txt", outSmall); err != nil {
-		t.Fatalf("write small bucket file: %v", err)
+	if err := writeContentFile(ctx, daemon, finalRoot, "small.txt", outSmall); err != nil {
+		t.Fatalf("write small file: %v", err)
 	}
 	gotSmall, err := os.ReadFile(outSmall)
 	if err != nil {
@@ -150,8 +124,8 @@ func TestWriteBucketFileSmallAndLarge(t *testing.T) {
 	}
 
 	outLarge := filepath.Join(t.TempDir(), "large.out")
-	if err := writeCurrentFile(ctx, daemon, base+"/large.bin", outLarge); err != nil {
-		t.Fatalf("write large bucket file: %v", err)
+	if err := writeContentFile(ctx, daemon, finalRoot, "large.bin", outLarge); err != nil {
+		t.Fatalf("write large file: %v", err)
 	}
 	gotLarge, err := os.ReadFile(outLarge)
 	if err != nil {

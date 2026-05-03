@@ -16,13 +16,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var getRoot string
+
 func init() {
 	rootCmd.AddCommand(getCmd)
+	getCmd.Flags().StringVar(&getRoot, "root", "", "Root CID to export from")
 }
 
 var getCmd = &cobra.Command{
 	Use:   "get <malt-path> [local-output]",
-	Short: "Export a file or directory from the current root",
+	Short: "Export a file or directory from a root",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE:  runGet,
 }
@@ -35,7 +38,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	client := mustDaemonClient()
-	stat, err := client.StatCurrentPath(cmd.Context(), maltPath)
+	stat, err := client.Stat(cmd.Context(), getRoot, maltPath)
 	if err != nil {
 		return daemonCommandError(err)
 	}
@@ -46,7 +49,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	if stat.Kind == "file" {
-		if err := writeCurrentFile(cmd.Context(), client, maltPath, dest); err != nil {
+		if err := writeContentFile(cmd.Context(), client, getRoot, maltPath, dest); err != nil {
 			return daemonCommandError(err)
 		}
 		return nil
@@ -56,7 +59,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := exportCurrentDirectory(cmd.Context(), client, casClient, maltPath, dest, stat); err != nil {
+		if err := exportDirectory(cmd.Context(), client, casClient, getRoot, maltPath, dest, stat); err != nil {
 			return daemonCommandError(err)
 		}
 		return nil
@@ -69,9 +72,6 @@ func resolveGetOutputPath(maltPath string, kind string, explicitOutput string) (
 	if explicitOutput != "" {
 		return explicitOutput, nil
 	}
-	if maltPath == "" {
-		return "", fmt.Errorf("current root requires explicit local-output")
-	}
 	base := path.Base(maltPath)
 	if base == "" || base == "." || base == "/" {
 		return "", fmt.Errorf("cannot infer output path for %q", maltPath)
@@ -79,9 +79,9 @@ func resolveGetOutputPath(maltPath string, kind string, explicitOutput string) (
 	return filepath.Join(".", base), nil
 }
 
-func exportCurrentDirectory(ctx context.Context, client *daemonclient.Client, casClient addCASClient, currentPath string, localDir string, rootStat *httpapi.PathStatResponse) error {
+func exportDirectory(ctx context.Context, client *daemonclient.Client, casClient addCASClient, root string, currentPath string, localDir string, rootStat *httpapi.PathStatResponse) error {
 	if rootStat == nil {
-		stat, err := client.StatCurrentPath(ctx, currentPath)
+		stat, err := client.Stat(ctx, root, currentPath)
 		if err != nil {
 			return err
 		}
@@ -99,27 +99,27 @@ func exportCurrentDirectory(ctx context.Context, client *daemonclient.Client, ca
 		return err
 	}
 	for _, child := range entries {
-		childCurrentPath := child
+		childPath := child
 		if currentPath != "" {
-			childCurrentPath = path.Join(currentPath, child)
+			childPath = path.Join(currentPath, child)
 		}
 		childLocalPath := filepath.Join(localDir, child)
 
-		childStat, err := client.StatCurrentPath(ctx, childCurrentPath)
+		childStat, err := client.Stat(ctx, root, childPath)
 		if err != nil {
 			return err
 		}
 		switch childStat.Kind {
 		case "file":
-			if err := writeCurrentFile(ctx, client, childCurrentPath, childLocalPath); err != nil {
+			if err := writeContentFile(ctx, client, root, childPath, childLocalPath); err != nil {
 				return err
 			}
 		case "dir":
-			if err := exportCurrentDirectory(ctx, client, casClient, childCurrentPath, childLocalPath, childStat); err != nil {
+			if err := exportDirectory(ctx, client, casClient, root, childPath, childLocalPath, childStat); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unsupported kind %q at %q", childStat.Kind, childCurrentPath)
+			return fmt.Errorf("unsupported kind %q at %q", childStat.Kind, childPath)
 		}
 	}
 	return nil
@@ -150,8 +150,8 @@ func directoryEntriesFromStatPayload(ctx context.Context, casClient addCASClient
 	return m.Entries, nil
 }
 
-func writeCurrentFile(ctx context.Context, client *daemonclient.Client, currentPath string, localFile string) error {
-	body, _, _, err := client.OpenCurrentContent(ctx, currentPath, "")
+func writeContentFile(ctx context.Context, client *daemonclient.Client, root string, maltPath string, localFile string) error {
+	body, _, _, err := client.Content(ctx, root, maltPath, "")
 	if err != nil {
 		return err
 	}

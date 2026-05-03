@@ -51,7 +51,7 @@ func runSemanticMutation(cmd *cobra.Command, args []string) error {
 	return enc.Encode(resp)
 }
 
-func readSemanticMutationRequest(path string) (*httpapi.RootSemanticMutationRequest, error) {
+func readSemanticMutationRequest(path string) (*httpapi.SemanticMutationRequest, error) {
 	var r io.Reader
 	if path == "-" {
 		r = os.Stdin
@@ -64,7 +64,7 @@ func readSemanticMutationRequest(path string) (*httpapi.RootSemanticMutationRequ
 		r = f
 	}
 
-	var req httpapi.RootSemanticMutationRequest
+	var req httpapi.SemanticMutationRequest
 	dec := json.NewDecoder(r)
 	if err := dec.Decode(&req); err != nil {
 		return nil, fmt.Errorf("decode semantic mutation request: %w", err)

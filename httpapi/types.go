@@ -21,31 +21,8 @@ type MetricsResponse struct {
 	Snapshot metrics.Snapshot `json:"snapshot"`
 }
 
-// CurrentRootResponse describes the daemon-managed current root pointer.
-type CurrentRootResponse struct {
-	Root         string `json:"root,omitempty"`
-	ArcCount     int    `json:"arc_count"`
-	Backend      string `json:"backend,omitempty"`
-	ArcTableType string `json:"arctable_type,omitempty"`
-	State        string `json:"state,omitempty"`
-}
-
-// CurrentRootSetRequest sets the daemon-managed current root.
-type CurrentRootSetRequest struct {
-	NewRoot         string `json:"new_root"`
-	ArcCount        int    `json:"arc_count"`
-	ExpectedOldRoot string `json:"expected_old_root,omitempty"`
-}
-
-// CurrentSemanticMutationRequest applies a semantic mutation and publishes it as current root.
-type CurrentSemanticMutationRequest struct {
-	BaseRoot string                `json:"base_root,omitempty"`
-	Puts     []SemanticMutationPut `json:"puts"`
-}
-
-// RootSemanticMutationRequest materializes a root-relative semantic mutation
-// without publishing the result as current root.
-type RootSemanticMutationRequest struct {
+// SemanticMutationRequest materializes a root-relative semantic mutation.
+type SemanticMutationRequest struct {
 	Puts []SemanticMutationPut `json:"puts"`
 }
 
@@ -64,16 +41,8 @@ type SemanticMutationEntry struct {
 	TargetKind string  `json:"target_kind,omitempty"`
 }
 
-// CurrentSemanticMutationResponse returns the gateway write receipt after publication.
-type CurrentSemanticMutationResponse struct {
-	BaseRoot string `json:"base_root"`
-	NewRoot  string `json:"new_root"`
-	PutCount int    `json:"put_count"`
-	ArcCount int    `json:"arc_count"`
-}
-
-// RootSemanticMutationResponse returns a root-centric gateway materialization receipt.
-type RootSemanticMutationResponse struct {
+// SemanticMutationResponse returns a gateway materialization receipt.
+type SemanticMutationResponse struct {
 	BaseRoot string `json:"base_root"`
 	NewRoot  string `json:"new_root"`
 	PutCount int    `json:"put_count"`
