@@ -45,16 +45,16 @@ func NewList(scheme commitment.IndexCommitment, arctable arctable.ArcTable) (*Tr
 	}, nil
 }
 
-func (s *TreeList) Commit(ctx context.Context, bucketID string, view list.View) (cid.Cid, error) {
+func (s *TreeList) Commit(ctx context.Context, namespace string, view list.View) (cid.Cid, error) {
 	values, err := valuesFromView(view)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.buildFromValues(ctx, bucketID, values, layout.RequiredHeight(uint64(len(values))), true)
+	return s.buildFromValues(ctx, namespace, values, layout.RequiredHeight(uint64(len(values))), true)
 }
 
-func (s *TreeList) Prove(ctx context.Context, bucketID string, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
-	rootSlots, length, err := s.loadRoot(ctx, bucketID, root)
+func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
+	rootSlots, length, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
@@ -106,7 +106,7 @@ func (s *TreeList) Prove(ctx context.Context, bucketID string, root cid.Cid, ind
 		if err != nil {
 			return list.Query{}, nil, err
 		}
-		currentSlots, err = s.loadNode(ctx, bucketID, currentRoot, false)
+		currentSlots, err = s.loadNode(ctx, namespace, currentRoot, false)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
@@ -182,28 +182,28 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	return false, nil
 }
 
-func (s *TreeList) Replace(ctx context.Context, bucketID string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
+func (s *TreeList) Replace(ctx context.Context, namespace string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
 	if !oldKey.Defined() {
 		return cid.Undef, fmt.Errorf("old key is undefined")
 	}
 	if !newKey.Defined() {
 		return cid.Undef, fmt.Errorf("new key is undefined")
 	}
-	_, length, err := s.loadRoot(ctx, bucketID, root)
+	_, length, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
 	}
 	if index >= length {
 		return cid.Undef, fmt.Errorf("index %d out of range", index)
 	}
-	return s.replaceAt(ctx, bucketID, root, true, layout.RequiredHeight(length), index, oldKey, newKey)
+	return s.replaceAt(ctx, namespace, root, true, layout.RequiredHeight(length), index, oldKey, newKey)
 }
 
-func (s *TreeList) Append(ctx context.Context, bucketID string, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
+func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
 	if !key.Defined() {
 		return cid.Undef, 0, fmt.Errorf("key is undefined")
 	}
-	rootSlots, length, err := s.loadRoot(ctx, bucketID, root)
+	rootSlots, length, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, 0, err
 	}
@@ -214,7 +214,7 @@ func (s *TreeList) Append(ctx context.Context, bucketID string, root cid.Cid, ke
 	newHeight := layout.RequiredHeight(newLength)
 
 	if newHeight > oldHeight {
-		grownRoot, err := s.growRoot(ctx, bucketID, root, oldHeight, length)
+		grownRoot, err := s.growRoot(ctx, namespace, root, oldHeight, length)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
@@ -234,13 +234,13 @@ func (s *TreeList) Append(ctx context.Context, bucketID string, root cid.Cid, ke
 		}
 		rootDigit := int(newIndex / childSpan)
 		localIndex := newIndex % childSpan
-		childRoot, err := s.buildSparseSubtree(ctx, bucketID, newHeight-1, localIndex, key)
+		childRoot, err := s.buildSparseSubtree(ctx, namespace, newHeight-1, localIndex, key)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
 		content[rootDigit] = childRoot
 
-		newRoot, err := s.commitSlots(ctx, bucketID, nextRootSlots)
+		newRoot, err := s.commitSlots(ctx, namespace, nextRootSlots)
 		return newRoot, newIndex, err
 	}
 
@@ -257,7 +257,7 @@ func (s *TreeList) Append(ctx context.Context, bucketID string, root cid.Cid, ke
 			return cid.Undef, 0, fmt.Errorf("append slot %d is already occupied", newIndex)
 		}
 		content[newIndex] = key
-		newRoot, err := s.commitSlots(ctx, bucketID, nextRootSlots)
+		newRoot, err := s.commitSlots(ctx, namespace, nextRootSlots)
 		return newRoot, newIndex, err
 	}
 
@@ -269,20 +269,20 @@ func (s *TreeList) Append(ctx context.Context, bucketID string, root cid.Cid, ke
 	localIndex := newIndex % childSpan
 
 	if content[digit].Defined() {
-		content[digit], err = s.appendInto(ctx, bucketID, content[digit], oldHeight-1, localIndex, key)
+		content[digit], err = s.appendInto(ctx, namespace, content[digit], oldHeight-1, localIndex, key)
 	} else {
-		content[digit], err = s.buildSparseSubtree(ctx, bucketID, oldHeight-1, localIndex, key)
+		content[digit], err = s.buildSparseSubtree(ctx, namespace, oldHeight-1, localIndex, key)
 	}
 	if err != nil {
 		return cid.Undef, 0, err
 	}
 
-	newRoot, err := s.commitSlots(ctx, bucketID, nextRootSlots)
+	newRoot, err := s.commitSlots(ctx, namespace, nextRootSlots)
 	return newRoot, newIndex, err
 }
 
-func (s *TreeList) Truncate(ctx context.Context, bucketID string, root cid.Cid, newLen uint64) (cid.Cid, error) {
-	_, oldLen, err := s.loadRoot(ctx, bucketID, root)
+func (s *TreeList) Truncate(ctx context.Context, namespace string, root cid.Cid, newLen uint64) (cid.Cid, error) {
+	_, oldLen, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -293,15 +293,15 @@ func (s *TreeList) Truncate(ctx context.Context, bucketID string, root cid.Cid, 
 		return root, nil
 	}
 	if newLen == 0 {
-		return s.commitEmptyRoot(ctx, bucketID)
+		return s.commitEmptyRoot(ctx, namespace)
 	}
 
 	oldHeight := layout.RequiredHeight(oldLen)
 	newHeight := layout.RequiredHeight(newLen)
-	return s.rebuildPrefix(ctx, bucketID, root, true, oldHeight, true, newHeight, newLen)
+	return s.rebuildPrefix(ctx, namespace, root, true, oldHeight, true, newHeight, newLen)
 }
 
-func (s *TreeList) buildFromValues(ctx context.Context, bucketID string, values []cid.Cid, height int, isRoot bool) (cid.Cid, error) {
+func (s *TreeList) buildFromValues(ctx context.Context, namespace string, values []cid.Cid, height int, isRoot bool) (cid.Cid, error) {
 	var slots []cid.Cid
 	if isRoot {
 		slots = layout.EmptyRootSlots()
@@ -317,7 +317,7 @@ func (s *TreeList) buildFromValues(ctx context.Context, bucketID string, values 
 	content := layout.ContentSlots(slots, isRoot)
 	if height == 0 {
 		copy(content, values)
-		return s.commitSlots(ctx, bucketID, slots)
+		return s.commitSlots(ctx, namespace, slots)
 	}
 
 	childSpan, err := layout.SubtreeCapacity(height - 1)
@@ -329,7 +329,7 @@ func (s *TreeList) buildFromValues(ctx context.Context, bucketID string, values 
 		if end > len(values) {
 			end = len(values)
 		}
-		childRoot, err := s.buildFromValues(ctx, bucketID, values[start:end], height-1, false)
+		childRoot, err := s.buildFromValues(ctx, namespace, values[start:end], height-1, false)
 		if err != nil {
 			return cid.Undef, err
 		}
@@ -337,16 +337,16 @@ func (s *TreeList) buildFromValues(ctx context.Context, bucketID string, values 
 		start = end
 	}
 
-	return s.commitSlots(ctx, bucketID, slots)
+	return s.commitSlots(ctx, namespace, slots)
 }
 
-func (s *TreeList) growRoot(ctx context.Context, bucketID string, root cid.Cid, oldHeight int, oldLen uint64) (cid.Cid, error) {
-	return s.rebuildPrefix(ctx, bucketID, root, true, oldHeight, false, oldHeight, oldLen)
+func (s *TreeList) growRoot(ctx context.Context, namespace string, root cid.Cid, oldHeight int, oldLen uint64) (cid.Cid, error) {
+	return s.rebuildPrefix(ctx, namespace, root, true, oldHeight, false, oldHeight, oldLen)
 }
 
 func (s *TreeList) rebuildPrefix(
 	ctx context.Context,
-	bucketID string,
+	namespace string,
 	root cid.Cid,
 	sourceRoot bool,
 	sourceHeight int,
@@ -359,12 +359,12 @@ func (s *TreeList) rebuildPrefix(
 	}
 	if keepLen == 0 {
 		if targetRoot {
-			return s.commitEmptyRoot(ctx, bucketID)
+			return s.commitEmptyRoot(ctx, namespace)
 		}
 		return cid.Undef, nil
 	}
 
-	slots, err := s.loadNode(ctx, bucketID, root, sourceRoot)
+	slots, err := s.loadNode(ctx, namespace, root, sourceRoot)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -374,7 +374,7 @@ func (s *TreeList) rebuildPrefix(
 		if !content[0].Defined() {
 			return cid.Undef, fmt.Errorf("cannot descend into empty leftmost subtree")
 		}
-		return s.rebuildPrefix(ctx, bucketID, content[0], false, sourceHeight-1, targetRoot, targetHeight, keepLen)
+		return s.rebuildPrefix(ctx, namespace, content[0], false, sourceHeight-1, targetRoot, targetHeight, keepLen)
 	}
 
 	var nextSlots []cid.Cid
@@ -395,7 +395,7 @@ func (s *TreeList) rebuildPrefix(
 			return cid.Undef, fmt.Errorf("keep length %d exceeds leaf width %d", keepLen, len(content))
 		}
 		copy(nextContent, content[:int(keepLen)])
-		return s.commitSlots(ctx, bucketID, nextSlots)
+		return s.commitSlots(ctx, namespace, nextSlots)
 	}
 
 	childSpan, err := layout.SubtreeCapacity(targetHeight - 1)
@@ -417,7 +417,7 @@ func (s *TreeList) rebuildPrefix(
 		}
 		nextContent[fullChildren], err = s.rebuildPrefix(
 			ctx,
-			bucketID,
+			namespace,
 			content[fullChildren],
 			false,
 			targetHeight-1,
@@ -430,12 +430,12 @@ func (s *TreeList) rebuildPrefix(
 		}
 	}
 
-	return s.commitSlots(ctx, bucketID, nextSlots)
+	return s.commitSlots(ctx, namespace, nextSlots)
 }
 
 func (s *TreeList) replaceAt(
 	ctx context.Context,
-	bucketID string,
+	namespace string,
 	root cid.Cid,
 	isRoot bool,
 	height int,
@@ -443,7 +443,7 @@ func (s *TreeList) replaceAt(
 	oldKey cid.Cid,
 	newKey cid.Cid,
 ) (cid.Cid, error) {
-	slots, err := s.loadNode(ctx, bucketID, root, isRoot)
+	slots, err := s.loadNode(ctx, namespace, root, isRoot)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -458,7 +458,7 @@ func (s *TreeList) replaceAt(
 		}
 		nextSlots := cloneSlots(slots)
 		layout.ContentSlots(nextSlots, isRoot)[index] = newKey
-		return s.commitSlots(ctx, bucketID, nextSlots)
+		return s.commitSlots(ctx, namespace, nextSlots)
 	}
 
 	childSpan, err := layout.SubtreeCapacity(height - 1)
@@ -472,18 +472,18 @@ func (s *TreeList) replaceAt(
 		return cid.Undef, fmt.Errorf("missing child at digit %d", digit)
 	}
 
-	newChild, err := s.replaceAt(ctx, bucketID, content[digit], false, height-1, localIndex, oldKey, newKey)
+	newChild, err := s.replaceAt(ctx, namespace, content[digit], false, height-1, localIndex, oldKey, newKey)
 	if err != nil {
 		return cid.Undef, err
 	}
 
 	nextSlots := cloneSlots(slots)
 	layout.ContentSlots(nextSlots, isRoot)[digit] = newChild
-	return s.commitSlots(ctx, bucketID, nextSlots)
+	return s.commitSlots(ctx, namespace, nextSlots)
 }
 
-func (s *TreeList) appendInto(ctx context.Context, bucketID string, root cid.Cid, height int, index uint64, key cid.Cid) (cid.Cid, error) {
-	slots, err := s.loadNode(ctx, bucketID, root, false)
+func (s *TreeList) appendInto(ctx context.Context, namespace string, root cid.Cid, height int, index uint64, key cid.Cid) (cid.Cid, error) {
+	slots, err := s.loadNode(ctx, namespace, root, false)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -497,7 +497,7 @@ func (s *TreeList) appendInto(ctx context.Context, bucketID string, root cid.Cid
 		}
 		nextSlots := cloneSlots(slots)
 		nextSlots[index] = key
-		return s.commitSlots(ctx, bucketID, nextSlots)
+		return s.commitSlots(ctx, namespace, nextSlots)
 	}
 
 	childSpan, err := layout.SubtreeCapacity(height - 1)
@@ -509,24 +509,24 @@ func (s *TreeList) appendInto(ctx context.Context, bucketID string, root cid.Cid
 
 	nextSlots := cloneSlots(slots)
 	if nextSlots[digit].Defined() {
-		nextSlots[digit], err = s.appendInto(ctx, bucketID, nextSlots[digit], height-1, localIndex, key)
+		nextSlots[digit], err = s.appendInto(ctx, namespace, nextSlots[digit], height-1, localIndex, key)
 	} else {
-		nextSlots[digit], err = s.buildSparseSubtree(ctx, bucketID, height-1, localIndex, key)
+		nextSlots[digit], err = s.buildSparseSubtree(ctx, namespace, height-1, localIndex, key)
 	}
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.commitSlots(ctx, bucketID, nextSlots)
+	return s.commitSlots(ctx, namespace, nextSlots)
 }
 
-func (s *TreeList) buildSparseSubtree(ctx context.Context, bucketID string, height int, index uint64, key cid.Cid) (cid.Cid, error) {
+func (s *TreeList) buildSparseSubtree(ctx context.Context, namespace string, height int, index uint64, key cid.Cid) (cid.Cid, error) {
 	if height == 0 {
 		slots := layout.EmptyNodeSlots()
 		if index >= uint64(len(slots)) {
 			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
 		}
 		slots[index] = key
-		return s.commitSlots(ctx, bucketID, slots)
+		return s.commitSlots(ctx, namespace, slots)
 	}
 
 	childSpan, err := layout.SubtreeCapacity(height - 1)
@@ -537,25 +537,25 @@ func (s *TreeList) buildSparseSubtree(ctx context.Context, bucketID string, heig
 	localIndex := index % childSpan
 
 	slots := layout.EmptyNodeSlots()
-	slots[digit], err = s.buildSparseSubtree(ctx, bucketID, height-1, localIndex, key)
+	slots[digit], err = s.buildSparseSubtree(ctx, namespace, height-1, localIndex, key)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.commitSlots(ctx, bucketID, slots)
+	return s.commitSlots(ctx, namespace, slots)
 }
 
-func (s *TreeList) commitEmptyRoot(ctx context.Context, bucketID string) (cid.Cid, error) {
+func (s *TreeList) commitEmptyRoot(ctx context.Context, namespace string) (cid.Cid, error) {
 	slots := layout.EmptyRootSlots()
 	lengthMarker, err := layout.EncodeLengthMarker(0)
 	if err != nil {
 		return cid.Undef, err
 	}
 	slots[0] = lengthMarker
-	return s.commitSlots(ctx, bucketID, slots)
+	return s.commitSlots(ctx, namespace, slots)
 }
 
-func (s *TreeList) loadRoot(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, uint64, error) {
-	slots, err := s.loadNode(ctx, bucketID, root, true)
+func (s *TreeList) loadRoot(ctx context.Context, namespace string, root cid.Cid) ([]cid.Cid, uint64, error) {
+	slots, err := s.loadNode(ctx, namespace, root, true)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -566,12 +566,12 @@ func (s *TreeList) loadRoot(ctx context.Context, bucketID string, root cid.Cid) 
 	return slots, length, nil
 }
 
-func (s *TreeList) loadNode(ctx context.Context, bucketID string, root cid.Cid, isRoot bool) ([]cid.Cid, error) {
+func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid, isRoot bool) ([]cid.Cid, error) {
 	width := layout.NodeWidth
 	if isRoot {
 		width = layout.RootWidth
 	}
-	slots, err := layout.LoadSlots(ctx, s.arctable, bucketID, root, width)
+	slots, err := layout.LoadSlots(ctx, s.arctable, namespace, root, width)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +581,7 @@ func (s *TreeList) loadNode(ctx context.Context, bucketID string, root cid.Cid, 
 	return slots, nil
 }
 
-func (s *TreeList) commitSlots(ctx context.Context, bucketID string, slots []cid.Cid) (cid.Cid, error) {
+func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
 	root, err := layout.CommitSlots(s.scheme, slots)
 	if err != nil {
 		return cid.Undef, err
@@ -597,7 +597,7 @@ func (s *TreeList) commitSlots(ctx context.Context, bucketID string, slots []cid
 		return cid.Undef, err
 	}
 
-	if err := layout.StoreSlots(ctx, s.arctable, bucketID, listRoot, slots); err != nil {
+	if err := layout.StoreSlots(ctx, s.arctable, namespace, listRoot, slots); err != nil {
 		return cid.Undef, err
 	}
 	return listRoot, nil

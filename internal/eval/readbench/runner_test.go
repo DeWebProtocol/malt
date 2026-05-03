@@ -22,7 +22,7 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 	runner := NewRunner(baseURL)
 
 	fixture, err := runner.PrepareFixture(ctx, FixtureConfig{
-		Bucket:         "readbench-fixture",
+		FixtureName:    "readbench-fixture",
 		DirectoryDepth: 3,
 		SmallFileBytes: 32,
 		LargeFileBytes: 300 * 1024,
@@ -31,8 +31,8 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 		t.Fatalf("PrepareFixture() error = %v", err)
 	}
 
-	if fixture.Bucket != "readbench-fixture" {
-		t.Fatalf("fixture bucket = %q", fixture.Bucket)
+	if fixture.FixtureName != "readbench-fixture" {
+		t.Fatalf("fixture fixture = %q", fixture.FixtureName)
 	}
 	if fixture.SmallPath != "dir00/dir01/dir02/small.txt" {
 		t.Fatalf("small path = %q", fixture.SmallPath)
@@ -42,7 +42,7 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 	}
 
 	client := daemonclient.NewWithBaseURL(baseURL)
-	smallStat, err := client.StatBucketPath(ctx, fixture.Bucket, fixture.SmallPath)
+	smallStat, err := client.StatCurrentPath(ctx, fixture.SmallPath)
 	if err != nil {
 		t.Fatalf("stat small fixture: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 		t.Fatalf("small stat = %+v, want raw file", smallStat)
 	}
 
-	largeStat, err := client.StatBucketPath(ctx, fixture.Bucket, fixture.LargePath)
+	largeStat, err := client.StatCurrentPath(ctx, fixture.LargePath)
 	if err != nil {
 		t.Fatalf("stat large fixture: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestPrepareFixtureSupportsZeroDirectoryDepth(t *testing.T) {
 	runner := NewRunner(newTestDaemon(t))
 
 	fixture, err := runner.PrepareFixture(ctx, FixtureConfig{
-		Bucket:         "readbench-root",
+		FixtureName:    "readbench-root",
 		DirectoryDepth: 0,
 		SmallFileBytes: 8,
 		LargeFileBytes: 300 * 1024,
@@ -83,7 +83,7 @@ func TestPrepareFixtureSupportsZeroDirectoryDepth(t *testing.T) {
 	}
 }
 
-func TestPrepareFixtureGeneratesUniqueBucketWhenOmitted(t *testing.T) {
+func TestPrepareFixtureGeneratesUniqueFixtureNameWhenOmitted(t *testing.T) {
 	ctx := context.Background()
 	runner := NewRunner(newTestDaemon(t))
 
@@ -101,33 +101,13 @@ func TestPrepareFixtureGeneratesUniqueBucketWhenOmitted(t *testing.T) {
 		t.Fatalf("second PrepareFixture() error = %v", err)
 	}
 
-	if first.Bucket == second.Bucket {
-		t.Fatalf("generated bucket reused %q", first.Bucket)
+	if first.FixtureName == second.FixtureName {
+		t.Fatalf("generated fixture reused %q", first.FixtureName)
 	}
-	for _, bucket := range []string{first.Bucket, second.Bucket} {
-		if !strings.HasPrefix(bucket, DefaultBucket+"-") {
-			t.Fatalf("generated bucket = %q, want %q prefix", bucket, DefaultBucket+"-")
+	for _, fixture := range []string{first.FixtureName, second.FixtureName} {
+		if !strings.HasPrefix(fixture, DefaultFixtureName+"-") {
+			t.Fatalf("generated fixture = %q, want %q prefix", fixture, DefaultFixtureName+"-")
 		}
-	}
-}
-
-func TestPrepareFixtureRejectsExistingBucket(t *testing.T) {
-	ctx := context.Background()
-	baseURL := newTestDaemon(t)
-	client := daemonclient.NewWithBaseURL(baseURL)
-	if _, err := client.CreateBucket(ctx, "readbench-existing", ""); err != nil {
-		t.Fatalf("create existing bucket: %v", err)
-	}
-
-	runner := NewRunner(baseURL)
-	_, err := runner.PrepareFixture(ctx, FixtureConfig{
-		Bucket:         "readbench-existing",
-		DirectoryDepth: 1,
-		SmallFileBytes: 8,
-		LargeFileBytes: 300 * 1024,
-	})
-	if err == nil {
-		t.Fatal("PrepareFixture() succeeded with an existing bucket")
 	}
 }
 
@@ -138,7 +118,7 @@ func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 	var out bytes.Buffer
 	err := runner.RunJSONL(ctx, RunConfig{
 		Fixture: FixtureConfig{
-			Bucket:         "readbench-run",
+			FixtureName:    "readbench-run",
 			DirectoryDepth: 2,
 			SmallFileBytes: 48,
 			LargeFileBytes: 300 * 1024,
@@ -159,8 +139,8 @@ func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 	if proofRead.OperationKind != OperationProofListPath {
 		t.Fatalf("first operation = %q, want %q", proofRead.OperationKind, OperationProofListPath)
 	}
-	if proofRead.Bucket != "readbench-run" || proofRead.Path != "dir00/dir01/small.txt" {
-		t.Fatalf("proof read target = bucket %q path %q", proofRead.Bucket, proofRead.Path)
+	if proofRead.FixtureName != "readbench-run" || proofRead.Path != "dir00/dir01/small.txt" {
+		t.Fatalf("proof read target = fixture %q path %q", proofRead.FixtureName, proofRead.Path)
 	}
 	if proofRead.RangeHeader != "" {
 		t.Fatalf("prooflist range header = %q, want empty", proofRead.RangeHeader)
@@ -215,7 +195,7 @@ func TestRunJSONLAllowsZeroIterations(t *testing.T) {
 	var out bytes.Buffer
 	err := runner.RunJSONL(ctx, RunConfig{
 		Fixture: FixtureConfig{
-			Bucket:         "readbench-zero-iterations",
+			FixtureName:    "readbench-zero-iterations",
 			DirectoryDepth: 1,
 			SmallFileBytes: 8,
 			LargeFileBytes: 300 * 1024,

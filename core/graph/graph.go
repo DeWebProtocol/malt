@@ -26,7 +26,7 @@ import (
 // It is stateless: the root CID is always passed as a parameter, never held internally.
 type Graph struct {
 	id              string
-	bucketId        string
+	namespace       string
 	scheme          commitment.IndexCommitment
 	semantic        mapping.Semantics
 	listSemantic    list.Semantics
@@ -41,19 +41,19 @@ type Graph struct {
 //
 // Parameters:
 //   - id: unique graph identifier
-//   - arctable: shared ArcTable (namespace by bucketId) — from Node
+//   - arctable: shared ArcTable (namespace by namespace) — from Node
 //   - cas: shared read-side CAS client — from Node (nil for testing/mocks)
-//   - opts: functional options (WithCommitmentScheme, WithBucketId, etc.)
+//   - opts: functional options (WithCommitmentScheme, WithNamespace, etc.)
 func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Option) (*Graph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)
 	}
 
-	// Default bucketId = graph id
-	bucketId := o.BucketId
-	if bucketId == "" {
-		bucketId = id
+	// Default namespace = graph id
+	namespace := o.Namespace
+	if namespace == "" {
+		namespace = id
 	}
 
 	// Default commitment scheme: KZG
@@ -76,7 +76,7 @@ func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Opt
 	}
 
 	// Create per-graph explicit resolver
-	explicitStep := explicit.NewResolver(arctable, semantic, bucketId)
+	explicitStep := explicit.NewResolver(arctable, semantic, namespace)
 
 	// Create per-graph implicit resolver
 	implicitStep := implicit.NewResolver(cas)
@@ -90,7 +90,7 @@ func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Opt
 
 	return &Graph{
 		id:              id,
-		bucketId:        bucketId,
+		namespace:       namespace,
 		scheme:          scheme,
 		semantic:        semantic,
 		listSemantic:    listSemantic,
@@ -106,9 +106,9 @@ func (g *Graph) ID() string {
 	return g.id
 }
 
-// BucketId returns the ArcTable bucket namespace for this graph.
-func (g *Graph) BucketId() string {
-	return g.bucketId
+// Namespace returns the ArcTable namespace for this graph.
+func (g *Graph) Namespace() string {
+	return g.namespace
 }
 
 // Semantic returns the per-graph keyed-map semantic.
@@ -172,7 +172,7 @@ func (g *Graph) Update(ctx context.Context, root cid.Cid, arcs map[string]cid.Ci
 	if !root.Defined() {
 		return cid.Cid{}, nil, fmt.Errorf("root must be defined")
 	}
-	result, err := g.wr.BatchUpdateArcs(ctx, g.bucketId, root, arcs)
+	result, err := g.wr.BatchUpdateArcs(ctx, g.namespace, root, arcs)
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("batch update failed: %w", err)
 	}
@@ -199,10 +199,10 @@ func (g *Graph) Snapshot(ctx context.Context, root cid.Cid) (arcset.ArcSet, erro
 	if !root.Defined() {
 		return nil, fmt.Errorf("root must be defined")
 	}
-	return g.wr.GetSnapshot(ctx, g.bucketId, root)
+	return g.wr.GetSnapshot(ctx, g.namespace, root)
 }
 
 // Commit implements GraphWriter.Commit.
 func (g *Graph) Commit(ctx context.Context, snapshot arcset.ArcSet) (cid.Cid, error) {
-	return g.wr.CreateStructure(ctx, g.bucketId, snapshot)
+	return g.wr.CreateStructure(ctx, g.namespace, snapshot)
 }

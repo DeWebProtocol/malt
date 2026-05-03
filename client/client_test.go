@@ -22,7 +22,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-func TestClientBucketFlow(t *testing.T) {
+func TestClientRootFlow(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -39,25 +39,19 @@ func TestClientBucketFlow(t *testing.T) {
 	client := New(cfg)
 
 	ctx := context.Background()
-	bucket, err := client.CreateBucket(ctx, "demo", "")
+	current, err := client.GetCurrentRoot(ctx)
 	if err != nil {
-		t.Fatalf("create bucket: %v", err)
+		t.Fatalf("get current root: %v", err)
 	}
-	if bucket.ID != "demo" {
-		t.Fatalf("bucket id = %q, want %q", bucket.ID, "demo")
+	if current.Root != "" {
+		t.Fatalf("current root = %q, want empty for undefined root", current.Root)
 	}
-	if bucket.Root != "" {
-		t.Fatalf("bucket root = %q, want empty for undefined head", bucket.Root)
-	}
-	loadedBucket, err := client.GetBucket(ctx, "demo")
+	loadedCurrent, err := client.GetCurrentRoot(ctx)
 	if err != nil {
-		t.Fatalf("get bucket: %v", err)
+		t.Fatalf("get current root: %v", err)
 	}
-	if loadedBucket.ID != "demo" {
-		t.Fatalf("loaded bucket id = %q, want %q", loadedBucket.ID, "demo")
-	}
-	if loadedBucket.Root != "" {
-		t.Fatalf("loaded bucket root = %q, want empty for undefined head", loadedBucket.Root)
+	if loadedCurrent.Root != "" {
+		t.Fatalf("loaded current root = %q, want empty for undefined root", loadedCurrent.Root)
 	}
 
 	target := fakeCIDString("alice")
@@ -106,7 +100,7 @@ func TestClientBucketFlow(t *testing.T) {
 	}
 }
 
-func TestClientManagedBucketStructureFlow(t *testing.T) {
+func TestClientCurrentStructureFlow(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -123,12 +117,12 @@ func TestClientManagedBucketStructureFlow(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
 	target := fakeCIDString("managed-alice")
-	createResp, err := client.CreateBucketStructure(ctx, "demo", map[string]string{
+	createResp, err := client.CreateCurrentStructure(ctx, map[string]string{
 		"@payload": fakeCIDString("managed-payload"),
 		"name":     target,
 		"/name":    target,
@@ -140,7 +134,7 @@ func TestClientManagedBucketStructureFlow(t *testing.T) {
 		t.Fatal("expected non-empty managed graph root")
 	}
 
-	resolveResp, err := client.ResolveBucket(ctx, "demo", "name")
+	resolveResp, err := client.ResolveCurrent(ctx, "name")
 	if err != nil {
 		t.Fatalf("resolve managed bucket: %v", err)
 	}
@@ -148,7 +142,7 @@ func TestClientManagedBucketStructureFlow(t *testing.T) {
 		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, target)
 	}
 
-	meta, err := client.GetBucket(ctx, "demo")
+	meta, err := client.GetCurrentRoot(ctx)
 	if err != nil {
 		t.Fatalf("get managed bucket metadata: %v", err)
 	}
@@ -157,7 +151,7 @@ func TestClientManagedBucketStructureFlow(t *testing.T) {
 	}
 
 	updateTarget := fakeCIDString("managed-bob")
-	updateResp, err := client.UpdateBucket(ctx, "demo", "name", updateTarget)
+	updateResp, err := client.UpdateCurrent(ctx, "name", updateTarget)
 	if err != nil {
 		t.Fatalf("update managed bucket: %v", err)
 	}
@@ -165,7 +159,7 @@ func TestClientManagedBucketStructureFlow(t *testing.T) {
 		t.Fatal("expected managed bucket update to advance the head root")
 	}
 
-	snapshotResp, err := client.SnapshotBucket(ctx, "demo")
+	snapshotResp, err := client.SnapshotCurrent(ctx)
 	if err != nil {
 		t.Fatalf("snapshot managed bucket: %v", err)
 	}
@@ -194,13 +188,13 @@ func TestClientProofListReads(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
 	target := fakeCIDString("client-prooflist-target")
 	payload := fakeCIDString("client-prooflist-payload")
-	_, err = client.CreateBucketStructure(ctx, "demo", map[string]string{
+	_, err = client.CreateCurrentStructure(ctx, map[string]string{
 		"@payload": payload,
 		"name":     target,
 	})
@@ -208,9 +202,9 @@ func TestClientProofListReads(t *testing.T) {
 		t.Fatalf("create bucket structure: %v", err)
 	}
 
-	bucketProof, err := client.ProofListBucket(ctx, "demo", "name")
+	bucketProof, err := client.ProofListCurrent(ctx, "name")
 	if err != nil {
-		t.Fatalf("ProofListBucket: %v", err)
+		t.Fatalf("ProofListCurrent: %v", err)
 	}
 	if bucketProof.Target != target {
 		t.Fatalf("bucket prooflist target = %q, want %q", bucketProof.Target, target)
@@ -316,7 +310,7 @@ func TestClientReturnsStructuredAPIError(t *testing.T) {
 	cfg.RPC.Listen = ts.Listener.Addr().String()
 	client := New(cfg)
 
-	_, err = client.GetBucket(context.Background(), "missing")
+	_, err = client.ResolveCurrent(context.Background(), "missing")
 	if err == nil {
 		t.Fatal("expected GetBucket to fail for missing bucket")
 	}
@@ -325,8 +319,8 @@ func TestClientReturnsStructuredAPIError(t *testing.T) {
 	if !ok {
 		t.Fatalf("error type = %T, want *client.Error", err)
 	}
-	if apiErr.StatusCode != 404 {
-		t.Fatalf("status = %d, want 404", apiErr.StatusCode)
+	if apiErr.StatusCode != 409 {
+		t.Fatalf("status = %d, want 409", apiErr.StatusCode)
 	}
 }
 
@@ -347,22 +341,22 @@ func TestClientBucketHeadSet(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
-	root1Resp, err := client.CreateBucketMap(ctx, "demo", withPayloadBinding(map[string]string{
+	root1Resp, err := client.CreateCurrentMap(ctx, withPayloadBinding(map[string]string{
 		"file.txt": fakeCIDString("head-file"),
 	}))
 	if err != nil {
 		t.Fatalf("create map root: %v", err)
 	}
 	root1 := root1Resp.Root
-	if err := client.SetBucketHead(ctx, "demo", root1, 2, ""); err != nil {
+	if err := client.SetCurrentRoot(ctx, root1, 2, ""); err != nil {
 		t.Fatalf("set head: %v", err)
 	}
 
-	meta, err := client.GetBucket(ctx, "demo")
+	meta, err := client.GetCurrentRoot(ctx)
 	if err != nil {
 		t.Fatalf("get bucket: %v", err)
 	}
@@ -371,7 +365,7 @@ func TestClientBucketHeadSet(t *testing.T) {
 	}
 
 	// Stale expected old root should be rejected.
-	if err := client.SetBucketHead(ctx, "demo", fakeCIDString("head-2"), 3, fakeCIDString("stale")); err == nil {
+	if err := client.SetCurrentRoot(ctx, fakeCIDString("head-2"), 3, fakeCIDString("stale")); err == nil {
 		t.Fatal("expected stale expected_old_root to fail")
 	}
 }
@@ -393,55 +387,55 @@ func TestClientBucketScopedMapAndListAPIs(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
 	target := fakeCIDString("bucket-map-target")
-	mapCreate, err := client.CreateBucketMap(ctx, "demo", withPayloadBinding(map[string]string{"docs/readme.md": target}))
+	mapCreate, err := client.CreateCurrentMap(ctx, withPayloadBinding(map[string]string{"docs/readme.md": target}))
 	if err != nil {
-		t.Fatalf("CreateBucketMap: %v", err)
+		t.Fatalf("CreateCurrentMap: %v", err)
 	}
 	if mapCreate.Root == "" {
-		t.Fatal("CreateBucketMap returned empty root")
+		t.Fatal("CreateCurrentMap returned empty root")
 	}
 
-	mapResolve, err := client.ResolveBucketMap(ctx, "demo", mapCreate.Root, "docs/readme.md")
+	mapResolve, err := client.ResolveCurrentMap(ctx, mapCreate.Root, "docs/readme.md")
 	if err != nil {
-		t.Fatalf("ResolveBucketMap: %v", err)
+		t.Fatalf("ResolveCurrentMap: %v", err)
 	}
 	if mapResolve.Key != target {
-		t.Fatalf("ResolveBucketMap key = %q, want %q", mapResolve.Key, target)
+		t.Fatalf("ResolveCurrentMap key = %q, want %q", mapResolve.Key, target)
 	}
 
-	if _, err := client.ResolveBucketMap(ctx, "demo", mapCreate.Root, "missing"); err == nil {
-		t.Fatal("expected ResolveBucketMap to fail for missing path")
+	if _, err := client.ResolveCurrentMap(ctx, mapCreate.Root, "missing"); err == nil {
+		t.Fatal("expected ResolveCurrentMap to fail for missing path")
 	}
 
-	mapSnapshot, err := client.SnapshotBucketMap(ctx, "demo", mapCreate.Root)
+	mapSnapshot, err := client.SnapshotCurrentMap(ctx, mapCreate.Root)
 	if err != nil {
-		t.Fatalf("SnapshotBucketMap: %v", err)
+		t.Fatalf("SnapshotCurrentMap: %v", err)
 	}
 	if mapSnapshot.Bindings["docs/readme.md"] != target {
-		t.Fatalf("SnapshotBucketMap binding = %q, want %q", mapSnapshot.Bindings["docs/readme.md"], target)
+		t.Fatalf("SnapshotCurrentMap binding = %q, want %q", mapSnapshot.Bindings["docs/readme.md"], target)
 	}
 
 	chunk1 := fakeCIDString("chunk1")
 	chunk2 := fakeCIDString("chunk2")
-	listCreate, err := client.CreateBucketList(ctx, "demo", []string{chunk1, chunk2}, 262144)
+	listCreate, err := client.CreateCurrentList(ctx, []string{chunk1, chunk2}, 262144)
 	if err != nil {
-		t.Fatalf("CreateBucketList: %v", err)
+		t.Fatalf("CreateCurrentList: %v", err)
 	}
 	if listCreate.ChunkCount != 2 || listCreate.ChunkSize != 262144 {
-		t.Fatalf("CreateBucketList response = %+v", listCreate)
+		t.Fatalf("CreateCurrentList response = %+v", listCreate)
 	}
 
-	listStat, err := client.GetBucketList(ctx, "demo", listCreate.Root)
+	listStat, err := client.GetCurrentList(ctx, listCreate.Root)
 	if err != nil {
-		t.Fatalf("GetBucketList: %v", err)
+		t.Fatalf("GetCurrentList: %v", err)
 	}
 	if listStat.ChunkCount != 2 || listStat.ChunkSize != 262144 {
-		t.Fatalf("GetBucketList response = %+v", listStat)
+		t.Fatalf("GetCurrentList response = %+v", listStat)
 	}
 }
 
@@ -462,10 +456,10 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
-	createResp, err := client.CreateBucketStructure(ctx, "demo", withPayloadBinding(map[string]string{
+	createResp, err := client.CreateCurrentStructure(ctx, withPayloadBinding(map[string]string{
 		"name": fakeCIDString("initial-name"),
 	}))
 	if err != nil {
@@ -473,7 +467,7 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 	}
 
 	nextName := fakeCIDString("next-name")
-	resp, err := client.ApplyBucketSemanticMutation(ctx, "demo", &httpapi.BucketSemanticMutationRequest{
+	resp, err := client.ApplyCurrentSemanticMutation(ctx, &httpapi.CurrentSemanticMutationRequest{
 		Puts: []httpapi.SemanticMutationPut{{
 			Object: createResp.Root,
 			Kind:   "map",
@@ -486,14 +480,14 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyBucketSemanticMutation: %v", err)
 	}
-	if resp.Bucket != "demo" || resp.BaseRoot != createResp.Root || resp.NewRoot == "" {
+	if resp.BaseRoot != createResp.Root || resp.NewRoot == "" {
 		t.Fatalf("unexpected semantic mutation response: %+v", resp)
 	}
 	if resp.PutCount != 1 || resp.ArcCount != 2 {
 		t.Fatalf("semantic mutation counts = puts %d arcs %d, want 1/2", resp.PutCount, resp.ArcCount)
 	}
 
-	meta, err := client.GetBucket(ctx, "demo")
+	meta, err := client.GetCurrentRoot(ctx)
 	if err != nil {
 		t.Fatalf("get bucket: %v", err)
 	}
@@ -501,7 +495,7 @@ func TestClientBucketSemanticMutation(t *testing.T) {
 		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", meta.Root, meta.ArcCount, resp.NewRoot)
 	}
 
-	resolved, err := client.ResolveBucket(ctx, "demo", "name")
+	resolved, err := client.ResolveCurrent(ctx, "name")
 	if err != nil {
 		t.Fatalf("resolve bucket: %v", err)
 	}
@@ -585,7 +579,7 @@ func TestClientBucketStatAndContent(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
@@ -593,21 +587,21 @@ func TestClientBucketStatAndContent(t *testing.T) {
 	rawCID := cidFromBytes(raw)
 	mockCAS.AddBlock(rawCID, raw)
 
-	if _, err := client.CreateBucketStructure(ctx, "demo", withPayloadBinding(map[string]string{"f.txt": rawCID.String()})); err != nil {
+	if _, err := client.CreateCurrentStructure(ctx, withPayloadBinding(map[string]string{"f.txt": rawCID.String()})); err != nil {
 		t.Fatalf("create structure: %v", err)
 	}
 
-	stat, err := client.StatBucketPath(ctx, "demo", "/f.txt")
+	stat, err := client.StatCurrentPath(ctx, "/f.txt")
 	if err != nil {
-		t.Fatalf("StatBucketPath: %v", err)
+		t.Fatalf("StatCurrentPath: %v", err)
 	}
 	if stat.Kind != "file" || stat.StorageKind != "raw" || stat.Size == nil || *stat.Size != int64(len(raw)) {
 		t.Fatalf("unexpected stat: %+v", stat)
 	}
 
-	body, status, _, err := client.GetBucketContent(ctx, "demo", "f.txt", "bytes=1-3")
+	body, status, _, err := client.GetCurrentContent(ctx, "f.txt", "bytes=1-3")
 	if err != nil {
-		t.Fatalf("GetBucketContent: %v", err)
+		t.Fatalf("GetCurrentContent: %v", err)
 	}
 	if status != 206 || string(body) != "bcd" {
 		t.Fatalf("unexpected status/body: %d %q", status, string(body))
@@ -631,16 +625,16 @@ func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
-	if _, err := client.AddBucketUnixFSFile(ctx, "demo", "f.txt", []byte("abcdef")); err != nil {
+	if _, err := client.AddCurrentUnixFSFile(ctx, "f.txt", []byte("abcdef")); err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}
 
-	resp, err := client.GetBucketContentProof(ctx, "demo", "f.txt", "bytes=1-3")
+	resp, err := client.GetCurrentContentProof(ctx, "f.txt", "bytes=1-3")
 	if err != nil {
-		t.Fatalf("GetBucketContentProof: %v", err)
+		t.Fatalf("GetCurrentContentProof: %v", err)
 	}
 	if string(resp.Content) != "bcd" {
 		t.Fatalf("content = %q, want bcd", resp.Content)
@@ -671,7 +665,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	if _, err := client.CreateBucket(ctx, "demo", ""); err != nil {
+	if _, err := client.GetCurrentRoot(ctx); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
@@ -685,7 +679,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put chunk2: %v", err)
 	}
-	listResp, err := client.CreateBucketList(ctx, "demo", []string{chunk1CID.String(), chunk2CID.String()}, 262144)
+	listResp, err := client.CreateCurrentList(ctx, []string{chunk1CID.String(), chunk2CID.String()}, 262144)
 	if err != nil {
 		t.Fatalf("create bucket list: %v", err)
 	}
@@ -698,14 +692,14 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	dirManifestCID := mustPutManifest(t, ctx, casClient, []string{"note.txt"})
 	rootManifestCID := mustPutManifest(t, ctx, casClient, []string{"dir", "large.bin"})
 
-	dirResp, err := client.CreateBucketMap(ctx, "demo", map[string]string{
+	dirResp, err := client.CreateCurrentMap(ctx, map[string]string{
 		"@payload": dirManifestCID.String(),
 		"note.txt": noteCID.String(),
 	})
 	if err != nil {
 		t.Fatalf("create dir map: %v", err)
 	}
-	rootResp, err := client.CreateBucketMap(ctx, "demo", map[string]string{
+	rootResp, err := client.CreateCurrentMap(ctx, map[string]string{
 		"@payload":     rootManifestCID.String(),
 		"dir":          dirResp.Root,
 		"dir/note.txt": noteCID.String(),
@@ -714,7 +708,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create root map: %v", err)
 	}
-	if err := client.SetBucketHead(ctx, "demo", rootResp.Root, 4, ""); err != nil {
+	if err := client.SetCurrentRoot(ctx, rootResp.Root, 4, ""); err != nil {
 		t.Fatalf("set bucket head: %v", err)
 	}
 
@@ -735,7 +729,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 	cfg.RPC.Listen = restartedTS.Listener.Addr().String()
 	restartedClient := New(cfg)
 
-	meta, err := restartedClient.GetBucket(ctx, "demo")
+	meta, err := restartedClient.GetCurrentRoot(ctx)
 	if err != nil {
 		t.Fatalf("get bucket after restart: %v", err)
 	}
@@ -743,7 +737,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 		t.Fatalf("bucket root after restart = %q, want %q", meta.Root, rootResp.Root)
 	}
 
-	body, status, _, err := restartedClient.GetBucketContent(ctx, "demo", "large.bin", "")
+	body, status, _, err := restartedClient.GetCurrentContent(ctx, "large.bin", "")
 	if err != nil {
 		t.Fatalf("read list-backed file after restart: status=%d err=%v", status, err)
 	}
@@ -754,7 +748,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 		t.Fatal("list-backed file tail mismatch after restart")
 	}
 
-	dirStat, err := restartedClient.StatBucketPath(ctx, "demo", "dir")
+	dirStat, err := restartedClient.StatCurrentPath(ctx, "dir")
 	if err != nil {
 		t.Fatalf("stat dir after restart: %v", err)
 	}
@@ -762,7 +756,7 @@ func TestClientBucketRestartSafety(t *testing.T) {
 		t.Fatalf("unexpected dir stat after restart: %+v", dirStat)
 	}
 
-	resolveResp, err := restartedClient.ResolveBucket(ctx, "demo", "dir")
+	resolveResp, err := restartedClient.ResolveCurrent(ctx, "dir")
 	if err != nil {
 		t.Fatalf("resolve dir after restart: %v", err)
 	}

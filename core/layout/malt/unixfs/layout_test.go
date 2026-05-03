@@ -39,7 +39,7 @@ func newLayout(t *testing.T, chunkSize int) *unixfs.Layout {
 	}
 
 	layout, err := unixfs.New(unixfs.Options{
-		BucketID:  "unixfs-" + strings.ReplaceAll(t.Name(), "/", "-"),
+		Namespace: "unixfs-" + strings.ReplaceAll(t.Name(), "/", "-"),
 		ChunkSize: chunkSize,
 		Map:       maps,
 		List:      lists,

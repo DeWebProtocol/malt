@@ -105,7 +105,7 @@ func (l *Layout) ListIndexStepsForFileRange(ctx context.Context, root cid.Cid, p
 	endIndex := (endOffset - 1) / info.chunkSize
 	steps := make([]ListIndexStep, 0, endIndex-startIndex+1)
 	for index := startIndex; index <= endIndex; index++ {
-		query, proof, err := l.lists.Prove(ctx, l.bucketID, info.payload, index)
+		query, proof, err := l.lists.Prove(ctx, l.namespace, info.payload, index)
 		if err != nil {
 			return nil, err
 		}

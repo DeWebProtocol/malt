@@ -1,9 +1,9 @@
-package bucketpath_test
+package querypath_test
 
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/bucketpath"
+	"github.com/dewebprotocol/malt/core/querypath"
 )
 
 func TestCanonicalizeQueryPath(t *testing.T) {
@@ -17,7 +17,7 @@ func TestCanonicalizeQueryPath(t *testing.T) {
 		{"/docs/readme.md", "docs/readme.md"},
 	}
 	for _, tc := range tests {
-		if got := bucketpath.CanonicalizeQueryPath(tc.in); got != tc.want {
+		if got := querypath.CanonicalizeQueryPath(tc.in); got != tc.want {
 			t.Errorf("CanonicalizeQueryPath(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}

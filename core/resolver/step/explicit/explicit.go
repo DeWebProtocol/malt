@@ -28,17 +28,17 @@ const (
 
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
-	arctable arctable.ArcTable
-	semantic mapping.Semantics
-	bucketId string
+	arctable  arctable.ArcTable
+	semantic  mapping.Semantics
+	namespace string
 }
 
 // NewResolver creates a new explicit arc resolver.
-func NewResolver(e arctable.ArcTable, semantic mapping.Semantics, bucketId string) *Resolver {
+func NewResolver(e arctable.ArcTable, semantic mapping.Semantics, namespace string) *Resolver {
 	return &Resolver{
-		arctable: e,
-		semantic: semantic,
-		bucketId: bucketId,
+		arctable:  e,
+		semantic:  semantic,
+		namespace: namespace,
 	}
 }
 
@@ -51,7 +51,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	start := time.Now()
 
 	logger.Debug("Resolver.Resolve started",
-		logger.String("bucket", r.bucketId),
+		logger.String("namespace", r.namespace),
 		logger.String("root", root.String()),
 		logger.String("path", path.String()))
 
@@ -73,10 +73,10 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	for i := len(segments); i > 0; i-- {
 		candidatePath := arcset.Path(strings.Join(segments[:i], "/"))
 
-		target, err := r.arctable.Get(ctx, r.bucketId, root, candidatePath)
+		target, err := r.arctable.Get(ctx, r.namespace, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
-			binding, proof, err := r.semantic.Prove(ctx, r.bucketId, root, candidatePath)
+			binding, proof, err := r.semantic.Prove(ctx, r.namespace, root, candidatePath)
 			if err != nil {
 				logger.Error("Resolver.Resolve prove failed",
 					logger.String("path", candidatePath.String()),
@@ -85,7 +85,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 			}
 
 			logger.Info("Resolver.Resolve completed",
-				logger.String("bucket", r.bucketId),
+				logger.String("namespace", r.namespace),
 				logger.String("root", root.String()),
 				logger.String("requested_path", path.String()),
 				logger.String("matched_path", candidatePath.String()),
@@ -101,7 +101,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	}
 
 	logger.Warn("Resolver.Resolve no match found",
-		logger.String("bucket", r.bucketId),
+		logger.String("namespace", r.namespace),
 		logger.String("root", root.String()),
 		logger.String("path", path.String()))
 
@@ -113,7 +113,7 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 	start := time.Now()
 
 	logger.Debug("Resolver.Verify started",
-		logger.String("bucket", r.bucketId),
+		logger.String("namespace", r.namespace),
 		logger.String("root", root.String()),
 		logger.String("path", path.String()))
 
@@ -138,7 +138,7 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 	}
 
 	logger.Debug("Resolver.Verify completed",
-		logger.String("bucket", r.bucketId),
+		logger.String("namespace", r.namespace),
 		logger.String("path", path.String()),
 		logger.Bool("valid", valid),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))

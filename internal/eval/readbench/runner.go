@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	// DefaultBucket is the prefix used for generated benchmark fixture buckets.
-	DefaultBucket         = "readbench"
+	// DefaultFixtureName is the prefix used for generated benchmark fixture fixtures.
+	DefaultFixtureName    = "readbench"
 	DefaultDirectoryDepth = 2
 	DefaultSmallFileBytes = 64
 	DefaultLargeFileBytes = 300 * 1024
@@ -27,7 +27,7 @@ const (
 	minListBackedFileBytes = 256*1024 + 1
 )
 
-var generatedBucketCounter atomic.Uint64
+var generatedFixtureCounter atomic.Uint64
 
 // OperationKind identifies the measured read operation.
 type OperationKind string
@@ -37,9 +37,9 @@ const (
 	OperationContentRange  OperationKind = "content_range"
 )
 
-// FixtureConfig controls the deterministic bucket fixture.
+// FixtureConfig controls the deterministic fixture fixture.
 type FixtureConfig struct {
-	Bucket         string
+	FixtureName    string
 	DirectoryDepth int
 	SmallFileBytes int
 	LargeFileBytes int
@@ -54,16 +54,16 @@ type RunConfig struct {
 
 // Fixture describes the deterministic MALT-only dataset.
 type Fixture struct {
-	Bucket    string
-	SmallPath string
-	LargePath string
+	FixtureName string
+	SmallPath   string
+	LargePath   string
 }
 
 // Result is one benchmark JSONL record.
 type Result struct {
 	OperationKind      OperationKind         `json:"operation_kind"`
 	Iteration          int                   `json:"iteration"`
-	Bucket             string                `json:"bucket"`
+	FixtureName        string                `json:"fixture"`
 	Path               string                `json:"path"`
 	RangeHeader        string                `json:"range_header,omitempty"`
 	ElapsedNS          int64                 `json:"elapsed_ns"`
@@ -94,7 +94,7 @@ func NewRunner(baseURL string) *Runner {
 	}
 }
 
-// PrepareFixture creates a deterministic MALT-only read fixture in a fresh bucket.
+// PrepareFixture creates a deterministic MALT-only read fixture under the current root.
 func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixture, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("read benchmark runner is nil")
@@ -104,23 +104,19 @@ func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixtur
 		return nil, err
 	}
 
-	if _, err := r.client.CreateBucket(ctx, normalized.Bucket, ""); err != nil {
-		return nil, fmt.Errorf("create bucket %q: %w", normalized.Bucket, err)
-	}
-
 	smallPath := fixturePath(normalized.DirectoryDepth, "small.txt")
 	largePath := fixturePath(normalized.DirectoryDepth, "large.bin")
-	if _, err := r.client.AddBucketUnixFSFile(ctx, normalized.Bucket, smallPath, deterministicBytes("small", normalized.SmallFileBytes)); err != nil {
+	if _, err := r.client.AddCurrentUnixFSFile(ctx, smallPath, deterministicBytes("small", normalized.SmallFileBytes)); err != nil {
 		return nil, fmt.Errorf("write small fixture: %w", err)
 	}
-	if _, err := r.client.AddBucketUnixFSFile(ctx, normalized.Bucket, largePath, deterministicBytes("large", normalized.LargeFileBytes)); err != nil {
+	if _, err := r.client.AddCurrentUnixFSFile(ctx, largePath, deterministicBytes("large", normalized.LargeFileBytes)); err != nil {
 		return nil, fmt.Errorf("write large fixture: %w", err)
 	}
 
 	return &Fixture{
-		Bucket:    normalized.Bucket,
-		SmallPath: smallPath,
-		LargePath: largePath,
+		FixtureName: normalized.FixtureName,
+		SmallPath:   smallPath,
+		LargePath:   largePath,
 	}, nil
 }
 
@@ -148,7 +144,7 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 	enc := json.NewEncoder(w)
 	for iteration := 0; iteration < normalized.Iterations; iteration++ {
 		for _, op := range ops {
-			result, err := r.measureOperation(ctx, iteration, fixture.Bucket, op)
+			result, err := r.measureOperation(ctx, iteration, fixture.FixtureName, op)
 			if err != nil {
 				return err
 			}
@@ -160,7 +156,7 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 	return nil
 }
 
-func (r *Runner) measureOperation(ctx context.Context, iteration int, bucket string, op operation) (*Result, error) {
+func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture string, op operation) (*Result, error) {
 	if err := r.resetMetrics(ctx); err != nil {
 		return nil, fmt.Errorf("reset metrics before %s: %w", op.kind, err)
 	}
@@ -173,14 +169,14 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, bucket str
 	)
 	switch op.kind {
 	case OperationProofListPath:
-		resp, err := r.client.ProofListBucket(ctx, bucket, op.path)
+		resp, err := r.client.ProofListCurrent(ctx, op.path)
 		if err != nil {
 			return nil, fmt.Errorf("prooflist read %q: %w", op.path, err)
 		}
 		target = resp.Target
 		stepCount = len(resp.ProofList.Steps)
 	case OperationContentRange:
-		resp, err := r.client.GetBucketContentProof(ctx, bucket, op.path, op.rangeHeader)
+		resp, err := r.client.GetCurrentContentProof(ctx, op.path, op.rangeHeader)
 		if err != nil {
 			return nil, fmt.Errorf("content range read %q: %w", op.path, err)
 		}
@@ -201,7 +197,7 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, bucket str
 	return &Result{
 		OperationKind:      op.kind,
 		Iteration:          iteration,
-		Bucket:             bucket,
+		FixtureName:        fixture,
 		Path:               op.path,
 		RangeHeader:        op.rangeHeader,
 		ElapsedNS:          elapsed,
@@ -250,10 +246,10 @@ func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 }
 
 func normalizeFixtureConfig(cfg FixtureConfig) (FixtureConfig, error) {
-	if bucket := strings.TrimSpace(cfg.Bucket); bucket == "" {
-		cfg.Bucket = defaultFixtureBucket()
+	if fixture := strings.TrimSpace(cfg.FixtureName); fixture == "" {
+		cfg.FixtureName = defaultFixtureFixtureName()
 	} else {
-		cfg.Bucket = bucket
+		cfg.FixtureName = fixture
 	}
 	if cfg.DirectoryDepth < 0 {
 		return FixtureConfig{}, fmt.Errorf("directory depth must be non-negative")
@@ -273,8 +269,8 @@ func normalizeFixtureConfig(cfg FixtureConfig) (FixtureConfig, error) {
 	return cfg, nil
 }
 
-func defaultFixtureBucket() string {
-	return fmt.Sprintf("%s-%d-%d", DefaultBucket, time.Now().UTC().UnixNano(), generatedBucketCounter.Add(1))
+func defaultFixtureFixtureName() string {
+	return fmt.Sprintf("%s-%d-%d", DefaultFixtureName, time.Now().UTC().UnixNano(), generatedFixtureCounter.Add(1))
 }
 
 func fixturePath(depth int, filename string) string {

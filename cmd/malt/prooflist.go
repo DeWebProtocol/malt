@@ -10,16 +10,16 @@ import (
 
 func init() {
 	rootCmd.AddCommand(proofListCmd)
-	proofListCmd.Flags().StringVarP(&proofListBucketID, "bucket", "b", "", "Generate a ProofList from the managed bucket head instead of an explicit root")
+	proofListCmd.Flags().BoolVar(&proofListCurrent, "current", false, "Generate a ProofList from the current root instead of an explicit root")
 }
 
-var proofListBucketID string
+var proofListCurrent bool
 
 var proofListCmd = &cobra.Command{
 	Use:   "prooflist [<root>] <path>",
 	Short: "Generate verifier-facing ProofList evidence for a path",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if proofListBucketID != "" {
+		if proofListCurrent {
 			return cobra.ExactArgs(1)(cmd, args)
 		}
 		return cobra.ExactArgs(2)(cmd, args)
@@ -34,8 +34,8 @@ func runProofList(cmd *cobra.Command, args []string) error {
 		result *httpapi.ProofListResponse
 		err    error
 	)
-	if proofListBucketID != "" {
-		result, err = client.ProofListBucket(cmd.Context(), proofListBucketID, args[0])
+	if proofListCurrent {
+		result, err = client.ProofListCurrent(cmd.Context(), args[0])
 	} else {
 		result, err = client.ProofListRoot(cmd.Context(), args[0], args[1])
 	}

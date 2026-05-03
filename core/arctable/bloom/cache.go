@@ -12,22 +12,22 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore"
 )
 
-// BucketMeta holds metadata for a bucket.
-type BucketMeta struct {
-	Config        BucketConfig `json:"config"`
-	CreatedAt     time.Time    `json:"createdAt"`
-	LastUpdatedAt time.Time    `json:"lastUpdatedAt,omitempty"`
+// NamespaceMeta holds metadata for a namespace.
+type NamespaceMeta struct {
+	Config        NamespaceConfig `json:"config"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	LastUpdatedAt time.Time       `json:"lastUpdatedAt,omitempty"`
 }
 
-// BucketConfig holds bloom filter configuration for a bucket.
-type BucketConfig struct {
+// NamespaceConfig holds bloom filter configuration for a namespace.
+type NamespaceConfig struct {
 	ExpectedItems     int     `json:"expectedItems"`
 	FalsePositiveRate float64 `json:"falsePositiveRate"`
 }
 
-// DefaultBucketConfig returns the default bucket configuration.
-func DefaultBucketConfig() *BucketConfig {
-	return &BucketConfig{
+// DefaultNamespaceConfig returns the default namespace configuration.
+func DefaultNamespaceConfig() *NamespaceConfig {
+	return &NamespaceConfig{
 		ExpectedItems:     DefaultExpectedItems,
 		FalsePositiveRate: DefaultFalsePositiveRate,
 	}
@@ -39,7 +39,7 @@ type cacheEntry struct {
 	filter *StandardBloom
 }
 
-// BloomCache is an independent component that manages bloom filters for all buckets.
+// BloomCache is an independent component that manages bloom filters for all namespaces.
 // It provides LRU caching and persistence via KVStore.
 type BloomCache struct {
 	kv      kvstore.KVStore
@@ -49,8 +49,8 @@ type BloomCache struct {
 	items    map[string]*list.Element
 	eviction *list.List
 
-	// Default config for new buckets
-	defaultConfig *BucketConfig
+	// Default config for new namespaces
+	defaultConfig *NamespaceConfig
 }
 
 // NewBloomCache creates a new BloomCache with the given KVStore and cache size.
@@ -63,17 +63,17 @@ func NewBloomCache(kv kvstore.KVStore, maxSize int) *BloomCache {
 		maxSize:       maxSize,
 		items:         make(map[string]*list.Element),
 		eviction:      list.New(),
-		defaultConfig: DefaultBucketConfig(),
+		defaultConfig: DefaultNamespaceConfig(),
 	}
 }
 
 // NewBloomCacheWithConfig creates a new BloomCache with custom default config.
-func NewBloomCacheWithConfig(kv kvstore.KVStore, maxSize int, defaultConfig *BucketConfig) *BloomCache {
+func NewBloomCacheWithConfig(kv kvstore.KVStore, maxSize int, defaultConfig *NamespaceConfig) *BloomCache {
 	if maxSize <= 0 {
 		maxSize = 100
 	}
 	if defaultConfig == nil {
-		defaultConfig = DefaultBucketConfig()
+		defaultConfig = DefaultNamespaceConfig()
 	}
 	return &BloomCache{
 		kv:            kv,
@@ -139,51 +139,51 @@ func (bc *BloomCache) cacheSize() int {
 	return bc.eviction.Len()
 }
 
-// bucketMetaKey returns the KVStore key for bucket metadata.
-func bucketMetaKey(bucketId string) []byte {
-	return []byte("bucket:" + bucketId + ":meta")
+// namespaceMetaKey returns the KVStore key for namespace metadata.
+func namespaceMetaKey(namespace string) []byte {
+	return []byte("namespace:" + namespace + ":meta")
 }
 
-// bucketBloomKey returns the KVStore key for bucket bloom filter.
-func bucketBloomKey(bucketId string) []byte {
-	return []byte("bucket:" + bucketId + ":bloom")
+// namespaceBloomKey returns the KVStore key for namespace bloom filter.
+func namespaceBloomKey(namespace string) []byte {
+	return []byte("namespace:" + namespace + ":bloom")
 }
 
-// GetBucketMeta retrieves bucket metadata from KVStore.
-func (bc *BloomCache) GetBucketMeta(ctx context.Context, bucketId string) (*BucketMeta, error) {
-	key := bucketMetaKey(bucketId)
+// GetNamespaceMeta retrieves namespace metadata from KVStore.
+func (bc *BloomCache) GetNamespaceMeta(ctx context.Context, namespace string) (*NamespaceMeta, error) {
+	key := namespaceMetaKey(namespace)
 	data, err := bc.kv.Get(ctx, key)
 	if err == kvstore.ErrNotFound {
 		return nil, nil // Not found
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bucket meta: %w", err)
+		return nil, fmt.Errorf("failed to get namespace meta: %w", err)
 	}
 
-	var meta BucketMeta
+	var meta NamespaceMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal bucket meta: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal namespace meta: %w", err)
 	}
 
 	return &meta, nil
 }
 
-// CreateBucket creates a new bucket with the given configuration.
-// It persists the bucket metadata and initializes an empty bloom filter.
-func (bc *BloomCache) CreateBucket(ctx context.Context, bucketId string, cfg *BucketConfig) error {
+// CreateNamespace creates a new namespace with the given configuration.
+// It persists the namespace metadata and initializes an empty bloom filter.
+func (bc *BloomCache) CreateNamespace(ctx context.Context, namespace string, cfg *NamespaceConfig) error {
 	if cfg == nil {
 		cfg = bc.defaultConfig
 	}
 
-	// Check if bucket already exists
-	if meta, err := bc.GetBucketMeta(ctx, bucketId); err != nil {
-		return fmt.Errorf("failed to check bucket existence: %w", err)
+	// Check if namespace already exists
+	if meta, err := bc.GetNamespaceMeta(ctx, namespace); err != nil {
+		return fmt.Errorf("failed to check namespace existence: %w", err)
 	} else if meta != nil {
-		return fmt.Errorf("bucket %s already exists", bucketId)
+		return fmt.Errorf("namespace %s already exists", namespace)
 	}
 
-	// Create bucket metadata
-	meta := &BucketMeta{
+	// Create namespace metadata
+	meta := &NamespaceMeta{
 		Config:    *cfg,
 		CreatedAt: time.Now(),
 	}
@@ -191,13 +191,13 @@ func (bc *BloomCache) CreateBucket(ctx context.Context, bucketId string, cfg *Bu
 	// Persist metadata
 	metaData, err := json.Marshal(meta)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bucket meta: %w", err)
+		return fmt.Errorf("failed to marshal namespace meta: %w", err)
 	}
 
 	batch := bc.kv.Batch()
-	if err := batch.Put(bucketMetaKey(bucketId), metaData); err != nil {
+	if err := batch.Put(namespaceMetaKey(namespace), metaData); err != nil {
 		batch.Cancel()
-		return fmt.Errorf("failed to put bucket meta: %w", err)
+		return fmt.Errorf("failed to put namespace meta: %w", err)
 	}
 
 	// Initialize empty bloom filter
@@ -208,61 +208,61 @@ func (bc *BloomCache) CreateBucket(ctx context.Context, bucketId string, cfg *Bu
 		return fmt.Errorf("failed to marshal bloom filter: %w", err)
 	}
 
-	if err := batch.Put(bucketBloomKey(bucketId), bloomData); err != nil {
+	if err := batch.Put(namespaceBloomKey(namespace), bloomData); err != nil {
 		batch.Cancel()
 		return fmt.Errorf("failed to put bloom filter: %w", err)
 	}
 
 	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit bucket creation: %w", err)
+		return fmt.Errorf("failed to commit namespace creation: %w", err)
 	}
 
 	// Cache the bloom filter
-	bc.cacheSet(bucketId, filter)
+	bc.cacheSet(namespace, filter)
 
 	return nil
 }
 
-// DeleteBucket deletes a bucket and its bloom filter.
-func (bc *BloomCache) DeleteBucket(ctx context.Context, bucketId string) error {
+// DeleteNamespace deletes a namespace and its bloom filter.
+func (bc *BloomCache) DeleteNamespace(ctx context.Context, namespace string) error {
 	batch := bc.kv.Batch()
 
-	if err := batch.Delete(bucketMetaKey(bucketId)); err != nil {
+	if err := batch.Delete(namespaceMetaKey(namespace)); err != nil {
 		batch.Cancel()
-		return fmt.Errorf("failed to delete bucket meta: %w", err)
+		return fmt.Errorf("failed to delete namespace meta: %w", err)
 	}
 
-	if err := batch.Delete(bucketBloomKey(bucketId)); err != nil {
+	if err := batch.Delete(namespaceBloomKey(namespace)); err != nil {
 		batch.Cancel()
 		return fmt.Errorf("failed to delete bloom filter: %w", err)
 	}
 
 	if err := batch.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit bucket deletion: %w", err)
+		return fmt.Errorf("failed to commit namespace deletion: %w", err)
 	}
 
 	// Remove from cache
-	bc.cacheDelete(bucketId)
+	bc.cacheDelete(namespace)
 
 	return nil
 }
 
-// Get retrieves the bloom filter for a bucket.
+// Get retrieves the bloom filter for a namespace.
 // It first checks the cache, then loads from KVStore if not found.
-// If the bucket doesn't exist, it creates one with default config.
-func (bc *BloomCache) Get(ctx context.Context, bucketId string) (*StandardBloom, error) {
+// If the namespace doesn't exist, it creates one with default config.
+func (bc *BloomCache) Get(ctx context.Context, namespace string) (*StandardBloom, error) {
 	// Check cache first
-	if filter := bc.cacheGet(bucketId); filter != nil {
+	if filter := bc.cacheGet(namespace); filter != nil {
 		return filter, nil
 	}
 
 	// Load from KVStore
-	key := bucketBloomKey(bucketId)
+	key := namespaceBloomKey(namespace)
 	data, err := bc.kv.Get(ctx, key)
 	if err == kvstore.ErrNotFound {
-		// Bucket doesn't exist, create with default config
-		if err := bc.CreateBucket(ctx, bucketId, nil); err != nil {
-			return nil, fmt.Errorf("failed to create bucket: %w", err)
+		// Namespace doesn't exist, create with default config
+		if err := bc.CreateNamespace(ctx, namespace, nil); err != nil {
+			return nil, fmt.Errorf("failed to create namespace: %w", err)
 		}
 		// Try loading again
 		data, err = bc.kv.Get(ctx, key)
@@ -281,14 +281,14 @@ func (bc *BloomCache) Get(ctx context.Context, bucketId string) (*StandardBloom,
 	}
 
 	// Cache it
-	bc.cacheSet(bucketId, filter)
+	bc.cacheSet(namespace, filter)
 
 	return filter, nil
 }
 
-// MightContain checks if a path might exist in a bucket using the bloom filter.
-func (bc *BloomCache) MightContain(ctx context.Context, bucketId string, path string) (bool, error) {
-	filter, err := bc.Get(ctx, bucketId)
+// MightContain checks if a path might exist in a namespace using the bloom filter.
+func (bc *BloomCache) MightContain(ctx context.Context, namespace string, path string) (bool, error) {
+	filter, err := bc.Get(ctx, namespace)
 	if err != nil {
 		return true, err // On error, conservatively return true
 	}
@@ -296,8 +296,8 @@ func (bc *BloomCache) MightContain(ctx context.Context, bucketId string, path st
 }
 
 // MightContainBatch checks multiple paths at once using the bloom filter.
-func (bc *BloomCache) MightContainBatch(ctx context.Context, bucketId string, paths []string) (map[string]bool, error) {
-	filter, err := bc.Get(ctx, bucketId)
+func (bc *BloomCache) MightContainBatch(ctx context.Context, namespace string, paths []string) (map[string]bool, error) {
+	filter, err := bc.Get(ctx, namespace)
 	if err != nil {
 		result := make(map[string]bool, len(paths))
 		for _, p := range paths {
@@ -313,9 +313,9 @@ func (bc *BloomCache) MightContainBatch(ctx context.Context, bucketId string, pa
 	return result, nil
 }
 
-// Add adds paths to a bucket's bloom filter and persists it.
-func (bc *BloomCache) Add(ctx context.Context, bucketId string, paths []string) error {
-	filter, err := bc.Get(ctx, bucketId)
+// Add adds paths to a namespace's bloom filter and persists it.
+func (bc *BloomCache) Add(ctx context.Context, namespace string, paths []string) error {
+	filter, err := bc.Get(ctx, namespace)
 	if err != nil {
 		return err
 	}
@@ -331,7 +331,7 @@ func (bc *BloomCache) Add(ctx context.Context, bucketId string, paths []string) 
 		return fmt.Errorf("failed to marshal bloom filter: %w", err)
 	}
 
-	key := bucketBloomKey(bucketId)
+	key := namespaceBloomKey(namespace)
 	if err := bc.kv.Put(ctx, key, bloomData); err != nil {
 		return fmt.Errorf("failed to persist bloom filter: %w", err)
 	}
@@ -339,26 +339,26 @@ func (bc *BloomCache) Add(ctx context.Context, bucketId string, paths []string) 
 	return nil
 }
 
-// UpdateBucketMeta updates the bucket metadata.
-func (bc *BloomCache) UpdateBucketMeta(ctx context.Context, bucketId string, meta *BucketMeta) error {
+// UpdateNamespaceMeta updates the namespace metadata.
+func (bc *BloomCache) UpdateNamespaceMeta(ctx context.Context, namespace string, meta *NamespaceMeta) error {
 	meta.LastUpdatedAt = time.Now()
 
 	data, err := json.Marshal(meta)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bucket meta: %w", err)
+		return fmt.Errorf("failed to marshal namespace meta: %w", err)
 	}
 
-	key := bucketMetaKey(bucketId)
+	key := namespaceMetaKey(namespace)
 	if err := bc.kv.Put(ctx, key, data); err != nil {
-		return fmt.Errorf("failed to persist bucket meta: %w", err)
+		return fmt.Errorf("failed to persist namespace meta: %w", err)
 	}
 
 	return nil
 }
 
-// Invalidate removes a bucket's bloom filter from the cache.
-func (bc *BloomCache) Invalidate(bucketId string) {
-	bc.cacheDelete(bucketId)
+// Invalidate removes a namespace's bloom filter from the cache.
+func (bc *BloomCache) Invalidate(namespace string) {
+	bc.cacheDelete(namespace)
 }
 
 // Clear removes all entries from the cache.
@@ -371,7 +371,7 @@ func (bc *BloomCache) Size() int {
 	return bc.cacheSize()
 }
 
-// DefaultConfig returns the default bucket configuration.
-func (bc *BloomCache) DefaultConfig() *BucketConfig {
+// DefaultConfig returns the default namespace configuration.
+func (bc *BloomCache) DefaultConfig() *NamespaceConfig {
 	return bc.defaultConfig
 }

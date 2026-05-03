@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/bucketpath"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/gateway"
@@ -22,6 +21,7 @@ import (
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/manifest"
+	"github.com/dewebprotocol/malt/core/querypath"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/core/structure/list"
@@ -34,7 +34,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-const fixedBucketListChunkSize = 262144
+const fixedListChunkSize = 262144
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.HealthResponse{Status: "ok"})
@@ -49,87 +49,17 @@ func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.MetricsResponse{Snapshot: s.node.MetricsSnapshot()})
 }
 
-func (s *Server) handleBucketCreate(w http.ResponseWriter, r *http.Request) {
-	var req httpapi.BucketCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-	if req.ID == "" {
-		writeError(w, http.StatusBadRequest, "bucket id is required")
-		return
-	}
-
-	meta, err := s.node.CreateManagedGraph(r.Context(), req.ID, req.Backend)
+func (s *Server) handleCurrentRootGet(w http.ResponseWriter, r *http.Request) {
+	meta, _, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, graph.ErrAlreadyExists) {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err.Error())
+		writeManagedGraphError(w, err)
 		return
 	}
-
-	writeJSON(w, http.StatusCreated, &httpapi.BucketResponse{Bucket: bucketToResponse(meta)})
+	writeJSON(w, http.StatusOK, currentRootResponse(meta))
 }
 
-func (s *Server) handleBucketList(w http.ResponseWriter, r *http.Request) {
-	graphs, err := s.gm.ListGraphs(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	resp := &httpapi.BucketListResponse{Buckets: make([]*httpapi.Bucket, len(graphs))}
-	for i, meta := range graphs {
-		resp.Buckets[i] = bucketToResponse(meta)
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleBucketGet(w http.ResponseWriter, r *http.Request) {
-	meta, err := s.gm.GetGraph(r.Context(), r.PathValue("id"))
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, graph.ErrNotFound) || errors.Is(err, graph.ErrDeleted) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, &httpapi.BucketResponse{Bucket: bucketToResponse(meta)})
-}
-
-func (s *Server) handleBucketDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.gm.DeleteGraph(r.Context(), r.PathValue("id")); err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, graph.ErrNotFound) || errors.Is(err, graph.ErrDeleted) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-func (s *Server) handleBucketFreeze(w http.ResponseWriter, r *http.Request) {
-	if err := s.gm.FreezeGraph(r.Context(), r.PathValue("id")); err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, graph.ErrNotFound) || errors.Is(err, graph.ErrDeleted) {
-			status = http.StatusNotFound
-		}
-		if errors.Is(err, graph.ErrInvalidState) {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "frozen"})
-}
-
-func (s *Server) handleBucketCreateStructure(w http.ResponseWriter, r *http.Request) {
-	graphID := r.PathValue("id")
-	_, g, err := s.openManagedGraph(r.Context(), graphID, true)
+func (s *Server) handleCurrentCreateStructure(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -155,12 +85,12 @@ func (s *Server) handleBucketCreateStructure(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	root, err := g.Writer().CreateStructure(r.Context(), g.BucketId(), snapshot)
+	root, err := g.Writer().CreateStructure(r.Context(), g.Namespace(), snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.updateManagedGraphHead(r.Context(), graphID, root, arcCount); err != nil {
+	if err := s.updateCurrentRoot(r.Context(), root, arcCount); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -168,17 +98,14 @@ func (s *Server) handleBucketCreateStructure(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, &httpapi.CreateStructureResponse{Root: root.String()})
 }
 
-func (s *Server) handleBucketHeadSet(w http.ResponseWriter, r *http.Request) {
-	bucketID := r.PathValue("id")
-
-	// Require active bucket.
-	meta, g, err := s.openManagedGraph(r.Context(), bucketID, true)
+func (s *Server) handleCurrentRootSet(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	var req httpapi.BucketHeadSetRequest
+	var req httpapi.CurrentRootSetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
@@ -204,7 +131,7 @@ func (s *Server) handleBucketHeadSet(w http.ResponseWriter, r *http.Request) {
 	if _, err := mandatoryMapPayload(r.Context(), g, newRoot); err != nil {
 		if !s.validUnixFSRoot(r.Context(), g, newRoot) {
 			if errors.Is(err, writer.ErrArcNotFound) {
-				writeError(w, http.StatusBadRequest, "new_root must resolve to a map root in this bucket with a mandatory @payload binding")
+				writeError(w, http.StatusBadRequest, "new_root must resolve to a map root with a mandatory @payload binding")
 				return
 			}
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -226,7 +153,7 @@ func (s *Server) handleBucketHeadSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldRoot := meta.Root
-	if err := s.updateManagedGraphHead(r.Context(), bucketID, newRoot, req.ArcCount); err != nil {
+	if err := s.updateCurrentRoot(r.Context(), newRoot, req.ArcCount); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -239,15 +166,14 @@ func (s *Server) handleBucketHeadSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Request) {
-	bucketID := r.PathValue("id")
-	meta, g, err := s.openManagedGraph(r.Context(), bucketID, true)
+func (s *Server) handleCurrentSemanticMutation(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	var req httpapi.BucketSemanticMutationRequest
+	var req httpapi.CurrentSemanticMutationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
@@ -272,12 +198,12 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if len(mut.Puts) == 0 || mut.Puts[len(mut.Puts)-1].Kind != arcset.KindMap {
-		writeError(w, http.StatusBadRequest, "semantic mutation result must be a map bucket head")
+		writeError(w, http.StatusBadRequest, "semantic mutation result must be a map current root")
 		return
 	}
 
 	exec := gateway.Executor{
-		Namespace: bucketID,
+		Namespace: g.Namespace(),
 		Maps:      g.Semantic(),
 		Lists:     g.ListSemantic(),
 		ArcTable:  s.node.ArcTable(),
@@ -288,7 +214,7 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
-		writeError(w, http.StatusBadRequest, "semantic mutation result must be a map bucket head")
+		writeError(w, http.StatusBadRequest, "semantic mutation result must be a map current root")
 		return
 	}
 	if _, err := mandatoryMapPayload(r.Context(), g, receipt.NewRoot); err != nil {
@@ -300,7 +226,7 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := s.updateManagedGraphHead(r.Context(), bucketID, receipt.NewRoot, receipt.ArcCount); err != nil {
+	if err := s.updateCurrentRoot(r.Context(), receipt.NewRoot, receipt.ArcCount); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -308,8 +234,7 @@ func (s *Server) handleBucketSemanticMutation(w http.ResponseWriter, r *http.Req
 		_ = lm.Record(r.Context(), receipt.NewRoot, receipt.BaseRoot, receipt.ArcCount)
 	}
 
-	writeJSON(w, http.StatusCreated, &httpapi.BucketSemanticMutationResponse{
-		Bucket:   bucketID,
+	writeJSON(w, http.StatusCreated, &httpapi.CurrentSemanticMutationResponse{
 		BaseRoot: receipt.BaseRoot.String(),
 		NewRoot:  receipt.NewRoot.String(),
 		PutCount: receipt.PutCount,
@@ -342,7 +267,7 @@ func (s *Server) handleRootSemanticMutation(w http.ResponseWriter, r *http.Reque
 	}
 
 	exec := gateway.Executor{
-		Namespace: g.BucketId(),
+		Namespace: g.Namespace(),
 		Maps:      g.Semantic(),
 		Lists:     g.ListSemantic(),
 		ArcTable:  s.node.ArcTable(),
@@ -364,14 +289,14 @@ func (s *Server) handleRootSemanticMutation(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (s *Server) handleBucketMapsCreate(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), true)
+func (s *Server) handleCurrentMapsCreate(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	var req httpapi.BucketMapCreateRequest
+	var req httpapi.MapCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
@@ -391,16 +316,16 @@ func (s *Server) handleBucketMapsCreate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	root, err := g.Writer().CreateStructure(r.Context(), g.BucketId(), snapshot)
+	root, err := g.Writer().CreateStructure(r.Context(), g.Namespace(), snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, &httpapi.BucketMapCreateResponse{Root: root.String()})
+	writeJSON(w, http.StatusCreated, &httpapi.MapCreateResponse{Root: root.String()})
 }
 
-func (s *Server) handleBucketMapsSnapshot(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentMapsSnapshot(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -425,14 +350,14 @@ func (s *Server) handleBucketMapsSnapshot(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, &httpapi.BucketMapSnapshotResponse{
+	writeJSON(w, http.StatusOK, &httpapi.MapSnapshotResponse{
 		Root:     root.String(),
 		Bindings: bindings,
 	})
 }
 
-func (s *Server) handleBucketMapsResolve(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentMapsResolve(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -447,7 +372,7 @@ func (s *Server) handleBucketMapsResolve(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	path := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	path := querypath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
 	result, err := g.Resolver().ResolveKey(root, path)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -461,11 +386,11 @@ func (s *Server) handleBucketMapsResolve(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, errPathNotFound.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, &httpapi.BucketMapResolveResponse{Key: result.Target.String()})
+	writeJSON(w, http.StatusOK, &httpapi.MapResolveResponse{Key: result.Target.String()})
 }
 
-func (s *Server) handleBucketMapsUpdate(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), true)
+func (s *Server) handleCurrentMapsUpdate(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -500,7 +425,7 @@ func (s *Server) handleBucketMapsUpdate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().UpdateArc(r.Context(), g.BucketId(), root, req.Path, target)
+	result, err := g.Writer().UpdateArc(r.Context(), g.Namespace(), root, req.Path, target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -508,8 +433,8 @@ func (s *Server) handleBucketMapsUpdate(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, updateResponse(result))
 }
 
-func (s *Server) handleBucketMapsBatchUpdate(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), true)
+func (s *Server) handleCurrentMapsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -538,7 +463,7 @@ func (s *Server) handleBucketMapsBatchUpdate(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.BucketId(), root, parsedUpdates)
+	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.Namespace(), root, parsedUpdates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -546,20 +471,20 @@ func (s *Server) handleBucketMapsBatchUpdate(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, batchResponse(result))
 }
 
-func (s *Server) handleBucketListsCreate(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), true)
+func (s *Server) handleCurrentListsCreate(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	var req httpapi.BucketListCreateRequest
+	var req httpapi.ListCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
 	}
-	if req.ChunkSize != fixedBucketListChunkSize {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("chunk_size must be %d", fixedBucketListChunkSize))
+	if req.ChunkSize != fixedListChunkSize {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("chunk_size must be %d", fixedListChunkSize))
 		return
 	}
 
@@ -573,20 +498,20 @@ func (s *Server) handleBucketListsCreate(w http.ResponseWriter, r *http.Request)
 		chunks[i] = c
 	}
 
-	root, err := g.ListSemantic().Commit(r.Context(), g.BucketId(), list.NewViewFromSlice(chunks))
+	root, err := g.ListSemantic().Commit(r.Context(), g.Namespace(), list.NewViewFromSlice(chunks))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, &httpapi.BucketListStatResponse{
+	writeJSON(w, http.StatusCreated, &httpapi.ListStatResponse{
 		Root:       root.String(),
 		ChunkCount: len(chunks),
-		ChunkSize:  fixedBucketListChunkSize,
+		ChunkSize:  fixedListChunkSize,
 	})
 }
 
-func (s *Server) handleBucketListsGet(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentListsGet(w http.ResponseWriter, r *http.Request) {
+	_, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -602,27 +527,26 @@ func (s *Server) handleBucketListsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query out-of-range to get authenticated length.
-	q, _, err := g.ListSemantic().Prove(r.Context(), g.BucketId(), root, ^uint64(0))
+	q, _, err := g.ListSemantic().Prove(r.Context(), g.Namespace(), root, ^uint64(0))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, &httpapi.BucketListStatResponse{
+	writeJSON(w, http.StatusOK, &httpapi.ListStatResponse{
 		Root:       root.String(),
 		ChunkCount: int(q.Length),
-		ChunkSize:  fixedBucketListChunkSize,
+		ChunkSize:  fixedListChunkSize,
 	})
 }
 
-func (s *Server) handleBucketUnixFSFile(w http.ResponseWriter, r *http.Request) {
-	graphID := r.PathValue("id")
-	meta, g, err := s.openManagedGraph(r.Context(), graphID, true)
+func (s *Server) handleCurrentUnixFSFile(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	p := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	p := querypath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
 	if p == "" {
 		writeError(w, http.StatusBadRequest, "path is required")
 		return
@@ -653,18 +577,17 @@ func (s *Server) handleBucketUnixFSFile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), graphID, g, layout, oldRoot, newRoot)
+	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), g, layout, oldRoot, newRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.publishUnixFSReceipt(r.Context(), graphID, oldRoot, receipt); err != nil {
+	if err := s.publishUnixFSReceipt(r.Context(), oldRoot, receipt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	resp := &httpapi.BucketUnixFSWriteResponse{
-		Bucket:   graphID,
+	resp := &httpapi.UnixFSWriteResponse{
 		Path:     p,
 		Kind:     "file",
 		NewRoot:  receipt.NewRoot.String(),
@@ -676,15 +599,14 @@ func (s *Server) handleBucketUnixFSFile(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (s *Server) handleBucketUnixFSDirectory(w http.ResponseWriter, r *http.Request) {
-	graphID := r.PathValue("id")
-	meta, g, err := s.openManagedGraph(r.Context(), graphID, true)
+func (s *Server) handleCurrentUnixFSDirectory(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	p := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	p := querypath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -705,18 +627,17 @@ func (s *Server) handleBucketUnixFSDirectory(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), graphID, g, layout, oldRoot, newRoot)
+	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), g, layout, oldRoot, newRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.publishUnixFSReceipt(r.Context(), graphID, oldRoot, receipt); err != nil {
+	if err := s.publishUnixFSReceipt(r.Context(), oldRoot, receipt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	resp := &httpapi.BucketUnixFSWriteResponse{
-		Bucket:   graphID,
+	resp := &httpapi.UnixFSWriteResponse{
 		Path:     p,
 		Kind:     "dir",
 		NewRoot:  receipt.NewRoot.String(),
@@ -728,15 +649,14 @@ func (s *Server) handleBucketUnixFSDirectory(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (s *Server) handleBucketUnixFSBatch(w http.ResponseWriter, r *http.Request) {
-	bucketID := r.PathValue("id")
-	meta, g, err := s.openManagedGraph(r.Context(), bucketID, true)
+func (s *Server) handleCurrentUnixFSBatch(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
 	}
 
-	var req httpapi.BucketUnixFSBatchRequest
+	var req httpapi.UnixFSBatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
@@ -783,17 +703,17 @@ func (s *Server) handleBucketUnixFSBatch(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	root, err := g.Semantic().Commit(r.Context(), bucketID, mapping.NewViewFromPaths(bindings))
+	root, err := g.Semantic().Commit(r.Context(), g.Namespace(), mapping.NewViewFromPaths(bindings))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.node.ArcTable().Update(r.Context(), bucketID, root, cid.Undef, snapshot); err != nil {
+	if err := s.node.ArcTable().Update(r.Context(), g.Namespace(), root, cid.Undef, snapshot); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	arcCount := countDefinedCIDBindings(bindings)
-	if err := s.updateManagedGraphHead(r.Context(), bucketID, root, arcCount); err != nil {
+	if err := s.updateCurrentRoot(r.Context(), root, arcCount); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -801,8 +721,7 @@ func (s *Server) handleBucketUnixFSBatch(w http.ResponseWriter, r *http.Request)
 		_ = lm.Record(r.Context(), root, oldRoot, arcCount)
 	}
 
-	resp := &httpapi.BucketUnixFSBatchResponse{
-		Bucket:   bucketID,
+	resp := &httpapi.UnixFSBatchResponse{
 		NewRoot:  root.String(),
 		PutCount: 1,
 		ArcCount: arcCount,
@@ -813,8 +732,8 @@ func (s *Server) handleBucketUnixFSBatch(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (s *Server) handleBucketStat(w http.ResponseWriter, r *http.Request) {
-	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentStat(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -824,8 +743,8 @@ func (s *Server) handleBucketStat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
-	stat, err := s.bucketStat(r.Context(), g, meta.Root, path)
+	path := querypath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	stat, err := s.pathStat(r.Context(), g, meta.Root, path)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
@@ -837,8 +756,8 @@ func (s *Server) handleBucketStat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stat)
 }
 
-func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
-	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentContent(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -848,8 +767,8 @@ func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
-	stat, err := s.bucketStat(r.Context(), g, meta.Root, path)
+	path := querypath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	stat, err := s.pathStat(r.Context(), g, meta.Root, path)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
@@ -859,7 +778,7 @@ func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if stat.Kind != "file" {
-		writeError(w, httpapi.StatusBucketContentIsDirectory, "content is only valid for file targets")
+		writeError(w, httpapi.StatusContentIsDirectory, "content is only valid for file targets")
 		return
 	}
 	key, err := decodeCID(stat.Key)
@@ -874,12 +793,12 @@ func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
 
 	start, endExclusive, partial, err := parseRangeHeader(r.Header.Get("Range"), totalSize)
 	if err != nil {
-		writeError(w, httpapi.StatusBucketRangeNotSatisfiable, err.Error())
+		writeError(w, httpapi.StatusRangeNotSatisfiable, err.Error())
 		return
 	}
 
 	var payload []byte
-	payload, err = s.readBucketContentPayload(r.Context(), g, stat, key, start, endExclusive)
+	payload, err = s.readContentPayload(r.Context(), g, stat, key, start, endExclusive)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -895,8 +814,8 @@ func (s *Server) handleBucketContent(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, bytes.NewReader(payload))
 }
 
-func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request) {
-	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentContentProof(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -906,8 +825,8 @@ func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	queryPath := bucketpath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
-	stat, err := s.bucketStat(r.Context(), g, meta.Root, queryPath)
+	queryPath := querypath.CanonicalizeQueryPath(r.URL.Query().Get("path"))
+	stat, err := s.pathStat(r.Context(), g, meta.Root, queryPath)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
@@ -917,7 +836,7 @@ func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if stat.Kind != "file" {
-		writeError(w, httpapi.StatusBucketContentIsDirectory, "content proof is only valid for file targets")
+		writeError(w, httpapi.StatusContentIsDirectory, "content proof is only valid for file targets")
 		return
 	}
 	key, err := decodeCID(stat.Key)
@@ -932,10 +851,10 @@ func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request
 
 	start, endExclusive, partial, err := parseRangeHeader(r.Header.Get("Range"), totalSize)
 	if err != nil {
-		writeError(w, httpapi.StatusBucketRangeNotSatisfiable, err.Error())
+		writeError(w, httpapi.StatusRangeNotSatisfiable, err.Error())
 		return
 	}
-	payload, err := s.readBucketContentPayload(r.Context(), g, stat, key, start, endExclusive)
+	payload, err := s.readContentPayload(r.Context(), g, stat, key, start, endExclusive)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -952,7 +871,7 @@ func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Accept-Ranges", "bytes")
 	s.node.RecordProofList(*pl)
-	writeJSON(w, http.StatusOK, &httpapi.BucketContentProofResponse{
+	writeJSON(w, http.StatusOK, &httpapi.ContentProofResponse{
 		Path:        queryPath,
 		StorageKind: stat.StorageKind,
 		Key:         stat.Key,
@@ -962,8 +881,8 @@ func (s *Server) handleBucketContentProof(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *Server) handleBucketResolve(w http.ResponseWriter, r *http.Request) {
-	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentResolve(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -976,12 +895,12 @@ func (s *Server) handleBucketResolve(w http.ResponseWriter, r *http.Request) {
 	s.resolveAndWrite(w, r.Context(), g, root, r.URL.Query().Get("path"))
 }
 
-func (s *Server) handleBucketProof(w http.ResponseWriter, r *http.Request) {
-	s.handleBucketResolve(w, r)
+func (s *Server) handleCurrentProof(w http.ResponseWriter, r *http.Request) {
+	s.handleCurrentResolve(w, r)
 }
 
-func (s *Server) handleBucketProofList(w http.ResponseWriter, r *http.Request) {
-	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentProofList(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -994,8 +913,8 @@ func (s *Server) handleBucketProofList(w http.ResponseWriter, r *http.Request) {
 	s.proofListAndWrite(w, r.Context(), g, root, r.URL.Query().Get("path"))
 }
 
-func (s *Server) handleBucketSnapshot(w http.ResponseWriter, r *http.Request) {
-	meta, g, err := s.openManagedGraph(r.Context(), r.PathValue("id"), false)
+func (s *Server) handleCurrentSnapshot(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), false)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -1008,9 +927,8 @@ func (s *Server) handleBucketSnapshot(w http.ResponseWriter, r *http.Request) {
 	s.writeSnapshot(w, r.Context(), g, root)
 }
 
-func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
-	graphID := r.PathValue("id")
-	meta, g, err := s.openManagedGraph(r.Context(), graphID, true)
+func (s *Server) handleCurrentUpdate(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -1041,21 +959,20 @@ func (s *Server) handleBucketUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().UpdateArc(r.Context(), g.BucketId(), root, req.Path, target)
+	result, err := g.Writer().UpdateArc(r.Context(), g.Namespace(), root, req.Path, target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.updateManagedGraphHead(r.Context(), graphID, result.NewRoot, applyArcDelta(meta.ArcCount, result.Op)); err != nil {
+	if err := s.updateCurrentRoot(r.Context(), result.NewRoot, applyArcDelta(meta.ArcCount, result.Op)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, updateResponse(result))
 }
 
-func (s *Server) handleBucketBatchUpdate(w http.ResponseWriter, r *http.Request) {
-	graphID := r.PathValue("id")
-	meta, g, err := s.openManagedGraph(r.Context(), graphID, true)
+func (s *Server) handleCurrentBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	meta, g, err := s.openCurrentGraph(r.Context(), true)
 	if err != nil {
 		writeManagedGraphError(w, err)
 		return
@@ -1081,12 +998,12 @@ func (s *Server) handleBucketBatchUpdate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.BucketId(), root, parsedUpdates)
+	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.Namespace(), root, parsedUpdates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.updateManagedGraphHead(r.Context(), graphID, result.NewRoot, applyBatchArcDelta(meta.ArcCount, result)); err != nil {
+	if err := s.updateCurrentRoot(r.Context(), result.NewRoot, applyBatchArcDelta(meta.ArcCount, result)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1120,7 +1037,7 @@ func (s *Server) handleRootCreateStructure(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	root, err := g.Writer().CreateStructure(r.Context(), g.BucketId(), snapshot)
+	root, err := g.Writer().CreateStructure(r.Context(), g.Namespace(), snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1206,7 +1123,7 @@ func (s *Server) handleRootUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().UpdateArc(r.Context(), g.BucketId(), root, req.Path, target)
+	result, err := g.Writer().UpdateArc(r.Context(), g.Namespace(), root, req.Path, target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1241,7 +1158,7 @@ func (s *Server) handleRootBatchUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.BucketId(), root, parsedUpdates)
+	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.Namespace(), root, parsedUpdates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1387,7 +1304,7 @@ func (s *Server) proofListAndWrite(w http.ResponseWriter, ctx context.Context, g
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	pl.Query = bucketpath.CanonicalizeQueryPath(rawPath)
+	pl.Query = querypath.CanonicalizeQueryPath(rawPath)
 	s.node.RecordProofList(*pl)
 	writeJSON(w, http.StatusOK, &httpapi.ProofListResponse{
 		Target:    result.Target.String(),
@@ -1417,32 +1334,32 @@ var (
 	errNotFlatUnixFS = errors.New("not a flat unixfs root")
 )
 
-func (s *Server) bucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.BucketStatResponse, error) {
-	if stat, err := s.flatUnixFSBucketStat(ctx, g, root, path); err == nil {
+func (s *Server) pathStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
+	if stat, err := s.flatUnixFSPathStat(ctx, g, root, path); err == nil {
 		return stat, nil
 	} else if errors.Is(err, errPathNotFound) {
 		return nil, err
 	}
-	if stat, err := s.unixFSBucketStat(ctx, g, root, path); err == nil {
+	if stat, err := s.unixFSPathStat(ctx, g, root, path); err == nil {
 		return stat, nil
 	}
-	return s.legacyBucketStat(ctx, g, root, path)
+	return s.legacyPathStat(ctx, g, root, path)
 }
 
-func (s *Server) flatUnixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
+func (s *Server) flatUnixFSPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
 	if codec.SemanticKindOf(root) != codec.SemanticKindMap {
 		return nil, errNotFlatUnixFS
 	}
-	rootPayload, payloadErr := s.node.ArcTable().Get(ctx, g.BucketId(), root, explicit.PayloadArc)
+	rootPayload, payloadErr := s.node.ArcTable().Get(ctx, g.Namespace(), root, explicit.PayloadArc)
 	if payloadErr != nil || codec.SemanticKindOf(rootPayload) != codec.SemanticKindManifest {
 		return nil, errNotFlatUnixFS
 	}
 	var target cid.Cid
 	var err error
-	if bucketpath.CanonicalizeQueryPath(p) == "" {
+	if querypath.CanonicalizeQueryPath(p) == "" {
 		target = rootPayload
 	} else {
-		target, err = s.node.ArcTable().Get(ctx, g.BucketId(), root, arcset.CanonicalizePath(p))
+		target, err = s.node.ArcTable().Get(ctx, g.Namespace(), root, arcset.CanonicalizePath(p))
 	}
 	if err != nil || !target.Defined() {
 		return s.flatUnixFSMapBoundaryStat(ctx, g, root, p)
@@ -1450,8 +1367,8 @@ func (s *Server) flatUnixFSBucketStat(ctx context.Context, g *graph.Graph, root 
 	return s.statFromFlatTarget(ctx, g, target)
 }
 
-func (s *Server) flatUnixFSMapBoundaryStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
-	clean := bucketpath.CanonicalizeQueryPath(p)
+func (s *Server) flatUnixFSMapBoundaryStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
+	clean := querypath.CanonicalizeQueryPath(p)
 	if clean == "" {
 		return nil, errPathNotFound
 	}
@@ -1459,23 +1376,23 @@ func (s *Server) flatUnixFSMapBoundaryStat(ctx context.Context, g *graph.Graph, 
 	for i := len(parts) - 1; i > 0; i-- {
 		prefix := strings.Join(parts[:i], "/")
 		suffix := strings.Join(parts[i:], "/")
-		target, err := s.node.ArcTable().Get(ctx, g.BucketId(), root, arcset.CanonicalizePath(prefix))
+		target, err := s.node.ArcTable().Get(ctx, g.Namespace(), root, arcset.CanonicalizePath(prefix))
 		if err != nil || codec.SemanticKindOf(target) != codec.SemanticKindMap {
 			continue
 		}
-		return s.legacyBucketStat(ctx, g, target, suffix)
+		return s.legacyPathStat(ctx, g, target, suffix)
 	}
 	return nil, errPathNotFound
 }
 
-func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target cid.Cid) (*httpapi.BucketStatResponse, error) {
+func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target cid.Cid) (*httpapi.PathStatResponse, error) {
 	switch codec.SemanticKindOf(target) {
 	case codec.SemanticKindManifest:
 		entries, err := s.readDirectoryManifest(ctx, target)
 		if err != nil {
 			return nil, err
 		}
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "dir",
 			StorageKind: "manifest",
 			Key:         target.String(),
@@ -1487,7 +1404,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target 
 		if err != nil {
 			return nil, err
 		}
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "dir",
 			StorageKind: "map",
 			Key:         target.String(),
@@ -1498,7 +1415,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target 
 		if err != nil {
 			return nil, err
 		}
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: "list",
 			Key:         target.String(),
@@ -1510,7 +1427,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target 
 			return nil, errPathNotFound
 		}
 		size := int64(len(data))
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: "raw",
 			Key:         target.String(),
@@ -1519,7 +1436,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target 
 	}
 }
 
-func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.BucketStatResponse, error) {
+func (s *Server) legacyPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
 	keyResult, err := g.Resolver().ResolveKey(root, path)
 	if err != nil {
 		return nil, err
@@ -1542,7 +1459,7 @@ func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.
 		if err != nil {
 			return nil, err
 		}
-		resp := &httpapi.BucketStatResponse{
+		resp := &httpapi.PathStatResponse{
 			Kind:        "dir",
 			StorageKind: "map",
 			Key:         key.String(),
@@ -1554,7 +1471,7 @@ func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.
 		if err != nil {
 			return nil, err
 		}
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: "list",
 			Key:         key.String(),
@@ -1567,7 +1484,7 @@ func (s *Server) legacyBucketStat(ctx context.Context, g *graph.Graph, root cid.
 			return nil, errPathNotFound
 		}
 		size := int64(len(data))
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: "raw",
 			Key:         key.String(),
@@ -1582,8 +1499,8 @@ func (s *Server) unixFSLayout(g *graph.Graph) (*unixfs.Layout, error) {
 		return nil, fmt.Errorf("configured CAS does not support writes")
 	}
 	return unixfs.New(unixfs.Options{
-		BucketID:  g.BucketId(),
-		ChunkSize: fixedBucketListChunkSize,
+		Namespace: g.Namespace(),
+		ChunkSize: fixedListChunkSize,
 		Map:       g.Semantic(),
 		List:      g.ListSemantic(),
 		Blocks:    blocks,
@@ -1596,7 +1513,7 @@ func (s *Server) existingFlatUnixFSBindings(ctx context.Context, g *graph.Graph,
 		return out, nil
 	}
 	if codec.SemanticKindOf(root) != codec.SemanticKindMap {
-		return nil, fmt.Errorf("bucket root must be a map root")
+		return nil, fmt.Errorf("current root must be a map root")
 	}
 	snapshot, err := g.Snapshot(ctx, root)
 	if err != nil {
@@ -1619,9 +1536,9 @@ func (s *Server) existingFlatUnixFSBindings(ctx context.Context, g *graph.Graph,
 	return out, nil
 }
 
-func (s *Server) applyFlatUnixFSBatchEntries(ctx context.Context, g *graph.Graph, bindings map[arcset.Path]cid.Cid, entries []httpapi.BucketUnixFSBatchEntry) error {
+func (s *Server) applyFlatUnixFSBatchEntries(ctx context.Context, g *graph.Graph, bindings map[arcset.Path]cid.Cid, entries []httpapi.UnixFSBatchEntry) error {
 	for _, entry := range entries {
-		p := arcset.CanonicalizePath(bucketpath.CanonicalizeQueryPath(entry.Path))
+		p := arcset.CanonicalizePath(querypath.CanonicalizeQueryPath(entry.Path))
 		if p.IsEmpty() {
 			return fmt.Errorf("entry path is required")
 		}
@@ -1656,7 +1573,7 @@ func (s *Server) applyFlatUnixFSBatchEntries(ctx context.Context, g *graph.Graph
 	return nil
 }
 
-func (s *Server) flatUnixFSBatchTarget(ctx context.Context, g *graph.Graph, entry httpapi.BucketUnixFSBatchEntry) (cid.Cid, error) {
+func (s *Server) flatUnixFSBatchTarget(ctx context.Context, g *graph.Graph, entry httpapi.UnixFSBatchEntry) (cid.Cid, error) {
 	if entry.Target != "" && len(entry.Chunks) > 0 {
 		return cid.Undef, fmt.Errorf("target and chunks are mutually exclusive")
 	}
@@ -1674,7 +1591,7 @@ func (s *Server) flatUnixFSBatchTarget(ctx context.Context, g *graph.Graph, entr
 		}
 		chunks = append(chunks, chunk)
 	}
-	return g.ListSemantic().Commit(ctx, g.BucketId(), list.NewViewFromSlice(chunks))
+	return g.ListSemantic().Commit(ctx, g.Namespace(), list.NewViewFromSlice(chunks))
 }
 
 func removeFlatSubtree(bindings map[arcset.Path]cid.Cid, p arcset.Path) {
@@ -1775,7 +1692,7 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *
 	return s.migrateLegacyTreeToUnixFS(ctx, g, layout, root)
 }
 
-func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
+func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
 	baseRoot := oldRoot
 	if !baseRoot.Defined() {
 		baseRoot = newRoot
@@ -1800,7 +1717,7 @@ func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string
 	}
 
 	exec := gateway.Executor{
-		Namespace: bucketID,
+		Namespace: g.Namespace(),
 		Maps:      g.Semantic(),
 		Lists:     g.ListSemantic(),
 		ArcTable:  s.node.ArcTable(),
@@ -1810,13 +1727,13 @@ func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, bucketID string
 		return gateway.WriteReceipt{}, err
 	}
 	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
-		return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map bucket head")
+		return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
 	}
 	return receipt, nil
 }
 
-func (s *Server) publishUnixFSReceipt(ctx context.Context, graphID string, oldRoot cid.Cid, receipt gateway.WriteReceipt) error {
-	if err := s.updateManagedGraphHead(ctx, graphID, receipt.NewRoot, receipt.ArcCount); err != nil {
+func (s *Server) publishUnixFSReceipt(ctx context.Context, oldRoot cid.Cid, receipt gateway.WriteReceipt) error {
+	if err := s.updateCurrentRoot(ctx, receipt.NewRoot, receipt.ArcCount); err != nil {
 		return err
 	}
 	if lm := s.node.LineageManager(); lm != nil {
@@ -1830,7 +1747,7 @@ func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g *graph.Graph, 
 }
 
 func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
-	stat, err := s.legacyBucketStat(ctx, g, legacyRoot, legacyPath)
+	stat, err := s.legacyPathStat(ctx, g, legacyRoot, legacyPath)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("migrate legacy path %q: %w", legacyPath, err)
 	}
@@ -1862,7 +1779,7 @@ func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g *graph.Graph, lay
 		return unixRoot, nil
 	case "file":
 		if unixPath == "" {
-			return cid.Undef, fmt.Errorf("legacy root file cannot be migrated into a UnixFS bucket root")
+			return cid.Undef, fmt.Errorf("legacy root file cannot be migrated into a UnixFS root")
 		}
 		data, err := s.readStatFile(ctx, g, stat)
 		if err != nil {
@@ -1874,7 +1791,7 @@ func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g *graph.Graph, lay
 	}
 }
 
-func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.BucketStatResponse) ([]string, error) {
+func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.PathStatResponse) ([]string, error) {
 	if stat == nil || stat.Kind != "dir" {
 		return nil, fmt.Errorf("directory stat is required")
 	}
@@ -1899,7 +1816,7 @@ func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.Buc
 	return m.Entries, nil
 }
 
-func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi.BucketStatResponse) ([]byte, error) {
+func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi.PathStatResponse) ([]byte, error) {
 	if stat == nil || stat.Kind != "file" {
 		return nil, fmt.Errorf("file stat is required")
 	}
@@ -1926,7 +1843,7 @@ func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi
 	}
 }
 
-func (s *Server) readBucketContentPayload(ctx context.Context, g *graph.Graph, stat *httpapi.BucketStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
+func (s *Server) readContentPayload(ctx context.Context, g *graph.Graph, stat *httpapi.PathStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
 	switch stat.StorageKind {
 	case "raw":
 		raw, err := s.node.CAS().Get(ctx, key)
@@ -1941,7 +1858,7 @@ func (s *Server) readBucketContentPayload(ctx context.Context, g *graph.Graph, s
 	}
 }
 
-func (s *Server) contentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.BucketStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
+func (s *Server) contentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.PathStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
 	if layout, err := s.unixFSLayout(g); err == nil {
 		if unixStat, statErr := layout.Stat(ctx, root, queryPath); statErr == nil && unixStat.Kind == "file" {
 			return s.unixFSContentProofList(ctx, layout, root, queryPath, stat, start, endExclusive)
@@ -1950,7 +1867,7 @@ func (s *Server) contentProofList(ctx context.Context, g *graph.Graph, root cid.
 	return s.legacyContentProofList(ctx, g, root, queryPath, stat, start, endExclusive)
 }
 
-func (s *Server) unixFSContentProofList(ctx context.Context, layout *unixfs.Layout, root cid.Cid, queryPath string, stat *httpapi.BucketStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
+func (s *Server) unixFSContentProofList(ctx context.Context, layout *unixfs.Layout, root cid.Cid, queryPath string, stat *httpapi.PathStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
 	resolution, err := layout.Resolve(ctx, root, queryPath)
 	if err != nil {
 		return nil, err
@@ -1971,7 +1888,7 @@ func (s *Server) unixFSContentProofList(ctx context.Context, layout *unixfs.Layo
 	return pl, nil
 }
 
-func (s *Server) legacyContentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.BucketStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
+func (s *Server) legacyContentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.PathStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
 	result, err := g.Resolver().Resolve(root, queryPath)
 	if err != nil {
 		return nil, err
@@ -2000,7 +1917,7 @@ func (s *Server) legacyContentProofList(ctx context.Context, g *graph.Graph, roo
 	return pl, nil
 }
 
-func (s *Server) unixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.BucketStatResponse, error) {
+func (s *Server) unixFSPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		return nil, err
@@ -2012,7 +1929,7 @@ func (s *Server) unixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.
 
 	switch stat.Kind {
 	case "directory":
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "dir",
 			StorageKind: "map",
 			Key:         stat.NodeRoot.String(),
@@ -2021,7 +1938,7 @@ func (s *Server) unixFSBucketStat(ctx context.Context, g *graph.Graph, root cid.
 		}, nil
 	case "file":
 		size := int64(stat.Size)
-		return &httpapi.BucketStatResponse{
+		return &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: stat.StorageKind,
 			Key:         stat.Payload.String(),
@@ -2038,7 +1955,7 @@ func (s *Server) unixFSResolve(ctx context.Context, g *graph.Graph, root cid.Cid
 	if err != nil {
 		return nil, err
 	}
-	resolution, err := layout.Resolve(ctx, root, bucketpath.CanonicalizeQueryPath(rawPath))
+	resolution, err := layout.Resolve(ctx, root, querypath.CanonicalizeQueryPath(rawPath))
 	if err != nil {
 		return nil, err
 	}
@@ -2103,7 +2020,7 @@ func unixFSArcCountAt(ctx context.Context, layout *unixfs.Layout, root cid.Cid, 
 }
 
 func (s *Server) listFileSize(ctx context.Context, g *graph.Graph, listRoot cid.Cid) (int64, uint64, error) {
-	q, _, err := g.ListSemantic().Prove(ctx, g.BucketId(), listRoot, ^uint64(0))
+	q, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, ^uint64(0))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -2111,7 +2028,7 @@ func (s *Server) listFileSize(ctx context.Context, g *graph.Graph, listRoot cid.
 	if count == 0 {
 		return 0, 0, nil
 	}
-	last, _, err := g.ListSemantic().Prove(ctx, g.BucketId(), listRoot, count-1)
+	last, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, count-1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -2119,7 +2036,7 @@ func (s *Server) listFileSize(ctx context.Context, g *graph.Graph, listRoot cid.
 	if err != nil {
 		return 0, 0, err
 	}
-	size := int64((count-1)*uint64(fixedBucketListChunkSize) + uint64(len(lastChunk)))
+	size := int64((count-1)*uint64(fixedListChunkSize) + uint64(len(lastChunk)))
 	return size, count, nil
 }
 
@@ -2127,11 +2044,11 @@ func (s *Server) readListRange(ctx context.Context, g *graph.Graph, listRoot cid
 	if endExclusive <= start {
 		return []byte{}, nil
 	}
-	first := uint64(start / fixedBucketListChunkSize)
-	last := uint64((endExclusive - 1) / fixedBucketListChunkSize)
+	first := uint64(start / fixedListChunkSize)
+	last := uint64((endExclusive - 1) / fixedListChunkSize)
 	var out bytes.Buffer
 	for i := first; i <= last; i++ {
-		q, _, err := g.ListSemantic().Prove(ctx, g.BucketId(), listRoot, i)
+		q, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, i)
 		if err != nil {
 			return nil, err
 		}
@@ -2139,7 +2056,7 @@ func (s *Server) readListRange(ctx context.Context, g *graph.Graph, listRoot cid
 		if err != nil {
 			return nil, err
 		}
-		chunkStart := int64(i) * fixedBucketListChunkSize
+		chunkStart := int64(i) * fixedListChunkSize
 		localStart := int64(0)
 		if start > chunkStart {
 			localStart = start - chunkStart
@@ -2163,11 +2080,11 @@ func (s *Server) listIndexStepsForRange(ctx context.Context, g *graph.Graph, lis
 	if endExclusive <= start {
 		return nil, nil
 	}
-	first := uint64(start / fixedBucketListChunkSize)
-	last := uint64((endExclusive - 1) / fixedBucketListChunkSize)
+	first := uint64(start / fixedListChunkSize)
+	last := uint64((endExclusive - 1) / fixedListChunkSize)
 	steps := make([]unixfs.ListIndexStep, 0, last-first+1)
 	for index := first; index <= last; index++ {
-		query, proof, err := g.ListSemantic().Prove(ctx, g.BucketId(), listRoot, index)
+		query, proof, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, index)
 		if err != nil {
 			return nil, err
 		}
@@ -2191,14 +2108,14 @@ func (s *Server) listIndexStepsForRange(ctx context.Context, g *graph.Graph, lis
 	return steps, nil
 }
 
-func contentRangeMetadata(start, endExclusive, totalSize int64, partial bool) httpapi.BucketContentRange {
+func contentRangeMetadata(start, endExclusive, totalSize int64, partial bool) httpapi.ContentRange {
 	statusCode := http.StatusOK
 	contentRange := ""
 	if partial {
 		statusCode = http.StatusPartialContent
 		contentRange = fmt.Sprintf("bytes %d-%d/%d", start, endExclusive-1, totalSize)
 	}
-	return httpapi.BucketContentRange{
+	return httpapi.ContentRange{
 		Start:         start,
 		EndExclusive:  endExclusive,
 		ContentLength: endExclusive - start,
@@ -2452,7 +2369,7 @@ func resolveMiss(root cid.Cid, requestedPath string, result *resolver.ResolveRes
 }
 
 func mandatoryMapPayload(ctx context.Context, g *graph.Graph, root cid.Cid) (cid.Cid, error) {
-	payload, err := g.Writer().GetArc(ctx, g.BucketId(), root, explicit.PayloadArc.String())
+	payload, err := g.Writer().GetArc(ctx, g.Namespace(), root, explicit.PayloadArc.String())
 	if err != nil {
 		return cid.Undef, err
 	}

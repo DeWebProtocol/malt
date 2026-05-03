@@ -27,7 +27,7 @@ func TestArcTableStatsWrapperCountsCallsAndPreservesBehavior(t *testing.T) {
 	wrapped := NewArcTable(base)
 
 	ctx := context.Background()
-	bucketID := "metrics-bucket"
+	namespace := "metrics-namespace"
 	root := newTestCID([]byte("root"))
 	targetA := newTestCID([]byte("target-a"))
 	targetB := newTestCID([]byte("target-b"))
@@ -36,10 +36,10 @@ func TestArcTableStatsWrapperCountsCallsAndPreservesBehavior(t *testing.T) {
 		"b": targetB,
 	})
 
-	if err := wrapped.Update(ctx, bucketID, root, cid.Undef, arcs); err != nil {
+	if err := wrapped.Update(ctx, namespace, root, cid.Undef, arcs); err != nil {
 		t.Fatalf("update arcs: %v", err)
 	}
-	got, err := wrapped.Get(ctx, bucketID, root, arcset.CanonicalizePath("a"))
+	got, err := wrapped.Get(ctx, namespace, root, arcset.CanonicalizePath("a"))
 	if err != nil {
 		t.Fatalf("get arc: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestArcTableStatsWrapperCountsCallsAndPreservesBehavior(t *testing.T) {
 		t.Fatalf("Get returned %s, want %s", got, targetA)
 	}
 
-	batch, err := wrapped.BatchGet(ctx, bucketID, root, []arcset.Path{
+	batch, err := wrapped.BatchGet(ctx, namespace, root, []arcset.Path{
 		arcset.CanonicalizePath("a"),
 		arcset.CanonicalizePath("b"),
 	})
@@ -58,7 +58,7 @@ func TestArcTableStatsWrapperCountsCallsAndPreservesBehavior(t *testing.T) {
 		t.Fatalf("BatchGet returned %d arcs, want 2", len(batch))
 	}
 
-	snapshot, err := wrapped.Snapshot(ctx, bucketID, root)
+	snapshot, err := wrapped.Snapshot(ctx, namespace, root)
 	if err != nil {
 		t.Fatalf("snapshot arcs: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestArcTableStatsWrapperCountsCallsAndPreservesBehavior(t *testing.T) {
 		t.Fatalf("Snapshot returned %d arcs, want 2", snapshot.Len())
 	}
 
-	iter := wrapped.Iterate(ctx, bucketID, root)
+	iter := wrapped.Iterate(ctx, namespace, root)
 	defer iter.Close()
 	iterated := 0
 	for {
@@ -118,7 +118,7 @@ func TestArcTableStatsResetClearsCounters(t *testing.T) {
 	wrapped := NewArcTable(base)
 
 	ctx := context.Background()
-	_, _ = wrapped.Get(ctx, "bucket", cid.Undef, arcset.CanonicalizePath("missing"))
+	_, _ = wrapped.Get(ctx, "namespace", cid.Undef, arcset.CanonicalizePath("missing"))
 
 	wrapped.ResetStats()
 

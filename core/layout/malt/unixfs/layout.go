@@ -54,7 +54,7 @@ var (
 
 // Options configures a UnixFS layout instance.
 type Options struct {
-	BucketID  string
+	Namespace string
 	ChunkSize int
 	Map       mapping.Semantics
 	List      list.Semantics
@@ -63,7 +63,7 @@ type Options struct {
 
 // Layout materializes a UnixFS-style hierarchy with MALT map/list semantics.
 type Layout struct {
-	bucketID  string
+	namespace string
 	chunkSize int
 	maps      mapping.Semantics
 	lists     list.Semantics
@@ -114,8 +114,8 @@ func New(opts Options) (*Layout, error) {
 	if opts.Blocks == nil {
 		return nil, fmt.Errorf("CAS client is nil")
 	}
-	if opts.BucketID == "" {
-		return nil, fmt.Errorf("bucket ID is empty")
+	if opts.Namespace == "" {
+		return nil, fmt.Errorf("namespace is empty")
 	}
 
 	chunkSize := opts.ChunkSize
@@ -127,7 +127,7 @@ func New(opts Options) (*Layout, error) {
 	}
 
 	return &Layout{
-		bucketID:  opts.BucketID,
+		namespace: opts.Namespace,
 		chunkSize: chunkSize,
 		maps:      opts.Map,
 		lists:     opts.List,
@@ -149,7 +149,7 @@ func (l *Layout) EmptyDirectory(ctx context.Context) (cid.Cid, error) {
 		typePath:    dirMarker,
 		payloadPath: payload,
 	}
-	return l.maps.Commit(ctx, l.bucketID, mapping.NewViewFromPaths(entries))
+	return l.maps.Commit(ctx, l.namespace, mapping.NewViewFromPaths(entries))
 }
 
 // AddDirectory ensures that path exists as a directory and returns the new root.
@@ -409,7 +409,7 @@ func (l *Layout) commitFile(ctx context.Context, data []byte) (cid.Cid, error) {
 		sizePath:      sizeMarker,
 		chunkSizePath: chunkSizeMarker,
 	}
-	return l.maps.Commit(ctx, l.bucketID, mapping.NewViewFromPaths(entries))
+	return l.maps.Commit(ctx, l.namespace, mapping.NewViewFromPaths(entries))
 }
 
 func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error) {
@@ -429,7 +429,7 @@ func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error
 		}
 		chunks = append(chunks, chunkCID)
 	}
-	return l.lists.Commit(ctx, l.bucketID, list.NewViewFromSlice(chunks))
+	return l.lists.Commit(ctx, l.namespace, list.NewViewFromSlice(chunks))
 }
 
 func (l *Layout) resolveNode(ctx context.Context, root cid.Cid, path string) (cid.Cid, []Step, error) {
@@ -555,7 +555,7 @@ func (l *Layout) readListRange(ctx context.Context, root cid.Cid, offset, length
 
 	out := bytes.Buffer{}
 	for index := startIndex; index <= endIndex; index++ {
-		query, proof, err := l.lists.Prove(ctx, l.bucketID, root, index)
+		query, proof, err := l.lists.Prove(ctx, l.namespace, root, index)
 		if err != nil {
 			return nil, err
 		}
@@ -604,7 +604,7 @@ func (l *Layout) nodeType(ctx context.Context, root cid.Cid) (string, error) {
 }
 
 func (l *Layout) lookup(ctx context.Context, root cid.Cid, key arcset.Path) (cid.Cid, structure.Proof, bool, error) {
-	binding, proof, err := l.maps.Prove(ctx, l.bucketID, root, key)
+	binding, proof, err := l.maps.Prove(ctx, l.namespace, root, key)
 	if err != nil {
 		if isMapAbsent(err) {
 			return cid.Undef, nil, false, nil
@@ -634,7 +634,7 @@ func (l *Layout) set(ctx context.Context, root cid.Cid, key arcset.Path, oldValu
 	if !oldValue.Defined() {
 		oldValue = cid.Undef
 	}
-	return l.maps.Update(ctx, l.bucketID, root, key, oldValue, newValue)
+	return l.maps.Update(ctx, l.namespace, root, key, oldValue, newValue)
 }
 
 func (l *Layout) setChild(ctx context.Context, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {

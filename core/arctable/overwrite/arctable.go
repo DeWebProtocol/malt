@@ -1,5 +1,5 @@
 // Package overwrite provides an ArcTable implementation with overwrite semantics.
-// This ArcTable stores arc sets for single-root graphs with bucket-based isolation.
+// This ArcTable stores arc sets for single-root graphs with namespace-based isolation.
 //
 // Bloom Filter: Uses BloomCache component for fast negative lookups.
 //
@@ -22,7 +22,7 @@ import (
 )
 
 // ArcTable is an ArcTable with overwrite semantics.
-// It uses bucketId for namespace isolation, allowing multiple graphs
+// It uses namespace for namespace isolation, allowing multiple graphs
 // to share the same KVStore instance.
 type ArcTable struct {
 	kv           kvstore.KVStore
@@ -66,23 +66,23 @@ func NewArcTableWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache)
 	return NewArcTable(WithKVStore(kv), WithBloomCache(bloomCache))
 }
 
-// CreateBucket creates a new bucket with custom bloom configuration.
-func (e *ArcTable) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
-	return e.bloomManager.CreateBucket(ctx, bucketId, cfg)
+// CreateNamespace creates a new namespace with custom bloom configuration.
+func (e *ArcTable) CreateNamespace(ctx context.Context, namespace string, cfg *bloom.NamespaceConfig) error {
+	return e.bloomManager.CreateNamespace(ctx, namespace, cfg)
 }
 
-// MightContain checks if a path might exist in the bucket using bloom filter.
+// MightContain checks if a path might exist in the namespace using bloom filter.
 // Returns false if the path definitely doesn't exist (can skip KVStore lookup).
 // Returns true if the path might exist (need to call Get to verify).
-func (e *ArcTable) MightContain(ctx context.Context, bucketId string, path arcset.Path) bool {
+func (e *ArcTable) MightContain(ctx context.Context, namespace string, path arcset.Path) bool {
 	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
-	return e.bloomManager.MightContain(bucketId, path.String())
+	return e.bloomManager.MightContain(namespace, path.String())
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
-func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths []arcset.Path) map[arcset.Path]bool {
+func (e *ArcTable) MightContainBatch(ctx context.Context, namespace string, paths []arcset.Path) map[arcset.Path]bool {
 	result := make(map[arcset.Path]bool, len(paths))
 
 	if !e.bloomManager.Enabled() {
@@ -96,7 +96,7 @@ func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths
 	for i, path := range paths {
 		pathStrings[i] = path.String()
 	}
-	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, pathStrings)
+	batchResult, err := e.bloomManager.MightContainBatch(ctx, namespace, pathStrings)
 	if err != nil {
 		for _, p := range paths {
 			result[p] = true
@@ -110,20 +110,20 @@ func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths
 	return result
 }
 
-// Get retrieves the target CID for a path within a bucket.
+// Get retrieves the target CID for a path within a namespace.
 // First checks bloom filter, then queries KVStore.
-func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+func (e *ArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("ArcTable.Get started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("root", root.String()),
 		logger.String("path", path.String()))
 
 	// Quick bloom filter check
-	if !e.MightContain(ctx, bucketId, path) {
+	if !e.MightContain(ctx, namespace, path) {
 		logger.Debug("ArcTable.Get bloom negative",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.String("path", path.String()))
 		return cid.Cid{}, arcset.ErrNotFound
 	}
@@ -131,43 +131,43 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path 
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := arctable.RootKeyFormat(root)
-		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		namespaceBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
 				logger.Debug("ArcTable.Get root not found",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("root", root.String()))
 				return cid.Cid{}, arcset.ErrNotFound
 			}
 			logger.Error("ArcTable.Get failed to resolve root",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("root", root.String()),
 				logger.Err(err))
 			return cid.Cid{}, fmt.Errorf("failed to resolve root: %w", err)
 		}
 
-		// Verify this root maps to the correct bucket
-		if string(bucketIdBytes) != bucketId {
-			logger.Debug("ArcTable.Get root bucket mismatch",
-				logger.String("bucket", bucketId),
+		// Verify this root maps to the correct namespace
+		if string(namespaceBytes) != namespace {
+			logger.Debug("ArcTable.Get root namespace mismatch",
+				logger.String("namespace", namespace),
 				logger.String("root", root.String()),
-				logger.String("expected_bucket", string(bucketIdBytes)))
+				logger.String("expected_namespace", string(namespaceBytes)))
 			return cid.Cid{}, arcset.ErrNotFound
 		}
 	}
 
 	// Get the arc
-	arcKeyBytes := arctable.DefaultArcKey(bucketId, path)
+	arcKeyBytes := arctable.DefaultArcKey(namespace, path)
 	val, err := e.kv.Get(ctx, arcKeyBytes)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
 			logger.Debug("ArcTable.Get arc not found",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("path", path.String()))
 			return cid.Cid{}, arcset.ErrNotFound
 		}
 		logger.Error("ArcTable.Get failed to get arc",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.String("path", path.String()),
 			logger.Err(err))
 		return cid.Cid{}, fmt.Errorf("failed to get arc: %w", err)
@@ -176,7 +176,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path 
 	result, err := cid.Cast(val)
 	if err == nil {
 		logger.Debug("ArcTable.Get success",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.String("path", path.String()),
 			logger.String("target", result.String()),
 			logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
@@ -186,16 +186,16 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path 
 
 // BatchGet retrieves multiple target CIDs in a single operation.
 // Uses bloom filter to filter out definitely-not-present paths.
-func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (e *ArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	start := time.Now()
 
 	logger.Debug("ArcTable.BatchGet started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("root", root.String()),
 		logger.Int("path_count", len(paths)))
 
 	// Filter paths using bloom filter
-	mightExist := e.MightContainBatch(ctx, bucketId, paths)
+	mightExist := e.MightContainBatch(ctx, namespace, paths)
 	filteredPaths := make([]arcset.Path, 0, len(paths))
 	for _, p := range paths {
 		if mightExist[p] {
@@ -205,32 +205,32 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 
 	if len(filteredPaths) == 0 {
 		logger.Debug("ArcTable.BatchGet all filtered by bloom",
-			logger.String("bucket", bucketId))
+			logger.String("namespace", namespace))
 		return map[arcset.Path]cid.Cid{}, nil
 	}
 
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := arctable.RootKeyFormat(root)
-		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		namespaceBytes, err := e.kv.Get(ctx, rootKeyBytes)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
 				logger.Debug("ArcTable.BatchGet root not found",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("root", root.String()))
 				return nil, arcset.ErrNotFound
 			}
 			logger.Error("ArcTable.BatchGet failed to resolve root",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Err(err))
 			return nil, fmt.Errorf("failed to resolve root: %w", err)
 		}
 
-		// Verify this root maps to the correct bucket
-		if string(bucketIdBytes) != bucketId {
-			logger.Debug("ArcTable.BatchGet root bucket mismatch",
-				logger.String("bucket", bucketId),
-				logger.String("expected_bucket", string(bucketIdBytes)))
+		// Verify this root maps to the correct namespace
+		if string(namespaceBytes) != namespace {
+			logger.Debug("ArcTable.BatchGet root namespace mismatch",
+				logger.String("namespace", namespace),
+				logger.String("expected_namespace", string(namespaceBytes)))
 			return nil, arcset.ErrNotFound
 		}
 	}
@@ -239,7 +239,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 	keys := make([][]byte, len(filteredPaths))
 	pathToKey := make(map[string]arcset.Path, len(filteredPaths))
 	for i, path := range filteredPaths {
-		key := arctable.DefaultArcKey(bucketId, path)
+		key := arctable.DefaultArcKey(namespace, path)
 		keys[i] = key
 		pathToKey[string(key)] = path
 	}
@@ -248,7 +248,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 	kvResults, err := e.kv.BatchGet(ctx, keys)
 	if err != nil {
 		logger.Error("ArcTable.BatchGet kv error",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.Err(err))
 		return nil, fmt.Errorf("failed to batch get arcs: %w", err)
 	}
@@ -263,7 +263,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 	}
 
 	logger.Debug("ArcTable.BatchGet completed",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.Int("requested_count", len(paths)),
 		logger.Int("filtered_count", len(filteredPaths)),
 		logger.Int("found_count", len(results)),
@@ -273,8 +273,8 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, 
 }
 
 // Update stores arc entries with a new commitment root.
-// Updates the bucket bloom filter incrementally.
-func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+// Updates the namespace bloom filter incrementally.
+func (e *ArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
 	arcMap, err := arcset.ToPathMap(arcs)
 	if err != nil {
 		return err
@@ -282,7 +282,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 	start := time.Now()
 
 	logger.Info("ArcTable.Update started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("new_root", newRoot.String()),
 		logger.String("old_root", oldRoot.String()),
 		logger.Int("arc_count", len(arcMap)))
@@ -295,7 +295,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 		if err := batch.Delete(oldRootKey); err != nil {
 			batch.Cancel()
 			logger.Error("ArcTable.Update failed to delete old root",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("old_root", oldRoot.String()),
 				logger.Err(err))
 			return fmt.Errorf("failed to delete old root mapping: %w", err)
@@ -305,10 +305,10 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 	// Add new root mapping if provided
 	if newRoot != cid.Undef {
 		newRootKey := arctable.RootKeyFormat(newRoot)
-		if err := batch.Put(newRootKey, []byte(bucketId)); err != nil {
+		if err := batch.Put(newRootKey, []byte(namespace)); err != nil {
 			batch.Cancel()
 			logger.Error("ArcTable.Update failed to add new root",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("new_root", newRoot.String()),
 				logger.Err(err))
 			return fmt.Errorf("failed to add new root mapping: %w", err)
@@ -320,13 +320,13 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 
 	// Add/Update/Delete arcs
 	for path, target := range arcMap {
-		key := arctable.DefaultArcKey(bucketId, path)
+		key := arctable.DefaultArcKey(namespace, path)
 		if target == cid.Undef {
 			// Delete the arc
 			if err := batch.Delete(key); err != nil {
 				batch.Cancel()
 				logger.Error("ArcTable.Update failed to delete arc",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.Err(err))
 				return fmt.Errorf("failed to delete arc %s: %w", path.String(), err)
@@ -338,7 +338,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 			if err := batch.Put(key, val); err != nil {
 				batch.Cancel()
 				logger.Error("ArcTable.Update failed to put arc",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.Err(err))
 				return fmt.Errorf("failed to put arc %s: %w", path.String(), err)
@@ -348,23 +348,23 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 
 	if err := batch.Commit(ctx); err != nil {
 		logger.Error("ArcTable.Update commit failed",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.Err(err))
 		return fmt.Errorf("failed to commit update: %w", err)
 	}
 
-	// Update bucket bloom filter after successful commit
+	// Update namespace bloom filter after successful commit
 	if e.bloomManager.Enabled() && len(addedPaths) > 0 {
-		if err := e.bloomManager.AddBatch(ctx, bucketId, addedPaths); err != nil {
+		if err := e.bloomManager.AddBatch(ctx, namespace, addedPaths); err != nil {
 			logger.Warn("ArcTable.Update failed to update bloom (non-fatal)",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Err(err))
 			// Non-fatal: bloom is optional optimization
 		}
 	}
 
 	logger.Info("ArcTable.Update completed",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("new_root", newRoot.String()),
 		logger.Int("arc_count", len(arcMap)),
 		logger.Int("added_count", len(addedPaths)),
@@ -374,20 +374,20 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot
 	return nil
 }
 
-// Snapshot returns an immutable snapshot of all arcs in the bucket.
-func (e *ArcTable) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.ArcSet, error) {
+// Snapshot returns an immutable snapshot of all arcs in the namespace.
+func (e *ArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := arctable.RootKeyFormat(root)
-		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
-		if err != nil || string(bucketIdBytes) != bucketId {
+		namespaceBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		if err != nil || string(namespaceBytes) != namespace {
 			return arcset.NewSet(), nil // Return empty snapshot for invalid root
 		}
 	}
 
 	// Load all arcs into memory
 	arcs := make(map[string]cid.Cid)
-	prefix := arctable.DefaultBucketPrefix(bucketId)
+	prefix := arctable.DefaultNamespacePrefix(namespace)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 	defer iter.Close()
 
@@ -411,18 +411,18 @@ func (e *ArcTable) Snapshot(ctx context.Context, bucketId string, root cid.Cid) 
 	return snapshot, nil
 }
 
-// Iterate returns a streaming iterator over all arcs in the bucket.
-func (e *ArcTable) Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset.Iterator {
+// Iterate returns a streaming iterator over all arcs in the namespace.
+func (e *ArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
 	// Validate root if provided
 	if root != cid.Undef {
 		rootKeyBytes := arctable.RootKeyFormat(root)
-		bucketIdBytes, err := e.kv.Get(ctx, rootKeyBytes)
-		if err != nil || string(bucketIdBytes) != bucketId {
+		namespaceBytes, err := e.kv.Get(ctx, rootKeyBytes)
+		if err != nil || string(namespaceBytes) != namespace {
 			return &emptyIterator{}
 		}
 	}
 
-	prefix := arctable.DefaultBucketPrefix(bucketId)
+	prefix := arctable.DefaultNamespacePrefix(namespace)
 	iter := e.kv.NewIterator(ctx, prefix, nil)
 
 	return &arcTableIterator{

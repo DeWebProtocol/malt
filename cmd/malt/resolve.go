@@ -12,16 +12,16 @@ import (
 func init() {
 	rootCmd.AddCommand(resolveCmd)
 	resolveCmd.Flags().BoolP("verbose", "v", false, "Show resolution transcript")
-	resolveCmd.Flags().StringVarP(&resolveBucketID, "bucket", "b", "", "Resolve from the managed bucket head instead of an explicit root")
+	resolveCmd.Flags().BoolVar(&resolveCurrent, "current", false, "Resolve from the current root instead of an explicit root")
 }
 
-var resolveBucketID string
+var resolveCurrent bool
 
 var resolveCmd = &cobra.Command{
 	Use:   "resolve [<root>] [path]",
 	Short: "Resolve a path through a MALT structure",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if resolveBucketID != "" {
+		if resolveCurrent {
 			return cobra.RangeArgs(0, 1)(cmd, args)
 		}
 		return cobra.RangeArgs(1, 2)(cmd, args)
@@ -37,12 +37,12 @@ func runResolve(cmd *cobra.Command, args []string) error {
 		err    error
 	)
 
-	if resolveBucketID != "" {
+	if resolveCurrent {
 		path := ""
 		if len(args) > 0 {
 			path = args[0]
 		}
-		result, err = client.ResolveBucket(cmd.Context(), resolveBucketID, path)
+		result, err = client.ResolveCurrent(cmd.Context(), path)
 	} else {
 		path := ""
 		if len(args) > 1 {

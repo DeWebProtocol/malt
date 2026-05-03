@@ -65,15 +65,15 @@ func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error
 	return &Map{scheme: scheme, arctable: e}, nil
 }
 
-func (s *Map) Commit(ctx context.Context, bucketID string, view mapping.View) (cid.Cid, error) {
+func (s *Map) Commit(ctx context.Context, namespace string, view mapping.View) (cid.Cid, error) {
 	bindings, err := extractBindings(view)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.commitRoot(ctx, bucketID, bindings)
+	return s.commitRoot(ctx, namespace, bindings)
 }
 
-func (s *Map) Prove(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
+func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
 	if !root.Defined() {
 		return mapping.Binding{}, nil, fmt.Errorf("root is undefined")
 	}
@@ -86,7 +86,7 @@ func (s *Map) Prove(ctx context.Context, bucketID string, root cid.Cid, key arcs
 	envelope := proofEnvelope{}
 
 	for depth := 0; depth < len(digest); depth++ {
-		slots, err := s.loadValidatedNode(ctx, bucketID, currentRoot)
+		slots, err := s.loadValidatedNode(ctx, namespace, currentRoot)
 		if err != nil {
 			return mapping.Binding{}, nil, err
 		}
@@ -129,7 +129,7 @@ func (s *Map) Prove(ctx context.Context, bucketID string, root cid.Cid, key arcs
 		if bucketRoot, ok, err := tryDecodeBucketRef(slotCID); err != nil {
 			return mapping.Binding{}, nil, err
 		} else if ok {
-			markers, err := s.loadBucketEntries(ctx, bucketID, bucketRoot)
+			markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
 			if err != nil {
 				return mapping.Binding{}, nil, err
 			}
@@ -246,7 +246,7 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 	return false, nil
 }
 
-func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, fmt.Errorf("root is undefined")
 	}
@@ -254,14 +254,14 @@ func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arc
 		return cid.Undef, fmt.Errorf("key is empty")
 	}
 
-	rootSlots, err := s.loadValidatedNode(ctx, bucketID, root)
+	rootSlots, err := s.loadValidatedNode(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
 	}
 
 	digest := hashPath(key)
 	slotIndex := digest[0]
-	nextSlot, err := s.updateSubtree(ctx, bucketID, rootSlots[slotIndex], digest, 1, key, oldValue, newValue)
+	nextSlot, err := s.updateSubtree(ctx, namespace, rootSlots[slotIndex], digest, 1, key, oldValue, newValue)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -271,12 +271,12 @@ func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arc
 
 	nextSlots := cloneCIDs(rootSlots)
 	nextSlots[slotIndex] = nextSlot
-	return s.commitNode(ctx, bucketID, nextSlots)
+	return s.commitNode(ctx, namespace, nextSlots)
 }
 
 func (s *Map) updateSubtree(
 	ctx context.Context,
-	bucketID string,
+	namespace string,
 	current cid.Cid,
 	digest [sha256.Size]byte,
 	depth int,
@@ -317,27 +317,27 @@ func (s *Map) updateSubtree(
 			}
 			existing := newLeafBinding(leafPath, leafValue)
 			inserted := leafBinding{path: key, value: newValue, digest: digest}
-			return s.buildSubtree(ctx, bucketID, []leafBinding{existing, inserted}, depth)
+			return s.buildSubtree(ctx, namespace, []leafBinding{existing, inserted}, depth)
 		}
 	}
 
 	if bucketRoot, ok, err := tryDecodeBucketRef(current); err != nil {
 		return cid.Undef, err
 	} else if ok {
-		return s.updateBucket(ctx, bucketID, bucketRoot, key, oldValue, newValue)
+		return s.updateBucket(ctx, namespace, bucketRoot, key, oldValue, newValue)
 	}
 
 	if depth >= len(digest) {
 		return cid.Undef, fmt.Errorf("unexpected radix depth overflow")
 	}
 
-	slots, err := s.loadValidatedNode(ctx, bucketID, current)
+	slots, err := s.loadValidatedNode(ctx, namespace, current)
 	if err != nil {
 		return cid.Undef, err
 	}
 
 	slotIndex := digest[depth]
-	nextSlot, err := s.updateSubtree(ctx, bucketID, slots[slotIndex], digest, depth+1, key, oldValue, newValue)
+	nextSlot, err := s.updateSubtree(ctx, namespace, slots[slotIndex], digest, depth+1, key, oldValue, newValue)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -347,11 +347,11 @@ func (s *Map) updateSubtree(
 
 	nextSlots := cloneCIDs(slots)
 	nextSlots[slotIndex] = nextSlot
-	return s.commitOrCollapseNode(ctx, bucketID, nextSlots)
+	return s.commitOrCollapseNode(ctx, namespace, nextSlots)
 }
 
-func (s *Map) updateBucket(ctx context.Context, bucketID string, bucketRoot cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	markers, err := s.loadBucketEntries(ctx, bucketID, bucketRoot)
+func (s *Map) updateBucket(ctx context.Context, namespace string, bucketRoot cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -381,7 +381,7 @@ func (s *Map) updateBucket(ctx context.Context, bucketID string, bucketRoot cid.
 		if !newValue.Defined() {
 			next := append([]cid.Cid(nil), markers[:index]...)
 			next = append(next, markers[index+1:]...)
-			return s.commitBucketMarkers(ctx, bucketID, next)
+			return s.commitBucketMarkers(ctx, namespace, next)
 		}
 
 		nextMarker, err := encodeLeafMarker(key, newValue)
@@ -397,7 +397,7 @@ func (s *Map) updateBucket(ctx context.Context, bucketID string, bucketRoot cid.
 		}
 		next := cloneCIDs(markers)
 		next[index] = nextMarker
-		if err := s.storeBucketEntries(ctx, bucketID, root, next); err != nil {
+		if err := s.storeBucketEntries(ctx, namespace, root, next); err != nil {
 			return cid.Undef, err
 		}
 		return encodeBucketRef(root)
@@ -433,23 +433,23 @@ func (s *Map) updateBucket(ctx context.Context, bucketID string, bucketRoot cid.
 				return 0
 			}
 		})
-		return s.commitBucketMarkers(ctx, bucketID, next)
+		return s.commitBucketMarkers(ctx, namespace, next)
 	}
 }
 
-func (s *Map) commitRoot(ctx context.Context, bucketID string, bindings []leafBinding) (cid.Cid, error) {
+func (s *Map) commitRoot(ctx context.Context, namespace string, bindings []leafBinding) (cid.Cid, error) {
 	slots := make([]cid.Cid, fanout)
 	for slotIndex, group := range groupBindings(bindings, 0) {
-		child, err := s.buildSubtree(ctx, bucketID, group, 1)
+		child, err := s.buildSubtree(ctx, namespace, group, 1)
 		if err != nil {
 			return cid.Undef, err
 		}
 		slots[slotIndex] = child
 	}
-	return s.commitNode(ctx, bucketID, slots)
+	return s.commitNode(ctx, namespace, slots)
 }
 
-func (s *Map) buildSubtree(ctx context.Context, bucketID string, bindings []leafBinding, depth int) (cid.Cid, error) {
+func (s *Map) buildSubtree(ctx context.Context, namespace string, bindings []leafBinding, depth int) (cid.Cid, error) {
 	switch len(bindings) {
 	case 0:
 		return cid.Undef, nil
@@ -466,32 +466,32 @@ func (s *Map) buildSubtree(ctx context.Context, bucketID string, bindings []leaf
 			}
 			markers[i] = marker
 		}
-		return s.commitBucketMarkers(ctx, bucketID, markers)
+		return s.commitBucketMarkers(ctx, namespace, markers)
 	}
 
 	slots := make([]cid.Cid, fanout)
 	for slotIndex, group := range groupBindings(bindings, depth) {
-		child, err := s.buildSubtree(ctx, bucketID, group, depth+1)
+		child, err := s.buildSubtree(ctx, namespace, group, depth+1)
 		if err != nil {
 			return cid.Undef, err
 		}
 		slots[slotIndex] = child
 	}
-	return s.commitNode(ctx, bucketID, slots)
+	return s.commitNode(ctx, namespace, slots)
 }
 
-func (s *Map) commitNode(ctx context.Context, bucketID string, slots []cid.Cid) (cid.Cid, error) {
+func (s *Map) commitNode(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
 	root, err := s.scheme.Commit(cellsFromCIDs(slots))
 	if err != nil {
 		return cid.Undef, err
 	}
-	if err := s.storeNodeSlots(ctx, bucketID, root, slots); err != nil {
+	if err := s.storeNodeSlots(ctx, namespace, root, slots); err != nil {
 		return cid.Undef, err
 	}
 	return root, nil
 }
 
-func (s *Map) commitOrCollapseNode(ctx context.Context, bucketID string, slots []cid.Cid) (cid.Cid, error) {
+func (s *Map) commitOrCollapseNode(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
 	var only cid.Cid
 	count := 0
 	for _, slot := range slots {
@@ -519,10 +519,10 @@ func (s *Map) commitOrCollapseNode(ctx context.Context, bucketID string, slots [
 			return only, nil
 		}
 	}
-	return s.commitNode(ctx, bucketID, slots)
+	return s.commitNode(ctx, namespace, slots)
 }
 
-func (s *Map) commitBucketMarkers(ctx context.Context, bucketID string, markers []cid.Cid) (cid.Cid, error) {
+func (s *Map) commitBucketMarkers(ctx context.Context, namespace string, markers []cid.Cid) (cid.Cid, error) {
 	switch len(markers) {
 	case 0:
 		return cid.Undef, nil
@@ -537,7 +537,7 @@ func (s *Map) commitBucketMarkers(ctx context.Context, bucketID string, markers 
 	if err != nil {
 		return cid.Undef, err
 	}
-	if err := s.storeBucketEntries(ctx, bucketID, root, markers); err != nil {
+	if err := s.storeBucketEntries(ctx, namespace, root, markers); err != nil {
 		return cid.Undef, err
 	}
 	return encodeBucketRef(root)
@@ -604,8 +604,8 @@ func hashPath(path arcset.Path) [sha256.Size]byte {
 	return sha256.Sum256([]byte(path.String()))
 }
 
-func (s *Map) loadValidatedNode(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, error) {
-	slots, err := s.loadNodeSlots(ctx, bucketID, root)
+func (s *Map) loadValidatedNode(ctx context.Context, namespace string, root cid.Cid) ([]cid.Cid, error) {
+	slots, err := s.loadNodeSlots(ctx, namespace, root)
 	if err != nil {
 		return nil, err
 	}
@@ -619,12 +619,12 @@ func (s *Map) loadValidatedNode(ctx context.Context, bucketID string, root cid.C
 	return slots, nil
 }
 
-func (s *Map) loadNodeSlots(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, error) {
+func (s *Map) loadNodeSlots(ctx context.Context, namespace string, root cid.Cid) ([]cid.Cid, error) {
 	paths := make([]arcset.Path, fanout)
 	for i := 0; i < fanout; i++ {
 		paths[i] = nodeSlotPath(root, byte(i))
 	}
-	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := s.arctable.BatchGet(ctx, namespace, cid.Undef, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -638,7 +638,7 @@ func (s *Map) loadNodeSlots(ctx context.Context, bucketID string, root cid.Cid) 
 	return slots, nil
 }
 
-func (s *Map) storeNodeSlots(ctx context.Context, bucketID string, root cid.Cid, slots []cid.Cid) error {
+func (s *Map) storeNodeSlots(ctx context.Context, namespace string, root cid.Cid, slots []cid.Cid) error {
 	arcs := make(map[arcset.Path]cid.Cid)
 	for i, slot := range slots {
 		if !slot.Defined() {
@@ -653,11 +653,11 @@ func (s *Map) storeNodeSlots(ctx context.Context, bucketID string, root cid.Cid,
 	if err != nil {
 		return err
 	}
-	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
+	return s.arctable.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 
-func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.Cid) ([]cid.Cid, error) {
-	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, bucketCountPath(root))
+func (s *Map) loadBucketEntries(ctx context.Context, namespace string, root cid.Cid) ([]cid.Cid, error) {
+	countCID, err := s.arctable.Get(ctx, namespace, cid.Undef, bucketCountPath(root))
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +670,7 @@ func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.C
 	for i := uint64(0); i < count; i++ {
 		paths[i] = bucketEntryPath(root, i)
 	}
-	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := s.arctable.BatchGet(ctx, namespace, cid.Undef, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -686,7 +686,7 @@ func (s *Map) loadBucketEntries(ctx context.Context, bucketID string, root cid.C
 	return markers, nil
 }
 
-func (s *Map) storeBucketEntries(ctx context.Context, bucketID string, root cid.Cid, markers []cid.Cid) error {
+func (s *Map) storeBucketEntries(ctx context.Context, namespace string, root cid.Cid, markers []cid.Cid) error {
 	arcs := make(map[arcset.Path]cid.Cid, len(markers)+1)
 	countMarker, err := encodeBucketCountMarker(uint64(len(markers)))
 	if err != nil {
@@ -700,7 +700,7 @@ func (s *Map) storeBucketEntries(ctx context.Context, bucketID string, root cid.
 	if err != nil {
 		return err
 	}
-	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
+	return s.arctable.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 
 func cellsFromCIDs(values []cid.Cid) []commitment.Cell {

@@ -21,10 +21,9 @@ var rootCmd = &cobra.Command{
 Primary commands:
   init        Create ~/.malt/malt.json and choose local state paths
   daemon      Run the local MALT daemon
-  bucket      Manage buckets and client-side default bucket
-  add         Upload local files/directories to CAS and merge into a bucket
-  cat         Stream file content from a bucket path
-  get         Export a file or directory from a bucket path
+  add         Upload local files/directories to CAS and merge into the current root
+  cat         Stream file content from the current root
+  get         Export a file or directory from the current root
   resolve     Resolve a path via the daemon
   update      Mutate structure via the daemon
   prove       Resolve and print transcript evidence via the daemon

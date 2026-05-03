@@ -29,7 +29,7 @@ func TestEvalReadPrintsBenchmarkJSONL(t *testing.T) {
 	t.Cleanup(func() { cfgFile = oldCfgFile })
 
 	resetEvalReadFlags(t)
-	evalReadBucket = "eval-read-cli"
+	evalReadFixture = "eval-read-cli"
 	evalReadDepth = 1
 	evalReadSmallBytes = 40
 	evalReadLargeBytes = 300 * 1024
@@ -81,14 +81,14 @@ func decodeEvalReadJSONL(t *testing.T, raw string) []readbench.Result {
 func resetEvalReadFlags(t *testing.T) {
 	t.Helper()
 
-	oldBucket := evalReadBucket
+	oldFixture := evalReadFixture
 	oldDepth := evalReadDepth
 	oldSmallBytes := evalReadSmallBytes
 	oldLargeBytes := evalReadLargeBytes
 	oldRange := evalReadRange
 	oldIterations := evalReadIterations
 	t.Cleanup(func() {
-		evalReadBucket = oldBucket
+		evalReadFixture = oldFixture
 		evalReadDepth = oldDepth
 		evalReadSmallBytes = oldSmallBytes
 		evalReadLargeBytes = oldLargeBytes

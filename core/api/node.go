@@ -43,7 +43,7 @@ type Node struct {
 	cfg  *config.Config
 	opts *options
 
-	// Shared components (namespace by bucketId)
+	// Shared components (namespace by namespace)
 	kv           kvstore.KVStore
 	arctable     arctable.ArcTable
 	cas          cas.Reader
@@ -268,7 +268,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 //
 // Parameters:
 //   - id: unique graph identifier
-//   - opts: functional options (graph.WithCommitmentScheme, graph.WithBucketId, etc.)
+//   - opts: functional options (graph.WithCommitmentScheme, graph.WithNamespace, etc.)
 //
 // The Node auto-injects shared infrastructure (ArcTable, CAS) and optional lineage recording.
 func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
@@ -308,8 +308,8 @@ type lineageRecorderAdapter struct {
 	mgr *lineage.Manager
 }
 
-func (a *lineageRecorderAdapter) Record(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid) error {
-	// bucketId is ignored — lineage tracks by root CID
+func (a *lineageRecorderAdapter) Record(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid) error {
+	// namespace is ignored — lineage tracks by root CID
 	return a.mgr.Record(ctx, newRoot, oldRoot, 0)
 }
 

@@ -38,20 +38,20 @@ type Query struct {
 type Semantics interface {
 	// Commit commits the supplied list view into the provided graph scope and
 	// returns a structure root.
-	Commit(ctx context.Context, bucketID string, view View) (cid.Cid, error)
+	Commit(ctx context.Context, namespace string, view View) (cid.Cid, error)
 
 	// Prove proves the key (or absence) at index under root.
-	Prove(ctx context.Context, bucketID string, root cid.Cid, index uint64) (Query, structure.Proof, error)
+	Prove(ctx context.Context, namespace string, root cid.Cid, index uint64) (Query, structure.Proof, error)
 
 	// Verify verifies the proof for an index query under root.
 	Verify(root cid.Cid, index uint64, expected Query, proof structure.Proof) (bool, error)
 
 	// Replace performs an index-stable replacement at an existing position.
-	Replace(ctx context.Context, bucketID string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error)
+	Replace(ctx context.Context, namespace string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error)
 
 	// Append extends the list by one key and returns the new root and index.
-	Append(ctx context.Context, bucketID string, root cid.Cid, key cid.Cid) (newRoot cid.Cid, newIndex uint64, err error)
+	Append(ctx context.Context, namespace string, root cid.Cid, key cid.Cid) (newRoot cid.Cid, newIndex uint64, err error)
 
 	// Truncate shrinks the committed length while preserving the remaining prefix.
-	Truncate(ctx context.Context, bucketID string, root cid.Cid, newLen uint64) (cid.Cid, error)
+	Truncate(ctx context.Context, namespace string, root cid.Cid, newLen uint64) (cid.Cid, error)
 }

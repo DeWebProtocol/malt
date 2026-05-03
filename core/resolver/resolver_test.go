@@ -52,19 +52,19 @@ func newSemantic(t *testing.T, e *overwrite.ArcTable) mapping.Semantics {
 	return semantic
 }
 
-func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *overwrite.ArcTable, bucketID string, arcs map[string]cid.Cid) cid.Cid {
+func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *overwrite.ArcTable, namespace string, arcs map[string]cid.Cid) cid.Cid {
 	t.Helper()
-	root, err := semantic.Commit(ctx, bucketID, mapping.NewViewFrom(arcs))
+	root, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(arcs))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if err := e.Update(ctx, bucketID, root, cid.Undef, arcset.NewSetFrom(arcs)); err != nil {
+	if err := e.Update(ctx, namespace, root, cid.Undef, arcset.NewSetFrom(arcs)); err != nil {
 		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 	return root
 }
 
-const testBucketId = "test-graph"
+const testNamespace = "test-graph"
 
 func TestResolverExplicitOnly(t *testing.T) {
 	e := newTestArcTable()
@@ -81,9 +81,9 @@ func TestResolverExplicitOnly(t *testing.T) {
 		"a/b":   k2,
 		"a/b/c": k3,
 	}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -129,9 +129,9 @@ func TestResolverCanonicalizesResolvePath(t *testing.T) {
 	arcsMap := map[string]cid.Cid{
 		"a/b": target,
 	}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -162,9 +162,9 @@ func TestResolverExplicitLongestPrefix(t *testing.T) {
 		"a/b":   k2,
 		"a/b/c": k3,
 	}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -182,11 +182,11 @@ func TestResolverImplicitStep(t *testing.T) {
 	ctx := context.Background()
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcsMap := map[string]cid.Cid{"data": payloadCID}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	c.AddBlock(payloadCID, []byte("raw-block-data"))
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -215,9 +215,9 @@ func TestResolverTranscript(t *testing.T) {
 		"inner": innerCID,
 		"outer": outerCID,
 	}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -252,9 +252,9 @@ func TestResolverPayloadRedirect(t *testing.T) {
 		"@payload": payloadCID,
 		"link":     payloadCID,
 	}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -295,11 +295,11 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewListKZGCid failed: %v", err)
 	}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, map[string]cid.Cid{
+	root := commitStructure(t, ctx, semantic, e, testNamespace, map[string]cid.Cid{
 		"file": listRoot,
 	})
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -334,9 +334,9 @@ func TestResolverMissingPayloadBindingFails(t *testing.T) {
 	ctx := context.Background()
 	targetCID, _ := newPayloadCID([]byte("target-data"))
 	arcsMap := map[string]cid.Cid{"link": targetCID}
-	root := commitStructure(t, ctx, semantic, e, testBucketId, arcsMap)
+	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 
@@ -354,7 +354,7 @@ func TestResolverNonMaltEmptyPath(t *testing.T) {
 	payloadCID, _ := newPayloadCID([]byte("raw-data"))
 	c.AddBlock(payloadCID, []byte("raw-data"))
 
-	explicitR := explicit.NewResolver(e, semantic, testBucketId)
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
 	implicitR := implicit.NewResolver(c)
 	g := resolver.NewResolver(explicitR, implicitR)
 

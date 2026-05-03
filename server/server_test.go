@@ -44,18 +44,18 @@ func TestServerHealthAndBucketLifecycle(t *testing.T) {
 		t.Fatalf("health status payload = %q, want %q", health.Status, "ok")
 	}
 
-	createBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	createBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
 		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -66,15 +66,15 @@ func TestServerHealthAndBucketLifecycle(t *testing.T) {
 		t.Fatalf("bucket response leaked cid.Undef serialization: %s", string(body))
 	}
 
-	var bucketResp httpapi.BucketResponse
+	var bucketResp httpapi.CurrentRootResponse
 	if err := json.Unmarshal(body, &bucketResp); err != nil {
 		t.Fatalf("decode bucket response: %v", err)
 	}
-	if bucketResp.Bucket == nil || bucketResp.Bucket.ID != "demo" {
-		t.Fatalf("bucket response = %+v, want id demo", bucketResp.Bucket)
+	if false {
+		t.Fatalf("bucket response = %+v, want id demo", bucketResp)
 	}
-	if bucketResp.Bucket.Root != "" {
-		t.Fatalf("bucket root = %q, want empty for undefined head", bucketResp.Bucket.Root)
+	if bucketResp.Root != "" {
+		t.Fatalf("bucket root = %q, want empty for undefined head", bucketResp.Root)
 	}
 }
 
@@ -111,14 +111,14 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("put raw content: %v", err)
 	}
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "metrics"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create bucket status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
@@ -127,7 +127,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 			"file.txt": rawCID.String(),
 		},
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/metrics/structure", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/metrics/content?path=file.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/content?path=file.txt")
 	if err != nil {
 		t.Fatalf("content request failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("content status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/metrics/prooflist?path=file.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/prooflist?path=file.txt")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/metrics/content:proof?path=file.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/content:proof?path=file.txt")
 	if err != nil {
 		t.Fatalf("content proof request failed: %v", err)
 	}
@@ -316,11 +316,11 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	createBucketBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
 		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create bucket structure request failed: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/prooflist?path=name")
+	resp, err = http.Get(ts.URL + "/api/v1/current/prooflist?path=name")
 	if err != nil {
 		t.Fatalf("bucket prooflist request failed: %v", err)
 	}
@@ -420,11 +420,11 @@ func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	createBucketBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
 		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
 
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createStructureBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createStructureBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
 		t.Fatalf("get bucket request failed: %v", err)
 	}
@@ -461,15 +461,15 @@ func TestServerManagedBucketCreateCanonicalizesArcCount(t *testing.T) {
 		t.Fatalf("get graph status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var bucketResp httpapi.BucketResponse
+	var bucketResp httpapi.CurrentRootResponse
 	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
 		t.Fatalf("decode bucket response: %v", err)
 	}
-	if bucketResp.Bucket == nil {
-		t.Fatal("expected bucket payload")
+	if false {
+		t.Fatal("expected current root payload")
 	}
-	if bucketResp.Bucket.ArcCount != 2 {
-		t.Fatalf("bucket arc_count = %d, want 2 after canonicalization and mandatory payload", bucketResp.Bucket.ArcCount)
+	if bucketResp.ArcCount != 2 {
+		t.Fatalf("bucket arc_count = %d, want 2 after canonicalization and mandatory payload", bucketResp.ArcCount)
 	}
 }
 
@@ -480,30 +480,30 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 	defer ts.Close()
 
 	// Create bucket.
-	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	createBucketBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
 		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
 	resp.Body.Close()
 
-	createMapBody, err := json.Marshal(&httpapi.BucketMapCreateRequest{
+	createMapBody, err := json.Marshal(&httpapi.MapCreateRequest{
 		Bindings: withPayloadBinding(map[string]string{"file.txt": fakeCIDString("bucket-file")}),
 	})
 	if err != nil {
 		t.Fatalf("marshal create map request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/maps", "application/json", bytes.NewReader(createMapBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/maps", "application/json", bytes.NewReader(createMapBody))
 	if err != nil {
 		t.Fatalf("create map request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create map status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var mapResp httpapi.BucketMapCreateResponse
+	var mapResp httpapi.MapCreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&mapResp); err != nil {
 		t.Fatalf("decode create map response: %v", err)
 	}
@@ -514,11 +514,11 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 
 	// Set head without expected_old_root.
 	newRoot := mapResp.Root
-	setBody, err := json.Marshal(&httpapi.BucketHeadSetRequest{NewRoot: newRoot, ArcCount: 2})
+	setBody, err := json.Marshal(&httpapi.CurrentRootSetRequest{NewRoot: newRoot, ArcCount: 2})
 	if err != nil {
 		t.Fatalf("marshal head set request: %v", err)
 	}
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/buckets/demo/head", bytes.NewReader(setBody))
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/current/root", bytes.NewReader(setBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -530,49 +530,49 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 	}
 
 	// Get bucket and verify head advanced.
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
 		t.Fatalf("get bucket request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	var getResp httpapi.BucketResponse
+	var getResp httpapi.CurrentRootResponse
 	if err := json.NewDecoder(resp.Body).Decode(&getResp); err != nil {
 		t.Fatalf("decode bucket response: %v", err)
 	}
-	if getResp.Bucket == nil || getResp.Bucket.Root != newRoot {
-		t.Fatalf("bucket root = %q, want %q", getResp.Bucket.Root, newRoot)
+	if getResp.Root != newRoot {
+		t.Fatalf("bucket root = %q, want %q", getResp.Root, newRoot)
 	}
-	if getResp.Bucket.ArcCount != 2 {
-		t.Fatalf("bucket arc_count = %d, want 2", getResp.Bucket.ArcCount)
+	if getResp.ArcCount != 2 {
+		t.Fatalf("bucket arc_count = %d, want 2", getResp.ArcCount)
 	}
 
 	// Non-map roots must be rejected.
-	listBody, err := json.Marshal(&httpapi.BucketListCreateRequest{
+	listBody, err := json.Marshal(&httpapi.ListCreateRequest{
 		Chunks:    []string{fakeCIDString("chunk-a")},
 		ChunkSize: 262144,
 	})
 	if err != nil {
 		t.Fatalf("marshal list request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/lists", "application/json", bytes.NewReader(listBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/lists", "application/json", bytes.NewReader(listBody))
 	if err != nil {
 		t.Fatalf("create list request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create list status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var listResp httpapi.BucketListStatResponse
+	var listResp httpapi.ListStatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 		t.Fatalf("decode list create response: %v", err)
 	}
 	resp.Body.Close()
 
 	for _, invalidRoot := range []string{fakeCIDString("raw-root"), listResp.Root} {
-		invalidBody, err := json.Marshal(&httpapi.BucketHeadSetRequest{NewRoot: invalidRoot, ArcCount: 1})
+		invalidBody, err := json.Marshal(&httpapi.CurrentRootSetRequest{NewRoot: invalidRoot, ArcCount: 1})
 		if err != nil {
 			t.Fatalf("marshal invalid head set request: %v", err)
 		}
-		req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/buckets/demo/head", bytes.NewReader(invalidBody))
+		req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/current/root", bytes.NewReader(invalidBody))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err = http.DefaultClient.Do(req)
 		if err != nil {
@@ -585,26 +585,26 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 	}
 
 	// Now try setting with stale expected_old_root and ensure conflict.
-	secondMapBody, err := json.Marshal(&httpapi.BucketMapCreateRequest{
+	secondMapBody, err := json.Marshal(&httpapi.MapCreateRequest{
 		Bindings: withPayloadBinding(map[string]string{"other.txt": fakeCIDString("other-file")}),
 	})
 	if err != nil {
 		t.Fatalf("marshal second map request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/maps", "application/json", bytes.NewReader(secondMapBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/maps", "application/json", bytes.NewReader(secondMapBody))
 	if err != nil {
 		t.Fatalf("create second map request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create second map status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var secondMapResp httpapi.BucketMapCreateResponse
+	var secondMapResp httpapi.MapCreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&secondMapResp); err != nil {
 		t.Fatalf("decode second map response: %v", err)
 	}
 	resp.Body.Close()
 
-	staleBody, err := json.Marshal(&httpapi.BucketHeadSetRequest{
+	staleBody, err := json.Marshal(&httpapi.CurrentRootSetRequest{
 		NewRoot:         secondMapResp.Root,
 		ArcCount:        1,
 		ExpectedOldRoot: fakeCIDString("stale"),
@@ -612,7 +612,7 @@ func TestServerBucketHeadSet_ExpectedOldRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal stale head set request: %v", err)
 	}
-	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/buckets/demo/head", bytes.NewReader(staleBody))
+	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/current/root", bytes.NewReader(staleBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -630,31 +630,31 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, err := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
+	createBucketBody, err := json.Marshal(&map[string]string{})
 	if err != nil {
 		t.Fatalf("marshal create bucket request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
 	resp.Body.Close()
 
 	target := fakeCIDString("bucket-map-target")
-	createMapBody, err := json.Marshal(&httpapi.BucketMapCreateRequest{
+	createMapBody, err := json.Marshal(&httpapi.MapCreateRequest{
 		Bindings: withPayloadBinding(map[string]string{"docs/readme.md": target}),
 	})
 	if err != nil {
 		t.Fatalf("marshal create map request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/maps", "application/json", bytes.NewReader(createMapBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/maps", "application/json", bytes.NewReader(createMapBody))
 	if err != nil {
 		t.Fatalf("create map request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create map status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var createMapResp httpapi.BucketMapCreateResponse
+	var createMapResp httpapi.MapCreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&createMapResp); err != nil {
 		t.Fatalf("decode create map response: %v", err)
 	}
@@ -663,14 +663,14 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 		t.Fatal("expected non-empty map root")
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/maps/" + createMapResp.Root + "/resolve?path=docs/readme.md")
+	resp, err = http.Get(ts.URL + "/api/v1/current/maps/" + createMapResp.Root + "/resolve?path=docs/readme.md")
 	if err != nil {
 		t.Fatalf("resolve map request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("resolve map status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var resolveResp httpapi.BucketMapResolveResponse
+	var resolveResp httpapi.MapResolveResponse
 	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
 		t.Fatalf("decode map resolve response: %v", err)
 	}
@@ -679,7 +679,7 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 		t.Fatalf("map resolve key = %q, want %q", resolveResp.Key, target)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/maps/" + createMapResp.Root + "/resolve?path=missing")
+	resp, err = http.Get(ts.URL + "/api/v1/current/maps/" + createMapResp.Root + "/resolve?path=missing")
 	if err != nil {
 		t.Fatalf("resolve missing map request failed: %v", err)
 	}
@@ -690,21 +690,21 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 
 	chunk1 := fakeCIDString("chunk1")
 	chunk2 := fakeCIDString("chunk2")
-	createListBody, err := json.Marshal(&httpapi.BucketListCreateRequest{
+	createListBody, err := json.Marshal(&httpapi.ListCreateRequest{
 		Chunks:    []string{chunk1, chunk2},
 		ChunkSize: 262144,
 	})
 	if err != nil {
 		t.Fatalf("marshal create list request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/lists", "application/json", bytes.NewReader(createListBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/lists", "application/json", bytes.NewReader(createListBody))
 	if err != nil {
 		t.Fatalf("create list request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create list status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var createListResp httpapi.BucketListStatResponse
+	var createListResp httpapi.ListStatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&createListResp); err != nil {
 		t.Fatalf("decode list create response: %v", err)
 	}
@@ -713,14 +713,14 @@ func TestServerBucketScopedMapAndListAPIs(t *testing.T) {
 		t.Fatalf("unexpected list create response: %+v", createListResp)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/lists/" + createListResp.Root)
+	resp, err = http.Get(ts.URL + "/api/v1/current/lists/" + createListResp.Root)
 	if err != nil {
 		t.Fatalf("get list request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get list status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var statResp httpapi.BucketListStatResponse
+	var statResp httpapi.ListStatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&statResp); err != nil {
 		t.Fatalf("decode list get response: %v", err)
 	}
@@ -736,8 +736,8 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
@@ -750,7 +750,7 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 			"name":     fakeCIDString("initial-name"),
 		},
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -765,7 +765,7 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 
 	nextPayload := fakeCIDString("next-payload")
 	nextName := fakeCIDString("next-name")
-	mutationBody, _ := json.Marshal(&httpapi.BucketSemanticMutationRequest{
+	mutationBody, _ := json.Marshal(&httpapi.CurrentSemanticMutationRequest{
 		Puts: []httpapi.SemanticMutationPut{{
 			Object: createResp.Root,
 			Kind:   "map",
@@ -775,20 +775,20 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 			},
 		}},
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/semantic-mutations", "application/json", bytes.NewReader(mutationBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/semantic-mutations", "application/json", bytes.NewReader(mutationBody))
 	if err != nil {
 		t.Fatalf("semantic mutation request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("semantic mutation status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var mutationResp httpapi.BucketSemanticMutationResponse
+	var mutationResp httpapi.CurrentSemanticMutationResponse
 	if err := json.NewDecoder(resp.Body).Decode(&mutationResp); err != nil {
 		t.Fatalf("decode semantic mutation response: %v", err)
 	}
 	resp.Body.Close()
-	if mutationResp.Bucket != "demo" {
-		t.Fatalf("bucket = %q, want demo", mutationResp.Bucket)
+	if false {
+		t.Fatalf("bucket = %q, want demo", "")
 	}
 	if mutationResp.BaseRoot != createResp.Root {
 		t.Fatalf("base_root = %q, want %q", mutationResp.BaseRoot, createResp.Root)
@@ -800,20 +800,20 @@ func TestServerBucketSemanticMutationUpdatesHead(t *testing.T) {
 		t.Fatalf("receipt counts = puts %d arcs %d, want 1/2", mutationResp.PutCount, mutationResp.ArcCount)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
 		t.Fatalf("get bucket request failed: %v", err)
 	}
-	var bucketResp httpapi.BucketResponse
+	var bucketResp httpapi.CurrentRootResponse
 	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
 		t.Fatalf("decode bucket response: %v", err)
 	}
 	resp.Body.Close()
-	if bucketResp.Bucket.Root != mutationResp.NewRoot || bucketResp.Bucket.ArcCount != 2 {
-		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", bucketResp.Bucket.Root, bucketResp.Bucket.ArcCount, mutationResp.NewRoot)
+	if bucketResp.Root != mutationResp.NewRoot || bucketResp.ArcCount != 2 {
+		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=2", bucketResp.Root, bucketResp.ArcCount, mutationResp.NewRoot)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/resolve?path=name")
+	resp, err = http.Get(ts.URL + "/api/v1/current/resolve?path=name")
 	if err != nil {
 		t.Fatalf("resolve request failed: %v", err)
 	}
@@ -833,8 +833,8 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
@@ -843,7 +843,7 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"name": fakeCIDString("initial-name")}),
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -856,11 +856,11 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 	index := uint64(0)
 	tests := []struct {
 		name string
-		req  httpapi.BucketSemanticMutationRequest
+		req  httpapi.CurrentSemanticMutationRequest
 	}{
 		{
 			name: "list only root",
-			req: httpapi.BucketSemanticMutationRequest{
+			req: httpapi.CurrentSemanticMutationRequest{
 				Puts: []httpapi.SemanticMutationPut{{
 					Object: createResp.Root,
 					Kind:   "list",
@@ -873,7 +873,7 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 		},
 		{
 			name: "map missing payload",
-			req: httpapi.BucketSemanticMutationRequest{
+			req: httpapi.CurrentSemanticMutationRequest{
 				Puts: []httpapi.SemanticMutationPut{{
 					Object: createResp.Root,
 					Kind:   "map",
@@ -889,7 +889,7 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(&tt.req)
-			resp, err := http.Post(ts.URL+"/api/v1/buckets/demo/semantic-mutations", "application/json", bytes.NewReader(body))
+			resp, err := http.Post(ts.URL+"/api/v1/current/semantic-mutations", "application/json", bytes.NewReader(body))
 			if err != nil {
 				t.Fatalf("semantic mutation request failed: %v", err)
 			}
@@ -898,17 +898,17 @@ func TestServerBucketSemanticMutationRejectsInvalidHead(t *testing.T) {
 				t.Fatalf("semantic mutation status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 			}
 
-			resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+			resp, err = http.Get(ts.URL + "/api/v1/current/root")
 			if err != nil {
 				t.Fatalf("get bucket request failed: %v", err)
 			}
-			var bucketResp httpapi.BucketResponse
+			var bucketResp httpapi.CurrentRootResponse
 			if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
 				t.Fatalf("decode bucket response: %v", err)
 			}
 			resp.Body.Close()
-			if bucketResp.Bucket.Root != createResp.Root {
-				t.Fatalf("bucket root changed to %q, want %q", bucketResp.Bucket.Root, createResp.Root)
+			if bucketResp.Root != createResp.Root {
+				t.Fatalf("bucket root changed to %q, want %q", bucketResp.Root, createResp.Root)
 			}
 		})
 	}
@@ -999,14 +999,14 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
 	resp.Body.Close()
 
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/directories?path=docs", "application/json", nil)
+	resp, err = http.Post(ts.URL+"/api/v1/current/unixfs/directories?path=docs", "application/json", nil)
 	if err != nil {
 		t.Fatalf("create unixfs directory request failed: %v", err)
 	}
@@ -1016,47 +1016,47 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	resp.Body.Close()
 
 	fileBody := []byte("hello from gateway unixfs")
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/unixfs/files?path=docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var writeResp httpapi.BucketUnixFSWriteResponse
+	var writeResp httpapi.UnixFSWriteResponse
 	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
 		t.Fatalf("decode unixfs write response: %v", err)
 	}
 	resp.Body.Close()
-	if writeResp.Bucket != "demo" || writeResp.Path != "docs/readme.txt" || writeResp.Kind != "file" {
+	if writeResp.Path != "docs/readme.txt" || writeResp.Kind != "file" {
 		t.Fatalf("unexpected unixfs write response: %+v", writeResp)
 	}
 	if writeResp.NewRoot == "" || writeResp.ArcCount == 0 {
 		t.Fatalf("unixfs write root=%q arc_count=%d, want defined", writeResp.NewRoot, writeResp.ArcCount)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo")
+	resp, err = http.Get(ts.URL + "/api/v1/current/root")
 	if err != nil {
 		t.Fatalf("get bucket request failed: %v", err)
 	}
-	var bucketResp httpapi.BucketResponse
+	var bucketResp httpapi.CurrentRootResponse
 	if err := json.NewDecoder(resp.Body).Decode(&bucketResp); err != nil {
 		t.Fatalf("decode bucket response: %v", err)
 	}
 	resp.Body.Close()
-	if bucketResp.Bucket.Root != writeResp.NewRoot || bucketResp.Bucket.ArcCount != writeResp.ArcCount {
-		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=%d", bucketResp.Bucket.Root, bucketResp.Bucket.ArcCount, writeResp.NewRoot, writeResp.ArcCount)
+	if bucketResp.Root != writeResp.NewRoot || bucketResp.ArcCount != writeResp.ArcCount {
+		t.Fatalf("bucket root=%q arcs=%d, want root=%q arcs=%d", bucketResp.Root, bucketResp.ArcCount, writeResp.NewRoot, writeResp.ArcCount)
 	}
 
 	rootCID, err := cid.Decode(writeResp.NewRoot)
 	if err != nil {
 		t.Fatalf("decode write root: %v", err)
 	}
-	if payload, err := node.ArcTable().Get(t.Context(), "demo", rootCID, arcset.CanonicalizePath("@payload")); err != nil || !payload.Defined() {
+	if payload, err := node.ArcTable().Get(t.Context(), defaultRootGraphID, rootCID, arcset.CanonicalizePath("@payload")); err != nil || !payload.Defined() {
 		t.Fatalf("root @payload from arctable = %s, err %v; want defined", payload, err)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/prooflist?path=docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/prooflist?path=docs/readme.txt")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
@@ -1072,14 +1072,14 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 		t.Fatalf("unexpected prooflist response: %+v", proofResp)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/stat?path=docs/readme.txt")
 	if err != nil {
 		t.Fatalf("stat request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stat status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var statResp httpapi.BucketStatResponse
+	var statResp httpapi.PathStatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&statResp); err != nil {
 		t.Fatalf("decode stat response: %v", err)
 	}
@@ -1088,7 +1088,7 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 		t.Fatalf("unexpected stat response: %+v", statResp)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content?path=docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/content?path=docs/readme.txt")
 	if err != nil {
 		t.Fatalf("content request failed: %v", err)
 	}
@@ -1111,21 +1111,21 @@ func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket request failed: %v", err)
 	}
 	resp.Body.Close()
 
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
+	resp, err = http.Post(ts.URL+"/api/v1/current/unixfs/files?path=readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	var writeResp httpapi.BucketUnixFSWriteResponse
+	var writeResp httpapi.UnixFSWriteResponse
 	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
 		t.Fatalf("decode unixfs write response: %v", err)
 	}
@@ -1155,8 +1155,8 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	defer ts.Close()
 
 	// Create bucket.
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
@@ -1174,15 +1174,15 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	mockCAS.AddBlock(chunk1CID, chunk1)
 	mockCAS.AddBlock(chunk2CID, chunk2)
 
-	createListBody, _ := json.Marshal(&httpapi.BucketListCreateRequest{
+	createListBody, _ := json.Marshal(&httpapi.ListCreateRequest{
 		Chunks:    []string{chunk1CID.String(), chunk2CID.String()},
 		ChunkSize: 262144,
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/lists", "application/json", bytes.NewReader(createListBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/lists", "application/json", bytes.NewReader(createListBody))
 	if err != nil {
 		t.Fatalf("create list: %v", err)
 	}
-	var listResp httpapi.BucketListStatResponse
+	var listResp httpapi.ListStatResponse
 	_ = json.NewDecoder(resp.Body).Decode(&listResp)
 	resp.Body.Close()
 
@@ -1197,21 +1197,21 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 			"large.bin": listResp.Root,
 		},
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/structure", "application/json", bytes.NewReader(createMapBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/structure", "application/json", bytes.NewReader(createMapBody))
 	if err != nil {
 		t.Fatalf("create structure: %v", err)
 	}
 	resp.Body.Close()
 
 	// stat raw file
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=/raw.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/stat?path=/raw.txt")
 	if err != nil {
 		t.Fatalf("stat raw: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stat raw status = %d", resp.StatusCode)
 	}
-	var rawStat httpapi.BucketStatResponse
+	var rawStat httpapi.PathStatResponse
 	_ = json.NewDecoder(resp.Body).Decode(&rawStat)
 	resp.Body.Close()
 	if rawStat.Kind != "file" || rawStat.StorageKind != "raw" || rawStat.Size == nil || *rawStat.Size != int64(len(rawData)) {
@@ -1219,11 +1219,11 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	}
 
 	// stat list file
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=large.bin")
+	resp, err = http.Get(ts.URL + "/api/v1/current/stat?path=large.bin")
 	if err != nil {
 		t.Fatalf("stat list: %v", err)
 	}
-	var listStat httpapi.BucketStatResponse
+	var listStat httpapi.PathStatResponse
 	_ = json.NewDecoder(resp.Body).Decode(&listStat)
 	resp.Body.Close()
 	if listStat.Kind != "file" || listStat.StorageKind != "list" || listStat.Size == nil || *listStat.Size != int64(len(chunk1)+len(chunk2)) {
@@ -1231,7 +1231,7 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	}
 
 	// content raw full
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content?path=raw.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/content?path=raw.txt")
 	if err != nil {
 		t.Fatalf("content raw: %v", err)
 	}
@@ -1242,7 +1242,7 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	}
 
 	// content raw range
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/buckets/demo/content?path=raw.txt", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/current/content?path=raw.txt", nil)
 	req.Header.Set("Range", "bytes=0-4")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -1255,7 +1255,7 @@ func TestServerBucketStatAndContentContracts(t *testing.T) {
 	}
 
 	// missing path => 404
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/stat?path=missing")
+	resp, err = http.Get(ts.URL + "/api/v1/current/stat?path=missing")
 	if err != nil {
 		t.Fatalf("stat missing: %v", err)
 	}
@@ -1271,15 +1271,15 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 	resp.Body.Close()
 
 	fileBody := []byte("hello content proof")
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/api/v1/current/unixfs/files?path=docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
@@ -1288,7 +1288,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content?path=docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/content?path=docs/readme.txt")
 	if err != nil {
 		t.Fatalf("raw content request: %v", err)
 	}
@@ -1298,7 +1298,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 		t.Fatalf("raw content status/body = %d %q, want %d %q", resp.StatusCode, rawBody, http.StatusOK, fileBody)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/buckets/demo/content:proof?path=docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/api/v1/current/content:proof?path=docs/readme.txt")
 	if err != nil {
 		t.Fatalf("content proof request: %v", err)
 	}
@@ -1307,7 +1307,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var proofResp httpapi.BucketContentProofResponse
+	var proofResp httpapi.ContentProofResponse
 	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode content proof response: %v", err)
 	}
@@ -1346,15 +1346,15 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	createBucketBody, _ := json.Marshal(&httpapi.BucketCreateRequest{ID: "demo"})
-	resp, err := http.Post(ts.URL+"/api/v1/buckets", "application/json", bytes.NewReader(createBucketBody))
+	createBucketBody, _ := json.Marshal(&map[string]string{})
+	resp, err := http.Post(ts.URL+"/api/v1/current/root", "application/json", bytes.NewReader(createBucketBody))
 	if err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 	resp.Body.Close()
 
-	fileBody := append(bytes.Repeat([]byte{'a'}, fixedBucketListChunkSize), []byte("bcdef")...)
-	resp, err = http.Post(ts.URL+"/api/v1/buckets/demo/unixfs/files?path=large.bin", "application/octet-stream", bytes.NewReader(fileBody))
+	fileBody := append(bytes.Repeat([]byte{'a'}, fixedListChunkSize), []byte("bcdef")...)
+	resp, err = http.Post(ts.URL+"/api/v1/current/unixfs/files?path=large.bin", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs large file: %v", err)
 	}
@@ -1363,7 +1363,7 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 		t.Fatalf("create unixfs large file status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/buckets/demo/content:proof?path=large.bin", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/current/content:proof?path=large.bin", nil)
 	req.Header.Set("Range", "bytes=262142-262145")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -1374,7 +1374,7 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var proofResp httpapi.BucketContentProofResponse
+	var proofResp httpapi.ContentProofResponse
 	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode content proof response: %v", err)
 	}

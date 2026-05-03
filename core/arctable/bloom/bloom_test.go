@@ -122,59 +122,59 @@ func TestBloomCacheNew(t *testing.T) {
 	}
 }
 
-func TestBloomCacheCreateBucket(t *testing.T) {
+func TestBloomCacheCreateNamespace(t *testing.T) {
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Create bucket with default config
-	err := bc.CreateBucket(ctx, "test-bucket", nil)
+	// Create namespace with default config
+	err := bc.CreateNamespace(ctx, "test-namespace", nil)
 	if err != nil {
-		t.Fatalf("CreateBucket failed: %v", err)
+		t.Fatalf("CreateNamespace failed: %v", err)
 	}
 
-	// Duplicate bucket should fail
-	err = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Duplicate namespace should fail
+	err = bc.CreateNamespace(ctx, "test-namespace", nil)
 	if err == nil {
-		t.Error("duplicate bucket should fail")
+		t.Error("duplicate namespace should fail")
 	}
 
-	// Create bucket with custom config
-	cfg := &bloom.BucketConfig{
+	// Create namespace with custom config
+	cfg := &bloom.NamespaceConfig{
 		ExpectedItems:     5000,
 		FalsePositiveRate: 0.001,
 	}
-	err = bc.CreateBucket(ctx, "custom-bucket", cfg)
+	err = bc.CreateNamespace(ctx, "custom-namespace", cfg)
 	if err != nil {
-		t.Fatalf("CreateBucket with custom config failed: %v", err)
+		t.Fatalf("CreateNamespace with custom config failed: %v", err)
 	}
 }
 
-func TestBloomCacheGetBucketMeta(t *testing.T) {
+func TestBloomCacheGetNamespaceMeta(t *testing.T) {
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Non-existent bucket
-	meta, err := bc.GetBucketMeta(ctx, "nonexistent")
+	// Non-existent namespace
+	meta, err := bc.GetNamespaceMeta(ctx, "nonexistent")
 	if err != nil {
-		t.Fatalf("GetBucketMeta for non-existent should not error: %v", err)
+		t.Fatalf("GetNamespaceMeta for non-existent should not error: %v", err)
 	}
 	if meta != nil {
-		t.Error("non-existent bucket should return nil meta")
+		t.Error("non-existent namespace should return nil meta")
 	}
 
-	// Create bucket
-	cfg := &bloom.BucketConfig{
+	// Create namespace
+	cfg := &bloom.NamespaceConfig{
 		ExpectedItems:     1000,
 		FalsePositiveRate: 0.05,
 	}
-	bc.CreateBucket(ctx, "test-bucket", cfg)
+	bc.CreateNamespace(ctx, "test-namespace", cfg)
 
 	// Get meta
-	meta, err = bc.GetBucketMeta(ctx, "test-bucket")
+	meta, err = bc.GetNamespaceMeta(ctx, "test-namespace")
 	if err != nil {
-		t.Fatalf("GetBucketMeta failed: %v", err)
+		t.Fatalf("GetNamespaceMeta failed: %v", err)
 	}
 	if meta == nil {
 		t.Fatal("meta should not be nil")
@@ -192,19 +192,19 @@ func TestBloomCacheGet(t *testing.T) {
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Get non-existent bucket (auto-creates with default config)
-	filter, err := bc.Get(ctx, "auto-bucket")
+	// Get non-existent namespace (auto-creates with default config)
+	filter, err := bc.Get(ctx, "auto-namespace")
 	if err != nil {
-		t.Fatalf("Get auto-created bucket failed: %v", err)
+		t.Fatalf("Get auto-created namespace failed: %v", err)
 	}
 	if filter == nil {
 		t.Error("filter should not be nil")
 	}
 
-	// Verify bucket was created
-	meta, _ := bc.GetBucketMeta(ctx, "auto-bucket")
+	// Verify namespace was created
+	meta, _ := bc.GetNamespaceMeta(ctx, "auto-namespace")
 	if meta == nil {
-		t.Error("auto-bucket should be created")
+		t.Error("auto-namespace should be created")
 	}
 }
 
@@ -213,19 +213,19 @@ func TestBloomCacheAddAndMightContain(t *testing.T) {
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Create bucket
-	bc.CreateBucket(ctx, "test-bucket", nil)
+	// Create namespace
+	bc.CreateNamespace(ctx, "test-namespace", nil)
 
 	// Add paths
 	paths := []string{"path/a", "path/b", "path/c"}
-	err := bc.Add(ctx, "test-bucket", paths)
+	err := bc.Add(ctx, "test-namespace", paths)
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 
 	// MightContain for existing paths
 	for _, path := range paths {
-		result, err := bc.MightContain(ctx, "test-bucket", path)
+		result, err := bc.MightContain(ctx, "test-namespace", path)
 		if err != nil {
 			t.Fatalf("MightContain failed: %v", err)
 		}
@@ -235,7 +235,7 @@ func TestBloomCacheAddAndMightContain(t *testing.T) {
 	}
 
 	// MightContain for non-existent path (may be false positive)
-	_, err = bc.MightContain(ctx, "test-bucket", "nonexistent/path")
+	_, err = bc.MightContain(ctx, "test-namespace", "nonexistent/path")
 	if err != nil {
 		t.Fatalf("MightContain failed: %v", err)
 	}
@@ -247,16 +247,16 @@ func TestBloomCacheMightContainBatch(t *testing.T) {
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Create bucket
-	bc.CreateBucket(ctx, "test-bucket", nil)
+	// Create namespace
+	bc.CreateNamespace(ctx, "test-namespace", nil)
 
 	// Add paths
 	paths := []string{"path/a", "path/b", "path/c"}
-	bc.Add(ctx, "test-bucket", paths)
+	bc.Add(ctx, "test-namespace", paths)
 
 	// Batch check (include both existing and non-existing paths)
 	testPaths := []string{"path/a", "path/b", "path/c", "nonexistent"}
-	results, err := bc.MightContainBatch(ctx, "test-bucket", testPaths)
+	results, err := bc.MightContainBatch(ctx, "test-namespace", testPaths)
 	if err != nil {
 		t.Fatalf("MightContainBatch failed: %v", err)
 	}
@@ -272,25 +272,25 @@ func TestBloomCacheMightContainBatch(t *testing.T) {
 	}
 }
 
-func TestBloomCacheDeleteBucket(t *testing.T) {
+func TestBloomCacheDeleteNamespace(t *testing.T) {
 	kv := memory.New()
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Create bucket
-	bc.CreateBucket(ctx, "test-bucket", nil)
-	bc.Add(ctx, "test-bucket", []string{"path/a"})
+	// Create namespace
+	bc.CreateNamespace(ctx, "test-namespace", nil)
+	bc.Add(ctx, "test-namespace", []string{"path/a"})
 
-	// Delete bucket
-	err := bc.DeleteBucket(ctx, "test-bucket")
+	// Delete namespace
+	err := bc.DeleteNamespace(ctx, "test-namespace")
 	if err != nil {
-		t.Fatalf("DeleteBucket failed: %v", err)
+		t.Fatalf("DeleteNamespace failed: %v", err)
 	}
 
 	// Verify deleted
-	meta, _ := bc.GetBucketMeta(ctx, "test-bucket")
+	meta, _ := bc.GetNamespaceMeta(ctx, "test-namespace")
 	if meta != nil {
-		t.Error("bucket should be deleted")
+		t.Error("namespace should be deleted")
 	}
 
 	// Cache should be cleared
@@ -304,10 +304,10 @@ func TestBloomCacheLRUEviction(t *testing.T) {
 	bc := bloom.NewBloomCache(kv, 3) // Small cache
 	ctx := context.Background()
 
-	// Create more buckets than cache size
+	// Create more namespaces than cache size
 	for i := 0; i < 5; i++ {
-		bucketId := string(rune('a' + i))
-		bc.CreateBucket(ctx, bucketId, nil)
+		namespace := string(rune('a' + i))
+		bc.CreateNamespace(ctx, namespace, nil)
 	}
 
 	// Cache size should be limited
@@ -321,23 +321,23 @@ func TestBloomCacheInvalidate(t *testing.T) {
 	bc := bloom.NewBloomCache(kv, 100)
 	ctx := context.Background()
 
-	// Create bucket and add to cache
-	bc.CreateBucket(ctx, "test-bucket", nil)
-	bc.Get(ctx, "test-bucket")
+	// Create namespace and add to cache
+	bc.CreateNamespace(ctx, "test-namespace", nil)
+	bc.Get(ctx, "test-namespace")
 
 	if bc.Size() != 1 {
 		t.Error("cache should have 1 entry")
 	}
 
 	// Invalidate
-	bc.Invalidate("test-bucket")
+	bc.Invalidate("test-namespace")
 
 	if bc.Size() != 0 {
 		t.Error("cache should be empty after invalidate")
 	}
 
 	// Get should reload from kvstore
-	filter, err := bc.Get(ctx, "test-bucket")
+	filter, err := bc.Get(ctx, "test-namespace")
 	if err != nil {
 		t.Fatalf("Get after invalidate failed: %v", err)
 	}
@@ -352,29 +352,29 @@ func TestBloomCachePersistence(t *testing.T) {
 
 	// Create BloomCache, add data
 	bc1 := bloom.NewBloomCache(kv, 100)
-	bc1.CreateBucket(ctx, "test-bucket", &bloom.BucketConfig{
+	bc1.CreateNamespace(ctx, "test-namespace", &bloom.NamespaceConfig{
 		ExpectedItems:     5000,
 		FalsePositiveRate: 0.01,
 	})
-	bc1.Add(ctx, "test-bucket", []string{"path/a", "path/b"})
+	bc1.Add(ctx, "test-namespace", []string{"path/a", "path/b"})
 
 	// Create new BloomCache with same kvstore (simulates restart)
 	bc2 := bloom.NewBloomCache(kv, 100)
 
 	// Data should persist
-	meta, err := bc2.GetBucketMeta(ctx, "test-bucket")
+	meta, err := bc2.GetNamespaceMeta(ctx, "test-namespace")
 	if err != nil {
-		t.Fatalf("GetBucketMeta failed: %v", err)
+		t.Fatalf("GetNamespaceMeta failed: %v", err)
 	}
 	if meta == nil {
-		t.Fatal("bucket metadata should persist")
+		t.Fatal("namespace metadata should persist")
 	}
 	if meta.Config.ExpectedItems != 5000 {
 		t.Errorf("expected 5000 items, got %d", meta.Config.ExpectedItems)
 	}
 
 	// Bloom filter should persist
-	result, _ := bc2.MightContain(ctx, "test-bucket", "path/a")
+	result, _ := bc2.MightContain(ctx, "test-namespace", "path/a")
 	if !result {
 		t.Error("path/a should exist in persisted bloom filter")
 	}

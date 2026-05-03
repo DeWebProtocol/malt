@@ -29,9 +29,6 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.CAS.EmbeddedMock.Enabled {
 		t.Fatal("embedded mock should be enabled by default")
 	}
-	if cfg.Client.DefaultBucketID != "" {
-		t.Fatalf("Client.DefaultBucketID = %q", cfg.Client.DefaultBucketID)
-	}
 }
 
 func TestLoad_NoConfigFileReturnsDefaults(t *testing.T) {
@@ -145,7 +142,6 @@ func TestWriteToFileRoundTrip(t *testing.T) {
 	cfg.CAS.Mode = "external"
 	cfg.CAS.BaseURL = "http://127.0.0.1:5001"
 	cfg.CAS.EmbeddedMock.Enabled = false
-	cfg.Client.DefaultBucketID = "bucket-123"
 
 	if err := WriteToFile(path, cfg); err != nil {
 		t.Fatalf("WriteToFile() error = %v", err)
@@ -161,9 +157,6 @@ func TestWriteToFileRoundTrip(t *testing.T) {
 	}
 	if loaded.CAS.BaseURL != "http://127.0.0.1:5001" {
 		t.Fatalf("loaded CAS.BaseURL = %q", loaded.CAS.BaseURL)
-	}
-	if loaded.Client.DefaultBucketID != "bucket-123" {
-		t.Fatalf("loaded Client.DefaultBucketID = %q", loaded.Client.DefaultBucketID)
 	}
 }
 

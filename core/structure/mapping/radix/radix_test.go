@@ -18,7 +18,7 @@ import (
 
 type schemeFactory func(t *testing.T) commitment.IndexCommitment
 
-const testBucketID = "map-radix-semantic-test"
+const testNamespace = "map-radix-semantic-test"
 
 func mappingSchemes() map[string]schemeFactory {
 	return map[string]schemeFactory{
@@ -77,13 +77,13 @@ func TestMapCommitProveVerify(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			semantic := newMap(t, factory, nil)
 
-			root, err := semantic.Commit(ctx, testBucketID, view)
+			root, err := semantic.Commit(ctx, testNamespace, view)
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			key := arcset.CanonicalizePath("b/c")
-			binding, proof, err := semantic.Prove(ctx, testBucketID, root, key)
+			binding, proof, err := semantic.Prove(ctx, testNamespace, root, key)
 			if err != nil {
 				t.Fatalf("Prove failed: %v", err)
 			}
@@ -122,7 +122,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			semantic := newMap(t, factory, nil)
 			initialView := mapping.NewViewFrom(initialEntries)
 
-			root, err := semantic.Commit(ctx, testBucketID, initialView)
+			root, err := semantic.Commit(ctx, testNamespace, initialView)
 			if err != nil {
 				t.Fatalf("Commit(initial) failed: %v", err)
 			}
@@ -130,7 +130,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			replacement := fakeCID("value-c2")
 			replacedRoot, err := semantic.Update(
 				ctx,
-				testBucketID,
+				testNamespace,
 				root,
 				arcset.CanonicalizePath("c"),
 				initialEntries["c"],
@@ -144,7 +144,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 				"a": initialEntries["a"],
 				"c": replacement,
 			})
-			expectedReplacedRoot, err := semantic.Commit(ctx, testBucketID, replacedView)
+			expectedReplacedRoot, err := semantic.Commit(ctx, testNamespace, replacedView)
 			if err != nil {
 				t.Fatalf("Commit(replaced) failed: %v", err)
 			}
@@ -155,7 +155,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			inserted := fakeCID("value-b")
 			insertedRoot, err := semantic.Update(
 				ctx,
-				testBucketID,
+				testNamespace,
 				replacedRoot,
 				arcset.CanonicalizePath("b"),
 				cid.Undef,
@@ -170,7 +170,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 				"b": inserted,
 				"c": replacement,
 			})
-			expectedInsertedRoot, err := semantic.Commit(ctx, testBucketID, insertedView)
+			expectedInsertedRoot, err := semantic.Commit(ctx, testNamespace, insertedView)
 			if err != nil {
 				t.Fatalf("Commit(inserted) failed: %v", err)
 			}
@@ -180,7 +180,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 
 			deletedRoot, err := semantic.Update(
 				ctx,
-				testBucketID,
+				testNamespace,
 				insertedRoot,
 				arcset.CanonicalizePath("a"),
 				initialEntries["a"],
@@ -194,7 +194,7 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 				"b": inserted,
 				"c": replacement,
 			})
-			expectedDeletedRoot, err := semantic.Commit(ctx, testBucketID, deletedView)
+			expectedDeletedRoot, err := semantic.Commit(ctx, testNamespace, deletedView)
 			if err != nil {
 				t.Fatalf("Commit(deleted) failed: %v", err)
 			}
@@ -214,14 +214,14 @@ func TestMapUpdateRejectsInconsistentOldValue(t *testing.T) {
 	for name, factory := range mappingSchemes() {
 		t.Run(name, func(t *testing.T) {
 			semantic := newMap(t, factory, nil)
-			root, err := semantic.Commit(ctx, testBucketID, view)
+			root, err := semantic.Commit(ctx, testNamespace, view)
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			_, err = semantic.Update(
 				ctx,
-				testBucketID,
+				testNamespace,
 				root,
 				arcset.CanonicalizePath("a"),
 				fakeCID("wrong-old"),
@@ -247,14 +247,14 @@ func TestMapRestartSafeProveAndUpdate(t *testing.T) {
 			kv := kvmemory.New()
 			semantic := newMap(t, factory, kv)
 
-			root, err := semantic.Commit(ctx, testBucketID, initial)
+			root, err := semantic.Commit(ctx, testNamespace, initial)
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			restarted := newMap(t, factory, kv)
 			key := arcset.CanonicalizePath("aa/beta")
-			binding, proof, err := restarted.Prove(ctx, testBucketID, root, key)
+			binding, proof, err := restarted.Prove(ctx, testNamespace, root, key)
 			if err != nil {
 				t.Fatalf("Prove after restart failed: %v", err)
 			}
@@ -272,7 +272,7 @@ func TestMapRestartSafeProveAndUpdate(t *testing.T) {
 
 			updatedRoot, err := restarted.Update(
 				ctx,
-				testBucketID,
+				testNamespace,
 				root,
 				arcset.CanonicalizePath("a"),
 				fakeCID("value-a"),
@@ -282,7 +282,7 @@ func TestMapRestartSafeProveAndUpdate(t *testing.T) {
 				t.Fatalf("Update after restart failed: %v", err)
 			}
 
-			expectedRoot, err := restarted.Commit(ctx, testBucketID, mapping.NewViewFrom(map[string]cid.Cid{
+			expectedRoot, err := restarted.Commit(ctx, testNamespace, mapping.NewViewFrom(map[string]cid.Cid{
 				"a":       fakeCID("value-a2"),
 				"aa":      fakeCID("value-aa"),
 				"aa/beta": fakeCID("value-aa-beta"),

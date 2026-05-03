@@ -23,13 +23,13 @@ func TestMetricsSnapshotPrintsDaemonJSON(t *testing.T) {
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	if _, err := daemon.CreateBucket(ctx, "metrics", ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
-	if _, err := daemon.AddBucketUnixFSFile(ctx, "metrics", "file.txt", []byte("hello metrics")); err != nil {
+	if _, err := daemon.AddCurrentUnixFSFile(ctx, "file.txt", []byte("hello metrics")); err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}
-	if _, err := daemon.GetBucketContentProof(ctx, "metrics", "file.txt", ""); err != nil {
+	if _, err := daemon.GetCurrentContentProof(ctx, "file.txt", ""); err != nil {
 		t.Fatalf("content proof: %v", err)
 	}
 
@@ -57,13 +57,13 @@ func TestMetricsResetPrintsDaemonJSON(t *testing.T) {
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	if _, err := daemon.CreateBucket(ctx, "metrics-reset", ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
-	if _, err := daemon.AddBucketUnixFSFile(ctx, "metrics-reset", "file.txt", []byte("hello metrics reset")); err != nil {
+	if _, err := daemon.AddCurrentUnixFSFile(ctx, "file.txt", []byte("hello metrics reset")); err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}
-	if _, err := daemon.GetBucketContentProof(ctx, "metrics-reset", "file.txt", ""); err != nil {
+	if _, err := daemon.GetCurrentContentProof(ctx, "file.txt", ""); err != nil {
 		t.Fatalf("content proof: %v", err)
 	}
 

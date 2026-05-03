@@ -212,9 +212,8 @@ func TestCollectAddInputsFollowsSymlink(t *testing.T) {
 func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "flat-symlink-dir"
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	root := t.TempDir()
@@ -237,7 +236,7 @@ func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 		t.Skipf("symlink not supported in test environment: %v", err)
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{inputRoot}, addBuildOptions{
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{inputRoot}, addBuildOptions{
 		Target: addTargetMALT,
 		Model:  addModelUnixFS,
 		Layout: addLayoutFlat,
@@ -250,7 +249,7 @@ func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 	}
 
 	base := filepath.Base(inputRoot)
-	snapshot, err := daemon.SnapshotBucketMap(ctx, bucketID, result.NewRoot)
+	snapshot, err := daemon.SnapshotCurrentMap(ctx, result.NewRoot)
 	if err != nil {
 		t.Fatalf("snapshot root: %v", err)
 	}
@@ -269,14 +268,14 @@ func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 		t.Fatalf("flat root should not contain symlink-dir descendants: %+v", snapshot.Bindings)
 	}
 
-	linkStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/linked")
+	linkStat, err := daemon.StatCurrentPath(ctx, base+"/linked")
 	if err != nil {
 		t.Fatalf("stat symlink dir: %v", err)
 	}
 	if linkStat.Kind != "dir" || linkStat.StorageKind != "map" {
 		t.Fatalf("unexpected symlink dir stat: %+v", linkStat)
 	}
-	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/linked/note.txt", "")
+	body, status, _, err := daemon.GetCurrentContent(ctx, base+"/linked/note.txt", "")
 	if err != nil {
 		t.Fatalf("read symlink target content: status=%d err=%v", status, err)
 	}
@@ -288,9 +287,8 @@ func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "hierarchical-symlink-dir"
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	root := t.TempDir()
@@ -306,7 +304,7 @@ func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t
 		t.Skipf("symlink not supported in test environment: %v", err)
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{link}, addBuildOptions{
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{link}, addBuildOptions{
 		Target: addTargetMALT,
 		Model:  addModelUnixFS,
 		Layout: addLayoutHierarchical,
@@ -318,7 +316,7 @@ func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t
 		t.Fatalf("files = %d, want 1", result.Files)
 	}
 
-	snapshot, err := daemon.SnapshotBucketMap(ctx, bucketID, result.NewRoot)
+	snapshot, err := daemon.SnapshotCurrentMap(ctx, result.NewRoot)
 	if err != nil {
 		t.Fatalf("snapshot root: %v", err)
 	}
@@ -337,7 +335,7 @@ func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t
 		t.Fatalf("root should not contain symlink-dir descendants: %+v", snapshot.Bindings)
 	}
 
-	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, "linked/note.txt", "")
+	body, status, _, err := daemon.GetCurrentContent(ctx, "linked/note.txt", "")
 	if err != nil {
 		t.Fatalf("read symlink target content: status=%d err=%v", status, err)
 	}
@@ -354,7 +352,7 @@ func TestAddInputsWithUnixFSMerkleDAGTarget(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	result, err := addInputsWithUnixFS(ctx, nil, casClient, "", []string{file}, addBuildOptions{
+	result, err := addInputsWithUnixFS(ctx, nil, casClient, []string{file}, addBuildOptions{
 		Target:     addTargetMerkleDAG,
 		Model:      addModelUnixFS,
 		FileLayout: addFileLayoutBalanced,
@@ -444,10 +442,9 @@ func TestMergeAddNodesConflictPolicy(t *testing.T) {
 func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "demo"
 
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	inputRoot := filepath.Join(t.TempDir(), "repo")
@@ -468,7 +465,7 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 		t.Fatalf("write large: %v", err)
 	}
 
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{inputRoot}, addBuildOptions{})
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, []string{inputRoot}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("build staging: %v", err)
 	}
@@ -477,16 +474,16 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 	}
 
 	merged := mergeAddNodes(newDirNode(), staged.Root)
-	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, merged)
+	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, mat.Key.String(), mat.ArcCount, ""); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, ""); err != nil {
 		t.Fatalf("set head: %v", err)
 	}
 
 	base := filepath.Base(inputRoot)
-	emptyStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/empty")
+	emptyStat, err := daemon.StatCurrentPath(ctx, base+"/empty")
 	if err != nil {
 		t.Fatalf("stat empty dir: %v", err)
 	}
@@ -497,7 +494,7 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 		t.Fatal("empty dir payload should not be empty")
 	}
 
-	smallStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/small.txt")
+	smallStat, err := daemon.StatCurrentPath(ctx, base+"/nested/small.txt")
 	if err != nil {
 		t.Fatalf("stat small: %v", err)
 	}
@@ -505,7 +502,7 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 		t.Fatalf("small storage kind = %q, want raw", smallStat.StorageKind)
 	}
 
-	largeStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/large.bin")
+	largeStat, err := daemon.StatCurrentPath(ctx, base+"/nested/large.bin")
 	if err != nil {
 		t.Fatalf("stat large: %v", err)
 	}
@@ -517,10 +514,9 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "unixfs-demo"
 
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	inputRoot := filepath.Join(t.TempDir(), "repo")
@@ -541,7 +537,7 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 		t.Fatalf("write large: %v", err)
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{inputRoot}, addBuildOptions{})
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{inputRoot}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("add with unixfs: %v", err)
 	}
@@ -552,7 +548,7 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 		t.Fatal("new root should not be empty")
 	}
 
-	meta, err := daemon.GetBucket(ctx, bucketID)
+	meta, err := daemon.GetCurrentRoot(ctx)
 	if err != nil {
 		t.Fatalf("get bucket: %v", err)
 	}
@@ -561,7 +557,7 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 	}
 
 	base := filepath.Base(inputRoot)
-	snapshot, err := daemon.SnapshotBucketMap(ctx, bucketID, result.NewRoot)
+	snapshot, err := daemon.SnapshotCurrentMap(ctx, result.NewRoot)
 	if err != nil {
 		t.Fatalf("snapshot bucket root: %v", err)
 	}
@@ -577,11 +573,11 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 	if codec.SemanticKindOf(baseCID) != codec.SemanticKindManifest {
 		t.Fatalf("base binding kind = %s, want manifest", codec.SemanticKindOf(baseCID))
 	}
-	if _, err := daemon.StatBucketPath(ctx, bucketID, base+"/missing.txt"); err == nil {
+	if _, err := daemon.StatCurrentPath(ctx, base+"/missing.txt"); err == nil {
 		t.Fatal("missing child under manifest directory should not stat successfully")
 	}
 
-	emptyStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/empty")
+	emptyStat, err := daemon.StatCurrentPath(ctx, base+"/empty")
 	if err != nil {
 		t.Fatalf("stat empty: %v", err)
 	}
@@ -589,14 +585,14 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 		t.Fatalf("unexpected empty stat: %+v", emptyStat)
 	}
 
-	smallStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/small.txt")
+	smallStat, err := daemon.StatCurrentPath(ctx, base+"/nested/small.txt")
 	if err != nil {
 		t.Fatalf("stat small: %v", err)
 	}
 	if smallStat.Kind != "file" || smallStat.StorageKind != "raw" {
 		t.Fatalf("unexpected small stat: %+v", smallStat)
 	}
-	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/nested/small.txt", "")
+	body, status, _, err := daemon.GetCurrentContent(ctx, base+"/nested/small.txt", "")
 	if err != nil {
 		t.Fatalf("get small content: status=%d err=%v", status, err)
 	}
@@ -604,14 +600,14 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 		t.Fatalf("small body = %q", string(body))
 	}
 
-	largeStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/nested/large.bin")
+	largeStat, err := daemon.StatCurrentPath(ctx, base+"/nested/large.bin")
 	if err != nil {
 		t.Fatalf("stat large: %v", err)
 	}
 	if largeStat.Kind != "file" || largeStat.StorageKind != "list" {
 		t.Fatalf("unexpected large stat: %+v", largeStat)
 	}
-	largeBody, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/nested/large.bin", "")
+	largeBody, status, _, err := daemon.GetCurrentContent(ctx, base+"/nested/large.bin", "")
 	if err != nil {
 		t.Fatalf("get large content: status=%d err=%v", status, err)
 	}
@@ -620,11 +616,11 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "out")
-	rootStat, err := daemon.StatBucketPath(ctx, bucketID, base)
+	rootStat, err := daemon.StatCurrentPath(ctx, base)
 	if err != nil {
 		t.Fatalf("stat root: %v", err)
 	}
-	if err := exportBucketDirectory(ctx, daemon, casClient, bucketID, base, outDir, rootStat); err != nil {
+	if err := exportCurrentDirectory(ctx, daemon, casClient, base, outDir, rootStat); err != nil {
 		t.Fatalf("export unixfs directory: %v", err)
 	}
 	if info, err := os.Stat(filepath.Join(outDir, "empty")); err != nil || !info.IsDir() {
@@ -635,10 +631,9 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 func TestAddInputsWithUnixFSMigratesLegacyBucket(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "unixfs-migrate"
 
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	legacyRoot := filepath.Join(t.TempDir(), "repo")
@@ -648,15 +643,15 @@ func TestAddInputsWithUnixFSMigratesLegacyBucket(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyRoot, "docs", "old.txt"), []byte("old"), 0o644); err != nil {
 		t.Fatalf("write legacy file: %v", err)
 	}
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{legacyRoot}, addBuildOptions{})
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, []string{legacyRoot}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("build legacy staging: %v", err)
 	}
-	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, mergeAddNodes(newDirNode(), staged.Root))
+	mat, err := materializeDirectory(ctx, daemon, casClient, mergeAddNodes(newDirNode(), staged.Root))
 	if err != nil {
 		t.Fatalf("materialize legacy root: %v", err)
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, mat.Key.String(), mat.ArcCount, ""); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, ""); err != nil {
 		t.Fatalf("set legacy head: %v", err)
 	}
 
@@ -667,19 +662,19 @@ func TestAddInputsWithUnixFSMigratesLegacyBucket(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nextRoot, "docs", "new.txt"), []byte("new"), 0o644); err != nil {
 		t.Fatalf("write next file: %v", err)
 	}
-	if _, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, []string{nextRoot}, addBuildOptions{}); err != nil {
+	if _, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{nextRoot}, addBuildOptions{}); err != nil {
 		t.Fatalf("add with unixfs over legacy bucket: %v", err)
 	}
 
 	base := filepath.Base(legacyRoot)
-	oldBody, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/docs/old.txt", "")
+	oldBody, status, _, err := daemon.GetCurrentContent(ctx, base+"/docs/old.txt", "")
 	if err != nil {
 		t.Fatalf("read migrated old file: status=%d err=%v", status, err)
 	}
 	if string(oldBody) != "old" {
 		t.Fatalf("old body = %q", string(oldBody))
 	}
-	newBody, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/docs/new.txt", "")
+	newBody, status, _, err := daemon.GetCurrentContent(ctx, base+"/docs/new.txt", "")
 	if err != nil {
 		t.Fatalf("read new file: status=%d err=%v", status, err)
 	}
@@ -691,9 +686,8 @@ func TestAddInputsWithUnixFSMigratesLegacyBucket(t *testing.T) {
 func TestAddWorkflowMergesExistingTree(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "merge-demo"
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	firstRoot := filepath.Join(t.TempDir(), "repo")
@@ -707,24 +701,24 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 		t.Fatalf("write guide: %v", err)
 	}
 
-	firstStaged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{firstRoot}, addBuildOptions{})
+	firstStaged, err := buildAddStagingTree(ctx, casClient, daemon, []string{firstRoot}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("build first staging: %v", err)
 	}
 	firstMerged := mergeAddNodes(newDirNode(), firstStaged.Root)
-	firstMat, err := materializeDirectory(ctx, daemon, casClient, bucketID, firstMerged)
+	firstMat, err := materializeDirectory(ctx, daemon, casClient, firstMerged)
 	if err != nil {
 		t.Fatalf("materialize first: %v", err)
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, firstMat.Key.String(), firstMat.ArcCount, ""); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, firstMat.Key.String(), firstMat.ArcCount, ""); err != nil {
 		t.Fatalf("set first head: %v", err)
 	}
 
-	meta, err := daemon.GetBucket(ctx, bucketID)
+	meta, err := daemon.GetCurrentRoot(ctx)
 	if err != nil {
 		t.Fatalf("get bucket meta: %v", err)
 	}
-	existing, err := loadExistingBucketTree(ctx, daemon, casClient, bucketID, meta.Root)
+	existing, err := loadExistingCurrentTree(ctx, daemon, casClient, meta.Root)
 	if err != nil {
 		t.Fatalf("load existing tree: %v", err)
 	}
@@ -739,26 +733,26 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(secondRoot, "docs", "new.txt"), []byte("new"), 0o644); err != nil {
 		t.Fatalf("write new: %v", err)
 	}
-	secondStaged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{secondRoot}, addBuildOptions{})
+	secondStaged, err := buildAddStagingTree(ctx, casClient, daemon, []string{secondRoot}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("build second staging: %v", err)
 	}
 
 	secondMerged := mergeAddNodes(existing, secondStaged.Root)
-	secondMat, err := materializeDirectory(ctx, daemon, casClient, bucketID, secondMerged)
+	secondMat, err := materializeDirectory(ctx, daemon, casClient, secondMerged)
 	if err != nil {
 		t.Fatalf("materialize second: %v", err)
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, secondMat.Key.String(), secondMat.ArcCount, meta.Root); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, secondMat.Key.String(), secondMat.ArcCount, meta.Root); err != nil {
 		t.Fatalf("set second head: %v", err)
 	}
 
 	base := filepath.Base(secondRoot)
-	readmeStat, err := daemon.StatBucketPath(ctx, bucketID, base+"/README.md")
+	readmeStat, err := daemon.StatCurrentPath(ctx, base+"/README.md")
 	if err != nil {
 		t.Fatalf("stat readme: %v", err)
 	}
-	body, status, _, err := daemon.GetBucketContent(ctx, bucketID, base+"/README.md", "")
+	body, status, _, err := daemon.GetCurrentContent(ctx, base+"/README.md", "")
 	if err != nil {
 		t.Fatalf("get readme content: status=%d err=%v", status, err)
 	}
@@ -769,10 +763,10 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 		t.Fatalf("readme kind = %q, want file", readmeStat.Kind)
 	}
 
-	if _, err := daemon.StatBucketPath(ctx, bucketID, base+"/docs/guide.txt"); err != nil {
+	if _, err := daemon.StatCurrentPath(ctx, base+"/docs/guide.txt"); err != nil {
 		t.Fatalf("guide should remain after merge: %v", err)
 	}
-	if _, err := daemon.StatBucketPath(ctx, bucketID, base+"/docs/new.txt"); err != nil {
+	if _, err := daemon.StatCurrentPath(ctx, base+"/docs/new.txt"); err != nil {
 		t.Fatalf("new file should exist after merge: %v", err)
 	}
 }

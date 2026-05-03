@@ -98,14 +98,14 @@ func (m *mockLineageRecorder) Last() (cid.Cid, cid.Cid) {
 func TestWriter_UpdateArc_Insert(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	// Create initial structure
 	arcs := makeArcSet(map[string]cid.Cid{
 		"a": fakeCID("data-a"),
 		"b": fakeCID("data-b"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestWriter_UpdateArc_Insert(t *testing.T) {
 
 	// Insert a new arc
 	newTarget := fakeCID("data-c")
-	result, err := w.UpdateArc(ctx, bucketId, root, "c", newTarget)
+	result, err := w.UpdateArc(ctx, namespace, root, "c", newTarget)
 	if err != nil {
 		t.Fatalf("UpdateArc insert failed: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestWriter_UpdateArc_Insert(t *testing.T) {
 	}
 
 	// Verify the new arc is accessible
-	target, err := w.GetArc(ctx, bucketId, result.NewRoot, "c")
+	target, err := w.GetArc(ctx, namespace, result.NewRoot, "c")
 	if err != nil {
 		t.Fatalf("GetArc failed after insert: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestWriter_UpdateArc_Insert(t *testing.T) {
 
 	// Verify old arcs are still accessible
 	for path, expected := range map[string]cid.Cid{"a": fakeCID("data-a"), "b": fakeCID("data-b")} {
-		got, err := w.GetArc(ctx, bucketId, result.NewRoot, path)
+		got, err := w.GetArc(ctx, namespace, result.NewRoot, path)
 		if err != nil {
 			t.Fatalf("GetArc failed for %s: %v", path, err)
 		}
@@ -157,20 +157,20 @@ func TestWriter_UpdateArc_Insert(t *testing.T) {
 func TestWriter_UpdateArc_Replace(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{
 		"a": fakeCID("data-a"),
 		"b": fakeCID("data-b"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
 
 	// Replace arc "a"
 	newTarget := fakeCID("data-a-new")
-	result, err := w.UpdateArc(ctx, bucketId, root, "a", newTarget)
+	result, err := w.UpdateArc(ctx, namespace, root, "a", newTarget)
 	if err != nil {
 		t.Fatalf("UpdateArc replace failed: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestWriter_UpdateArc_Replace(t *testing.T) {
 	}
 
 	// Verify replacement
-	got, err := w.GetArc(ctx, bucketId, result.NewRoot, "a")
+	got, err := w.GetArc(ctx, namespace, result.NewRoot, "a")
 	if err != nil {
 		t.Fatalf("GetArc failed: %v", err)
 	}
@@ -195,19 +195,19 @@ func TestWriter_UpdateArc_Replace(t *testing.T) {
 func TestWriter_UpdateArc_Delete(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{
 		"a": fakeCID("data-a"),
 		"b": fakeCID("data-b"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
 
 	// Delete arc "a"
-	result, err := w.UpdateArc(ctx, bucketId, root, "a", cid.Undef)
+	result, err := w.UpdateArc(ctx, namespace, root, "a", cid.Undef)
 	if err != nil {
 		t.Fatalf("UpdateArc delete failed: %v", err)
 	}
@@ -217,13 +217,13 @@ func TestWriter_UpdateArc_Delete(t *testing.T) {
 	}
 
 	// Verify deleted
-	_, err = w.GetArc(ctx, bucketId, result.NewRoot, "a")
+	_, err = w.GetArc(ctx, namespace, result.NewRoot, "a")
 	if err == nil {
 		t.Error("expected error after delete, got nil")
 	}
 
 	// Arc "b" should still be accessible
-	got, err := w.GetArc(ctx, bucketId, result.NewRoot, "b")
+	got, err := w.GetArc(ctx, namespace, result.NewRoot, "b")
 	if err != nil {
 		t.Fatalf("GetArc for 'b' failed: %v", err)
 	}
@@ -235,18 +235,18 @@ func TestWriter_UpdateArc_Delete(t *testing.T) {
 func TestWriter_UpdateArc_InvalidInputs(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	// Undefined root
-	_, err := w.UpdateArc(ctx, bucketId, cid.Undef, "a", fakeCID("data"))
+	_, err := w.UpdateArc(ctx, namespace, cid.Undef, "a", fakeCID("data"))
 	if err != ErrInvalidRoot {
 		t.Errorf("expected ErrInvalidRoot, got %v", err)
 	}
 
 	// Empty path
 	arcs := makeArcSet(map[string]cid.Cid{"a": fakeCID("data-a")})
-	root, _ := w.CreateStructure(ctx, bucketId, arcs)
-	_, err = w.UpdateArc(ctx, bucketId, root, "", fakeCID("data"))
+	root, _ := w.CreateStructure(ctx, namespace, arcs)
+	_, err = w.UpdateArc(ctx, namespace, root, "", fakeCID("data"))
 	if err != ErrEmptyPath {
 		t.Errorf("expected ErrEmptyPath, got %v", err)
 	}
@@ -255,14 +255,14 @@ func TestWriter_UpdateArc_InvalidInputs(t *testing.T) {
 func TestWriter_BatchUpdateArcs(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{
 		"a": fakeCID("data-a"),
 		"b": fakeCID("data-b"),
 		"c": fakeCID("data-c"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestWriter_BatchUpdateArcs(t *testing.T) {
 		"c": cid.Undef,
 	}
 
-	result, err := w.BatchUpdateArcs(ctx, bucketId, root, updates)
+	result, err := w.BatchUpdateArcs(ctx, namespace, root, updates)
 	if err != nil {
 		t.Fatalf("BatchUpdateArcs failed: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestWriter_BatchUpdateArcs(t *testing.T) {
 	}
 
 	for path, check := range checks {
-		got, err := w.GetArc(ctx, bucketId, result.NewRoot, path)
+		got, err := w.GetArc(ctx, namespace, result.NewRoot, path)
 		if check.exists {
 			if err != nil {
 				t.Fatalf("GetArc(%s) failed: %v", path, err)
@@ -328,18 +328,18 @@ func TestWriter_BatchUpdateArcs(t *testing.T) {
 func TestWriter_BatchUpdateArcs_InvalidInputs(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	// Undefined root
-	_, err := w.BatchUpdateArcs(ctx, bucketId, cid.Undef, map[string]cid.Cid{"a": fakeCID("data")})
+	_, err := w.BatchUpdateArcs(ctx, namespace, cid.Undef, map[string]cid.Cid{"a": fakeCID("data")})
 	if err != ErrInvalidRoot {
 		t.Errorf("expected ErrInvalidRoot, got %v", err)
 	}
 
 	// Empty updates
 	arcs := makeArcSet(map[string]cid.Cid{"a": fakeCID("data-a")})
-	root, _ := w.CreateStructure(ctx, bucketId, arcs)
-	_, err = w.BatchUpdateArcs(ctx, bucketId, root, map[string]cid.Cid{})
+	root, _ := w.CreateStructure(ctx, namespace, arcs)
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{})
 	if err == nil {
 		t.Error("expected error for empty updates, got nil")
 	}
@@ -348,14 +348,14 @@ func TestWriter_BatchUpdateArcs_InvalidInputs(t *testing.T) {
 func TestWriter_CreateStructure(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	// Create structure with arcs
 	arcs := makeArcSet(map[string]cid.Cid{
 		"foo": fakeCID("data-foo"),
 		"bar": fakeCID("data-bar"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestWriter_CreateStructure(t *testing.T) {
 		"foo": fakeCID("data-foo"),
 		"bar": fakeCID("data-bar"),
 	} {
-		got, err := w.GetArc(ctx, bucketId, root, path)
+		got, err := w.GetArc(ctx, namespace, root, path)
 		if err != nil {
 			t.Fatalf("GetArc(%s) failed: %v", path, err)
 		}
@@ -381,17 +381,17 @@ func TestWriter_CreateStructure(t *testing.T) {
 func TestWriter_CanonicalizesPathsAtWriteBoundary(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{
 		"/foo//bar/": fakeCID("data-foo-bar"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
 
-	got, err := w.GetArc(ctx, bucketId, root, "foo/bar")
+	got, err := w.GetArc(ctx, namespace, root, "foo/bar")
 	if err != nil {
 		t.Fatalf("GetArc failed: %v", err)
 	}
@@ -399,11 +399,11 @@ func TestWriter_CanonicalizesPathsAtWriteBoundary(t *testing.T) {
 		t.Errorf("GetArc(foo/bar): expected %s, got %s", fakeCID("data-foo-bar"), got)
 	}
 
-	updated, err := w.UpdateArc(ctx, bucketId, root, "/foo//bar/", fakeCID("data-foo-bar-v2"))
+	updated, err := w.UpdateArc(ctx, namespace, root, "/foo//bar/", fakeCID("data-foo-bar-v2"))
 	if err != nil {
 		t.Fatalf("UpdateArc failed: %v", err)
 	}
-	got, err = w.GetArc(ctx, bucketId, updated.NewRoot, "/foo//bar/")
+	got, err = w.GetArc(ctx, namespace, updated.NewRoot, "/foo//bar/")
 	if err != nil {
 		t.Fatalf("GetArc after update failed: %v", err)
 	}
@@ -415,9 +415,9 @@ func TestWriter_CanonicalizesPathsAtWriteBoundary(t *testing.T) {
 func TestWriter_CreateStructure_NilArcSet(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
-	_, err := w.CreateStructure(ctx, bucketId, nil)
+	_, err := w.CreateStructure(ctx, namespace, nil)
 	if err == nil {
 		t.Error("expected error for nil arc set, got nil")
 	}
@@ -426,12 +426,12 @@ func TestWriter_CreateStructure_NilArcSet(t *testing.T) {
 func TestWriter_GetArc_NotFound(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{"a": fakeCID("data-a")})
-	root, _ := w.CreateStructure(ctx, bucketId, arcs)
+	root, _ := w.CreateStructure(ctx, namespace, arcs)
 
-	_, err := w.GetArc(ctx, bucketId, root, "nonexistent")
+	_, err := w.GetArc(ctx, namespace, root, "nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent arc, got nil")
 	}
@@ -440,18 +440,18 @@ func TestWriter_GetArc_NotFound(t *testing.T) {
 func TestWriter_GetSnapshot(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{
 		"x": fakeCID("data-x"),
 		"y": fakeCID("data-y"),
 	})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
 
-	snapshot, err := w.GetSnapshot(ctx, bucketId, root)
+	snapshot, err := w.GetSnapshot(ctx, namespace, root)
 	if err != nil {
 		t.Fatalf("GetSnapshot failed: %v", err)
 	}
@@ -478,11 +478,11 @@ func TestWriter_LineageRecorder(t *testing.T) {
 	w := NewWriter(semantic, e, rec)
 
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	// Create structure (should record lineage: root → cid.Undef)
 	arcs := makeArcSet(map[string]cid.Cid{"a": fakeCID("data-a")})
-	root, err := w.CreateStructure(ctx, bucketId, arcs)
+	root, err := w.CreateStructure(ctx, namespace, arcs)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestWriter_LineageRecorder(t *testing.T) {
 
 	// Update (should record lineage: newRoot → root)
 	newTarget := fakeCID("data-b")
-	result, err := w.UpdateArc(ctx, bucketId, root, "b", newTarget)
+	result, err := w.UpdateArc(ctx, namespace, root, "b", newTarget)
 	if err != nil {
 		t.Fatalf("UpdateArc failed: %v", err)
 	}
@@ -516,27 +516,27 @@ func TestWriter_UpdateArc_UpdateThenGet(t *testing.T) {
 	// reflects all accumulated changes.
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
-	bucketId := "test"
+	namespace := "test"
 
 	arcs := makeArcSet(map[string]cid.Cid{
 		"alpha": fakeCID("v0-alpha"),
 	})
-	root, _ := w.CreateStructure(ctx, bucketId, arcs)
+	root, _ := w.CreateStructure(ctx, namespace, arcs)
 
 	// Update 1: insert "beta"
-	r1, err := w.UpdateArc(ctx, bucketId, root, "beta", fakeCID("v0-beta"))
+	r1, err := w.UpdateArc(ctx, namespace, root, "beta", fakeCID("v0-beta"))
 	if err != nil {
 		t.Fatalf("Update 1 (insert beta) failed: %v", err)
 	}
 
 	// Update 2: replace "alpha"
-	r2, err := w.UpdateArc(ctx, bucketId, r1.NewRoot, "alpha", fakeCID("v1-alpha"))
+	r2, err := w.UpdateArc(ctx, namespace, r1.NewRoot, "alpha", fakeCID("v1-alpha"))
 	if err != nil {
 		t.Fatalf("Update 2 (replace alpha) failed: %v", err)
 	}
 
 	// Update 3: insert "gamma"
-	r3, err := w.UpdateArc(ctx, bucketId, r2.NewRoot, "gamma", fakeCID("v0-gamma"))
+	r3, err := w.UpdateArc(ctx, namespace, r2.NewRoot, "gamma", fakeCID("v0-gamma"))
 	if err != nil {
 		t.Fatalf("Update 3 (insert gamma) failed: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestWriter_UpdateArc_UpdateThenGet(t *testing.T) {
 		"gamma": fakeCID("v0-gamma"),
 	}
 	for path, expected := range checks {
-		got, err := w.GetArc(ctx, bucketId, finalRoot, path)
+		got, err := w.GetArc(ctx, namespace, finalRoot, path)
 		if err != nil {
 			t.Fatalf("GetArc(%s) after chain of updates: %v", path, err)
 		}

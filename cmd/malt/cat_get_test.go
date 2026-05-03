@@ -37,9 +37,8 @@ func TestResolveGetOutputPathRules(t *testing.T) {
 func TestGetExportDirectoryMixedTree(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "get-export"
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	source := filepath.Join(t.TempDir(), "repo")
@@ -57,26 +56,26 @@ func TestGetExportDirectoryMixedTree(t *testing.T) {
 		t.Fatalf("write large file: %v", err)
 	}
 
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{source}, addBuildOptions{})
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, []string{source}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("build staging: %v", err)
 	}
 	merged := mergeAddNodes(newDirNode(), staged.Root)
-	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, merged)
+	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
 	if err != nil {
 		t.Fatalf("materialize root: %v", err)
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, mat.Key.String(), mat.ArcCount, ""); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, ""); err != nil {
 		t.Fatalf("set bucket head: %v", err)
 	}
 
 	base := filepath.Base(source)
-	rootStat, err := daemon.StatBucketPath(ctx, bucketID, base)
+	rootStat, err := daemon.StatCurrentPath(ctx, base)
 	if err != nil {
 		t.Fatalf("stat exported root: %v", err)
 	}
 	outDir := filepath.Join(t.TempDir(), "out")
-	if err := exportBucketDirectory(ctx, daemon, casClient, bucketID, base, outDir, rootStat); err != nil {
+	if err := exportCurrentDirectory(ctx, daemon, casClient, base, outDir, rootStat); err != nil {
 		t.Fatalf("export directory: %v", err)
 	}
 
@@ -105,9 +104,8 @@ func TestGetExportDirectoryMixedTree(t *testing.T) {
 func TestWriteBucketFileSmallAndLarge(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
-	bucketID := "cat-stream"
-	if _, err := daemon.CreateBucket(ctx, bucketID, ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 
 	source := filepath.Join(t.TempDir(), "repo")
@@ -125,22 +123,22 @@ func TestWriteBucketFileSmallAndLarge(t *testing.T) {
 		t.Fatalf("write large file: %v", err)
 	}
 
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, []string{source}, addBuildOptions{})
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, []string{source}, addBuildOptions{})
 	if err != nil {
 		t.Fatalf("build staging: %v", err)
 	}
 	merged := mergeAddNodes(newDirNode(), staged.Root)
-	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, merged)
+	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
 	if err != nil {
 		t.Fatalf("materialize root: %v", err)
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, mat.Key.String(), mat.ArcCount, ""); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, ""); err != nil {
 		t.Fatalf("set bucket head: %v", err)
 	}
 
 	base := filepath.Base(source)
 	outSmall := filepath.Join(t.TempDir(), "small.out")
-	if err := writeBucketFile(ctx, daemon, bucketID, base+"/small.txt", outSmall); err != nil {
+	if err := writeCurrentFile(ctx, daemon, base+"/small.txt", outSmall); err != nil {
 		t.Fatalf("write small bucket file: %v", err)
 	}
 	gotSmall, err := os.ReadFile(outSmall)
@@ -152,7 +150,7 @@ func TestWriteBucketFileSmallAndLarge(t *testing.T) {
 	}
 
 	outLarge := filepath.Join(t.TempDir(), "large.out")
-	if err := writeBucketFile(ctx, daemon, bucketID, base+"/large.bin", outLarge); err != nil {
+	if err := writeCurrentFile(ctx, daemon, base+"/large.bin", outLarge); err != nil {
 		t.Fatalf("write large bucket file: %v", err)
 	}
 	gotLarge, err := os.ReadFile(outLarge)

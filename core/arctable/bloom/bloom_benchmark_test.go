@@ -167,18 +167,18 @@ func setupBloomCache(b *testing.B) (*bloom.BloomCache, context.Context) {
 func BenchmarkBloomCacheGetCached(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create bucket and add paths
-	_ = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Pre-create namespace and add paths
+	_ = bc.CreateNamespace(ctx, "test-namespace", nil)
 	for i := 0; i < 1000; i++ {
-		_ = bc.Add(ctx, "test-bucket", []string{fmt.Sprintf("path/%d", i)})
+		_ = bc.Add(ctx, "test-namespace", []string{fmt.Sprintf("path/%d", i)})
 	}
 
 	// Warm up cache
-	_, _ = bc.Get(ctx, "test-bucket")
+	_, _ = bc.Get(ctx, "test-namespace")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = bc.Get(ctx, "test-bucket")
+		_, _ = bc.Get(ctx, "test-namespace")
 	}
 }
 
@@ -186,12 +186,12 @@ func BenchmarkBloomCacheGetCached(b *testing.B) {
 func BenchmarkBloomCacheGetUncached(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create buckets
+	// Pre-create namespaces
 	for i := 0; i < b.N; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i)
-		_ = bc.CreateBucket(ctx, bucketId, nil)
+		namespace := fmt.Sprintf("namespace-%d", i)
+		_ = bc.CreateNamespace(ctx, namespace, nil)
 		for j := 0; j < 100; j++ {
-			_ = bc.Add(ctx, bucketId, []string{fmt.Sprintf("path/%d", j)})
+			_ = bc.Add(ctx, namespace, []string{fmt.Sprintf("path/%d", j)})
 		}
 	}
 
@@ -200,8 +200,8 @@ func BenchmarkBloomCacheGetUncached(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i)
-		_, _ = bc.Get(ctx, bucketId)
+		namespace := fmt.Sprintf("namespace-%d", i)
+		_, _ = bc.Get(ctx, namespace)
 	}
 }
 
@@ -209,17 +209,17 @@ func BenchmarkBloomCacheGetUncached(b *testing.B) {
 func BenchmarkBloomCacheMightContainPositive(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create bucket and add paths
-	_ = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Pre-create namespace and add paths
+	_ = bc.CreateNamespace(ctx, "test-namespace", nil)
 	paths := make([]string, 1000)
 	for i := 0; i < 1000; i++ {
 		paths[i] = fmt.Sprintf("path/%d", i)
 	}
-	_ = bc.Add(ctx, "test-bucket", paths)
+	_ = bc.Add(ctx, "test-namespace", paths)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bc.MightContain(ctx, "test-bucket", paths[i%1000])
+		bc.MightContain(ctx, "test-namespace", paths[i%1000])
 	}
 }
 
@@ -227,16 +227,16 @@ func BenchmarkBloomCacheMightContainPositive(b *testing.B) {
 func BenchmarkBloomCacheMightContainNegative(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create bucket with some paths
-	_ = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Pre-create namespace with some paths
+	_ = bc.CreateNamespace(ctx, "test-namespace", nil)
 	for i := 0; i < 100; i++ {
-		_ = bc.Add(ctx, "test-bucket", []string{fmt.Sprintf("path/%d", i)})
+		_ = bc.Add(ctx, "test-namespace", []string{fmt.Sprintf("path/%d", i)})
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Test path that definitely doesn't exist
-		bc.MightContain(ctx, "test-bucket", fmt.Sprintf("nonexistent/%d", i))
+		bc.MightContain(ctx, "test-namespace", fmt.Sprintf("nonexistent/%d", i))
 	}
 }
 
@@ -244,12 +244,12 @@ func BenchmarkBloomCacheMightContainNegative(b *testing.B) {
 func BenchmarkBloomCacheMightContainBatch(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create bucket
-	_ = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Pre-create namespace
+	_ = bc.CreateNamespace(ctx, "test-namespace", nil)
 
 	// Pre-populate paths
 	for i := 0; i < 1000; i++ {
-		_ = bc.Add(ctx, "test-bucket", []string{fmt.Sprintf("path/%d", i)})
+		_ = bc.Add(ctx, "test-namespace", []string{fmt.Sprintf("path/%d", i)})
 	}
 
 	// Prepare batch
@@ -260,7 +260,7 @@ func BenchmarkBloomCacheMightContainBatch(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bc.MightContainBatch(ctx, "test-bucket", paths)
+		bc.MightContainBatch(ctx, "test-namespace", paths)
 	}
 }
 
@@ -268,14 +268,14 @@ func BenchmarkBloomCacheMightContainBatch(b *testing.B) {
 func BenchmarkBloomCacheAdd(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create bucket
-	_ = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Pre-create namespace
+	_ = bc.CreateNamespace(ctx, "test-namespace", nil)
 
 	paths := []string{"test/path/1", "test/path/2", "test/path/3"}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = bc.Add(ctx, "test-bucket", paths)
+		_ = bc.Add(ctx, "test-namespace", paths)
 	}
 }
 
@@ -283,8 +283,8 @@ func BenchmarkBloomCacheAdd(b *testing.B) {
 func BenchmarkBloomCacheAddBatch(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
-	// Pre-create bucket
-	_ = bc.CreateBucket(ctx, "test-bucket", nil)
+	// Pre-create namespace
+	_ = bc.CreateNamespace(ctx, "test-namespace", nil)
 
 	for _, batchSize := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
@@ -295,20 +295,20 @@ func BenchmarkBloomCacheAddBatch(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = bc.Add(ctx, "test-bucket", paths)
+				_ = bc.Add(ctx, "test-namespace", paths)
 			}
 		})
 	}
 }
 
-// BenchmarkBloomCacheCreateBucket benchmarks bucket creation.
-func BenchmarkBloomCacheCreateBucket(b *testing.B) {
+// BenchmarkBloomCacheCreateNamespace benchmarks namespace creation.
+func BenchmarkBloomCacheCreateNamespace(b *testing.B) {
 	bc, ctx := setupBloomCache(b)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i)
-		_ = bc.CreateBucket(ctx, bucketId, nil)
+		namespace := fmt.Sprintf("namespace-%d", i)
+		_ = bc.CreateNamespace(ctx, namespace, nil)
 	}
 }
 
@@ -324,14 +324,14 @@ func BenchmarkCacheGet(b *testing.B) {
 
 	// Pre-populate cache
 	for i := 0; i < 100; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i)
-		_ = bc.CreateBucket(ctx, bucketId, nil)
+		namespace := fmt.Sprintf("namespace-%d", i)
+		_ = bc.CreateNamespace(ctx, namespace, nil)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i%100)
-		_, _ = bc.Get(ctx, bucketId)
+		namespace := fmt.Sprintf("namespace-%d", i%100)
+		_, _ = bc.Get(ctx, namespace)
 	}
 }
 
@@ -343,9 +343,9 @@ func BenchmarkCacheSet(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i%100)
-		_ = bc.CreateBucket(ctx, bucketId, nil)
-		_ = bc.Add(ctx, bucketId, []string{fmt.Sprintf("path-%d", i)})
+		namespace := fmt.Sprintf("namespace-%d", i%100)
+		_ = bc.CreateNamespace(ctx, namespace, nil)
+		_ = bc.Add(ctx, namespace, []string{fmt.Sprintf("path-%d", i)})
 	}
 }
 
@@ -357,8 +357,8 @@ func BenchmarkCacheSetEvict(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bucketId := fmt.Sprintf("bucket-%d", i)
-		_ = bc.CreateBucket(ctx, bucketId, nil)
-		_ = bc.Add(ctx, bucketId, []string{fmt.Sprintf("path-%d", i)})
+		namespace := fmt.Sprintf("namespace-%d", i)
+		_ = bc.CreateNamespace(ctx, namespace, nil)
+		_ = bc.Add(ctx, namespace, []string{fmt.Sprintf("path-%d", i)})
 	}
 }

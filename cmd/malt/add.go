@@ -41,8 +41,6 @@ const (
 )
 
 var (
-	addBucketIDFlag     string
-	addCreateBucketFlag bool
 	addPrefixFlag       string
 	addWrapFlag         bool
 	addWrapNameFlag     string
@@ -58,9 +56,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(addCmd)
-	addCmd.Flags().StringVarP(&addBucketIDFlag, "bucket", "b", "", "Target bucket ID (defaults to client.default_bucket_id)")
-	addCmd.Flags().BoolVar(&addCreateBucketFlag, "create-bucket", false, "Auto-create the bucket if it does not exist")
-	addCmd.Flags().StringVarP(&addPrefixFlag, "prefix", "p", "", "Prefix inside the bucket")
+	addCmd.Flags().StringVarP(&addPrefixFlag, "prefix", "p", "", "Prefix inside the current root")
 	addCmd.Flags().BoolVarP(&addWrapFlag, "wrap", "w", false, "Wrap all inputs under one directory")
 	addCmd.Flags().StringVar(&addWrapNameFlag, "wrap-name", "", "Wrapper directory name (required for multi-input --wrap)")
 	addCmd.Flags().StringVar(&addTargetFlag, "target", addTargetMALT, "Authenticated target substrate: malt or merkle-dag")
@@ -75,23 +71,21 @@ func init() {
 
 var addCmd = &cobra.Command{
 	Use:   "add <local-path> [<local-path>...]",
-	Short: "Upload local files/directories and merge into a bucket tree",
+	Short: "Upload local files/directories and merge into the current root",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runAdd,
 }
 
 type addSummary struct {
-	Target      string `json:"target,omitempty"`
-	Model       string `json:"model,omitempty"`
-	Layout      string `json:"layout,omitempty"`
-	FileLayout  string `json:"file_layout,omitempty"`
-	DirLayout   string `json:"dir_layout,omitempty"`
-	Bucket      string `json:"bucket,omitempty"`
-	OldRoot     string `json:"old_root,omitempty"`
-	NewRoot     string `json:"new_root"`
-	Files       int    `json:"files_imported"`
-	Bytes       int64  `json:"bytes_uploaded"`
-	AutoCreated bool   `json:"bucket_auto_created"`
+	Target     string `json:"target,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Layout     string `json:"layout,omitempty"`
+	FileLayout string `json:"file_layout,omitempty"`
+	DirLayout  string `json:"dir_layout,omitempty"`
+	OldRoot    string `json:"old_root,omitempty"`
+	NewRoot    string `json:"new_root"`
+	Files      int    `json:"files_imported"`
+	Bytes      int64  `json:"bytes_uploaded"`
 }
 
 type addNode struct {
@@ -149,10 +143,6 @@ type addCASClient interface {
 
 func runAdd(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	cfg, err := loadRuntimeConfig()
-	if err != nil {
-		return err
-	}
 	opts, err := normalizeAddBuildOptions(addBuildOptions{
 		Prefix:     addPrefixFlag,
 		Wrap:       addWrapFlag,
@@ -176,25 +166,18 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var bucketID string
 	var oldRoot string
-	var autoCreated bool
 	var daemon *daemonclient.Client
 	if opts.Target == addTargetMALT {
-		bucketID, err = resolveAddBucketID(cfg.Client.DefaultBucketID, addBucketIDFlag)
-		if err != nil {
-			return err
-		}
 		daemon = mustDaemonClient()
-		meta, created, err := ensureAddBucket(ctx, daemon, bucketID, addCreateBucketFlag)
+		meta, err := daemon.GetCurrentRoot(ctx)
 		if err != nil {
 			return daemonCommandError(err)
 		}
 		oldRoot = strings.TrimSpace(meta.Root)
-		autoCreated = created
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, bucketID, args, opts)
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, args, opts)
 	if err != nil {
 		var apiErr *daemonclient.Error
 		if errors.As(err, &apiErr) {
@@ -203,21 +186,19 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if result.NewRoot == "" {
-		return fmt.Errorf("failed to materialize a new bucket root")
+		return fmt.Errorf("failed to materialize a new root")
 	}
 
 	printJSON(&addSummary{
-		Target:      opts.Target,
-		Model:       opts.Model,
-		Layout:      opts.Layout,
-		FileLayout:  opts.FileLayout,
-		DirLayout:   opts.DirLayout,
-		Bucket:      bucketID,
-		OldRoot:     oldRoot,
-		NewRoot:     result.NewRoot,
-		Files:       result.Files,
-		Bytes:       result.Bytes,
-		AutoCreated: autoCreated,
+		Target:     opts.Target,
+		Model:      opts.Model,
+		Layout:     opts.Layout,
+		FileLayout: opts.FileLayout,
+		DirLayout:  opts.DirLayout,
+		OldRoot:    oldRoot,
+		NewRoot:    result.NewRoot,
+		Files:      result.Files,
+		Bytes:      result.Bytes,
 	})
 	return nil
 }
@@ -234,7 +215,7 @@ type addBuildOptions struct {
 	Ignore     addIgnoreOptions
 }
 
-func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
 	normalized, err := normalizeAddBuildOptions(opts)
 	if err != nil {
 		return nil, err
@@ -243,9 +224,9 @@ func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casCl
 	case addTargetMALT:
 		switch normalized.Layout {
 		case addLayoutFlat:
-			return addInputsWithMALTFlatUnixFS(ctx, daemon, casClient, bucketID, rawInputs, normalized)
+			return addInputsWithMALTFlatUnixFS(ctx, daemon, casClient, rawInputs, normalized)
 		case addLayoutHierarchical:
-			return addInputsWithMALTHierarchicalUnixFS(ctx, daemon, casClient, bucketID, rawInputs, normalized)
+			return addInputsWithMALTHierarchicalUnixFS(ctx, daemon, casClient, rawInputs, normalized)
 		}
 	case addTargetMerkleDAG:
 		return addInputsWithMerkleDAGUnixFS(ctx, casClient, rawInputs, normalized)
@@ -308,7 +289,7 @@ func normalizeAddToken(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
 }
 
-func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if daemon == nil {
 		return nil, fmt.Errorf("malt target requires daemon client")
 	}
@@ -326,7 +307,7 @@ func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Clien
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
 			if item.Input.Symlink {
-				key, files, bytesUploaded, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, bucketID, item.Input.AbsPath)
+				key, files, bytesUploaded, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, item.Input.AbsPath)
 				if err != nil {
 					return nil, err
 				}
@@ -337,7 +318,7 @@ func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Clien
 				result.Bytes += bytesUploaded
 				continue
 			}
-			files, bytesUploaded, err := stageFlatUnixFSDirectory(ctx, root, casClient, daemon, bucketID, item, opts.Ignore)
+			files, bytesUploaded, err := stageFlatUnixFSDirectory(ctx, root, casClient, daemon, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
@@ -357,11 +338,11 @@ func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Clien
 	if err != nil {
 		return nil, err
 	}
-	meta, err := daemon.GetBucket(ctx, bucketID)
+	meta, err := daemon.GetCurrentRoot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := daemon.ApplyBucketUnixFSBatch(ctx, bucketID, &httpapi.BucketUnixFSBatchRequest{
+	resp, err := daemon.ApplyCurrentUnixFSBatch(ctx, &httpapi.UnixFSBatchRequest{
 		BaseRoot: meta.Root,
 		Entries:  entries,
 	})
@@ -372,31 +353,31 @@ func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Clien
 	return result, nil
 }
 
-func addInputsWithMALTHierarchicalUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTHierarchicalUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if daemon == nil {
 		return nil, fmt.Errorf("malt target requires daemon client")
 	}
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, bucketID, rawInputs, opts)
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, rawInputs, opts)
 	if err != nil {
 		return nil, err
 	}
-	meta, err := daemon.GetBucket(ctx, bucketID)
+	meta, err := daemon.GetCurrentRoot(ctx)
 	if err != nil {
 		return nil, err
 	}
 	existing := newDirNode()
 	if strings.TrimSpace(meta.Root) != "" {
-		existing, err = loadExistingBucketTree(ctx, daemon, casClient, bucketID, meta.Root)
+		existing, err = loadExistingCurrentTree(ctx, daemon, casClient, meta.Root)
 		if err != nil {
 			return nil, err
 		}
 	}
 	merged := mergeAddNodes(existing, staged.Root)
-	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, merged)
+	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
 	if err != nil {
 		return nil, err
 	}
-	if err := daemon.SetBucketHead(ctx, bucketID, mat.Key.String(), mat.ArcCount, meta.Root); err != nil {
+	if err := daemon.SetCurrentRoot(ctx, mat.Key.String(), mat.ArcCount, meta.Root); err != nil {
 		return nil, err
 	}
 	return &addUnixFSResult{Files: staged.Files, Bytes: staged.Bytes, NewRoot: mat.Key.String()}, nil
@@ -426,7 +407,7 @@ func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, r
 	return &addUnixFSResult{Files: result.Files, Bytes: result.Bytes, NewRoot: result.Root}, nil
 }
 
-func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
+func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
 	mountBase := canonicalAddPath(item.MountBase)
 	if mountBase == "" {
 		return 0, 0, fmt.Errorf("directory mount path must not be empty")
@@ -471,7 +452,7 @@ func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addC
 				return fmt.Errorf("stat symlink target %s: %w", current, err)
 			}
 			if info.IsDir() {
-				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, bucketID, current)
+				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, current)
 				if err != nil {
 					return err
 				}
@@ -595,7 +576,7 @@ func uploadFlatChunks(ctx context.Context, casClient addCASClient, localPath str
 	return chunks, nil
 }
 
-func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, localPath string) (cid.Cid, int, int64, error) {
+func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, localPath string) (cid.Cid, int, int64, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return cid.Undef, 0, 0, fmt.Errorf("stat symlink directory %s: %w", localPath, err)
@@ -604,18 +585,18 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclie
 		return cid.Undef, 0, 0, fmt.Errorf("symlink target is not a directory: %s", localPath)
 	}
 	staged := newDirNode()
-	files, bytesUploaded, err := stageHierarchicalDirectoryChildren(ctx, staged, casClient, daemon, bucketID, localPath, "", make(map[string]struct{}))
+	files, bytesUploaded, err := stageHierarchicalDirectoryChildren(ctx, staged, casClient, daemon, localPath, "", make(map[string]struct{}))
 	if err != nil {
 		return cid.Undef, 0, 0, err
 	}
-	mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, staged)
+	mat, err := materializeDirectory(ctx, daemon, casClient, staged)
 	if err != nil {
 		return cid.Undef, 0, 0, err
 	}
 	return mat.Key, files, bytesUploaded, nil
 }
 
-func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, localDir string, mountBase string, seen map[string]struct{}) (int, int64, error) {
+func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localDir string, mountBase string, seen map[string]struct{}) (int, int64, error) {
 	cycleKey, err := filepath.EvalSymlinks(localDir)
 	if err != nil {
 		cycleKey, err = filepath.Abs(localDir)
@@ -644,7 +625,7 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 		}
 		if info.IsDir() {
 			ensureDirNode(root, childPath)
-			childFiles, childBytes, err := stageHierarchicalDirectoryChildren(ctx, root, casClient, daemon, bucketID, childLocal, childPath, seen)
+			childFiles, childBytes, err := stageHierarchicalDirectoryChildren(ctx, root, casClient, daemon, childLocal, childPath, seen)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -655,7 +636,7 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 		if !info.Mode().IsRegular() {
 			return 0, 0, fmt.Errorf("non-regular file is not supported: %s", childLocal)
 		}
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, bucketID, childLocal, childPath)
+		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, childLocal, childPath)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -665,8 +646,8 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 	return files, bytesUploaded, nil
 }
 
-func flatUnixFSBatchEntries(ctx context.Context, casClient addCASClient, root *addNode) ([]httpapi.BucketUnixFSBatchEntry, error) {
-	entries := make([]httpapi.BucketUnixFSBatchEntry, 0)
+func flatUnixFSBatchEntries(ctx context.Context, casClient addCASClient, root *addNode) ([]httpapi.UnixFSBatchEntry, error) {
+	entries := make([]httpapi.UnixFSBatchEntry, 0)
 	var walk func(prefix string, node *addNode) error
 	walk = func(prefix string, node *addNode) error {
 		if node == nil {
@@ -679,18 +660,18 @@ func flatUnixFSBatchEntries(ctx context.Context, casClient addCASClient, root *a
 				if err != nil {
 					return err
 				}
-				entries = append(entries, httpapi.BucketUnixFSBatchEntry{
+				entries = append(entries, httpapi.UnixFSBatchEntry{
 					Path:   prefix,
 					Target: manifestCID.String(),
 				})
 			case "mapdir":
-				entries = append(entries, httpapi.BucketUnixFSBatchEntry{
+				entries = append(entries, httpapi.UnixFSBatchEntry{
 					Path:   prefix,
 					Target: node.Key.String(),
 				})
 				return nil
 			case "file":
-				entry := httpapi.BucketUnixFSBatchEntry{Path: prefix}
+				entry := httpapi.UnixFSBatchEntry{Path: prefix}
 				if len(node.Chunks) > 0 {
 					entry.Chunks = make([]string, len(node.Chunks))
 					for i, chunk := range node.Chunks {
@@ -741,7 +722,7 @@ func putAddDirectoryManifest(ctx context.Context, casClient addCASClient, node *
 	return manifestCID, nil
 }
 
-func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, string, error) {
+func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, string, error) {
 	mountBase := canonicalAddPath(item.MountBase)
 	if mountBase == "" {
 		return 0, 0, "", fmt.Errorf("directory mount path must not be empty")
@@ -751,7 +732,7 @@ func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bu
 		return 0, 0, "", err
 	}
 
-	resp, err := daemon.AddBucketUnixFSDirectory(ctx, bucketID, mountBase)
+	resp, err := daemon.AddCurrentUnixFSDirectory(ctx, mountBase)
 	if err != nil {
 		return 0, 0, "", err
 	}
@@ -798,7 +779,7 @@ func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bu
 		}
 
 		if d.IsDir() {
-			resp, err := daemon.AddBucketUnixFSDirectory(ctx, bucketID, targetPath)
+			resp, err := daemon.AddCurrentUnixFSDirectory(ctx, targetPath)
 			if err != nil {
 				return err
 			}
@@ -814,7 +795,7 @@ func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bu
 			return fmt.Errorf("non-regular file is not supported: %s", current)
 		}
 
-		bytesWritten, root, err := addFileWithUnixFS(ctx, daemon, bucketID, current, targetPath)
+		bytesWritten, root, err := addFileWithUnixFS(ctx, daemon, current, targetPath)
 		if err != nil {
 			return err
 		}
@@ -829,7 +810,7 @@ func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bu
 	return files, bytesUploaded, lastRoot, nil
 }
 
-func addFileWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketID string, localPath string, targetPath string) (int64, string, error) {
+func addFileWithUnixFS(ctx context.Context, daemon *daemonclient.Client, localPath string, targetPath string) (int64, string, error) {
 	targetPath = canonicalAddPath(targetPath)
 	if targetPath == "" {
 		return 0, "", fmt.Errorf("target path must not be empty")
@@ -847,37 +828,14 @@ func addFileWithUnixFS(ctx context.Context, daemon *daemonclient.Client, bucketI
 	if err != nil {
 		return 0, "", fmt.Errorf("read %s: %w", localPath, err)
 	}
-	resp, err := daemon.AddBucketUnixFSFile(ctx, bucketID, targetPath, data)
+	resp, err := daemon.AddCurrentUnixFSFile(ctx, targetPath, data)
 	if err != nil {
 		return 0, "", err
 	}
 	return info.Size(), resp.NewRoot, nil
 }
 
-func resolveAddBucketID(defaultBucketID string, flagBucketID string) (string, error) {
-	if trimmed := strings.TrimSpace(flagBucketID); trimmed != "" {
-		return trimmed, nil
-	}
-	if trimmed := strings.TrimSpace(defaultBucketID); trimmed != "" {
-		return trimmed, nil
-	}
-	return "", fmt.Errorf("bucket id is required; pass --bucket or set client.default_bucket_id")
-}
-
-func ensureAddBucket(ctx context.Context, daemon *daemonclient.Client, bucketID string, autoCreate bool) (*httpapi.Bucket, bool, error) {
-	meta, err := daemon.GetBucket(ctx, bucketID)
-	if err == nil {
-		return meta, false, nil
-	}
-	var apiErr *daemonclient.Error
-	if errors.As(err, &apiErr) && apiErr.StatusCode == 404 && autoCreate {
-		created, createErr := daemon.CreateBucket(ctx, bucketID, "")
-		return created, createErr == nil, createErr
-	}
-	return nil, false, err
-}
-
-func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, bucketID string, rawInputs []string, opts addBuildOptions) (*addBuildResult, error) {
+func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, rawInputs []string, opts addBuildOptions) (*addBuildResult, error) {
 	inputs, err := collectAddInputs(rawInputs)
 	if err != nil {
 		return nil, err
@@ -894,7 +852,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
 			if item.Input.Symlink {
-				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, bucketID, item.Input.AbsPath)
+				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, item.Input.AbsPath)
 				if err != nil {
 					return nil, err
 				}
@@ -905,7 +863,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 				bytesUploaded += dirBytes
 				continue
 			}
-			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, bucketID, item, opts.Ignore)
+			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
@@ -913,7 +871,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 			bytesUploaded += dirBytes
 			continue
 		}
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, bucketID, item.Input.AbsPath, item.MountBase)
+		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, item.Input.AbsPath, item.MountBase)
 		if err != nil {
 			return nil, err
 		}
@@ -999,7 +957,7 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 	return out, nil
 }
 
-func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
+func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
 	mountBase := item.MountBase
 	ensureDirNode(root, mountBase)
 	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
@@ -1061,7 +1019,7 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 			return fmt.Errorf("non-regular file is not supported: %s", current)
 		}
 
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, bucketID, current, targetPath)
+		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, current, targetPath)
 		if err != nil {
 			return err
 		}
@@ -1075,7 +1033,7 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 	return files, bytesUploaded, nil
 }
 
-func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, bucketID string, localPath string, targetPath string) (int64, error) {
+func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localPath string, targetPath string) (int64, error) {
 	targetPath = canonicalAddPath(targetPath)
 	if targetPath == "" {
 		return 0, fmt.Errorf("target path must not be empty")
@@ -1101,7 +1059,7 @@ func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient,
 		}
 		key = blockCID
 	} else {
-		listRoot, err := uploadAsList(ctx, casClient, daemon, bucketID, localPath)
+		listRoot, err := uploadAsList(ctx, casClient, daemon, localPath)
 		if err != nil {
 			return 0, err
 		}
@@ -1114,7 +1072,7 @@ func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient,
 	return info.Size(), nil
 }
 
-func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, bucketID string, localPath string) (cid.Cid, error) {
+func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, localPath string) (cid.Cid, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("open %s: %w", localPath, err)
@@ -1142,7 +1100,7 @@ func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemoncli
 	if len(chunks) == 0 {
 		return cid.Undef, fmt.Errorf("empty chunk sequence for %s", localPath)
 	}
-	resp, err := daemon.CreateBucketList(ctx, bucketID, chunks, addFixedChunkSize)
+	resp, err := daemon.CreateCurrentList(ctx, chunks, addFixedChunkSize)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -1276,8 +1234,8 @@ func mergeAddNodes(existing *addNode, staged *addNode) *addNode {
 	return existing
 }
 
-func loadExistingBucketTree(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, rootCID string) (*addNode, error) {
-	rootStat, err := daemon.StatBucketPath(ctx, bucketID, "")
+func loadExistingCurrentTree(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rootCID string) (*addNode, error) {
+	rootStat, err := daemon.StatCurrentPath(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1285,12 +1243,12 @@ func loadExistingBucketTree(ctx context.Context, daemon *daemonclient.Client, ca
 		rootCID = rootStat.Key
 	}
 	if rootStat.Kind != "dir" {
-		return nil, fmt.Errorf("bucket root must be directory, got %q", rootStat.Kind)
+		return nil, fmt.Errorf("current root must be directory, got %q", rootStat.Kind)
 	}
-	return loadBucketDirRecursive(ctx, daemon, casClient, bucketID, "", rootStat)
+	return loadCurrentDirRecursive(ctx, daemon, casClient, "", rootStat)
 }
 
-func loadBucketDirRecursive(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, currentPath string, stat *httpapi.BucketStatResponse) (*addNode, error) {
+func loadCurrentDirRecursive(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, currentPath string, stat *httpapi.PathStatResponse) (*addNode, error) {
 	node := newDirNode()
 	node.Changed = false
 	node.StorageKind = stat.StorageKind
@@ -1320,13 +1278,13 @@ func loadBucketDirRecursive(ctx context.Context, daemon *daemonclient.Client, ca
 		if currentPath != "" {
 			childPath = path.Join(currentPath, childName)
 		}
-		childStat, err := daemon.StatBucketPath(ctx, bucketID, childPath)
+		childStat, err := daemon.StatCurrentPath(ctx, childPath)
 		if err != nil {
 			return nil, err
 		}
 		switch childStat.Kind {
 		case "dir":
-			childDir, err := loadBucketDirRecursive(ctx, daemon, casClient, bucketID, childPath, childStat)
+			childDir, err := loadCurrentDirRecursive(ctx, daemon, casClient, childPath, childStat)
 			if err != nil {
 				return nil, err
 			}
@@ -1349,7 +1307,7 @@ func loadBucketDirRecursive(ctx context.Context, daemon *daemonclient.Client, ca
 	return node, nil
 }
 
-func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, bucketID string, node *addNode) (*addMaterializeResult, error) {
+func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, node *addNode) (*addMaterializeResult, error) {
 	if node == nil || node.Kind != "dir" {
 		return nil, fmt.Errorf("materializeDirectory requires a directory node")
 	}
@@ -1368,7 +1326,7 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 			continue
 		}
 		if child.Kind == "dir" {
-			mat, err := materializeDirectory(ctx, daemon, casClient, bucketID, child)
+			mat, err := materializeDirectory(ctx, daemon, casClient, child)
 			if err != nil {
 				return nil, err
 			}
@@ -1414,7 +1372,7 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 		bindings[rel] = key.String()
 	}
 
-	resp, err := daemon.CreateBucketMap(ctx, bucketID, bindings)
+	resp, err := daemon.CreateCurrentMap(ctx, bindings)
 	if err != nil {
 		return nil, err
 	}

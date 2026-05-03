@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
@@ -72,34 +72,30 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
 	mux.HandleFunc("POST /api/v1/metrics:reset", s.handleMetricsReset)
 
-	// Bucket-first managed metadata surface (Phase 2).
-	mux.HandleFunc("POST /api/v1/buckets", s.handleBucketCreate)
-	mux.HandleFunc("GET /api/v1/buckets", s.handleBucketList)
-	mux.HandleFunc("GET /api/v1/buckets/{id}", s.handleBucketGet)
-	mux.HandleFunc("DELETE /api/v1/buckets/{id}", s.handleBucketDelete)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/freeze", s.handleBucketFreeze)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/structure", s.handleBucketCreateStructure)
-	mux.HandleFunc("PUT /api/v1/buckets/{id}/head", s.handleBucketHeadSet)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/semantic-mutations", s.handleBucketSemanticMutation)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/maps", s.handleBucketMapsCreate)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/snapshot", s.handleBucketMapsSnapshot)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/resolve", s.handleBucketMapsResolve)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/update", s.handleBucketMapsUpdate)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/updates:batch", s.handleBucketMapsBatchUpdate)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/lists", s.handleBucketListsCreate)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/lists/{root}", s.handleBucketListsGet)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs:batch", s.handleBucketUnixFSBatch)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/files", s.handleBucketUnixFSFile)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/directories", s.handleBucketUnixFSDirectory)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/stat", s.handleBucketStat)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/content", s.handleBucketContent)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/content:proof", s.handleBucketContentProof)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/resolve", s.handleBucketResolve)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/proof", s.handleBucketProof)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/prooflist", s.handleBucketProofList)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/snapshot", s.handleBucketSnapshot)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/update", s.handleBucketUpdate)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/updates:batch", s.handleBucketBatchUpdate)
+	mux.HandleFunc("GET /api/v1/current/root", s.handleCurrentRootGet)
+	mux.HandleFunc("POST /api/v1/current/root", s.handleCurrentRootGet)
+	mux.HandleFunc("PUT /api/v1/current/root", s.handleCurrentRootSet)
+	mux.HandleFunc("POST /api/v1/current/structure", s.handleCurrentCreateStructure)
+	mux.HandleFunc("POST /api/v1/current/semantic-mutations", s.handleCurrentSemanticMutation)
+	mux.HandleFunc("POST /api/v1/current/maps", s.handleCurrentMapsCreate)
+	mux.HandleFunc("GET /api/v1/current/maps/{root}/snapshot", s.handleCurrentMapsSnapshot)
+	mux.HandleFunc("GET /api/v1/current/maps/{root}/resolve", s.handleCurrentMapsResolve)
+	mux.HandleFunc("POST /api/v1/current/maps/{root}/update", s.handleCurrentMapsUpdate)
+	mux.HandleFunc("POST /api/v1/current/maps/{root}/updates:batch", s.handleCurrentMapsBatchUpdate)
+	mux.HandleFunc("POST /api/v1/current/lists", s.handleCurrentListsCreate)
+	mux.HandleFunc("GET /api/v1/current/lists/{root}", s.handleCurrentListsGet)
+	mux.HandleFunc("POST /api/v1/current/unixfs:batch", s.handleCurrentUnixFSBatch)
+	mux.HandleFunc("POST /api/v1/current/unixfs/files", s.handleCurrentUnixFSFile)
+	mux.HandleFunc("POST /api/v1/current/unixfs/directories", s.handleCurrentUnixFSDirectory)
+	mux.HandleFunc("GET /api/v1/current/stat", s.handleCurrentStat)
+	mux.HandleFunc("GET /api/v1/current/content", s.handleCurrentContent)
+	mux.HandleFunc("GET /api/v1/current/content:proof", s.handleCurrentContentProof)
+	mux.HandleFunc("GET /api/v1/current/resolve", s.handleCurrentResolve)
+	mux.HandleFunc("GET /api/v1/current/proof", s.handleCurrentProof)
+	mux.HandleFunc("GET /api/v1/current/prooflist", s.handleCurrentProofList)
+	mux.HandleFunc("GET /api/v1/current/snapshot", s.handleCurrentSnapshot)
+	mux.HandleFunc("POST /api/v1/current/update", s.handleCurrentUpdate)
+	mux.HandleFunc("POST /api/v1/current/updates:batch", s.handleCurrentBatchUpdate)
 
 	mux.HandleFunc("POST /api/v1/roots", s.handleRootCreateStructure)
 	mux.HandleFunc("GET /api/v1/roots/{root}/resolve", s.handleRootResolve)
@@ -129,8 +125,11 @@ func (s *Server) getGraph(ctx context.Context, id string) (*graph.Graph, error) 
 
 	g, err := s.node.OpenGraph(ctx, id)
 	if err != nil {
-		if id == defaultRootGraphID && err == graph.ErrNotFound {
-			g, err = s.node.NewGraph(id)
+		if id == defaultRootGraphID && errors.Is(err, graph.ErrNotFound) {
+			if _, createErr := s.node.CreateManagedGraph(ctx, id, ""); createErr != nil && !errors.Is(createErr, graph.ErrAlreadyExists) {
+				return nil, createErr
+			}
+			g, err = s.node.OpenGraph(ctx, id)
 		}
 		if err != nil {
 			return nil, err
@@ -162,15 +161,27 @@ func (s *Server) openManagedGraph(ctx context.Context, id string, requireActive 
 	return meta, g, nil
 }
 
+func (s *Server) openCurrentGraph(ctx context.Context, requireActive bool) (*graph.GraphMeta, *graph.Graph, error) {
+	if _, err := s.gm.GetGraph(ctx, defaultRootGraphID); err != nil {
+		if !errors.Is(err, graph.ErrNotFound) {
+			return nil, nil, err
+		}
+		if _, err := s.node.CreateManagedGraph(ctx, defaultRootGraphID, ""); err != nil && !errors.Is(err, graph.ErrAlreadyExists) {
+			return nil, nil, err
+		}
+	}
+	return s.openManagedGraph(ctx, defaultRootGraphID, requireActive)
+}
+
 func graphHead(meta *graph.GraphMeta) (cid.Cid, error) {
 	if meta == nil || !meta.Root.Defined() {
-		return cid.Undef, fmt.Errorf("graph head is not defined")
+		return cid.Undef, fmt.Errorf("current root is not defined")
 	}
 	return meta.Root, nil
 }
 
-func (s *Server) updateManagedGraphHead(ctx context.Context, graphID string, newRoot cid.Cid, arcCount int) error {
-	_, err := s.gm.UpdateGraph(ctx, graphID, newRoot, arcCount)
+func (s *Server) updateCurrentRoot(ctx context.Context, newRoot cid.Cid, arcCount int) error {
+	_, err := s.gm.UpdateGraph(ctx, defaultRootGraphID, newRoot, arcCount)
 	return err
 }
 
@@ -238,7 +249,7 @@ func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {
 	return arcs, count, nil
 }
 
-func bucketToResponse(meta *graph.GraphMeta) *httpapi.Bucket {
+func currentRootResponse(meta *graph.GraphMeta) *httpapi.CurrentRootResponse {
 	if meta == nil {
 		return nil
 	}
@@ -246,11 +257,8 @@ func bucketToResponse(meta *graph.GraphMeta) *httpapi.Bucket {
 	if meta.Root.Defined() {
 		root = meta.Root.String()
 	}
-	return &httpapi.Bucket{
-		ID:           meta.ID,
+	return &httpapi.CurrentRootResponse{
 		Root:         root,
-		CreatedAt:    meta.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:    meta.UpdatedAt.Format(time.RFC3339),
 		ArcCount:     meta.ArcCount,
 		Backend:      meta.Backend,
 		ArcTableType: meta.ArcTableType,

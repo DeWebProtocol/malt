@@ -9,45 +9,33 @@ import (
 	"path/filepath"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
-	"github.com/dewebprotocol/malt/core/bucketpath"
 	"github.com/dewebprotocol/malt/core/manifest"
+	"github.com/dewebprotocol/malt/core/querypath"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
-var getBucketID string
-
 func init() {
 	rootCmd.AddCommand(getCmd)
-	getCmd.Flags().StringVarP(&getBucketID, "bucket", "b", "", "Bucket ID (defaults to client.default_bucket_id)")
 }
 
 var getCmd = &cobra.Command{
 	Use:   "get <malt-path> [local-output]",
-	Short: "Export a file or directory from a bucket path",
+	Short: "Export a file or directory from the current root",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE:  runGet,
 }
 
 func runGet(cmd *cobra.Command, args []string) error {
-	cfg, err := loadRuntimeConfig()
-	if err != nil {
-		return err
-	}
-	bucketID, err := resolveAddBucketID(cfg.Client.DefaultBucketID, getBucketID)
-	if err != nil {
-		return err
-	}
-
-	maltPath := bucketpath.CanonicalizeQueryPath(args[0])
+	maltPath := querypath.CanonicalizeQueryPath(args[0])
 	localOutput := ""
 	if len(args) > 1 {
 		localOutput = args[1]
 	}
 
 	client := mustDaemonClient()
-	stat, err := client.StatBucketPath(cmd.Context(), bucketID, maltPath)
+	stat, err := client.StatCurrentPath(cmd.Context(), maltPath)
 	if err != nil {
 		return daemonCommandError(err)
 	}
@@ -58,7 +46,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	if stat.Kind == "file" {
-		if err := writeBucketFile(cmd.Context(), client, bucketID, maltPath, dest); err != nil {
+		if err := writeCurrentFile(cmd.Context(), client, maltPath, dest); err != nil {
 			return daemonCommandError(err)
 		}
 		return nil
@@ -68,7 +56,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := exportBucketDirectory(cmd.Context(), client, casClient, bucketID, maltPath, dest, stat); err != nil {
+		if err := exportCurrentDirectory(cmd.Context(), client, casClient, maltPath, dest, stat); err != nil {
 			return daemonCommandError(err)
 		}
 		return nil
@@ -82,7 +70,7 @@ func resolveGetOutputPath(maltPath string, kind string, explicitOutput string) (
 		return explicitOutput, nil
 	}
 	if maltPath == "" {
-		return "", fmt.Errorf("bucket root requires explicit local-output")
+		return "", fmt.Errorf("current root requires explicit local-output")
 	}
 	base := path.Base(maltPath)
 	if base == "" || base == "." || base == "/" {
@@ -91,16 +79,16 @@ func resolveGetOutputPath(maltPath string, kind string, explicitOutput string) (
 	return filepath.Join(".", base), nil
 }
 
-func exportBucketDirectory(ctx context.Context, client *daemonclient.Client, casClient addCASClient, bucketID string, bucketPath string, localDir string, rootStat *httpapi.BucketStatResponse) error {
+func exportCurrentDirectory(ctx context.Context, client *daemonclient.Client, casClient addCASClient, currentPath string, localDir string, rootStat *httpapi.PathStatResponse) error {
 	if rootStat == nil {
-		stat, err := client.StatBucketPath(ctx, bucketID, bucketPath)
+		stat, err := client.StatCurrentPath(ctx, currentPath)
 		if err != nil {
 			return err
 		}
 		rootStat = stat
 	}
 	if rootStat.Kind != "dir" {
-		return fmt.Errorf("path %q is not a directory", bucketPath)
+		return fmt.Errorf("path %q is not a directory", currentPath)
 	}
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return fmt.Errorf("create directory %s: %w", localDir, err)
@@ -111,33 +99,33 @@ func exportBucketDirectory(ctx context.Context, client *daemonclient.Client, cas
 		return err
 	}
 	for _, child := range entries {
-		childBucketPath := child
-		if bucketPath != "" {
-			childBucketPath = path.Join(bucketPath, child)
+		childCurrentPath := child
+		if currentPath != "" {
+			childCurrentPath = path.Join(currentPath, child)
 		}
 		childLocalPath := filepath.Join(localDir, child)
 
-		childStat, err := client.StatBucketPath(ctx, bucketID, childBucketPath)
+		childStat, err := client.StatCurrentPath(ctx, childCurrentPath)
 		if err != nil {
 			return err
 		}
 		switch childStat.Kind {
 		case "file":
-			if err := writeBucketFile(ctx, client, bucketID, childBucketPath, childLocalPath); err != nil {
+			if err := writeCurrentFile(ctx, client, childCurrentPath, childLocalPath); err != nil {
 				return err
 			}
 		case "dir":
-			if err := exportBucketDirectory(ctx, client, casClient, bucketID, childBucketPath, childLocalPath, childStat); err != nil {
+			if err := exportCurrentDirectory(ctx, client, casClient, childCurrentPath, childLocalPath, childStat); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unsupported kind %q at %q", childStat.Kind, childBucketPath)
+			return fmt.Errorf("unsupported kind %q at %q", childStat.Kind, childCurrentPath)
 		}
 	}
 	return nil
 }
 
-func directoryEntriesFromStatPayload(ctx context.Context, casClient addCASClient, stat *httpapi.BucketStatResponse) ([]string, error) {
+func directoryEntriesFromStatPayload(ctx context.Context, casClient addCASClient, stat *httpapi.PathStatResponse) ([]string, error) {
 	if stat == nil || stat.Kind != "dir" {
 		return nil, fmt.Errorf("directory stat is required")
 	}
@@ -162,8 +150,8 @@ func directoryEntriesFromStatPayload(ctx context.Context, casClient addCASClient
 	return m.Entries, nil
 }
 
-func writeBucketFile(ctx context.Context, client *daemonclient.Client, bucketID string, bucketPath string, localFile string) error {
-	body, _, _, err := client.OpenBucketContent(ctx, bucketID, bucketPath, "")
+func writeCurrentFile(ctx context.Context, client *daemonclient.Client, currentPath string, localFile string) error {
+	body, _, _, err := client.OpenCurrentContent(ctx, currentPath, "")
 	if err != nil {
 		return err
 	}

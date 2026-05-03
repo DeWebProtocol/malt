@@ -12,16 +12,16 @@ import (
 func init() {
 	rootCmd.AddCommand(proveCmd)
 	proveCmd.Flags().BoolP("json", "j", false, "Output as JSON")
-	proveCmd.Flags().StringVarP(&proveBucketID, "bucket", "b", "", "Generate a proof from the managed bucket head instead of an explicit root")
+	proveCmd.Flags().BoolVar(&proveCurrent, "current", false, "Generate a proof from the current root instead of an explicit root")
 }
 
-var proveBucketID string
+var proveCurrent bool
 
 var proveCmd = &cobra.Command{
 	Use:   "prove [<root>] <path>",
 	Short: "Generate a proof for a path resolution",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if proveBucketID != "" {
+		if proveCurrent {
 			return cobra.ExactArgs(1)(cmd, args)
 		}
 		return cobra.ExactArgs(2)(cmd, args)
@@ -39,10 +39,10 @@ func runProve(cmd *cobra.Command, args []string) error {
 		err    error
 	)
 
-	if proveBucketID != "" {
+	if proveCurrent {
 		path = args[0]
-		result, err = client.ProveBucket(cmd.Context(), proveBucketID, path)
-		root = "<managed-bucket-head>"
+		result, err = client.ProveCurrent(cmd.Context(), path)
+		root = "<current-root>"
 	} else {
 		root = args[0]
 		path = args[1]

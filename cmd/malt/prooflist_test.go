@@ -13,34 +13,34 @@ import (
 )
 
 func TestProofListArgumentShape(t *testing.T) {
-	proofListBucketID = ""
+	proofListCurrent = false
 	if err := proofListCmd.Args(proofListCmd, []string{"bafyroot"}); err == nil {
 		t.Fatal("expected explicit-root prooflist to require root and path")
 	}
 
-	proofListBucketID = "demo"
-	t.Cleanup(func() { proofListBucketID = "" })
+	proofListCurrent = true
+	t.Cleanup(func() { proofListCurrent = false })
 	if err := proofListCmd.Args(proofListCmd, []string{"root", "path"}); err == nil {
-		t.Fatal("expected bucket prooflist to accept only a path argument")
+		t.Fatal("expected current prooflist to accept only a path argument")
 	}
 }
 
-func TestProofListBucketPrintsIndentedJSON(t *testing.T) {
+func TestProofListCurrentPrintsIndentedJSON(t *testing.T) {
 	ctx := context.Background()
 	daemon, _ := newAddTestClients(t)
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	if _, err := daemon.CreateBucket(ctx, "demo", ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
+	if _, err := daemon.GetCurrentRoot(ctx); err != nil {
+		t.Fatalf("create current root: %v", err)
 	}
 	target := fakeAddCID("prooflist-target").String()
-	if _, err := daemon.CreateBucketStructure(ctx, "demo", map[string]string{"@payload": target, "name": target}); err != nil {
-		t.Fatalf("create bucket structure: %v", err)
+	if _, err := daemon.CreateCurrentStructure(ctx, map[string]string{"@payload": target, "name": target}); err != nil {
+		t.Fatalf("create current root structure: %v", err)
 	}
 
-	proofListBucketID = "demo"
-	t.Cleanup(func() { proofListBucketID = "" })
+	proofListCurrent = true
+	t.Cleanup(func() { proofListCurrent = false })
 	out := captureStdout(t, func() {
 		if err := runProofList(testCommandWithContext(ctx), []string{"name"}); err != nil {
 			t.Fatalf("run prooflist: %v", err)
