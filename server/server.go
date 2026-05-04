@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
@@ -23,23 +22,18 @@ const defaultRootGraphID = "default"
 
 // Server serves the daemon HTTP API.
 type Server struct {
-	node   *api.Node
-	addr   string
-	server *http.Server
-
-	gm *graph.Manager
-
-	mu     sync.Mutex
-	graphs map[string]*graph.Graph
+	node         *api.Node
+	addr         string
+	server       *http.Server
+	defaultGraph *graph.Graph
+	graphMu      sync.Mutex
 }
 
 // New creates a new daemon server.
 func New(node *api.Node, addr string) *Server {
 	return &Server{
-		node:   node,
-		addr:   addr,
-		gm:     node.GraphManager(),
-		graphs: make(map[string]*graph.Graph),
+		node: node,
+		addr: addr,
 	}
 }
 
@@ -72,46 +66,26 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
 	mux.HandleFunc("POST /api/v1/metrics:reset", s.handleMetricsReset)
 
-	// Bucket-first managed metadata surface (Phase 2).
-	mux.HandleFunc("POST /api/v1/buckets", s.handleBucketCreate)
-	mux.HandleFunc("GET /api/v1/buckets", s.handleBucketList)
-	mux.HandleFunc("GET /api/v1/buckets/{id}", s.handleBucketGet)
-	mux.HandleFunc("DELETE /api/v1/buckets/{id}", s.handleBucketDelete)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/freeze", s.handleBucketFreeze)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/structure", s.handleBucketCreateStructure)
-	mux.HandleFunc("PUT /api/v1/buckets/{id}/head", s.handleBucketHeadSet)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/semantic-mutations", s.handleBucketSemanticMutation)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/maps", s.handleBucketMapsCreate)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/snapshot", s.handleBucketMapsSnapshot)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/maps/{root}/resolve", s.handleBucketMapsResolve)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/update", s.handleBucketMapsUpdate)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/maps/{root}/updates:batch", s.handleBucketMapsBatchUpdate)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/lists", s.handleBucketListsCreate)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/lists/{root}", s.handleBucketListsGet)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs:batch", s.handleBucketUnixFSBatch)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/files", s.handleBucketUnixFSFile)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/unixfs/directories", s.handleBucketUnixFSDirectory)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/stat", s.handleBucketStat)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/content", s.handleBucketContent)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/content:proof", s.handleBucketContentProof)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/resolve", s.handleBucketResolve)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/proof", s.handleBucketProof)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/prooflist", s.handleBucketProofList)
-	mux.HandleFunc("GET /api/v1/buckets/{id}/snapshot", s.handleBucketSnapshot)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/update", s.handleBucketUpdate)
-	mux.HandleFunc("POST /api/v1/buckets/{id}/updates:batch", s.handleBucketBatchUpdate)
+	// Read (Kubo-style: /{verb}/{root}/{path...})
+	mux.HandleFunc("GET /api/v1/resolve/{root}/{path...}", s.handleResolveRead)
+	mux.HandleFunc("GET /api/v1/proof/{root}/{path...}", s.handleProofRead)
+	mux.HandleFunc("GET /api/v1/prooflist/{root}/{path...}", s.handleProofListRead)
+	mux.HandleFunc("GET /api/v1/stat/{root}/{path...}", s.handleStatRead)
+	mux.HandleFunc("GET /api/v1/content/{root}/{path...}", s.handleContentRead)
+	mux.HandleFunc("GET /api/v1/content-proof/{root}/{path...}", s.handleContentProofRead)
 
-	mux.HandleFunc("POST /api/v1/roots", s.handleRootCreateStructure)
-	mux.HandleFunc("GET /api/v1/roots/{root}/resolve", s.handleRootResolve)
-	mux.HandleFunc("GET /api/v1/roots/{root}/proof", s.handleRootProof)
-	mux.HandleFunc("GET /api/v1/roots/{root}/prooflist", s.handleRootProofList)
-	mux.HandleFunc("GET /api/v1/roots/{root}/snapshot", s.handleRootSnapshot)
-	mux.HandleFunc("POST /api/v1/roots/{root}/semantic-mutations", s.handleRootSemanticMutation)
-	mux.HandleFunc("POST /api/v1/roots/{root}/update", s.handleRootUpdate)
-	mux.HandleFunc("POST /api/v1/roots/{root}/updates:batch", s.handleRootBatchUpdate)
+	// Write (stateless materialization)
+	mux.HandleFunc("POST /api/v1/roots", s.handleCreateStructure)
+	mux.HandleFunc("POST /api/v1/roots/{root}/semantic-mutations", s.handleSemanticMutation)
+	mux.HandleFunc("POST /api/v1/roots/{root}/update", s.handleUpdate)
+	mux.HandleFunc("POST /api/v1/roots/{root}/updates:batch", s.handleBatchUpdate)
+	mux.HandleFunc("POST /api/v1/roots/{root}/unixfs/file/{path...}", s.handleUnixFSFile)
+	mux.HandleFunc("POST /api/v1/roots/{root}/unixfs/directory/{path...}", s.handleUnixFSDirectory)
 
+	// Verify
 	mux.HandleFunc("POST /api/v1/verify", s.handleVerify)
 
+	// Lineage
 	mux.HandleFunc("GET /api/v1/lineage", s.handleLineageList)
 	mux.HandleFunc("GET /api/v1/lineage/count", s.handleLineageCount)
 	mux.HandleFunc("GET /api/v1/lineage/{root}", s.handleLineageGet)
@@ -119,59 +93,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/lineage/{root}/descendants", s.handleLineageDescendants)
 }
 
-func (s *Server) getGraph(ctx context.Context, id string) (*graph.Graph, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if g, ok := s.graphs[id]; ok {
-		return g, nil
+func (s *Server) getOrCreateGraph(ctx context.Context) (*graph.Graph, error) {
+	s.graphMu.Lock()
+	defer s.graphMu.Unlock()
+	if s.defaultGraph != nil {
+		return s.defaultGraph, nil
 	}
-
-	g, err := s.node.OpenGraph(ctx, id)
-	if err != nil {
-		if id == defaultRootGraphID && err == graph.ErrNotFound {
-			g, err = s.node.NewGraph(id)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	s.graphs[id] = g
-	return g, nil
-}
-
-func (s *Server) openManagedGraph(ctx context.Context, id string, requireActive bool) (*graph.GraphMeta, *graph.Graph, error) {
-	var (
-		meta *graph.GraphMeta
-		err  error
-	)
-	if requireActive {
-		meta, err = s.gm.RequireActive(ctx, id)
-	} else {
-		meta, err = s.gm.GetGraph(ctx, id)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	g, err := s.getGraph(ctx, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	return meta, g, nil
-}
-
-func graphHead(meta *graph.GraphMeta) (cid.Cid, error) {
-	if meta == nil || !meta.Root.Defined() {
-		return cid.Undef, fmt.Errorf("graph head is not defined")
-	}
-	return meta.Root, nil
-}
-
-func (s *Server) updateManagedGraphHead(ctx context.Context, graphID string, newRoot cid.Cid, arcCount int) error {
-	_, err := s.gm.UpdateGraph(ctx, graphID, newRoot, arcCount)
-	return err
+	var err error
+	s.defaultGraph, err = s.node.NewGraph("default")
+	return s.defaultGraph, err
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -238,22 +168,3 @@ func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {
 	return arcs, count, nil
 }
 
-func bucketToResponse(meta *graph.GraphMeta) *httpapi.Bucket {
-	if meta == nil {
-		return nil
-	}
-	root := ""
-	if meta.Root.Defined() {
-		root = meta.Root.String()
-	}
-	return &httpapi.Bucket{
-		ID:           meta.ID,
-		Root:         root,
-		CreatedAt:    meta.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:    meta.UpdatedAt.Format(time.RFC3339),
-		ArcCount:     meta.ArcCount,
-		Backend:      meta.Backend,
-		ArcTableType: meta.ArcTableType,
-		State:        string(meta.State),
-	}
-}

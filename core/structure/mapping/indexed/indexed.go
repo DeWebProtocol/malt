@@ -48,7 +48,7 @@ func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error
 }
 
 // Commit commits the supplied keyed view and materializes the runtime state in ArcTable.
-func (s *Map) Commit(ctx context.Context, bucketID string, view mapping.View) (cid.Cid, error) {
+func (s *Map) Commit(ctx context.Context, namespace string, view mapping.View) (cid.Cid, error) {
 	entries, cells, err := extractSortedEntries(view)
 	if err != nil {
 		return cid.Undef, err
@@ -57,15 +57,15 @@ func (s *Map) Commit(ctx context.Context, bucketID string, view mapping.View) (c
 	if err != nil {
 		return cid.Undef, err
 	}
-	if err := s.storeEntries(ctx, bucketID, root, entries); err != nil {
+	if err := s.storeEntries(ctx, namespace, root, entries); err != nil {
 		return cid.Undef, err
 	}
 	return root, nil
 }
 
 // Prove proves a membership binding for key under root.
-func (s *Map) Prove(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
-	entries, cells, err := s.loadEntries(ctx, bucketID, root)
+func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
+	entries, cells, err := s.loadEntries(ctx, namespace, root)
 	if err != nil {
 		return mapping.Binding{}, nil, err
 	}
@@ -111,8 +111,8 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 }
 
 // Update applies insert, replace, or delete semantics over the committed runtime state.
-func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
-	entries, cells, err := s.loadEntries(ctx, bucketID, root)
+func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	entries, cells, err := s.loadEntries(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -143,7 +143,7 @@ func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arc
 		if !newValue.Defined() {
 			nextEntries := append([]entry(nil), entries[:index]...)
 			nextEntries = append(nextEntries, entries[index+1:]...)
-			return s.commitEntries(ctx, bucketID, nextEntries)
+			return s.commitEntries(ctx, namespace, nextEntries)
 		}
 
 		oldCell, err := encodeBindingCell(key, oldValue)
@@ -160,7 +160,7 @@ func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arc
 		}
 		nextEntries := append([]entry(nil), entries...)
 		nextEntries[index].value = newValue
-		if err := s.storeEntries(ctx, bucketID, newRoot, nextEntries); err != nil {
+		if err := s.storeEntries(ctx, namespace, newRoot, nextEntries); err != nil {
 			return cid.Undef, err
 		}
 		return newRoot, nil
@@ -175,11 +175,11 @@ func (s *Map) Update(ctx context.Context, bucketID string, root cid.Cid, key arc
 		nextEntries = append(nextEntries, entry{})
 		copy(nextEntries[index+1:], nextEntries[index:])
 		nextEntries[index] = entry{path: key, value: newValue}
-		return s.commitEntries(ctx, bucketID, nextEntries)
+		return s.commitEntries(ctx, namespace, nextEntries)
 	}
 }
 
-func (s *Map) commitEntries(ctx context.Context, bucketID string, entries []entry) (cid.Cid, error) {
+func (s *Map) commitEntries(ctx context.Context, namespace string, entries []entry) (cid.Cid, error) {
 	cells, err := entriesToCells(entries)
 	if err != nil {
 		return cid.Undef, err
@@ -188,7 +188,7 @@ func (s *Map) commitEntries(ctx context.Context, bucketID string, entries []entr
 	if err != nil {
 		return cid.Undef, err
 	}
-	if err := s.storeEntries(ctx, bucketID, root, entries); err != nil {
+	if err := s.storeEntries(ctx, namespace, root, entries); err != nil {
 		return cid.Undef, err
 	}
 	return root, nil
@@ -298,8 +298,8 @@ func decodeBindingCell(path arcset.Path, cell commitment.Cell) (cid.Cid, error) 
 	return cid.Cast(cell[3+pathLen:])
 }
 
-func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([]entry, []commitment.Cell, error) {
-	countCID, err := s.arctable.Get(ctx, bucketID, cid.Undef, countPath(root))
+func (s *Map) loadEntries(ctx context.Context, namespace string, root cid.Cid) ([]entry, []commitment.Cell, error) {
+	countCID, err := s.arctable.Get(ctx, namespace, cid.Undef, countPath(root))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -315,7 +315,7 @@ func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([
 	for i := uint64(0); i < count; i++ {
 		paths = append(paths, entryKeyPath(root, i), entryValuePath(root, i))
 	}
-	found, err := s.arctable.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := s.arctable.BatchGet(ctx, namespace, cid.Undef, paths)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -344,7 +344,7 @@ func (s *Map) loadEntries(ctx context.Context, bucketID string, root cid.Cid) ([
 	return entries, cells, nil
 }
 
-func (s *Map) storeEntries(ctx context.Context, bucketID string, root cid.Cid, entries []entry) error {
+func (s *Map) storeEntries(ctx context.Context, namespace string, root cid.Cid, entries []entry) error {
 	arcs := make(map[arcset.Path]cid.Cid, 1+len(entries)*2)
 
 	countCID, err := encodeCountMarker(uint64(len(entries)))
@@ -366,7 +366,7 @@ func (s *Map) storeEntries(ctx context.Context, bucketID string, root cid.Cid, e
 	if err != nil {
 		return err
 	}
-	return s.arctable.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
+	return s.arctable.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 
 func countPath(root cid.Cid) arcset.Path {

@@ -29,7 +29,7 @@ func TestEvalReadPrintsBenchmarkJSONL(t *testing.T) {
 	t.Cleanup(func() { cfgFile = oldCfgFile })
 
 	resetEvalReadFlags(t)
-	evalReadBucket = "eval-read-cli"
+	evalReadFixture = "eval-read-cli"
 	evalReadDepth = 1
 	evalReadSmallBytes = 40
 	evalReadLargeBytes = 300 * 1024
@@ -81,14 +81,14 @@ func decodeEvalReadJSONL(t *testing.T, raw string) []readbench.Result {
 func resetEvalReadFlags(t *testing.T) {
 	t.Helper()
 
-	oldBucket := evalReadBucket
+	oldFixture := evalReadFixture
 	oldDepth := evalReadDepth
 	oldSmallBytes := evalReadSmallBytes
 	oldLargeBytes := evalReadLargeBytes
 	oldRange := evalReadRange
 	oldIterations := evalReadIterations
 	t.Cleanup(func() {
-		evalReadBucket = oldBucket
+		evalReadFixture = oldFixture
 		evalReadDepth = oldDepth
 		evalReadSmallBytes = oldSmallBytes
 		evalReadLargeBytes = oldLargeBytes
@@ -101,6 +101,26 @@ func newEvalReadTestConfig(t *testing.T) (string, string) {
 	t.Helper()
 
 	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
+
+	ctx := context.Background()
+
+	// Create a proper fixture root with a valid @payload in CAS.
+	manifestData := []byte(`{"entries":["dummy"]}`)
+	manifestCID, err := mockCAS.Put(ctx, manifestData)
+	if err != nil {
+		t.Fatalf("put manifest: %v", err)
+	}
+	dummyData := []byte("dummy")
+	dummyCID, err := mockCAS.Put(ctx, dummyData)
+	if err != nil {
+		t.Fatalf("put dummy: %v", err)
+	}
+	oldArcs := evalReadArcs
+	evalReadArcs = map[string]string{
+		"@payload": manifestCID.String(),
+		"dummy":    dummyCID.String(),
+	}
+	t.Cleanup(func() { evalReadArcs = oldArcs })
 
 	cfg := config.DefaultConfig()
 	cfg.RPC.Listen = ""

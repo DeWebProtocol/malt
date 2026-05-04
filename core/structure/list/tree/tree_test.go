@@ -79,10 +79,10 @@ func newListWithArcTable(scheme commitment.IndexCommitment, kv *kvmemory.KV) (*t
 	return semantic, e, nil
 }
 
-func assertVerifiedQuery(t *testing.T, semantic *tree.TreeList, bucketID string, root cid.Cid, index uint64, expected list.Query) {
+func assertVerifiedQuery(t *testing.T, semantic *tree.TreeList, namespace string, root cid.Cid, index uint64, expected list.Query) {
 	t.Helper()
 
-	query, proof, err := semantic.Prove(context.Background(), bucketID, root, index)
+	query, proof, err := semantic.Prove(context.Background(), namespace, root, index)
 	if err != nil {
 		t.Fatalf("Prove(%d) failed: %v", index, err)
 	}
@@ -109,10 +109,10 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			bucketID := "tree-proof-" + name
+			namespace := "tree-proof-" + name
 
 			semantic := newList(t, factory, kv)
-			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(values))
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(values))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
@@ -127,19 +127,19 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 			}
 
 			for _, index := range []uint64{0, 254, 255, 256, 299} {
-				assertVerifiedQuery(t, semantic, bucketID, root, index, list.Query{
+				assertVerifiedQuery(t, semantic, namespace, root, index, list.Query{
 					Key:    values[index],
 					Length: uint64(len(values)),
 				})
 			}
 
-			assertVerifiedQuery(t, semantic, bucketID, root, 999, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, root, 999, list.Query{
 				Key:    cid.Undef,
 				Length: uint64(len(values)),
 			})
 
 			restarted := newList(t, factory, kv)
-			assertVerifiedQuery(t, restarted, bucketID, root, 256, list.Query{
+			assertVerifiedQuery(t, restarted, namespace, root, 256, list.Query{
 				Key:    values[256],
 				Length: uint64(len(values)),
 			})
@@ -154,56 +154,56 @@ func TestTreeListSemanticUpdates(t *testing.T) {
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			bucketID := "tree-update-" + name
+			namespace := "tree-update-" + name
 
 			semantic := newList(t, factory, kv)
-			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(initial))
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(initial))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
 			replacement := newPayloadCID([]byte("replacement"))
-			replacedRoot, err := semantic.Replace(ctx, bucketID, root, 128, initial[128], replacement)
+			replacedRoot, err := semantic.Replace(ctx, namespace, root, 128, initial[128], replacement)
 			if err != nil {
 				t.Fatalf("Replace failed: %v", err)
 			}
-			assertVerifiedQuery(t, semantic, bucketID, replacedRoot, 128, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, replacedRoot, 128, list.Query{
 				Key:    replacement,
 				Length: uint64(len(initial)),
 			})
 
 			appended := newPayloadCID([]byte("appended"))
-			appendedRoot, newIndex, err := semantic.Append(ctx, bucketID, replacedRoot, appended)
+			appendedRoot, newIndex, err := semantic.Append(ctx, namespace, replacedRoot, appended)
 			if err != nil {
 				t.Fatalf("Append failed: %v", err)
 			}
 			if newIndex != uint64(len(initial)) {
 				t.Fatalf("unexpected append index %d", newIndex)
 			}
-			assertVerifiedQuery(t, semantic, bucketID, appendedRoot, newIndex, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, appendedRoot, newIndex, list.Query{
 				Key:    appended,
 				Length: uint64(len(initial) + 1),
 			})
-			assertVerifiedQuery(t, semantic, bucketID, appendedRoot, 128, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, appendedRoot, 128, list.Query{
 				Key:    replacement,
 				Length: uint64(len(initial) + 1),
 			})
 
-			truncatedRoot, err := semantic.Truncate(ctx, bucketID, appendedRoot, 128)
+			truncatedRoot, err := semantic.Truncate(ctx, namespace, appendedRoot, 128)
 			if err != nil {
 				t.Fatalf("Truncate failed: %v", err)
 			}
-			assertVerifiedQuery(t, semantic, bucketID, truncatedRoot, 127, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, truncatedRoot, 127, list.Query{
 				Key:    initial[127],
 				Length: 128,
 			})
-			assertVerifiedQuery(t, semantic, bucketID, truncatedRoot, 128, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, truncatedRoot, 128, list.Query{
 				Key:    cid.Undef,
 				Length: 128,
 			})
 
 			restarted := newList(t, factory, kv)
-			assertVerifiedQuery(t, restarted, bucketID, truncatedRoot, 127, list.Query{
+			assertVerifiedQuery(t, restarted, namespace, truncatedRoot, 127, list.Query{
 				Key:    initial[127],
 				Length: 128,
 			})
@@ -217,43 +217,43 @@ func TestTreeListEmptyAndRegrow(t *testing.T) {
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			bucketID := "tree-empty-" + name
+			namespace := "tree-empty-" + name
 
 			semantic := newList(t, factory, kv)
-			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(nil))
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(nil))
 			if err != nil {
 				t.Fatalf("Commit(empty) failed: %v", err)
 			}
 
-			assertVerifiedQuery(t, semantic, bucketID, root, 0, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, root, 0, list.Query{
 				Key:    cid.Undef,
 				Length: 0,
 			})
 
 			appended := newPayloadCID([]byte("first"))
-			appendedRoot, index, err := semantic.Append(ctx, bucketID, root, appended)
+			appendedRoot, index, err := semantic.Append(ctx, namespace, root, appended)
 			if err != nil {
 				t.Fatalf("Append(empty) failed: %v", err)
 			}
 			if index != 0 {
 				t.Fatalf("unexpected append index %d", index)
 			}
-			assertVerifiedQuery(t, semantic, bucketID, appendedRoot, 0, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, appendedRoot, 0, list.Query{
 				Key:    appended,
 				Length: 1,
 			})
 
-			truncatedRoot, err := semantic.Truncate(ctx, bucketID, appendedRoot, 0)
+			truncatedRoot, err := semantic.Truncate(ctx, namespace, appendedRoot, 0)
 			if err != nil {
 				t.Fatalf("Truncate(to zero) failed: %v", err)
 			}
-			assertVerifiedQuery(t, semantic, bucketID, truncatedRoot, 0, list.Query{
+			assertVerifiedQuery(t, semantic, namespace, truncatedRoot, 0, list.Query{
 				Key:    cid.Undef,
 				Length: 0,
 			})
 
 			restarted := newList(t, factory, kv)
-			assertVerifiedQuery(t, restarted, bucketID, truncatedRoot, 0, list.Query{
+			assertVerifiedQuery(t, restarted, namespace, truncatedRoot, 0, list.Query{
 				Key:    cid.Undef,
 				Length: 0,
 			})
@@ -267,21 +267,21 @@ func TestTreeListRejectsUndefinedCommittedKeys(t *testing.T) {
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			bucketID := "tree-undefined-" + name
+			namespace := "tree-undefined-" + name
 			semantic := newList(t, factory, kv)
 
-			if _, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice([]cid.Cid{newPayloadCID([]byte("a")), cid.Undef})); err == nil {
+			if _, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice([]cid.Cid{newPayloadCID([]byte("a")), cid.Undef})); err == nil {
 				t.Fatal("Commit should reject undefined committed keys")
 			}
 
-			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice([]cid.Cid{newPayloadCID([]byte("a"))}))
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice([]cid.Cid{newPayloadCID([]byte("a"))}))
 			if err != nil {
 				t.Fatalf("Commit(valid) failed: %v", err)
 			}
-			if _, _, err := semantic.Append(ctx, bucketID, root, cid.Undef); err == nil {
+			if _, _, err := semantic.Append(ctx, namespace, root, cid.Undef); err == nil {
 				t.Fatal("Append should reject undefined key")
 			}
-			if _, err := semantic.Replace(ctx, bucketID, root, 0, newPayloadCID([]byte("a")), cid.Undef); err == nil {
+			if _, err := semantic.Replace(ctx, namespace, root, 0, newPayloadCID([]byte("a")), cid.Undef); err == nil {
 				t.Fatal("Replace should reject undefined new key")
 			}
 		})
@@ -295,31 +295,31 @@ func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			bucketID := "tree-corrupt-" + name
+			namespace := "tree-corrupt-" + name
 			scheme := factory(t)
 			semantic, e, err := newListWithArcTable(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithArcTable failed: %v", err)
 			}
 
-			root, err := semantic.Commit(ctx, bucketID, list.NewViewFromSlice(values))
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(values))
 			if err != nil {
 				t.Fatalf("Commit failed: %v", err)
 			}
 
-			childRoot, err := e.Get(ctx, bucketID, cid.Undef, arcset.CanonicalizePath(layout.NodeSlotPath(root, 2).String()))
+			childRoot, err := e.Get(ctx, namespace, cid.Undef, arcset.CanonicalizePath(layout.NodeSlotPath(root, 2).String()))
 			if err != nil {
 				t.Fatalf("failed to fetch child root: %v", err)
 			}
 
 			corruptValue := newPayloadCID([]byte("corrupt-child-slot"))
-			if err := e.Update(ctx, bucketID, cid.Undef, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
+			if err := e.Update(ctx, namespace, cid.Undef, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
 				layout.NodeSlotPath(childRoot, 1).String(): corruptValue,
 			})); err != nil {
 				t.Fatalf("failed to corrupt child materialization: %v", err)
 			}
 
-			if _, err := semantic.Replace(ctx, bucketID, root, 256, values[256], newPayloadCID([]byte("replacement"))); err == nil {
+			if _, err := semantic.Replace(ctx, namespace, root, 256, values[256], newPayloadCID([]byte("replacement"))); err == nil {
 				t.Fatal("Replace should reject corrupted child materialization")
 			}
 		})

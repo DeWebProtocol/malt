@@ -8,17 +8,18 @@ import (
 )
 
 var (
-	evalReadBucket     = ""
+	evalReadFixture    = ""
 	evalReadDepth      = readbench.DefaultDirectoryDepth
 	evalReadSmallBytes = readbench.DefaultSmallFileBytes
 	evalReadLargeBytes = readbench.DefaultLargeFileBytes
 	evalReadRange      = readbench.DefaultRangeHeader
 	evalReadIterations = readbench.DefaultIterations
+	evalReadArcs       map[string]string
 )
 
 func init() {
 	rootCmd.AddCommand(evalReadCmd)
-	evalReadCmd.Flags().StringVar(&evalReadBucket, "bucket", evalReadBucket, "bucket id for the deterministic read fixture (defaults to a fresh readbench-* bucket)")
+	evalReadCmd.Flags().StringVar(&evalReadFixture, "fixture", evalReadFixture, "name for the deterministic read fixture (defaults to a fresh readbench-* fixture)")
 	evalReadCmd.Flags().IntVar(&evalReadDepth, "depth", evalReadDepth, "directory depth for fixture paths")
 	evalReadCmd.Flags().IntVar(&evalReadSmallBytes, "small-bytes", evalReadSmallBytes, "small raw file size in bytes")
 	evalReadCmd.Flags().IntVar(&evalReadLargeBytes, "large-bytes", evalReadLargeBytes, "large list-backed file size in bytes")
@@ -40,13 +41,17 @@ func runEvalRead(cmd *cobra.Command, args []string) error {
 	}
 
 	runner := readbench.NewRunner(cfg.APIBaseURL())
+	fixtureConfig := readbench.FixtureConfig{
+		FixtureName:    evalReadFixture,
+		DirectoryDepth: evalReadDepth,
+		SmallFileBytes: evalReadSmallBytes,
+		LargeFileBytes: evalReadLargeBytes,
+	}
+	if len(evalReadArcs) > 0 {
+		fixtureConfig.Arcs = evalReadArcs
+	}
 	return runner.RunJSONL(cmd.Context(), readbench.RunConfig{
-		Fixture: readbench.FixtureConfig{
-			Bucket:         evalReadBucket,
-			DirectoryDepth: evalReadDepth,
-			SmallFileBytes: evalReadSmallBytes,
-			LargeFileBytes: evalReadLargeBytes,
-		},
+		Fixture:     fixtureConfig,
 		RangeHeader: evalReadRange,
 		Iterations:  evalReadIterations,
 	}, os.Stdout)

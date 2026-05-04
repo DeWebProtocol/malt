@@ -19,17 +19,16 @@ func TestMetricsCommandHasSnapshotAndResetSubcommands(t *testing.T) {
 
 func TestMetricsSnapshotPrintsDaemonJSON(t *testing.T) {
 	ctx := context.Background()
-	daemon, _ := newAddTestClients(t)
+	daemon, casClient := newAddTestClients(t)
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	if _, err := daemon.CreateBucket(ctx, "metrics", ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
-	}
-	if _, err := daemon.AddBucketUnixFSFile(ctx, "metrics", "file.txt", []byte("hello metrics")); err != nil {
+	root := newTestRoot(ctx, t, daemon, casClient)
+	writeResp, err := daemon.AddUnixFSFile(ctx, root, "file.txt", []byte("hello metrics"))
+	if err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}
-	if _, err := daemon.GetBucketContentProof(ctx, "metrics", "file.txt", ""); err != nil {
+	if _, err := daemon.ContentProof(ctx, writeResp.NewRoot, "file.txt", ""); err != nil {
 		t.Fatalf("content proof: %v", err)
 	}
 
@@ -53,17 +52,16 @@ func TestMetricsSnapshotPrintsDaemonJSON(t *testing.T) {
 
 func TestMetricsResetPrintsDaemonJSON(t *testing.T) {
 	ctx := context.Background()
-	daemon, _ := newAddTestClients(t)
+	daemon, casClient := newAddTestClients(t)
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	if _, err := daemon.CreateBucket(ctx, "metrics-reset", ""); err != nil {
-		t.Fatalf("create bucket: %v", err)
-	}
-	if _, err := daemon.AddBucketUnixFSFile(ctx, "metrics-reset", "file.txt", []byte("hello metrics reset")); err != nil {
+	root := newTestRoot(ctx, t, daemon, casClient)
+	writeResp, err := daemon.AddUnixFSFile(ctx, root, "file.txt", []byte("hello metrics reset"))
+	if err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}
-	if _, err := daemon.GetBucketContentProof(ctx, "metrics-reset", "file.txt", ""); err != nil {
+	if _, err := daemon.ContentProof(ctx, writeResp.NewRoot, "file.txt", ""); err != nil {
 		t.Fatalf("content proof: %v", err)
 	}
 

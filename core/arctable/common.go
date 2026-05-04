@@ -24,44 +24,44 @@ func NewBloomFilterManager(bloomCache *bloom.BloomCache) *BloomFilterManager {
 }
 
 // Checker checks if a path might exist in the cache using bloom filter.
-func (bfm *BloomFilterManager) MightContain(bucketId, path string) bool {
+func (bfm *BloomFilterManager) MightContain(namespace, path string) bool {
 	if bfm.bloomCache == nil {
 		return true // Bloom disabled, assume it might exist
 	}
 	// Note: This is a simplified synchronous check; actual implementation
 	// in BloomCache may be async. Callers should wrap async calls as needed.
-	result, err := bfm.bloomCache.MightContain(nil, bucketId, path)
+	result, err := bfm.bloomCache.MightContain(nil, namespace, path)
 	if err != nil {
 		return true // On error, assume it might exist
 	}
 	return result
 }
 
-// CreateBucket creates a new bucket with custom bloom configuration.
-func (bfm *BloomFilterManager) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
+// CreateNamespace creates a new namespace with custom bloom configuration.
+func (bfm *BloomFilterManager) CreateNamespace(ctx context.Context, namespace string, cfg *bloom.NamespaceConfig) error {
 	if bfm.bloomCache == nil {
 		return fmt.Errorf("bloom cache not configured")
 	}
-	return bfm.bloomCache.CreateBucket(ctx, bucketId, cfg)
+	return bfm.bloomCache.CreateNamespace(ctx, namespace, cfg)
 }
 
 // Insert records that a path exists in the bloom filter.
-func (bfm *BloomFilterManager) Insert(ctx context.Context, bucketId, path string) error {
+func (bfm *BloomFilterManager) Insert(ctx context.Context, namespace, path string) error {
 	if bfm.bloomCache == nil {
 		return nil // Bloom disabled
 	}
-	return bfm.bloomCache.Add(ctx, bucketId, []string{path})
+	return bfm.bloomCache.Add(ctx, namespace, []string{path})
 }
 
 // Delete records that a path no longer exists in the bloom filter.
-// Note: BloomCache does not support path deletion, only bucket-level operations.
+// Note: BloomCache does not support path deletion, only namespace-level operations.
 // This is a no-op to maintain interface consistency.
-func (bfm *BloomFilterManager) Delete(ctx context.Context, bucketId, path string) error {
+func (bfm *BloomFilterManager) Delete(ctx context.Context, namespace, path string) error {
 	if bfm.bloomCache == nil {
 		return nil // Bloom disabled
 	}
 	// Bloom filter does not support single path deletion
-	// Callers should invalidate the entire bucket if needed
+	// Callers should invalidate the entire namespace if needed
 	return nil
 }
 
@@ -71,15 +71,15 @@ func (bfm *BloomFilterManager) Enabled() bool {
 }
 
 // AddBatch adds multiple paths to the bloom filter at once.
-func (bfm *BloomFilterManager) AddBatch(ctx context.Context, bucketId string, paths []string) error {
+func (bfm *BloomFilterManager) AddBatch(ctx context.Context, namespace string, paths []string) error {
 	if bfm.bloomCache == nil {
 		return nil
 	}
-	return bfm.bloomCache.Add(ctx, bucketId, paths)
+	return bfm.bloomCache.Add(ctx, namespace, paths)
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
-func (bfm *BloomFilterManager) MightContainBatch(ctx context.Context, bucketId string, paths []string) (map[string]bool, error) {
+func (bfm *BloomFilterManager) MightContainBatch(ctx context.Context, namespace string, paths []string) (map[string]bool, error) {
 	if bfm.bloomCache == nil {
 		result := make(map[string]bool)
 		for _, p := range paths {
@@ -87,7 +87,7 @@ func (bfm *BloomFilterManager) MightContainBatch(ctx context.Context, bucketId s
 		}
 		return result, nil
 	}
-	return bfm.bloomCache.MightContainBatch(ctx, bucketId, paths)
+	return bfm.bloomCache.MightContainBatch(ctx, namespace, paths)
 }
 
 // GetBloomCache returns the underlying BloomCache for advanced operations.
@@ -100,33 +100,33 @@ func (bfm *BloomFilterManager) GetBloomCache() *bloom.BloomCache {
 
 // DefaultArcKey generates the standard arc key format.
 // Used by overwrite ArcTable implementation.
-func DefaultArcKey(bucketId string, path arcset.Path) []byte {
-	// Format: bucketId:path
-	return []byte(bucketId + ":" + path.String())
+func DefaultArcKey(namespace string, path arcset.Path) []byte {
+	// Format: namespace:path
+	return []byte(namespace + ":" + path.String())
 }
 
-// DefaultBucketPrefix generates the standard bucket prefix format.
+// DefaultNamespacePrefix generates the standard namespace prefix format.
 // Used by overwrite ArcTable implementation.
-func DefaultBucketPrefix(bucketId string) []byte {
-	// Format: bucketId:
-	return []byte(bucketId + ":")
+func DefaultNamespacePrefix(namespace string) []byte {
+	// Format: namespace:
+	return []byte(namespace + ":")
 }
 
 // VersionedArcKey generates a versioned arc key format.
 // Used by versioned ArcTable implementation to include version information.
-func VersionedArcKey(bucketId string, version cid.Cid, path arcset.Path) []byte {
-	// Format: bucketId:version:path
-	return []byte(bucketId + ":" + version.String() + ":" + path.String())
+func VersionedArcKey(namespace string, version cid.Cid, path arcset.Path) []byte {
+	// Format: namespace:version:path
+	return []byte(namespace + ":" + version.String() + ":" + path.String())
 }
 
-// VersionedBucketPrefix generates a versioned bucket prefix format.
+// VersionedNamespacePrefix generates a versioned namespace prefix format.
 // Used by versioned ArcTable implementation to include version information.
-func VersionedBucketPrefix(bucketId string, version cid.Cid) []byte {
-	// Format: bucketId:version:
-	return []byte(bucketId + ":" + version.String() + ":")
+func VersionedNamespacePrefix(namespace string, version cid.Cid) []byte {
+	// Format: namespace:version:
+	return []byte(namespace + ":" + version.String() + ":")
 }
 
-// RootKeyFormat generates the key for root->bucketId mapping.
+// RootKeyFormat generates the key for root->namespace mapping.
 // This is shared across all ArcTable implementations.
 func RootKeyFormat(root cid.Cid) []byte {
 	// Format: root:{cid}

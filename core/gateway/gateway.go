@@ -115,7 +115,7 @@ func (e Executor) Apply(ctx context.Context, mut SemanticMutation) (WriteReceipt
 	}, nil
 }
 
-func (e Executor) commitPut(ctx context.Context, bucketID string, put ArcSetPut) (cid.Cid, int, error) {
+func (e Executor) commitPut(ctx context.Context, namespace string, put ArcSetPut) (cid.Cid, int, error) {
 	switch put.Kind {
 	case arcset.KindMap:
 		if e.Maps == nil {
@@ -125,7 +125,7 @@ func (e Executor) commitPut(ctx context.Context, bucketID string, put ArcSetPut)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
-		root, err := e.Maps.Commit(ctx, bucketID, view)
+		root, err := e.Maps.Commit(ctx, namespace, view)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
@@ -134,7 +134,7 @@ func (e Executor) commitPut(ctx context.Context, bucketID string, put ArcSetPut)
 			if err != nil {
 				return cid.Undef, 0, err
 			}
-			if err := e.ArcTable.Update(ctx, bucketID, root, put.Object, snapshot); err != nil {
+			if err := e.ArcTable.Update(ctx, namespace, root, put.Object, snapshot); err != nil {
 				return cid.Undef, 0, err
 			}
 		}
@@ -147,7 +147,7 @@ func (e Executor) commitPut(ctx context.Context, bucketID string, put ArcSetPut)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
-		root, err := e.Lists.Commit(ctx, bucketID, view)
+		root, err := e.Lists.Commit(ctx, namespace, view)
 		if err != nil {
 			return cid.Undef, 0, err
 		}

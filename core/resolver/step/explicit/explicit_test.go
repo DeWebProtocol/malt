@@ -17,7 +17,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-const testBucketId = "test-bucket"
+const testNamespace = "test-bucket"
 
 // makeCID creates a CID from an integer for testing purposes.
 func makeCID(n int) cid.Cid {
@@ -54,12 +54,12 @@ func newTestComponents() (*overwrite.ArcTable, mapping.Semantics, *kzg.Scheme) {
 // setupArcSet commits arcs to semantic layer and stores them in ArcTable.
 func setupArcSet(t *testing.T, e *overwrite.ArcTable, semantic mapping.Semantics, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
-	root, err := semantic.Commit(context.Background(), testBucketId, mapping.NewViewFrom(arcsMap))
+	root, err := semantic.Commit(context.Background(), testNamespace, mapping.NewViewFrom(arcsMap))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
 	ctx := context.Background()
-	if err := e.Update(ctx, testBucketId, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
+	if err := e.Update(ctx, testNamespace, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
 		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 	return root
@@ -82,7 +82,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 	root := setupArcSet(t, e, semantic, arcsMap)
 
 	// Create resolver
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Resolve "a/b/c/d" should match longest prefix "a/b/c" -> target3
 	matchedPath, target, ev, err := r.Resolve(root, "a/b/c/d")
@@ -168,7 +168,7 @@ func TestResolve_ExactMatch(t *testing.T) {
 	}
 	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Exact match: resolve "a/b" should return "a/b" -> target2
 	matchedPath, target, ev, err := r.Resolve(root, "a/b")
@@ -204,7 +204,7 @@ func TestResolve_NoMatch(t *testing.T) {
 	}
 	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Resolve "x/y/z" has no matching prefix
 	_, _, _, err := r.Resolve(root, "x/y/z")
@@ -222,7 +222,7 @@ func TestResolve_EmptyPath(t *testing.T) {
 	}
 	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Empty path should error with "path is empty"
 	_, _, _, err := r.Resolve(root, "")
@@ -237,7 +237,7 @@ func TestResolve_EmptyPath(t *testing.T) {
 func TestResolve_UndefinedRoot(t *testing.T) {
 	e, semantic, _ := newTestComponents()
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Undefined root should error with "root is not defined"
 	_, _, _, err := r.Resolve(cid.Undef, "a/b")
@@ -258,7 +258,7 @@ func TestVerify_ValidProof(t *testing.T) {
 	}
 	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// First resolve to get valid evidence
 	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "a/b")
@@ -285,7 +285,7 @@ func TestVerify_WrongProof(t *testing.T) {
 	}
 	root := setupArcSet(t, e, semantic, arcsMap)
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Resolve to get a valid evidence
 	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "a/b")
@@ -318,7 +318,7 @@ func TestVerify_WrongProof(t *testing.T) {
 func TestVerify_NilEvidence(t *testing.T) {
 	e, semantic, _ := newTestComponents()
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 	root := makeCID(1)
 	target := makeCID(2)
 
@@ -335,7 +335,7 @@ func TestVerify_NilEvidence(t *testing.T) {
 func TestVerify_WrongEvidenceType(t *testing.T) {
 	e, semantic, _ := newTestComponents()
 
-	r := explicit.NewResolver(e, semantic, testBucketId)
+	r := explicit.NewResolver(e, semantic, testNamespace)
 	root := makeCID(1)
 	target := makeCID(2)
 
@@ -373,22 +373,22 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	bucketId := "bloom-test"
+	namespace := "bloom-test"
 
 	target := makeCID(42)
 	arcsMap := map[string]cid.Cid{
 		"data/file": target,
 	}
 
-	root, err := semantic.Commit(ctx, bucketId, mapping.NewViewFrom(arcsMap))
+	root, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(arcsMap))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if err := e.Update(ctx, bucketId, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
+	if err := e.Update(ctx, namespace, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
 		t.Fatalf("ArcTable.Update failed: %v", err)
 	}
 
-	r := explicit.NewResolver(e, semantic, bucketId)
+	r := explicit.NewResolver(e, semantic, namespace)
 
 	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "data/file")
 	if err != nil {

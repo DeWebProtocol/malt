@@ -21,50 +21,8 @@ type MetricsResponse struct {
 	Snapshot metrics.Snapshot `json:"snapshot"`
 }
 
-// Bucket describes bucket metadata in daemon responses.
-type Bucket struct {
-	ID           string `json:"id"`
-	Root         string `json:"root,omitempty"`
-	CreatedAt    string `json:"created_at,omitempty"`
-	UpdatedAt    string `json:"updated_at,omitempty"`
-	ArcCount     int    `json:"arc_count"`
-	Backend      string `json:"backend"`
-	ArcTableType string `json:"arctable_type"`
-	State        string `json:"state"`
-}
-
-// BucketCreateRequest creates a managed bucket.
-type BucketCreateRequest struct {
-	ID      string `json:"id"`
-	Backend string `json:"backend,omitempty"`
-}
-
-// BucketResponse wraps a single bucket.
-type BucketResponse struct {
-	Bucket *Bucket `json:"bucket"`
-}
-
-// BucketListResponse wraps multiple buckets.
-type BucketListResponse struct {
-	Buckets []*Bucket `json:"buckets"`
-}
-
-// BucketHeadSetRequest sets a managed bucket head root.
-type BucketHeadSetRequest struct {
-	NewRoot         string `json:"new_root"`
-	ArcCount        int    `json:"arc_count"`
-	ExpectedOldRoot string `json:"expected_old_root,omitempty"`
-}
-
-// BucketSemanticMutationRequest applies a semantic mutation to a managed bucket head.
-type BucketSemanticMutationRequest struct {
-	BaseRoot string                `json:"base_root,omitempty"`
-	Puts     []SemanticMutationPut `json:"puts"`
-}
-
-// RootSemanticMutationRequest materializes a root-relative semantic mutation
-// without publishing a managed bucket head.
-type RootSemanticMutationRequest struct {
+// SemanticMutationRequest materializes a root-relative semantic mutation.
+type SemanticMutationRequest struct {
 	Puts []SemanticMutationPut `json:"puts"`
 }
 
@@ -83,59 +41,50 @@ type SemanticMutationEntry struct {
 	TargetKind string  `json:"target_kind,omitempty"`
 }
 
-// BucketSemanticMutationResponse returns the gateway write receipt after publication.
-type BucketSemanticMutationResponse struct {
-	Bucket   string `json:"bucket"`
+// SemanticMutationResponse returns a gateway materialization receipt.
+type SemanticMutationResponse struct {
 	BaseRoot string `json:"base_root"`
 	NewRoot  string `json:"new_root"`
 	PutCount int    `json:"put_count"`
 	ArcCount int    `json:"arc_count"`
 }
 
-// RootSemanticMutationResponse returns a root-centric gateway materialization receipt.
-type RootSemanticMutationResponse struct {
-	BaseRoot string `json:"base_root"`
-	NewRoot  string `json:"new_root"`
-	PutCount int    `json:"put_count"`
-	ArcCount int    `json:"arc_count"`
-}
-
-// BucketMapCreateRequest creates a map root inside a bucket namespace.
-type BucketMapCreateRequest struct {
+// MapCreateRequest creates a map root inside the current namespace.
+type MapCreateRequest struct {
 	Bindings map[string]string `json:"bindings"`
 }
 
-// BucketMapCreateResponse returns a created map root.
-type BucketMapCreateResponse struct {
+// MapCreateResponse returns a created map root.
+type MapCreateResponse struct {
 	Root string `json:"root"`
 }
 
-// BucketMapSnapshotResponse returns a map root snapshot.
-type BucketMapSnapshotResponse struct {
+// MapSnapshotResponse returns a map root snapshot.
+type MapSnapshotResponse struct {
 	Root     string            `json:"root"`
 	Bindings map[string]string `json:"bindings"`
 }
 
-// BucketMapResolveResponse returns a resolved key under a map root.
-type BucketMapResolveResponse struct {
+// MapResolveResponse returns a resolved key under a map root.
+type MapResolveResponse struct {
 	Key string `json:"key"`
 }
 
-// BucketListCreateRequest creates a list root from ordered chunk CIDs.
-type BucketListCreateRequest struct {
+// ListCreateRequest creates a list root from ordered chunk CIDs.
+type ListCreateRequest struct {
 	Chunks    []string `json:"chunks"`
 	ChunkSize int      `json:"chunk_size"`
 }
 
-// BucketListStatResponse is the response shape for list create/stat.
-type BucketListStatResponse struct {
+// ListStatResponse is the response shape for list create/stat.
+type ListStatResponse struct {
 	Root       string `json:"root"`
 	ChunkCount int    `json:"chunk_count"`
 	ChunkSize  int    `json:"chunk_size"`
 }
 
-// BucketStatResponse is the locked stat contract for bucket content inspection.
-type BucketStatResponse struct {
+// PathStatResponse is the locked stat contract for content inspection.
+type PathStatResponse struct {
 	Kind        string   `json:"kind"`              // file|dir
 	StorageKind string   `json:"storage_kind"`      // raw|list|map
 	Key         string   `json:"key"`               // terminal key CID
@@ -144,9 +93,9 @@ type BucketStatResponse struct {
 	Entries     []string `json:"entries,omitempty"` // directory entries when available
 }
 
-// BucketContentRange describes the HTTP-equivalent byte range metadata for a
+// ContentRange describes the HTTP-equivalent byte range metadata for a
 // proof-bearing JSON content read.
-type BucketContentRange struct {
+type ContentRange struct {
 	Start         int64  `json:"start"`
 	EndExclusive  int64  `json:"end_exclusive"`
 	ContentLength int64  `json:"content_length"`
@@ -157,20 +106,19 @@ type BucketContentRange struct {
 	ContentRange  string `json:"content_range,omitempty"`
 }
 
-// BucketContentProofResponse returns content bytes with range metadata and the
+// ContentProofResponse returns content bytes with range metadata and the
 // verifier-facing ProofList for the same read.
-type BucketContentProofResponse struct {
+type ContentProofResponse struct {
 	Path        string              `json:"path,omitempty"`
 	StorageKind string              `json:"storage_kind"`
 	Key         string              `json:"key"`
 	Content     []byte              `json:"content"`
-	Range       BucketContentRange  `json:"range"`
+	Range       ContentRange        `json:"range"`
 	ProofList   prooflist.ProofList `json:"prooflist"`
 }
 
-// BucketUnixFSWriteResponse returns the result of a UnixFS layout mutation.
-type BucketUnixFSWriteResponse struct {
-	Bucket   string `json:"bucket"`
+// UnixFSWriteResponse returns the result of a UnixFS layout mutation.
+type UnixFSWriteResponse struct {
 	Path     string `json:"path"`
 	Kind     string `json:"kind"`
 	OldRoot  string `json:"old_root,omitempty"`
@@ -178,22 +126,21 @@ type BucketUnixFSWriteResponse struct {
 	ArcCount int    `json:"arc_count"`
 }
 
-// BucketUnixFSBatchRequest applies a flat UnixFS path-map mutation.
-type BucketUnixFSBatchRequest struct {
-	BaseRoot string                   `json:"base_root,omitempty"`
-	Entries  []BucketUnixFSBatchEntry `json:"entries"`
+// UnixFSBatchRequest applies a flat UnixFS path-map mutation.
+type UnixFSBatchRequest struct {
+	BaseRoot string             `json:"base_root,omitempty"`
+	Entries  []UnixFSBatchEntry `json:"entries"`
 }
 
-// BucketUnixFSBatchEntry binds one bucket path to a payload CID or chunk list.
-type BucketUnixFSBatchEntry struct {
+// UnixFSBatchEntry binds one query path to a payload CID or chunk list.
+type UnixFSBatchEntry struct {
 	Path   string   `json:"path"`
 	Target string   `json:"target,omitempty"`
 	Chunks []string `json:"chunks,omitempty"`
 }
 
-// BucketUnixFSBatchResponse returns the result of a flat UnixFS batch write.
-type BucketUnixFSBatchResponse struct {
-	Bucket   string `json:"bucket"`
+// UnixFSBatchResponse returns the result of a flat UnixFS batch write.
+type UnixFSBatchResponse struct {
 	OldRoot  string `json:"old_root,omitempty"`
 	NewRoot  string `json:"new_root"`
 	PutCount int    `json:"put_count"`

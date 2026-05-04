@@ -18,21 +18,36 @@ import (
 
 func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 	ctx := context.Background()
-	baseURL := newTestDaemon(t)
+	baseURL, mockCAS := newTestDaemonWithCAS(t)
 	runner := NewRunner(baseURL)
 
+	manifestData := []byte(`{"entries":["dummy"]}`)
+	manifestCID, err := mockCAS.Put(ctx, manifestData)
+	if err != nil {
+		t.Fatalf("put manifest: %v", err)
+	}
+	dummyData := []byte("dummy")
+	dummyCID, err := mockCAS.Put(ctx, dummyData)
+	if err != nil {
+		t.Fatalf("put dummy: %v", err)
+	}
+
 	fixture, err := runner.PrepareFixture(ctx, FixtureConfig{
-		Bucket:         "readbench-fixture",
+		FixtureName:    "readbench-fixture",
 		DirectoryDepth: 3,
 		SmallFileBytes: 32,
 		LargeFileBytes: 300 * 1024,
+		Arcs: map[string]string{
+			"@payload": manifestCID.String(),
+			"dummy":    dummyCID.String(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("PrepareFixture() error = %v", err)
 	}
 
-	if fixture.Bucket != "readbench-fixture" {
-		t.Fatalf("fixture bucket = %q", fixture.Bucket)
+	if fixture.FixtureName != "readbench-fixture" {
+		t.Fatalf("fixture fixture = %q", fixture.FixtureName)
 	}
 	if fixture.SmallPath != "dir00/dir01/dir02/small.txt" {
 		t.Fatalf("small path = %q", fixture.SmallPath)
@@ -42,7 +57,7 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 	}
 
 	client := daemonclient.NewWithBaseURL(baseURL)
-	smallStat, err := client.StatBucketPath(ctx, fixture.Bucket, fixture.SmallPath)
+	smallStat, err := client.Stat(ctx, fixture.Root, fixture.SmallPath)
 	if err != nil {
 		t.Fatalf("stat small fixture: %v", err)
 	}
@@ -50,7 +65,7 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 		t.Fatalf("small stat = %+v, want raw file", smallStat)
 	}
 
-	largeStat, err := client.StatBucketPath(ctx, fixture.Bucket, fixture.LargePath)
+	largeStat, err := client.Stat(ctx, fixture.Root, fixture.LargePath)
 	if err != nil {
 		t.Fatalf("stat large fixture: %v", err)
 	}
@@ -64,13 +79,29 @@ func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
 
 func TestPrepareFixtureSupportsZeroDirectoryDepth(t *testing.T) {
 	ctx := context.Background()
-	runner := NewRunner(newTestDaemon(t))
+	baseURL, mockCAS := newTestDaemonWithCAS(t)
+	runner := NewRunner(baseURL)
+
+	manifestData := []byte(`{"entries":["dummy"]}`)
+	manifestCID, err := mockCAS.Put(ctx, manifestData)
+	if err != nil {
+		t.Fatalf("put manifest: %v", err)
+	}
+	dummyData := []byte("dummy")
+	dummyCID, err := mockCAS.Put(ctx, dummyData)
+	if err != nil {
+		t.Fatalf("put dummy: %v", err)
+	}
 
 	fixture, err := runner.PrepareFixture(ctx, FixtureConfig{
-		Bucket:         "readbench-root",
+		FixtureName:    "readbench-root",
 		DirectoryDepth: 0,
 		SmallFileBytes: 8,
 		LargeFileBytes: 300 * 1024,
+		Arcs: map[string]string{
+			"@payload": manifestCID.String(),
+			"dummy":    dummyCID.String(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("PrepareFixture() error = %v", err)
@@ -83,14 +114,30 @@ func TestPrepareFixtureSupportsZeroDirectoryDepth(t *testing.T) {
 	}
 }
 
-func TestPrepareFixtureGeneratesUniqueBucketWhenOmitted(t *testing.T) {
+func TestPrepareFixtureGeneratesUniqueFixtureNameWhenOmitted(t *testing.T) {
 	ctx := context.Background()
-	runner := NewRunner(newTestDaemon(t))
+	baseURL, mockCAS := newTestDaemonWithCAS(t)
+	runner := NewRunner(baseURL)
+
+	manifestData := []byte(`{"entries":["dummy"]}`)
+	manifestCID, err := mockCAS.Put(ctx, manifestData)
+	if err != nil {
+		t.Fatalf("put manifest: %v", err)
+	}
+	dummyData := []byte("dummy")
+	dummyCID, err := mockCAS.Put(ctx, dummyData)
+	if err != nil {
+		t.Fatalf("put dummy: %v", err)
+	}
 
 	cfg := FixtureConfig{
 		DirectoryDepth: 1,
 		SmallFileBytes: 8,
 		LargeFileBytes: 300 * 1024,
+		Arcs: map[string]string{
+			"@payload": manifestCID.String(),
+			"dummy":    dummyCID.String(),
+		},
 	}
 	first, err := runner.PrepareFixture(ctx, cfg)
 	if err != nil {
@@ -101,47 +148,30 @@ func TestPrepareFixtureGeneratesUniqueBucketWhenOmitted(t *testing.T) {
 		t.Fatalf("second PrepareFixture() error = %v", err)
 	}
 
-	if first.Bucket == second.Bucket {
-		t.Fatalf("generated bucket reused %q", first.Bucket)
+	if first.FixtureName == second.FixtureName {
+		t.Fatalf("generated fixture reused %q", first.FixtureName)
 	}
-	for _, bucket := range []string{first.Bucket, second.Bucket} {
-		if !strings.HasPrefix(bucket, DefaultBucket+"-") {
-			t.Fatalf("generated bucket = %q, want %q prefix", bucket, DefaultBucket+"-")
+	for _, fixture := range []string{first.FixtureName, second.FixtureName} {
+		if !strings.HasPrefix(fixture, DefaultFixtureName+"-") {
+			t.Fatalf("generated fixture = %q, want %q prefix", fixture, DefaultFixtureName+"-")
 		}
-	}
-}
-
-func TestPrepareFixtureRejectsExistingBucket(t *testing.T) {
-	ctx := context.Background()
-	baseURL := newTestDaemon(t)
-	client := daemonclient.NewWithBaseURL(baseURL)
-	if _, err := client.CreateBucket(ctx, "readbench-existing", ""); err != nil {
-		t.Fatalf("create existing bucket: %v", err)
-	}
-
-	runner := NewRunner(baseURL)
-	_, err := runner.PrepareFixture(ctx, FixtureConfig{
-		Bucket:         "readbench-existing",
-		DirectoryDepth: 1,
-		SmallFileBytes: 8,
-		LargeFileBytes: 300 * 1024,
-	})
-	if err == nil {
-		t.Fatal("PrepareFixture() succeeded with an existing bucket")
 	}
 }
 
 func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 	ctx := context.Background()
-	runner := NewRunner(newTestDaemon(t))
+	baseURL, mockCAS := newTestDaemonWithCAS(t)
+	runner := NewRunner(baseURL)
+	arcs := newTestReadbenchArcs(ctx, t, mockCAS)
 
 	var out bytes.Buffer
 	err := runner.RunJSONL(ctx, RunConfig{
 		Fixture: FixtureConfig{
-			Bucket:         "readbench-run",
+			FixtureName:    "readbench-run",
 			DirectoryDepth: 2,
 			SmallFileBytes: 48,
 			LargeFileBytes: 300 * 1024,
+			Arcs:           arcs,
 		},
 		RangeHeader: "bytes=7-19",
 		Iterations:  1,
@@ -159,8 +189,8 @@ func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 	if proofRead.OperationKind != OperationProofListPath {
 		t.Fatalf("first operation = %q, want %q", proofRead.OperationKind, OperationProofListPath)
 	}
-	if proofRead.Bucket != "readbench-run" || proofRead.Path != "dir00/dir01/small.txt" {
-		t.Fatalf("proof read target = bucket %q path %q", proofRead.Bucket, proofRead.Path)
+	if proofRead.FixtureName != "readbench-run" || proofRead.Path != "dir00/dir01/small.txt" {
+		t.Fatalf("proof read target = fixture %q path %q", proofRead.FixtureName, proofRead.Path)
 	}
 	if proofRead.RangeHeader != "" {
 		t.Fatalf("prooflist range header = %q, want empty", proofRead.RangeHeader)
@@ -210,15 +240,18 @@ func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 
 func TestRunJSONLAllowsZeroIterations(t *testing.T) {
 	ctx := context.Background()
-	runner := NewRunner(newTestDaemon(t))
+	baseURL, mockCAS := newTestDaemonWithCAS(t)
+	runner := NewRunner(baseURL)
+	arcs := newTestReadbenchArcs(ctx, t, mockCAS)
 
 	var out bytes.Buffer
 	err := runner.RunJSONL(ctx, RunConfig{
 		Fixture: FixtureConfig{
-			Bucket:         "readbench-zero-iterations",
+			FixtureName:    "readbench-zero-iterations",
 			DirectoryDepth: 1,
 			SmallFileBytes: 8,
 			LargeFileBytes: 300 * 1024,
+			Arcs:           arcs,
 		},
 		Iterations: 0,
 	}, &out)
@@ -250,6 +283,12 @@ func decodeJSONLResults(t *testing.T, data []byte) []Result {
 
 func newTestDaemon(t *testing.T) string {
 	t.Helper()
+	baseURL, _ := newTestDaemonWithCAS(t)
+	return baseURL
+}
+
+func newTestDaemonWithCAS(t *testing.T) (string, *casmock.CAS) {
+	t.Helper()
 
 	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
 
@@ -267,5 +306,23 @@ func newTestDaemon(t *testing.T) string {
 
 	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
 	t.Cleanup(ts.Close)
-	return ts.URL + "/api/v1"
+	return ts.URL + "/api/v1", mockCAS
+}
+
+func newTestReadbenchArcs(ctx context.Context, t *testing.T, mockCAS *casmock.CAS) map[string]string {
+	t.Helper()
+	manifestData := []byte(`{"entries":["dummy"]}`)
+	manifestCID, err := mockCAS.Put(ctx, manifestData)
+	if err != nil {
+		t.Fatalf("put manifest: %v", err)
+	}
+	dummyData := []byte("dummy")
+	dummyCID, err := mockCAS.Put(ctx, dummyData)
+	if err != nil {
+		t.Fatalf("put dummy: %v", err)
+	}
+	return map[string]string{
+		"@payload": manifestCID.String(),
+		"dummy":    dummyCID.String(),
+	}
 }

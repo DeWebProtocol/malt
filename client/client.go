@@ -77,268 +77,77 @@ func (c *Client) ResetMetrics(ctx context.Context) (*httpapi.MetricsResponse, er
 	return &resp, nil
 }
 
-// CreateBucket creates a managed bucket.
-func (c *Client) CreateBucket(ctx context.Context, id string, backend string) (*httpapi.Bucket, error) {
-	req := &httpapi.BucketCreateRequest{ID: id, Backend: backend}
-	var resp httpapi.BucketResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Bucket, nil
-}
-
-// GetBucket returns bucket metadata.
-func (c *Client) GetBucket(ctx context.Context, id string) (*httpapi.Bucket, error) {
-	var resp httpapi.BucketResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets/"+url.PathEscape(id), nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Bucket, nil
-}
-
-// ListBuckets returns all buckets.
-func (c *Client) ListBuckets(ctx context.Context) ([]*httpapi.Bucket, error) {
-	var resp httpapi.BucketListResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Buckets, nil
-}
-
-// DeleteBucket deletes a managed bucket.
-func (c *Client) DeleteBucket(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/buckets/"+url.PathEscape(id), nil, nil, nil)
-}
-
-// FreezeBucket freezes a managed bucket.
-func (c *Client) FreezeBucket(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/freeze", nil, map[string]any{}, nil)
-}
-
-// ResolveBucket resolves a path from a managed bucket head.
-func (c *Client) ResolveBucket(ctx context.Context, id string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/buckets/"+url.PathEscape(id)+"/resolve", p)
-}
-
 // ResolveRoot resolves a path from an explicit root.
 func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/roots/"+url.PathEscape(root)+"/resolve", p)
-}
-
-// ProveBucket returns the transcript for a managed bucket path.
-func (c *Client) ProveBucket(ctx context.Context, id string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/buckets/"+url.PathEscape(id)+"/proof", p)
+	return c.resolve(ctx, "/resolve/"+url.PathEscape(root)+"/"+p, "")
 }
 
 // ProveRoot returns the transcript for an explicit root path.
 func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/roots/"+url.PathEscape(root)+"/proof", p)
-}
-
-// ProofListBucket returns a ProofList read result from a managed bucket head.
-func (c *Client) ProofListBucket(ctx context.Context, id string, p string) (*httpapi.ProofListResponse, error) {
-	return c.proofList(ctx, "/buckets/"+url.PathEscape(id)+"/prooflist", p)
+	return c.resolve(ctx, "/proof/"+url.PathEscape(root)+"/"+p, "")
 }
 
 // ProofListRoot returns a ProofList read result from an explicit root.
 func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
-	return c.proofList(ctx, "/roots/"+url.PathEscape(root)+"/prooflist", p)
+	return c.proofList(ctx, "/prooflist/"+url.PathEscape(root)+"/"+p, "")
 }
 
-// SnapshotBucket returns the managed bucket head snapshot.
-func (c *Client) SnapshotBucket(ctx context.Context, id string) (*httpapi.SnapshotResponse, error) {
-	var resp httpapi.SnapshotResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets/"+url.PathEscape(id)+"/snapshot", nil, nil, &resp); err != nil {
+// Resolve resolves a path relative to a root CID.
+func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
+	return c.resolve(ctx, "/resolve/"+url.PathEscape(root)+"/"+rawPath, "")
+}
+
+// ProofList resolves a path and returns a verifier-facing ProofList.
+func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.ProofListResponse, error) {
+	return c.proofList(ctx, "/prooflist/"+url.PathEscape(root)+"/"+rawPath, "")
+}
+
+// Stat returns the locked stat contract for a path under a root CID.
+func (c *Client) Stat(ctx context.Context, root, rawPath string) (*httpapi.PathStatResponse, error) {
+	var resp httpapi.PathStatResponse
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/stat/%s/%s", url.PathEscape(root), rawPath), nil, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// SnapshotRoot returns the snapshot for an explicit root.
-func (c *Client) SnapshotRoot(ctx context.Context, root string) (*httpapi.SnapshotResponse, error) {
-	var resp httpapi.SnapshotResponse
-	if err := c.do(ctx, http.MethodGet, "/roots/"+url.PathEscape(root)+"/snapshot", nil, nil, &resp); err != nil {
-		return nil, err
+// Content reads raw content bytes for a path under a root CID.
+func (c *Client) Content(ctx context.Context, root, rawPath, rangeHeader string) (io.ReadCloser, int, http.Header, error) {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, 0, nil, err
 	}
-	return &resp, nil
+	u.Path = path.Join(u.Path, fmt.Sprintf("/content/%s/%s", url.PathEscape(root), rawPath))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	return resp.Body, resp.StatusCode, resp.Header, nil
 }
 
-// UpdateBucket updates a single path on a managed bucket head.
-func (c *Client) UpdateBucket(ctx context.Context, id string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// UpdateRoot updates a single path under an explicit root.
-func (c *Client) UpdateRoot(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// BatchUpdateBucket performs a batch update on a managed bucket head.
-func (c *Client) BatchUpdateBucket(ctx context.Context, id string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// BatchUpdateRoot performs a batch update under an explicit root.
-func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// CreateBucketStructure creates a structure and advances the managed bucket head.
-func (c *Client) CreateBucketStructure(ctx context.Context, id string, arcs map[string]string) (*httpapi.CreateStructureResponse, error) {
-	var resp httpapi.CreateStructureResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/structure", nil, &httpapi.CreateStructureRequest{Arcs: arcs}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// SetBucketHead sets the managed bucket head root.
-func (c *Client) SetBucketHead(ctx context.Context, id string, newRoot string, arcCount int, expectedOldRoot string) error {
-	req := &httpapi.BucketHeadSetRequest{
-		NewRoot:         newRoot,
-		ArcCount:        arcCount,
-		ExpectedOldRoot: expectedOldRoot,
-	}
-	return c.do(ctx, http.MethodPut, "/buckets/"+url.PathEscape(id)+"/head", nil, req, nil)
-}
-
-// ApplyBucketSemanticMutation applies a gateway semantic mutation and advances the bucket head.
-func (c *Client) ApplyBucketSemanticMutation(ctx context.Context, id string, req *httpapi.BucketSemanticMutationRequest) (*httpapi.BucketSemanticMutationResponse, error) {
-	var resp httpapi.BucketSemanticMutationResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/semantic-mutations", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ApplyRootSemanticMutation materializes a root-centric semantic mutation without publishing a bucket head.
-func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.RootSemanticMutationRequest) (*httpapi.RootSemanticMutationResponse, error) {
-	var resp httpapi.RootSemanticMutationResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/semantic-mutations", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) AddBucketUnixFSDirectory(ctx context.Context, id string, p string) (*httpapi.BucketUnixFSWriteResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.BucketUnixFSWriteResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/unixfs/directories", query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) AddBucketUnixFSFile(ctx context.Context, id string, p string, data []byte) (*httpapi.BucketUnixFSWriteResponse, error) {
-	query := map[string]string{"path": p}
-	var resp httpapi.BucketUnixFSWriteResponse
-	if err := c.doRaw(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/unixfs/files", query, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) ApplyBucketUnixFSBatch(ctx context.Context, id string, req *httpapi.BucketUnixFSBatchRequest) (*httpapi.BucketUnixFSBatchResponse, error) {
-	var resp httpapi.BucketUnixFSBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/unixfs:batch", nil, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) CreateBucketMap(ctx context.Context, id string, bindings map[string]string) (*httpapi.BucketMapCreateResponse, error) {
-	var resp httpapi.BucketMapCreateResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/maps", nil, &httpapi.BucketMapCreateRequest{Bindings: bindings}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) SnapshotBucketMap(ctx context.Context, id string, root string) (*httpapi.BucketMapSnapshotResponse, error) {
-	var resp httpapi.BucketMapSnapshotResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets/"+url.PathEscape(id)+"/maps/"+url.PathEscape(root)+"/snapshot", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) ResolveBucketMap(ctx context.Context, id string, root string, p string) (*httpapi.BucketMapResolveResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.BucketMapResolveResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets/"+url.PathEscape(id)+"/maps/"+url.PathEscape(root)+"/resolve", query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) UpdateBucketMap(ctx context.Context, id string, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/maps/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) BatchUpdateBucketMap(ctx context.Context, id string, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/maps/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) CreateBucketList(ctx context.Context, id string, chunks []string, chunkSize int) (*httpapi.BucketListStatResponse, error) {
-	var resp httpapi.BucketListStatResponse
-	if err := c.do(ctx, http.MethodPost, "/buckets/"+url.PathEscape(id)+"/lists", nil, &httpapi.BucketListCreateRequest{Chunks: chunks, ChunkSize: chunkSize}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) GetBucketList(ctx context.Context, id string, root string) (*httpapi.BucketListStatResponse, error) {
-	var resp httpapi.BucketListStatResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets/"+url.PathEscape(id)+"/lists/"+url.PathEscape(root), nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) StatBucketPath(ctx context.Context, id string, p string) (*httpapi.BucketStatResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.BucketStatResponse
-	if err := c.do(ctx, http.MethodGet, "/buckets/"+url.PathEscape(id)+"/stat", query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) GetBucketContent(ctx context.Context, id string, p string, rangeHeader string) ([]byte, int, http.Header, error) {
-	body, status, headers, err := c.OpenBucketContent(ctx, id, p, rangeHeader)
+// GetContent reads all content bytes for a path under a root CID.
+func (c *Client) GetContent(ctx context.Context, root, rawPath, rangeHeader string) ([]byte, int, http.Header, error) {
+	body, status, headers, err := c.Content(ctx, root, rawPath, rangeHeader)
 	if err != nil {
 		return nil, status, headers, err
 	}
@@ -350,19 +159,13 @@ func (c *Client) GetBucketContent(ctx context.Context, id string, p string, rang
 	return data, status, headers, nil
 }
 
-// GetBucketContentProof reads bucket content as JSON with range metadata and a
-// ProofList for the same path/range.
-func (c *Client) GetBucketContentProof(ctx context.Context, id string, p string, rangeHeader string) (*httpapi.BucketContentProofResponse, error) {
+// ContentProof reads content with a content-range and ProofList for a root CID path.
+func (c *Client) ContentProof(ctx context.Context, root, rawPath, rangeHeader string) (*httpapi.ContentProofResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, err
 	}
-	u.Path = path.Join(u.Path, "/buckets/"+url.PathEscape(id)+"/content:proof")
-	values := u.Query()
-	if p != "" {
-		values.Set("path", p)
-	}
-	u.RawQuery = values.Encode()
+	u.Path = path.Join(u.Path, fmt.Sprintf("/content-proof/%s/%s", url.PathEscape(root), rawPath))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -387,51 +190,56 @@ func (c *Client) GetBucketContentProof(ctx context.Context, id string, p string,
 		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
 	}
 
-	var out httpapi.BucketContentProofResponse
+	var out httpapi.ContentProofResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// OpenBucketContent opens a streaming response body for bucket content.
-// Callers must close the returned ReadCloser.
-func (c *Client) OpenBucketContent(ctx context.Context, id string, p string, rangeHeader string) (io.ReadCloser, int, http.Header, error) {
-	u, err := url.Parse(c.baseURL)
-	if err != nil {
-		return nil, 0, nil, err
+// UpdateRoot updates a single path under an explicit root.
+func (c *Client) UpdateRoot(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
+	var resp httpapi.WriteUpdateResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
+		return nil, err
 	}
-	u.Path = path.Join(u.Path, "/buckets/"+url.PathEscape(id)+"/content")
-	values := u.Query()
-	if p != "" {
-		values.Set("path", p)
-	}
-	u.RawQuery = values.Encode()
+	return &resp, nil
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, 0, nil, err
+// BatchUpdateRoot performs a batch update under an explicit root.
+func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
+	var resp httpapi.WriteBatchResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
+		return nil, err
 	}
-	if rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
+	return &resp, nil
+}
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, 0, nil, err
+// ApplyRootSemanticMutation materializes a semantic mutation under an explicit root.
+func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.SemanticMutationRequest) (*httpapi.SemanticMutationResponse, error) {
+	var resp httpapi.SemanticMutationResponse
+	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/semantic-mutations", nil, req, &resp); err != nil {
+		return nil, err
 	}
+	return &resp, nil
+}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr httpapi.ErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
-			_ = resp.Body.Close()
-			return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
-		}
-		payload, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return nil, resp.StatusCode, resp.Header, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+// AddUnixFSFile uploads a file into a root's UnixFS tree.
+func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data []byte) (*httpapi.UnixFSWriteResponse, error) {
+	var resp httpapi.UnixFSWriteResponse
+	if err := c.doRaw(ctx, http.MethodPost, fmt.Sprintf("/roots/%s/unixfs/file/%s", url.PathEscape(root), rawPath), nil, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
+		return nil, err
 	}
-	return resp.Body, resp.StatusCode, resp.Header, nil
+	return &resp, nil
+}
+
+// AddUnixFSDirectory creates a directory node in a root's UnixFS tree.
+func (c *Client) AddUnixFSDirectory(ctx context.Context, root, rawPath string) (*httpapi.UnixFSWriteResponse, error) {
+	var resp httpapi.UnixFSWriteResponse
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/roots/%s/unixfs/directory/%s", url.PathEscape(root), rawPath), nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // CreateRootStructure creates a root-scoped structure.
@@ -441,6 +249,17 @@ func (c *Client) CreateRootStructure(ctx context.Context, arcs map[string]string
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// CreatePayloadRoot creates a minimal valid map root with an empty @payload and
+// optional extra bindings. It is a convenience helper for tests and bootstrapping.
+func (c *Client) CreatePayloadRoot(ctx context.Context, extras map[string]string) (*httpapi.CreateStructureResponse, error) {
+	arcs := make(map[string]string, len(extras)+1)
+	for k, v := range extras {
+		arcs[k] = v
+	}
+	arcs["@payload"] = "bafkqaaa"
+	return c.CreateRootStructure(ctx, arcs)
 }
 
 // Verify verifies a transcript under a root.

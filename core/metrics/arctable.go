@@ -11,8 +11,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// ErrBucketCreatorUnsupported is returned when a wrapped ArcTable cannot create buckets.
-var ErrBucketCreatorUnsupported = errors.New("wrapped arctable does not support bucket creation")
+// ErrNamespaceCreatorUnsupported is returned when a wrapped ArcTable cannot create namespaces.
+var ErrNamespaceCreatorUnsupported = errors.New("wrapped arctable does not support namespace creation")
 
 // ErrParentLookupUnsupported is returned when a wrapped ArcTable cannot read root parents.
 var ErrParentLookupUnsupported = errors.New("wrapped arctable does not support parent lookup")
@@ -90,32 +90,32 @@ func (m *ArcTable) ResetStats() {
 	m.stats.reset()
 }
 
-// Get retrieves the target CID for (bucketId, root, path).
-func (m *ArcTable) Get(ctx context.Context, bucketId string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+// Get retrieves the target CID for (namespace, root, path).
+func (m *ArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	m.stats.getCount.Add(1)
-	return m.base.Get(ctx, bucketId, root, path)
+	return m.base.Get(ctx, namespace, root, path)
 }
 
 // BatchGet retrieves multiple target CIDs in a single operation.
-func (m *ArcTable) BatchGet(ctx context.Context, bucketId string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (m *ArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	m.stats.batchGetCount.Add(1)
 	m.stats.batchGetPathCount.Add(uint64(len(paths)))
-	return m.base.BatchGet(ctx, bucketId, root, paths)
+	return m.base.BatchGet(ctx, namespace, root, paths)
 }
 
 // Update stores arc entries with a new commitment root.
-func (m *ArcTable) Update(ctx context.Context, bucketId string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+func (m *ArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
 	m.stats.updateCount.Add(1)
 	if arcs != nil {
 		m.stats.updateArcCount.Add(uint64(arcs.Len()))
 	}
-	return m.base.Update(ctx, bucketId, newRoot, oldRoot, arcs)
+	return m.base.Update(ctx, namespace, newRoot, oldRoot, arcs)
 }
 
 // Snapshot returns an immutable snapshot of all arcs for a given root.
-func (m *ArcTable) Snapshot(ctx context.Context, bucketId string, root cid.Cid) (arcset.ArcSet, error) {
+func (m *ArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
 	m.stats.snapshotCount.Add(1)
-	arcs, err := m.base.Snapshot(ctx, bucketId, root)
+	arcs, err := m.base.Snapshot(ctx, namespace, root)
 	if err == nil && arcs != nil {
 		m.stats.snapshotArcCount.Add(uint64(arcs.Len()))
 	}
@@ -123,9 +123,9 @@ func (m *ArcTable) Snapshot(ctx context.Context, bucketId string, root cid.Cid) 
 }
 
 // Iterate returns a streaming iterator over arcs for a given root.
-func (m *ArcTable) Iterate(ctx context.Context, bucketId string, root cid.Cid) arcset.Iterator {
+func (m *ArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
 	m.stats.iterateCount.Add(1)
-	return m.base.Iterate(ctx, bucketId, root)
+	return m.base.Iterate(ctx, namespace, root)
 }
 
 // Close releases resources.
@@ -133,25 +133,25 @@ func (m *ArcTable) Close() error {
 	return m.base.Close()
 }
 
-// CreateBucket forwards bucket creation when the wrapped ArcTable supports it.
-func (m *ArcTable) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
-	creator, ok := m.base.(arctable.BucketCreator)
+// CreateNamespace forwards namespace creation when the wrapped ArcTable supports it.
+func (m *ArcTable) CreateNamespace(ctx context.Context, namespace string, cfg *bloom.NamespaceConfig) error {
+	creator, ok := m.base.(arctable.NamespaceCreator)
 	if !ok {
-		return ErrBucketCreatorUnsupported
+		return ErrNamespaceCreatorUnsupported
 	}
-	return creator.CreateBucket(ctx, bucketId, cfg)
+	return creator.CreateNamespace(ctx, namespace, cfg)
 }
 
 // GetParent forwards version-parent lookups when the wrapped ArcTable supports it.
-func (m *ArcTable) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
+func (m *ArcTable) GetParent(ctx context.Context, namespace string, version cid.Cid) (cid.Cid, error) {
 	reader, ok := m.base.(interface {
 		GetParent(context.Context, string, cid.Cid) (cid.Cid, error)
 	})
 	if !ok {
 		return cid.Undef, ErrParentLookupUnsupported
 	}
-	return reader.GetParent(ctx, bucketId, version)
+	return reader.GetParent(ctx, namespace, version)
 }
 
 var _ arctable.ArcTable = (*ArcTable)(nil)
-var _ arctable.BucketCreator = (*ArcTable)(nil)
+var _ arctable.NamespaceCreator = (*ArcTable)(nil)

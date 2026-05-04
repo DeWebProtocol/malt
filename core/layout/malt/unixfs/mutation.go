@@ -92,7 +92,7 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 
 // MutationPlanForRoot exposes canonical map/list arcsets for the complete
 // UnixFS tree rooted at root. Child payloads and maps are emitted before their
-// parent directories so the final put is the canonical bucket-head map.
+// parent directories so the final put is the canonical current-root map.
 func (l *Layout) MutationPlanForRoot(ctx context.Context, baseRoot cid.Cid, root cid.Cid) (*MutationPlan, error) {
 	if !root.Defined() {
 		return nil, fmt.Errorf("root is undefined")
@@ -260,7 +260,7 @@ func (l *Layout) canonicalListArcSet(ctx context.Context, root cid.Cid, length u
 		if index > math.MaxInt64 {
 			return nil, fmt.Errorf("list index %d exceeds canonical coordinate range", index)
 		}
-		query, proof, err := l.lists.Prove(ctx, l.bucketID, root, index)
+		query, proof, err := l.lists.Prove(ctx, l.namespace, root, index)
 		if err != nil {
 			return nil, err
 		}

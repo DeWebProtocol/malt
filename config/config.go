@@ -89,9 +89,6 @@ type LoggingConfig struct {
 
 // ClientConfig configures client-side CLI defaults.
 type ClientConfig struct {
-	// DefaultBucketID is used when bucket is not explicitly provided.
-	// Resolution order is: --bucket > client.default_bucket_id > error.
-	DefaultBucketID string `json:"default_bucket_id,omitempty"`
 }
 
 // DefaultConfig returns the runtime default configuration.
@@ -336,8 +333,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid cas.embedded_mock.latency: %w", err)
 		}
 	}
-
-	// client.default_bucket_id is optional; empty means "require explicit --bucket".
 
 	return nil
 }

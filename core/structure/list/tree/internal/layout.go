@@ -75,7 +75,7 @@ func NodeSlotPath(root cid.Cid, slot uint64) arcset.Path {
 
 // LoadSlots reconstructs a fixed-width slot vector for a committed node.
 // Missing entries are treated as cid.Undef.
-func LoadSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root cid.Cid, width int) ([]cid.Cid, error) {
+func LoadSlots(ctx context.Context, e arctable.ArcTable, namespace string, root cid.Cid, width int) ([]cid.Cid, error) {
 	if e == nil {
 		return nil, fmt.Errorf("arctable is nil")
 	}
@@ -91,7 +91,7 @@ func LoadSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root c
 		paths[i] = NodeSlotPath(root, uint64(i))
 	}
 
-	found, err := e.BatchGet(ctx, bucketID, cid.Undef, paths)
+	found, err := e.BatchGet(ctx, namespace, cid.Undef, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func LoadSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root c
 }
 
 // StoreSlots materializes a committed node in ArcTable under its node-root namespace.
-func StoreSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root cid.Cid, slots []cid.Cid) error {
+func StoreSlots(ctx context.Context, e arctable.ArcTable, namespace string, root cid.Cid, slots []cid.Cid) error {
 	if e == nil {
 		return fmt.Errorf("arctable is nil")
 	}
@@ -128,7 +128,7 @@ func StoreSlots(ctx context.Context, e arctable.ArcTable, bucketID string, root 
 	if err != nil {
 		return err
 	}
-	return e.Update(ctx, bucketID, cid.Undef, cid.Undef, snapshot)
+	return e.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 
 // CellsFromSlots converts a CID slot vector into commitment cells.

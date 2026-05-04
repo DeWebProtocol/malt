@@ -11,7 +11,7 @@ type Option func(*Options)
 // Options holds configuration for Graph creation.
 type Options struct {
 	Scheme          commitment.IndexCommitment
-	BucketId        string
+	Namespace       string
 	LineageRecorder writer.LineageRecorder
 }
 
@@ -27,11 +27,11 @@ func WithCommitmentScheme(scheme commitment.IndexCommitment) Option {
 	}
 }
 
-// WithBucketId sets the ArcTable bucket namespace for this Graph.
+// WithNamespace sets the ArcTable namespace for this Graph.
 // Default: the graph's ID.
-func WithBucketId(id string) Option {
+func WithNamespace(id string) Option {
 	return func(o *Options) {
-		o.BucketId = id
+		o.Namespace = id
 	}
 }
 

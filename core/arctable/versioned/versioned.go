@@ -5,7 +5,7 @@
 // Bloom Filter: Uses BloomCache component for fast negative lookups.
 //
 // Concurrency: This implementation is inherently concurrency-safe because each update
-// creates a new version with its own namespace (bucketId:version:path).
+// creates a new version with its own namespace (namespace:version:path).
 package versioned
 
 import (
@@ -26,7 +26,7 @@ const (
 	PreviousArc = "@previous" // Points to parent version's commitment root
 )
 
-// ArcTable is a versioned ArcTable implementation with bucket-based isolation.
+// ArcTable is a versioned ArcTable implementation with namespace-based isolation.
 // Each version stores only modified arcs, with @previous linking to the parent.
 type ArcTable struct {
 	kv           kvstore.KVStore
@@ -67,26 +67,26 @@ func NewArcTableWithBloomCache(kv kvstore.KVStore, bloomCache *bloom.BloomCache)
 	return NewArcTable(WithKVStore(kv), WithBloomCache(bloomCache))
 }
 
-// CreateBucket creates a new bucket with custom bloom configuration.
-func (e *ArcTable) CreateBucket(ctx context.Context, bucketId string, cfg *bloom.BucketConfig) error {
+// CreateNamespace creates a new namespace with custom bloom configuration.
+func (e *ArcTable) CreateNamespace(ctx context.Context, namespace string, cfg *bloom.NamespaceConfig) error {
 	if !e.bloomManager.Enabled() {
 		return fmt.Errorf("bloom cache not configured")
 	}
-	return e.bloomManager.CreateBucket(ctx, bucketId, cfg)
+	return e.bloomManager.CreateNamespace(ctx, namespace, cfg)
 }
 
-// MightContain checks if a path might exist in a bucket using bloom filter.
+// MightContain checks if a path might exist in a namespace using bloom filter.
 // Returns false if the path definitely doesn't exist.
 // Returns true if the path might exist (need to call Get to verify).
-func (e *ArcTable) MightContain(ctx context.Context, bucketId string, path arcset.Path) bool {
+func (e *ArcTable) MightContain(ctx context.Context, namespace string, path arcset.Path) bool {
 	if !e.bloomManager.Enabled() {
 		return true // Bloom disabled
 	}
-	return e.bloomManager.MightContain(bucketId, path.String())
+	return e.bloomManager.MightContain(namespace, path.String())
 }
 
 // MightContainBatch checks multiple paths at once using bloom filter.
-func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths []arcset.Path) map[arcset.Path]bool {
+func (e *ArcTable) MightContainBatch(ctx context.Context, namespace string, paths []arcset.Path) map[arcset.Path]bool {
 	result := make(map[arcset.Path]bool, len(paths))
 
 	if !e.bloomManager.Enabled() {
@@ -100,7 +100,7 @@ func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths
 	for i, path := range paths {
 		pathStrings[i] = path.String()
 	}
-	batchResult, err := e.bloomManager.MightContainBatch(ctx, bucketId, pathStrings)
+	batchResult, err := e.bloomManager.MightContainBatch(ctx, namespace, pathStrings)
 	if err != nil {
 		for _, p := range paths {
 			result[p] = true
@@ -116,13 +116,13 @@ func (e *ArcTable) MightContainBatch(ctx context.Context, bucketId string, paths
 
 // Get retrieves the target CID for a path at a specific version.
 // First checks bloom filter, then walks the @previous chain.
-func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, path arcset.Path) (cid.Cid, error) {
+func (e *ArcTable) Get(ctx context.Context, namespace string, version cid.Cid, path arcset.Path) (cid.Cid, error) {
 	start := time.Now()
 
 	// Quick bloom filter check
-	if !e.MightContain(ctx, bucketId, path) {
+	if !e.MightContain(ctx, namespace, path) {
 		logger.Debug("ArcTable.Get bloom negative",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.String("version", version.String()),
 			logger.String("path", path.String()))
 		return cid.Cid{}, arcset.ErrNotFound
@@ -133,7 +133,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 	depth := 0
 
 	logger.Debug("ArcTable.Get started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("version", version.String()),
 		logger.String("path", path.String()))
 
@@ -141,7 +141,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 		depth++
 		if ctx.Err() != nil {
 			logger.Warn("ArcTable.Get cancelled",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("path", path.String()),
 				logger.Int("depth", depth),
 				logger.Err(ctx.Err()))
@@ -149,12 +149,12 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 		}
 
 		// Try to get the arc at current version
-		key := arctable.VersionedArcKey(bucketId, currentVersion, path)
+		key := arctable.VersionedArcKey(namespace, currentVersion, path)
 		val, err := e.kv.Get(ctx, key)
 		if err == nil {
 			if len(val) == 0 {
 				logger.Debug("ArcTable.Get found tombstone",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.Int("depth", depth))
 				return cid.Cid{}, arcset.ErrNotFound
@@ -162,7 +162,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 			result, err := cid.Cast(val)
 			if err == nil {
 				logger.Debug("ArcTable.Get success",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.String("target", result.String()),
 					logger.Int("depth", depth),
@@ -173,19 +173,19 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 
 		if err != kvstore.ErrNotFound {
 			logger.Error("ArcTable.Get kv error",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("path", path.String()),
 				logger.Err(err))
 			return cid.Cid{}, fmt.Errorf("failed to get arc: %w", err)
 		}
 
 		// Arc not found at this version, try parent
-		prevKey := arctable.VersionedArcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := arctable.VersionedArcKey(namespace, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			if err == kvstore.ErrNotFound {
 				logger.Debug("ArcTable.Get not found (no parent)",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.Int("depth", depth))
 				return cid.Cid{}, arcset.ErrNotFound
@@ -196,7 +196,7 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 		parentVersion, err := cid.Cast(prevVal)
 		if err != nil {
 			logger.Error("ArcTable.Get invalid @previous CID",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.String("path", path.String()),
 				logger.Err(err))
 			return cid.Cid{}, fmt.Errorf("invalid @previous CID: %w", err)
@@ -205,18 +205,18 @@ func (e *ArcTable) Get(ctx context.Context, bucketId string, version cid.Cid, pa
 	}
 
 	logger.Warn("ArcTable.Get exceeded max depth",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("path", path.String()),
 		logger.Int("maxDepth", maxDepth))
 	return cid.Cid{}, fmt.Errorf("version chain too deep (max %d)", maxDepth)
 }
 
 // BatchGet retrieves multiple target CIDs in a single operation.
-func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (e *ArcTable) BatchGet(ctx context.Context, namespace string, version cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	start := time.Now()
 
 	// Filter paths using bloom filter
-	mightExist := e.MightContainBatch(ctx, bucketId, paths)
+	mightExist := e.MightContainBatch(ctx, namespace, paths)
 	filteredPaths := make([]arcset.Path, 0, len(paths))
 	for _, p := range paths {
 		if mightExist[p] {
@@ -229,7 +229,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 	}
 
 	logger.Debug("ArcTable.BatchGet started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("version", version.String()),
 		logger.Int("path_count", len(paths)),
 		logger.Int("filtered_count", len(filteredPaths)))
@@ -252,7 +252,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 
 		if ctx.Err() != nil {
 			logger.Warn("ArcTable.BatchGet cancelled",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Int("depth", depth),
 				logger.Err(ctx.Err()))
 			return nil, ctx.Err()
@@ -264,7 +264,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 			if tombstones[path] {
 				continue
 			}
-			key := arctable.VersionedArcKey(bucketId, currentVersion, path)
+			key := arctable.VersionedArcKey(namespace, currentVersion, path)
 			keys = append(keys, key)
 			pathForKey[string(key)] = path
 		}
@@ -276,7 +276,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 		kvResults, err := e.kv.BatchGet(ctx, keys)
 		if err != nil {
 			logger.Error("ArcTable.BatchGet kv error",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Int("depth", depth),
 				logger.Err(err))
 			return nil, fmt.Errorf("failed to batch get arcs: %w", err)
@@ -300,7 +300,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 			break
 		}
 
-		prevKey := arctable.VersionedArcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := arctable.VersionedArcKey(namespace, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -314,7 +314,7 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 	}
 
 	logger.Debug("ArcTable.BatchGet completed",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.Int("found_count", len(results)),
 		logger.Int("depth", depth),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
@@ -322,8 +322,8 @@ func (e *ArcTable) BatchGet(ctx context.Context, bucketId string, version cid.Ci
 	return results, nil
 }
 
-// Update stores arcs at a new version and updates the bucket bloom filter.
-func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentRoot cid.Cid, arcs arcset.ArcSet) error {
+// Update stores arcs at a new version and updates the namespace bloom filter.
+func (e *ArcTable) Update(ctx context.Context, namespace string, newRoot, parentRoot cid.Cid, arcs arcset.ArcSet) error {
 	arcMap, err := arcset.ToPathMap(arcs)
 	if err != nil {
 		return err
@@ -331,7 +331,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentR
 	start := time.Now()
 
 	logger.Info("ArcTable.Update started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("new_root", newRoot.String()),
 		logger.String("parent_root", parentRoot.String()),
 		logger.Int("arc_count", len(arcMap)))
@@ -343,13 +343,13 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentR
 
 	// Store all arcs for this version
 	for path, target := range arcMap {
-		key := arctable.VersionedArcKey(bucketId, newRoot, path)
+		key := arctable.VersionedArcKey(namespace, newRoot, path)
 		if target == cid.Undef {
 			tombstoneCount++
 			if err := batch.Put(key, []byte{}); err != nil {
 				batch.Cancel()
 				logger.Error("ArcTable.Update failed to add tombstone",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.Err(err))
 				return fmt.Errorf("failed to add tombstone for arc %s: %w", path.String(), err)
@@ -359,7 +359,7 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentR
 			if err := batch.Put(key, val); err != nil {
 				batch.Cancel()
 				logger.Error("ArcTable.Update failed to add arc",
-					logger.String("bucket", bucketId),
+					logger.String("namespace", namespace),
 					logger.String("path", path.String()),
 					logger.Err(err))
 				return fmt.Errorf("failed to add arc %s to batch: %w", path.String(), err)
@@ -370,12 +370,12 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentR
 
 	// Link to parent via @previous
 	if parentRoot != cid.Undef {
-		prevKey := arctable.VersionedArcKey(bucketId, newRoot, PreviousArc)
+		prevKey := arctable.VersionedArcKey(namespace, newRoot, PreviousArc)
 		prevVal := parentRoot.Bytes()
 		if err := batch.Put(prevKey, prevVal); err != nil {
 			batch.Cancel()
 			logger.Error("ArcTable.Update failed to add @previous",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Err(err))
 			return fmt.Errorf("failed to add @previous to batch: %w", err)
 		}
@@ -384,23 +384,23 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentR
 	// Commit the batch
 	if err := batch.Commit(ctx); err != nil {
 		logger.Error("ArcTable.Update commit failed",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.Err(err))
 		return fmt.Errorf("failed to commit version: %w", err)
 	}
 
-	// Update bucket bloom filter
+	// Update namespace bloom filter
 	if e.bloomManager.Enabled() && len(addedPaths) > 0 {
-		if err := e.bloomManager.AddBatch(ctx, bucketId, addedPaths); err != nil {
+		if err := e.bloomManager.AddBatch(ctx, namespace, addedPaths); err != nil {
 			logger.Warn("ArcTable.Update failed to update bloom (non-fatal)",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Err(err))
 			// Non-fatal: bloom is optional optimization
 		}
 	}
 
 	logger.Info("ArcTable.Update completed",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("new_root", newRoot.String()),
 		logger.Int("arc_count", len(arcMap)),
 		logger.Int("tombstone_count", tombstoneCount),
@@ -411,8 +411,8 @@ func (e *ArcTable) Update(ctx context.Context, bucketId string, newRoot, parentR
 }
 
 // GetParent returns the parent version of a given version via @previous.
-func (e *ArcTable) GetParent(ctx context.Context, bucketId string, version cid.Cid) (cid.Cid, error) {
-	prevKey := arctable.VersionedArcKey(bucketId, version, PreviousArc)
+func (e *ArcTable) GetParent(ctx context.Context, namespace string, version cid.Cid) (cid.Cid, error) {
+	prevKey := arctable.VersionedArcKey(namespace, version, PreviousArc)
 	prevVal, err := e.kv.Get(ctx, prevKey)
 	if err != nil {
 		if err == kvstore.ErrNotFound {
@@ -425,24 +425,24 @@ func (e *ArcTable) GetParent(ctx context.Context, bucketId string, version cid.C
 }
 
 // Snapshot returns an immutable snapshot of all arcs visible at the given version.
-func (e *ArcTable) Snapshot(ctx context.Context, bucketId string, version cid.Cid) (arcset.ArcSet, error) {
+func (e *ArcTable) Snapshot(ctx context.Context, namespace string, version cid.Cid) (arcset.ArcSet, error) {
 	start := time.Now()
 
 	logger.Debug("ArcTable.Snapshot started",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("version", version.String()))
 
-	arcs, err := e.collectFlattenedArcs(ctx, bucketId, version)
+	arcs, err := e.collectFlattenedArcs(ctx, namespace, version)
 	if err != nil {
 		logger.Error("ArcTable.Snapshot failed",
-			logger.String("bucket", bucketId),
+			logger.String("namespace", namespace),
 			logger.String("version", version.String()),
 			logger.Err(err))
 		return nil, err
 	}
 
 	logger.Debug("ArcTable.Snapshot completed",
-		logger.String("bucket", bucketId),
+		logger.String("namespace", namespace),
 		logger.String("version", version.String()),
 		logger.Int("arc_count", len(arcs)),
 		logger.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000))
@@ -455,7 +455,7 @@ func (e *ArcTable) Snapshot(ctx context.Context, bucketId string, version cid.Ci
 }
 
 // collectFlattenedArcs collects all arcs visible at a version (including ancestors).
-func (e *ArcTable) collectFlattenedArcs(ctx context.Context, bucketId string, version cid.Cid) (map[string]cid.Cid, error) {
+func (e *ArcTable) collectFlattenedArcs(ctx context.Context, namespace string, version cid.Cid) (map[string]cid.Cid, error) {
 	arcs := make(map[string]cid.Cid)
 	seen := make(map[string]bool)
 	currentVersion := version
@@ -464,12 +464,12 @@ func (e *ArcTable) collectFlattenedArcs(ctx context.Context, bucketId string, ve
 	for i := 0; i < maxDepth; i++ {
 		if ctx.Err() != nil {
 			logger.Warn("ArcTable.collectFlattenedArcs cancelled",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Int("depth", i))
 			return nil, ctx.Err()
 		}
 
-		prefix := arctable.VersionedBucketPrefix(bucketId, currentVersion)
+		prefix := arctable.VersionedNamespacePrefix(namespace, currentVersion)
 		iter := e.kv.NewIterator(ctx, prefix, nil)
 
 		for iter.Next() {
@@ -498,13 +498,13 @@ func (e *ArcTable) collectFlattenedArcs(ctx context.Context, bucketId string, ve
 		if err := iter.Err(); err != nil {
 			iter.Close()
 			logger.Error("ArcTable.collectFlattenedArcs iterator error",
-				logger.String("bucket", bucketId),
+				logger.String("namespace", namespace),
 				logger.Err(err))
 			return nil, fmt.Errorf("iterator error: %w", err)
 		}
 		iter.Close()
 
-		prevKey := arctable.VersionedArcKey(bucketId, currentVersion, PreviousArc)
+		prevKey := arctable.VersionedArcKey(namespace, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
 			break
@@ -521,11 +521,11 @@ func (e *ArcTable) collectFlattenedArcs(ctx context.Context, bucketId string, ve
 }
 
 // Iterate returns a streaming iterator over all arcs visible at the given version.
-func (e *ArcTable) Iterate(ctx context.Context, bucketId string, version cid.Cid) arcset.Iterator {
+func (e *ArcTable) Iterate(ctx context.Context, namespace string, version cid.Cid) arcset.Iterator {
 	return &chainIterator{
 		arctable:       e,
 		ctx:            ctx,
-		bucketId:       bucketId,
+		namespace:      namespace,
 		currentVersion: version,
 		seen:           make(map[string]bool),
 		maxDepth:       1000,
@@ -544,7 +544,7 @@ func (e *ArcTable) Close() error {
 type chainIterator struct {
 	arctable       *ArcTable
 	ctx            context.Context
-	bucketId       string
+	namespace      string
 	currentVersion cid.Cid
 	seen           map[string]bool
 	maxDepth       int
@@ -579,7 +579,7 @@ func (it *chainIterator) Next() (arcset.Path, cid.Cid, bool) {
 
 	it.maxDepth--
 
-	prefix := arctable.VersionedBucketPrefix(it.bucketId, it.currentVersion)
+	prefix := arctable.VersionedNamespacePrefix(it.namespace, it.currentVersion)
 	iter := it.arctable.kv.NewIterator(it.ctx, prefix, nil)
 
 	it.currentBatch = make(map[string]cid.Cid)

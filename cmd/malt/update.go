@@ -11,70 +11,30 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 	updateCmd.AddCommand(updateBatchCmd)
 	updateCmd.AddCommand(createCmd)
-	updateCmd.Flags().StringVarP(&updateBucketID, "bucket", "b", "", "Update the managed bucket head instead of providing an explicit root")
-	updateBatchCmd.Flags().StringVarP(&batchBucketID, "bucket", "b", "", "Batch update the managed bucket head instead of providing an explicit root")
-	createCmd.Flags().StringVarP(&createBucketID, "bucket", "b", "", "Create or replace the managed bucket head")
 }
 
-var (
-	updateBucketID string
-	batchBucketID  string
-	createBucketID string
-)
-
 var updateCmd = &cobra.Command{
-	Use:   "update [<root>] <path> <target>",
+	Use:   "update <root> <path> <target>",
 	Short: "Update an arc in a MALT structure",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if updateBucketID != "" {
-			return cobra.ExactArgs(2)(cmd, args)
-		}
-		return cobra.ExactArgs(3)(cmd, args)
-	},
-	RunE: runUpdate,
+	Args:  cobra.ExactArgs(3),
+	RunE:  runUpdate,
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	var (
-		resp *struct {
-			OldRoot   string `json:"old_root"`
-			NewRoot   string `json:"new_root"`
-			Path      string `json:"path"`
-			OldTarget string `json:"old_target"`
-			NewTarget string `json:"new_target"`
-			Op        string `json:"op"`
-		}
-	)
-
-	if updateBucketID != "" {
-		out, err := client.UpdateBucket(cmd.Context(), updateBucketID, args[0], args[1])
-		if err != nil {
-			return daemonCommandError(err)
-		}
-		resp = &struct {
-			OldRoot   string `json:"old_root"`
-			NewRoot   string `json:"new_root"`
-			Path      string `json:"path"`
-			OldTarget string `json:"old_target"`
-			NewTarget string `json:"new_target"`
-			Op        string `json:"op"`
-		}{out.OldRoot, out.NewRoot, out.Path, out.OldTarget, out.NewTarget, out.Op}
-	} else {
-		out, err := client.UpdateRoot(cmd.Context(), args[0], args[1], args[2])
-		if err != nil {
-			return daemonCommandError(err)
-		}
-		resp = &struct {
-			OldRoot   string `json:"old_root"`
-			NewRoot   string `json:"new_root"`
-			Path      string `json:"path"`
-			OldTarget string `json:"old_target"`
-			NewTarget string `json:"new_target"`
-			Op        string `json:"op"`
-		}{out.OldRoot, out.NewRoot, out.Path, out.OldTarget, out.NewTarget, out.Op}
+	out, err := client.UpdateRoot(cmd.Context(), args[0], args[1], args[2])
+	if err != nil {
+		return daemonCommandError(err)
 	}
+	resp := &struct {
+		OldRoot   string `json:"old_root"`
+		NewRoot   string `json:"new_root"`
+		Path      string `json:"path"`
+		OldTarget string `json:"old_target"`
+		NewTarget string `json:"new_target"`
+		Op        string `json:"op"`
+	}{out.OldRoot, out.NewRoot, out.Path, out.OldTarget, out.NewTarget, out.Op}
 
 	printJSON(resp)
 	fmt.Fprintf(os.Stderr, "arc %q updated (op: %s)\n", resp.Path, resp.Op)
@@ -82,34 +42,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 var updateBatchCmd = &cobra.Command{
-	Use:   "batch [<root>] <path=target>...",
+	Use:   "batch <root> <path=target>...",
 	Short: "Batch update multiple arcs",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if batchBucketID != "" {
-			return cobra.MinimumNArgs(1)(cmd, args)
-		}
-		return cobra.MinimumNArgs(2)(cmd, args)
-	},
-	RunE: runBatchUpdate,
+	Args:  cobra.MinimumNArgs(2),
+	RunE:  runBatchUpdate,
 }
 
 func runBatchUpdate(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	updates, err := parseUpdatePairs(args, batchBucketID == "")
+	updates, err := parseUpdatePairs(args, true)
 	if err != nil {
 		return err
-	}
-
-	if batchBucketID != "" {
-		result, err := client.BatchUpdateBucket(cmd.Context(), batchBucketID, updates)
-		if err != nil {
-			return daemonCommandError(err)
-		}
-		fmt.Printf("old_root: %s\n", result.OldRoot)
-		fmt.Printf("new_root: %s\n", result.NewRoot)
-		fmt.Fprintf(os.Stderr, "updated %d arc(s)\n", len(result.PerArc))
-		return nil
 	}
 
 	root := args[0]
@@ -135,16 +79,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	arcs, err := parseCreatePairs(args)
 	if err != nil {
 		return err
-	}
-
-	if createBucketID != "" {
-		resp, err := client.CreateBucketStructure(cmd.Context(), createBucketID, arcs)
-		if err != nil {
-			return daemonCommandError(err)
-		}
-		fmt.Println(resp.Root)
-		fmt.Fprintf(os.Stderr, "structure created with %d arc(s)\n", len(arcs))
-		return nil
 	}
 
 	resp, err := client.CreateRootStructure(cmd.Context(), arcs)

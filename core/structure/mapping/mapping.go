@@ -36,11 +36,11 @@ type Binding struct {
 // Semantics defines the public keyed-map semantics.
 type Semantics interface {
 	// Commit commits the supplied map view and returns a structure root.
-	Commit(ctx context.Context, bucketID string, view View) (cid.Cid, error)
+	Commit(ctx context.Context, namespace string, view View) (cid.Cid, error)
 
 	// Prove proves the existing binding for key under root.
 	// It returns an error if key is absent from the committed runtime state.
-	Prove(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path) (Binding, structure.Proof, error)
+	Prove(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (Binding, structure.Proof, error)
 
 	// Verify verifies the proof for a keyed binding under root.
 	Verify(root cid.Cid, key arcset.Path, expected Binding, proof structure.Proof) (bool, error)
@@ -48,5 +48,5 @@ type Semantics interface {
 	// Update applies insert, replace, or delete semantics over the committed
 	// runtime state. oldValue=cid.Undef means insert; newValue=cid.Undef means
 	// delete.
-	Update(ctx context.Context, bucketID string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
+	Update(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
 }
