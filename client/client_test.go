@@ -96,6 +96,21 @@ func TestClientProofListReads(t *testing.T) {
 		_ = node.Close()
 	})
 
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+	targetData := []byte("client-prooflist-target")
+	targetCID, err := mockCAS.Put(context.Background(), targetData)
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+	payloadData := []byte("client-prooflist-payload")
+	payloadCID, err := mockCAS.Put(context.Background(), payloadData)
+	if err != nil {
+		t.Fatalf("put payload: %v", err)
+	}
+
 	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
@@ -103,8 +118,8 @@ func TestClientProofListReads(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	target := fakeCIDString("client-prooflist-target")
-	payload := fakeCIDString("client-prooflist-payload")
+	target := targetCID.String()
+	payload := payloadCID.String()
 	createResp, err := client.CreateRootStructure(ctx, map[string]string{
 		"@payload": payload,
 		"name":     target,
@@ -124,7 +139,12 @@ func TestClientProofListReads(t *testing.T) {
 		t.Fatal("expected non-empty root prooflist")
 	}
 
-	rootPayload := fakeCIDString("client-root-prooflist-payload")
+	rootPayloadData := []byte("client-root-prooflist-payload")
+	rootPayloadCID, err := mockCAS.Put(context.Background(), rootPayloadData)
+	if err != nil {
+		t.Fatalf("put root payload: %v", err)
+	}
+	rootPayload := rootPayloadCID.String()
 	rootCreateResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
 		"@payload": rootPayload,
 	}))
@@ -171,9 +191,9 @@ func TestClientMetricsSnapshotAndReset(t *testing.T) {
 		seen <- r.Method + " " + r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/metrics":
+		case r.Method == http.MethodGet && r.URL.Path == "/metrics":
 			_ = json.NewEncoder(w).Encode(&snapshotResp)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/metrics:reset":
+		case r.Method == http.MethodPost && r.URL.Path == "/metrics:reset":
 			_ = json.NewEncoder(w).Encode(&resetResp)
 		default:
 			http.NotFound(w, r)
@@ -181,13 +201,13 @@ func TestClientMetricsSnapshotAndReset(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	client := NewWithBaseURL(ts.URL + "/api/v1")
+	client := NewWithBaseURL(ts.URL  )
 	snapshot, err := client.MetricsSnapshot(context.Background())
 	if err != nil {
 		t.Fatalf("MetricsSnapshot: %v", err)
 	}
-	if got := <-seen; got != "GET /api/v1/metrics" {
-		t.Fatalf("MetricsSnapshot request = %q, want GET /api/v1/metrics", got)
+	if got := <-seen; got != "GET /metrics" {
+		t.Fatalf("MetricsSnapshot request = %q, want GET /metrics", got)
 	}
 	if snapshot.Snapshot.CAS.GetCount != 7 || snapshot.Snapshot.ArcTable.SnapshotCount != 2 || snapshot.Snapshot.Proof.ProofListCount != 3 {
 		t.Fatalf("decoded metrics snapshot = %+v", snapshot.Snapshot)
@@ -197,8 +217,8 @@ func TestClientMetricsSnapshotAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResetMetrics: %v", err)
 	}
-	if got := <-seen; got != "POST /api/v1/metrics:reset" {
-		t.Fatalf("ResetMetrics request = %q, want POST /api/v1/metrics:reset", got)
+	if got := <-seen; got != "POST /metrics:reset" {
+		t.Fatalf("ResetMetrics request = %q, want POST /metrics:reset", got)
 	}
 	if reset.Snapshot != (metrics.Snapshot{}) {
 		t.Fatalf("decoded reset snapshot = %+v, want zero counters", reset.Snapshot)

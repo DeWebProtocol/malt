@@ -146,5 +146,5 @@ func newEvalReadTestConfig(t *testing.T) (string, string) {
 	if _, err := os.Stat(cfgPath); err != nil {
 		t.Fatalf("stat test config: %v", err)
 	}
-	return ts.URL + "/api/v1", cfgPath
+	return ts.URL, cfgPath
 }

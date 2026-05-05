@@ -306,7 +306,7 @@ func newTestDaemonWithCAS(t *testing.T) (string, *casmock.CAS) {
 
 	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
 	t.Cleanup(ts.Close)
-	return ts.URL + "/api/v1", mockCAS
+	return ts.URL, mockCAS
 }
 
 func newTestReadbenchArcs(ctx context.Context, t *testing.T, mockCAS *casmock.CAS) map[string]string {

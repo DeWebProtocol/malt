@@ -47,62 +47,7 @@ func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.MetricsResponse{Snapshot: s.node.MetricsSnapshot()})
 }
 
-func (s *Server) handleResolveRead(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
-		return
-	}
-	s.resolveAndWrite(w, r.Context(), g, root, r.PathValue("path"))
-}
-
-func (s *Server) handleProofRead(w http.ResponseWriter, r *http.Request) {
-	s.handleResolveRead(w, r)
-}
-
-func (s *Server) handleProofListRead(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
-		return
-	}
-	s.proofListAndWrite(w, r.Context(), g, root, r.PathValue("path"))
-}
-
-func (s *Server) handleStatRead(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
-		return
-	}
-	stat, err := s.pathStat(r.Context(), g, root, r.PathValue("path"))
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, stat)
-}
-
-func (s *Server) handleContentRead(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	g, err := s.getOrCreateGraph(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -114,6 +59,19 @@ func (s *Server) handleContentRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.PathValue("path")
+
+	// Format negotiation
+	if r.URL.Query().Get("format") == "proof" {
+		// Empty path means root-level proof — resolve @payload instead
+		queryPath := path
+		if queryPath == "" {
+			queryPath = "@payload"
+		}
+		s.serveContentProof(w, r, g, root, queryPath)
+		return
+	}
+
+	// Stat to determine file vs directory
 	stat, err := s.pathStat(r.Context(), g, root, path)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -123,10 +81,29 @@ func (s *Server) handleContentRead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	if stat.Kind != "file" {
-		writeError(w, httpapi.StatusContentIsDirectory, "content is only valid for file targets")
+
+	// HEAD request — return stat headers without body
+	if r.Method == http.MethodHead {
+		w.Header().Set("X-Malt-Kind", stat.Kind)
+		w.Header().Set("X-Malt-Storage-Kind", stat.StorageKind)
+		w.Header().Set("X-Malt-Key", stat.Key)
+		if stat.Payload != "" {
+			w.Header().Set("X-Malt-Payload", stat.Payload)
+		}
+		if stat.Size != nil {
+			w.Header().Set("Content-Length", strconv.FormatInt(*stat.Size, 10))
+		}
+		w.WriteHeader(http.StatusOK)
 		return
 	}
+
+	if stat.Kind == "dir" {
+		// Return JSON directory listing
+		writeJSON(w, http.StatusOK, stat)
+		return
+	}
+
+	// Serve file content
 	key, err := decodeCID(stat.Key)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -156,20 +133,8 @@ func (s *Server) handleContentRead(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, bytes.NewReader(payload))
 }
 
-func (s *Server) handleContentProofRead(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
-		return
-	}
-
-	path := r.PathValue("path")
-	stat, err := s.pathStat(r.Context(), g, root, path)
+func (s *Server) serveContentProof(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {
+	stat, err := s.pathStat(r.Context(), g, root, queryPath)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
@@ -202,7 +167,7 @@ func (s *Server) handleContentProofRead(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	pl, err := s.contentProofList(r.Context(), g, root, path, stat, start, endExclusive)
+	pl, err := s.contentProofList(r.Context(), g, root, queryPath, stat, start, endExclusive)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) || errors.Is(err, unixfs.ErrNotFound) {
@@ -215,13 +180,43 @@ func (s *Server) handleContentProofRead(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Accept-Ranges", "bytes")
 	s.node.RecordProofList(*pl)
 	writeJSON(w, http.StatusOK, &httpapi.ContentProofResponse{
-		Path:        path,
+		Path:        queryPath,
 		StorageKind: stat.StorageKind,
 		Key:         stat.Key,
 		Content:     payload,
 		Range:       contentRangeMetadata(start, endExclusive, totalSize, partial),
 		ProofList:   *pl,
 	})
+}
+
+func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
+	g, err := s.getOrCreateGraph(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	root, err := decodeCID(r.PathValue("root"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
+		return
+	}
+	path := r.PathValue("path")
+	stat, err := s.pathStat(r.Context(), g, root, path)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	w.Header().Set("X-Malt-Kind", stat.Kind)
+	w.Header().Set("X-Malt-Storage-Kind", stat.StorageKind)
+	w.Header().Set("X-Malt-Key", stat.Key)
+	if stat.Size != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(*stat.Size, 10))
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +266,7 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (s *Server) handleUnixFSFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	g, err := s.getOrCreateGraph(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -290,12 +285,6 @@ func (s *Server) handleUnixFSFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
-		return
-	}
-
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -305,6 +294,32 @@ func (s *Server) handleUnixFSFile(w http.ResponseWriter, r *http.Request) {
 	baseRoot, err := s.prepareUnixFSRoot(r.Context(), g, layout, root)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	if r.URL.Query().Get("type") == "dir" {
+		newRoot, err := layout.AddDirectory(r.Context(), baseRoot, p)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		receipt, err := s.applyUnixFSGatewayMutation(r.Context(), g, layout, root, newRoot)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, &httpapi.UnixFSWriteResponse{
+			Path:     p,
+			Kind:     "dir",
+			NewRoot:  receipt.NewRoot.String(),
+			ArcCount: receipt.ArcCount,
+		})
+		return
+	}
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
 		return
 	}
 	newRoot, err := layout.AddFile(r.Context(), baseRoot, p, data)
@@ -317,63 +332,9 @@ func (s *Server) handleUnixFSFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
 	resp := &httpapi.UnixFSWriteResponse{
 		Path:     p,
 		Kind:     "file",
-		NewRoot:  receipt.NewRoot.String(),
-		ArcCount: receipt.ArcCount,
-	}
-	if root.Defined() {
-		resp.OldRoot = root.String()
-	}
-	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (s *Server) handleUnixFSDirectory(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
-		return
-	}
-
-	p := r.PathValue("path")
-	if p == "" {
-		writeError(w, http.StatusBadRequest, "path is required")
-		return
-	}
-
-	layout, err := s.unixFSLayout(g)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	baseRoot, err := s.prepareUnixFSRoot(r.Context(), g, layout, root)
-	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	newRoot, err := layout.AddDirectory(r.Context(), baseRoot, p)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), g, layout, root, newRoot)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	resp := &httpapi.UnixFSWriteResponse{
-		Path:     p,
-		Kind:     "dir",
 		NewRoot:  receipt.NewRoot.String(),
 		ArcCount: receipt.ArcCount,
 	}
@@ -430,15 +391,15 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	path := r.PathValue("path")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
 
 	var req httpapi.UpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-	req.Path = nonEmpty(req.Path, r.URL.Query().Get("path"))
-	if req.Path == "" {
-		writeError(w, http.StatusBadRequest, "path is required")
 		return
 	}
 
@@ -447,11 +408,11 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validatePayloadUpdate(req.Path, target); err != nil {
+	if err := validatePayloadUpdate(path, target); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := g.Writer().UpdateArc(r.Context(), g.Namespace(), root, req.Path, target)
+	result, err := g.Writer().UpdateArc(r.Context(), g.Namespace(), root, path, target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -604,42 +565,6 @@ func (s *Server) handleLineageCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.CountResponse{Count: s.node.LineageManager().Count(r.Context())})
 }
 
-func (s *Server) resolveAndWrite(w http.ResponseWriter, ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string) {
-	if resp, err := s.unixFSResolve(ctx, g, root, rawPath); err == nil {
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-
-	result, err := g.Resolver().Resolve(root, rawPath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, &httpapi.ResolveResponse{
-		Target:     result.Target.String(),
-		Transcript: encodeTranscript(result.Transcript),
-	})
-}
-
-func (s *Server) proofListAndWrite(w http.ResponseWriter, ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string) {
-	result, err := g.Resolver().Resolve(root, rawPath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	pl, err := resolver.ProofListFromTranscript(root, result.Transcript)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	pl.Query = querypath.CanonicalizeQueryPath(rawPath)
-	s.node.RecordProofList(*pl)
-	writeJSON(w, http.StatusOK, &httpapi.ProofListResponse{
-		Target:    result.Target.String(),
-		ProofList: *pl,
-	})
-}
-
 var (
 	errPathNotFound  = errors.New("path not found")
 	errNotFlatUnixFS = errors.New("not a flat unixfs root")
@@ -789,18 +714,18 @@ func (s *Server) legacyPathStat(ctx context.Context, g *graph.Graph, root cid.Ci
 			Size:        &size,
 		}, nil
 	default:
-		// Non-MALT key is treated as raw file content.
-		data, err := s.node.CAS().Get(ctx, key)
-		if err != nil {
-			return nil, errPathNotFound
-		}
-		size := int64(len(data))
-		return &httpapi.PathStatResponse{
+		// Non-MALT key is treated as a raw file. If the content is available in
+		// CAS we include the size; otherwise we still return the resolved key.
+		resp := &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: "raw",
 			Key:         key.String(),
-			Size:        &size,
-		}, nil
+		}
+		if data, err := s.node.CAS().Get(ctx, key); err == nil {
+			s := int64(len(data))
+			resp.Size = &s
+		}
+		return resp, nil
 	}
 }
 

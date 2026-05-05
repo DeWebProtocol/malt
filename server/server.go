@@ -62,35 +62,30 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
-	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
-	mux.HandleFunc("POST /api/v1/metrics:reset", s.handleMetricsReset)
+	// Admin (specific routes, matched first by Go ServeMux)
+	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
+	mux.HandleFunc("POST /metrics:reset", s.handleMetricsReset)
+	mux.HandleFunc("POST /verify", s.handleVerify)
 
-	// Read (Kubo-style: /{verb}/{root}/{path...})
-	mux.HandleFunc("GET /api/v1/resolve/{root}/{path...}", s.handleResolveRead)
-	mux.HandleFunc("GET /api/v1/proof/{root}/{path...}", s.handleProofRead)
-	mux.HandleFunc("GET /api/v1/prooflist/{root}/{path...}", s.handleProofListRead)
-	mux.HandleFunc("GET /api/v1/stat/{root}/{path...}", s.handleStatRead)
-	mux.HandleFunc("GET /api/v1/content/{root}/{path...}", s.handleContentRead)
-	mux.HandleFunc("GET /api/v1/content-proof/{root}/{path...}", s.handleContentProofRead)
+	// Lineage (prefixed to avoid CID conflict)
+	mux.HandleFunc("GET /lineage", s.handleLineageList)
+	mux.HandleFunc("GET /lineage/count", s.handleLineageCount)
+	mux.HandleFunc("GET /lineage/{root}", s.handleLineageGet)
+	mux.HandleFunc("GET /lineage/{root}/ancestors", s.handleLineageAncestors)
+	mux.HandleFunc("GET /lineage/{root}/descendants", s.handleLineageDescendants)
 
-	// Write (stateless materialization)
-	mux.HandleFunc("POST /api/v1/roots", s.handleCreateStructure)
-	mux.HandleFunc("POST /api/v1/roots/{root}/semantic-mutations", s.handleSemanticMutation)
-	mux.HandleFunc("POST /api/v1/roots/{root}/update", s.handleUpdate)
-	mux.HandleFunc("POST /api/v1/roots/{root}/updates:batch", s.handleBatchUpdate)
-	mux.HandleFunc("POST /api/v1/roots/{root}/unixfs/file/{path...}", s.handleUnixFSFile)
-	mux.HandleFunc("POST /api/v1/roots/{root}/unixfs/directory/{path...}", s.handleUnixFSDirectory)
+	// Write - specific pattern first
+	mux.HandleFunc("POST /{root}/_mutate", s.handleSemanticMutation)
+	mux.HandleFunc("POST /{root}/_batch-update", s.handleBatchUpdate)
 
-	// Verify
-	mux.HandleFunc("POST /api/v1/verify", s.handleVerify)
+	// Core read/write (/{root}/{path...} format)
+	mux.HandleFunc("GET /{root}/{path...}", s.handleContent)
+	mux.HandleFunc("POST /{root}/{path...}", s.handleWrite)
+	mux.HandleFunc("PUT /{root}/{path...}", s.handleUpdate)
 
-	// Lineage
-	mux.HandleFunc("GET /api/v1/lineage", s.handleLineageList)
-	mux.HandleFunc("GET /api/v1/lineage/count", s.handleLineageCount)
-	mux.HandleFunc("GET /api/v1/lineage/{root}", s.handleLineageGet)
-	mux.HandleFunc("GET /api/v1/lineage/{root}/ancestors", s.handleLineageAncestors)
-	mux.HandleFunc("GET /api/v1/lineage/{root}/descendants", s.handleLineageDescendants)
+	// Root creation
+	mux.HandleFunc("POST /{root}", s.handleCreateStructure)
 }
 
 func (s *Server) getOrCreateGraph(ctx context.Context) (*graph.Graph, error) {

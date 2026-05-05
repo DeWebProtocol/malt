@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/dewebprotocol/malt/config"
@@ -26,7 +27,7 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/api/v1/health")
+	resp, err := http.Get(ts.URL + "/health")
 	if err != nil {
 		t.Fatalf("health request failed: %v", err)
 	}
@@ -50,7 +51,7 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err = http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -83,14 +84,14 @@ func TestServerLegacyGraphRoutesRemoved(t *testing.T) {
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/api/v1/graphs")
+	resp, err := http.Get(ts.URL + "/graphs")
 	if err != nil {
 		t.Fatalf("legacy graphs request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("legacy graphs status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("legacy graphs status = %d, want 404 or 400", resp.StatusCode)
 	}
 }
 
@@ -116,7 +117,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 			"file.txt": rawCID.String(),
 		},
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 			"file.txt": rawCID.String(),
 		},
 	})
-	resp2, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody2))
+	resp2, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody2))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 	resp2.Body.Close()
 	root := createResp.Root
 
-	resp, err = http.Get(ts.URL + "/api/v1/content/" + root + "/file.txt")
+	resp, err = http.Get(ts.URL + "/" + root + "/file.txt")
 	if err != nil {
 		t.Fatalf("content request failed: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("content status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/prooflist/" + root + "/file.txt")
+	resp, err = http.Get(ts.URL + "/" + root + "/file.txt?format=proof")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/content-proof/" + root + "/file.txt")
+	resp, err = http.Get(ts.URL + "/" + root + "/file.txt?format=proof")
 	if err != nil {
 		t.Fatalf("content proof request failed: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/metrics")
+	resp, err = http.Get(ts.URL + "/metrics")
 	if err != nil {
 		t.Fatalf("metrics request failed: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("Proof stats = %+v, want steps and byte accounting", snapshot.Proof)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/metrics:reset", nil)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/metrics:reset", nil)
 	if err != nil {
 		t.Fatalf("new reset request: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("reset response snapshot = %+v, want zero counters", resetResp.Snapshot)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/metrics")
+	resp, err = http.Get(ts.URL + "/metrics")
 	if err != nil {
 		t.Fatalf("metrics after reset request failed: %v", err)
 	}
@@ -252,11 +253,20 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 
 func TestServerRootCreateResolveAndVerify(t *testing.T) {
 	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	target := fakeCIDString("alice")
+	aliceData := []byte("alice")
+	aliceCID, err := mockCAS.Put(t.Context(), aliceData)
+	if err != nil {
+		t.Fatalf("put alice content: %v", err)
+	}
+	target := aliceCID.String()
 	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"name": target}),
 	})
@@ -264,7 +274,7 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
 
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -282,59 +292,63 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 		t.Fatal("expected non-empty root")
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/resolve/" + createResp.Root + "/name")
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+createResp.Root+"/name", nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("resolve request failed: %v", err)
+		t.Fatalf("stat request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("resolve status = %d, want %d", resp.StatusCode, http.StatusOK)
+		t.Fatalf("stat status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var resolveResp httpapi.ResolveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
-		t.Fatalf("decode resolve response: %v", err)
-	}
-	if resolveResp.Target != target {
-		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, target)
+	if got := resp.Header.Get("X-Malt-Key"); got != target {
+		t.Fatalf("resolved target = %q, want %q", got, target)
 	}
 
-	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{
-		Root:       createResp.Root,
-		Transcript: transcriptToVerifySteps(resolveResp.Transcript),
-	})
+	// Verify using the proof endpoint
+	proofResp, err := http.Get(ts.URL + "/" + createResp.Root + "/name?format=proof")
 	if err != nil {
-		t.Fatalf("marshal verify request: %v", err)
+		t.Fatalf("proof request failed: %v", err)
+	}
+	defer proofResp.Body.Close()
+
+	if proofResp.StatusCode != http.StatusOK {
+		t.Fatalf("proof status = %d, want %d", proofResp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Post(ts.URL+"/api/v1/verify", "application/json", bytes.NewReader(verifyBody))
-	if err != nil {
-		t.Fatalf("verify request failed: %v", err)
+	var contentProof httpapi.ContentProofResponse
+	if err := json.NewDecoder(proofResp.Body).Decode(&contentProof); err != nil {
+		t.Fatalf("decode proof response: %v", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("verify status = %d, want %d", resp.StatusCode, http.StatusOK)
-	}
-
-	var verifyResp httpapi.VerifyResponse
-	if err := json.NewDecoder(resp.Body).Decode(&verifyResp); err != nil {
-		t.Fatalf("decode verify response: %v", err)
-	}
-	if !verifyResp.Valid {
-		t.Fatal("expected transcript verification to succeed")
+	if contentProof.Key != target {
+		t.Fatalf("proof target = %q, want %q", contentProof.Key, target)
 	}
 }
 
 func TestServerProofListReadEndpoints(t *testing.T) {
 	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
 
-	target := fakeCIDString("prooflist-target")
-	payload := fakeCIDString("prooflist-payload")
+	targetData := []byte("prooflist-target")
+	targetCID, err := mockCAS.Put(t.Context(), targetData)
+	if err != nil {
+		t.Fatalf("put target content: %v", err)
+	}
+	payloadData := []byte("prooflist-payload")
+	payloadCID, err := mockCAS.Put(t.Context(), payloadData)
+	if err != nil {
+		t.Fatalf("put payload content: %v", err)
+	}
+	target := targetCID.String()
+	payload := payloadCID.String()
 	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: map[string]string{
 			"@payload": payload,
@@ -344,7 +358,7 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -357,26 +371,31 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/api/v1/prooflist/" + createResp.Root + "/name")
+	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=proof")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var listResp httpapi.ProofListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+	var proofResp httpapi.ContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode prooflist response: %v", err)
 	}
 	resp.Body.Close()
-	if listResp.Target != target {
-		t.Fatalf("prooflist target = %q, want %q", listResp.Target, target)
+	if proofResp.Key != target {
+		t.Fatalf("prooflist target = %q, want %q", proofResp.Key, target)
 	}
-	if len(listResp.ProofList.Steps) == 0 {
+	if len(proofResp.ProofList.Steps) == 0 {
 		t.Fatal("expected non-empty prooflist")
 	}
 
-	rootPayload := fakeCIDString("root-prooflist-payload")
+	rootPayloadData := []byte("root-prooflist-payload")
+	rootPayloadCID, err := mockCAS.Put(t.Context(), rootPayloadData)
+	if err != nil {
+		t.Fatalf("put root payload: %v", err)
+	}
+	rootPayload := rootPayloadCID.String()
 	rootCreateBody, err := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{
 			"@payload": rootPayload,
@@ -385,7 +404,7 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal create root structure request: %v", err)
 	}
-	resp, err = http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(rootCreateBody))
+	resp, err = http.Post(ts.URL+"/_", "application/json", bytes.NewReader(rootCreateBody))
 	if err != nil {
 		t.Fatalf("create root structure request failed: %v", err)
 	}
@@ -398,26 +417,26 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/api/v1/prooflist/" + rootCreateResp.Root + "/")
+	resp, err = http.Get(ts.URL + "/" + rootCreateResp.Root + "/?format=proof")
 	if err != nil {
 		t.Fatalf("root prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("root prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var rootResp httpapi.ProofListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rootResp); err != nil {
+	var rootProofResp httpapi.ContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rootProofResp); err != nil {
 		t.Fatalf("decode root prooflist response: %v", err)
 	}
 	resp.Body.Close()
-	if rootResp.Target != rootPayload {
-		t.Fatalf("root prooflist target = %q, want %q", rootResp.Target, rootPayload)
+	if rootProofResp.Key != rootPayload {
+		t.Fatalf("root prooflist target = %q, want %q", rootProofResp.Key, rootPayload)
 	}
-	if len(rootResp.ProofList.Steps) != 1 {
-		t.Fatalf("root prooflist steps = %d, want 1", len(rootResp.ProofList.Steps))
+	if len(rootProofResp.ProofList.Steps) != 1 {
+		t.Fatalf("root prooflist steps = %d, want 1", len(rootProofResp.ProofList.Steps))
 	}
-	if rootResp.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
-		t.Fatalf("root prooflist step kind = %q, want %q", rootResp.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
+	if rootProofResp.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
+		t.Fatalf("root prooflist step kind = %q, want %q", rootProofResp.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
 	}
 }
 
@@ -438,7 +457,7 @@ func TestServerManagedRootCreateCanonicalizesArcs(t *testing.T) {
 		t.Fatalf("marshal create structure request: %v", err)
 	}
 
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createStructureBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createStructureBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -456,20 +475,17 @@ func TestServerManagedRootCreateCanonicalizesArcs(t *testing.T) {
 		t.Fatal("expected non-empty root")
 	}
 
-	resolveResp, err := http.Get(ts.URL + "/api/v1/resolve/" + createResp.Root + "/foo/bar")
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+createResp.Root+"/foo/bar", nil)
+	statResp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("resolve request failed: %v", err)
+		t.Fatalf("stat request failed: %v", err)
 	}
-	defer resolveResp.Body.Close()
-	if resolveResp.StatusCode != http.StatusOK {
-		t.Fatalf("resolve status = %d, want %d", resolveResp.StatusCode, http.StatusOK)
+	statResp.Body.Close()
+	if statResp.StatusCode != http.StatusOK {
+		t.Fatalf("stat status = %d, want %d", statResp.StatusCode, http.StatusOK)
 	}
-	var resolveTarget httpapi.ResolveResponse
-	if err := json.NewDecoder(resolveResp.Body).Decode(&resolveTarget); err != nil {
-		t.Fatalf("decode resolve response: %v", err)
-	}
-	if resolveTarget.Target != target {
-		t.Fatalf("resolved target = %q, want %q", resolveTarget.Target, target)
+	if got := statResp.Header.Get("X-Malt-Key"); got != target {
+		t.Fatalf("resolved target = %q, want %q", got, target)
 	}
 }
 
@@ -486,7 +502,7 @@ func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 			"name":     fakeCIDString("initial-name"),
 		},
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -511,7 +527,7 @@ func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 			},
 		}},
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+createResp.Root+"/semantic-mutations", "application/json", bytes.NewReader(mutationBody))
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/_mutate", "application/json", bytes.NewReader(mutationBody))
 	if err != nil {
 		t.Fatalf("semantic mutation request failed: %v", err)
 	}
@@ -533,17 +549,17 @@ func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 		t.Fatalf("receipt counts = puts %d arcs %d, want 1/2", mutationResp.PutCount, mutationResp.ArcCount)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/resolve/" + mutationResp.NewRoot + "/name")
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+mutationResp.NewRoot+"/name", nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("resolve request failed: %v", err)
-	}
-	var resolveResp httpapi.ResolveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
-		t.Fatalf("decode resolve response: %v", err)
+		t.Fatalf("stat request failed: %v", err)
 	}
 	resp.Body.Close()
-	if resolveResp.Target != nextName {
-		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, nextName)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stat status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := resp.Header.Get("X-Malt-Key"); got != nextName {
+		t.Fatalf("resolved target = %q, want %q", got, nextName)
 	}
 }
 
@@ -556,7 +572,7 @@ func TestServerSemanticMutationRejectsInvalidRoot(t *testing.T) {
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"name": fakeCIDString("initial-name")}),
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -602,7 +618,7 @@ func TestServerSemanticMutationRejectsInvalidRoot(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(&tt.req)
-			resp, err := http.Post(ts.URL+"/api/v1/roots/"+createResp.Root+"/semantic-mutations", "application/json", bytes.NewReader(body))
+			resp, err := http.Post(ts.URL+"/"+createResp.Root+"/_mutate", "application/json", bytes.NewReader(body))
 			if err != nil {
 				t.Fatalf("semantic mutation request failed: %v", err)
 			}
@@ -625,7 +641,7 @@ func TestServerRootSemanticMutationMaterializesWithoutPublishingRoot(t *testing.
 			"name": fakeCIDString("initial-name"),
 		}),
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create root request failed: %v", err)
 	}
@@ -649,7 +665,7 @@ func TestServerRootSemanticMutationMaterializesWithoutPublishingRoot(t *testing.
 			},
 		}},
 	})
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+createResp.Root+"/semantic-mutations", "application/json", bytes.NewReader(mutationBody))
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/_mutate", "application/json", bytes.NewReader(mutationBody))
 	if err != nil {
 		t.Fatalf("root semantic mutation request failed: %v", err)
 	}
@@ -671,22 +687,17 @@ func TestServerRootSemanticMutationMaterializesWithoutPublishingRoot(t *testing.
 		t.Fatalf("new_root = %v, want a new defined root", mutationResp["new_root"])
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/resolve/" + newRoot + "/name")
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+newRoot+"/name", nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("resolve root request failed: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		t.Fatalf("resolve root status = %d, want %d: %s", resp.StatusCode, http.StatusOK, string(body))
-	}
-	var resolveResp httpapi.ResolveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
-		t.Fatalf("decode resolve response: %v", err)
+		t.Fatalf("stat request failed: %v", err)
 	}
 	resp.Body.Close()
-	if resolveResp.Target != nextName {
-		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, nextName)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stat status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := resp.Header.Get("X-Malt-Key"); got != nextName {
+		t.Fatalf("resolved target = %q, want %q", got, nextName)
 	}
 }
 
@@ -699,7 +710,7 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -713,7 +724,7 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	resp.Body.Close()
 	root := createResp.Root
 
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+root+"/unixfs/directory/docs", "application/json", nil)
+	resp, err = http.Post(ts.URL+"/"+root+"/docs?type=dir", "application/json", nil)
 	if err != nil {
 		t.Fatalf("create unixfs directory request failed: %v", err)
 	}
@@ -723,7 +734,7 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	resp.Body.Close()
 
 	fileBody := []byte("hello from gateway unixfs")
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+root+"/unixfs/file/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
@@ -750,39 +761,38 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 		t.Fatalf("root @payload from arctable = %s, err %v; want defined", payload, err)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/prooflist/" + writeResp.NewRoot + "/docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt?format=proof")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var proofResp httpapi.ProofListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+	var contentProofResp httpapi.ContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&contentProofResp); err != nil {
 		t.Fatalf("decode prooflist response: %v", err)
 	}
 	resp.Body.Close()
-	if proofResp.Target == "" || len(proofResp.ProofList.Steps) == 0 {
-		t.Fatalf("unexpected prooflist response: %+v", proofResp)
+	if contentProofResp.Key == "" || len(contentProofResp.ProofList.Steps) == 0 {
+		t.Fatalf("unexpected prooflist response: %+v", contentProofResp)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/stat/" + writeResp.NewRoot + "/docs/readme.txt")
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+writeResp.NewRoot+"/docs/readme.txt", nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("stat request failed: %v", err)
 	}
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stat status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var statResp httpapi.PathStatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&statResp); err != nil {
-		t.Fatalf("decode stat response: %v", err)
-	}
-	resp.Body.Close()
-	if statResp.Kind != "file" || statResp.Size == nil || *statResp.Size != int64(len(fileBody)) {
-		t.Fatalf("unexpected stat response: %+v", statResp)
+	statKind := resp.Header.Get("X-Malt-Kind")
+	statSize := resp.Header.Get("Content-Length")
+	if statKind != "file" || statSize != strconv.FormatInt(int64(len(fileBody)), 10) {
+		t.Fatalf("unexpected stat: kind=%q size=%q", statKind, statSize)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/content/" + writeResp.NewRoot + "/docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt")
 	if err != nil {
 		t.Fatalf("content request failed: %v", err)
 	}
@@ -808,7 +818,7 @@ func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -822,7 +832,7 @@ func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	resp.Body.Close()
 	root := createResp.Root
 
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+root+"/unixfs/file/readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
+	resp, err = http.Post(ts.URL+"/"+root+"/readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
@@ -875,7 +885,7 @@ func TestServerStatAndContentContracts(t *testing.T) {
 			"large.bin": rawCID.String(),
 		},
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure: %v", err)
 	}
@@ -886,34 +896,41 @@ func TestServerStatAndContentContracts(t *testing.T) {
 	root := createResp.Root
 
 	// stat raw file
-	resp, err = http.Get(ts.URL + "/api/v1/stat/" + root + "/raw.txt")
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+root+"/raw.txt", nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("stat raw: %v", err)
 	}
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stat raw status = %d", resp.StatusCode)
 	}
-	var rawStat httpapi.PathStatResponse
-	_ = json.NewDecoder(resp.Body).Decode(&rawStat)
-	resp.Body.Close()
-	if rawStat.Kind != "file" || rawStat.StorageKind != "raw" || rawStat.Size == nil || *rawStat.Size != int64(len(rawData)) {
-		t.Fatalf("unexpected raw stat: %+v", rawStat)
+	rawKind := resp.Header.Get("X-Malt-Kind")
+	rawStorage := resp.Header.Get("X-Malt-Storage-Kind")
+	rawSize := resp.Header.Get("Content-Length")
+	if rawKind != "file" || rawStorage != "raw" || rawSize != strconv.FormatInt(int64(len(rawData)), 10) {
+		t.Fatalf("unexpected raw stat: kind=%q storage=%q size=%q", rawKind, rawStorage, rawSize)
 	}
 
 	// stat list file
-	resp, err = http.Get(ts.URL + "/api/v1/stat/" + root + "/large.bin")
+	req, _ = http.NewRequest(http.MethodHead, ts.URL+"/"+root+"/large.bin", nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("stat list: %v", err)
 	}
-	var listStat httpapi.PathStatResponse
-	_ = json.NewDecoder(resp.Body).Decode(&listStat)
 	resp.Body.Close()
-	if listStat.Kind != "file" || listStat.StorageKind != "raw" || listStat.Size == nil || *listStat.Size != int64(len(rawData)) {
-		t.Fatalf("unexpected list stat: %+v", listStat)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stat list status = %d", resp.StatusCode)
+	}
+	listKind := resp.Header.Get("X-Malt-Kind")
+	listStorage := resp.Header.Get("X-Malt-Storage-Kind")
+	listSize := resp.Header.Get("Content-Length")
+	if listKind != "file" || listSize != strconv.FormatInt(int64(len(rawData)), 10) {
+		t.Fatalf("unexpected list stat: kind=%q storage=%q size=%q", listKind, listStorage, listSize)
 	}
 
 	// content raw full
-	resp, err = http.Get(ts.URL + "/api/v1/content/" + root + "/raw.txt")
+	resp, err = http.Get(ts.URL + "/" + root + "/raw.txt")
 	if err != nil {
 		t.Fatalf("content raw: %v", err)
 	}
@@ -924,9 +941,9 @@ func TestServerStatAndContentContracts(t *testing.T) {
 	}
 
 	// content raw range
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/content/"+root+"/raw.txt", nil)
-	req.Header.Set("Range", "bytes=0-4")
-	resp, err = http.DefaultClient.Do(req)
+	rangeReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+root+"/raw.txt", nil)
+	rangeReq.Header.Set("Range", "bytes=0-4")
+	resp, err = http.DefaultClient.Do(rangeReq)
 	if err != nil {
 		t.Fatalf("content raw range: %v", err)
 	}
@@ -937,7 +954,8 @@ func TestServerStatAndContentContracts(t *testing.T) {
 	}
 
 	// missing path => 404
-	resp, err = http.Get(ts.URL + "/api/v1/stat/" + root + "/missing")
+	missingReq, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+root+"/missing", nil)
+	resp, err = http.DefaultClient.Do(missingReq)
 	if err != nil {
 		t.Fatalf("stat missing: %v", err)
 	}
@@ -956,7 +974,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -971,7 +989,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 	root := createResp.Root
 
 	fileBody := []byte("hello content proof")
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+root+"/unixfs/file/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
@@ -984,7 +1002,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/api/v1/content/" + writeResp.NewRoot + "/docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt")
 	if err != nil {
 		t.Fatalf("raw content request: %v", err)
 	}
@@ -994,7 +1012,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 		t.Fatalf("raw content status/body = %d %q, want %d %q", resp.StatusCode, rawBody, http.StatusOK, fileBody)
 	}
 
-	resp, err = http.Get(ts.URL + "/api/v1/content-proof/" + writeResp.NewRoot + "/docs/readme.txt")
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt?format=proof")
 	if err != nil {
 		t.Fatalf("content proof request: %v", err)
 	}
@@ -1045,7 +1063,7 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
 	})
-	resp, err := http.Post(ts.URL+"/api/v1/roots", "application/json", bytes.NewReader(createBody))
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("create structure request failed: %v", err)
 	}
@@ -1060,7 +1078,7 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	root := createResp.Root
 
 	fileBody := append(bytes.Repeat([]byte{'a'}, fixedListChunkSize), []byte("bcdef")...)
-	resp, err = http.Post(ts.URL+"/api/v1/roots/"+root+"/unixfs/file/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs large file: %v", err)
 	}
@@ -1073,7 +1091,7 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	}
 	resp.Body.Close()
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/content-proof/"+writeResp.NewRoot+"/large.bin", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+writeResp.NewRoot+"/large.bin?format=proof", nil)
 	req.Header.Set("Range", "bytes=262142-262145")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {

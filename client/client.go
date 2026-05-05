@@ -79,36 +79,129 @@ func (c *Client) ResetMetrics(ctx context.Context) (*httpapi.MetricsResponse, er
 
 // ResolveRoot resolves a path from an explicit root.
 func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/resolve/"+url.PathEscape(root)+"/"+p, "")
+	return c.Resolve(ctx, root, p)
 }
 
 // ProveRoot returns the transcript for an explicit root path.
 func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/proof/"+url.PathEscape(root)+"/"+p, "")
+	return c.Resolve(ctx, root, p)
 }
 
 // ProofListRoot returns a ProofList read result from an explicit root.
-func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
-	return c.proofList(ctx, "/prooflist/"+url.PathEscape(root)+"/"+p, "")
+func (c *Client) ProofListRoot(ctx context.Context, root string, _ string) (*httpapi.ProofListResponse, error) {
+	return c.ProofList(ctx, root, "")
 }
 
-// Resolve resolves a path relative to a root CID.
+// Resolve resolves a path relative to a root CID. Uses HEAD /{root}/{path}
+// and returns the resolved key via X-Malt-Key response header.
 func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
-	return c.resolve(ctx, "/resolve/"+url.PathEscape(root)+"/"+rawPath, "")
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return nil, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	return &httpapi.ResolveResponse{Target: resp.Header.Get("X-Malt-Key")}, nil
 }
 
 // ProofList resolves a path and returns a verifier-facing ProofList.
 func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.ProofListResponse, error) {
-	return c.proofList(ctx, "/prooflist/"+url.PathEscape(root)+"/"+rawPath, "")
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
+	q := u.Query()
+	q.Set("format", "proof")
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return nil, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	var out httpapi.ContentProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &httpapi.ProofListResponse{Target: out.Key, ProofList: out.ProofList}, nil
 }
 
 // Stat returns the locked stat contract for a path under a root CID.
 func (c *Client) Stat(ctx context.Context, root, rawPath string) (*httpapi.PathStatResponse, error) {
-	var resp httpapi.PathStatResponse
-	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/stat/%s/%s", url.PathEscape(root), rawPath), nil, nil, &resp); err != nil {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var apiErr httpapi.ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
+			return nil, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
+	}
+
+	stat := &httpapi.PathStatResponse{
+		Kind:        resp.Header.Get("X-Malt-Kind"),
+		StorageKind: resp.Header.Get("X-Malt-Storage-Kind"),
+		Key:         resp.Header.Get("X-Malt-Key"),
+		Payload:     resp.Header.Get("X-Malt-Payload"),
+	}
+	if size := resp.Header.Get("Content-Length"); size != "" {
+		if parsed, err := strconv.ParseInt(size, 10, 64); err == nil {
+			stat.Size = &parsed
+		}
+	}
+	return stat, nil
 }
 
 // Content reads raw content bytes for a path under a root CID.
@@ -117,7 +210,7 @@ func (c *Client) Content(ctx context.Context, root, rawPath, rangeHeader string)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	u.Path = path.Join(u.Path, fmt.Sprintf("/content/%s/%s", url.PathEscape(root), rawPath))
+	u.Path = path.Join(u.Path, fmt.Sprintf("/%s/%s", url.PathEscape(root), rawPath))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -165,7 +258,10 @@ func (c *Client) ContentProof(ctx context.Context, root, rawPath, rangeHeader st
 	if err != nil {
 		return nil, err
 	}
-	u.Path = path.Join(u.Path, fmt.Sprintf("/content-proof/%s/%s", url.PathEscape(root), rawPath))
+	u.Path = path.Join(u.Path, fmt.Sprintf("/%s/%s", url.PathEscape(root), rawPath))
+	q := u.Query()
+	q.Set("format", "proof")
+	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -197,10 +293,10 @@ func (c *Client) ContentProof(ctx context.Context, root, rawPath, rangeHeader st
 	return &out, nil
 }
 
-// UpdateRoot updates a single path under an explicit root.
+// UpdateRoot updates a single path under an explicit root (PUT /{root}/{path}).
 func (c *Client) UpdateRoot(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
 	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/update", map[string]string{"path": path}, &httpapi.UpdateRequest{Path: path, Target: target}, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPut, "/"+url.PathEscape(root)+"/"+path, nil, &httpapi.UpdateRequest{Target: target}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -209,7 +305,7 @@ func (c *Client) UpdateRoot(ctx context.Context, root string, path string, targe
 // BatchUpdateRoot performs a batch update under an explicit root.
 func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
 	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/updates:batch", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/_batch-update", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -218,7 +314,7 @@ func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[s
 // ApplyRootSemanticMutation materializes a semantic mutation under an explicit root.
 func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.SemanticMutationRequest) (*httpapi.SemanticMutationResponse, error) {
 	var resp httpapi.SemanticMutationResponse
-	if err := c.do(ctx, http.MethodPost, "/roots/"+url.PathEscape(root)+"/semantic-mutations", nil, req, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/_mutate", nil, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -227,7 +323,7 @@ func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req
 // AddUnixFSFile uploads a file into a root's UnixFS tree.
 func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data []byte) (*httpapi.UnixFSWriteResponse, error) {
 	var resp httpapi.UnixFSWriteResponse
-	if err := c.doRaw(ctx, http.MethodPost, fmt.Sprintf("/roots/%s/unixfs/file/%s", url.PathEscape(root), rawPath), nil, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
+	if err := c.doRaw(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/"+rawPath, nil, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -236,7 +332,7 @@ func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data [
 // AddUnixFSDirectory creates a directory node in a root's UnixFS tree.
 func (c *Client) AddUnixFSDirectory(ctx context.Context, root, rawPath string) (*httpapi.UnixFSWriteResponse, error) {
 	var resp httpapi.UnixFSWriteResponse
-	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/roots/%s/unixfs/directory/%s", url.PathEscape(root), rawPath), nil, nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/"+rawPath, map[string]string{"type": "dir"}, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -245,7 +341,7 @@ func (c *Client) AddUnixFSDirectory(ctx context.Context, root, rawPath string) (
 // CreateRootStructure creates a root-scoped structure.
 func (c *Client) CreateRootStructure(ctx context.Context, arcs map[string]string) (*httpapi.CreateStructureResponse, error) {
 	var resp httpapi.CreateStructureResponse
-	if err := c.do(ctx, http.MethodPost, "/roots", nil, &httpapi.CreateStructureRequest{Arcs: arcs}, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/_", nil, &httpapi.CreateStructureRequest{Arcs: arcs}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -318,30 +414,6 @@ func (c *Client) CountLineage(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return resp.Count, nil
-}
-
-func (c *Client) resolve(ctx context.Context, route string, p string) (*httpapi.ResolveResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.ResolveResponse
-	if err := c.do(ctx, http.MethodGet, route, query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) proofList(ctx context.Context, route string, p string) (*httpapi.ProofListResponse, error) {
-	query := map[string]string{}
-	if p != "" {
-		query["path"] = p
-	}
-	var resp httpapi.ProofListResponse
-	if err := c.do(ctx, http.MethodGet, route, query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
 }
 
 func (c *Client) do(ctx context.Context, method string, route string, query map[string]string, body any, out any) error {

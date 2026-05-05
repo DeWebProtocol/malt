@@ -725,7 +725,7 @@ func newAddTestClients(t *testing.T) (*daemonclient.Client, *ipfs.Client) {
 
 	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
 	t.Cleanup(ts.Close)
-	return daemonclient.NewWithBaseURL(ts.URL + "/api/v1"), ipfs.NewClient(casTS.URL)
+	return daemonclient.NewWithBaseURL(ts.URL), ipfs.NewClient(casTS.URL)
 }
 
 func mustAddNodeAtPath(t *testing.T, root *addNode, p string) *addNode {
