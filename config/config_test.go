@@ -199,7 +199,7 @@ func TestEmbeddedMockLatency(t *testing.T) {
 
 func TestAPIBaseURL(t *testing.T) {
 	cfg := DefaultConfig()
-	if got := cfg.APIBaseURL(); got != "http://127.0.0.1:4317/api/v1" {
+	if got := cfg.APIBaseURL(); got != "http://127.0.0.1:4317" {
 		t.Fatalf("APIBaseURL() = %q", got)
 	}
 }

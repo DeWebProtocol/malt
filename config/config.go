@@ -355,9 +355,9 @@ func (c *Config) RPCBaseURL() string {
 	return listen
 }
 
-// APIBaseURL returns the fixed daemon API v1 base URL.
+// APIBaseURL returns the daemon API base URL.
 func (c *Config) APIBaseURL() string {
-	return strings.TrimRight(c.RPCBaseURL(), "/") + "/api/v1"
+	return strings.TrimRight(c.RPCBaseURL(), "/")
 }
 
 // CASBaseURL returns the active CAS HTTP endpoint.

@@ -24,11 +24,16 @@ func TestProofListArgumentShape(t *testing.T) {
 
 func TestProofListPrintsIndentedJSON(t *testing.T) {
 	ctx := context.Background()
-	daemon, _ := newAddTestClients(t)
+	daemon, casClient := newAddTestClients(t)
 	defaultClient = daemon
 	t.Cleanup(func() { defaultClient = nil })
 
-	target := fakeAddCID("prooflist-target").String()
+	targetData := []byte("prooflist-target")
+	targetCID, err := casClient.Put(ctx, targetData)
+	if err != nil {
+		t.Fatalf("put target content: %v", err)
+	}
+	target := targetCID.String()
 	createResp, err := daemon.CreateRootStructure(ctx, map[string]string{"@payload": target, "name": target})
 	if err != nil {
 		t.Fatalf("create root structure: %v", err)
