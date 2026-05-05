@@ -24,7 +24,7 @@ List and map are semantic abstractions:
   child references
 - map semantic: authenticated keyed/path-like relations among graph nodes
 
-ArcTable is bucket/namespace-scoped arcset persistence/materialization and does
+ArcTable is namespace-scoped arcset persistence/materialization and does
 not provide correctness by itself. Commitment backends are stateless
 vector-commitment primitives used to authenticate semantic-layer
 representations. Layouts translate source-domain data into semantic mutations;
@@ -42,7 +42,7 @@ The target model has four distinct layers:
 | Layer | Responsibility |
 | --- | --- |
 | Semantic layer | Abstract list/map semantics |
-| ArcTable | Bucket/namespace-scoped arcset persistence/materialization |
+| ArcTable | Namespace-scoped arcset persistence/materialization |
 | Commitment backend | Stateless proof and verification over semantic-layer representations |
 | Gateway | Runtime surface accepting semantic mutations and returning ProofLists |
 | Application layout | Product data model built above list/map/CAS blobs |
@@ -60,11 +60,10 @@ Conceptually, gateway reads return `result + ProofList`, where the ProofList is
 the vector-commitment proof chain from root to destination. Root-centric
 gateway materialization accepts semantic mutations that have already been
 produced by a layout and returns an operational receipt without publishing a
-managed bucket head. The
-HTTP gateway may return blob content with ProofList metadata in response
+managed head. The HTTP gateway may return blob content with ProofList metadata in response
 headers, and may return large-file byte ranges with ProofLists covering the
-selected list entries. Bucket routes remain compatibility/product surfaces
-around the same internal materialization namespace.
+selected list entries. File routes are product surfaces around the same
+root-centric materialization namespace.
 
 ### List Semantic
 
@@ -122,7 +121,7 @@ implicitly redirect through `@payload`.
 List/map semantics need materialized arcset state in order to prove and update
 without reconstructing full payload objects.
 
-In the current implementation this role is served by bucket/namespace-scoped
+In the current implementation this role is served by namespace-scoped
 ArcTable:
 
 - point lookup of materialized structure entries
@@ -134,11 +133,10 @@ ArcTable:
 ArcTable is not the trust root. Incorrect materialized state is rejected by
 proof verification or root recomputation.
 
-The bucket identifier is an operational namespace and collection boundary for
-state placement, replication, migration, GC, bloom/index configuration, and
-optional head publication. It is not part of the mathematical list/map
-semantics, and it does not decide which root should become an application's
-current head.
+The namespace identifier is an operational collection boundary for state
+placement, replication, migration, GC, and bloom/index configuration. It is not
+part of the mathematical list/map semantics, and it does not decide which root
+should become an application's current head.
 
 ### Commitment Backend
 
@@ -179,7 +177,7 @@ as follows:
 - `core/structure/list/tree`
   - primary list implementation
 - `core/arctable`
-  - bucket/namespace-scoped arcset persistence/materialization
+  - namespace-scoped arcset persistence/materialization
 - `core/commitment`
   - stateless primitive commitment backends
 - `core/layout/malt/unixfs`
@@ -195,9 +193,10 @@ as follows:
 - `core/lineage`
   - auxiliary version-history metadata pending integration with versioned
     ArcTable
-- `core/bucketpath` and `core/manifest`
-  - current file/bucket layout helpers, candidates to move under a dedicated
-    UnixFS-style layout package
+- `core/querypath`
+  - current query-path canonicalization helper for root-relative paths
+- `core/manifest`
+  - current UnixFS directory-manifest helper above the semantic layer
 
 ## Runtime Packaging
 
@@ -209,24 +208,26 @@ Current command model:
   - long-running local process
   - owns hot structure state
   - serves local HTTP/JSON API requests
-- `malt bucket ...`
-  - manages daemon-side buckets and the client-side default bucket
 - `malt add ...`
   - client-side file and directory ingestion
   - uploads payload blocks to CAS
   - commits structure through list/map semantics
+  - writes under `--root` when extending an existing root, or creates a new
+    root when omitted
 - `malt cat ...` and `malt get ...`
-  - product read paths for bucket-local files and directories
+  - product read paths for files and directories under explicit roots
+- `malt semantic-mutation ...`
+  - root-centric semantic mutation materialization
 - lower-level commands
-  - resolve, prove, update, verify, and lineage inspection
+  - resolve, prove, prooflist, update, verify, metrics, eval-read, and lineage
+    inspection
 - `malt cas ...`
   - convenience commands for CAS-oriented workflows
 
 Current runtime invariants:
 
-- a managed bucket head is a directory-shaped map root
-- a list root represents file-content structure and is not a valid managed
-  bucket head
+- a directory root is a directory-shaped map root
+- a list root represents file-content structure and is not a directory root
 - every MALT-native map root carries the reserved `@payload` binding as a map
   semantic invariant
 - materializing a bare map root means resolving `@payload` first
@@ -234,8 +235,8 @@ Current runtime invariants:
   `@payload`
 - bucket-path misses are reported as `not found`
 
-Bucket heads and path-miss behavior are file-layout and product-runtime
-invariants. The reserved `@payload` binding belongs to map semantic objects.
+Path-miss behavior is a file-layout and product-runtime invariant. The reserved
+`@payload` binding belongs to map semantic objects.
 
 ## Code Layout
 
@@ -249,17 +250,20 @@ malt/
 |-- server/          # daemon HTTP server
 |-- core/
 |   |-- api/          # Node: top-level component wiring
-|   |-- arctable/     # bucket/namespace-scoped arcset persistence/materialization
-|   |-- bucketpath/   # current bucket path boundary helper
+|   |-- arctable/     # namespace-scoped arcset persistence/materialization
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities
 |   |-- commitment/   # primitive commitment backends
 |   |-- graph/        # current metadata/runtime composition
 |   |-- kvstore/      # KV backends
+|   |-- metrics/      # node-local evaluation counters
+|   |-- querypath/    # root-relative query path canonicalization
 |   |-- layout/
-|   |   `-- unixfs/    # current map/list-based UnixFS layout prototype
+|   |   |-- ipld/      # Merkle DAG UnixFS import helpers
+|   |   `-- malt/
+|   |       `-- unixfs/ # current map/list-based UnixFS layout prototype
 |   |-- lineage/      # auxiliary version-history metadata
-|   |-- manifest/     # current directory-manifest helper
+|   |-- manifest/     # UnixFS directory-manifest helper
 |   |-- resolver/     # current read compatibility adapters
 |   |-- structure/    # list/map semantic abstractions and implementations
 |   |-- types/        # arc sets, evidence, proof-related types
@@ -381,9 +385,9 @@ Current boundary:
 - The package remains the direct map/list/CAS library layer for the
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
-- Managed buckets now expose this layout through daemon routes for UnixFS file
-  and directory writes, path stat, and content reads. The `malt add`,
-  `malt cat`, and `malt get` commands use those bucket APIs.
+- Root-centric daemon routes expose this layout for UnixFS file and directory
+  writes, path stat, and content reads. The `malt add`, `malt cat`, and
+  `malt get` commands use those root APIs.
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
   remain runtime and compatibility adapters rather than semantic owners.
@@ -414,8 +418,8 @@ Open TODOs for the next discussion:
 - define the `ProofList` schema for path lookup, terminal `@payload`, blob
   bindings, and list range reads
 - decide how UnixFS reads should map onto gateway read queries and `ProofList`
-- define the final UnixFS write receipt, bucket-head advancement, and
-  concurrency contract for the already-wired managed bucket APIs
+- define the final UnixFS write receipt and application-level concurrency
+  contract for the already-wired root APIs
 - decide whether list needs a first-class range proof API or whether composed
   index proofs are sufficient for the first benchmark
 
