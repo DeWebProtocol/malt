@@ -4,6 +4,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 )
 
@@ -84,12 +86,19 @@ func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpa
 
 // ProveRoot returns the transcript for an explicit root path.
 func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.Resolve(ctx, root, p)
+	proof, err := c.ProofList(ctx, root, p)
+	if err != nil {
+		return nil, err
+	}
+	return &httpapi.ResolveResponse{
+		Target:     proof.Target,
+		Transcript: transcriptFromProofList(proof.ProofList),
+	}, nil
 }
 
 // ProofListRoot returns a ProofList read result from an explicit root.
-func (c *Client) ProofListRoot(ctx context.Context, root string, _ string) (*httpapi.ProofListResponse, error) {
-	return c.ProofList(ctx, root, "")
+func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
+	return c.ProofList(ctx, root, p)
 }
 
 // Resolve resolves a path relative to a root CID. Uses HEAD /{root}/{path}
@@ -160,6 +169,27 @@ func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.
 		return nil, err
 	}
 	return &httpapi.ProofListResponse{Target: out.Key, ProofList: out.ProofList}, nil
+}
+
+func transcriptFromProofList(pl prooflist.ProofList) []httpapi.StepEvidence {
+	steps := make([]httpapi.StepEvidence, 0, len(pl.Steps))
+	for _, step := range pl.Steps {
+		evidence := step.Evidence
+		if len(evidence) == 0 {
+			evidence = step.Proof
+		}
+		stepPath := step.Path
+		if stepPath == "" {
+			stepPath = step.Coordinate
+		}
+		steps = append(steps, httpapi.StepEvidence{
+			Path:     stepPath,
+			Target:   step.Target.String(),
+			Evidence: base64.StdEncoding.EncodeToString(evidence),
+			Kind:     string(step.Kind),
+		})
+	}
+	return steps
 }
 
 // Stat returns the locked stat contract for a path under a root CID.

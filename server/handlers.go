@@ -308,12 +308,16 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, &httpapi.UnixFSWriteResponse{
+		resp := &httpapi.UnixFSWriteResponse{
 			Path:     p,
 			Kind:     "dir",
 			NewRoot:  receipt.NewRoot.String(),
 			ArcCount: receipt.ArcCount,
-		})
+		}
+		if root.Defined() {
+			resp.OldRoot = root.String()
+		}
+		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
 
