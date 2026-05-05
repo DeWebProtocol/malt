@@ -84,12 +84,16 @@ func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpa
 
 // ProveRoot returns the transcript for an explicit root path.
 func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	return c.Resolve(ctx, root, p)
+	var resp httpapi.ResolveResponse
+	if err := c.do(ctx, http.MethodGet, "/"+url.PathEscape(root)+"/"+p, map[string]string{"format": "resolve"}, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // ProofListRoot returns a ProofList read result from an explicit root.
-func (c *Client) ProofListRoot(ctx context.Context, root string, _ string) (*httpapi.ProofListResponse, error) {
-	return c.ProofList(ctx, root, "")
+func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
+	return c.ProofList(ctx, root, p)
 }
 
 // Resolve resolves a path relative to a root CID. Uses HEAD /{root}/{path}

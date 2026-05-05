@@ -85,7 +85,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /{root}/{path...}", s.handleUpdate)
 
 	// Root creation
-	mux.HandleFunc("POST /{root}", s.handleCreateStructure)
+	mux.HandleFunc("POST /_", s.handleCreateStructure)
 }
 
 func (s *Server) getOrCreateGraph(ctx context.Context) (*graph.Graph, error) {

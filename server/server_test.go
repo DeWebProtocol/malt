@@ -78,6 +78,37 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	}
 }
 
+func TestServerCreateRootOnlyAcceptsUnderscoreRoute(t *testing.T) {
+	node := newTestNode(t)
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	body, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": fakeCIDString("name")}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /_: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /_ status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/not-a-create-route", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /not-a-create-route: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusCreated {
+		t.Fatalf("POST /not-a-create-route unexpectedly created a root")
+	}
+}
+
 func TestServerLegacyGraphRoutesRemoved(t *testing.T) {
 	node := newTestNode(t)
 
@@ -731,7 +762,14 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create unixfs directory status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
+	var dirResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dirResp); err != nil {
+		t.Fatalf("decode unixfs directory response: %v", err)
+	}
 	resp.Body.Close()
+	if dirResp.OldRoot != root {
+		t.Fatalf("directory write old_root = %q, want %q", dirResp.OldRoot, root)
+	}
 
 	fileBody := []byte("hello from gateway unixfs")
 	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))

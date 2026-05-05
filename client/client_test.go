@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/config"
@@ -164,6 +165,167 @@ func TestClientProofListReads(t *testing.T) {
 	}
 	if rootProof.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
 		t.Fatalf("root prooflist step kind = %q, want %q", rootProof.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
+	}
+}
+
+func TestClientProofListRootPreservesPath(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	client := NewWithBaseURL(ts.URL)
+	ctx := context.Background()
+
+	targetData := []byte("named-target")
+	targetCID, err := mockCAS.Put(ctx, targetData)
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+	rootPayloadData := []byte("root-payload")
+	rootPayloadCID, err := mockCAS.Put(ctx, rootPayloadData)
+	if err != nil {
+		t.Fatalf("put root payload: %v", err)
+	}
+
+	createResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
+		"@payload": rootPayloadCID.String(),
+		"name":     targetCID.String(),
+	}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	proof, err := client.ProofListRoot(ctx, createResp.Root, "name")
+	if err != nil {
+		t.Fatalf("ProofListRoot: %v", err)
+	}
+	if proof.Target != targetCID.String() {
+		t.Fatalf("ProofListRoot target = %q, want %q", proof.Target, targetCID.String())
+	}
+}
+
+func TestClientProveRootReturnsTranscript(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	client := NewWithBaseURL(ts.URL)
+	ctx := context.Background()
+
+	targetData := []byte("prove-target")
+	targetCID, err := mockCAS.Put(ctx, targetData)
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+
+	createResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
+		"name": targetCID.String(),
+	}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	proof, err := client.ProveRoot(ctx, createResp.Root, "name")
+	if err != nil {
+		t.Fatalf("ProveRoot: %v", err)
+	}
+	if proof.Target != targetCID.String() {
+		t.Fatalf("target = %q, want %q", proof.Target, targetCID.String())
+	}
+	if len(proof.Transcript) == 0 {
+		t.Fatalf("transcript is empty")
+	}
+	verifyResp, err := client.Verify(ctx, &httpapi.VerifyRequest{
+		Root:       createResp.Root,
+		Transcript: toVerifySteps(proof.Transcript),
+	})
+	if err != nil {
+		t.Fatalf("Verify ProveRoot transcript: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatalf("ProveRoot transcript did not verify")
+	}
+}
+
+func TestClientProveRootDoesNotRequireTargetContent(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	client := NewWithBaseURL(ts.URL)
+	ctx := context.Background()
+
+	target := fakeCIDString("missing-content-target")
+	createResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
+		"name": target,
+	}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	proof, err := client.ProveRoot(ctx, createResp.Root, "name")
+	if err != nil {
+		t.Fatalf("ProveRoot: %v", err)
+	}
+	if proof.Target != target {
+		t.Fatalf("target = %q, want %q", proof.Target, target)
+	}
+	if len(proof.Transcript) == 0 {
+		t.Fatalf("transcript is empty")
+	}
+}
+
+func TestClientRootPathMethodsPreserveNestedPath(t *testing.T) {
+	seen := make(chan string, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Method + " " + r.URL.RequestURI()
+		w.Header().Set("X-Malt-Key", fakeCIDString("target"))
+		w.Header().Set("X-Malt-Kind", "file")
+		w.Header().Set("X-Malt-Storage-Kind", "raw")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	client := NewWithBaseURL(ts.URL)
+	root := fakeCIDString("root")
+
+	if _, err := client.Resolve(context.Background(), root, "a/b/c"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := <-seen; !strings.Contains(got, "/"+root+"/a/b/c") {
+		t.Fatalf("request = %q, want nested root path", got)
 	}
 }
 

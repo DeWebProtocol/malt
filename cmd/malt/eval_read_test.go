@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/config"
@@ -15,11 +16,12 @@ import (
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/internal/eval/readbench"
 	"github.com/dewebprotocol/malt/server"
+	cid "github.com/ipfs/go-cid"
 )
 
 func TestEvalReadPrintsBenchmarkJSONL(t *testing.T) {
 	ctx := context.Background()
-	apiBaseURL, cfgPath := newEvalReadTestConfig(t)
+	apiBaseURL, cfgPath, manifestCID, dummyCID := newEvalReadTestConfigWithCIDs(t)
 	if apiBaseURL == "" {
 		t.Fatal("test API base URL should not be empty")
 	}
@@ -35,6 +37,10 @@ func TestEvalReadPrintsBenchmarkJSONL(t *testing.T) {
 	evalReadLargeBytes = 300 * 1024
 	evalReadRange = "bytes=3-8"
 	evalReadIterations = 1
+	evalReadArcFlags = []string{
+		"@payload=" + manifestCID.String(),
+		"dummy=" + dummyCID.String(),
+	}
 
 	out := captureStdout(t, func() {
 		if err := runEvalRead(testCommandWithContext(ctx), nil); err != nil {
@@ -57,6 +63,54 @@ func TestEvalReadPrintsBenchmarkJSONL(t *testing.T) {
 	}
 	if results[0].Proof.ProofListCount != 1 || results[1].Proof.ProofListCount != 1 {
 		t.Fatalf("proof metrics should be reset per operation: %+v %+v", results[0].Proof, results[1].Proof)
+	}
+}
+
+func TestEvalReadAcceptsArcFlags(t *testing.T) {
+	ctx := context.Background()
+	_, cfgPath, manifestCID, dummyCID := newEvalReadTestConfigWithCIDs(t)
+
+	oldCfgFile := cfgFile
+	cfgFile = cfgPath
+	t.Cleanup(func() { cfgFile = oldCfgFile })
+
+	resetEvalReadFlags(t)
+	evalReadFixture = "eval-read-cli-arc"
+	evalReadDepth = 0
+	evalReadSmallBytes = 40
+	evalReadLargeBytes = 300 * 1024
+	evalReadIterations = 1
+	evalReadArcFlags = []string{
+		"@payload=" + manifestCID.String(),
+		"dummy=" + dummyCID.String(),
+	}
+
+	out := captureStdout(t, func() {
+		if err := runEvalRead(testCommandWithContext(ctx), nil); err != nil {
+			t.Fatalf("run eval-read with --arc flags: %v", err)
+		}
+	})
+	results := decodeEvalReadJSONL(t, out)
+	if len(results) != 2 {
+		t.Fatalf("result count = %d, want 2\n%s", len(results), out)
+	}
+}
+
+func TestEvalReadRequiresArcFlags(t *testing.T) {
+	ctx := context.Background()
+	_, cfgPath := newEvalReadTestConfig(t)
+
+	oldCfgFile := cfgFile
+	cfgFile = cfgPath
+	t.Cleanup(func() { cfgFile = oldCfgFile })
+
+	resetEvalReadFlags(t)
+	err := runEvalRead(testCommandWithContext(ctx), nil)
+	if err == nil {
+		t.Fatal("expected eval-read without --arc to fail")
+	}
+	if !strings.Contains(err.Error(), "--arc is required") {
+		t.Fatalf("error = %q, want --arc is required", err.Error())
 	}
 }
 
@@ -87,6 +141,8 @@ func resetEvalReadFlags(t *testing.T) {
 	oldLargeBytes := evalReadLargeBytes
 	oldRange := evalReadRange
 	oldIterations := evalReadIterations
+	oldArcFlags := evalReadArcFlags
+	oldArcs := evalReadArcs
 	t.Cleanup(func() {
 		evalReadFixture = oldFixture
 		evalReadDepth = oldDepth
@@ -94,10 +150,21 @@ func resetEvalReadFlags(t *testing.T) {
 		evalReadLargeBytes = oldLargeBytes
 		evalReadRange = oldRange
 		evalReadIterations = oldIterations
+		evalReadArcFlags = oldArcFlags
+		evalReadArcs = oldArcs
 	})
+	evalReadArcFlags = nil
+	evalReadArcs = nil
 }
 
 func newEvalReadTestConfig(t *testing.T) (string, string) {
+	t.Helper()
+
+	apiBaseURL, cfgPath, _, _ := newEvalReadTestConfigWithCIDs(t)
+	return apiBaseURL, cfgPath
+}
+
+func newEvalReadTestConfigWithCIDs(t *testing.T) (string, string, cid.Cid, cid.Cid) {
 	t.Helper()
 
 	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
@@ -115,12 +182,6 @@ func newEvalReadTestConfig(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatalf("put dummy: %v", err)
 	}
-	oldArcs := evalReadArcs
-	evalReadArcs = map[string]string{
-		"@payload": manifestCID.String(),
-		"dummy":    dummyCID.String(),
-	}
-	t.Cleanup(func() { evalReadArcs = oldArcs })
 
 	cfg := config.DefaultConfig()
 	cfg.RPC.Listen = ""
@@ -146,5 +207,5 @@ func newEvalReadTestConfig(t *testing.T) (string, string) {
 	if _, err := os.Stat(cfgPath); err != nil {
 		t.Fatalf("stat test config: %v", err)
 	}
-	return ts.URL, cfgPath
+	return ts.URL, cfgPath, manifestCID, dummyCID
 }
