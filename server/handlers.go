@@ -61,6 +61,10 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
 	// Format negotiation
+	if r.URL.Query().Get("format") == "resolve" {
+		s.serveResolve(w, r, g, root, path)
+		return
+	}
 	if r.URL.Query().Get("format") == "proof" {
 		// Empty path means root-level proof — resolve @payload instead
 		queryPath := path
@@ -131,6 +135,26 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
 	_, _ = io.Copy(w, bytes.NewReader(payload))
+}
+
+func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {
+	result, err := g.Resolver().Resolve(root, queryPath)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, resolver.ErrResolutionFailed) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	if resolveMiss(root, queryPath, result) {
+		writeError(w, http.StatusNotFound, errPathNotFound.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, &httpapi.ResolveResponse{
+		Target:     result.Target.String(),
+		Transcript: encodeTranscript(result.Transcript),
+	})
 }
 
 func (s *Server) serveContentProof(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {

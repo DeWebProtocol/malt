@@ -259,6 +259,52 @@ func TestClientProveRootReturnsTranscript(t *testing.T) {
 	if len(proof.Transcript) == 0 {
 		t.Fatalf("transcript is empty")
 	}
+	verifyResp, err := client.Verify(ctx, &httpapi.VerifyRequest{
+		Root:       createResp.Root,
+		Transcript: toVerifySteps(proof.Transcript),
+	})
+	if err != nil {
+		t.Fatalf("Verify ProveRoot transcript: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatalf("ProveRoot transcript did not verify")
+	}
+}
+
+func TestClientProveRootDoesNotRequireTargetContent(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	client := NewWithBaseURL(ts.URL)
+	ctx := context.Background()
+
+	target := fakeCIDString("missing-content-target")
+	createResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{
+		"name": target,
+	}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	proof, err := client.ProveRoot(ctx, createResp.Root, "name")
+	if err != nil {
+		t.Fatalf("ProveRoot: %v", err)
+	}
+	if proof.Target != target {
+		t.Fatalf("target = %q, want %q", proof.Target, target)
+	}
+	if len(proof.Transcript) == 0 {
+		t.Fatalf("transcript is empty")
+	}
 }
 
 func TestClientRootPathMethodsPreserveNestedPath(t *testing.T) {
