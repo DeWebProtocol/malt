@@ -162,4 +162,3 @@ func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {
 	}
 	return arcs, count, nil
 }
-

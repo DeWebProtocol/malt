@@ -379,7 +379,6 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, &httpapi.CreateStructureResponse{Root: root.String()})
 }
 
-
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	g, err := s.getOrCreateGraph(r.Context())
 	if err != nil {
@@ -1504,4 +1503,3 @@ func nonEmpty(primary string, fallback string) string {
 	}
 	return fallback
 }
-

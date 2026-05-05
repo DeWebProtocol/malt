@@ -201,7 +201,7 @@ func TestClientMetricsSnapshotAndReset(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	client := NewWithBaseURL(ts.URL  )
+	client := NewWithBaseURL(ts.URL)
 	snapshot, err := client.MetricsSnapshot(context.Background())
 	if err != nil {
 		t.Fatalf("MetricsSnapshot: %v", err)
