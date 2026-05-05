@@ -25,9 +25,9 @@ VerifyRead(root, query, result, ProofList) -> valid / invalid
 A structure root exposes authenticated read/write semantics, but those
 semantics are owned by `list` and `map`, not by the current runtime `graph`
 object. Root-centric gateway materialization accepts semantic mutations
-produced by layouts and returns an operational receipt; managed bucket heads
-remain product/runtime publication pointers, not the gateway correctness
-interface. In the HTTP deployment, blob reads may carry
+produced by layouts and returns an operational receipt. Root publication,
+freshness, and multi-writer arbitration are application or deployment policy,
+not the gateway correctness interface. In the HTTP deployment, blob reads may carry
 `ProofList` in response metadata/header; large-file range reads return selected
 bytes plus the corresponding `ProofList`.
 
@@ -45,7 +45,7 @@ Current core semantics are:
   - use case: directory-like metadata, object fields, path indexes
   - every map semantic object carries the reserved `@payload` binding
 
-Both semantics use ArcTable for bucket/namespace-scoped arcset persistence/materialization
+Both semantics use ArcTable for namespace-scoped arcset persistence/materialization
 and stateless commitment backends for proofs.
 
 ## What MALT Changes
@@ -73,25 +73,28 @@ Current runtime shape:
 - `malt daemon`
   - long-running local process
   - owns hot proving/index state
-- `malt bucket`
-  - manages daemon-side buckets and the client-side default bucket
 - `malt add`
   - uploads payload directly to CAS
   - commits file and directory structure through MALT list/map semantics
+  - writes under `--root` when extending an existing root, or creates a new
+    root when omitted
 - `malt cat`, `malt get`
-  - product file and directory read commands over bucket paths
-- `malt resolve`, `malt prove`, `malt update`, `malt verify`, `malt lineage`
+  - product file and directory read commands over explicit roots
+- `malt semantic-mutation`
+  - materializes root-centric semantic mutation requests
+- `malt resolve`, `malt prove`, `malt prooflist`, `malt update`,
+  `malt verify`, `malt lineage`, `malt metrics`, `malt eval-read`
   - lower-level thin HTTP clients against the local daemon
 - `malt cas`
   - direct convenience commands against the configured CAS endpoint
 - daemon API
-  - fixed HTTP/JSON surface at `/api/v1`
+  - root-centric HTTP/JSON surface rooted at `/`
 - embedded mock CAS
   - optional same-process second-port service
   - fixed Kubo-compatible API at `/api/v0`
 
-The bucket/file commands are the current product layout built above MALT. They
-are not the definition of the MALT semantic layer.
+The file commands are the current product layout built above MALT. They are
+not the definition of the MALT semantic layer.
 
 ## Data Model
 
@@ -103,32 +106,30 @@ MALT separates:
 Payload CIDs identify immutable CAS blocks.
 Structure roots identify committed list/map semantic state.
 
-In the current bucket-first prototype:
+In the current root-centric prototype:
 
-- a managed bucket head is a directory-shaped `map` root
+- a directory root is a directory-shaped `map` root
 - large files are represented by `list` roots referenced from map bindings
 - every MALT-native `map` root carries a reserved `@payload` binding as a map
   semantic invariant
 - empty payloads should use a defined empty-block CID rather than omitting
   `@payload`
 
-The managed bucket head is a product/runtime pointer. The `@payload` binding is
-not merely a bucket rule: it is reserved by map semantic objects for terminal
+The `@payload` binding is reserved by map semantic objects for terminal
 materialization. List roots are terminal typed keys and do not auto-redirect
 through `@payload`.
 
-Bucket is an operational namespace and collection boundary for state placement,
-replication, migration, GC, indexing configuration, and optional head pointers.
-It is not part of the core list/map semantics. Applications decide which root
-becomes a published head, how freshness is communicated, and whether concurrent
-roots are merged.
+The daemon still uses an internal namespace for local state placement and
+materialization. That namespace is not part of the core list/map semantics.
+Applications decide which root becomes a published head, how freshness is
+communicated, and whether concurrent roots are merged.
 
 ## Terminology and Layers
 
 | Layer | Role | Examples |
 | --- | --- | --- |
 | Semantic Layer | Abstract list/map semantics | `list`, `map` |
-| ArcTable | Bucket/namespace-scoped arcset persistence/materialization | overwrite, versioned |
+| ArcTable | Namespace-scoped arcset persistence/materialization | overwrite, versioned |
 | Commitment Backend | Stateless primitive authentication | KZG, IPA |
 | Gateway | Deployment surface for semantic mutations and verifiable reads | daemon HTTP API |
 | Application Layout | Product data model built above semantic layer | flattened UnixFS-style bucket layout |
@@ -211,9 +212,9 @@ Current boundary:
 - `core/layout/malt/unixfs` remains the direct map/list/CAS library layer for the
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
-- The managed bucket runtime now exposes this layout through daemon routes for
-  UnixFS file and directory writes, path stat, and content reads, and the
-  `malt add`, `malt cat`, and `malt get` commands use those bucket APIs.
+- The root-centric daemon exposes this layout through routes for UnixFS file
+  and directory writes, path stat, and content reads, and the `malt add`,
+  `malt cat`, and `malt get` commands use those root APIs.
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
   `core/resolver` the semantic owners.
@@ -270,7 +271,7 @@ Verification is local to the client:
 - `core/commitment`
   - stateless primitive commitment backends
 - `core/arctable`
-  - bucket/namespace-scoped arcset persistence/materialization
+  - namespace-scoped arcset persistence/materialization
 - `core/layout/malt/unixfs`
   - current pure MALT UnixFS-style layout prototype over map/list semantics
 - `core/resolver`
@@ -282,9 +283,10 @@ Verification is local to the client:
 - `core/lineage`
   - auxiliary version-history metadata; pending redesign with MVCC and
     versioned ArcTable
-- `core/bucketpath` and `core/manifest`
-  - current bucket/file layout helpers; candidates to move under a dedicated
-    UnixFS or bucket layout package
+- `core/querypath`
+  - current query-path canonicalization helper for root-relative paths
+- `core/manifest`
+  - current UnixFS directory-manifest helper above the semantic layer
 
 ## Config
 
@@ -294,7 +296,6 @@ Current operator flow:
 2. create `~/.malt/malt.json`
 3. choose a local state root
 4. run `malt daemon`
-5. optionally set `client.default_bucket_id` or use `malt bucket default`
 
 Current schema:
 
@@ -310,7 +311,7 @@ Current schema:
 - `cas.timeout`
 - `cas.embedded_mock`
 - `logging`
-- `client.default_bucket_id`
+- `client`
 
 Current defaults:
 
@@ -318,6 +319,7 @@ Current defaults:
 - embedded mock CAS listen: `127.0.0.1:4318`
 - structure backend: `kzg`
 - ArcTable type: `versioned`
+- CAS mode: `embedded-mock`
 
 ## Repo Layout
 
@@ -330,15 +332,16 @@ malt/
 |-- httpapi/         # shared daemon request/response payload types
 |-- core/
 |   |-- api/          # top-level wiring via Node
-|   |-- arctable/     # bucket/namespace-scoped arcset persistence/materialization
-|   |-- bucketpath/   # current bucket path boundary helper
+|   |-- arctable/     # namespace-scoped arcset persistence/materialization
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities
 |   |-- commitment/   # primitive commitment backends
 |   |-- graph/        # current runtime metadata/composition
 |   |-- kvstore/      # KV backends
+|   |-- metrics/      # node-local evaluation counters
+|   |-- querypath/    # root-relative query path canonicalization
 |   |-- lineage/      # auxiliary version-history metadata
-|   |-- manifest/     # current directory-manifest helper
+|   |-- manifest/     # UnixFS directory-manifest helper
 |   |-- resolver/     # current read compatibility adapters
 |   |-- structure/    # list/map semantic abstractions and implementations
 |   |-- types/        # arc sets, evidence, proof-related types
