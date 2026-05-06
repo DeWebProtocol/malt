@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/config"
@@ -1237,6 +1238,12 @@ func TestServerDefaultGETReturnsProofHeader(t *testing.T) {
 		t.Fatalf("X-Malt-ProofList-Encoding = %q, want %q", encodingHeader, "base64url-json")
 	}
 
+	// Vary header should be present
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+
 	// Decode and validate the proof list
 	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
 	if err != nil {
@@ -1301,6 +1308,12 @@ func TestServerDefaultGETProofHeaderWithProofFalse(t *testing.T) {
 	if resp.Header.Get("X-Malt-ProofList") != "" {
 		t.Fatal("X-Malt-ProofList header should be absent when proof=false")
 	}
+
+	// Vary header should still be present since response varies based on X-Malt-Proof
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
 }
 
 func TestServerDefaultGETProofHeaderWithXMaltProofOmit(t *testing.T) {
@@ -1354,6 +1367,12 @@ func TestServerDefaultGETProofHeaderWithXMaltProofOmit(t *testing.T) {
 
 	if resp.Header.Get("X-Malt-ProofList") != "" {
 		t.Fatal("X-Malt-ProofList header should be absent when X-Malt-Proof: omit")
+	}
+
+	// Vary header should still be present since response varies based on X-Malt-Proof
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
 	}
 }
 
@@ -1410,6 +1429,12 @@ func TestServerDefaultGETDirectoryProofHeader(t *testing.T) {
 	proofListHeader := resp.Header.Get("X-Malt-ProofList")
 	if proofListHeader == "" {
 		t.Fatal("X-Malt-ProofList header is missing for directory GET")
+	}
+
+	// Vary header should be present
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
 	}
 
 	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
@@ -1498,6 +1523,12 @@ func TestServerDefaultGETRangeProofHeader(t *testing.T) {
 		t.Fatal("X-Malt-ProofList header is missing for range GET")
 	}
 
+	// Vary header should be present
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+
 	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
 	if err != nil {
 		t.Fatalf("decode proof list header: %v", err)
@@ -1522,6 +1553,57 @@ func TestServerDefaultGETRangeProofHeader(t *testing.T) {
 	}
 	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
 		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	}
+}
+
+func TestServerHEADDoesNotReturnProofHeaders(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	fileBody := []byte("head test file")
+	resp, err = http.Post(ts.URL+"/"+root+"/head.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	resp.Body.Close()
+
+	// HEAD request should not return proof headers
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+writeResp.NewRoot+"/head.txt", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HEAD request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	if resp.Header.Get("X-Malt-ProofList") != "" {
+		t.Fatal("X-Malt-ProofList header should be absent for HEAD request")
+	}
+	if resp.Header.Get("X-Malt-ProofList-Encoding") != "" {
+		t.Fatal("X-Malt-ProofList-Encoding header should be absent for HEAD request")
 	}
 }
 
