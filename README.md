@@ -27,9 +27,10 @@ semantics are owned by `list` and `map`, not by the current runtime `graph`
 object. Root-centric gateway materialization accepts semantic mutations
 produced by layouts and returns an operational receipt. Root publication,
 freshness, and multi-writer arbitration are application or deployment policy,
-not the gateway correctness interface. In the HTTP deployment, blob reads may carry
-`ProofList` in response metadata/header; large-file range reads return selected
-bytes plus the corresponding `ProofList`.
+not the gateway correctness interface. In the HTTP deployment, successful
+default blob and directory `GET /{root}/{path}` reads carry `ProofList`
+metadata in response headers; large-file range reads return selected bytes plus
+the corresponding range-covering `ProofList`.
 
 Current core semantics are:
 
@@ -95,6 +96,30 @@ Current runtime shape:
 
 The file commands are the current product layout built above MALT. They are
 not the definition of the MALT semantic layer.
+
+## HTTP Read Proof Metadata
+
+Default successful `GET /{root}/{path}` responses include verifier-facing proof
+metadata in these response headers:
+
+```text
+X-Malt-ProofList: <base64url(JSON ProofList)>
+X-Malt-ProofList-Encoding: base64url-json
+Vary: X-Malt-Proof
+```
+
+The proof header is generated for file bytes, directory JSON responses, and
+byte-range reads. For list-backed file ranges, the `ProofList` includes the
+touched list-index steps. Clients that only need content bytes can opt out of
+default proof generation with either `?proof=false` or request header
+`X-Malt-Proof: omit`; the `Vary` response header advertises the header-based
+variance to shared HTTP caches.
+
+`HEAD /{root}/{path}` remains a stat-only operation and returns `X-Malt-Kind`,
+`X-Malt-Storage-Kind`, `X-Malt-Key`, optional `X-Malt-Payload`, and optional
+`Content-Length` without generating proof headers. `GET /{root}/{path}?format=proof`
+keeps the JSON-body proof contract for clients that prefer `ContentProofResponse`
+over header metadata.
 
 ## Data Model
 
