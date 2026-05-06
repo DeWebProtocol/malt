@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
+	"github.com/dewebprotocol/malt/core/cas"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
@@ -18,6 +19,11 @@ import (
 )
 
 func newLayout(t *testing.T, chunkSize int) *unixfs.Layout {
+	t.Helper()
+	return newLayoutWithBlocks(t, chunkSize, casmock.NewCAS(casmock.WithoutLatency()))
+}
+
+func newLayoutWithBlocks(t *testing.T, chunkSize int, blocks cas.Client) *unixfs.Layout {
 	t.Helper()
 
 	kv := kvmemory.New()
@@ -43,12 +49,42 @@ func newLayout(t *testing.T, chunkSize int) *unixfs.Layout {
 		ChunkSize: chunkSize,
 		Map:       maps,
 		List:      lists,
-		Blocks:    casmock.NewCAS(casmock.WithoutLatency()),
+		Blocks:    blocks,
 	})
 	if err != nil {
 		t.Fatalf("unixfs.New failed: %v", err)
 	}
 	return layout
+}
+
+type spyBatchCAS struct {
+	inner   *casmock.CAS
+	batches [][]cas.Block
+}
+
+func newSpyBatchCAS() *spyBatchCAS {
+	return &spyBatchCAS{inner: casmock.NewCAS(casmock.WithoutLatency())}
+}
+
+func (s *spyBatchCAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
+	return s.inner.Get(ctx, c)
+}
+
+func (s *spyBatchCAS) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	return s.inner.Has(ctx, c)
+}
+
+func (s *spyBatchCAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	return s.inner.Put(ctx, data)
+}
+
+func (s *spyBatchCAS) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	cloned := make([]cas.Block, len(blocks))
+	for i, block := range blocks {
+		cloned[i] = cas.Block{Data: append([]byte(nil), block.Data...), Codec: block.Codec}
+	}
+	s.batches = append(s.batches, cloned)
+	return s.inner.PutBatch(ctx, blocks)
 }
 
 func TestAddAndReadSmallFile(t *testing.T) {
@@ -112,6 +148,46 @@ func TestAddAndReadLargeFileRange(t *testing.T) {
 	}
 	if !bytes.Equal(ranged, data[3:14]) {
 		t.Fatalf("ReadFileRange mismatch: got %q want %q", ranged, data[3:14])
+	}
+}
+
+func TestAddLargeFileUsesCASPutBatch(t *testing.T) {
+	ctx := context.Background()
+	blocks := newSpyBatchCAS()
+	layout := newLayoutWithBlocks(t, 4, blocks)
+	data := []byte("abcdefghijklmnopqrstuvwxyz")
+
+	root, err := layout.AddFile(ctx, cid.Undef, "blob.bin", data)
+	if err != nil {
+		t.Fatalf("AddFile failed: %v", err)
+	}
+	if len(blocks.batches) != 1 {
+		t.Fatalf("PutBatch calls = %d, want 1", len(blocks.batches))
+	}
+	if len(blocks.batches[0]) != 7 {
+		t.Fatalf("batched chunks = %d, want 7", len(blocks.batches[0]))
+	}
+
+	stat, err := layout.Stat(ctx, root, "blob.bin")
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if stat.StorageKind != "list" || stat.Size != uint64(len(data)) {
+		t.Fatalf("stat = %+v, want list storage and original size", stat)
+	}
+	full, err := layout.ReadFile(ctx, root, "blob.bin")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if !bytes.Equal(full, data) {
+		t.Fatalf("ReadFile mismatch: got %q want %q", full, data)
+	}
+	resolution, err := layout.Resolve(ctx, root, "blob.bin")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(resolution.Steps) != 2 {
+		t.Fatalf("resolution steps = %d, want 2", len(resolution.Steps))
 	}
 }
 

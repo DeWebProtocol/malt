@@ -831,6 +831,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 		return nil, err
 	}
 
+	batcher := asAddCASBatcher(casClient)
 	root := newDirNode()
 	var files int
 	var bytesUploaded int64
@@ -838,7 +839,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
 			if item.Input.Symlink {
-				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, item.Input.AbsPath)
+				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, batcher, item.Input.AbsPath)
 				if err != nil {
 					return nil, err
 				}
@@ -849,7 +850,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 				bytesUploaded += dirBytes
 				continue
 			}
-			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, item, opts.Ignore)
+			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, batcher, daemon, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
@@ -857,12 +858,15 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 			bytesUploaded += dirBytes
 			continue
 		}
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, item.Input.AbsPath, item.MountBase)
+		fileBytes, err := stageSingleFile(ctx, root, batcher, daemon, item.Input.AbsPath, item.MountBase)
 		if err != nil {
 			return nil, err
 		}
 		files++
 		bytesUploaded += fileBytes
+	}
+	if err := batcher.Flush(ctx); err != nil {
+		return nil, fmt.Errorf("flush staged CAS batch: %w", err)
 	}
 
 	return &addBuildResult{
@@ -1288,6 +1292,10 @@ func loadCurrentDirRecursive(ctx context.Context, daemon *daemonclient.Client, c
 }
 
 func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, node *addNode) (*addMaterializeResult, error) {
+	return materializeDirectoryWithBatcher(ctx, daemon, asAddCASBatcher(casClient), node)
+}
+
+func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.Client, casClient *addCASBatcher, node *addNode) (*addMaterializeResult, error) {
 	if node == nil || node.Kind != "dir" {
 		return nil, fmt.Errorf("materializeDirectory requires a directory node")
 	}
@@ -1306,7 +1314,7 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 			continue
 		}
 		if child.Kind == "dir" {
-			mat, err := materializeDirectory(ctx, daemon, casClient, child)
+			mat, err := materializeDirectoryWithBatcher(ctx, daemon, casClient, child)
 			if err != nil {
 				return nil, err
 			}
@@ -1338,6 +1346,9 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 	payloadCID, err := casClient.Put(ctx, payloadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("upload directory manifest: %w", err)
+	}
+	if err := casClient.Flush(ctx); err != nil {
+		return nil, fmt.Errorf("flush directory manifest: %w", err)
 	}
 
 	bindings := make(map[string]string, 1+len(childKeys)+len(desc))

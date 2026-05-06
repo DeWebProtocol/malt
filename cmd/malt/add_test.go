@@ -10,8 +10,10 @@ import (
 	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
+	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/server"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -475,6 +477,104 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 	}
 }
 
+func TestAddCASBatcherDeduplicatesBlocks(t *testing.T) {
+	ctx := context.Background()
+	recorder := newRecordingAddCAS(casmock.NewCAS(casmock.WithoutLatency()))
+	batcher := newAddCASBatcher(recorder)
+
+	first, err := batcher.Put(ctx, []byte("same"))
+	if err != nil {
+		t.Fatalf("Put first: %v", err)
+	}
+	second, err := batcher.Put(ctx, []byte("same"))
+	if err != nil {
+		t.Fatalf("Put duplicate: %v", err)
+	}
+	if !first.Equals(second) {
+		t.Fatalf("duplicate CID = %s, want %s", second, first)
+	}
+	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), codec.CodecMaltManifest)
+	if err != nil {
+		t.Fatalf("PutWithCodec: %v", err)
+	}
+	if typed.Prefix().Codec != codec.CodecMaltManifest {
+		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, codec.CodecMaltManifest)
+	}
+	if err := batcher.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if len(recorder.batches) != 1 {
+		t.Fatalf("batch calls = %d, want 1", len(recorder.batches))
+	}
+	if len(recorder.batches[0]) != 2 {
+		t.Fatalf("batched blocks = %d, want 2", len(recorder.batches[0]))
+	}
+}
+
+func TestBuildAddStagingTreeFlushesCASBatchBeforeRootMaterialization(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	recorder := newRecordingAddCAS(casClient)
+
+	inputRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "a.txt"), []byte("duplicate"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "b.txt"), []byte("duplicate"), 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	large := make([]byte, addFixedChunkSize+11)
+	for i := range large {
+		large[i] = byte('a' + (i % 17))
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "large.bin"), large, 0o644); err != nil {
+		t.Fatalf("write large: %v", err)
+	}
+
+	staged, err := buildAddStagingTree(ctx, recorder, daemon, []string{inputRoot}, addBuildOptions{})
+	if err != nil {
+		t.Fatalf("build staging: %v", err)
+	}
+	if staged.Files != 3 {
+		t.Fatalf("files = %d, want 3", staged.Files)
+	}
+	if len(recorder.batches) == 0 {
+		t.Fatal("expected staged CAS writes to flush through PutBatch")
+	}
+	firstBatchLen := len(recorder.batches[0])
+	if firstBatchLen != 1 {
+		t.Fatalf("first staged batch size = %d, want 1 deduplicated small-file payload", firstBatchLen)
+	}
+
+	mat, err := materializeDirectory(ctx, daemon, recorder, staged.Root)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	base := filepath.Base(inputRoot)
+	for _, p := range []string{base + "/a.txt", base + "/b.txt", base + "/large.bin"} {
+		if _, err := daemon.Stat(ctx, mat.Key.String(), p); err != nil {
+			t.Fatalf("stat %q: %v", p, err)
+		}
+	}
+	body, _, _, err := daemon.GetContent(ctx, mat.Key.String(), base+"/a.txt", "")
+	if err != nil {
+		t.Fatalf("get a.txt: %v", err)
+	}
+	if string(body) != "duplicate" {
+		t.Fatalf("a.txt body = %q, want duplicate", body)
+	}
+	largeBody, _, _, err := daemon.GetContent(ctx, mat.Key.String(), base+"/large.bin", "")
+	if err != nil {
+		t.Fatalf("get large.bin: %v", err)
+	}
+	if len(largeBody) != len(large) || string(largeBody[:64]) != string(large[:64]) {
+		t.Fatal("large body mismatch")
+	}
+}
+
 func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
@@ -726,6 +826,39 @@ func newAddTestClients(t *testing.T) (*daemonclient.Client, *ipfs.Client) {
 	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
 	t.Cleanup(ts.Close)
 	return daemonclient.NewWithBaseURL(ts.URL), ipfs.NewClient(casTS.URL)
+}
+
+type recordingAddCAS struct {
+	inner   addCASClient
+	batches [][]cas.Block
+}
+
+func newRecordingAddCAS(inner addCASClient) *recordingAddCAS {
+	return &recordingAddCAS{inner: inner}
+}
+
+func (r *recordingAddCAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	return r.inner.Put(ctx, data)
+}
+
+func (r *recordingAddCAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	return r.inner.PutWithCodec(ctx, data, codec)
+}
+
+func (r *recordingAddCAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
+	return r.inner.Get(ctx, c)
+}
+
+func (r *recordingAddCAS) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	cloned := make([]cas.Block, len(blocks))
+	for i, block := range blocks {
+		cloned[i] = cas.Block{Data: append([]byte(nil), block.Data...), Codec: block.Codec}
+	}
+	r.batches = append(r.batches, cloned)
+	if batch, ok := r.inner.(cas.BatchWriter); ok {
+		return batch.PutBatch(ctx, blocks)
+	}
+	return cas.PutBlocks(ctx, r.inner, blocks)
 }
 
 func mustAddNodeAtPath(t *testing.T, root *addNode, p string) *addNode {

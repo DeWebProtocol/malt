@@ -417,17 +417,21 @@ func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error
 		return l.blocks.Put(ctx, data)
 	}
 
-	chunks := make([]cid.Cid, 0, (len(data)+l.chunkSize-1)/l.chunkSize)
+	blocks := make([]cas.Block, 0, (len(data)+l.chunkSize-1)/l.chunkSize)
 	for start := 0; start < len(data); start += l.chunkSize {
 		end := start + l.chunkSize
 		if end > len(data) {
 			end = len(data)
 		}
-		chunkCID, err := l.blocks.Put(ctx, data[start:end])
-		if err != nil {
-			return cid.Undef, err
-		}
-		chunks = append(chunks, chunkCID)
+		blocks = append(blocks, cas.Block{Data: data[start:end]})
+	}
+	results, err := cas.PutBlocks(ctx, l.blocks, blocks)
+	if err != nil {
+		return cid.Undef, err
+	}
+	chunks := make([]cid.Cid, len(results))
+	for i, result := range results {
+		chunks[i] = result.CID
 	}
 	return l.lists.Commit(ctx, l.namespace, list.NewViewFromSlice(chunks))
 }
