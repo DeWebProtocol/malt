@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -19,6 +20,8 @@ import (
 	cashttpapi "github.com/dewebprotocol/malt/core/cas/httpapi"
 	cid "github.com/ipfs/go-cid"
 )
+
+var errBatchEndpointUnsupported = errors.New("MALT batch endpoint unsupported")
 
 // Client implements cas.Client using a local IPFS daemon API.
 type Client struct {
@@ -192,7 +195,17 @@ func (c *Client) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutRes
 	for i, item := range unique {
 		uniqueCIDs[i] = item.cid
 	}
-	present, err := c.HasBatch(ctx, uniqueCIDs)
+	present, err := c.hasBatchForPut(ctx, uniqueCIDs)
+	if errors.Is(err, errBatchEndpointUnsupported) {
+		uploaded, err := c.putBatchMissingIndividually(ctx, unique)
+		if err != nil {
+			return nil, err
+		}
+		for i, result := range uploaded {
+			results[unique[i].index] = result
+		}
+		return results, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +238,57 @@ func (c *Client) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutRes
 			return nil, fmt.Errorf("batch put returned CID %s for block %d, want %s", result.CID, item.index, item.cid)
 		}
 		results[item.index] = result
+	}
+	return results, nil
+}
+
+func (c *Client) hasBatchForPut(ctx context.Context, cids []cid.Cid) ([]bool, error) {
+	if len(cids) == 0 {
+		return []bool{}, nil
+	}
+	reqBody := cashttpapi.HasBatchRequest{CIDs: make([]string, len(cids))}
+	for i, blockCID := range cids {
+		reqBody.CIDs[i] = blockCID.String()
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal batch has request: %w", err)
+	}
+	apiURL := fmt.Sprintf("%s/api/v0/malt/block/has-batch", c.apiURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create batch has request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check batch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if isBatchEndpointUnsupported(resp.StatusCode) {
+		io.Copy(io.Discard, resp.Body)
+		return nil, errBatchEndpointUnsupported
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("MALT batch has returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var apiResp cashttpapi.HasBatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("decode batch has response: %w", err)
+	}
+	if len(apiResp.Results) != len(cids) {
+		return nil, fmt.Errorf("batch has returned %d results for %d CIDs", len(apiResp.Results), len(cids))
+	}
+	results := make([]bool, len(cids))
+	for i, item := range apiResp.Results {
+		if item.CID != cids[i].String() {
+			return nil, fmt.Errorf("batch has returned CID %s at index %d, want %s", item.CID, i, cids[i])
+		}
+		results[i] = item.Present
 	}
 	return results, nil
 }

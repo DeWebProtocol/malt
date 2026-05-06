@@ -544,9 +544,16 @@ func TestBuildAddStagingTreeFlushesCASBatchBeforeRootMaterialization(t *testing.
 	if len(recorder.batches) == 0 {
 		t.Fatal("expected staged CAS writes to flush through PutBatch")
 	}
-	firstBatchLen := len(recorder.batches[0])
-	if firstBatchLen != 1 {
-		t.Fatalf("first staged batch size = %d, want 1 deduplicated small-file payload", firstBatchLen)
+	payloadCopies := 0
+	for _, batch := range recorder.batches {
+		for _, block := range batch {
+			if string(block.Data) == "duplicate" {
+				payloadCopies++
+			}
+		}
+	}
+	if payloadCopies != 1 {
+		t.Fatalf("deduplicated small-file payload copies = %d, want 1", payloadCopies)
 	}
 
 	mat, err := materializeDirectory(ctx, daemon, recorder, staged.Root)
@@ -571,6 +578,124 @@ func TestBuildAddStagingTreeFlushesCASBatchBeforeRootMaterialization(t *testing.
 		t.Fatalf("get large.bin: %v", err)
 	}
 	if len(largeBody) != len(large) || string(largeBody[:64]) != string(large[:64]) {
+		t.Fatal("large body mismatch")
+	}
+}
+
+func TestAddInputsWithUnixFSUsesCASPutBatch(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	recorder := newRecordingAddCAS(casClient)
+
+	inputRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "a.txt"), []byte("hello batch"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, recorder, []string{inputRoot}, "", addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add with unixfs: %v", err)
+	}
+	if result.NewRoot == "" {
+		t.Fatal("new root should not be empty")
+	}
+	if len(recorder.batches) == 0 {
+		t.Fatal("expected normal MALT add path to call PutBatch")
+	}
+	body, _, _, err := daemon.GetContent(ctx, result.NewRoot, filepath.Base(inputRoot)+"/a.txt", "")
+	if err != nil {
+		t.Fatalf("get a.txt: %v", err)
+	}
+	if string(body) != "hello batch" {
+		t.Fatalf("body = %q, want hello batch", body)
+	}
+}
+
+func TestAddInputsWithUnixFSDeduplicatesDuplicateSmallPayloads(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	recorder := newRecordingAddCAS(casClient)
+
+	inputRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	payload := []byte("same payload")
+	if err := os.WriteFile(filepath.Join(inputRoot, "a.txt"), payload, 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "b.txt"), payload, 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, recorder, []string{inputRoot}, "", addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add with unixfs: %v", err)
+	}
+	payloadCopies := 0
+	for _, batch := range recorder.batches {
+		for _, block := range batch {
+			if string(block.Data) == string(payload) {
+				payloadCopies++
+			}
+		}
+	}
+	if payloadCopies != 1 {
+		t.Fatalf("duplicate payload copies uploaded = %d, want 1", payloadCopies)
+	}
+
+	base := filepath.Base(inputRoot)
+	for _, name := range []string{"a.txt", "b.txt"} {
+		body, _, _, err := daemon.GetContent(ctx, result.NewRoot, base+"/"+name, "")
+		if err != nil {
+			t.Fatalf("get %s: %v", name, err)
+		}
+		if string(body) != string(payload) {
+			t.Fatalf("%s body = %q, want %q", name, body, payload)
+		}
+	}
+}
+
+func TestAddInputsWithUnixFSLargeFileThroughStaging(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	recorder := newRecordingAddCAS(casClient)
+
+	inputRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	large := make([]byte, addFixedChunkSize+31)
+	for i := range large {
+		large[i] = byte('a' + (i % 19))
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "large.bin"), large, 0o644); err != nil {
+		t.Fatalf("write large: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, recorder, []string{inputRoot}, "", addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add with unixfs: %v", err)
+	}
+	base := filepath.Base(inputRoot)
+	stat, err := daemon.Stat(ctx, result.NewRoot, base+"/large.bin")
+	if err != nil {
+		t.Fatalf("stat large: %v", err)
+	}
+	if stat.Kind != "file" || stat.StorageKind != "list" {
+		t.Fatalf("unexpected large stat: %+v", stat)
+	}
+	if stat.Size == nil || *stat.Size != int64(len(large)) {
+		t.Fatalf("large size = %v, want %d", stat.Size, len(large))
+	}
+	body, _, _, err := daemon.GetContent(ctx, result.NewRoot, base+"/large.bin", "")
+	if err != nil {
+		t.Fatalf("get large: %v", err)
+	}
+	if len(body) != len(large) || string(body[:64]) != string(large[:64]) {
 		t.Fatal("large body mismatch")
 	}
 }

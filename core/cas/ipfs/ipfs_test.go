@@ -144,12 +144,14 @@ func TestClientPutBatchUploadsOnlyMissingBlocks(t *testing.T) {
 func TestClientPutBatchFallsBackToSingleBlockPut(t *testing.T) {
 	ctx := context.Background()
 	var singlePuts int
+	var statCalls int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v0/malt/block/has-batch", "/api/v0/malt/block/put-batch":
 			http.NotFound(w, r)
 		case "/api/v0/block/stat":
-			http.NotFound(w, r)
+			statCalls++
+			t.Fatalf("PutBatch fallback must not call block/stat")
 		case "/api/v0/block/put":
 			singlePuts++
 			blockCID := cidForMultipartPut(t, r)
@@ -171,10 +173,98 @@ func TestClientPutBatchFallsBackToSingleBlockPut(t *testing.T) {
 	if singlePuts != 2 {
 		t.Fatalf("single puts = %d, want 2", singlePuts)
 	}
+	if statCalls != 0 {
+		t.Fatalf("stat calls = %d, want 0", statCalls)
+	}
 	for i, result := range results {
 		if result.Status != cas.PutStatusStored {
 			t.Fatalf("result[%d] status = %q, want stored", i, result.Status)
 		}
+	}
+}
+
+func TestClientPutBatchUnsupportedFallbackDeduplicates(t *testing.T) {
+	ctx := context.Background()
+	var singlePuts int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/malt/block/has-batch", "/api/v0/malt/block/put-batch":
+			http.NotFound(w, r)
+		case "/api/v0/block/stat":
+			t.Fatalf("PutBatch fallback must not call block/stat")
+		case "/api/v0/block/put":
+			singlePuts++
+			blockCID := cidForMultipartPut(t, r)
+			encodeJSON(t, w, struct {
+				Key  string `json:"Key"`
+				Size int    `json:"Size"`
+			}{Key: blockCID.String()})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL)
+	results, err := client.PutBatch(ctx, []cas.Block{
+		{Data: []byte("same")},
+		{Data: []byte("same")},
+		{Data: []byte("other")},
+	})
+	if err != nil {
+		t.Fatalf("PutBatch fallback duplicates: %v", err)
+	}
+	if singlePuts != 2 {
+		t.Fatalf("single puts = %d, want 2", singlePuts)
+	}
+	if results[0].Status != cas.PutStatusStored || results[2].Status != cas.PutStatusStored {
+		t.Fatalf("stored statuses = %q/%q, want stored", results[0].Status, results[2].Status)
+	}
+	if results[1].Status != cas.PutStatusDuplicate {
+		t.Fatalf("duplicate status = %q, want duplicate", results[1].Status)
+	}
+}
+
+func TestClientPutBatchUnsupportedFallbackPreservesTypedCodec(t *testing.T) {
+	ctx := context.Background()
+	var gotFormat string
+	var gotMHType string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/malt/block/has-batch", "/api/v0/malt/block/put-batch":
+			http.NotFound(w, r)
+		case "/api/v0/block/stat":
+			t.Fatalf("PutBatch fallback must not call block/stat")
+		case "/api/v0/block/put":
+			gotFormat = r.URL.Query().Get("format")
+			gotMHType = r.URL.Query().Get("mhtype")
+			blockCID := cidForMultipartPut(t, r)
+			encodeJSON(t, w, struct {
+				Key  string `json:"Key"`
+				Size int    `json:"Size"`
+			}{Key: blockCID.String()})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL)
+	results, err := client.PutBatch(ctx, []cas.Block{{
+		Data:  []byte(`{"entries":["a.txt"]}`),
+		Codec: codec.CodecMaltManifest,
+	}})
+	if err != nil {
+		t.Fatalf("PutBatch typed fallback: %v", err)
+	}
+	if gotFormat != strconv.FormatUint(codec.CodecMaltManifest, 10) {
+		t.Fatalf("format = %q, want %d", gotFormat, codec.CodecMaltManifest)
+	}
+	if gotMHType != "sha2-256" {
+		t.Fatalf("mhtype = %q, want sha2-256", gotMHType)
+	}
+	if results[0].CID.Prefix().Codec != codec.CodecMaltManifest {
+		t.Fatalf("result codec = %x, want %x", results[0].CID.Prefix().Codec, codec.CodecMaltManifest)
 	}
 }
 
