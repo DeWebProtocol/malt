@@ -321,10 +321,14 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusCreated, &httpapi.SemanticMutationResponse{
-		BaseRoot: receipt.BaseRoot.String(),
-		NewRoot:  receipt.NewRoot.String(),
-		PutCount: receipt.PutCount,
-		ArcCount: receipt.ArcCount,
+		BaseRoot:        receipt.BaseRoot.String(),
+		NewRoot:         receipt.NewRoot.String(),
+		ResultRoot:      receipt.NewRoot.String(),
+		PutCount:        receipt.PutCount,
+		ArcCount:        receipt.ArcCount,
+		MALTObjectCount: receipt.PutCount,
+		MapCount:        countSemanticPuts(mut.Puts, arcset.KindMap),
+		ListCount:       countSemanticPuts(mut.Puts, arcset.KindList),
 	})
 }
 
@@ -681,6 +685,9 @@ func (s *Server) flatUnixFSMapBoundaryStat(ctx context.Context, g *graph.Graph, 
 		if err != nil || codec.SemanticKindOf(target) != codec.SemanticKindMap {
 			continue
 		}
+		if stat, statErr := s.unixFSPathStat(ctx, g, target, suffix); statErr == nil {
+			return stat, nil
+		}
 		return s.legacyPathStat(ctx, g, target, suffix)
 	}
 	return nil, errPathNotFound
@@ -701,6 +708,9 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target 
 			Entries:     entries,
 		}, nil
 	case codec.SemanticKindMap:
+		if stat, err := s.unixFSPathStat(ctx, g, target, ""); err == nil {
+			return stat, nil
+		}
 		payload, err := mandatoryMapPayload(ctx, g, target)
 		if err != nil {
 			return nil, err
@@ -756,6 +766,9 @@ func (s *Server) legacyPathStat(ctx context.Context, g *graph.Graph, root cid.Ci
 	case codec.SemanticKindManifest:
 		return s.statFromFlatTarget(ctx, g, key)
 	case codec.SemanticKindMap:
+		if stat, err := s.unixFSPathStat(ctx, g, key, ""); err == nil {
+			return stat, nil
+		}
 		payload, err := mandatoryMapPayload(ctx, g, key)
 		if err != nil {
 			return nil, err
@@ -1400,6 +1413,16 @@ func semanticEntryFromRequest(kind arcset.Kind, req httpapi.SemanticMutationEntr
 		Coordinate: coord,
 		Target:     targetRef,
 	}, nil
+}
+
+func countSemanticPuts(puts []gateway.ArcSetPut, kind arcset.Kind) int {
+	count := 0
+	for _, put := range puts {
+		if put.Kind == kind {
+			count++
+		}
+	}
+	return count
 }
 
 func semanticTargetRef(kind string, target cid.Cid) (arcset.TargetRef, error) {

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
@@ -211,8 +212,6 @@ func TestCollectAddInputsFollowsSymlink(t *testing.T) {
 }
 
 func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
-	t.Skip("addDirectoryWithUnixFS does not support symlinks inside input directories")
-
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
 
@@ -268,8 +267,6 @@ func TestAddInputsFlatUnixFSUsesMapBoundaryForSymlinkDirectory(t *testing.T) {
 }
 
 func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t *testing.T) {
-	t.Skip("addDirectoryWithUnixFS symlink handling has pre-existing issues")
-
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
 
@@ -314,6 +311,106 @@ func TestAddInputsHierarchicalUnixFSUsesMapBoundaryForTopLevelSymlinkDirectory(t
 	}
 	if string(body) != "via symlink" {
 		t.Fatalf("symlink target body = %q", string(body))
+	}
+}
+
+func TestAddInputsMALTSymlinkFileUsesRegularFilePayload(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+
+	root := newTestRoot(ctx, t, daemon, casClient)
+
+	rootDir := t.TempDir()
+	inputRoot := filepath.Join(rootDir, "repo")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir input root: %v", err)
+	}
+	target := filepath.Join(rootDir, "target.txt")
+	if err := os.WriteFile(target, []byte("via symlink file"), 0o644); err != nil {
+		t.Fatalf("write symlink target file: %v", err)
+	}
+	link := filepath.Join(inputRoot, "linked.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported in test environment: %v", err)
+	}
+
+	result, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{inputRoot}, root, addBuildOptions{
+		Target: addTargetMALT,
+		Model:  addModelUnixFS,
+		Layout: addLayoutFlat,
+	})
+	if err != nil {
+		t.Fatalf("add unixfs with symlink file: %v", err)
+	}
+	if result.SymlinkRoots != 0 {
+		t.Fatalf("symlink roots = %d, want 0", result.SymlinkRoots)
+	}
+
+	base := filepath.Base(inputRoot)
+	stat, err := daemon.Stat(ctx, result.NewRoot, base+"/linked.txt")
+	if err != nil {
+		t.Fatalf("stat symlink file: %v", err)
+	}
+	if stat.Kind != "file" || stat.StorageKind != "raw" {
+		t.Fatalf("unexpected symlink file stat: %+v", stat)
+	}
+
+	resolved, err := daemon.ProveRoot(ctx, result.NewRoot, base+"/linked.txt")
+	if err != nil {
+		t.Fatalf("resolve symlink file: %v", err)
+	}
+	var parentTarget cid.Cid
+	for _, step := range resolved.Transcript {
+		if step.Path == base+"/linked.txt" || step.Path == "linked.txt" {
+			parsed, err := cid.Decode(step.Target)
+			if err != nil {
+				t.Fatalf("decode symlink file target: %v", err)
+			}
+			parentTarget = parsed
+		}
+	}
+	if !parentTarget.Defined() {
+		t.Fatalf("resolve transcript did not expose symlink file target: %+v", resolved.Transcript)
+	}
+	if parentTarget.String() != stat.Key {
+		t.Fatalf("symlink file parent target = %s, want stat key %s", parentTarget, stat.Key)
+	}
+	if codec.SemanticKindOf(parentTarget) == codec.SemanticKindMap {
+		t.Fatalf("symlink file parent target should be a regular file payload, got map %s", parentTarget)
+	}
+	body, _, _, err := daemon.GetContent(ctx, result.NewRoot, base+"/linked.txt", "")
+	if err != nil {
+		t.Fatalf("read symlink file content: %v", err)
+	}
+	if string(body) != "via symlink file" {
+		t.Fatalf("symlink file body = %q", string(body))
+	}
+}
+
+func TestFormatAddSummaryUsesHumanReadableObjectCounts(t *testing.T) {
+	out := formatAddSummary(addSummary{
+		Target:           addTargetMALT,
+		Model:            addModelUnixFS,
+		Layout:           addLayoutFlat,
+		NewRoot:          fakeAddCID("summary-root").String(),
+		ImmutableObjects: 3,
+		MALTObjects:      2,
+		MALTMaps:         2,
+		MALTLists:        0,
+		SymlinkRoots:     1,
+		Files:            1,
+		Bytes:            12,
+	})
+
+	for _, want := range []string{
+		"Uploaded 3 immutable objects",
+		"Wrote 2 MALT objects: 2 maps, 0 lists",
+		"Materialized 1 symlink root",
+		"Result root:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -923,6 +1020,65 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 	}
 	if _, err := daemon.Stat(ctx, mergedRoot, base+"/docs/new.txt"); err != nil {
 		t.Fatalf("new file should exist after merge: %v", err)
+	}
+}
+
+func TestAddInputsWithUnixFSRootReplacesExistingDirWithSymlinkDirBoundary(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+
+	root := newTestRoot(ctx, t, daemon, casClient)
+
+	firstRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(firstRoot, "linked"), 0o755); err != nil {
+		t.Fatalf("mkdir linked: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(firstRoot, "linked", "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("write old file: %v", err)
+	}
+	first, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{firstRoot}, root, addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add initial directory: %v", err)
+	}
+
+	rootDir := t.TempDir()
+	secondRoot := filepath.Join(rootDir, "repo")
+	targetDir := filepath.Join(rootDir, "target")
+	if err := os.MkdirAll(secondRoot, 0o755); err != nil {
+		t.Fatalf("mkdir second root: %v", err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir symlink target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write new file: %v", err)
+	}
+	if err := os.Symlink(targetDir, filepath.Join(secondRoot, "linked")); err != nil {
+		t.Skipf("symlink not supported in test environment: %v", err)
+	}
+
+	second, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{secondRoot}, first.NewRoot, addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add symlink directory over existing directory: %v", err)
+	}
+
+	base := filepath.Base(secondRoot)
+	linkStat, err := daemon.Stat(ctx, second.NewRoot, base+"/linked")
+	if err != nil {
+		t.Fatalf("stat symlink dir boundary: %v", err)
+	}
+	if linkStat.Kind != "dir" || linkStat.StorageKind != "map" {
+		t.Fatalf("unexpected symlink dir stat: %+v", linkStat)
+	}
+	body, _, _, err := daemon.GetContent(ctx, second.NewRoot, base+"/linked/new.txt", "")
+	if err != nil {
+		t.Fatalf("read symlink directory replacement content: %v", err)
+	}
+	if string(body) != "new" {
+		t.Fatalf("new body = %q", string(body))
+	}
+	if _, err := daemon.Stat(ctx, second.NewRoot, base+"/linked/old.txt"); err == nil {
+		t.Fatal("old directory child should be replaced by symlink directory boundary")
 	}
 }
 
