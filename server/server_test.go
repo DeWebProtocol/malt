@@ -3,12 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/config"
@@ -241,8 +243,8 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 	if snapshot.ArcTable.GetCount == 0 {
 		t.Fatalf("ArcTable GetCount = %d, want > 0", snapshot.ArcTable.GetCount)
 	}
-	if snapshot.Proof.ProofListCount != 2 {
-		t.Fatalf("ProofListCount = %d, want 2", snapshot.Proof.ProofListCount)
+	if snapshot.Proof.ProofListCount != 3 {
+		t.Fatalf("ProofListCount = %d, want 3", snapshot.Proof.ProofListCount)
 	}
 	if snapshot.Proof.StepCount == 0 || snapshot.Proof.TotalBytes == 0 {
 		t.Fatalf("Proof stats = %+v, want steps and byte accounting", snapshot.Proof)
@@ -1172,6 +1174,436 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	}
 	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
 		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	}
+}
+
+func TestServerDefaultGETReturnsProofHeader(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	// Create a structure with a small raw file
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	// Write a small file via UnixFS
+	fileBody := []byte("hello proof header")
+	resp, err = http.Post(ts.URL+"/"+root+"/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode unixfs write: %v", err)
+	}
+	resp.Body.Close()
+
+	// Default GET should include proof headers
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/readme.txt")
+	if err != nil {
+		t.Fatalf("default GET request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("default GET status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(body, fileBody) {
+		t.Fatalf("default GET body = %q, want %q", string(body), string(fileBody))
+	}
+
+	proofListHeader := resp.Header.Get("X-Malt-ProofList")
+	encodingHeader := resp.Header.Get("X-Malt-ProofList-Encoding")
+	if proofListHeader == "" {
+		t.Fatal("X-Malt-ProofList header is missing")
+	}
+	if encodingHeader != "base64url-json" {
+		t.Fatalf("X-Malt-ProofList-Encoding = %q, want %q", encodingHeader, "base64url-json")
+	}
+
+	// Vary header should be present
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+
+	// Decode and validate the proof list
+	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
+	if err != nil {
+		t.Fatalf("decode proof list header: %v", err)
+	}
+	var pl prooflist.ProofList
+	if err := json.Unmarshal(proofData, &pl); err != nil {
+		t.Fatalf("unmarshal proof list: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("proof list validation: %v", err)
+	}
+}
+
+func TestServerDefaultGETProofHeaderWithProofFalse(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	fileBody := []byte("opt-out proof")
+	resp, err = http.Post(ts.URL+"/"+root+"/file.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	resp.Body.Close()
+
+	// GET with ?proof=false should omit proof headers
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/file.txt?proof=false")
+	if err != nil {
+		t.Fatalf("GET with proof=false: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(body, fileBody) {
+		t.Fatalf("GET body = %q, want %q", string(body), string(fileBody))
+	}
+
+	if resp.Header.Get("X-Malt-ProofList") != "" {
+		t.Fatal("X-Malt-ProofList header should be absent when proof=false")
+	}
+
+	// Vary header should still be present since response varies based on X-Malt-Proof
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+}
+
+func TestServerDefaultGETProofHeaderWithXMaltProofOmit(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	fileBody := []byte("header opt-out proof")
+	resp, err = http.Post(ts.URL+"/"+root+"/file2.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	resp.Body.Close()
+
+	// GET with X-Malt-Proof: omit should omit proof headers
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+writeResp.NewRoot+"/file2.txt", nil)
+	req.Header.Set("X-Malt-Proof", "omit")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET with X-Malt-Proof: omit: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(body, fileBody) {
+		t.Fatalf("GET body = %q, want %q", string(body), string(fileBody))
+	}
+
+	if resp.Header.Get("X-Malt-ProofList") != "" {
+		t.Fatal("X-Malt-ProofList header should be absent when X-Malt-Proof: omit")
+	}
+
+	// Vary header should still be present since response varies based on X-Malt-Proof
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+}
+
+func TestServerDefaultGETDirectoryProofHeader(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	// Create a directory
+	resp, err = http.Post(ts.URL+"/"+root+"/docs?type=dir", "application/json", nil)
+	if err != nil {
+		t.Fatalf("create directory: %v", err)
+	}
+	var dirResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dirResp); err != nil {
+		t.Fatalf("decode dir response: %v", err)
+	}
+	resp.Body.Close()
+
+	// Default GET on directory should include proof header
+	resp, err = http.Get(ts.URL + "/" + dirResp.NewRoot + "/docs")
+	if err != nil {
+		t.Fatalf("GET directory: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET directory status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var dirStat httpapi.PathStatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dirStat); err != nil {
+		t.Fatalf("decode directory response: %v", err)
+	}
+	if dirStat.Kind != "dir" {
+		t.Fatalf("dir stat kind = %q, want %q", dirStat.Kind, "dir")
+	}
+
+	proofListHeader := resp.Header.Get("X-Malt-ProofList")
+	if proofListHeader == "" {
+		t.Fatal("X-Malt-ProofList header is missing for directory GET")
+	}
+
+	// Vary header should be present
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+
+	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
+	if err != nil {
+		t.Fatalf("decode proof list header: %v", err)
+	}
+	var pl prooflist.ProofList
+	if err := json.Unmarshal(proofData, &pl); err != nil {
+		t.Fatalf("unmarshal proof list: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("proof list validation: %v", err)
+	}
+
+	// Directory proofs should include a terminal @payload binding step
+	var hasPayloadBinding bool
+	for _, step := range pl.Steps {
+		if step.Kind == prooflist.KindPayloadBinding && step.Path == "@payload" {
+			hasPayloadBinding = true
+			break
+		}
+	}
+	if !hasPayloadBinding {
+		t.Fatalf("directory proof missing terminal @payload binding step, steps: %+v", pl.Steps)
+	}
+}
+
+func TestServerDefaultGETRangeProofHeader(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	// Create a large file that spans multiple chunks
+	fileBody := append(bytes.Repeat([]byte{'a'}, fixedListChunkSize), []byte("bcdef")...)
+	resp, err = http.Post(ts.URL+"/"+root+"/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs large file: %v", err)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	resp.Body.Close()
+
+	// Range GET should include proof header with list index steps
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+writeResp.NewRoot+"/large.bin", nil)
+	req.Header.Set("Range", "bytes=262142-262145")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("range GET request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("range GET status = %d, want %d (Partial Content)", resp.StatusCode, http.StatusPartialContent)
+	}
+
+	contentRange := resp.Header.Get("Content-Range")
+	wantContentRange := "bytes 262142-262145/262149"
+	if contentRange != wantContentRange {
+		t.Fatalf("Content-Range = %q, want %q", contentRange, wantContentRange)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "aabc" {
+		t.Fatalf("range GET body = %q, want %q", string(body), "aabc")
+	}
+
+	proofListHeader := resp.Header.Get("X-Malt-ProofList")
+	if proofListHeader == "" {
+		t.Fatal("X-Malt-ProofList header is missing for range GET")
+	}
+
+	// Vary header should be present
+	varyHeader := resp.Header.Get("Vary")
+	if !strings.Contains(varyHeader, "X-Malt-Proof") {
+		t.Fatalf("Vary header = %q, want to contain X-Malt-Proof", varyHeader)
+	}
+
+	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
+	if err != nil {
+		t.Fatalf("decode proof list header: %v", err)
+	}
+	var pl prooflist.ProofList
+	if err := json.Unmarshal(proofData, &pl); err != nil {
+		t.Fatalf("unmarshal proof list: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("proof list validation: %v", err)
+	}
+
+	// Range GET proof should include list index steps for the touched chunks
+	var indexes []uint64
+	for _, step := range pl.Steps {
+		if step.Kind == prooflist.KindListIndex {
+			if step.Index == nil {
+				t.Fatalf("list-index step missing index: %+v", step)
+			}
+			indexes = append(indexes, *step.Index)
+		}
+	}
+	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
+		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	}
+}
+
+func TestServerHEADDoesNotReturnProofHeaders(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+	root := createResp.Root
+
+	fileBody := []byte("head test file")
+	resp, err = http.Post(ts.URL+"/"+root+"/head.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	resp.Body.Close()
+
+	// HEAD request should not return proof headers
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+writeResp.NewRoot+"/head.txt", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HEAD request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	if resp.Header.Get("X-Malt-ProofList") != "" {
+		t.Fatal("X-Malt-ProofList header should be absent for HEAD request")
+	}
+	if resp.Header.Get("X-Malt-ProofList-Encoding") != "" {
+		t.Fatal("X-Malt-ProofList-Encoding header should be absent for HEAD request")
 	}
 }
 

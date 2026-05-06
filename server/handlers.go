@@ -103,6 +103,23 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 
 	if stat.Kind == "dir" {
 		// Return JSON directory listing
+		if !shouldOmitDefaultProof(r) {
+			queryPath := path
+			if queryPath == "" {
+				queryPath = "@payload"
+			}
+			pl, err := s.contentProofList(r.Context(), g, root, queryPath, stat, 0, 0)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if err := writeProofListHeader(w, *pl); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			s.node.RecordProofList(*pl)
+		}
+		addVaryHeader(w, "X-Malt-Proof")
 		writeJSON(w, http.StatusOK, stat)
 		return
 	}
@@ -127,6 +144,27 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Generate and write proof headers before response headers
+	if !shouldOmitDefaultProof(r) {
+		queryPath := path
+		if queryPath == "" {
+			queryPath = "@payload"
+		}
+		pl, err := s.contentProofList(r.Context(), g, root, queryPath, stat, start, endExclusive)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := writeProofListHeader(w, *pl); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.node.RecordProofList(*pl)
+	}
+
+	// Advertise X-Malt-Proof as a variance header since proof generation depends on it
+	addVaryHeader(w, "X-Malt-Proof")
 	w.Header().Set("Accept-Ranges", "bytes")
 	if partial {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, endExclusive-1, totalSize))
@@ -1530,4 +1568,41 @@ func nonEmpty(primary string, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+// shouldOmitDefaultProof returns true when the request opts out of default proof
+// generation via query parameter or request header.
+func shouldOmitDefaultProof(r *http.Request) bool {
+	if r.URL.Query().Get("proof") == "false" {
+		return true
+	}
+	if r.Header.Get("X-Malt-Proof") == "omit" {
+		return true
+	}
+	return false
+}
+
+// writeProofListHeader encodes and writes the ProofList as base64url-json headers.
+func writeProofListHeader(w http.ResponseWriter, pl prooflist.ProofList) error {
+	data, err := json.Marshal(pl)
+	if err != nil {
+		return err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+	w.Header().Set("X-Malt-ProofList", encoded)
+	w.Header().Set("X-Malt-ProofList-Encoding", "base64url-json")
+	return nil
+}
+
+// addVaryHeader adds a Vary header value if not already present, preserving existing values.
+func addVaryHeader(w http.ResponseWriter, value string) {
+	values := w.Header().Values("Vary")
+	for _, existing := range values {
+		for _, part := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), value) {
+				return
+			}
+		}
+	}
+	w.Header().Add("Vary", value)
 }

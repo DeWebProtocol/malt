@@ -60,10 +60,14 @@ Conceptually, gateway reads return `result + ProofList`, where the ProofList is
 the vector-commitment proof chain from root to destination. Root-centric
 gateway materialization accepts semantic mutations that have already been
 produced by a layout and returns an operational receipt without publishing a
-managed head. The HTTP gateway may return blob content with ProofList metadata in response
-headers, and may return large-file byte ranges with ProofLists covering the
-selected list entries. File routes are product surfaces around the same
-root-centric materialization namespace.
+managed head. The HTTP gateway returns default `GET /{root}/{path}` file and
+directory reads with `ProofList` metadata in `X-Malt-ProofList` response
+headers encoded as `base64url-json`. Clients can opt out of default proof
+generation with `?proof=false` or `X-Malt-Proof: omit`; default GET responses
+advertise that request-header variance with `Vary: X-Malt-Proof`. Large-file
+byte-range reads include ProofLists covering the selected list entries. File
+routes are product surfaces around the same root-centric materialization
+namespace.
 
 ### List Semantic
 
@@ -360,6 +364,18 @@ mutations accepted by the gateway.
 `ProofList` is the standard verifier-facing read artifact. It should cover map
 step proofs, terminal `@payload` proofs, list index/range proofs, and blob
 target binding proofs from the queried root to the destination.
+
+The current daemon has two HTTP proof-bearing read surfaces:
+
+- default `GET /{root}/{path}` returns content or directory JSON and places the
+  verifier-facing `ProofList` in `X-Malt-ProofList` with
+  `X-Malt-ProofList-Encoding: base64url-json`
+- `GET /{root}/{path}?format=proof` returns the existing JSON
+  `ContentProofResponse` body with embedded content bytes, range metadata, and
+  `prooflist`
+
+`HEAD /{root}/{path}` is intentionally stat-only and returns stat headers
+without generating proof metadata.
 
 ## Flattened UnixFS-Style Layout
 
