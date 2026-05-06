@@ -172,13 +172,6 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	workingRoot := strings.TrimSpace(addRootFlag)
 	if opts.Target == addTargetMALT {
 		daemon = mustDaemonClient()
-		if workingRoot == "" {
-			rootResp, err := daemon.CreatePayloadRoot(ctx, nil)
-			if err != nil {
-				return daemonCommandError(err)
-			}
-			workingRoot = rootResp.Root
-		}
 	}
 
 	result, err := addInputsWithUnixFS(ctx, daemon, casClient, args, workingRoot, opts)
@@ -294,79 +287,39 @@ func normalizeAddToken(raw string) string {
 }
 
 func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
-	if daemon == nil {
-		return nil, fmt.Errorf("malt target requires daemon client")
-	}
-	inputs, err := collectAddInputs(rawInputs)
-	if err != nil {
-		return nil, err
-	}
-	mounted, err := mountAddInputs(inputs, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &addUnixFSResult{}
-	lastRoot := root
-	for _, item := range mounted {
-		if item.Input.Info.IsDir() {
-			files, bytesUploaded, newRoot, err := addDirectoryWithUnixFS(ctx, daemon, item, lastRoot, opts.Ignore)
-			if err != nil {
-				return nil, err
-			}
-			result.Files += files
-			result.Bytes += bytesUploaded
-			lastRoot = newRoot
-			continue
-		}
-		bytesUploaded, newRoot, err := addFileWithUnixFS(ctx, daemon, item.Input.AbsPath, item.MountBase, lastRoot)
-		if err != nil {
-			return nil, err
-		}
-		result.Files++
-		result.Bytes += bytesUploaded
-		lastRoot = newRoot
-	}
-	result.NewRoot = lastRoot
-	return result, nil
+	return addInputsWithMALTStagedUnixFS(ctx, daemon, casClient, rawInputs, root, opts)
 }
 
 func addInputsWithMALTHierarchicalUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+	return addInputsWithMALTStagedUnixFS(ctx, daemon, casClient, rawInputs, root, opts)
+}
+
+func addInputsWithMALTStagedUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if daemon == nil {
 		return nil, fmt.Errorf("malt target requires daemon client")
 	}
-	inputs, err := collectAddInputs(rawInputs)
-	if err != nil {
-		return nil, err
-	}
-	mounted, err := mountAddInputs(inputs, opts)
+	staged, err := buildAddStagingTree(ctx, casClient, daemon, rawInputs, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &addUnixFSResult{}
-	lastRoot := root
-	for _, item := range mounted {
-		if item.Input.Info.IsDir() {
-			files, bytesUploaded, newRoot, err := addDirectoryWithUnixFS(ctx, daemon, item, lastRoot, opts.Ignore)
-			if err != nil {
-				return nil, err
-			}
-			result.Files += files
-			result.Bytes += bytesUploaded
-			lastRoot = newRoot
-			continue
-		}
-		bytesUploaded, newRoot, err := addFileWithUnixFS(ctx, daemon, item.Input.AbsPath, item.MountBase, lastRoot)
+	rootNode := staged.Root
+	if strings.TrimSpace(root) != "" {
+		existing, err := loadExistingCurrentTree(ctx, daemon, casClient, root)
 		if err != nil {
 			return nil, err
 		}
-		result.Files++
-		result.Bytes += bytesUploaded
-		lastRoot = newRoot
+		rootNode = mergeAddNodes(existing, staged.Root)
 	}
-	result.NewRoot = lastRoot
-	return result, nil
+	mat, err := materializeDirectory(ctx, daemon, casClient, rootNode)
+	if err != nil {
+		return nil, err
+	}
+	return &addUnixFSResult{
+		Files:   staged.Files,
+		Bytes:   staged.Bytes,
+		NewRoot: mat.Key.String(),
+	}, nil
 }
 
 func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {
@@ -831,6 +784,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 		return nil, err
 	}
 
+	batcher := asAddCASBatcher(casClient)
 	root := newDirNode()
 	var files int
 	var bytesUploaded int64
@@ -838,7 +792,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
 			if item.Input.Symlink {
-				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, item.Input.AbsPath)
+				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, batcher, item.Input.AbsPath)
 				if err != nil {
 					return nil, err
 				}
@@ -849,7 +803,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 				bytesUploaded += dirBytes
 				continue
 			}
-			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, casClient, daemon, item, opts.Ignore)
+			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, batcher, daemon, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
@@ -857,12 +811,15 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 			bytesUploaded += dirBytes
 			continue
 		}
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, item.Input.AbsPath, item.MountBase)
+		fileBytes, err := stageSingleFile(ctx, root, batcher, daemon, item.Input.AbsPath, item.MountBase)
 		if err != nil {
 			return nil, err
 		}
 		files++
 		bytesUploaded += fileBytes
+	}
+	if err := batcher.Flush(ctx); err != nil {
+		return nil, fmt.Errorf("flush staged CAS batch: %w", err)
 	}
 
 	return &addBuildResult{
@@ -1059,36 +1016,42 @@ func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient,
 }
 
 func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, localPath string) (cid.Cid, error) {
-	data, err := os.ReadFile(localPath)
+	chunks, err := uploadFlatChunks(ctx, casClient, localPath)
 	if err != nil {
-		return cid.Undef, fmt.Errorf("read %s: %w", localPath, err)
+		return cid.Undef, err
 	}
-
-	// Use the daemon's UnixFS API to add the file. This creates a proper
-	// list structure (typed MALT list CID) for chunked content that the
-	// stat handler can recognize as StorageKind "list".
+	if batcher, ok := casClient.(*addCASBatcher); ok {
+		if err := batcher.Flush(ctx); err != nil {
+			return cid.Undef, fmt.Errorf("flush chunks for %s: %w", localPath, err)
+		}
+	}
 	tempRootResp, err := daemon.CreatePayloadRoot(ctx, nil)
 	if err != nil {
 		return cid.Undef, err
 	}
-
-	writeResp, err := daemon.AddUnixFSFile(ctx, tempRootResp.Root, "f", data)
+	entries := make([]httpapi.SemanticMutationEntry, len(chunks))
+	for i, chunk := range chunks {
+		index := uint64(i)
+		entries[i] = httpapi.SemanticMutationEntry{
+			Index:      &index,
+			Target:     chunk.String(),
+			TargetKind: "cas",
+		}
+	}
+	resp, err := daemon.ApplyRootSemanticMutation(ctx, tempRootResp.Root, &httpapi.SemanticMutationRequest{
+		Puts: []httpapi.SemanticMutationPut{{
+			Kind:    "list",
+			Entries: entries,
+		}},
+	})
 	if err != nil {
 		return cid.Undef, err
 	}
-
-	// Extract the file's payload CID (list CID for large files,
-	// raw CID for small). This is what gets stored as the child arc.
-	statResp, err := daemon.Stat(ctx, writeResp.NewRoot, "f")
+	listRoot, err := cid.Decode(resp.NewRoot)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, fmt.Errorf("decode list root CID: %w", err)
 	}
-
-	payloadCID, err := cid.Decode(statResp.Payload)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode payload CID: %w", err)
-	}
-	return payloadCID, nil
+	return listRoot, nil
 }
 
 func ensureDirNode(root *addNode, p string) *addNode {
@@ -1288,6 +1251,10 @@ func loadCurrentDirRecursive(ctx context.Context, daemon *daemonclient.Client, c
 }
 
 func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, node *addNode) (*addMaterializeResult, error) {
+	return materializeDirectoryWithBatcher(ctx, daemon, asAddCASBatcher(casClient), node)
+}
+
+func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.Client, casClient *addCASBatcher, node *addNode) (*addMaterializeResult, error) {
 	if node == nil || node.Kind != "dir" {
 		return nil, fmt.Errorf("materializeDirectory requires a directory node")
 	}
@@ -1306,7 +1273,7 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 			continue
 		}
 		if child.Kind == "dir" {
-			mat, err := materializeDirectory(ctx, daemon, casClient, child)
+			mat, err := materializeDirectoryWithBatcher(ctx, daemon, casClient, child)
 			if err != nil {
 				return nil, err
 			}
@@ -1338,6 +1305,9 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 	payloadCID, err := casClient.Put(ctx, payloadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("upload directory manifest: %w", err)
+	}
+	if err := casClient.Flush(ctx); err != nil {
+		return nil, fmt.Errorf("flush directory manifest: %w", err)
 	}
 
 	bindings := make(map[string]string, 1+len(childKeys)+len(desc))

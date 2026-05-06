@@ -2,6 +2,7 @@ package mock
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/core/cas"
+	cashttpapi "github.com/dewebprotocol/malt/core/cas/httpapi"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -34,6 +36,8 @@ func (s *HTTPServer) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v0/block/get", s.handleBlockGet)
 	mux.HandleFunc("POST /api/v0/block/put", s.handleBlockPut)
 	mux.HandleFunc("POST /api/v0/block/stat", s.handleBlockStat)
+	mux.HandleFunc("POST /api/v0/malt/block/has-batch", s.handleHasBatch)
+	mux.HandleFunc("POST /api/v0/malt/block/put-batch", s.handlePutBatch)
 	return mux
 }
 
@@ -113,6 +117,91 @@ func (s *HTTPServer) handleBlockPut(w http.ResponseWriter, r *http.Request) {
 	}{
 		Key:  blockCID.String(),
 		Size: len(data),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *HTTPServer) handleHasBatch(w http.ResponseWriter, r *http.Request) {
+	var req cashttpapi.HasBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid json: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	cids := make([]cid.Cid, len(req.CIDs))
+	for i, raw := range req.CIDs {
+		blockCID, err := cid.Decode(raw)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid cid at index %d: %v", i, err), http.StatusBadRequest)
+			return
+		}
+		cids[i] = blockCID
+	}
+
+	var (
+		present []bool
+		err     error
+	)
+	if batch, ok := s.cas.(cas.BatchReader); ok {
+		present, err = batch.HasBatch(r.Context(), cids)
+	} else {
+		present = make([]bool, len(cids))
+		for i, blockCID := range cids {
+			present[i], err = s.cas.Has(r.Context(), blockCID)
+			if err != nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(present) != len(cids) {
+		http.Error(w, "batch reader returned wrong result count", http.StatusInternalServerError)
+		return
+	}
+
+	resp := cashttpapi.HasBatchResponse{Results: make([]cashttpapi.HasBatchResult, len(cids))}
+	for i, blockCID := range cids {
+		resp.Results[i] = cashttpapi.HasBatchResult{
+			CID:     blockCID.String(),
+			Present: present[i],
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *HTTPServer) handlePutBatch(w http.ResponseWriter, r *http.Request) {
+	var req cashttpapi.PutBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid json: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	blocks := make([]cas.Block, len(req.Blocks))
+	for i, block := range req.Blocks {
+		data, err := base64.StdEncoding.DecodeString(block.Data)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid base64 at index %d: %v", i, err), http.StatusBadRequest)
+			return
+		}
+		blocks[i] = cas.Block{Data: data, Codec: block.Codec}
+	}
+
+	results, err := cas.PutBlocks(r.Context(), s.cas, blocks)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp := cashttpapi.PutBatchResponse{Results: make([]cashttpapi.PutBatchResult, len(results))}
+	for i, result := range results {
+		resp.Results[i] = cashttpapi.PutBatchResult{
+			CID:    result.CID.String(),
+			Status: string(result.Status),
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
