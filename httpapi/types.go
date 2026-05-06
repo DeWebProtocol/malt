@@ -43,10 +43,14 @@ type SemanticMutationEntry struct {
 
 // SemanticMutationResponse returns a gateway materialization receipt.
 type SemanticMutationResponse struct {
-	BaseRoot string `json:"base_root"`
-	NewRoot  string `json:"new_root"`
-	PutCount int    `json:"put_count"`
-	ArcCount int    `json:"arc_count"`
+	BaseRoot        string `json:"base_root"`
+	NewRoot         string `json:"new_root"`
+	ResultRoot      string `json:"result_root,omitempty"`
+	PutCount        int    `json:"put_count"`
+	ArcCount        int    `json:"arc_count"`
+	MALTObjectCount int    `json:"malt_object_count,omitempty"`
+	MapCount        int    `json:"map_count,omitempty"`
+	ListCount       int    `json:"list_count,omitempty"`
 }
 
 // MapCreateRequest creates a map root inside the current namespace.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/dewebprotocol/malt/internal/merkledagimport"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +40,11 @@ const (
 	addDirLayoutBasic    = "basic"
 	addDirLayoutHAMT     = "hamt"
 	addDirLayoutAdaptive = "adaptive"
+
+	addUnixFSTypeFile        = "file"
+	addUnixFSTypePrefix      = "malt:unixfs:type:v1:"
+	addUnixFSSizePrefix      = "malt:unixfs:size:v1:"
+	addUnixFSChunkSizePrefix = "malt:unixfs:chunk-size:v1:"
 )
 
 var (
@@ -79,15 +86,22 @@ var addCmd = &cobra.Command{
 }
 
 type addSummary struct {
-	Target     string `json:"target,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Layout     string `json:"layout,omitempty"`
-	FileLayout string `json:"file_layout,omitempty"`
-	DirLayout  string `json:"dir_layout,omitempty"`
-	OldRoot    string `json:"old_root,omitempty"`
-	NewRoot    string `json:"new_root"`
-	Files      int    `json:"files_imported"`
-	Bytes      int64  `json:"bytes_uploaded"`
+	Target           string `json:"target,omitempty"`
+	Model            string `json:"model,omitempty"`
+	Layout           string `json:"layout,omitempty"`
+	FileLayout       string `json:"file_layout,omitempty"`
+	DirLayout        string `json:"dir_layout,omitempty"`
+	OldRoot          string `json:"old_root,omitempty"`
+	NewRoot          string `json:"new_root"`
+	Files            int    `json:"files_imported"`
+	Bytes            int64  `json:"bytes_uploaded"`
+	ImmutableObjects int    `json:"immutable_objects_written,omitempty"`
+	MALTObjects      int    `json:"malt_objects_written,omitempty"`
+	MALTMaps         int    `json:"malt_maps_written,omitempty"`
+	MALTLists        int    `json:"malt_lists_written,omitempty"`
+	ArcSets          int    `json:"arcsets_written,omitempty"`
+	Arcs             int    `json:"arcs_written,omitempty"`
+	SymlinkRoots     int    `json:"symlink_roots,omitempty"`
 }
 
 type addNode struct {
@@ -120,21 +134,41 @@ type addMountedInput struct {
 }
 
 type addBuildResult struct {
-	Root  *addNode
-	Files int
-	Bytes int64
+	Root             *addNode
+	Files            int
+	Bytes            int64
+	ImmutableObjects int
+	MALTObjects      int
+	MALTMaps         int
+	MALTLists        int
+	ArcSets          int
+	Arcs             int
+	SymlinkRoots     int
 }
 
 type addMaterializeResult struct {
-	Key         cid.Cid
-	ArcCount    int
-	Descendants map[string]cid.Cid
+	Key              cid.Cid
+	ArcCount         int
+	Descendants      map[string]cid.Cid
+	ImmutableObjects int
+	MALTObjects      int
+	MALTMaps         int
+	MALTLists        int
+	ArcSets          int
+	Arcs             int
 }
 
 type addUnixFSResult struct {
-	Files   int
-	Bytes   int64
-	NewRoot string
+	Files            int
+	Bytes            int64
+	NewRoot          string
+	ImmutableObjects int
+	MALTObjects      int
+	MALTMaps         int
+	MALTLists        int
+	ArcSets          int
+	Arcs             int
+	SymlinkRoots     int
 }
 
 type addCASClient interface {
@@ -186,18 +220,39 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to materialize a new root")
 	}
 
-	printJSON(&addSummary{
-		Target:     opts.Target,
-		Model:      opts.Model,
-		Layout:     opts.Layout,
-		FileLayout: opts.FileLayout,
-		DirLayout:  opts.DirLayout,
-		OldRoot:    addRootFlag,
-		NewRoot:    result.NewRoot,
-		Files:      result.Files,
-		Bytes:      result.Bytes,
-	})
+	summary := addSummary{
+		Target:           opts.Target,
+		Model:            opts.Model,
+		Layout:           opts.Layout,
+		FileLayout:       opts.FileLayout,
+		DirLayout:        opts.DirLayout,
+		OldRoot:          addRootFlag,
+		NewRoot:          result.NewRoot,
+		Files:            result.Files,
+		Bytes:            result.Bytes,
+		ImmutableObjects: result.ImmutableObjects,
+		MALTObjects:      result.MALTObjects,
+		MALTMaps:         result.MALTMaps,
+		MALTLists:        result.MALTLists,
+		ArcSets:          result.ArcSets,
+		Arcs:             result.Arcs,
+		SymlinkRoots:     result.SymlinkRoots,
+	}
+	fmt.Print(formatAddSummary(summary))
 	return nil
+}
+
+func formatAddSummary(summary addSummary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Uploaded %d immutable objects, %d bytes\n", summary.ImmutableObjects, summary.Bytes)
+	fmt.Fprintf(&b, "Wrote %d MALT objects: %d maps, %d lists\n", summary.MALTObjects, summary.MALTMaps, summary.MALTLists)
+	if summary.SymlinkRoots == 1 {
+		fmt.Fprintf(&b, "Materialized 1 symlink root\n")
+	} else if summary.SymlinkRoots > 1 {
+		fmt.Fprintf(&b, "Materialized %d symlink roots\n", summary.SymlinkRoots)
+	}
+	fmt.Fprintf(&b, "Result root: %s\n", summary.NewRoot)
+	return b.String()
 }
 
 type addBuildOptions struct {
@@ -316,9 +371,16 @@ func addInputsWithMALTStagedUnixFS(ctx context.Context, daemon *daemonclient.Cli
 		return nil, err
 	}
 	return &addUnixFSResult{
-		Files:   staged.Files,
-		Bytes:   staged.Bytes,
-		NewRoot: mat.Key.String(),
+		Files:            staged.Files,
+		Bytes:            staged.Bytes,
+		NewRoot:          mat.Key.String(),
+		ImmutableObjects: staged.ImmutableObjects + mat.ImmutableObjects,
+		MALTObjects:      staged.MALTObjects + mat.MALTObjects,
+		MALTMaps:         staged.MALTMaps + mat.MALTMaps,
+		MALTLists:        staged.MALTLists + mat.MALTLists,
+		ArcSets:          staged.ArcSets + mat.ArcSets,
+		Arcs:             staged.Arcs + mat.Arcs,
+		SymlinkRoots:     staged.SymlinkRoots,
 	}, nil
 }
 
@@ -391,7 +453,7 @@ func stageFlatUnixFSDirectory(ctx context.Context, root *addNode, casClient addC
 				return fmt.Errorf("stat symlink target %s: %w", current, err)
 			}
 			if info.IsDir() {
-				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, current)
+				key, dirFiles, dirBytes, _, _, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, current)
 				if err != nil {
 					return err
 				}
@@ -515,74 +577,196 @@ func uploadFlatChunks(ctx context.Context, casClient addCASClient, localPath str
 	return chunks, nil
 }
 
-func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, localPath string) (cid.Cid, int, int64, error) {
+func materializeSymlinkFileBoundary(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, localPath string) (cid.Cid, int64, *addMaterializeResult, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
-		return cid.Undef, 0, 0, fmt.Errorf("stat symlink directory %s: %w", localPath, err)
+		return cid.Undef, 0, nil, fmt.Errorf("stat symlink file %s: %w", localPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return cid.Undef, 0, nil, fmt.Errorf("symlink target is not a regular file: %s", localPath)
+	}
+
+	var payload cid.Cid
+	payloadKind := "cas"
+	listObjects := 0
+	if info.Size() <= addFixedChunkSize {
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			return cid.Undef, 0, nil, fmt.Errorf("read %s: %w", localPath, err)
+		}
+		payload, err = casClient.Put(ctx, data)
+		if err != nil {
+			return cid.Undef, 0, nil, fmt.Errorf("upload %s to CAS: %w", localPath, err)
+		}
+	} else {
+		payload, err = uploadAsList(ctx, casClient, daemon, localPath)
+		if err != nil {
+			return cid.Undef, 0, nil, err
+		}
+		payloadKind = "list"
+		listObjects = 1
+	}
+
+	typeCID, err := addUnixFSIdentityCID([]byte(addUnixFSTypePrefix + addUnixFSTypeFile))
+	if err != nil {
+		return cid.Undef, 0, nil, err
+	}
+	sizeCID, err := addUnixFSUintMarker(addUnixFSSizePrefix, uint64(info.Size()))
+	if err != nil {
+		return cid.Undef, 0, nil, err
+	}
+	chunkSizeCID, err := addUnixFSUintMarker(addUnixFSChunkSizePrefix, addFixedChunkSize)
+	if err != nil {
+		return cid.Undef, 0, nil, err
+	}
+
+	base, err := daemon.CreatePayloadRoot(ctx, nil)
+	if err != nil {
+		return cid.Undef, 0, nil, err
+	}
+	resp, err := daemon.ApplyRootSemanticMutation(ctx, base.Root, &httpapi.SemanticMutationRequest{
+		Puts: []httpapi.SemanticMutationPut{{
+			Kind: "map",
+			Entries: []httpapi.SemanticMutationEntry{
+				{Path: "@type", Target: typeCID.String(), TargetKind: "cas"},
+				{Path: "@payload", Target: payload.String(), TargetKind: payloadKind},
+				{Path: "@size", Target: sizeCID.String(), TargetKind: "cas"},
+				{Path: "@chunksize", Target: chunkSizeCID.String(), TargetKind: "cas"},
+			},
+		}},
+	})
+	if err != nil {
+		return cid.Undef, 0, nil, err
+	}
+	fileRoot, err := cid.Decode(resp.NewRoot)
+	if err != nil {
+		return cid.Undef, 0, nil, fmt.Errorf("decode symlink file root: %w", err)
+	}
+	return fileRoot, info.Size(), &addMaterializeResult{
+		Key:         fileRoot,
+		MALTObjects: 1 + listObjects,
+		MALTMaps:    1,
+		MALTLists:   listObjects,
+		ArcSets:     1 + listObjects,
+		Arcs:        resp.ArcCount,
+	}, nil
+}
+
+func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, localPath string) (cid.Cid, int, int64, *addMaterializeResult, int, error) {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return cid.Undef, 0, 0, nil, 0, fmt.Errorf("stat symlink directory %s: %w", localPath, err)
 	}
 	if !info.IsDir() {
-		return cid.Undef, 0, 0, fmt.Errorf("symlink target is not a directory: %s", localPath)
+		return cid.Undef, 0, 0, nil, 0, fmt.Errorf("symlink target is not a directory: %s", localPath)
 	}
 	staged := newDirNode()
-	files, bytesUploaded, err := stageHierarchicalDirectoryChildren(ctx, staged, casClient, daemon, localPath, "", make(map[string]struct{}))
+	files, bytesUploaded, listObjects, nestedMat, nestedSymlinks, err := stageHierarchicalDirectoryChildren(ctx, staged, casClient, daemon, localPath, "", make(map[string]struct{}))
 	if err != nil {
-		return cid.Undef, 0, 0, err
+		return cid.Undef, 0, 0, nil, 0, err
 	}
 	mat, err := materializeDirectory(ctx, daemon, casClient, staged)
 	if err != nil {
-		return cid.Undef, 0, 0, err
+		return cid.Undef, 0, 0, nil, 0, err
 	}
-	return mat.Key, files, bytesUploaded, nil
+	mat.MALTObjects += nestedMat.MALTObjects + listObjects
+	mat.MALTMaps += nestedMat.MALTMaps
+	mat.MALTLists += nestedMat.MALTLists + listObjects
+	mat.ArcSets += nestedMat.ArcSets + listObjects
+	mat.Arcs += nestedMat.Arcs
+	return mat.Key, files, bytesUploaded, mat, nestedSymlinks, nil
 }
 
-func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localDir string, mountBase string, seen map[string]struct{}) (int, int64, error) {
+func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localDir string, mountBase string, seen map[string]struct{}) (int, int64, int, *addMaterializeResult, int, error) {
 	cycleKey, err := filepath.EvalSymlinks(localDir)
 	if err != nil {
 		cycleKey, err = filepath.Abs(localDir)
 		if err != nil {
-			return 0, 0, fmt.Errorf("resolve directory %s: %w", localDir, err)
+			return 0, 0, 0, nil, 0, fmt.Errorf("resolve directory %s: %w", localDir, err)
 		}
 	}
 	if _, ok := seen[cycleKey]; ok {
-		return 0, 0, fmt.Errorf("symlink cycle detected at %s", localDir)
+		return 0, 0, 0, nil, 0, fmt.Errorf("symlink cycle detected at %s", localDir)
 	}
 	seen[cycleKey] = struct{}{}
 	defer delete(seen, cycleKey)
 
 	entries, err := os.ReadDir(localDir)
 	if err != nil {
-		return 0, 0, fmt.Errorf("read directory %s: %w", localDir, err)
+		return 0, 0, 0, nil, 0, fmt.Errorf("read directory %s: %w", localDir, err)
 	}
 	var files int
 	var bytesUploaded int64
+	var listObjects int
+	nestedMat := &addMaterializeResult{}
+	var symlinkRoots int
 	for _, entry := range entries {
 		childLocal := filepath.Join(localDir, entry.Name())
 		childPath := canonicalAddPath(path.Join(mountBase, entry.Name()))
+		if entry.Type()&fs.ModeSymlink != 0 {
+			info, err := os.Stat(childLocal)
+			if err != nil {
+				return 0, 0, 0, nil, 0, fmt.Errorf("stat symlink target %s: %w", childLocal, err)
+			}
+			if info.IsDir() {
+				key, dirFiles, dirBytes, mat, nestedSymlinkCount, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, childLocal)
+				if err != nil {
+					return 0, 0, 0, nil, 0, err
+				}
+				if err := setMapDirNode(root, childPath, key); err != nil {
+					return 0, 0, 0, nil, 0, err
+				}
+				files += dirFiles
+				bytesUploaded += dirBytes
+				addMaterializeStats(nestedMat, mat)
+				symlinkRoots += 1 + nestedSymlinkCount
+				continue
+			}
+			if !info.Mode().IsRegular() {
+				return 0, 0, 0, nil, 0, fmt.Errorf("non-regular symlink target is not supported: %s", childLocal)
+			}
+			key, fileBytes, mat, err := materializeSymlinkFileBoundary(ctx, daemon, casClient, childLocal)
+			if err != nil {
+				return 0, 0, 0, nil, 0, err
+			}
+			if err := setMapDirNode(root, childPath, key); err != nil {
+				return 0, 0, 0, nil, 0, err
+			}
+			files++
+			bytesUploaded += fileBytes
+			addMaterializeStats(nestedMat, mat)
+			symlinkRoots++
+			continue
+		}
 		info, err := os.Stat(childLocal)
 		if err != nil {
-			return 0, 0, fmt.Errorf("stat %s: %w", childLocal, err)
+			return 0, 0, 0, nil, 0, fmt.Errorf("stat %s: %w", childLocal, err)
 		}
 		if info.IsDir() {
 			ensureDirNode(root, childPath)
-			childFiles, childBytes, err := stageHierarchicalDirectoryChildren(ctx, root, casClient, daemon, childLocal, childPath, seen)
+			childFiles, childBytes, childLists, childMat, childSymlinks, err := stageHierarchicalDirectoryChildren(ctx, root, casClient, daemon, childLocal, childPath, seen)
 			if err != nil {
-				return 0, 0, err
+				return 0, 0, 0, nil, 0, err
 			}
 			files += childFiles
 			bytesUploaded += childBytes
+			listObjects += childLists
+			addMaterializeStats(nestedMat, childMat)
+			symlinkRoots += childSymlinks
 			continue
 		}
 		if !info.Mode().IsRegular() {
-			return 0, 0, fmt.Errorf("non-regular file is not supported: %s", childLocal)
+			return 0, 0, 0, nil, 0, fmt.Errorf("non-regular file is not supported: %s", childLocal)
 		}
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, childLocal, childPath)
+		fileBytes, childLists, err := stageSingleFile(ctx, root, casClient, daemon, childLocal, childPath)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, nil, 0, err
 		}
 		files++
 		bytesUploaded += fileBytes
+		listObjects += childLists
 	}
-	return files, bytesUploaded, nil
+	return files, bytesUploaded, listObjects, nestedMat, symlinkRoots, nil
 }
 
 func flatUnixFSBatchEntries(ctx context.Context, casClient addCASClient, root *addNode) ([]httpapi.UnixFSBatchEntry, error) {
@@ -659,6 +843,21 @@ func putAddDirectoryManifest(ctx context.Context, casClient addCASClient, node *
 		return cid.Undef, fmt.Errorf("upload directory manifest: %w", err)
 	}
 	return manifestCID, nil
+}
+
+func addUnixFSUintMarker(prefix string, value uint64) (cid.Cid, error) {
+	return addUnixFSIdentityCID([]byte(prefix + fmt.Sprintf("%d", value)))
+}
+
+func addUnixFSIdentityCID(payload []byte) (cid.Cid, error) {
+	if len(payload) > math.MaxInt32 {
+		return cid.Undef, fmt.Errorf("identity payload too large")
+	}
+	hash, err := mh.Sum(payload, mh.IDENTITY, len(payload))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, hash), nil
 }
 
 func addDirectoryWithUnixFS(ctx context.Context, daemon *daemonclient.Client, item addMountedInput, root string, ignoreOpts addIgnoreOptions) (int, int64, string, error) {
@@ -788,11 +987,18 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 	root := newDirNode()
 	var files int
 	var bytesUploaded int64
+	var maltObjects int
+	var maltMaps int
+	var maltLists int
+	var directLists int
+	var arcSets int
+	var arcs int
+	var symlinkRoots int
 
 	for _, item := range mounted {
 		if item.Input.Info.IsDir() {
 			if item.Input.Symlink {
-				key, dirFiles, dirBytes, err := materializeSymlinkDirectoryBoundary(ctx, daemon, batcher, item.Input.AbsPath)
+				key, dirFiles, dirBytes, mat, nestedSymlinks, err := materializeSymlinkDirectoryBoundary(ctx, daemon, batcher, item.Input.AbsPath)
 				if err != nil {
 					return nil, err
 				}
@@ -801,31 +1007,72 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 				}
 				files += dirFiles
 				bytesUploaded += dirBytes
+				maltObjects += mat.MALTObjects
+				maltMaps += mat.MALTMaps
+				maltLists += mat.MALTLists
+				arcSets += mat.ArcSets
+				arcs += mat.Arcs
+				symlinkRoots += 1 + nestedSymlinks
 				continue
 			}
-			dirFiles, dirBytes, err := stageDirectoryInput(ctx, root, batcher, daemon, item, opts.Ignore)
+			dirFiles, dirBytes, dirLists, dirMat, dirSymlinks, err := stageDirectoryInput(ctx, root, batcher, daemon, item, opts.Ignore)
 			if err != nil {
 				return nil, err
 			}
 			files += dirFiles
 			bytesUploaded += dirBytes
+			maltLists += dirLists
+			directLists += dirLists
+			maltObjects += dirMat.MALTObjects
+			maltMaps += dirMat.MALTMaps
+			maltLists += dirMat.MALTLists
+			arcSets += dirMat.ArcSets
+			arcs += dirMat.Arcs
+			symlinkRoots += dirSymlinks
 			continue
 		}
-		fileBytes, err := stageSingleFile(ctx, root, batcher, daemon, item.Input.AbsPath, item.MountBase)
+		if item.Input.Symlink {
+			key, fileBytes, mat, err := materializeSymlinkFileBoundary(ctx, daemon, batcher, item.Input.AbsPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := setMapDirNode(root, item.MountBase, key); err != nil {
+				return nil, err
+			}
+			files++
+			bytesUploaded += fileBytes
+			maltObjects += mat.MALTObjects
+			maltMaps += mat.MALTMaps
+			maltLists += mat.MALTLists
+			arcSets += mat.ArcSets
+			arcs += mat.Arcs
+			symlinkRoots++
+			continue
+		}
+		fileBytes, listObjects, err := stageSingleFile(ctx, root, batcher, daemon, item.Input.AbsPath, item.MountBase)
 		if err != nil {
 			return nil, err
 		}
 		files++
 		bytesUploaded += fileBytes
+		maltLists += listObjects
+		directLists += listObjects
 	}
 	if err := batcher.Flush(ctx); err != nil {
 		return nil, fmt.Errorf("flush staged CAS batch: %w", err)
 	}
 
 	return &addBuildResult{
-		Root:  root,
-		Files: files,
-		Bytes: bytesUploaded,
+		Root:             root,
+		Files:            files,
+		Bytes:            bytesUploaded,
+		ImmutableObjects: batcher.UploadedCount(),
+		MALTObjects:      maltObjects + directLists,
+		MALTMaps:         maltMaps,
+		MALTLists:        maltLists,
+		ArcSets:          arcSets + directLists,
+		Arcs:             arcs,
+		SymlinkRoots:     symlinkRoots,
 	}, nil
 }
 
@@ -900,16 +1147,19 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 	return out, nil
 }
 
-func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, error) {
+func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, int, *addMaterializeResult, int, error) {
 	mountBase := item.MountBase
 	ensureDirNode(root, mountBase)
 	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, nil, 0, err
 	}
 
 	var files int
 	var bytesUploaded int64
+	var listObjects int
+	symlinkMat := &addMaterializeResult{}
+	var symlinkRoots int
 	err = filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -933,7 +1183,44 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 		}
 		if current != item.Input.AbsPath {
 			if d.Type()&fs.ModeSymlink != 0 {
-				return fmt.Errorf("symlink is not supported: %s", current)
+				rel, err := filepath.Rel(item.Input.AbsPath, current)
+				if err != nil {
+					return fmt.Errorf("compute relative path %q: %w", current, err)
+				}
+				targetPath := canonicalAddPath(path.Join(mountBase, filepath.ToSlash(rel)))
+				info, err := os.Stat(current)
+				if err != nil {
+					return fmt.Errorf("stat symlink target %s: %w", current, err)
+				}
+				if info.IsDir() {
+					key, dirFiles, dirBytes, mat, nestedSymlinks, err := materializeSymlinkDirectoryBoundary(ctx, daemon, casClient, current)
+					if err != nil {
+						return err
+					}
+					if err := setMapDirNode(root, targetPath, key); err != nil {
+						return err
+					}
+					files += dirFiles
+					bytesUploaded += dirBytes
+					addMaterializeStats(symlinkMat, mat)
+					symlinkRoots += 1 + nestedSymlinks
+					return nil
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("non-regular symlink target is not supported: %s", current)
+				}
+				key, fileBytes, mat, err := materializeSymlinkFileBoundary(ctx, daemon, casClient, current)
+				if err != nil {
+					return err
+				}
+				if err := setMapDirNode(root, targetPath, key); err != nil {
+					return err
+				}
+				files++
+				bytesUploaded += fileBytes
+				addMaterializeStats(symlinkMat, mat)
+				symlinkRoots++
+				return nil
 			}
 		}
 
@@ -962,57 +1249,60 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 			return fmt.Errorf("non-regular file is not supported: %s", current)
 		}
 
-		fileBytes, err := stageSingleFile(ctx, root, casClient, daemon, current, targetPath)
+		fileBytes, childLists, err := stageSingleFile(ctx, root, casClient, daemon, current, targetPath)
 		if err != nil {
 			return err
 		}
 		files++
 		bytesUploaded += fileBytes
+		listObjects += childLists
 		return nil
 	})
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, nil, 0, err
 	}
-	return files, bytesUploaded, nil
+	return files, bytesUploaded, listObjects, symlinkMat, symlinkRoots, nil
 }
 
-func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localPath string, targetPath string) (int64, error) {
+func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localPath string, targetPath string) (int64, int, error) {
 	targetPath = canonicalAddPath(targetPath)
 	if targetPath == "" {
-		return 0, fmt.Errorf("target path must not be empty")
+		return 0, 0, fmt.Errorf("target path must not be empty")
 	}
 
 	info, err := os.Stat(localPath)
 	if err != nil {
-		return 0, fmt.Errorf("stat %s: %w", localPath, err)
+		return 0, 0, fmt.Errorf("stat %s: %w", localPath, err)
 	}
 	if !info.Mode().IsRegular() {
-		return 0, fmt.Errorf("not a regular file: %s", localPath)
+		return 0, 0, fmt.Errorf("not a regular file: %s", localPath)
 	}
 
 	var key cid.Cid
+	listObjects := 0
 	if info.Size() <= addFixedChunkSize {
 		data, err := os.ReadFile(localPath)
 		if err != nil {
-			return 0, fmt.Errorf("read %s: %w", localPath, err)
+			return 0, 0, fmt.Errorf("read %s: %w", localPath, err)
 		}
 		blockCID, err := casClient.Put(ctx, data)
 		if err != nil {
-			return 0, fmt.Errorf("upload %s to CAS: %w", localPath, err)
+			return 0, 0, fmt.Errorf("upload %s to CAS: %w", localPath, err)
 		}
 		key = blockCID
 	} else {
 		listRoot, err := uploadAsList(ctx, casClient, daemon, localPath)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		key = listRoot
+		listObjects = 1
 	}
 
 	if err := setFileNode(root, targetPath, key); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return info.Size(), nil
+	return info.Size(), listObjects, nil
 }
 
 func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, localPath string) (cid.Cid, error) {
@@ -1254,6 +1544,19 @@ func materializeDirectory(ctx context.Context, daemon *daemonclient.Client, casC
 	return materializeDirectoryWithBatcher(ctx, daemon, asAddCASBatcher(casClient), node)
 }
 
+func addMaterializeStats(dst *addMaterializeResult, src *addMaterializeResult) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.ImmutableObjects += src.ImmutableObjects
+	dst.MALTObjects += src.MALTObjects
+	dst.MALTMaps += src.MALTMaps
+	dst.MALTLists += src.MALTLists
+	dst.ArcSets += src.ArcSets
+	dst.Arcs += src.Arcs
+	dst.ArcCount += src.ArcCount
+}
+
 func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.Client, casClient *addCASBatcher, node *addNode) (*addMaterializeResult, error) {
 	if node == nil || node.Kind != "dir" {
 		return nil, fmt.Errorf("materializeDirectory requires a directory node")
@@ -1267,6 +1570,7 @@ func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.C
 
 	desc := make(map[string]cid.Cid)
 	childKeys := make(map[string]cid.Cid, len(node.Children))
+	stats := &addMaterializeResult{}
 	for _, name := range names {
 		child := node.Children[name]
 		if child == nil {
@@ -1277,6 +1581,7 @@ func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.C
 			if err != nil {
 				return nil, err
 			}
+			addMaterializeStats(stats, mat)
 			child.Key = mat.Key
 			child.Changed = false
 			childKeys[name] = mat.Key
@@ -1292,9 +1597,15 @@ func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.C
 
 	if !node.Changed && node.Key.Defined() {
 		return &addMaterializeResult{
-			Key:         node.Key,
-			ArcCount:    0,
-			Descendants: desc,
+			Key:              node.Key,
+			ArcCount:         stats.ArcCount,
+			Descendants:      desc,
+			ImmutableObjects: stats.ImmutableObjects,
+			MALTObjects:      stats.MALTObjects,
+			MALTMaps:         stats.MALTMaps,
+			MALTLists:        stats.MALTLists,
+			ArcSets:          stats.ArcSets,
+			Arcs:             stats.Arcs,
 		}, nil
 	}
 
@@ -1333,10 +1644,17 @@ func materializeDirectoryWithBatcher(ctx context.Context, daemon *daemonclient.C
 	node.Key = rootCID
 	node.Changed = false
 	node.StorageKind = "map"
+	arcCount := countDefinedBindings(bindings)
 	return &addMaterializeResult{
-		Key:         rootCID,
-		ArcCount:    countDefinedBindings(bindings),
-		Descendants: desc,
+		Key:              rootCID,
+		ArcCount:         stats.ArcCount + arcCount,
+		Descendants:      desc,
+		ImmutableObjects: stats.ImmutableObjects + 1,
+		MALTObjects:      stats.MALTObjects + 1,
+		MALTMaps:         stats.MALTMaps + 1,
+		MALTLists:        stats.MALTLists,
+		ArcSets:          stats.ArcSets + 1,
+		Arcs:             stats.Arcs + arcCount,
 	}, nil
 }
 

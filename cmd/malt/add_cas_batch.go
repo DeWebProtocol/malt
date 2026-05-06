@@ -9,9 +9,10 @@ import (
 )
 
 type addCASBatcher struct {
-	inner  addCASClient
-	blocks []cas.Block
-	seen   map[string]cid.Cid
+	inner    addCASClient
+	blocks   []cas.Block
+	seen     map[string]cid.Cid
+	uploaded int
 }
 
 func newAddCASBatcher(inner addCASClient) *addCASBatcher {
@@ -76,7 +77,15 @@ func (b *addCASBatcher) Flush(ctx context.Context) error {
 			return fmt.Errorf("CAS batch flush returned CID %s for block %d, want %s", result.CID, i, want)
 		}
 	}
+	b.uploaded += len(b.blocks)
 	b.blocks = nil
 	b.seen = make(map[string]cid.Cid)
 	return nil
+}
+
+func (b *addCASBatcher) UploadedCount() int {
+	if b == nil {
+		return 0
+	}
+	return b.uploaded
 }
