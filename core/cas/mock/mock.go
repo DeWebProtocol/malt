@@ -20,7 +20,6 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/metrics"
 	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
 )
 
 // Default latency values based on ProbeLab Kubo v0.39.0 e2e measurements
@@ -163,17 +162,51 @@ func (m *CAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.
 	m.stats.RecordPutCall()
 	simulateLatency(m.putLatency, m.jitter)
 
-	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
+	c, err := cas.CIDForBlock(cas.Block{Data: data, Codec: codec})
 	if err != nil {
 		return cid.Cid{}, err
 	}
-	c := cid.NewCidV1(codec, mhash)
 
 	if err := m.kv.Put(ctx, blockKey(c), data); err != nil {
 		return cid.Cid{}, fmt.Errorf("failed to store block: %w", err)
 	}
 	m.stats.RecordPutBytes(len(data))
 	return c, nil
+}
+
+// PutBatch stores a batch of blocks in mock storage.
+func (m *CAS) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	if len(blocks) == 0 {
+		return []cas.PutResult{}, nil
+	}
+	for range blocks {
+		m.stats.RecordPutCall()
+	}
+	simulateLatency(m.putLatency, m.jitter)
+
+	results := make([]cas.PutResult, len(blocks))
+	for i, block := range blocks {
+		blockCID, err := cas.CIDForBlock(block)
+		if err != nil {
+			return nil, err
+		}
+		exists, err := m.kv.Has(ctx, blockKey(blockCID))
+		if err != nil {
+			return nil, fmt.Errorf("failed to check block: %w", err)
+		}
+		status := cas.PutStatusStored
+		if exists {
+			status = cas.PutStatusAlreadyPresent
+		}
+		if !exists {
+			if err := m.kv.Put(ctx, blockKey(blockCID), block.Data); err != nil {
+				return nil, fmt.Errorf("failed to store block: %w", err)
+			}
+		}
+		m.stats.RecordPutBytes(len(block.Data))
+		results[i] = cas.PutResult{CID: blockCID, Status: status}
+	}
+	return results, nil
 }
 
 // Has checks if a block exists in mock storage.
@@ -186,6 +219,27 @@ func (m *CAS) Has(ctx context.Context, c cid.Cid) (bool, error) {
 		return false, fmt.Errorf("failed to check block: %w", err)
 	}
 	return exists, nil
+}
+
+// HasBatch checks if each block exists in mock storage.
+func (m *CAS) HasBatch(ctx context.Context, cids []cid.Cid) ([]bool, error) {
+	if len(cids) == 0 {
+		return []bool{}, nil
+	}
+	for range cids {
+		m.stats.RecordHasCall()
+	}
+	simulateLatency(m.hasLatency, m.jitter)
+
+	results := make([]bool, len(cids))
+	for i, c := range cids {
+		exists, err := m.kv.Has(ctx, blockKey(c))
+		if err != nil {
+			return nil, fmt.Errorf("failed to check block: %w", err)
+		}
+		results[i] = exists
+	}
+	return results, nil
 }
 
 // AddBlock adds a pre-existing block to mock storage without latency.
@@ -205,3 +259,5 @@ func (m *CAS) ResetStats() {
 
 // Ensure CAS implements cas.Client.
 var _ cas.Client = (*CAS)(nil)
+var _ cas.BatchReader = (*CAS)(nil)
+var _ cas.BatchWriter = (*CAS)(nil)
