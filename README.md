@@ -243,9 +243,9 @@ Current boundary:
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
   `core/resolver` the semantic owners.
-- Graph-level node/arc terminology, gateway semantic-mutation schema,
-  `ProofList`, write receipts, and benchmark-facing proof reporting remain
-  explicit TODO items.
+- Graph-level node/arc terminology, paper-facing formalization of the current
+  gateway semantic-mutation and `ProofList` schemas, write receipt semantics,
+  and benchmark-facing proof reporting remain explicit TODO items.
 
 ## CAS Boundary
 

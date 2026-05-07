@@ -407,7 +407,8 @@ Current boundary:
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
   remain runtime and compatibility adapters rather than semantic owners.
-- The concrete semantic-mutation schema, `ProofList`, write metadata,
+- The current compatibility semantic-mutation and `ProofList` schemas are
+  implemented. Paper-facing formalization, write metadata semantics,
   graph-node terminology, and benchmark-facing proof reporting remain open TODO
   items.
 
@@ -429,10 +430,11 @@ Open TODOs for the next discussion:
 
 - define graph node and arc terminology precisely enough to map onto current
   map/list semantics
-- define the gateway semantic-mutation schema
-- define how `core/layout/malt/unixfs` should expose or produce semantic mutations
-- define the `ProofList` schema for path lookup, terminal `@payload`, blob
-  bindings, and list range reads
+- formalize the current gateway semantic-mutation schema
+- formalize how `core/layout/malt/unixfs` exposes and consumes semantic
+  mutations
+- formalize the current `ProofList` schema and verification semantics for path
+  lookup, terminal `@payload`, blob bindings, and list range reads
 - decide how UnixFS reads should map onto gateway read queries and `ProofList`
 - define the final UnixFS write receipt and application-level concurrency
   contract for the already-wired root APIs
