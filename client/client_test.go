@@ -518,6 +518,43 @@ func TestClientStatAndContent(t *testing.T) {
 	}
 }
 
+func TestClientResolveRootReturnsTranscriptSteps(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	t.Cleanup(ts.Close)
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+
+	ctx := context.Background()
+	target := fakeCIDString("resolve-target")
+	createResp, err := client.CreateRootStructure(ctx, withPayloadBinding(map[string]string{"name": target}))
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+
+	resolveResp, err := client.ResolveRoot(ctx, createResp.Root, "name")
+	if err != nil {
+		t.Fatalf("ResolveRoot: %v", err)
+	}
+	if resolveResp.Target != target {
+		t.Fatalf("target = %q, want %q", resolveResp.Target, target)
+	}
+	if len(resolveResp.Transcript) == 0 {
+		t.Fatal("ResolveRoot should return transcript evidence steps")
+	}
+	if resolveResp.Transcript[0].Evidence == "" {
+		t.Fatal("ResolveRoot transcript step should include evidence")
+	}
+}
+
 func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))

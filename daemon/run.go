@@ -59,13 +59,9 @@ func Run(cfg *config.Config, opts RunOptions) error {
 	)
 
 	if effective.CAS.Mode == "embedded-mock" {
-		mockOpts := []casmock.Option{}
-		if latency, err := effective.EmbeddedMockLatency(); err == nil && latency > 0 {
-			mockOpts = append(mockOpts,
-				casmock.WithGetLatency(latency),
-				casmock.WithPutLatency(latency),
-				casmock.WithHasLatency(latency),
-			)
+		mockOpts, err := embeddedMockCASOptions(&effective)
+		if err != nil {
+			return err
 		}
 		mockCASInst = casmock.NewCAS(mockOpts...)
 		nodeOpts = append(nodeOpts, api.WithCAS(mockCASInst))
@@ -128,4 +124,22 @@ func mockServerError(ch chan error) <-chan error {
 		return empty
 	}
 	return ch
+}
+
+func embeddedMockCASOptions(cfg *config.Config) ([]casmock.Option, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	latency, err := cfg.EmbeddedMockLatency()
+	if err != nil {
+		return nil, fmt.Errorf("invalid embedded mock latency: %w", err)
+	}
+	if latency <= 0 {
+		return []casmock.Option{casmock.WithoutLatency()}, nil
+	}
+	return []casmock.Option{
+		casmock.WithGetLatency(latency),
+		casmock.WithPutLatency(latency),
+		casmock.WithHasLatency(latency),
+	}, nil
 }

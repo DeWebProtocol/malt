@@ -96,16 +96,19 @@ func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*htt
 	return c.ProofList(ctx, root, p)
 }
 
-// Resolve resolves a path relative to a root CID. Uses HEAD /{root}/{path}
-// and returns the resolved key via X-Malt-Key response header.
+// Resolve resolves a path relative to a root CID and returns transcript
+// evidence for the resolution.
 func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, err
 	}
 	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
+	q := u.Query()
+	q.Set("format", "resolve")
+	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +128,14 @@ func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.Re
 		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
 	}
 
-	return &httpapi.ResolveResponse{Target: resp.Header.Get("X-Malt-Key")}, nil
+	var out httpapi.ResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		if err == io.EOF && resp.Header.Get("X-Malt-Key") != "" {
+			return &httpapi.ResolveResponse{Target: resp.Header.Get("X-Malt-Key")}, nil
+		}
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ProofList resolves a path and returns a verifier-facing ProofList.
