@@ -37,6 +37,7 @@ type Step struct {
 	Coordinate      string   `json:"coordinate,omitempty"`
 	Path            string   `json:"path,omitempty"`
 	Index           *uint64  `json:"index,omitempty"`
+	Length          *uint64  `json:"length,omitempty"`
 	Target          cid.Cid  `json:"target"`
 	EvidenceKind    string   `json:"evidence_kind,omitempty"`
 	EvidenceBackend string   `json:"evidence_backend,omitempty"`

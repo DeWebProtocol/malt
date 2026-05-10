@@ -22,15 +22,12 @@ Primary commands:
   init        Create ~/.malt/malt.json and choose local state paths
   daemon      Run the local MALT daemon
   add         Upload local files/directories to CAS and merge into the current root
-  cat         Stream file content from the current root
-  get         Export a file or directory from the current root
   resolve     Resolve a path via the daemon
-  update      Mutate structure via the daemon
-  prove       Resolve and print transcript evidence via the daemon
-  verify      Verify a transcript via the daemon
-  lineage     Query lineage via the daemon
-  cas         Interact directly with the configured CAS endpoint`,
+  verify      Verify a ProofList`,
 	Version: Version,
+	CompletionOptions: cobra.CompletionOptions{
+		DisableDefaultCmd: true,
+	},
 }
 
 func init() {

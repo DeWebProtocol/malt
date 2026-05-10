@@ -128,6 +128,35 @@ func TestServerLegacyGraphRoutesRemoved(t *testing.T) {
 	}
 }
 
+func TestServerDeprecatedPublicRoutesRemoved(t *testing.T) {
+	node := newTestNode(t)
+	handler := New(node, "127.0.0.1:0").Handler()
+
+	for _, tc := range []struct {
+		method string
+		route  string
+		body   string
+	}{
+		{method: http.MethodGet, route: "/lineage"},
+		{method: http.MethodGet, route: "/lineage/count"},
+		{method: http.MethodPost, route: "/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku/_batch-update", body: `{"updates":{"name":"bafkqaaa"}}`},
+	} {
+		req := httptest.NewRequest(tc.method, tc.route, strings.NewReader(tc.body))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s %s status = %d, want 404 or 405", tc.method, tc.route, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku/path", strings.NewReader(`{"target":"bafkqaaa"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT update status = %d, want 404 or 405", rec.Code)
+	}
+}
+
 func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)
@@ -357,6 +386,175 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 	}
 	if contentProof.Key != target {
 		t.Fatalf("proof target = %q, want %q", contentProof.Key, target)
+	}
+}
+
+func TestServerResolveFormatReturnsProofListByDefault(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	targetCID, err := mockCAS.Put(t.Context(), []byte("resolve proof target"))
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": targetCID.String()}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root: %v", err)
+	}
+
+	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=resolve")
+	if err != nil {
+		t.Fatalf("resolve request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	if payload["target"] != targetCID.String() {
+		t.Fatalf("target = %v, want %s", payload["target"], targetCID.String())
+	}
+	if _, ok := payload["prooflist"].(map[string]any); !ok {
+		t.Fatalf("prooflist missing from resolve response: %#v", payload)
+	}
+	if _, ok := payload["transcript"]; ok {
+		t.Fatalf("transcript should not be exposed by resolve response: %#v", payload["transcript"])
+	}
+	if vary := resp.Header.Get("Vary"); !strings.Contains(vary, "X-Malt-Proof") {
+		t.Fatalf("resolve Vary header = %q, want to contain X-Malt-Proof", vary)
+	}
+
+	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=resolve&proof=false")
+	if err != nil {
+		t.Fatalf("resolve proof=false request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve proof=false status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var noProof map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&noProof); err != nil {
+		t.Fatalf("decode proof=false resolve response: %v", err)
+	}
+	if noProof["target"] != targetCID.String() {
+		t.Fatalf("proof=false target = %v, want %s", noProof["target"], targetCID.String())
+	}
+	if _, ok := noProof["prooflist"]; ok {
+		t.Fatalf("prooflist should be absent when proof=false: %#v", noProof["prooflist"])
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/"+createResp.Root+"/name?format=resolve", nil)
+	if err != nil {
+		t.Fatalf("build resolve omit request: %v", err)
+	}
+	req.Header.Set("X-Malt-Proof", "omit")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("resolve omit request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve omit status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	noProof = nil
+	if err := json.NewDecoder(resp.Body).Decode(&noProof); err != nil {
+		t.Fatalf("decode omit resolve response: %v", err)
+	}
+	if _, ok := noProof["prooflist"]; ok {
+		t.Fatalf("prooflist should be absent when X-Malt-Proof: omit: %#v", noProof["prooflist"])
+	}
+}
+
+func TestServerVerifyAcceptsProofList(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	targetCID, err := mockCAS.Put(t.Context(), []byte("verify proof target"))
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": targetCID.String()}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=resolve")
+	if err != nil {
+		t.Fatalf("resolve request: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var resolveResp httpapi.ResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	resp.Body.Close()
+	if resolveResp.ProofList == nil {
+		t.Fatal("resolve response missing ProofList")
+	}
+
+	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: *resolveResp.ProofList})
+	if err != nil {
+		t.Fatalf("marshal verify request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var verifyResp httpapi.VerifyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&verifyResp); err != nil {
+		t.Fatalf("decode verify response: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatal("expected ProofList to verify")
 	}
 }
 
@@ -1166,6 +1364,9 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 			if step.Index == nil {
 				t.Fatalf("list-index step missing index: %+v", step)
 			}
+			if step.Length == nil || *step.Length != 2 {
+				t.Fatalf("list-index step length = %v, want 2", step.Length)
+			}
 			indexes = append(indexes, *step.Index)
 			if step.EvidenceBackend != "list" {
 				t.Fatalf("list-index evidence backend = %q, want list", step.EvidenceBackend)
@@ -1174,6 +1375,26 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	}
 	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
 		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	}
+
+	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: proofResp.ProofList})
+	if err != nil {
+		t.Fatalf("marshal verify request: %v", err)
+	}
+	verifyRespHTTP, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify list-index prooflist request: %v", err)
+	}
+	defer verifyRespHTTP.Body.Close()
+	if verifyRespHTTP.StatusCode != http.StatusOK {
+		t.Fatalf("verify list-index prooflist status = %d, want %d", verifyRespHTTP.StatusCode, http.StatusOK)
+	}
+	var verifyResp httpapi.VerifyResponse
+	if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
+		t.Fatalf("decode verify list-index response: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatal("expected list-index prooflist verification to succeed")
 	}
 }
 
@@ -1624,19 +1845,6 @@ func newTestNode(t *testing.T) *api.Node {
 		_ = node.Close()
 	})
 	return node
-}
-
-func transcriptToVerifySteps(steps []httpapi.StepEvidence) []httpapi.VerifyStep {
-	out := make([]httpapi.VerifyStep, len(steps))
-	for i, step := range steps {
-		out[i] = httpapi.VerifyStep{
-			Path:     step.Path,
-			Target:   step.Target,
-			Evidence: step.Evidence,
-			Kind:     step.Kind,
-		}
-	}
-	return out
 }
 
 func fakeCIDString(seed string) string {

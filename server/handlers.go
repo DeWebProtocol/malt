@@ -12,22 +12,22 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/gateway"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
-	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/querypath"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/core/structure"
+	"github.com/dewebprotocol/malt/core/structure/list"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
-	"github.com/dewebprotocol/malt/core/writer"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 )
@@ -189,10 +189,19 @@ func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, g *graph.G
 		writeError(w, http.StatusNotFound, errPathNotFound.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, &httpapi.ResolveResponse{
-		Target:     result.Target.String(),
-		Transcript: encodeTranscript(result.Transcript),
-	})
+	addVaryHeader(w, "X-Malt-Proof")
+	resp := &httpapi.ResolveResponse{Target: result.Target.String()}
+	if !shouldOmitDefaultProof(r) {
+		pl, err := resolver.ProofListFromTranscript(root, result.Transcript)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		pl.Query = querypath.CanonicalizeQueryPath(queryPath)
+		resp.ProofList = pl
+		s.node.RecordProofList(*pl)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) serveContentProof(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {
@@ -449,81 +458,6 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, &httpapi.CreateStructureResponse{Root: root.String()})
 }
 
-func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	path := r.PathValue("path")
-	if path == "" {
-		writeError(w, http.StatusBadRequest, "path is required")
-		return
-	}
-
-	var req httpapi.UpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-
-	target, err := parseOptionalCID(req.Target)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validatePayloadUpdate(path, target); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	result, err := g.Writer().UpdateArc(r.Context(), g.Namespace(), root, path, target)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, updateResponse(result))
-}
-
-func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	var req httpapi.BatchUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-
-	parsedUpdates, err := parseArcMap(req.Updates)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validatePayloadBatchUpdates(parsedUpdates); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	result, err := g.Writer().BatchUpdateArcs(r.Context(), g.Namespace(), root, parsedUpdates)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, batchResponse(result))
-}
-
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	g, err := s.getOrCreateGraph(r.Context())
 	if err != nil {
@@ -536,102 +470,75 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
 	}
-	root, err := decodeCID(req.Root)
+	valid, err := s.verifyProofList(g, req.ProofList)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	steps := make([]resolver.StepEvidence, len(req.Transcript))
-	for i, step := range req.Transcript {
-		target, err := decodeCID(step.Target)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid target CID at step %d: %v", i, err))
-			return
-		}
-		evBytes, err := base64.StdEncoding.DecodeString(step.Evidence)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid evidence at step %d: %v", i, err))
-			return
-		}
-		ev, err := decodeEvidence(step.Kind, evBytes)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid evidence kind at step %d: %v", i, err))
-			return
-		}
-		steps[i] = resolver.StepEvidence{
-			Path:     arcset.CanonicalizePath(step.Path),
-			Target:   target,
-			Evidence: ev,
-		}
-	}
-
-	valid, err := g.Resolver().VerifyTranscript(root, &resolver.Transcript{Steps: steps})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, &httpapi.VerifyResponse{Valid: valid})
 }
 
-func (s *Server) handleLineageGet(w http.ResponseWriter, r *http.Request) {
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+func (s *Server) verifyProofList(g *graph.Graph, pl prooflist.ProofList) (bool, error) {
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		return false, err
 	}
-	rec, err := s.node.LineageManager().Get(r.Context(), root)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
+	if proofListUsesResolverEvidence(pl) {
+		return s.verifyResolverProofList(g, pl)
 	}
-	writeJSON(w, http.StatusOK, lineageRecord(rec))
+	return s.verifyStructureProofList(g, pl)
 }
 
-func (s *Server) handleLineageAncestors(w http.ResponseWriter, r *http.Request) {
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+func proofListUsesResolverEvidence(pl prooflist.ProofList) bool {
+	for _, step := range pl.Steps {
+		switch step.EvidenceKind {
+		case "explicit", "implicit", "hamt":
+			return true
+		}
 	}
-	maxDepth, _ := strconv.Atoi(r.URL.Query().Get("max_depth"))
-	items, err := s.node.LineageManager().Ancestors(r.Context(), root, maxDepth)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, &httpapi.CIDListResponse{Items: cidsToStrings(items)})
+	return false
 }
 
-func (s *Server) handleLineageDescendants(w http.ResponseWriter, r *http.Request) {
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+func (s *Server) verifyResolverProofList(g *graph.Graph, pl prooflist.ProofList) (bool, error) {
+	steps := make([]resolver.StepEvidence, len(pl.Steps))
+	for i, step := range pl.Steps {
+		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)
+		if err != nil {
+			return false, fmt.Errorf("invalid evidence at step %d: %w", i, err)
+		}
+		steps[i] = resolver.StepEvidence{
+			Path:     arcset.CanonicalizePath(step.Path),
+			Target:   step.Target,
+			Evidence: ev,
+		}
 	}
-	items, err := s.node.LineageManager().Descendants(r.Context(), root)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, &httpapi.CIDListResponse{Items: cidsToStrings(items)})
+	return g.Resolver().VerifyTranscript(pl.Root, &resolver.Transcript{Steps: steps})
 }
 
-func (s *Server) handleLineageList(w http.ResponseWriter, r *http.Request) {
-	records, err := s.node.LineageManager().List(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+func (s *Server) verifyStructureProofList(g *graph.Graph, pl prooflist.ProofList) (bool, error) {
+	for i, step := range pl.Steps {
+		switch {
+		case step.EvidenceKind == "structure" && step.EvidenceBackend == "map":
+			key := arcset.CanonicalizePath(step.Path)
+			ok, err := g.Semantic().Verify(step.From, key, mapping.Binding{Value: step.Target, Present: true}, structure.Proof(step.Proof))
+			if err != nil || !ok {
+				return ok, err
+			}
+		case step.EvidenceKind == "structure" && step.EvidenceBackend == "list":
+			if step.Index == nil {
+				return false, fmt.Errorf("prooflist step %d list index is missing", i)
+			}
+			if step.Length == nil {
+				return false, fmt.Errorf("prooflist step %d list length is missing", i)
+			}
+			ok, err := g.ListSemantic().Verify(step.From, *step.Index, list.Query{Key: step.Target, Length: *step.Length}, structure.Proof(step.Proof))
+			if err != nil || !ok {
+				return ok, err
+			}
+		default:
+			return false, fmt.Errorf("prooflist step %d has unsupported evidence labels %q/%q", i, step.EvidenceKind, step.EvidenceBackend)
+		}
 	}
-	resp := &httpapi.LineageListResponse{Records: make([]httpapi.LineageRecordResponse, len(records))}
-	for i, rec := range records {
-		resp.Records[i] = lineageRecord(rec)
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleLineageCount(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, &httpapi.CountResponse{Count: s.node.LineageManager().Count(r.Context())})
+	return true, nil
 }
 
 var (
@@ -1104,19 +1011,13 @@ func (s *Server) unixFSResolve(ctx context.Context, g *graph.Graph, root cid.Cid
 	if err != nil {
 		return nil, err
 	}
-
-	steps := make([]httpapi.StepEvidence, len(resolution.Steps))
-	for i, step := range resolution.Steps {
-		steps[i] = httpapi.StepEvidence{
-			Path:     step.Path.String(),
-			Target:   step.Target.String(),
-			Evidence: base64.StdEncoding.EncodeToString([]byte(step.Proof)),
-			Kind:     "explicit",
-		}
+	pl, err := unixfs.ProofListFromSteps(root, querypath.CanonicalizeQueryPath(rawPath), resolution.Steps)
+	if err != nil {
+		return nil, err
 	}
 	return &httpapi.ResolveResponse{
-		Target:     resolution.Payload.String(),
-		Transcript: steps,
+		Target:    resolution.Payload.String(),
+		ProofList: pl,
 	}, nil
 }
 
@@ -1237,6 +1138,7 @@ func (s *Server) listIndexStepsForRange(ctx context.Context, g *graph.Graph, lis
 		steps = append(steps, unixfs.ListIndexStep{
 			Root:   listRoot,
 			Index:  index,
+			Length: query.Length,
 			Target: query.Key,
 			Proof:  proof,
 		})
@@ -1468,33 +1370,6 @@ func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {
 	return snapshot, arcCount, nil
 }
 
-func decodeTargetCID(raw string) cid.Cid {
-	if raw == "" {
-		return cid.Undef
-	}
-	c, err := cid.Decode(raw)
-	if err != nil {
-		return cid.Undef
-	}
-	return c
-}
-
-func validatePayloadUpdate(path string, target cid.Cid) error {
-	if arcset.CanonicalizePath(path) == explicit.PayloadArc && !target.Defined() {
-		return fmt.Errorf("@payload binding is mandatory and cannot be deleted")
-	}
-	return nil
-}
-
-func validatePayloadBatchUpdates(updates map[string]cid.Cid) error {
-	for rawPath, target := range updates {
-		if err := validatePayloadUpdate(rawPath, target); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func resolveMiss(root cid.Cid, requestedPath string, result *resolver.ResolveResult) bool {
 	if result == nil {
 		return false
@@ -1521,36 +1396,6 @@ func parseOptionalCID(raw string) (cid.Cid, error) {
 	return cid.Decode(raw)
 }
 
-func updateResponse(result *writer.UpdateResult) *httpapi.WriteUpdateResponse {
-	return &httpapi.WriteUpdateResponse{
-		OldRoot:   result.OldRoot.String(),
-		NewRoot:   result.NewRoot.String(),
-		Path:      result.Path.String(),
-		OldTarget: result.OldTarget.String(),
-		NewTarget: result.NewTarget.String(),
-		Op:        result.Op.String(),
-	}
-}
-
-func batchResponse(result *writer.BatchUpdateResult) *httpapi.WriteBatchResponse {
-	resp := &httpapi.WriteBatchResponse{
-		OldRoot: result.OldRoot.String(),
-		NewRoot: result.NewRoot.String(),
-		PerArc:  make(map[string]*httpapi.WriteUpdateResponse, len(result.PerArc)),
-	}
-	for path, r := range result.PerArc {
-		resp.PerArc[path.String()] = &httpapi.WriteUpdateResponse{
-			OldRoot:   r.OldRoot.String(),
-			NewRoot:   r.NewRoot.String(),
-			Path:      r.Path.String(),
-			OldTarget: r.OldTarget.String(),
-			NewTarget: r.NewTarget.String(),
-			Op:        r.Op.String(),
-		}
-	}
-	return resp
-}
-
 func decodeEvidence(kind string, payload []byte) (evidence.Evidence, error) {
 	switch kind {
 	case "explicit":
@@ -1562,28 +1407,6 @@ func decodeEvidence(kind string, payload []byte) (evidence.Evidence, error) {
 	default:
 		return nil, fmt.Errorf("unknown evidence kind %q", kind)
 	}
-}
-
-func lineageRecord(rec *lineage.LineageRecord) httpapi.LineageRecordResponse {
-	parent := ""
-	if rec.Parent.Defined() {
-		parent = rec.Parent.String()
-	}
-	return httpapi.LineageRecordResponse{
-		Root:      rec.Root.String(),
-		Parent:    parent,
-		Timestamp: rec.Timestamp.Format(time.RFC3339),
-		Depth:     rec.Depth,
-		ArcCount:  rec.ArcCount,
-	}
-}
-
-func cidsToStrings(items []cid.Cid) []string {
-	out := make([]string, len(items))
-	for i, item := range items {
-		out[i] = item.String()
-	}
-	return out
 }
 
 func nonEmpty(primary string, fallback string) string {

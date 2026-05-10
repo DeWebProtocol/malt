@@ -17,6 +17,7 @@ import (
 type ListIndexStep struct {
 	Root   cid.Cid
 	Index  uint64
+	Length uint64
 	Target cid.Cid
 	Proof  structure.Proof
 }
@@ -65,12 +66,14 @@ func AppendListIndexSteps(pl *prooflist.ProofList, queriedPath string, steps []L
 			return fmt.Errorf("list step target is undefined")
 		}
 		index := layoutStep.Index
+		length := layoutStep.Length
 		pl.Steps = append(pl.Steps, prooflist.Step{
 			Kind:            prooflist.KindListIndex,
 			From:            layoutStep.Root,
 			Query:           queriedPath,
 			Coordinate:      strconv.FormatUint(layoutStep.Index, 10),
 			Index:           &index,
+			Length:          &length,
 			Target:          layoutStep.Target,
 			EvidenceKind:    "structure",
 			EvidenceBackend: "list",
@@ -122,6 +125,7 @@ func (l *Layout) ListIndexStepsForFileRange(ctx context.Context, root cid.Cid, p
 		steps = append(steps, ListIndexStep{
 			Root:   info.payload,
 			Index:  index,
+			Length: query.Length,
 			Target: query.Key,
 			Proof:  proof,
 		})

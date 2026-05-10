@@ -68,24 +68,28 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /metrics:reset", s.handleMetricsReset)
 	mux.HandleFunc("POST /verify", s.handleVerify)
 
-	// Lineage (prefixed to avoid CID conflict)
-	mux.HandleFunc("GET /lineage", s.handleLineageList)
-	mux.HandleFunc("GET /lineage/count", s.handleLineageCount)
-	mux.HandleFunc("GET /lineage/{root}", s.handleLineageGet)
-	mux.HandleFunc("GET /lineage/{root}/ancestors", s.handleLineageAncestors)
-	mux.HandleFunc("GET /lineage/{root}/descendants", s.handleLineageDescendants)
+	// Removed public APIs stay reserved so they do not fall through to root
+	// content routes.
+	mux.HandleFunc("GET /lineage", s.handleRemovedPublicRoute)
+	mux.HandleFunc("GET /lineage/count", s.handleRemovedPublicRoute)
+	mux.HandleFunc("GET /lineage/{root}", s.handleRemovedPublicRoute)
+	mux.HandleFunc("GET /lineage/{root}/ancestors", s.handleRemovedPublicRoute)
+	mux.HandleFunc("GET /lineage/{root}/descendants", s.handleRemovedPublicRoute)
+	mux.HandleFunc("POST /{root}/_batch-update", s.handleRemovedPublicRoute)
 
 	// Write - specific pattern first
 	mux.HandleFunc("POST /{root}/_mutate", s.handleSemanticMutation)
-	mux.HandleFunc("POST /{root}/_batch-update", s.handleBatchUpdate)
 
 	// Core read/write (/{root}/{path...} format)
 	mux.HandleFunc("GET /{root}/{path...}", s.handleContent)
 	mux.HandleFunc("POST /{root}/{path...}", s.handleWrite)
-	mux.HandleFunc("PUT /{root}/{path...}", s.handleUpdate)
 
 	// Root creation
 	mux.HandleFunc("POST /_", s.handleCreateStructure)
+}
+
+func (s *Server) handleRemovedPublicRoute(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "not found")
 }
 
 func (s *Server) getOrCreateGraph(ctx context.Context) (*graph.Graph, error) {
