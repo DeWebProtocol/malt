@@ -118,11 +118,12 @@ variance to shared HTTP caches.
 
 `HEAD /{root}/{path}` remains a stat-only operation and returns `X-Malt-Kind`,
 `X-Malt-Storage-Kind`, `X-Malt-Key`, optional `X-Malt-Payload`, and optional
-`Content-Length` without generating proof headers. `GET /{root}/{path}?format=proof`
-keeps the JSON-body proof contract for clients that prefer `ContentProofResponse`
-over header metadata. `GET /{root}/{path}?format=resolve` returns a JSON
-`ResolveResponse` with `target` and, by default, `prooflist`; clients can opt out
-with `?proof=false` or `X-Malt-Proof: omit`.
+`Content-Length` without generating proof headers.
+
+Path resolution is a separate prefixed API: `GET /resolve/{root}/{path}` returns
+a JSON `ResolveResponse` with `target` and, by default, `prooflist`; clients can
+opt out with `?proof=false` or `X-Malt-Proof: omit`. The content route no longer
+uses `format=resolve` or `format=proof` query modes.
 
 ## Data Model
 

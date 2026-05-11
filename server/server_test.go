@@ -23,6 +23,26 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
+func requireProofListHeader(t *testing.T, resp *http.Response) prooflist.ProofList {
+	t.Helper()
+	proofListHeader := resp.Header.Get("X-Malt-ProofList")
+	if proofListHeader == "" {
+		t.Fatal("X-Malt-ProofList header is missing")
+	}
+	if got := resp.Header.Get("X-Malt-ProofList-Encoding"); got != "base64url-json" {
+		t.Fatalf("X-Malt-ProofList-Encoding = %q, want %q", got, "base64url-json")
+	}
+	proofData, err := base64.RawURLEncoding.DecodeString(proofListHeader)
+	if err != nil {
+		t.Fatalf("decode proof list header: %v", err)
+	}
+	var pl prooflist.ProofList
+	if err := json.Unmarshal(proofData, &pl); err != nil {
+		t.Fatalf("unmarshal proof list: %v", err)
+	}
+	return pl
+}
+
 func TestServerHealthAndRootLifecycle(t *testing.T) {
 	node := newTestNode(t)
 
@@ -235,7 +255,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("content status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/" + root + "/file.txt?format=proof")
+	resp, err = http.Get(ts.URL + "/" + root + "/file.txt")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
@@ -244,7 +264,7 @@ func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	resp, err = http.Get(ts.URL + "/" + root + "/file.txt?format=proof")
+	resp, err = http.Get(ts.URL + "/" + root + "/file.txt")
 	if err != nil {
 		t.Fatalf("content proof request failed: %v", err)
 	}
@@ -378,8 +398,8 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 		t.Fatalf("resolved target = %q, want %q", got, target)
 	}
 
-	// Verify using the proof endpoint
-	proofResp, err := http.Get(ts.URL + "/" + createResp.Root + "/name?format=proof")
+	// Verify the proof header returned by the default read endpoint.
+	proofResp, err := http.Get(ts.URL + "/" + createResp.Root + "/name")
 	if err != nil {
 		t.Fatalf("proof request failed: %v", err)
 	}
@@ -389,16 +409,18 @@ func TestServerRootCreateResolveAndVerify(t *testing.T) {
 		t.Fatalf("proof status = %d, want %d", proofResp.StatusCode, http.StatusOK)
 	}
 
-	var contentProof httpapi.ContentProofResponse
-	if err := json.NewDecoder(proofResp.Body).Decode(&contentProof); err != nil {
-		t.Fatalf("decode proof response: %v", err)
+	_, _ = io.Copy(io.Discard, proofResp.Body)
+	contentProof := requireProofListHeader(t, proofResp)
+	proofTarget, err := contentProof.LastStepTarget()
+	if err != nil {
+		t.Fatalf("proof target: %v", err)
 	}
-	if contentProof.Key != target {
-		t.Fatalf("proof target = %q, want %q", contentProof.Key, target)
+	if proofTarget.String() != target {
+		t.Fatalf("proof target = %q, want %q", proofTarget.String(), target)
 	}
 }
 
-func TestServerResolveFormatReturnsProofListByDefault(t *testing.T) {
+func TestServerResolvePrefixReturnsProofListByDefault(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)
 	if !ok {
@@ -431,7 +453,7 @@ func TestServerResolveFormatReturnsProofListByDefault(t *testing.T) {
 		t.Fatalf("decode create root: %v", err)
 	}
 
-	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=resolve")
+	resp, err = http.Get(ts.URL + "/resolve/" + createResp.Root + "/name")
 	if err != nil {
 		t.Fatalf("resolve request: %v", err)
 	}
@@ -456,7 +478,7 @@ func TestServerResolveFormatReturnsProofListByDefault(t *testing.T) {
 		t.Fatalf("resolve Vary header = %q, want to contain X-Malt-Proof", vary)
 	}
 
-	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=resolve&proof=false")
+	resp, err = http.Get(ts.URL + "/resolve/" + createResp.Root + "/name?proof=false")
 	if err != nil {
 		t.Fatalf("resolve proof=false request: %v", err)
 	}
@@ -475,7 +497,7 @@ func TestServerResolveFormatReturnsProofListByDefault(t *testing.T) {
 		t.Fatalf("prooflist should be absent when proof=false: %#v", noProof["prooflist"])
 	}
 
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/"+createResp.Root+"/name?format=resolve", nil)
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/resolve/"+createResp.Root+"/name", nil)
 	if err != nil {
 		t.Fatalf("build resolve omit request: %v", err)
 	}
@@ -494,6 +516,52 @@ func TestServerResolveFormatReturnsProofListByDefault(t *testing.T) {
 	}
 	if _, ok := noProof["prooflist"]; ok {
 		t.Fatalf("prooflist should be absent when X-Malt-Proof: omit: %#v", noProof["prooflist"])
+	}
+}
+
+func TestServerContentRouteRejectsLegacyFormatModes(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	targetCID, err := mockCAS.Put(t.Context(), []byte("legacy format target"))
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": targetCID.String()}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root: %v", err)
+	}
+
+	for _, format := range []string{"resolve", "proof"} {
+		resp, err := http.Get(ts.URL + "/" + createResp.Root + "/name?format=" + format)
+		if err != nil {
+			t.Fatalf("format=%s request: %v", format, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("format=%s status = %d, want %d", format, resp.StatusCode, http.StatusBadRequest)
+		}
 	}
 }
 
@@ -530,7 +598,7 @@ func TestServerVerifyAcceptsProofList(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=resolve")
+	resp, err = http.Get(ts.URL + "/resolve/" + createResp.Root + "/name")
 	if err != nil {
 		t.Fatalf("resolve request: %v", err)
 	}
@@ -611,22 +679,24 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name?format=proof")
+	resp, err = http.Get(ts.URL + "/" + createResp.Root + "/name")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var proofResp httpapi.ContentProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
-		t.Fatalf("decode prooflist response: %v", err)
-	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	proofResp := requireProofListHeader(t, resp)
 	resp.Body.Close()
-	if proofResp.Key != target {
-		t.Fatalf("prooflist target = %q, want %q", proofResp.Key, target)
+	proofTarget, err := proofResp.LastStepTarget()
+	if err != nil {
+		t.Fatalf("prooflist target: %v", err)
 	}
-	if len(proofResp.ProofList.Steps) == 0 {
+	if proofTarget.String() != target {
+		t.Fatalf("prooflist target = %q, want %q", proofTarget.String(), target)
+	}
+	if len(proofResp.Steps) == 0 {
 		t.Fatal("expected non-empty prooflist")
 	}
 
@@ -657,26 +727,28 @@ func TestServerProofListReadEndpoints(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/" + rootCreateResp.Root + "/?format=proof")
+	resp, err = http.Get(ts.URL + "/" + rootCreateResp.Root)
 	if err != nil {
 		t.Fatalf("root prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("root prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var rootProofResp httpapi.ContentProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rootProofResp); err != nil {
-		t.Fatalf("decode root prooflist response: %v", err)
-	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	rootProofResp := requireProofListHeader(t, resp)
 	resp.Body.Close()
-	if rootProofResp.Key != rootPayload {
-		t.Fatalf("root prooflist target = %q, want %q", rootProofResp.Key, rootPayload)
+	rootProofTarget, err := rootProofResp.LastStepTarget()
+	if err != nil {
+		t.Fatalf("root prooflist target: %v", err)
 	}
-	if len(rootProofResp.ProofList.Steps) != 1 {
-		t.Fatalf("root prooflist steps = %d, want 1", len(rootProofResp.ProofList.Steps))
+	if rootProofTarget.String() != rootPayload {
+		t.Fatalf("root prooflist target = %q, want %q", rootProofTarget.String(), rootPayload)
 	}
-	if rootProofResp.ProofList.Steps[0].Kind != prooflist.KindPayloadBinding {
-		t.Fatalf("root prooflist step kind = %q, want %q", rootProofResp.ProofList.Steps[0].Kind, prooflist.KindPayloadBinding)
+	if len(rootProofResp.Steps) != 1 {
+		t.Fatalf("root prooflist steps = %d, want 1", len(rootProofResp.Steps))
+	}
+	if rootProofResp.Steps[0].Kind != prooflist.KindPayloadBinding {
+		t.Fatalf("root prooflist step kind = %q, want %q", rootProofResp.Steps[0].Kind, prooflist.KindPayloadBinding)
 	}
 }
 
@@ -1008,19 +1080,17 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 		t.Fatalf("root @payload from arctable = %s, err %v; want defined", payload, err)
 	}
 
-	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt?format=proof")
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt")
 	if err != nil {
 		t.Fatalf("prooflist request failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("prooflist status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var contentProofResp httpapi.ContentProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&contentProofResp); err != nil {
-		t.Fatalf("decode prooflist response: %v", err)
-	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	contentProofResp := requireProofListHeader(t, resp)
 	resp.Body.Close()
-	if contentProofResp.Key == "" || len(contentProofResp.ProofList.Steps) == 0 {
+	if len(contentProofResp.Steps) == 0 {
 		t.Fatalf("unexpected prooflist response: %+v", contentProofResp)
 	}
 
@@ -1212,7 +1282,7 @@ func TestServerStatAndContentContracts(t *testing.T) {
 	}
 }
 
-func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
+func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -1259,7 +1329,7 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 		t.Fatalf("raw content status/body = %d %q, want %d %q", resp.StatusCode, rawBody, http.StatusOK, fileBody)
 	}
 
-	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt?format=proof")
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt")
 	if err != nil {
 		t.Fatalf("content proof request: %v", err)
 	}
@@ -1268,40 +1338,35 @@ func TestServerContentProofReadSmallUnixFSFileIncludesPayloadProof(t *testing.T)
 		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var proofResp httpapi.ContentProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
-		t.Fatalf("decode content proof response: %v", err)
+	proofBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(proofBody, fileBody) {
+		t.Fatalf("content = %q, want %q", proofBody, fileBody)
 	}
-	if !bytes.Equal(proofResp.Content, fileBody) {
-		t.Fatalf("content = %q, want %q", proofResp.Content, fileBody)
+	if resp.Header.Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("Accept-Ranges = %q, want bytes", resp.Header.Get("Accept-Ranges"))
 	}
-	if proofResp.Range.StatusCode != http.StatusOK || proofResp.Range.ContentLength != int64(len(fileBody)) || proofResp.Range.TotalSize != int64(len(fileBody)) {
-		t.Fatalf("unexpected range metadata: %+v", proofResp.Range)
+	proofResp := requireProofListHeader(t, resp)
+	if proofResp.Query != "docs/readme.txt" {
+		t.Fatalf("proof query = %q, want docs/readme.txt", proofResp.Query)
 	}
-	if proofResp.Range.Partial || proofResp.Range.ContentRange != "" || proofResp.Range.AcceptRanges != "bytes" {
-		t.Fatalf("unexpected full-read range metadata: %+v", proofResp.Range)
-	}
-	if proofResp.ProofList.Query != "docs/readme.txt" {
-		t.Fatalf("proof query = %q, want docs/readme.txt", proofResp.ProofList.Query)
-	}
-	if err := proofResp.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+	if err := proofResp.ValidateShape(prooflist.RequireSteps()); err != nil {
 		t.Fatalf("prooflist shape: %v", err)
 	}
-	if len(proofResp.ProofList.Steps) == 0 {
+	if len(proofResp.Steps) == 0 {
 		t.Fatal("expected prooflist steps")
 	}
-	last := proofResp.ProofList.Steps[len(proofResp.ProofList.Steps)-1]
+	last := proofResp.Steps[len(proofResp.Steps)-1]
 	if last.Kind != prooflist.KindPayloadBinding || last.Path != "@payload" {
 		t.Fatalf("last proof step = %q/%q, want payload binding @payload", last.Kind, last.Path)
 	}
-	for i, step := range proofResp.ProofList.Steps {
+	for i, step := range proofResp.Steps {
 		if step.Kind == prooflist.KindListIndex {
 			t.Fatalf("small raw file included list-index step at %d: %+v", i, step)
 		}
 	}
 }
 
-func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.T) {
+func TestServerDefaultGETRangeIncludesTouchedListIndexes(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -1338,37 +1403,32 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 	}
 	resp.Body.Close()
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+writeResp.NewRoot+"/large.bin?format=proof", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+writeResp.NewRoot+"/large.bin", nil)
 	req.Header.Set("Range", "bytes=262142-262145")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("content proof range request: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("content proof status = %d, want %d", resp.StatusCode, http.StatusPartialContent)
 	}
 
-	var proofResp httpapi.ContentProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
-		t.Fatalf("decode content proof response: %v", err)
-	}
-	if string(proofResp.Content) != "aabc" {
-		t.Fatalf("content range = %q, want aabc", proofResp.Content)
+	content, _ := io.ReadAll(resp.Body)
+	if string(content) != "aabc" {
+		t.Fatalf("content range = %q, want aabc", content)
 	}
 	wantContentRange := "bytes 262142-262145/262149"
-	if proofResp.Range.StatusCode != http.StatusPartialContent || proofResp.Range.ContentRange != wantContentRange {
-		t.Fatalf("range metadata = %+v, want status 206 content-range %q", proofResp.Range, wantContentRange)
+	if got := resp.Header.Get("Content-Range"); got != wantContentRange {
+		t.Fatalf("content range header = %q, want %q", got, wantContentRange)
 	}
-	if proofResp.Range.Start != 262142 || proofResp.Range.EndExclusive != 262146 || proofResp.Range.ContentLength != 4 || !proofResp.Range.Partial {
-		t.Fatalf("unexpected byte range metadata: %+v", proofResp.Range)
-	}
-	if err := proofResp.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+	proofResp := requireProofListHeader(t, resp)
+	if err := proofResp.ValidateShape(prooflist.RequireSteps()); err != nil {
 		t.Fatalf("prooflist shape: %v", err)
 	}
 
 	var indexes []uint64
-	for _, step := range proofResp.ProofList.Steps {
+	for _, step := range proofResp.Steps {
 		if step.Kind == prooflist.KindListIndex {
 			if step.Index == nil {
 				t.Fatalf("list-index step missing index: %+v", step)
@@ -1386,7 +1446,7 @@ func TestServerContentProofReadUnixFSRangeIncludesTouchedListIndexes(t *testing.
 		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
 	}
 
-	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: proofResp.ProofList})
+	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: proofResp})
 	if err != nil {
 		t.Fatalf("marshal verify request: %v", err)
 	}

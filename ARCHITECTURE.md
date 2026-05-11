@@ -370,11 +370,8 @@ The current daemon has two HTTP proof-bearing read surfaces:
 - default `GET /{root}/{path}` returns content or directory JSON and places the
   verifier-facing `ProofList` in `X-Malt-ProofList` with
   `X-Malt-ProofList-Encoding: base64url-json`
-- `GET /{root}/{path}?format=resolve` returns `target` plus `prooflist` by
+- `GET /resolve/{root}/{path}` returns `target` plus `prooflist` by
   default. Clients can opt out with `?proof=false` or `X-Malt-Proof: omit`
-- `GET /{root}/{path}?format=proof` returns the existing JSON
-  `ContentProofResponse` body with embedded content bytes, range metadata, and
-  `prooflist`
 
 `HEAD /{root}/{path}` is intentionally stat-only and returns stat headers
 without generating proof metadata.
