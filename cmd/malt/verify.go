@@ -1,11 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/spf13/cobra"
 )
@@ -15,89 +16,34 @@ func init() {
 }
 
 var verifyCmd = &cobra.Command{
-	Use:   "verify <root> --transcript <file>",
-	Short: "Verify a resolution transcript",
-	Long: `Verify that a recorded resolution transcript is valid for a given root.
-The transcript can be provided as a JSON file or via stdin.
+	Use:   "verify --prooflist <file|->",
+	Short: "Verify a ProofList",
+	Long: `Verify that a ProofList is valid.
+The ProofList can be provided as a JSON file or via stdin. The input may be a
+bare ProofList or a resolve response containing a prooflist field.
 
 Examples:
-  malt verify bafy... --transcript transcript.json`,
-	Args: cobra.ExactArgs(1),
+  malt verify --prooflist resolve.json
+  malt verify --prooflist -`,
+	Args: cobra.NoArgs,
 	RunE: runVerify,
 }
 
-// TranscriptInput is the JSON format expected for verification input.
-type TranscriptInput struct {
-	Root  string      `json:"root"`
-	Path  string      `json:"path"`
-	Steps []StepInput `json:"steps"`
-}
-
-// StepInput represents a single resolution step in JSON form.
-type StepInput struct {
-	Path     string `json:"path"`
-	Target   string `json:"target"`
-	Evidence string `json:"evidence"` // base64-encoded
-	Kind     string `json:"kind"`
-}
-
 func init() {
-	verifyCmd.Flags().String("transcript", "", "Path to transcript JSON file")
-	_ = verifyCmd.MarkFlagRequired("transcript")
+	verifyCmd.Flags().String("prooflist", "", "Path to ProofList JSON file, resolve JSON file, or - for stdin")
+	_ = verifyCmd.MarkFlagRequired("prooflist")
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	rootCID, err := parseCID(args[0])
+	pl, err := readProofListInput(cmd)
 	if err != nil {
 		return err
 	}
 
-	transcriptPath, _ := cmd.Flags().GetString("transcript")
-	if transcriptPath == "" {
-		return fmt.Errorf("--transcript flag is required")
-	}
-
-	data, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		return fmt.Errorf("reading transcript: %w", err)
-	}
-
-	var input TranscriptInput
-	if err := json.Unmarshal(data, &input); err != nil {
-		return fmt.Errorf("parsing transcript: %w", err)
-	}
-
-	steps := make([]httpapi.VerifyStep, len(input.Steps))
-	for i, step := range input.Steps {
-		targetCID, err := parseCID(step.Target)
-		if err != nil {
-			return fmt.Errorf("step %d: invalid target CID: %w", i, err)
-		}
-
-		evBytes, err := base64.StdEncoding.DecodeString(step.Evidence)
-		if err != nil {
-			return fmt.Errorf("step %d: invalid evidence: %w", i, err)
-		}
-
-		switch step.Kind {
-		case "explicit", "implicit", "hamt":
-		default:
-			return fmt.Errorf("step %d: unknown evidence kind %q", i, step.Kind)
-		}
-
-		steps[i] = httpapi.VerifyStep{
-			Path:     step.Path,
-			Target:   targetCID.String(),
-			Evidence: base64.StdEncoding.EncodeToString(evBytes),
-			Kind:     step.Kind,
-		}
-	}
-
 	resp, err := client.Verify(cmd.Context(), &httpapi.VerifyRequest{
-		Root:       rootCID.String(),
-		Transcript: steps,
+		ProofList: *pl,
 	})
 	if err != nil {
 		return daemonCommandError(err)
@@ -105,11 +51,54 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	if resp.Valid {
 		fmt.Println("valid: true")
-		fmt.Fprintf(os.Stderr, "transcript verified successfully\n")
+		fmt.Fprintf(os.Stderr, "ProofList verified successfully\n")
 	} else {
 		fmt.Println("valid: false")
-		fmt.Fprintf(os.Stderr, "transcript verification failed\n")
+		fmt.Fprintf(os.Stderr, "ProofList verification failed\n")
 	}
 
 	return nil
+}
+
+func readProofListInput(cmd *cobra.Command) (*prooflist.ProofList, error) {
+	proofPath, _ := cmd.Flags().GetString("prooflist")
+	if proofPath == "" {
+		return nil, fmt.Errorf("--prooflist flag is required")
+	}
+
+	var (
+		data []byte
+		err  error
+	)
+	if proofPath == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(proofPath)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading ProofList: %w", err)
+	}
+
+	var wrapped struct {
+		Target    string               `json:"target"`
+		ProofList *prooflist.ProofList `json:"prooflist"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.ProofList != nil {
+		if wrapped.Target != "" {
+			lastTarget, err := wrapped.ProofList.LastStepTarget()
+			if err != nil {
+				return nil, fmt.Errorf("resolve ProofList shape: %w", err)
+			}
+			if wrapped.Target != lastTarget.String() {
+				return nil, fmt.Errorf("resolve target %s does not match ProofList terminal target %s", wrapped.Target, lastTarget.String())
+			}
+		}
+		return wrapped.ProofList, nil
+	}
+
+	var pl prooflist.ProofList
+	if err := json.Unmarshal(data, &pl); err != nil {
+		return nil, fmt.Errorf("parsing ProofList: %w", err)
+	}
+	return &pl, nil
 }

@@ -355,22 +355,21 @@ func TestAddInputsMALTSymlinkFileUsesRegularFilePayload(t *testing.T) {
 		t.Fatalf("unexpected symlink file stat: %+v", stat)
 	}
 
-	resolved, err := daemon.ProveRoot(ctx, result.NewRoot, base+"/linked.txt")
+	resolved, err := daemon.ResolveRoot(ctx, result.NewRoot, base+"/linked.txt")
 	if err != nil {
 		t.Fatalf("resolve symlink file: %v", err)
 	}
 	var parentTarget cid.Cid
-	for _, step := range resolved.Transcript {
+	if resolved.ProofList == nil {
+		t.Fatal("resolve response did not include ProofList")
+	}
+	for _, step := range resolved.ProofList.Steps {
 		if step.Path == base+"/linked.txt" || step.Path == "linked.txt" {
-			parsed, err := cid.Decode(step.Target)
-			if err != nil {
-				t.Fatalf("decode symlink file target: %v", err)
-			}
-			parentTarget = parsed
+			parentTarget = step.Target
 		}
 	}
 	if !parentTarget.Defined() {
-		t.Fatalf("resolve transcript did not expose symlink file target: %+v", resolved.Transcript)
+		t.Fatalf("resolve ProofList did not expose symlink file target: %+v", resolved.ProofList)
 	}
 	if parentTarget.String() != stat.Key {
 		t.Fatalf("symlink file parent target = %s, want stat key %s", parentTarget, stat.Key)
@@ -887,17 +886,6 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 		t.Fatal("large body mismatch")
 	}
 
-	outDir := filepath.Join(t.TempDir(), "out")
-	rootStat, err := daemon.Stat(ctx, result.NewRoot, base)
-	if err != nil {
-		t.Fatalf("stat root: %v", err)
-	}
-	if err := exportDirectory(ctx, daemon, casClient, result.NewRoot, base, outDir, rootStat); err != nil {
-		t.Fatalf("export unixfs directory: %v", err)
-	}
-	if info, err := os.Stat(filepath.Join(outDir, "empty")); err != nil || !info.IsDir() {
-		t.Fatalf("expected exported empty directory, err=%v", err)
-	}
 }
 
 func TestAddInputsWithUnixFSAddsIncrementally(t *testing.T) {

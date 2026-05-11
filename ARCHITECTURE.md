@@ -204,7 +204,8 @@ as follows:
 
 ## Runtime Packaging
 
-The product shape is a single binary named `malt`.
+The product shape is a small primary runtime binary named `malt`, plus
+standalone evaluation binaries.
 
 Current command model:
 
@@ -218,15 +219,14 @@ Current command model:
   - commits structure through list/map semantics
   - writes under `--root` when extending an existing root, or creates a new
     root when omitted
-- `malt cat ...` and `malt get ...`
-  - product read paths for files and directories under explicit roots
-- `malt semantic-mutation ...`
-  - root-centric semantic mutation materialization
-- lower-level commands
-  - resolve, prove, prooflist, update, verify, metrics, eval-read, and lineage
-    inspection
-- `malt cas ...`
-  - convenience commands for CAS-oriented workflows
+- `malt resolve ...`
+  - returns `target + ProofList` by default for a root-relative read
+- `malt verify ...`
+  - verifies a ProofList
+- `malt-metrics`
+  - standalone evaluation metrics client
+- `malt-eval-read`
+  - standalone read benchmark driver
 
 Current runtime invariants:
 
@@ -237,7 +237,7 @@ Current runtime invariants:
 - materializing a bare map root means resolving `@payload` first
 - list roots are terminal typed keys and do not auto-redirect through
   `@payload`
-- bucket-path misses are reported as `not found`
+- root-relative path misses are reported as `not found`
 
 Path-miss behavior is a file-layout and product-runtime invariant. The reserved
 `@payload` binding belongs to map semantic objects.
@@ -370,6 +370,8 @@ The current daemon has two HTTP proof-bearing read surfaces:
 - default `GET /{root}/{path}` returns content or directory JSON and places the
   verifier-facing `ProofList` in `X-Malt-ProofList` with
   `X-Malt-ProofList-Encoding: base64url-json`
+- `GET /{root}/{path}?format=resolve` returns `target` plus `prooflist` by
+  default. Clients can opt out with `?proof=false` or `X-Malt-Proof: omit`
 - `GET /{root}/{path}?format=proof` returns the existing JSON
   `ContentProofResponse` body with embedded content bytes, range metadata, and
   `prooflist`
@@ -402,8 +404,9 @@ Current boundary:
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
 - Root-centric daemon routes expose this layout for UnixFS file and directory
-  writes, path stat, and content reads. The `malt add`, `malt cat`, and
-  `malt get` commands use those root APIs.
+  writes, path stat, and content reads. The public CLI exposes ingestion through
+  `malt add`; reads are available through the daemon API and proof-bearing
+  resolve/content endpoints.
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
   remain runtime and compatibility adapters rather than semantic owners.

@@ -129,3 +129,55 @@ func TestValidateShapeRejectsUndefinedRootTargetAndUnknownKind(t *testing.T) {
 		t.Fatal("expected RequireSteps to reject an empty proof list")
 	}
 }
+
+func TestValidateShapeRejectsUnanchoredSteps(t *testing.T) {
+	root := testCID(t, "root")
+	detached := testCID(t, "detached")
+	target := testCID(t, "target")
+
+	if err := (ProofList{
+		Root: root,
+		Steps: []Step{{
+			Kind:   KindMapStep,
+			From:   detached,
+			Path:   "name",
+			Target: target,
+		}},
+	}).ValidateShape(RequireSteps()); err == nil {
+		t.Fatal("expected unanchored first step to be rejected")
+	}
+
+	mid := testCID(t, "mid")
+	chunk0 := testCID(t, "chunk0")
+	chunk1 := testCID(t, "chunk1")
+	index0 := uint64(0)
+	index1 := uint64(1)
+	length := uint64(2)
+	if err := (ProofList{
+		Root: root,
+		Steps: []Step{
+			{
+				Kind:   KindMapStep,
+				From:   root,
+				Path:   "large.bin",
+				Target: mid,
+			},
+			{
+				Kind:   KindListIndex,
+				From:   mid,
+				Index:  &index0,
+				Length: &length,
+				Target: chunk0,
+			},
+			{
+				Kind:   KindListIndex,
+				From:   mid,
+				Index:  &index1,
+				Length: &length,
+				Target: chunk1,
+			},
+		},
+	}).ValidateShape(RequireSteps()); err != nil {
+		t.Fatalf("expected sibling list-index steps anchored at a prior target to pass: %v", err)
+	}
+}

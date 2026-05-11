@@ -82,23 +82,21 @@ func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpa
 	return c.Resolve(ctx, root, p)
 }
 
-// ProveRoot returns the transcript for an explicit root path.
-func (c *Client) ProveRoot(ctx context.Context, root string, p string) (*httpapi.ResolveResponse, error) {
-	var resp httpapi.ResolveResponse
-	if err := c.do(ctx, http.MethodGet, "/"+url.PathEscape(root)+"/"+p, map[string]string{"format": "resolve"}, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+// ResolveRootWithProof resolves a path from an explicit root and controls
+// whether ProofList evidence is included in the daemon response.
+func (c *Client) ResolveRootWithProof(ctx context.Context, root string, p string, includeProof bool) (*httpapi.ResolveResponse, error) {
+	return c.ResolveWithProof(ctx, root, p, includeProof)
 }
 
-// ProofListRoot returns a ProofList read result from an explicit root.
-func (c *Client) ProofListRoot(ctx context.Context, root string, p string) (*httpapi.ProofListResponse, error) {
-	return c.ProofList(ctx, root, p)
-}
-
-// Resolve resolves a path relative to a root CID and returns transcript
-// evidence for the resolution.
+// Resolve resolves a path relative to a root CID and returns ProofList evidence
+// by default.
 func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
+	return c.ResolveWithProof(ctx, root, rawPath, true)
+}
+
+// ResolveWithProof resolves a path relative to a root CID and controls whether
+// ProofList evidence is included in the daemon response.
+func (c *Client) ResolveWithProof(ctx context.Context, root, rawPath string, includeProof bool) (*httpapi.ResolveResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, err
@@ -106,6 +104,9 @@ func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.Re
 	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
 	q := u.Query()
 	q.Set("format", "resolve")
+	if !includeProof {
+		q.Set("proof", "false")
+	}
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -139,14 +140,14 @@ func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.Re
 }
 
 // ProofList resolves a path and returns a verifier-facing ProofList.
-func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.ProofListResponse, error) {
+func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, err
 	}
 	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
 	q := u.Query()
-	q.Set("format", "proof")
+	q.Set("format", "resolve")
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -169,11 +170,11 @@ func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.
 		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
 	}
 
-	var out httpapi.ContentProofResponse
+	var out httpapi.ResolveResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
-	return &httpapi.ProofListResponse{Target: out.Key, ProofList: out.ProofList}, nil
+	return &out, nil
 }
 
 // Stat returns the locked stat contract for a path under a root CID.
@@ -307,24 +308,6 @@ func (c *Client) ContentProof(ctx context.Context, root, rawPath, rangeHeader st
 	return &out, nil
 }
 
-// UpdateRoot updates a single path under an explicit root (PUT /{root}/{path}).
-func (c *Client) UpdateRoot(ctx context.Context, root string, path string, target string) (*httpapi.WriteUpdateResponse, error) {
-	var resp httpapi.WriteUpdateResponse
-	if err := c.do(ctx, http.MethodPut, "/"+url.PathEscape(root)+"/"+path, nil, &httpapi.UpdateRequest{Target: target}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// BatchUpdateRoot performs a batch update under an explicit root.
-func (c *Client) BatchUpdateRoot(ctx context.Context, root string, updates map[string]string) (*httpapi.WriteBatchResponse, error) {
-	var resp httpapi.WriteBatchResponse
-	if err := c.do(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/_batch-update", nil, &httpapi.BatchUpdateRequest{Updates: updates}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 // ApplyRootSemanticMutation materializes a semantic mutation under an explicit root.
 func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req *httpapi.SemanticMutationRequest) (*httpapi.SemanticMutationResponse, error) {
 	var resp httpapi.SemanticMutationResponse
@@ -372,62 +355,13 @@ func (c *Client) CreatePayloadRoot(ctx context.Context, extras map[string]string
 	return c.CreateRootStructure(ctx, arcs)
 }
 
-// Verify verifies a transcript under a root.
+// Verify verifies a ProofList.
 func (c *Client) Verify(ctx context.Context, req *httpapi.VerifyRequest) (*httpapi.VerifyResponse, error) {
 	var resp httpapi.VerifyResponse
 	if err := c.do(ctx, http.MethodPost, "/verify", nil, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
-}
-
-// GetLineage returns one lineage record.
-func (c *Client) GetLineage(ctx context.Context, root string) (*httpapi.LineageRecordResponse, error) {
-	var resp httpapi.LineageRecordResponse
-	if err := c.do(ctx, http.MethodGet, "/lineage/"+url.PathEscape(root), nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// LineageAncestors returns ancestor roots.
-func (c *Client) LineageAncestors(ctx context.Context, root string, maxDepth int) ([]string, error) {
-	query := map[string]string{}
-	if maxDepth > 0 {
-		query["max_depth"] = strconv.Itoa(maxDepth)
-	}
-	var resp httpapi.CIDListResponse
-	if err := c.do(ctx, http.MethodGet, "/lineage/"+url.PathEscape(root)+"/ancestors", query, nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Items, nil
-}
-
-// LineageDescendants returns direct descendant roots.
-func (c *Client) LineageDescendants(ctx context.Context, root string) ([]string, error) {
-	var resp httpapi.CIDListResponse
-	if err := c.do(ctx, http.MethodGet, "/lineage/"+url.PathEscape(root)+"/descendants", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Items, nil
-}
-
-// ListLineage returns all lineage records.
-func (c *Client) ListLineage(ctx context.Context) ([]httpapi.LineageRecordResponse, error) {
-	var resp httpapi.LineageListResponse
-	if err := c.do(ctx, http.MethodGet, "/lineage", nil, nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Records, nil
-}
-
-// CountLineage returns the lineage record count.
-func (c *Client) CountLineage(ctx context.Context) (int, error) {
-	var resp httpapi.CountResponse
-	if err := c.do(ctx, http.MethodGet, "/lineage/count", nil, nil, &resp); err != nil {
-		return 0, err
-	}
-	return resp.Count, nil
 }
 
 func (c *Client) do(ctx context.Context, method string, route string, query map[string]string, body any, out any) error {

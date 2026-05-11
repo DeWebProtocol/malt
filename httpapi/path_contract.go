@@ -1,4 +1,4 @@
-// Locked path stat/content HTTP semantics and `malt get` output rules.
+// Locked path stat/content HTTP semantics.
 package httpapi
 
 import "net/http"
@@ -15,11 +15,3 @@ const (
 	// StatusRangeNotSatisfiable: Range header cannot be satisfied for the file.
 	StatusRangeNotSatisfiable = http.StatusRequestedRangeNotSatisfiable // 416
 )
-
-// GetDefaultOutputRules documents locked `malt get` local output behavior (no runtime here).
-//
-//  1. If local-output is omitted and the target path is non-root, write to ./<basename>
-//     (basename of the MALT path).
-//  2. If the target is the current root, local-output is required.
-//  3. If the target is a directory and local-output is omitted, materialize under ./<basename>.
-const GetDefaultOutputRules = "see plan.md: non-root default ./<basename>, root requires output, directory restores to ./<basename>"

@@ -71,12 +71,11 @@ func TestProofListFromStepsClassifiesTerminalPayloadBinding(t *testing.T) {
 }
 
 func TestAppendListIndexStepsClassifiesKnownListQueries(t *testing.T) {
-	root := testCID(t, "root")
 	listRoot := testCID(t, "list")
 	chunk0 := testCID(t, "chunk-0")
 	chunk1 := testCID(t, "chunk-1")
 
-	pl, err := unixfs.ProofListFromSteps(root, "blob.bin[0:8]", nil)
+	pl, err := unixfs.ProofListFromSteps(listRoot, "blob.bin[0:8]", nil)
 	if err != nil {
 		t.Fatalf("ProofListFromSteps failed: %v", err)
 	}

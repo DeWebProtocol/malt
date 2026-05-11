@@ -67,7 +67,8 @@ implicit ancestor-rewrite costs with explicit, verifiable structure maintenance.
 
 ## Runtime Shape
 
-The current prototype is packaged as a single binary named `malt`.
+The current prototype exposes a small primary runtime CLI named `malt`.
+Evaluation-oriented tools are packaged as separate binaries.
 
 Current runtime shape:
 
@@ -79,23 +80,23 @@ Current runtime shape:
   - commits file and directory structure through MALT list/map semantics
   - writes under `--root` when extending an existing root, or creates a new
     root when omitted
-- `malt cat`, `malt get`
-  - product file and directory read commands over explicit roots
-- `malt semantic-mutation`
-  - materializes root-centric semantic mutation requests
-- `malt resolve`, `malt prove`, `malt prooflist`, `malt update`,
-  `malt verify`, `malt lineage`, `malt metrics`, `malt eval-read`
-  - lower-level thin HTTP clients against the local daemon
-- `malt cas`
-  - direct convenience commands against the configured CAS endpoint
+- `malt resolve`
+  - resolves a root-relative path and returns `target + ProofList` by default
+- `malt verify`
+  - verifies a ProofList, including the ProofList emitted by `malt resolve`
+- `malt-metrics`
+  - standalone evaluation metrics client for the daemon
+- `malt-eval-read`
+  - standalone read benchmark driver
 - daemon API
   - root-centric HTTP/JSON surface rooted at `/`
 - embedded mock CAS
   - optional same-process second-port service
   - fixed Kubo-compatible API at `/api/v0`
 
-The file commands are the current product layout built above MALT. They are
-not the definition of the MALT semantic layer.
+The CLI is intentionally root-centric. Lower-level compatibility and benchmark
+modules may remain internally, but they are not exposed as primary `malt`
+subcommands.
 
 ## HTTP Read Proof Metadata
 
@@ -119,7 +120,9 @@ variance to shared HTTP caches.
 `X-Malt-Storage-Kind`, `X-Malt-Key`, optional `X-Malt-Payload`, and optional
 `Content-Length` without generating proof headers. `GET /{root}/{path}?format=proof`
 keeps the JSON-body proof contract for clients that prefer `ContentProofResponse`
-over header metadata.
+over header metadata. `GET /{root}/{path}?format=resolve` returns a JSON
+`ResolveResponse` with `target` and, by default, `prooflist`; clients can opt out
+with `?proof=false` or `X-Malt-Proof: omit`.
 
 ## Data Model
 
@@ -157,7 +160,7 @@ communicated, and whether concurrent roots are merged.
 | ArcTable | Namespace-scoped arcset persistence/materialization | overwrite, versioned |
 | Commitment Backend | Stateless primitive authentication | KZG, IPA |
 | Gateway | Deployment surface for semantic mutations and verifiable reads | daemon HTTP API |
-| Application Layout | Product data model built above semantic layer | flattened UnixFS-style bucket layout |
+| Application Layout | Product data model built above semantic layer | flattened UnixFS-style root layout |
 
 Under this terminology:
 
@@ -238,8 +241,9 @@ Current boundary:
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
 - The root-centric daemon exposes this layout through routes for UnixFS file
-  and directory writes, path stat, and content reads, and the `malt add`,
-  `malt cat`, and `malt get` commands use those root APIs.
+  and directory writes, path stat, and content reads. The public CLI currently
+  exposes write ingestion through `malt add`; reads are available through the
+  daemon API and proof-bearing resolve/content endpoints.
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
   `core/resolver` the semantic owners.
@@ -262,7 +266,7 @@ Recommended boundary:
 
 - publish payload to CAS
 - build map/list roots
-- attach resulting roots into the selected bucket layout
+- attach resulting roots into the selected root layout
 
 ## Interoperability
 
@@ -352,7 +356,9 @@ Current defaults:
 malt/
 |-- client/          # thin daemon HTTP client
 |-- cmd/
-|   `-- malt/
+|   |-- malt/
+|   |-- malt-eval-read/
+|   `-- malt-metrics/
 |-- config/
 |-- httpapi/         # shared daemon request/response payload types
 |-- core/

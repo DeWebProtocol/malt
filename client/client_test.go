@@ -57,34 +57,20 @@ func TestClientRootFlow(t *testing.T) {
 	if resolveResp.Target != target {
 		t.Fatalf("resolved target = %q, want %q", resolveResp.Target, target)
 	}
+	if resolveResp.ProofList == nil {
+		t.Fatal("resolve response missing ProofList")
+	}
 
 	verifyResp, err := client.Verify(ctx, &httpapi.VerifyRequest{
-		Root:       createResp.Root,
-		Transcript: toVerifySteps(resolveResp.Transcript),
+		ProofList: *resolveResp.ProofList,
 	})
 	if err != nil {
-		t.Fatalf("verify transcript: %v", err)
+		t.Fatalf("verify ProofList: %v", err)
 	}
 	if !verifyResp.Valid {
 		t.Fatal("expected verification to succeed")
 	}
 
-	updateTarget := fakeCIDString("bob")
-	updateResp, err := client.UpdateRoot(ctx, createResp.Root, "name", updateTarget)
-	if err != nil {
-		t.Fatalf("update root: %v", err)
-	}
-	if updateResp.NewRoot == createResp.Root {
-		t.Fatal("expected update to advance root")
-	}
-
-	resolved, err := client.Resolve(ctx, updateResp.NewRoot, "name")
-	if err != nil {
-		t.Fatalf("resolve updated root: %v", err)
-	}
-	if resolved.Target != updateTarget {
-		t.Fatalf("resolved target = %q, want %q", resolved.Target, updateTarget)
-	}
 }
 
 func TestClientProofListReads(t *testing.T) {
@@ -153,9 +139,9 @@ func TestClientProofListReads(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	rootProof, err = client.ProofListRoot(ctx, rootCreateResp.Root, "")
+	rootProof, err = client.ProofList(ctx, rootCreateResp.Root, "")
 	if err != nil {
-		t.Fatalf("ProofListRoot: %v", err)
+		t.Fatalf("ProofList: %v", err)
 	}
 	if rootProof.Target != rootPayload {
 		t.Fatalf("root prooflist target = %q, want %q", rootProof.Target, rootPayload)
@@ -168,7 +154,7 @@ func TestClientProofListReads(t *testing.T) {
 	}
 }
 
-func TestClientProofListRootPreservesPath(t *testing.T) {
+func TestClientProofListPreservesRootPath(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -207,16 +193,16 @@ func TestClientProofListRootPreservesPath(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	proof, err := client.ProofListRoot(ctx, createResp.Root, "name")
+	proof, err := client.ProofList(ctx, createResp.Root, "name")
 	if err != nil {
-		t.Fatalf("ProofListRoot: %v", err)
+		t.Fatalf("ProofList: %v", err)
 	}
 	if proof.Target != targetCID.String() {
-		t.Fatalf("ProofListRoot target = %q, want %q", proof.Target, targetCID.String())
+		t.Fatalf("ProofList target = %q, want %q", proof.Target, targetCID.String())
 	}
 }
 
-func TestClientProveRootReturnsTranscript(t *testing.T) {
+func TestClientResolveRootReturnsProofList(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -249,29 +235,22 @@ func TestClientProveRootReturnsTranscript(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	proof, err := client.ProveRoot(ctx, createResp.Root, "name")
+	proof, err := client.ResolveRoot(ctx, createResp.Root, "name")
 	if err != nil {
-		t.Fatalf("ProveRoot: %v", err)
+		t.Fatalf("ResolveRoot: %v", err)
 	}
 	if proof.Target != targetCID.String() {
 		t.Fatalf("target = %q, want %q", proof.Target, targetCID.String())
 	}
-	if len(proof.Transcript) == 0 {
-		t.Fatalf("transcript is empty")
+	if proof.ProofList == nil {
+		t.Fatalf("prooflist is missing")
 	}
-	verifyResp, err := client.Verify(ctx, &httpapi.VerifyRequest{
-		Root:       createResp.Root,
-		Transcript: toVerifySteps(proof.Transcript),
-	})
-	if err != nil {
-		t.Fatalf("Verify ProveRoot transcript: %v", err)
-	}
-	if !verifyResp.Valid {
-		t.Fatalf("ProveRoot transcript did not verify")
+	if err := proof.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("prooflist shape: %v", err)
 	}
 }
 
-func TestClientProveRootDoesNotRequireTargetContent(t *testing.T) {
+func TestClientResolveRootProofListDoesNotRequireTargetContent(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -295,15 +274,15 @@ func TestClientProveRootDoesNotRequireTargetContent(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	proof, err := client.ProveRoot(ctx, createResp.Root, "name")
+	proof, err := client.ResolveRoot(ctx, createResp.Root, "name")
 	if err != nil {
-		t.Fatalf("ProveRoot: %v", err)
+		t.Fatalf("ResolveRoot: %v", err)
 	}
 	if proof.Target != target {
 		t.Fatalf("target = %q, want %q", proof.Target, target)
 	}
-	if len(proof.Transcript) == 0 {
-		t.Fatalf("transcript is empty")
+	if proof.ProofList == nil || len(proof.ProofList.Steps) == 0 {
+		t.Fatalf("prooflist is empty: %+v", proof.ProofList)
 	}
 }
 
@@ -518,7 +497,7 @@ func TestClientStatAndContent(t *testing.T) {
 	}
 }
 
-func TestClientResolveRootReturnsTranscriptSteps(t *testing.T) {
+func TestClientResolveRootReturnsProofListSteps(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -547,11 +526,11 @@ func TestClientResolveRootReturnsTranscriptSteps(t *testing.T) {
 	if resolveResp.Target != target {
 		t.Fatalf("target = %q, want %q", resolveResp.Target, target)
 	}
-	if len(resolveResp.Transcript) == 0 {
-		t.Fatal("ResolveRoot should return transcript evidence steps")
+	if resolveResp.ProofList == nil {
+		t.Fatal("ResolveRoot should return ProofList evidence")
 	}
-	if resolveResp.Transcript[0].Evidence == "" {
-		t.Fatal("ResolveRoot transcript step should include evidence")
+	if len(resolveResp.ProofList.Steps) == 0 {
+		t.Fatal("ResolveRoot ProofList should include evidence steps")
 	}
 }
 
@@ -712,19 +691,6 @@ func persistentTestConfig(t *testing.T) (*config.Config, *ipfs.Client) {
 	cfg.CAS.Mode = "external"
 	cfg.CAS.BaseURL = casTS.URL
 	return cfg, ipfs.NewClient(casTS.URL)
-}
-
-func toVerifySteps(steps []httpapi.StepEvidence) []httpapi.VerifyStep {
-	out := make([]httpapi.VerifyStep, len(steps))
-	for i, step := range steps {
-		out[i] = httpapi.VerifyStep{
-			Path:     step.Path,
-			Target:   step.Target,
-			Evidence: step.Evidence,
-			Kind:     step.Kind,
-		}
-	}
-	return out
 }
 
 func fakeCIDString(seed string) string {

@@ -37,6 +37,7 @@ type Step struct {
 	Coordinate      string   `json:"coordinate,omitempty"`
 	Path            string   `json:"path,omitempty"`
 	Index           *uint64  `json:"index,omitempty"`
+	Length          *uint64  `json:"length,omitempty"`
 	Target          cid.Cid  `json:"target"`
 	EvidenceKind    string   `json:"evidence_kind,omitempty"`
 	EvidenceBackend string   `json:"evidence_backend,omitempty"`
@@ -75,6 +76,7 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 	if cfg.requireSteps && len(p.Steps) == 0 {
 		return fmt.Errorf("prooflist steps are empty")
 	}
+	anchored := map[string]struct{}{p.Root.String(): {}}
 	for i, step := range p.Steps {
 		if !step.Kind.Known() {
 			return fmt.Errorf("prooflist step %d has unknown kind %q", i, step.Kind)
@@ -85,8 +87,20 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 		if !step.Target.Defined() {
 			return fmt.Errorf("prooflist step %d target CID is undefined", i)
 		}
+		if _, ok := anchored[step.From.String()]; !ok {
+			return fmt.Errorf("prooflist step %d from CID %s is not anchored to the root or an earlier target", i, step.From.String())
+		}
+		anchored[step.Target.String()] = struct{}{}
 	}
 	return nil
+}
+
+// LastStepTarget returns the target CID of the final ordered step.
+func (p ProofList) LastStepTarget() (cid.Cid, error) {
+	if err := p.ValidateShape(RequireSteps()); err != nil {
+		return cid.Undef, err
+	}
+	return p.Steps[len(p.Steps)-1].Target, nil
 }
 
 // Known reports whether k is part of the current ProofList schema.
