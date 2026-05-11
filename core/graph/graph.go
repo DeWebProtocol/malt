@@ -140,6 +140,9 @@ func (g *Graph) Resolve(ctx context.Context, root cid.Cid, path string) (cid.Cid
 	if err != nil {
 		return cid.Cid{}, nil, fmt.Errorf("resolution failed: %w", err)
 	}
+	if !result.RemainingPath.IsEmpty() {
+		return cid.Cid{}, nil, fmt.Errorf("resolution incomplete: remaining path %q", result.RemainingPath.String())
+	}
 	return result.Target, NewTranscriptProof(result.Transcript), nil
 }
 
@@ -152,6 +155,9 @@ func (g *Graph) BatchResolve(ctx context.Context, root cid.Cid, paths []string) 
 	for _, p := range paths {
 		result, err := g.resolver.Resolve(root, p)
 		if err != nil {
+			continue
+		}
+		if !result.RemainingPath.IsEmpty() {
 			continue
 		}
 		results[p] = result.Target

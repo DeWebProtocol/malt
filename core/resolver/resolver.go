@@ -45,6 +45,10 @@ type ResolveResult struct {
 	// Target is the final resolved CID
 	Target cid.Cid
 
+	// RemainingPath is non-empty when resolution stopped before consuming the
+	// requested path.
+	RemainingPath arcset.Path
+
 	// Transcript contains the evidence for each step
 	Transcript *Transcript
 }
@@ -64,8 +68,9 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 		// Typed list roots are terminal for path traversal.
 		if codec.SemanticKindOf(currentCID) == codec.SemanticKindList {
 			return &ResolveResult{
-				Target:     currentCID,
-				Transcript: transcript,
+				Target:        currentCID,
+				RemainingPath: remainingPath,
+				Transcript:    transcript,
 			}, nil
 		}
 
@@ -79,8 +84,9 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 			// Explicit step: use explicit step executor for longest-prefix match.
 			if r.explicitStep == nil {
 				return &ResolveResult{
-					Target:     currentCID,
-					Transcript: transcript,
+					Target:        currentCID,
+					RemainingPath: remainingPath,
+					Transcript:    transcript,
 				}, nil
 			}
 			matchedPath, target, ev, err = r.explicitStep.Resolve(currentCID, remainingPath)
@@ -88,8 +94,9 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 			// Implicit step: use implicit step executor for DAG traversal.
 			if r.implicitStep == nil {
 				return &ResolveResult{
-					Target:     currentCID,
-					Transcript: transcript,
+					Target:        currentCID,
+					RemainingPath: remainingPath,
+					Transcript:    transcript,
 				}, nil
 			}
 			matchedPath, target, ev, err = r.implicitStep.Resolve(currentCID, remainingPath)
@@ -102,8 +109,9 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 		// If no path was matched, we can't continue.
 		if matchedPath.IsEmpty() {
 			return &ResolveResult{
-				Target:     currentCID,
-				Transcript: transcript,
+				Target:        currentCID,
+				RemainingPath: remainingPath,
+				Transcript:    transcript,
 			}, nil
 		}
 
@@ -126,8 +134,9 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 	}
 
 	return &ResolveResult{
-		Target:     currentCID,
-		Transcript: transcript,
+		Target:        currentCID,
+		RemainingPath: remainingPath,
+		Transcript:    transcript,
 	}, nil
 }
 
@@ -142,6 +151,9 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !keyResult.RemainingPath.IsEmpty() {
+		return keyResult, nil
+	}
 
 	// Terminal materialization is map-only. List roots must remain terminal.
 	if codec.SemanticKindOf(keyResult.Target) == codec.SemanticKindMap && r.explicitStep != nil {
@@ -155,8 +167,9 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 			Evidence: ev,
 		})
 		return &ResolveResult{
-			Target:     target,
-			Transcript: keyResult.Transcript,
+			Target:        target,
+			RemainingPath: "",
+			Transcript:    keyResult.Transcript,
 		}, nil
 	}
 

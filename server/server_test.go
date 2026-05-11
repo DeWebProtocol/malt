@@ -1118,6 +1118,103 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !bytes.Equal(got, fileBody) {
 		t.Fatalf("content status/body = %d %q, want %d %q", resp.StatusCode, string(got), http.StatusOK, string(fileBody))
 	}
+
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/docs/readme.txt/extra")
+	if err != nil {
+		t.Fatalf("partial content path request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("partial content path status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestServerResolveHeadAndReadShareUnixFSDirectoryTarget(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs?type=dir", "application/json", nil)
+	if err != nil {
+		t.Fatalf("create unixfs directory request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs directory status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var dirResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dirResp); err != nil {
+		t.Fatalf("decode unixfs directory response: %v", err)
+	}
+	resp.Body.Close()
+
+	headReq, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+dirResp.NewRoot+"/docs", nil)
+	resp, err = http.DefaultClient.Do(headReq)
+	if err != nil {
+		t.Fatalf("directory HEAD request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("directory HEAD status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	headKey := resp.Header.Get("X-Malt-Key")
+	if headKey == "" {
+		t.Fatal("directory HEAD X-Malt-Key is missing")
+	}
+	headTarget := resp.Header.Get("X-Malt-Payload")
+	if headTarget == "" {
+		headTarget = headKey
+	}
+
+	resp, err = http.Get(ts.URL + "/resolve/" + dirResp.NewRoot + "/docs")
+	if err != nil {
+		t.Fatalf("directory resolve request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("directory resolve status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var resolveResp httpapi.ResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+		t.Fatalf("decode directory resolve response: %v", err)
+	}
+	resp.Body.Close()
+	if resolveResp.Target != headTarget {
+		t.Fatalf("resolve target = %q, HEAD target = %q; want shared resolution target", resolveResp.Target, headTarget)
+	}
+
+	resp, err = http.Get(ts.URL + "/" + dirResp.NewRoot + "/docs")
+	if err != nil {
+		t.Fatalf("directory read request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("directory read status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	readProof := requireProofListHeader(t, resp)
+	resp.Body.Close()
+	readTarget, err := readProof.LastStepTarget()
+	if err != nil {
+		t.Fatalf("directory read proof target: %v", err)
+	}
+	if readTarget.String() != resolveResp.Target {
+		t.Fatalf("read proof target = %q, resolve target = %q; want shared resolution target", readTarget.String(), resolveResp.Target)
+	}
 }
 
 func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {

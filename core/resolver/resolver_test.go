@@ -324,6 +324,20 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 	if len(resolveResult.Transcript.Steps) != 1 {
 		t.Fatalf("Resolve should not append @payload for list; steps = %d", len(resolveResult.Transcript.Steps))
 	}
+
+	incompleteResult, err := g.Resolve(root, "file/extra")
+	if err != nil {
+		t.Fatalf("Resolve incomplete list path failed: %v", err)
+	}
+	if !incompleteResult.Target.Equals(listRoot) {
+		t.Fatalf("Resolve incomplete list target = %v, want list root %v", incompleteResult.Target, listRoot)
+	}
+	if incompleteResult.RemainingPath != "extra" {
+		t.Fatalf("Resolve incomplete list remaining path = %q, want %q", incompleteResult.RemainingPath, "extra")
+	}
+	if len(incompleteResult.Transcript.Steps) != 1 {
+		t.Fatalf("Resolve incomplete list steps = %d, want 1", len(incompleteResult.Transcript.Steps))
+	}
 }
 
 func TestResolverMissingPayloadBindingFails(t *testing.T) {
@@ -367,5 +381,32 @@ func TestResolverNonMaltEmptyPath(t *testing.T) {
 	}
 	if len(result.Transcript.Steps) != 0 {
 		t.Errorf("Expected 0 steps, got %d", len(result.Transcript.Steps))
+	}
+}
+
+func TestResolverNonMaltUnresolvedPathReportsRemaining(t *testing.T) {
+	e := newTestArcTable()
+	semantic := newSemantic(t, e)
+	c := mock.NewCAS()
+
+	payloadCID, _ := newPayloadCID([]byte("raw-data"))
+	c.AddBlock(payloadCID, []byte("raw-data"))
+
+	explicitR := explicit.NewResolver(e, semantic, testNamespace)
+	implicitR := implicit.NewResolver(c)
+	g := resolver.NewResolver(explicitR, implicitR)
+
+	result, err := g.Resolve(payloadCID, "missing/path")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !result.Target.Equals(payloadCID) {
+		t.Fatalf("Target = %v, want %v", result.Target, payloadCID)
+	}
+	if result.RemainingPath != "missing/path" {
+		t.Fatalf("RemainingPath = %q, want %q", result.RemainingPath, "missing/path")
+	}
+	if len(result.Transcript.Steps) != 0 {
+		t.Fatalf("Expected 0 steps, got %d", len(result.Transcript.Steps))
 	}
 }
