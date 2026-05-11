@@ -6,6 +6,7 @@ import (
 )
 
 func init() {
+	resolveCmd.Flags().Bool("proof", true, "Include ProofList evidence in resolve output")
 	rootCmd.AddCommand(resolveCmd)
 }
 
@@ -23,7 +24,11 @@ func runResolve(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		path = args[1]
 	}
-	result, err := client.ResolveRoot(cmd.Context(), args[0], path)
+	includeProof := true
+	if cmd.Flags().Lookup("proof") != nil {
+		includeProof, _ = cmd.Flags().GetBool("proof")
+	}
+	result, err := client.ResolveRootWithProof(cmd.Context(), args[0], path, includeProof)
 	if err != nil {
 		return daemonCommandError(err)
 	}

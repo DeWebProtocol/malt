@@ -80,9 +80,19 @@ func readProofListInput(cmd *cobra.Command) (*prooflist.ProofList, error) {
 	}
 
 	var wrapped struct {
+		Target    string               `json:"target"`
 		ProofList *prooflist.ProofList `json:"prooflist"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.ProofList != nil {
+		if wrapped.Target != "" {
+			lastTarget, err := wrapped.ProofList.LastStepTarget()
+			if err != nil {
+				return nil, fmt.Errorf("resolve ProofList shape: %w", err)
+			}
+			if wrapped.Target != lastTarget.String() {
+				return nil, fmt.Errorf("resolve target %s does not match ProofList terminal target %s", wrapped.Target, lastTarget.String())
+			}
+		}
 		return wrapped.ProofList, nil
 	}
 

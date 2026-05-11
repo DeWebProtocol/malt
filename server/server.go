@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/dewebprotocol/malt/core/api"
@@ -41,7 +42,13 @@ func New(node *api.Node, addr string) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isRemovedPublicRoute(r.Method, r.URL.Path) {
+			s.handleRemovedPublicRoute(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // Start starts the HTTP server.
@@ -86,6 +93,28 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Root creation
 	mux.HandleFunc("POST /_", s.handleCreateStructure)
+}
+
+func isRemovedPublicRoute(method, rawPath string) bool {
+	trimmed := strings.Trim(rawPath, "/")
+	if trimmed == "" {
+		return false
+	}
+	parts := strings.Split(trimmed, "/")
+	if parts[0] == "lineage" {
+		switch len(parts) {
+		case 1, 2:
+			return true
+		case 3:
+			return parts[2] == "ancestors" || parts[2] == "descendants"
+		default:
+			return false
+		}
+	}
+	if method == http.MethodPost && len(parts) == 2 && parts[1] == "_batch-update" {
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleRemovedPublicRoute(w http.ResponseWriter, r *http.Request) {

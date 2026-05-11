@@ -82,9 +82,21 @@ func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpa
 	return c.Resolve(ctx, root, p)
 }
 
+// ResolveRootWithProof resolves a path from an explicit root and controls
+// whether ProofList evidence is included in the daemon response.
+func (c *Client) ResolveRootWithProof(ctx context.Context, root string, p string, includeProof bool) (*httpapi.ResolveResponse, error) {
+	return c.ResolveWithProof(ctx, root, p, includeProof)
+}
+
 // Resolve resolves a path relative to a root CID and returns ProofList evidence
 // by default.
 func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
+	return c.ResolveWithProof(ctx, root, rawPath, true)
+}
+
+// ResolveWithProof resolves a path relative to a root CID and controls whether
+// ProofList evidence is included in the daemon response.
+func (c *Client) ResolveWithProof(ctx context.Context, root, rawPath string, includeProof bool) (*httpapi.ResolveResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, err
@@ -92,6 +104,9 @@ func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.Re
 	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
 	q := u.Query()
 	q.Set("format", "resolve")
+	if !includeProof {
+		q.Set("proof", "false")
+	}
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)

@@ -155,6 +155,15 @@ func TestServerDeprecatedPublicRoutesRemoved(t *testing.T) {
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("PUT update status = %d, want 404 or 405", rec.Code)
 	}
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/lineage", strings.NewReader("{}"))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s /lineage status = %d, want 404 tombstone", method, rec.Code)
+		}
+	}
 }
 
 func TestServerMetricsSnapshotAndResetEndpoints(t *testing.T) {
