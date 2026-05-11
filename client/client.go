@@ -4,6 +4,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
 )
 
@@ -101,9 +103,8 @@ func (c *Client) ResolveWithProof(ctx context.Context, root, rawPath string, inc
 	if err != nil {
 		return nil, err
 	}
-	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
+	u.Path = path.Join(u.Path, "/resolve/"+url.PathEscape(root)+"/"+rawPath)
 	q := u.Query()
-	q.Set("format", "resolve")
 	if !includeProof {
 		q.Set("proof", "false")
 	}
@@ -139,42 +140,22 @@ func (c *Client) ResolveWithProof(ctx context.Context, root, rawPath string, inc
 	return &out, nil
 }
 
-// ProofList resolves a path and returns a verifier-facing ProofList.
-func (c *Client) ProofList(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
-	u, err := url.Parse(c.baseURL)
+// ProofListFromHeaders decodes the verifier-facing ProofList returned by GET
+// content responses in X-Malt-ProofList.
+func ProofListFromHeaders(headers http.Header) (*prooflist.ProofList, error) {
+	raw := headers.Get("X-Malt-ProofList")
+	if raw == "" {
+		return nil, fmt.Errorf("missing X-Malt-ProofList header")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode X-Malt-ProofList: %w", err)
 	}
-	u.Path = path.Join(u.Path, "/"+url.PathEscape(root)+"/"+rawPath)
-	q := u.Query()
-	q.Set("format", "resolve")
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
+	var pl prooflist.ProofList
+	if err := json.Unmarshal(payload, &pl); err != nil {
+		return nil, fmt.Errorf("decode X-Malt-ProofList JSON: %w", err)
 	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr httpapi.ErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
-			return nil, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
-		}
-		payload, _ := io.ReadAll(resp.Body)
-		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
-	}
-
-	var out httpapi.ResolveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return &pl, nil
 }
 
 // Stat returns the locked stat contract for a path under a root CID.
@@ -265,47 +246,6 @@ func (c *Client) GetContent(ctx context.Context, root, rawPath, rangeHeader stri
 		return nil, status, headers, err
 	}
 	return data, status, headers, nil
-}
-
-// ContentProof reads content with a content-range and ProofList for a root CID path.
-func (c *Client) ContentProof(ctx context.Context, root, rawPath, rangeHeader string) (*httpapi.ContentProofResponse, error) {
-	u, err := url.Parse(c.baseURL)
-	if err != nil {
-		return nil, err
-	}
-	u.Path = path.Join(u.Path, fmt.Sprintf("/%s/%s", url.PathEscape(root), rawPath))
-	q := u.Query()
-	q.Set("format", "proof")
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	if rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr httpapi.ErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error != "" {
-			return nil, &Error{StatusCode: resp.StatusCode, Message: apiErr.Error}
-		}
-		payload, _ := io.ReadAll(resp.Body)
-		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(payload))}
-	}
-
-	var out httpapi.ContentProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 // ApplyRootSemanticMutation materializes a semantic mutation under an explicit root.

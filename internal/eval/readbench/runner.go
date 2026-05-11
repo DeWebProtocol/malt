@@ -33,8 +33,8 @@ var generatedFixtureCounter atomic.Uint64
 type OperationKind string
 
 const (
-	OperationProofListPath OperationKind = "prooflist_path"
-	OperationContentRange  OperationKind = "content_range"
+	OperationResolvePath  OperationKind = "resolve_path"
+	OperationContentRange OperationKind = "content_range"
 )
 
 // FixtureConfig controls the deterministic fixture fixture.
@@ -156,7 +156,7 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 	}
 
 	ops := []operation{
-		{kind: OperationProofListPath, path: fixture.SmallPath},
+		{kind: OperationResolvePath, path: fixture.SmallPath},
 		{kind: OperationContentRange, path: fixture.LargePath, rangeHeader: normalized.RangeHeader},
 	}
 
@@ -187,22 +187,25 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 		stepCount    int
 	)
 	switch op.kind {
-	case OperationProofListPath:
-		resp, err := r.client.ProofList(ctx, r.root, op.path)
+	case OperationResolvePath:
+		resp, err := r.client.ResolveRoot(ctx, r.root, op.path)
 		if err != nil {
-			return nil, fmt.Errorf("prooflist read %q: %w", op.path, err)
+			return nil, fmt.Errorf("resolve path %q: %w", op.path, err)
 		}
 		target = resp.Target
 		stepCount = len(resp.ProofList.Steps)
 	case OperationContentRange:
-		resp, err := r.client.ContentProof(ctx, r.root, op.path, op.rangeHeader)
+		content, _, headers, err := r.client.GetContent(ctx, r.root, op.path, op.rangeHeader)
 		if err != nil {
 			return nil, fmt.Errorf("content range read %q: %w", op.path, err)
 		}
-		count := len(resp.Content)
+		pl, err := daemonclient.ProofListFromHeaders(headers)
+		if err != nil {
+			return nil, fmt.Errorf("content range prooflist %q: %w", op.path, err)
+		}
+		count := len(content)
 		contentBytes = &count
-		target = resp.Key
-		stepCount = len(resp.ProofList.Steps)
+		stepCount = len(pl.Steps)
 	default:
 		return nil, fmt.Errorf("unsupported operation kind %q", op.kind)
 	}

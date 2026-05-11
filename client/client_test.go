@@ -115,7 +115,7 @@ func TestClientProofListReads(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	rootProof, err := client.ProofList(ctx, createResp.Root, "name")
+	rootProof, err := client.ResolveRoot(ctx, createResp.Root, "name")
 	if err != nil {
 		t.Fatalf("ProofList: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestClientProofListReads(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	rootProof, err = client.ProofList(ctx, rootCreateResp.Root, "")
+	rootProof, err = client.ResolveRoot(ctx, rootCreateResp.Root, "")
 	if err != nil {
 		t.Fatalf("ProofList: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestClientProofListPreservesRootPath(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	proof, err := client.ProofList(ctx, createResp.Root, "name")
+	proof, err := client.ResolveRoot(ctx, createResp.Root, "name")
 	if err != nil {
 		t.Fatalf("ProofList: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestClientResolveRootReturnsProofListSteps(t *testing.T) {
 	}
 }
 
-func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
+func TestClientContentRangeReadReturnsProofListHeader(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
 	if err != nil {
@@ -560,23 +560,24 @@ func TestClientContentProofReadReturnsContentRangeAndProofList(t *testing.T) {
 		t.Fatalf("add unixfs file: %v", err)
 	}
 
-	resp, err := client.ContentProof(ctx, writeResp.NewRoot, "f.txt", "bytes=1-3")
+	content, status, headers, err := client.GetContent(ctx, writeResp.NewRoot, "f.txt", "bytes=1-3")
 	if err != nil {
-		t.Fatalf("ContentProof: %v", err)
+		t.Fatalf("GetContent: %v", err)
 	}
-	if string(resp.Content) != "bcd" {
-		t.Fatalf("content = %q, want bcd", resp.Content)
+	if string(content) != "bcd" {
+		t.Fatalf("content = %q, want bcd", content)
 	}
-	if resp.Range.StatusCode != http.StatusPartialContent || resp.Range.ContentRange != "bytes 1-3/6" {
-		t.Fatalf("range metadata = %+v, want status 206 content-range bytes 1-3/6", resp.Range)
+	if status != http.StatusPartialContent || headers.Get("Content-Range") != "bytes 1-3/6" {
+		t.Fatalf("range metadata = status %d content-range %q, want status 206 content-range bytes 1-3/6", status, headers.Get("Content-Range"))
 	}
-	if resp.Range.Start != 1 || resp.Range.EndExclusive != 4 || resp.Range.ContentLength != 3 || resp.Range.TotalSize != 6 {
-		t.Fatalf("unexpected byte range metadata: %+v", resp.Range)
+	proof, err := ProofListFromHeaders(headers)
+	if err != nil {
+		t.Fatalf("prooflist header: %v", err)
 	}
-	if err := resp.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+	if err := proof.ValidateShape(prooflist.RequireSteps()); err != nil {
 		t.Fatalf("prooflist shape: %v", err)
 	}
-	last := resp.ProofList.Steps[len(resp.ProofList.Steps)-1]
+	last := proof.Steps[len(proof.Steps)-1]
 	if last.Kind != prooflist.KindPayloadBinding || last.Path != "@payload" {
 		t.Fatalf("last proof step = %q/%q, want payload binding @payload", last.Kind, last.Path)
 	}

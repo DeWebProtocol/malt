@@ -87,7 +87,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Write - specific pattern first
 	mux.HandleFunc("POST /{root}/_mutate", s.handleSemanticMutation)
 
+	// Resolve - explicit proof-producing path resolution.
+	mux.HandleFunc("GET /resolve/{root}", s.handleResolve)
+	mux.HandleFunc("GET /resolve/{root}/{path...}", s.handleResolve)
+
 	// Core read/write (/{root}/{path...} format)
+	mux.HandleFunc("GET /{root}", s.handleContent)
 	mux.HandleFunc("GET /{root}/{path...}", s.handleContent)
 	mux.HandleFunc("POST /{root}/{path...}", s.handleWrite)
 

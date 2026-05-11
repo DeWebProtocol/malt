@@ -47,6 +47,20 @@ func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.MetricsResponse{Snapshot: s.node.MetricsSnapshot()})
 }
 
+func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
+	g, err := s.getOrCreateGraph(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	root, err := decodeCID(r.PathValue("root"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
+		return
+	}
+	s.serveResolve(w, r, g, root, r.PathValue("path"))
+}
+
 func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	g, err := s.getOrCreateGraph(r.Context())
 	if err != nil {
@@ -60,18 +74,8 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.PathValue("path")
 
-	// Format negotiation
-	if r.URL.Query().Get("format") == "resolve" {
-		s.serveResolve(w, r, g, root, path)
-		return
-	}
-	if r.URL.Query().Get("format") == "proof" {
-		// Empty path means root-level proof — resolve @payload instead
-		queryPath := path
-		if queryPath == "" {
-			queryPath = "@payload"
-		}
-		s.serveContentProof(w, r, g, root, queryPath)
+	if _, ok := r.URL.Query()["format"]; ok {
+		writeError(w, http.StatusBadRequest, "format query is not supported; use /resolve/{root}/{path} for path resolution or GET /{root}/{path} for content reads")
 		return
 	}
 
@@ -202,62 +206,6 @@ func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, g *graph.G
 		s.node.RecordProofList(*pl)
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) serveContentProof(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {
-	stat, err := s.pathStat(r.Context(), g, root, queryPath)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	if stat.Kind != "file" {
-		writeError(w, httpapi.StatusContentIsDirectory, "content proof is only valid for file targets")
-		return
-	}
-	key, err := decodeCID(stat.Key)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	totalSize := int64(0)
-	if stat.Size != nil {
-		totalSize = *stat.Size
-	}
-
-	start, endExclusive, partial, err := parseRangeHeader(r.Header.Get("Range"), totalSize)
-	if err != nil {
-		writeError(w, httpapi.StatusRangeNotSatisfiable, err.Error())
-		return
-	}
-	payload, err := s.readContentPayload(r.Context(), g, stat, key, start, endExclusive)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	pl, err := s.contentProofList(r.Context(), g, root, queryPath, stat, start, endExclusive)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) || errors.Is(err, unixfs.ErrNotFound) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-
-	w.Header().Set("Accept-Ranges", "bytes")
-	s.node.RecordProofList(*pl)
-	writeJSON(w, http.StatusOK, &httpapi.ContentProofResponse{
-		Path:        queryPath,
-		StorageKind: stat.StorageKind,
-		Key:         stat.Key,
-		Content:     payload,
-		Range:       contentRangeMetadata(start, endExclusive, totalSize, partial),
-		ProofList:   *pl,
-	})
 }
 
 func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
@@ -1144,25 +1092,6 @@ func (s *Server) listIndexStepsForRange(ctx context.Context, g *graph.Graph, lis
 		})
 	}
 	return steps, nil
-}
-
-func contentRangeMetadata(start, endExclusive, totalSize int64, partial bool) httpapi.ContentRange {
-	statusCode := http.StatusOK
-	contentRange := ""
-	if partial {
-		statusCode = http.StatusPartialContent
-		contentRange = fmt.Sprintf("bytes %d-%d/%d", start, endExclusive-1, totalSize)
-	}
-	return httpapi.ContentRange{
-		Start:         start,
-		EndExclusive:  endExclusive,
-		ContentLength: endExclusive - start,
-		TotalSize:     totalSize,
-		Partial:       partial,
-		StatusCode:    statusCode,
-		AcceptRanges:  "bytes",
-		ContentRange:  contentRange,
-	}
 }
 
 func parseRangeHeader(raw string, size int64) (start int64, endExclusive int64, partial bool, err error) {

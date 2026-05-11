@@ -158,7 +158,7 @@ func TestPrepareFixtureGeneratesUniqueFixtureNameWhenOmitted(t *testing.T) {
 	}
 }
 
-func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
+func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	ctx := context.Background()
 	baseURL, mockCAS := newTestDaemonWithCAS(t)
 	runner := NewRunner(baseURL)
@@ -186,8 +186,8 @@ func TestRunJSONLMeasuresProofListAndContentRange(t *testing.T) {
 	}
 
 	proofRead := got[0]
-	if proofRead.OperationKind != OperationProofListPath {
-		t.Fatalf("first operation = %q, want %q", proofRead.OperationKind, OperationProofListPath)
+	if proofRead.OperationKind != OperationResolvePath {
+		t.Fatalf("first operation = %q, want %q", proofRead.OperationKind, OperationResolvePath)
 	}
 	if proofRead.FixtureName != "readbench-run" || proofRead.Path != "dir00/dir01/small.txt" {
 		t.Fatalf("proof read target = fixture %q path %q", proofRead.FixtureName, proofRead.Path)
