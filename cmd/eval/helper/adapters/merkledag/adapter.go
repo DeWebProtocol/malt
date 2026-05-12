@@ -4,8 +4,8 @@ package merkledag
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strings"
+	"io/fs"
+	"sort"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
@@ -51,17 +51,30 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 	if a.system == nil {
 		return replay.ApplyResult{}, fmt.Errorf("system store is nil")
 	}
-	if commit.SnapshotRoot == "" {
-		return replay.ApplyResult{}, fmt.Errorf("snapshot root is empty")
+	if commit.Snapshot == nil {
+		return replay.ApplyResult{}, fmt.Errorf("snapshot reader is nil")
 	}
-	result, err := merkledagimport.ImportPath(ctx, a.system.CAS, commit.SnapshotRoot, merkledagimport.Options{
+	files := append([]replay.LiveFile(nil), commit.LiveFiles...)
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	importFiles := make([]merkledagimport.File, 0, len(files))
+	for _, file := range files {
+		data, err := commit.Snapshot.ReadBlob(ctx, file.Hash)
+		if err != nil {
+			return replay.ApplyResult{}, fmt.Errorf("read blob for %s: %w", file.Path, err)
+		}
+		importFiles = append(importFiles, merkledagimport.File{
+			Path: file.Path,
+			Data: data,
+			Mode: gitFileMode(file.Mode),
+		})
+	}
+	result, err := merkledagimport.ImportFiles(ctx, a.system.CAS, importFiles, merkledagimport.Options{
 		Model:       merkledagimport.ModelUnixFS,
 		FileLayout:  a.opts.FileLayout,
 		DirLayout:   a.opts.DirLayout,
 		ChunkSize:   a.opts.ChunkSize,
 		HAMTFanout:  a.opts.HAMTFanout,
 		RawFileLeaf: a.opts.RawFileLeaf,
-		Ignore:      newLivePathFilter(commit.SnapshotRoot, commit.LiveFiles),
 	})
 	if err != nil {
 		return replay.ApplyResult{}, err
@@ -75,59 +88,11 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 	}, nil
 }
 
-type livePathFilter struct {
-	root  string
-	files map[string]struct{}
-	dirs  map[string]struct{}
-}
-
-func newLivePathFilter(root string, files []replay.LiveFile) *livePathFilter {
-	filter := &livePathFilter{
-		root:  root,
-		files: make(map[string]struct{}, len(files)),
-		dirs:  make(map[string]struct{}),
+func gitFileMode(mode string) fs.FileMode {
+	if mode == "100755" {
+		return 0o755
 	}
-	for _, file := range files {
-		clean := strings.Trim(filepath.ToSlash(file.Path), "/")
-		if clean == "" {
-			continue
-		}
-		filter.files[clean] = struct{}{}
-		dir := filepath.ToSlash(filepath.Dir(clean))
-		for dir != "." && dir != "" {
-			filter.dirs[dir] = struct{}{}
-			next := filepath.ToSlash(filepath.Dir(dir))
-			if next == dir {
-				break
-			}
-			dir = next
-		}
-	}
-	return filter
-}
-
-func (f *livePathFilter) LoadDirectoryRules(string) error {
-	return nil
-}
-
-func (f *livePathFilter) Ignored(localPath string, isDir bool) (bool, error) {
-	rel, err := filepath.Rel(f.root, localPath)
-	if err != nil {
-		return false, err
-	}
-	rel = filepath.ToSlash(rel)
-	if rel == "." {
-		return false, nil
-	}
-	if rel == ".git" || strings.HasPrefix(rel, ".git/") {
-		return true, nil
-	}
-	if isDir {
-		_, ok := f.dirs[rel]
-		return !ok, nil
-	}
-	_, ok := f.files[rel]
-	return !ok, nil
+	return 0o644
 }
 
 var _ replay.SystemAdapter = (*Adapter)(nil)

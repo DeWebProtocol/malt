@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,6 +55,85 @@ func TestSourceWalkEmitsFirstParentCommitMutationsAndLiveStats(t *testing.T) {
 	}
 	if len(commits[2].LiveFiles) != 1 || commits[2].LiveFiles[0].Path != "docs/README.md" {
 		t.Fatalf("third live files = %+v, want docs/README.md", commits[2].LiveFiles)
+	}
+}
+
+func TestSourceWalkUsesGitObjectSnapshotWithoutReplayWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initSingleFileRepo(t, "README.md", "hello\n")
+	initialWorktrees := worktreePaths(t, repo)
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    1,
+	}
+	var sawCommit bool
+	if err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		sawCommit = true
+		if got := worktreePaths(t, repo); !slices.Equal(got, initialWorktrees) {
+			t.Fatalf("worktrees during Walk = %v, want unchanged %v", got, initialWorktrees)
+		}
+		if commit.Snapshot == nil {
+			t.Fatal("snapshot reader is nil")
+		}
+		if len(commit.LiveFiles) != 1 || commit.LiveFiles[0].Hash == "" {
+			t.Fatalf("live files = %+v, want one file with blob hash", commit.LiveFiles)
+		}
+		data, err := commit.Snapshot.ReadBlob(ctx, commit.LiveFiles[0].Hash)
+		if err != nil {
+			t.Fatalf("ReadBlob: %v", err)
+		}
+		if string(data) != "hello\n" {
+			t.Fatalf("blob data = %q, want committed contents", string(data))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if !sawCommit {
+		t.Fatal("Walk did not emit a commit")
+	}
+}
+
+func TestSourceWalkReadsCommittedBlobWhenCheckoutIsDirty(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initSingleFileRepo(t, "file.txt", "committed\n")
+	writeFile(t, repo, "file.txt", "dirty working tree\n")
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    1,
+	}
+	var got []byte
+	if err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		if commit.Snapshot == nil {
+			t.Fatal("snapshot reader is nil")
+		}
+		if len(commit.LiveFiles) != 1 {
+			t.Fatalf("live files = %+v, want one file", commit.LiveFiles)
+		}
+		data, err := commit.Snapshot.ReadBlob(ctx, commit.LiveFiles[0].Hash)
+		if err != nil {
+			return err
+		}
+		got = data
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if string(got) != "committed\n" {
+		t.Fatalf("blob data = %q, want committed contents", string(got))
+	}
+	if branch := currentBranch(t, repo); branch != "main" {
+		t.Fatalf("source repo branch = %q, want main", branch)
 	}
 }
 
@@ -143,6 +223,18 @@ func initTraceRepo(t *testing.T) string {
 	return repo
 }
 
+func initSingleFileRepo(t *testing.T, rel, content string) string {
+	t.Helper()
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-b", "main")
+	runGit(t, repo, "config", "user.email", "bench@example.test")
+	runGit(t, repo, "config", "user.name", "Bench Test")
+	writeFile(t, repo, rel, content)
+	runGit(t, repo, "add", rel)
+	runGit(t, repo, "commit", "-m", "initial")
+	return repo
+}
+
 func writeFile(t *testing.T, repo, rel, content string) {
 	t.Helper()
 	path := filepath.Join(repo, filepath.FromSlash(rel))
@@ -173,6 +265,24 @@ func currentBranch(t *testing.T, repo string) string {
 		t.Fatalf("current branch failed: %v\n%s", err, out)
 	}
 	return string(bytesTrimSpace(out))
+}
+
+func worktreePaths(t *testing.T, repo string) []string {
+	t.Helper()
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("worktree list failed: %v\n%s", err, out)
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if ok {
+			paths = append(paths, filepath.Clean(path))
+		}
+	}
+	return paths
 }
 
 func bytesTrimSpace(in []byte) []byte {

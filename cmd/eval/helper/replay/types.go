@@ -27,7 +27,7 @@ type FileMutation struct {
 	Hash    string       `json:"hash,omitempty"`
 }
 
-// LiveFile describes a regular file present in the checked-out commit snapshot.
+// LiveFile describes a regular file present in the commit snapshot.
 type LiveFile struct {
 	Path string `json:"path"`
 	Mode string `json:"mode,omitempty"`
@@ -51,17 +51,22 @@ type SkipStats struct {
 	OtherCount   int `json:"other_count,omitempty"`
 }
 
+// SnapshotReader reads object bytes for files in one immutable source snapshot.
+type SnapshotReader interface {
+	ReadBlob(ctx context.Context, hash string) ([]byte, error)
+}
+
 // CommitMutation is the stable source-domain input shared by all systems.
 type CommitMutation struct {
-	Repo         string         `json:"repo"`
-	Commit       string         `json:"commit"`
-	Parent       string         `json:"parent,omitempty"`
-	Index        int            `json:"index"`
-	SnapshotRoot string         `json:"snapshot_root,omitempty"`
-	Mutations    []FileMutation `json:"mutations"`
-	LiveStats    LiveStats      `json:"live_stats"`
-	LiveFiles    []LiveFile     `json:"live_files,omitempty"`
-	Skipped      SkipStats      `json:"skipped,omitempty"`
+	Repo      string         `json:"repo"`
+	Commit    string         `json:"commit"`
+	Parent    string         `json:"parent,omitempty"`
+	Index     int            `json:"index"`
+	Snapshot  SnapshotReader `json:"-"`
+	Mutations []FileMutation `json:"mutations"`
+	LiveStats LiveStats      `json:"live_stats"`
+	LiveFiles []LiveFile     `json:"live_files,omitempty"`
+	Skipped   SkipStats      `json:"skipped,omitempty"`
 }
 
 // ApplyResult is returned by one evaluated system after applying a commit.

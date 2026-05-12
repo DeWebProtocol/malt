@@ -2,8 +2,6 @@ package merkledag_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/adapters/merkledag"
@@ -12,12 +10,8 @@ import (
 	"github.com/dewebprotocol/malt/internal/merkledagimport"
 )
 
-func TestAdapterImportsOnlyTraceLiveFilesAndIgnoresGitDirectory(t *testing.T) {
+func TestAdapterImportsOnlyTraceLiveFilesFromSnapshot(t *testing.T) {
 	ctx := context.Background()
-	snapshotRoot := t.TempDir()
-	writeFile(t, snapshotRoot, "keep.txt", "keep")
-	writeFile(t, snapshotRoot, ".git/config", "not part of snapshot")
-	writeFile(t, snapshotRoot, "ignored.txt", "not listed in trace")
 
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreModeIsolated,
@@ -37,13 +31,16 @@ func TestAdapterImportsOnlyTraceLiveFilesAndIgnoresGitDirectory(t *testing.T) {
 	})
 
 	result, err := adapter.Apply(ctx, replay.CommitMutation{
-		Repo:         "repo",
-		Commit:       "c1",
-		SnapshotRoot: snapshotRoot,
-		LiveFiles: []replay.LiveFile{
-			{Path: "keep.txt", Size: int64(len("keep"))},
+		Repo:   "repo",
+		Commit: "c1",
+		Snapshot: fakeSnapshot{
+			"keep-blob":    []byte("keep"),
+			"ignored-blob": []byte("not listed in trace"),
 		},
-		Mutations: []replay.FileMutation{{Kind: replay.MutationAdd, Path: "keep.txt"}},
+		LiveFiles: []replay.LiveFile{
+			{Path: "keep.txt", Size: int64(len("keep")), Hash: "keep-blob"},
+		},
+		Mutations: []replay.FileMutation{{Kind: replay.MutationAdd, Path: "keep.txt", Hash: "keep-blob"}},
 	})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -62,13 +59,18 @@ func TestAdapterImportsOnlyTraceLiveFilesAndIgnoresGitDirectory(t *testing.T) {
 	}
 }
 
-func writeFile(t *testing.T, root, rel, content string) {
-	t.Helper()
-	path := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+type fakeSnapshot map[string][]byte
+
+func (s fakeSnapshot) ReadBlob(_ context.Context, hash string) ([]byte, error) {
+	data, ok := s[hash]
+	if !ok {
+		return nil, errMissingBlob(hash)
 	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write %s: %v", rel, err)
-	}
+	return data, nil
+}
+
+type errMissingBlob string
+
+func (e errMissingBlob) Error() string {
+	return "missing blob " + string(e)
 }

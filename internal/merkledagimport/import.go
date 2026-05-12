@@ -2,11 +2,17 @@
 package merkledagimport
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	chunker "github.com/ipfs/boxo/chunker"
 	merkledag "github.com/ipfs/boxo/ipld/merkledag"
@@ -59,6 +65,13 @@ type Result struct {
 	Bytes int64
 }
 
+// File describes one virtual file to materialize into a UnixFS DAG.
+type File struct {
+	Path string
+	Data []byte
+	Mode fs.FileMode
+}
+
 // Store is the minimal CAS surface needed by the DAGService adapter.
 type Store interface {
 	PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error)
@@ -69,17 +82,8 @@ type Store interface {
 // builders and returns the Merkle DAG root CID.
 func ImportPath(ctx context.Context, store Store, localPath string, opts Options) (*Result, error) {
 	opts = normalizeOptions(opts)
-	if opts.Model != ModelUnixFS {
-		return nil, fmt.Errorf("unsupported merkle-dag model %q", opts.Model)
-	}
-	if opts.Layout != "" {
-		return nil, fmt.Errorf("merkle-dag uses file-layout and dir-layout, not top-level layout %q", opts.Layout)
-	}
-	if opts.FileLayout != FileLayoutBalanced && opts.FileLayout != FileLayoutTrickle {
-		return nil, fmt.Errorf("unsupported merkle-dag unixfs file layout %q", opts.FileLayout)
-	}
-	if opts.DirLayout != DirLayoutBasic && opts.DirLayout != DirLayoutHAMT && opts.DirLayout != DirLayoutAdaptive {
-		return nil, fmt.Errorf("unsupported merkle-dag unixfs directory layout %q", opts.DirLayout)
+	if err := validateOptions(opts); err != nil {
+		return nil, err
 	}
 
 	abs, err := filepath.Abs(localPath)
@@ -103,6 +107,30 @@ func ImportPath(ctx context.Context, store Store, localPath string, opts Options
 	}, nil
 }
 
+// ImportFiles imports a virtual repository snapshot into the supplied CAS using
+// Boxo's UnixFS DAG builders and returns the directory root CID.
+func ImportFiles(ctx context.Context, store Store, files []File, opts Options) (*Result, error) {
+	opts = normalizeOptions(opts)
+	if err := validateOptions(opts); err != nil {
+		return nil, err
+	}
+	importer := &pathImporter{
+		dag:   &casDAGService{store: store},
+		opts:  opts,
+		seen:  make(map[string]struct{}),
+		build: cid.Prefix{Version: 1, Codec: cid.DagProtobuf, MhType: mh.SHA2_256, MhLength: -1},
+	}
+	root, fileCount, bytesUploaded, err := importer.importFiles(ctx, files)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{
+		Root:  root.Cid().String(),
+		Files: fileCount,
+		Bytes: bytesUploaded,
+	}, nil
+}
+
 func normalizeOptions(opts Options) Options {
 	if opts.Model == "" {
 		opts.Model = ModelUnixFS
@@ -120,6 +148,22 @@ func normalizeOptions(opts Options) Options {
 		opts.HAMTFanout = unixfsio.DefaultShardWidth
 	}
 	return opts
+}
+
+func validateOptions(opts Options) error {
+	if opts.Model != ModelUnixFS {
+		return fmt.Errorf("unsupported merkle-dag model %q", opts.Model)
+	}
+	if opts.Layout != "" {
+		return fmt.Errorf("merkle-dag uses file-layout and dir-layout, not top-level layout %q", opts.Layout)
+	}
+	if opts.FileLayout != FileLayoutBalanced && opts.FileLayout != FileLayoutTrickle {
+		return fmt.Errorf("unsupported merkle-dag unixfs file layout %q", opts.FileLayout)
+	}
+	if opts.DirLayout != DirLayoutBasic && opts.DirLayout != DirLayoutHAMT && opts.DirLayout != DirLayoutAdaptive {
+		return fmt.Errorf("unsupported merkle-dag unixfs directory layout %q", opts.DirLayout)
+	}
+	return nil
 }
 
 type pathImporter struct {
@@ -154,17 +198,21 @@ func (i *pathImporter) importFile(ctx context.Context, localPath string, info fs
 	}
 	defer f.Close()
 
+	return i.importFileReader(ctx, localPath, f, info.Mode(), info.ModTime())
+}
+
+func (i *pathImporter) importFileReader(_ context.Context, name string, r io.Reader, mode fs.FileMode, modTime time.Time) (ipld.Node, error) {
 	dbp := helpers.DagBuilderParams{
 		Dagserv:     i.dag,
 		Maxlinks:    helpers.DefaultLinksPerBlock,
 		RawLeaves:   i.opts.RawFileLeaf,
 		CidBuilder:  i.build,
-		FileMode:    info.Mode(),
-		FileModTime: info.ModTime(),
+		FileMode:    mode,
+		FileModTime: modTime,
 	}
-	db, err := dbp.New(chunker.NewSizeSplitter(f, int64(i.opts.ChunkSize)))
+	db, err := dbp.New(chunker.NewSizeSplitter(r, int64(i.opts.ChunkSize)))
 	if err != nil {
-		return nil, fmt.Errorf("create unixfs dag builder for %s: %w", localPath, err)
+		return nil, fmt.Errorf("create unixfs dag builder for %s: %w", name, err)
 	}
 	var root ipld.Node
 	switch i.opts.FileLayout {
@@ -176,9 +224,122 @@ func (i *pathImporter) importFile(ctx context.Context, localPath string, info fs
 		return nil, fmt.Errorf("unsupported merkle-dag unixfs file layout %q", i.opts.FileLayout)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("build unixfs file dag for %s: %w", localPath, err)
+		return nil, fmt.Errorf("build unixfs file dag for %s: %w", name, err)
 	}
 	return root, nil
+}
+
+type virtualDir struct {
+	dirs  map[string]*virtualDir
+	files map[string]File
+}
+
+func newVirtualDir() *virtualDir {
+	return &virtualDir{
+		dirs:  make(map[string]*virtualDir),
+		files: make(map[string]File),
+	}
+}
+
+func (d *virtualDir) add(file File) error {
+	clean, err := cleanVirtualPath(file.Path)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(clean, "/")
+	dir := d
+	for _, part := range parts[:len(parts)-1] {
+		child := dir.dirs[part]
+		if child == nil {
+			child = newVirtualDir()
+			dir.dirs[part] = child
+		}
+		dir = child
+	}
+	name := parts[len(parts)-1]
+	if _, ok := dir.files[name]; ok {
+		return fmt.Errorf("duplicate virtual file path %q", clean)
+	}
+	file.Path = clean
+	dir.files[name] = file
+	return nil
+}
+
+func cleanVirtualPath(raw string) (string, error) {
+	trimmed := strings.Trim(filepath.ToSlash(strings.TrimSpace(raw)), "/")
+	clean := path.Clean(trimmed)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("invalid virtual file path %q", raw)
+	}
+	return clean, nil
+}
+
+func (i *pathImporter) importFiles(ctx context.Context, files []File) (ipld.Node, int, int64, error) {
+	root := newVirtualDir()
+	for _, file := range files {
+		if err := root.add(file); err != nil {
+			return nil, 0, 0, err
+		}
+	}
+	return i.importVirtualDirectory(ctx, ".", root)
+}
+
+func (i *pathImporter) importVirtualDirectory(ctx context.Context, name string, node *virtualDir) (ipld.Node, int, int64, error) {
+	dir, err := i.newDirectory()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	var files int
+	var bytesUploaded int64
+	for _, childName := range sortedKeys(node.dirs) {
+		child, childFiles, childBytes, err := i.importVirtualDirectory(ctx, childName, node.dirs[childName])
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		if err := dir.AddChild(ctx, childName, child); err != nil {
+			return nil, 0, 0, fmt.Errorf("add %s to virtual unixfs directory %s: %w", childName, name, err)
+		}
+		files += childFiles
+		bytesUploaded += childBytes
+	}
+	for _, fileName := range sortedKeys(node.files) {
+		file := node.files[fileName]
+		child, err := i.importFileReader(ctx, file.Path, bytes.NewReader(file.Data), virtualFileMode(file.Mode), time.Time{})
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		if err := dir.AddChild(ctx, fileName, child); err != nil {
+			return nil, 0, 0, fmt.Errorf("add %s to virtual unixfs directory %s: %w", fileName, name, err)
+		}
+		files++
+		bytesUploaded += int64(len(file.Data))
+	}
+
+	root, err := dir.GetNode()
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("materialize virtual unixfs directory %s: %w", name, err)
+	}
+	if err := i.dag.Add(ctx, root); err != nil {
+		return nil, 0, 0, fmt.Errorf("store virtual unixfs directory %s: %w", name, err)
+	}
+	return root, files, bytesUploaded, nil
+}
+
+func virtualFileMode(mode fs.FileMode) fs.FileMode {
+	if mode == 0 {
+		return 0o644
+	}
+	return mode
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (i *pathImporter) importDirectory(ctx context.Context, localPath string) (ipld.Node, int, int64, error) {

@@ -2,6 +2,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,7 +17,7 @@ import (
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 )
 
-// Source streams checked-out Git commit snapshots as replay.CommitMutation values.
+// Source streams Git object commit snapshots as replay.CommitMutation values.
 type Source struct {
 	RepoURL     string
 	RepoPath    string
@@ -27,7 +28,7 @@ type Source struct {
 }
 
 // Walk visits commits in chronological replay order.
-func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) (err error) {
+func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) error {
 	if fn == nil {
 		return fmt.Errorf("walk callback is nil")
 	}
@@ -43,15 +44,7 @@ func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) 
 	if err != nil {
 		return err
 	}
-	replayRepo, cleanup, err := createReplayWorktree(ctx, sourceRepo, ref)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cleanupErr := cleanup(); err == nil && cleanupErr != nil {
-			err = cleanupErr
-		}
-	}()
+	snapshot := objectSnapshot{repo: sourceRepo}
 	for i, commit := range commits {
 		parent, err := firstParent(ctx, sourceRepo, commit)
 		if err != nil {
@@ -61,24 +54,21 @@ func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) 
 		if err != nil {
 			return err
 		}
-		if err := runGit(ctx, replayRepo, "checkout", "--quiet", "--detach", commit); err != nil {
-			return err
-		}
 		liveFiles, liveStats, skipped, err := scanSnapshot(ctx, sourceRepo, commit)
 		if err != nil {
 			return err
 		}
 		enrichMutations(mutations, liveFiles)
 		if err := fn(replay.CommitMutation{
-			Repo:         repoName(sourceRepo, s.RepoURL),
-			Commit:       commit,
-			Parent:       parent,
-			Index:        i,
-			SnapshotRoot: replayRepo,
-			Mutations:    mutations,
-			LiveStats:    liveStats,
-			LiveFiles:    liveFiles,
-			Skipped:      skipped,
+			Repo:      repoName(sourceRepo, s.RepoURL),
+			Commit:    commit,
+			Parent:    parent,
+			Index:     i,
+			Snapshot:  snapshot,
+			Mutations: mutations,
+			LiveStats: liveStats,
+			LiveFiles: liveFiles,
+			Skipped:   skipped,
 		}); err != nil {
 			return err
 		}
@@ -389,27 +379,15 @@ func sanitizeCachePrefix(value string) string {
 	return strings.Trim(builder.String(), "-")
 }
 
-func createReplayWorktree(ctx context.Context, sourceRepo, ref string) (string, func() error, error) {
-	parent, err := os.MkdirTemp("", "malt-eval-replay-*")
-	if err != nil {
-		return "", nil, err
+type objectSnapshot struct {
+	repo string
+}
+
+func (s objectSnapshot) ReadBlob(ctx context.Context, hash string) ([]byte, error) {
+	if strings.TrimSpace(hash) == "" {
+		return nil, fmt.Errorf("blob hash is empty")
 	}
-	replayRepo := filepath.Join(parent, "checkout")
-	if err := runGit(ctx, sourceRepo, "worktree", "add", "--quiet", "--detach", replayRepo, ref); err != nil {
-		_ = os.RemoveAll(parent)
-		return "", nil, err
-	}
-	cleanup := func() error {
-		var firstErr error
-		if err := runGit(context.Background(), sourceRepo, "worktree", "remove", "--force", replayRepo); err != nil {
-			firstErr = err
-		}
-		if err := os.RemoveAll(parent); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		return firstErr
-	}
-	return replayRepo, cleanup, nil
+	return gitBlob(ctx, s.repo, hash)
 }
 
 func gitOutput(ctx context.Context, repo string, args ...string) (string, error) {
@@ -422,6 +400,20 @@ func gitOutput(ctx context.Context, repo string, args ...string) (string, error)
 		return "", fmt.Errorf("git %s failed: %w\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out), nil
+}
+
+func gitBlob(ctx context.Context, repo, hash string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "blob", hash)
+	if repo != "" {
+		cmd.Dir = repo
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file blob %s failed: %w\n%s", hash, err, stderr.String())
+	}
+	return out, nil
 }
 
 func runGit(ctx context.Context, repo string, args ...string) error {

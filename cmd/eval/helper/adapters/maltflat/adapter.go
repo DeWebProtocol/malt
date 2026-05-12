@@ -4,8 +4,6 @@ package maltflat
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
@@ -77,12 +75,12 @@ func (a *Adapter) Name() string {
 	return "maltflat"
 }
 
-// Apply materializes the checked-out live snapshot for this commit. Rebuilding
-// from the live trace keeps delete/rename semantics correct even before the
-// UnixFS layout exposes a delete primitive.
+// Apply materializes the object-backed live snapshot for this commit.
+// Rebuilding from the live trace keeps delete/rename semantics correct even
+// before the UnixFS layout exposes a delete primitive.
 func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (replay.ApplyResult, error) {
-	if commit.SnapshotRoot == "" {
-		return replay.ApplyResult{}, fmt.Errorf("snapshot root is empty")
+	if commit.Snapshot == nil {
+		return replay.ApplyResult{}, fmt.Errorf("snapshot reader is nil")
 	}
 	files := append([]replay.LiveFile(nil), commit.LiveFiles...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
@@ -96,9 +94,9 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 		}
 	}
 	for _, file := range files {
-		data, err := os.ReadFile(filepath.Join(commit.SnapshotRoot, filepath.FromSlash(file.Path)))
+		data, err := commit.Snapshot.ReadBlob(ctx, file.Hash)
 		if err != nil {
-			return replay.ApplyResult{}, fmt.Errorf("read %s: %w", file.Path, err)
+			return replay.ApplyResult{}, fmt.Errorf("read blob for %s: %w", file.Path, err)
 		}
 		root, err = a.layout.AddFile(ctx, root, file.Path, data)
 		if err != nil {

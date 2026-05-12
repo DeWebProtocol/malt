@@ -2,8 +2,6 @@ package maltflat_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/adapters/maltflat"
@@ -13,8 +11,6 @@ import (
 
 func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testing.T) {
 	ctx := context.Background()
-	snapshotRoot := t.TempDir()
-	writeSnapshotFile(t, snapshotRoot, "docs/readme.txt", "hello malt")
 
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreModeIsolated,
@@ -34,14 +30,14 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	}
 
 	result, err := adapter.Apply(ctx, replay.CommitMutation{
-		Repo:         "repo",
-		Commit:       "c1",
-		SnapshotRoot: snapshotRoot,
+		Repo:     "repo",
+		Commit:   "c1",
+		Snapshot: fakeSnapshot{"blob-1": []byte("hello malt")},
 		Mutations: []replay.FileMutation{
-			{Kind: replay.MutationAdd, Path: "docs/readme.txt", Size: int64(len("hello malt"))},
+			{Kind: replay.MutationAdd, Path: "docs/readme.txt", Size: int64(len("hello malt")), Hash: "blob-1"},
 		},
 		LiveFiles: []replay.LiveFile{
-			{Path: "docs/readme.txt", Size: int64(len("hello malt"))},
+			{Path: "docs/readme.txt", Size: int64(len("hello malt")), Hash: "blob-1"},
 		},
 	})
 	if err != nil {
@@ -62,13 +58,18 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	}
 }
 
-func writeSnapshotFile(t *testing.T, root, rel, content string) {
-	t.Helper()
-	path := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+type fakeSnapshot map[string][]byte
+
+func (s fakeSnapshot) ReadBlob(_ context.Context, hash string) ([]byte, error) {
+	data, ok := s[hash]
+	if !ok {
+		return nil, errMissingBlob(hash)
 	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write %s: %v", rel, err)
-	}
+	return data, nil
+}
+
+type errMissingBlob string
+
+func (e errMissingBlob) Error() string {
+	return "missing blob " + string(e)
 }
