@@ -2,9 +2,11 @@ package git_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
@@ -55,6 +57,66 @@ func TestSourceWalkEmitsFirstParentCommitMutationsAndLiveStats(t *testing.T) {
 	}
 }
 
+func TestSourceWalkDoesNotMutateRepoPathCheckoutOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initTraceRepo(t)
+	runGit(t, repo, "checkout", "main")
+
+	walkErr := errors.New("stop replay")
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    2,
+	}
+	err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		return walkErr
+	})
+	if !errors.Is(err, walkErr) {
+		t.Fatalf("Walk error = %v, want %v", err, walkErr)
+	}
+
+	if branch := currentBranch(t, repo); branch != "main" {
+		t.Fatalf("source repo branch = %q, want main", branch)
+	}
+}
+
+func TestCacheNameForURLIncludesFullRepositoryIdentity(t *testing.T) {
+	first := gittrace.CacheNameForURL("https://github.com/orgA/project.git")
+	second := gittrace.CacheNameForURL("https://github.com/orgB/project.git")
+	if first == second {
+		t.Fatalf("cache names collide: %q", first)
+	}
+}
+
+func TestCacheNameForURLIsBoundedForLongLocalPaths(t *testing.T) {
+	name := gittrace.CacheNameForURL("C:\\" + strings.Repeat("long-path-segment\\", 20) + "project.git")
+	if len(name) > 80 {
+		t.Fatalf("cache name length = %d, want <= 80: %q", len(name), name)
+	}
+}
+
+func TestEnsureCloneRejectsMismatchedExistingOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	cacheDir := t.TempDir()
+	url := "https://github.com/orgA/project.git"
+	cachePath := filepath.Join(cacheDir, gittrace.CacheNameForURL(url))
+	if err := os.MkdirAll(cachePath, 0755); err != nil {
+		t.Fatalf("mkdir cache path: %v", err)
+	}
+	runGit(t, cachePath, "init")
+	runGit(t, cachePath, "remote", "add", "origin", "https://github.com/orgB/project.git")
+
+	if _, err := gittrace.EnsureClone(ctx, url, cacheDir); err == nil {
+		t.Fatal("expected mismatched origin error")
+	}
+}
+
 func initTraceRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -100,4 +162,29 @@ func runGit(t *testing.T, repo string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
+}
+
+func currentBranch(t *testing.T, repo string) string {
+	t.Helper()
+	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("current branch failed: %v\n%s", err, out)
+	}
+	return string(bytesTrimSpace(out))
+}
+
+func bytesTrimSpace(in []byte) []byte {
+	for len(in) > 0 && (in[0] == '\r' || in[0] == '\n' || in[0] == ' ' || in[0] == '\t') {
+		in = in[1:]
+	}
+	for len(in) > 0 {
+		last := in[len(in)-1]
+		if last != '\r' && last != '\n' && last != ' ' && last != '\t' {
+			break
+		}
+		in = in[:len(in)-1]
+	}
+	return in
 }

@@ -83,6 +83,9 @@ func (f *Factory) NewSystem(ctx context.Context, name string) (*System, error) {
 	if name == "" {
 		return nil, fmt.Errorf("system name is empty")
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	meter := NewMeter()
 	stateKV, err := f.newKV(name, "state")
 	if err != nil {
@@ -104,9 +107,6 @@ func (f *Factory) NewSystem(ctx context.Context, name string) (*System, error) {
 			_ = stateKV.Close()
 			return nil, err
 		}
-	}
-	if ctx != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
 	}
 	return &System{
 		Name:    name,

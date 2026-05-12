@@ -56,8 +56,9 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	if result.Accounting.Categories[evalstore.CategoryArcTable].NewObjectCount == 0 {
 		t.Fatal("expected MALT-flat to charge ArcTable records")
 	}
-	if result.Accounting.Categories[evalstore.CategoryRootHead].NewPersistedBytes == 0 {
-		t.Fatal("expected MALT-flat to charge root/head metadata")
+	rootHead := result.Accounting.Categories[evalstore.CategoryRootHead]
+	if rootHead.NewPersistedBytes != uint64(len(result.Root)) {
+		t.Fatalf("root/head bytes = %d, want emitted root string length %d", rootHead.NewPersistedBytes, len(result.Root))
 	}
 }
 

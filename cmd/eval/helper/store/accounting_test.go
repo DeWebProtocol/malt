@@ -2,10 +2,13 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/core/kvstore"
+	cid "github.com/ipfs/go-cid"
 )
 
 func TestIsolatedSystemsCountIdenticalCASBlocksIndependently(t *testing.T) {
@@ -147,3 +150,51 @@ func TestMeteredCASPutBatchReportsStoredAlreadyPresentAndDuplicate(t *testing.T)
 		t.Fatalf("second status = %s, want already_present", results[0].Status)
 	}
 }
+
+func TestMeteredCASGetPreservesUnderlyingKVErrors(t *testing.T) {
+	boom := errors.New("disk failure")
+	metered := evalstore.NewMeteredCAS(errorKV{getErr: boom}, evalstore.NewMeter())
+
+	_, err := metered.Get(context.Background(), cid.Undef)
+	if !errors.Is(err, boom) {
+		t.Fatalf("Get error = %v, want to preserve %v", err, boom)
+	}
+}
+
+type errorKV struct {
+	getErr error
+}
+
+func (e errorKV) Get(context.Context, []byte) ([]byte, error) {
+	return nil, e.getErr
+}
+
+func (e errorKV) BatchGet(context.Context, [][]byte) (map[string][]byte, error) {
+	return nil, e.getErr
+}
+
+func (e errorKV) Put(context.Context, []byte, []byte) error {
+	return e.getErr
+}
+
+func (e errorKV) Delete(context.Context, []byte) error {
+	return e.getErr
+}
+
+func (e errorKV) Has(context.Context, []byte) (bool, error) {
+	return false, e.getErr
+}
+
+func (e errorKV) NewIterator(context.Context, []byte, []byte) kvstore.Iterator {
+	return nil
+}
+
+func (e errorKV) Batch() kvstore.Batch {
+	return nil
+}
+
+func (e errorKV) Close() error {
+	return nil
+}
+
+var _ kvstore.KVStore = errorKV{}

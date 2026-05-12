@@ -3,7 +3,10 @@ package git
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,11 +27,11 @@ type Source struct {
 }
 
 // Walk visits commits in chronological replay order.
-func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) error {
+func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) (err error) {
 	if fn == nil {
 		return fmt.Errorf("walk callback is nil")
 	}
-	repo, err := s.repositoryPath(ctx)
+	sourceRepo, err := s.repositoryPath(ctx)
 	if err != nil {
 		return err
 	}
@@ -36,33 +39,42 @@ func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) 
 	if ref == "" {
 		ref = "HEAD"
 	}
-	commits, err := s.revList(ctx, repo, ref)
+	commits, err := s.revList(ctx, sourceRepo, ref)
 	if err != nil {
 		return err
 	}
+	replayRepo, cleanup, err := createReplayWorktree(ctx, sourceRepo, ref)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cleanupErr := cleanup(); err == nil && cleanupErr != nil {
+			err = cleanupErr
+		}
+	}()
 	for i, commit := range commits {
-		parent, err := firstParent(ctx, repo, commit)
+		parent, err := firstParent(ctx, sourceRepo, commit)
 		if err != nil {
 			return err
 		}
-		mutations, err := mutationsForCommit(ctx, repo, parent, commit)
+		mutations, err := mutationsForCommit(ctx, sourceRepo, parent, commit)
 		if err != nil {
 			return err
 		}
-		if err := runGit(ctx, repo, "checkout", "--quiet", "--detach", commit); err != nil {
+		if err := runGit(ctx, replayRepo, "checkout", "--quiet", "--detach", commit); err != nil {
 			return err
 		}
-		liveFiles, liveStats, skipped, err := scanSnapshot(ctx, repo, commit)
+		liveFiles, liveStats, skipped, err := scanSnapshot(ctx, sourceRepo, commit)
 		if err != nil {
 			return err
 		}
 		enrichMutations(mutations, liveFiles)
 		if err := fn(replay.CommitMutation{
-			Repo:         repoName(repo, s.RepoURL),
+			Repo:         repoName(sourceRepo, s.RepoURL),
 			Commit:       commit,
 			Parent:       parent,
 			Index:        i,
-			SnapshotRoot: repo,
+			SnapshotRoot: replayRepo,
 			Mutations:    mutations,
 			LiveStats:    liveStats,
 			LiveFiles:    liveFiles,
@@ -92,8 +104,11 @@ func EnsureClone(ctx context.Context, repoURL, cacheDir string) (string, error) 
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(cacheDir, sanitizeRepoName(repoURL))
+	path := filepath.Join(cacheDir, CacheNameForURL(repoURL))
 	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+		if err := verifyCachedOrigin(ctx, path, repoURL); err != nil {
+			return "", err
+		}
 		if err := runGit(ctx, path, "fetch", "--prune", "origin"); err != nil {
 			return "", err
 		}
@@ -106,14 +121,7 @@ func EnsureClone(ctx context.Context, repoURL, cacheDir string) (string, error) 
 }
 
 func (s Source) revList(ctx context.Context, repo, ref string) ([]string, error) {
-	args := []string{"rev-list", "--reverse"}
-	if s.FirstParent {
-		args = append(args, "--first-parent")
-	}
-	if s.Limit > 0 {
-		args = append(args, "-n", strconv.Itoa(s.Limit))
-	}
-	args = append(args, ref)
+	args := revListArgs(ref, s.Limit, s.FirstParent)
 	out, err := gitOutput(ctx, repo, args...)
 	if err != nil {
 		return nil, err
@@ -123,6 +131,17 @@ func (s Source) revList(ctx context.Context, repo, ref string) ([]string, error)
 		return nil, fmt.Errorf("no commits found for ref %q", ref)
 	}
 	return lines, nil
+}
+
+func revListArgs(ref string, limit int, firstParent bool) []string {
+	args := []string{"rev-list", "--topo-order", "--reverse"}
+	if firstParent {
+		args = append(args, "--first-parent")
+	}
+	if limit > 0 {
+		args = append(args, "-n", strconv.Itoa(limit))
+	}
+	return append(args, ref)
 }
 
 func firstParent(ctx context.Context, repo, commit string) (string, error) {
@@ -295,10 +314,102 @@ func repoName(path, repoURL string) string {
 	return filepath.Base(path)
 }
 
-func sanitizeRepoName(repoURL string) string {
-	name := repoName(repoURL, repoURL)
-	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
-	return replacer.Replace(name)
+const (
+	cacheNameHashLen = 12
+	maxCacheNameLen  = 80
+)
+
+// CacheNameForURL returns a deterministic cache directory name for a full repo URL.
+func CacheNameForURL(repoURL string) string {
+	normalized := normalizeRepoURL(repoURL)
+	sum := sha256.Sum256([]byte(normalized))
+	prefix := sanitizeCachePrefix(normalized)
+	if prefix == "" {
+		prefix = "repo"
+	}
+	hash := hex.EncodeToString(sum[:])[:cacheNameHashLen]
+	maxPrefixLen := maxCacheNameLen - cacheNameHashLen - len("-")
+	if len(prefix) > maxPrefixLen {
+		prefix = strings.Trim(prefix[:maxPrefixLen], "-")
+		if prefix == "" {
+			prefix = "repo"
+		}
+	}
+	return fmt.Sprintf("%s-%s", prefix, hash)
+}
+
+func verifyCachedOrigin(ctx context.Context, path, repoURL string) error {
+	out, err := gitOutput(ctx, path, "remote", "get-url", "origin")
+	if err != nil {
+		return fmt.Errorf("verify cached origin for %s: %w", path, err)
+	}
+	got := normalizeRepoURL(strings.TrimSpace(out))
+	want := normalizeRepoURL(repoURL)
+	if got != want {
+		return fmt.Errorf("cached repo %s origin mismatch: got %q want %q", path, got, want)
+	}
+	return nil
+}
+
+func normalizeRepoURL(repoURL string) string {
+	trimmed := strings.TrimSpace(repoURL)
+	trimmed = strings.TrimRight(trimmed, "/")
+	if strings.HasSuffix(strings.ToLower(trimmed), ".git") {
+		trimmed = trimmed[:len(trimmed)-len(".git")]
+	}
+	if !strings.Contains(trimmed, "://") && strings.Contains(trimmed, "@") {
+		afterUser := strings.SplitN(trimmed, "@", 2)[1]
+		host, path, ok := strings.Cut(afterUser, ":")
+		if ok {
+			return strings.ToLower(host) + "/" + strings.Trim(path, "/")
+		}
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
+		return strings.ToLower(parsed.Host) + "/" + strings.Trim(parsed.Path, "/")
+	}
+	return trimmed
+}
+
+func sanitizeCachePrefix(value string) string {
+	lowered := strings.ToLower(value)
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range lowered {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_'
+		if ok {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func createReplayWorktree(ctx context.Context, sourceRepo, ref string) (string, func() error, error) {
+	parent, err := os.MkdirTemp("", "malt-eval-replay-*")
+	if err != nil {
+		return "", nil, err
+	}
+	replayRepo := filepath.Join(parent, "checkout")
+	if err := runGit(ctx, sourceRepo, "worktree", "add", "--quiet", "--detach", replayRepo, ref); err != nil {
+		_ = os.RemoveAll(parent)
+		return "", nil, err
+	}
+	cleanup := func() error {
+		var firstErr error
+		if err := runGit(context.Background(), sourceRepo, "worktree", "remove", "--force", replayRepo); err != nil {
+			firstErr = err
+		}
+		if err := os.RemoveAll(parent); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		return firstErr
+	}
+	return replayRepo, cleanup, nil
 }
 
 func gitOutput(ctx context.Context, repo string, args ...string) (string, error) {

@@ -106,7 +106,7 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 		}
 	}
 	if root.Defined() {
-		a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(root.Bytes()))
+		a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(root.String()))
 	}
 	return replay.ApplyResult{
 		Root:              root.String(),

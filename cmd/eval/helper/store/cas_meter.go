@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/cas"
@@ -23,7 +24,10 @@ func NewMeteredCAS(kv kvstore.KVStore, meter *Meter) *MeteredCAS {
 func (c *MeteredCAS) Get(ctx context.Context, block cid.Cid) ([]byte, error) {
 	data, err := c.kv.Get(ctx, casKey(block))
 	if err != nil {
-		return nil, fmt.Errorf("block not found: %s", block)
+		if errors.Is(err, kvstore.ErrNotFound) {
+			return nil, fmt.Errorf("block not found: %s: %w", block, err)
+		}
+		return nil, fmt.Errorf("get block %s: %w", block, err)
 	}
 	return data, nil
 }
