@@ -86,6 +86,40 @@ func TestImportDirectoryStoresHAMTUnixFSDAG(t *testing.T) {
 	}
 }
 
+func TestImportFilesStoresVirtualHAMTUnixFSDAG(t *testing.T) {
+	ctx := context.Background()
+	casClient := casmock.NewCAS(casmock.WithoutLatency())
+
+	result, err := ImportFiles(ctx, casClient, []File{
+		{Path: "README.md", Data: []byte("readme"), Mode: 0o644},
+		{Path: "docs/guide.txt", Data: []byte("guide"), Mode: 0o644},
+	}, Options{
+		Model:      ModelUnixFS,
+		FileLayout: FileLayoutBalanced,
+		DirLayout:  DirLayoutHAMT,
+		ChunkSize:  4,
+	})
+	if err != nil {
+		t.Fatalf("import virtual files: %v", err)
+	}
+	if result.Files != 2 {
+		t.Fatalf("files = %d, want 2", result.Files)
+	}
+	if result.Bytes != int64(len("readme")+len("guide")) {
+		t.Fatalf("bytes = %d", result.Bytes)
+	}
+	rootCID, err := cid.Decode(result.Root)
+	if err != nil {
+		t.Fatalf("decode root: %v", err)
+	}
+	if rootCID.Type() != cid.DagProtobuf {
+		t.Fatalf("root codec = %d, want dag-pb", rootCID.Type())
+	}
+	if _, err := casClient.Get(ctx, rootCID); err != nil {
+		t.Fatalf("directory root should be stored in CAS: %v", err)
+	}
+}
+
 func TestImportRejectsTopLevelLayout(t *testing.T) {
 	ctx := context.Background()
 	casClient := casmock.NewCAS(casmock.WithoutLatency())
