@@ -34,6 +34,13 @@ import (
 
 const fixedListChunkSize = 262144
 
+type pathResolution struct {
+	queryPath string
+	target    cid.Cid
+	stat      *httpapi.PathStatResponse
+	proofList *prooflist.ProofList
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.HealthResponse{Status: "ok"})
 }
@@ -79,8 +86,8 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stat to determine file vs directory
-	stat, err := s.pathStat(r.Context(), g, root, path)
+	wantProof := r.Method != http.MethodHead && !shouldOmitDefaultProof(r)
+	resolved, err := s.resolvePath(r.Context(), g, root, path, wantProof)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
@@ -89,6 +96,7 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
+	stat := resolved.stat
 
 	// HEAD request — return stat headers without body
 	if r.Method == http.MethodHead {
@@ -107,21 +115,12 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 
 	if stat.Kind == "dir" {
 		// Return JSON directory listing
-		if !shouldOmitDefaultProof(r) {
-			queryPath := path
-			if queryPath == "" {
-				queryPath = "@payload"
-			}
-			pl, err := s.contentProofList(r.Context(), g, root, queryPath, stat, 0, 0)
-			if err != nil {
+		if resolved.proofList != nil {
+			if err := writeProofListHeader(w, *resolved.proofList); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			if err := writeProofListHeader(w, *pl); err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			s.node.RecordProofList(*pl)
+			s.node.RecordProofList(*resolved.proofList)
 		}
 		addVaryHeader(w, "X-Malt-Proof")
 		writeJSON(w, http.StatusOK, stat)
@@ -150,12 +149,8 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate and write proof headers before response headers
-	if !shouldOmitDefaultProof(r) {
-		queryPath := path
-		if queryPath == "" {
-			queryPath = "@payload"
-		}
-		pl, err := s.contentProofList(r.Context(), g, root, queryPath, stat, start, endExclusive)
+	if resolved.proofList != nil {
+		pl, err := s.readProofList(r.Context(), g, resolved, start, endExclusive)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -180,47 +175,7 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {
-	result, err := g.Resolver().Resolve(root, queryPath)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, resolver.ErrResolutionFailed) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	if resolveMiss(root, queryPath, result) {
-		writeError(w, http.StatusNotFound, errPathNotFound.Error())
-		return
-	}
-	addVaryHeader(w, "X-Malt-Proof")
-	resp := &httpapi.ResolveResponse{Target: result.Target.String()}
-	if !shouldOmitDefaultProof(r) {
-		pl, err := resolver.ProofListFromTranscript(root, result.Transcript)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		pl.Query = querypath.CanonicalizeQueryPath(queryPath)
-		resp.ProofList = pl
-		s.node.RecordProofList(*pl)
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
-	g, err := s.getOrCreateGraph(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	root, err := decodeCID(r.PathValue("root"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid root CID: "+err.Error())
-		return
-	}
-	path := r.PathValue("path")
-	stat, err := s.pathStat(r.Context(), g, root, path)
+	resolved, err := s.resolvePath(r.Context(), g, root, queryPath, !shouldOmitDefaultProof(r))
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
@@ -229,13 +184,13 @@ func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	w.Header().Set("X-Malt-Kind", stat.Kind)
-	w.Header().Set("X-Malt-Storage-Kind", stat.StorageKind)
-	w.Header().Set("X-Malt-Key", stat.Key)
-	if stat.Size != nil {
-		w.Header().Set("Content-Length", strconv.FormatInt(*stat.Size, 10))
+	addVaryHeader(w, "X-Malt-Proof")
+	resp := &httpapi.ResolveResponse{Target: resolved.target.String()}
+	if resolved.proofList != nil {
+		resp.ProofList = resolved.proofList
+		s.node.RecordProofList(*resolved.proofList)
 	}
-	w.WriteHeader(http.StatusOK)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) {
@@ -430,122 +385,186 @@ func (s *Server) verifyProofList(g *graph.Graph, pl prooflist.ProofList) (bool, 
 	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
 		return false, err
 	}
-	if proofListUsesResolverEvidence(pl) {
-		return s.verifyResolverProofList(g, pl)
-	}
-	return s.verifyStructureProofList(g, pl)
-}
-
-func proofListUsesResolverEvidence(pl prooflist.ProofList) bool {
-	for _, step := range pl.Steps {
-		switch step.EvidenceKind {
-		case "explicit", "implicit", "hamt":
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) verifyResolverProofList(g *graph.Graph, pl prooflist.ProofList) (bool, error) {
-	steps := make([]resolver.StepEvidence, len(pl.Steps))
 	for i, step := range pl.Steps {
-		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)
-		if err != nil {
-			return false, fmt.Errorf("invalid evidence at step %d: %w", i, err)
-		}
-		steps[i] = resolver.StepEvidence{
-			Path:     arcset.CanonicalizePath(step.Path),
-			Target:   step.Target,
-			Evidence: ev,
-		}
-	}
-	return g.Resolver().VerifyTranscript(pl.Root, &resolver.Transcript{Steps: steps})
-}
-
-func (s *Server) verifyStructureProofList(g *graph.Graph, pl prooflist.ProofList) (bool, error) {
-	for i, step := range pl.Steps {
-		switch {
-		case step.EvidenceKind == "structure" && step.EvidenceBackend == "map":
-			key := arcset.CanonicalizePath(step.Path)
-			ok, err := g.Semantic().Verify(step.From, key, mapping.Binding{Value: step.Target, Present: true}, structure.Proof(step.Proof))
-			if err != nil || !ok {
-				return ok, err
-			}
-		case step.EvidenceKind == "structure" && step.EvidenceBackend == "list":
-			if step.Index == nil {
-				return false, fmt.Errorf("prooflist step %d list index is missing", i)
-			}
-			if step.Length == nil {
-				return false, fmt.Errorf("prooflist step %d list length is missing", i)
-			}
-			ok, err := g.ListSemantic().Verify(step.From, *step.Index, list.Query{Key: step.Target, Length: *step.Length}, structure.Proof(step.Proof))
-			if err != nil || !ok {
-				return ok, err
-			}
-		default:
-			return false, fmt.Errorf("prooflist step %d has unsupported evidence labels %q/%q", i, step.EvidenceKind, step.EvidenceBackend)
+		ok, err := s.verifyProofListStep(g, i, step)
+		if err != nil || !ok {
+			return ok, err
 		}
 	}
 	return true, nil
 }
 
+func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.Step) (bool, error) {
+	switch step.EvidenceKind {
+	case "explicit", "implicit", "hamt":
+		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)
+		if err != nil {
+			return false, fmt.Errorf("invalid evidence at step %d: %w", index, err)
+		}
+		return g.Resolver().VerifyTranscript(step.From, &resolver.Transcript{Steps: []resolver.StepEvidence{{
+			Path:     arcset.CanonicalizePath(step.Path),
+			Target:   step.Target,
+			Evidence: ev,
+		}}})
+	case "structure":
+		switch step.EvidenceBackend {
+		case "map":
+			key := arcset.CanonicalizePath(step.Path)
+			return g.Semantic().Verify(step.From, key, mapping.Binding{Value: step.Target, Present: true}, structure.Proof(step.Proof))
+		case "list":
+			if step.Index == nil {
+				return false, fmt.Errorf("prooflist step %d list index is missing", index)
+			}
+			if step.Length == nil {
+				return false, fmt.Errorf("prooflist step %d list length is missing", index)
+			}
+			return g.ListSemantic().Verify(step.From, *step.Index, list.Query{Key: step.Target, Length: *step.Length}, structure.Proof(step.Proof))
+		default:
+			return false, fmt.Errorf("prooflist step %d has unsupported structure evidence backend %q", index, step.EvidenceBackend)
+		}
+	default:
+		return false, fmt.Errorf("prooflist step %d has unsupported evidence labels %q/%q", index, step.EvidenceKind, step.EvidenceBackend)
+	}
+}
+
 var (
-	errPathNotFound  = errors.New("path not found")
-	errNotFlatUnixFS = errors.New("not a flat unixfs root")
+	errPathNotFound = errors.New("path not found")
 )
 
-func (s *Server) pathStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
-	if stat, err := s.flatUnixFSPathStat(ctx, g, root, path); err == nil {
-		return stat, nil
-	} else if errors.Is(err, errPathNotFound) {
+func (s *Server) resolvePath(ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string, wantProof bool) (*pathResolution, error) {
+	cleanPath := querypath.CanonicalizeQueryPath(rawPath)
+	keyResult, err := g.Resolver().ResolveKey(root, cleanPath)
+	if err != nil {
 		return nil, err
 	}
-	if stat, err := s.unixFSPathStat(ctx, g, root, path); err == nil {
-		return stat, nil
-	}
-	return s.legacyPathStat(ctx, g, root, path)
-}
-
-func (s *Server) flatUnixFSPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
-	if codec.SemanticKindOf(root) != codec.SemanticKindMap {
-		return nil, errNotFlatUnixFS
-	}
-	rootPayload, payloadErr := s.node.ArcTable().Get(ctx, g.Namespace(), root, explicit.PayloadArc)
-	if payloadErr != nil || codec.SemanticKindOf(rootPayload) != codec.SemanticKindManifest {
-		return nil, errNotFlatUnixFS
-	}
-	var target cid.Cid
-	var err error
-	if querypath.CanonicalizeQueryPath(p) == "" {
-		target = rootPayload
-	} else {
-		target, err = s.node.ArcTable().Get(ctx, g.Namespace(), root, arcset.CanonicalizePath(p))
-	}
-	if err != nil || !target.Defined() {
-		return s.flatUnixFSMapBoundaryStat(ctx, g, root, p)
-	}
-	return s.statFromFlatTarget(ctx, g, target)
-}
-
-func (s *Server) flatUnixFSMapBoundaryStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
-	clean := querypath.CanonicalizeQueryPath(p)
-	if clean == "" {
+	if resolveMiss(root, cleanPath, keyResult) {
 		return nil, errPathNotFound
 	}
-	parts := strings.Split(clean, "/")
-	for i := len(parts) - 1; i > 0; i-- {
-		prefix := strings.Join(parts[:i], "/")
-		suffix := strings.Join(parts[i:], "/")
-		target, err := s.node.ArcTable().Get(ctx, g.Namespace(), root, arcset.CanonicalizePath(prefix))
-		if err != nil || codec.SemanticKindOf(target) != codec.SemanticKindMap {
-			continue
-		}
-		if stat, statErr := s.unixFSPathStat(ctx, g, target, suffix); statErr == nil {
-			return stat, nil
-		}
-		return s.legacyPathStat(ctx, g, target, suffix)
+	key := keyResult.Target
+	if !key.Defined() {
+		return nil, errPathNotFound
 	}
-	return nil, errPathNotFound
+
+	stat, target, err := s.statForResolvedKey(ctx, g, key)
+	if err != nil {
+		return nil, err
+	}
+
+	resolved := &pathResolution{
+		queryPath: cleanPath,
+		target:    target,
+		stat:      stat,
+	}
+	if !wantProof {
+		return resolved, nil
+	}
+
+	transcript := keyResult.Transcript
+	if codec.SemanticKindOf(key) == codec.SemanticKindMap {
+		payloadResult, err := g.Resolver().ResolveKey(key, explicit.PayloadArc.String())
+		if err != nil {
+			return nil, err
+		}
+		if resolveMiss(key, explicit.PayloadArc.String(), payloadResult) {
+			return nil, errPathNotFound
+		}
+		if !payloadResult.Target.Equals(target) {
+			return nil, fmt.Errorf("%w: resolved target %s does not match projected target %s", resolver.ErrResolutionFailed, payloadResult.Target, target)
+		}
+		transcript.Steps = append(transcript.Steps, payloadResult.Transcript.Steps...)
+	}
+
+	pl, err := resolver.ProofListFromTranscript(root, transcript)
+	if err != nil {
+		return nil, err
+	}
+	pl.Query = cleanPath
+	resolved.proofList = pl
+	return resolved, nil
+}
+
+func (s *Server) statForResolvedKey(ctx context.Context, g *graph.Graph, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
+	switch codec.SemanticKindOf(key) {
+	case codec.SemanticKindManifest:
+		stat, err := s.statFromFlatTarget(ctx, g, key)
+		return stat, key, err
+	case codec.SemanticKindMap:
+		if stat, err := s.unixFSPathStat(ctx, g, key, ""); err == nil {
+			target, err := statReadTarget(stat)
+			if err != nil {
+				return nil, cid.Undef, err
+			}
+			return stat, target, nil
+		}
+		payload, err := mandatoryMapPayload(ctx, g, key)
+		if err != nil {
+			return nil, cid.Undef, err
+		}
+		return &httpapi.PathStatResponse{
+			Kind:        "dir",
+			StorageKind: "map",
+			Key:         key.String(),
+			Payload:     payload.String(),
+		}, payload, nil
+	case codec.SemanticKindList:
+		size, _, err := s.listFileSize(ctx, g, key)
+		if err != nil {
+			return nil, cid.Undef, err
+		}
+		return &httpapi.PathStatResponse{
+			Kind:        "file",
+			StorageKind: "list",
+			Key:         key.String(),
+			Size:        &size,
+		}, key, nil
+	default:
+		resp := &httpapi.PathStatResponse{
+			Kind:        "file",
+			StorageKind: "raw",
+			Key:         key.String(),
+		}
+		if data, err := s.node.CAS().Get(ctx, key); err == nil {
+			size := int64(len(data))
+			resp.Size = &size
+		}
+		return resp, key, nil
+	}
+}
+
+func statReadTarget(stat *httpapi.PathStatResponse) (cid.Cid, error) {
+	if stat == nil {
+		return cid.Undef, fmt.Errorf("resolved stat is nil")
+	}
+	target := stat.Key
+	if stat.Payload != "" {
+		target = stat.Payload
+	}
+	if target == "" {
+		return cid.Undef, errPathNotFound
+	}
+	return decodeCID(target)
+}
+
+func (s *Server) readProofList(ctx context.Context, g *graph.Graph, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
+	if resolved == nil || resolved.proofList == nil {
+		return nil, fmt.Errorf("resolution prooflist is missing")
+	}
+	pl := *resolved.proofList
+	pl.Steps = append([]prooflist.Step(nil), resolved.proofList.Steps...)
+	if resolved.stat.StorageKind == "list" && endExclusive > start {
+		listRoot, err := decodeCID(resolved.stat.Key)
+		if err != nil {
+			return nil, err
+		}
+		steps, err := s.listIndexStepsForRange(ctx, g, listRoot, start, endExclusive)
+		if err != nil {
+			return nil, err
+		}
+		if err := unixfs.AppendListIndexSteps(&pl, resolved.queryPath, steps); err != nil {
+			return nil, err
+		}
+	}
+	return &pl, nil
 }
 
 func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target cid.Cid) (*httpapi.PathStatResponse, error) {
@@ -858,65 +877,6 @@ func (s *Server) readContentPayload(ctx context.Context, g *graph.Graph, stat *h
 	}
 }
 
-func (s *Server) contentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.PathStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
-	if layout, err := s.unixFSLayout(g); err == nil {
-		if unixStat, statErr := layout.Stat(ctx, root, queryPath); statErr == nil && unixStat.Kind == "file" {
-			return s.unixFSContentProofList(ctx, layout, root, queryPath, stat, start, endExclusive)
-		}
-	}
-	return s.legacyContentProofList(ctx, g, root, queryPath, stat, start, endExclusive)
-}
-
-func (s *Server) unixFSContentProofList(ctx context.Context, layout *unixfs.Layout, root cid.Cid, queryPath string, stat *httpapi.PathStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
-	resolution, err := layout.Resolve(ctx, root, queryPath)
-	if err != nil {
-		return nil, err
-	}
-	pl, err := unixfs.ProofListFromSteps(root, queryPath, resolution.Steps)
-	if err != nil {
-		return nil, err
-	}
-	if stat.StorageKind == "list" && endExclusive > start {
-		steps, err := layout.ListIndexStepsForFileRange(ctx, root, queryPath, uint64(start), uint64(endExclusive-start))
-		if err != nil {
-			return nil, err
-		}
-		if err := unixfs.AppendListIndexSteps(pl, queryPath, steps); err != nil {
-			return nil, err
-		}
-	}
-	return pl, nil
-}
-
-func (s *Server) legacyContentProofList(ctx context.Context, g *graph.Graph, root cid.Cid, queryPath string, stat *httpapi.PathStatResponse, start, endExclusive int64) (*prooflist.ProofList, error) {
-	result, err := g.Resolver().Resolve(root, queryPath)
-	if err != nil {
-		return nil, err
-	}
-	if resolveMiss(root, queryPath, result) {
-		return nil, errPathNotFound
-	}
-	pl, err := resolver.ProofListFromTranscript(root, result.Transcript)
-	if err != nil {
-		return nil, err
-	}
-	pl.Query = queryPath
-	if stat.StorageKind == "list" && endExclusive > start {
-		listRoot, err := decodeCID(stat.Key)
-		if err != nil {
-			return nil, err
-		}
-		steps, err := s.listIndexStepsForRange(ctx, g, listRoot, start, endExclusive)
-		if err != nil {
-			return nil, err
-		}
-		if err := unixfs.AppendListIndexSteps(pl, queryPath, steps); err != nil {
-			return nil, err
-		}
-	}
-	return pl, nil
-}
-
 func (s *Server) unixFSPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
@@ -948,25 +908,6 @@ func (s *Server) unixFSPathStat(ctx context.Context, g *graph.Graph, root cid.Ci
 	default:
 		return nil, fmt.Errorf("unsupported unixfs node kind %q", stat.Kind)
 	}
-}
-
-func (s *Server) unixFSResolve(ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string) (*httpapi.ResolveResponse, error) {
-	layout, err := s.unixFSLayout(g)
-	if err != nil {
-		return nil, err
-	}
-	resolution, err := layout.Resolve(ctx, root, querypath.CanonicalizeQueryPath(rawPath))
-	if err != nil {
-		return nil, err
-	}
-	pl, err := unixfs.ProofListFromSteps(root, querypath.CanonicalizeQueryPath(rawPath), resolution.Steps)
-	if err != nil {
-		return nil, err
-	}
-	return &httpapi.ResolveResponse{
-		Target:    resolution.Payload.String(),
-		ProofList: pl,
-	}, nil
 }
 
 func (s *Server) unixFSArcCount(ctx context.Context, layout *unixfs.Layout, root cid.Cid) int {
@@ -1299,12 +1240,11 @@ func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {
 	return snapshot, arcCount, nil
 }
 
-func resolveMiss(root cid.Cid, requestedPath string, result *resolver.ResolveResult) bool {
+func resolveMiss(_ cid.Cid, _ string, result *resolver.ResolveResult) bool {
 	if result == nil {
 		return false
 	}
-	path := arcset.CanonicalizePath(requestedPath)
-	return !path.IsEmpty() && result.Target.Equals(root) && len(result.Transcript.Steps) == 0
+	return !result.RemainingPath.IsEmpty()
 }
 
 func mandatoryMapPayload(ctx context.Context, g *graph.Graph, root cid.Cid) (cid.Cid, error) {
