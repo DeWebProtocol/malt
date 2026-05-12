@@ -204,8 +204,8 @@ as follows:
 
 ## Runtime Packaging
 
-The product shape is a small primary runtime binary named `malt`, plus
-standalone evaluation binaries.
+The product shape is a small primary runtime binary named `malt`, plus one
+evaluation binary named `malt-eval` with workload-specific subcommands.
 
 Current command model:
 
@@ -223,10 +223,12 @@ Current command model:
   - returns `target + ProofList` by default for a root-relative read
 - `malt verify ...`
   - verifies a ProofList
-- `malt-metrics`
-  - standalone evaluation metrics client
-- `malt-eval-read`
-  - standalone read benchmark driver
+- `malt-eval read`
+  - MALT-only read benchmark driver
+- `malt-eval write`
+  - Git trace write-amplification replay driver
+- `malt-eval metrics`
+  - daemon evaluation metrics client
 
 Current runtime invariants:
 
