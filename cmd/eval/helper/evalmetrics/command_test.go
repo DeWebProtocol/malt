@@ -1,8 +1,9 @@
-package main
+package evalmetrics
 
 import "testing"
 
-func TestMetricsRootHasSnapshotAndReset(t *testing.T) {
+func TestMetricsCommandHasSnapshotAndReset(t *testing.T) {
+	rootCmd := NewCommand()
 	for _, name := range []string{"snapshot", "reset"} {
 		cmd, _, err := rootCmd.Find([]string{name})
 		if err != nil {

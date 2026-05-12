@@ -68,7 +68,8 @@ implicit ancestor-rewrite costs with explicit, verifiable structure maintenance.
 ## Runtime Shape
 
 The current prototype exposes a small primary runtime CLI named `malt`.
-Evaluation-oriented tools are packaged as separate binaries.
+Evaluation-oriented workloads are grouped under one `malt-eval` binary with
+subcommands.
 
 Current runtime shape:
 
@@ -84,10 +85,12 @@ Current runtime shape:
   - resolves a root-relative path and returns `target + ProofList` by default
 - `malt verify`
   - verifies a ProofList, including the ProofList emitted by `malt resolve`
-- `malt-metrics`
-  - standalone evaluation metrics client for the daemon
-- `malt-eval-read`
-  - standalone read benchmark driver
+- `malt-eval read`
+  - MALT-only read benchmark driver
+- `malt-eval write`
+  - Git trace write-amplification replay driver
+- `malt-eval metrics`
+  - daemon evaluation metrics client
 - daemon API
   - root-centric HTTP/JSON surface rooted at `/`
 - embedded mock CAS
@@ -357,9 +360,12 @@ Current defaults:
 malt/
 |-- client/          # thin daemon HTTP client
 |-- cmd/
-|   |-- malt/
-|   |-- malt-eval-read/
-|   `-- malt-metrics/
+|   |-- eval/
+|   |   |-- command/
+|   |   |-- helper/
+|   |   |-- malt-eval/
+|   |   `-- ...
+|   `-- malt/
 |-- config/
 |-- httpapi/         # shared daemon request/response payload types
 |-- core/

@@ -1,4 +1,4 @@
-package main
+package evalwrite
 
 import (
 	"context"
@@ -19,9 +19,9 @@ func TestBuildSystemsUsesIsolatedStoresByDefault(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = factory.Close() })
 
-	systems, err := buildSystems(ctx, factory, "maltflat,merkledag,hamt")
+	systems, err := BuildSystems(ctx, factory, "maltflat,merkledag,hamt")
 	if err != nil {
-		t.Fatalf("buildSystems: %v", err)
+		t.Fatalf("BuildSystems: %v", err)
 	}
 	names := systemNames(systems)
 	want := []string{"maltflat", "merkledag", "hamt"}
@@ -42,7 +42,7 @@ func TestBuildSystemsRejectsUnknownSystem(t *testing.T) {
 		t.Fatalf("NewFactory: %v", err)
 	}
 	t.Cleanup(func() { _ = factory.Close() })
-	if _, err := buildSystems(ctx, factory, "maltflat,nope"); err == nil {
+	if _, err := BuildSystems(ctx, factory, "maltflat,nope"); err == nil {
 		t.Fatal("expected unknown system error")
 	}
 }
