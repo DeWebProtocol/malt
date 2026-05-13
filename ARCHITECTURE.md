@@ -398,10 +398,13 @@ Current boundary:
 - The package remains the direct map/list/CAS library layer for the
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
-- Root-centric daemon routes expose this layout for UnixFS file and directory
-  writes, path stat, and content reads. The public CLI exposes ingestion through
-  `malt add`; reads are available through the daemon API and proof-bearing
-  resolve/content endpoints.
+- `POST /{root}/_mutate` is the gateway write boundary. Root-centric daemon
+  routes also expose `POST /{root}/{path}` as a UnixFS layout convenience: it
+  stages a file or directory operation, converts the resulting layout state into
+  a semantic mutation, and then uses the same gateway materialization path as
+  `_mutate`.
+- The public CLI exposes ingestion through `malt add`; reads are available
+  through the daemon API and proof-bearing resolve/content endpoints.
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
   remain runtime and compatibility adapters rather than semantic owners.
@@ -432,8 +435,9 @@ Open TODOs for the next discussion:
 - define graph node and arc terminology precisely enough to map onto current
   map/list semantics
 - formalize the current gateway semantic-mutation schema
-- formalize how `core/layout/malt/unixfs` exposes and consumes semantic
-  mutations
+- formalize how `core/layout/malt/unixfs` exposes semantic mutations for
+  gateway materialization and how much of the current UnixFS convenience route
+  remains public API versus test/demo scaffolding
 - formalize the current `ProofList` schema and verification semantics for path
   lookup, terminal `@payload`, blob bindings, and list range reads
 - decide how UnixFS reads should map onto gateway read queries and `ProofList`

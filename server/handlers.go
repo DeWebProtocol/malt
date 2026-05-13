@@ -217,13 +217,7 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	exec := gateway.Executor{
-		Namespace: g.Namespace(),
-		Maps:      g.Semantic(),
-		Lists:     g.ListSemantic(),
-		ArcTable:  s.node.ArcTable(),
-	}
-	receipt, err := exec.Apply(r.Context(), mut)
+	receipt, err := s.applyGatewaySemanticMutation(r.Context(), g, mut)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -278,7 +272,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		receipt, err := s.applyUnixFSGatewayMutation(r.Context(), g, layout, root, newRoot)
+		receipt, err := s.applyUnixFSLayoutMutation(r.Context(), g, layout, root, newRoot)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -306,7 +300,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	receipt, err := s.applyUnixFSGatewayMutation(r.Context(), g, layout, root, newRoot)
+	receipt, err := s.applyUnixFSLayoutMutation(r.Context(), g, layout, root, newRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -771,16 +765,38 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *
 	return cid.Undef, nil
 }
 
-func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
-	baseRoot := oldRoot
-	if !baseRoot.Defined() {
-		baseRoot = newRoot
-	}
-
+func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
 	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
 	if err != nil {
 		return gateway.WriteReceipt{}, err
 	}
+	mut := semanticMutationFromUnixFSPlan(plan, newRoot)
+	receipt, err := s.applyGatewaySemanticMutation(ctx, g, mut)
+	if err != nil {
+		return gateway.WriteReceipt{}, err
+	}
+	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
+		return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
+	}
+	return receipt, nil
+}
+
+func (s *Server) applyGatewaySemanticMutation(ctx context.Context, g *graph.Graph, mut gateway.SemanticMutation) (gateway.WriteReceipt, error) {
+	exec := gateway.Executor{
+		Namespace: g.Namespace(),
+		Maps:      g.Semantic(),
+		Lists:     g.ListSemantic(),
+		ArcTable:  s.node.ArcTable(),
+	}
+	return exec.Apply(ctx, mut)
+}
+
+func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.Cid) gateway.SemanticMutation {
+	baseRoot := plan.BaseRoot
+	if !baseRoot.Defined() {
+		baseRoot = fallbackRoot
+	}
+
 	mut := gateway.SemanticMutation{
 		BaseRoot: baseRoot,
 		Puts:     make([]gateway.ArcSetPut, 0, len(plan.Puts)),
@@ -794,21 +810,7 @@ func (s *Server) applyUnixFSGatewayMutation(ctx context.Context, g *graph.Graph,
 			ArcSet: put.ArcSet,
 		})
 	}
-
-	exec := gateway.Executor{
-		Namespace: g.Namespace(),
-		Maps:      g.Semantic(),
-		Lists:     g.ListSemantic(),
-		ArcTable:  s.node.ArcTable(),
-	}
-	receipt, err := exec.Apply(ctx, mut)
-	if err != nil {
-		return gateway.WriteReceipt{}, err
-	}
-	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
-		return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
-	}
-	return receipt, nil
+	return mut
 }
 
 func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {

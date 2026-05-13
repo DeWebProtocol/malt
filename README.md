@@ -246,10 +246,14 @@ Current boundary:
 - `core/layout/malt/unixfs` remains the direct map/list/CAS library layer for the
   UnixFS-style layout and translates source-domain file/directory data into
   MALT semantic mutations.
-- The root-centric daemon exposes this layout through routes for UnixFS file
-  and directory writes, path stat, and content reads. The public CLI currently
-  exposes write ingestion through `malt add`; reads are available through the
-  daemon API and proof-bearing resolve/content endpoints.
+- `POST /{root}/_mutate` is the gateway write boundary. The root-centric daemon
+  also exposes `POST /{root}/{path}` as a UnixFS layout convenience: it stages a
+  file or directory operation, converts the resulting layout state into a
+  semantic mutation, and then uses the same gateway materialization path as
+  `_mutate`.
+- The public CLI currently exposes write ingestion through `malt add`; reads
+  are available through the daemon API and proof-bearing resolve/content
+  endpoints.
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
   `core/resolver` the semantic owners.

@@ -84,14 +84,16 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /lineage/{root}/descendants", s.handleRemovedPublicRoute)
 	mux.HandleFunc("POST /{root}/_batch-update", s.handleRemovedPublicRoute)
 
-	// Write - specific pattern first
+	// Semantic mutation is the gateway write boundary.
 	mux.HandleFunc("POST /{root}/_mutate", s.handleSemanticMutation)
 
 	// Resolve - explicit proof-producing path resolution.
 	mux.HandleFunc("GET /resolve/{root}", s.handleResolve)
 	mux.HandleFunc("GET /resolve/{root}/{path...}", s.handleResolve)
 
-	// Core read/write (/{root}/{path...} format)
+	// Core read/write (/{root}/{path...} format). POST is a UnixFS layout
+	// convenience that converts file operations into semantic mutations before
+	// gateway materialization.
 	mux.HandleFunc("GET /{root}", s.handleContent)
 	mux.HandleFunc("GET /{root}/{path...}", s.handleContent)
 	mux.HandleFunc("POST /{root}/{path...}", s.handleWrite)
