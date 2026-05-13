@@ -39,9 +39,10 @@ func newCommand(use, short string, out io.Writer) *cobra.Command {
 		out:        out,
 	}
 	cmd := &cobra.Command{
-		Use:   use,
-		Short: short,
-		Args:  cobra.NoArgs,
+		Use:         use,
+		Short:       short,
+		Args:        cobra.NoArgs,
+		Annotations: map[string]string{"malt.result_schema": readbench.ResultSchemaPath},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, opts)
 		},

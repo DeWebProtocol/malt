@@ -87,6 +87,8 @@ Current runtime shape:
   - verifies a ProofList, including the ProofList emitted by `malt resolve`
 - `malt-eval read`
   - MALT-only read benchmark driver
+  - emits one JSONL record per measured operation; each line follows
+    `cmd/eval/schemas/readbench-result.schema.json`
 - `malt-eval write`
   - Git trace write-amplification replay driver
 - `malt-eval metrics`
