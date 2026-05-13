@@ -42,7 +42,6 @@ type StateConfig struct {
 	RootDir  string         `json:"root_dir"`
 	KVStore  KVStoreConfig  `json:"kvstore"`
 	ArcTable ArcTableConfig `json:"arctable"`
-	Lineage  LineageConfig  `json:"lineage"`
 }
 
 // KVStoreConfig configures the local KV store.
@@ -54,11 +53,6 @@ type KVStoreConfig struct {
 // ArcTableConfig configures the ArcTable implementation.
 type ArcTableConfig struct {
 	Type string `json:"type"`
-}
-
-// LineageConfig configures lineage persistence.
-type LineageConfig struct {
-	Enabled bool `json:"enabled"`
 }
 
 // StructureConfig configures structure runtime defaults.
@@ -108,9 +102,6 @@ func DefaultConfig() *Config {
 			},
 			ArcTable: ArcTableConfig{
 				Type: defaultArcTableType,
-			},
-			Lineage: LineageConfig{
-				Enabled: true,
 			},
 		},
 		Structure: StructureConfig{

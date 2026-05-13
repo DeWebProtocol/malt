@@ -313,9 +313,6 @@ Verification is local to the client:
   - current concrete map/arcs write adapter, not the target abstract writer
 - `core/graph`
   - current runtime metadata/composition package, not the semantic abstraction
-- `core/lineage`
-  - auxiliary version-history metadata; pending redesign with MVCC and
-    versioned ArcTable
 - `core/querypath`
   - current query-path canonicalization helper for root-relative paths
 - `core/manifest`
@@ -337,7 +334,6 @@ Current schema:
 - `state.kvstore`
 - `state.kvstore.type` accepts `badger`, `memory`, or `fs`
 - `state.arctable`
-- `state.lineage`
 - `structure.default_backend` accepts `kzg` or `ipa`
 - `cas.mode`
 - `cas.base_url`
@@ -378,7 +374,6 @@ malt/
 |   |-- kvstore/      # KV backends
 |   |-- metrics/      # node-local evaluation counters
 |   |-- querypath/    # root-relative query path canonicalization
-|   |-- lineage/      # auxiliary version-history metadata
 |   |-- manifest/     # UnixFS directory-manifest helper
 |   |-- resolver/     # current read compatibility adapters
 |   |-- structure/    # list/map semantic abstractions and implementations

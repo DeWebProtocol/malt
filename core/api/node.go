@@ -22,10 +22,8 @@ import (
 	"github.com/dewebprotocol/malt/core/kvstore/badger"
 	"github.com/dewebprotocol/malt/core/kvstore/fs"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/lineage"
 	"github.com/dewebprotocol/malt/core/metrics"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
-	cid "github.com/ipfs/go-cid"
 )
 
 func canonicalArcTableType(t string) string {
@@ -48,7 +46,6 @@ type Node struct {
 	arctable     arctable.ArcTable
 	cas          cas.Reader
 	graphManager *graph.Manager
-	lineageMgr   *lineage.Manager
 
 	metricsArcTable *metrics.ArcTable
 	proofStats      metrics.ProofStatsRecorder
@@ -253,14 +250,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 		return nil, fmt.Errorf("failed to create commitment scheme for graph %q: %w", id, err)
 	}
 
-	graphOpts := []graph.Option{
-		graph.WithCommitmentScheme(scheme),
-	}
-	if lm := n.LineageManager(); lm != nil {
-		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
-	}
-
-	return graph.NewGraph(id, n.arctable, n.cas, graphOpts...)
+	return graph.NewGraph(id, n.arctable, n.cas, graph.WithCommitmentScheme(scheme))
 }
 
 // NewGraph creates a new ad hoc per-graph instance with its own per-graph
@@ -270,7 +260,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 //   - id: unique graph identifier
 //   - opts: functional options (graph.WithCommitmentScheme, graph.WithNamespace, etc.)
 //
-// The Node auto-injects shared infrastructure (ArcTable, CAS) and optional lineage recording.
+// The Node auto-injects shared infrastructure (ArcTable, CAS).
 func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 	o := &graph.Options{}
 	for _, opt := range opts {
@@ -287,30 +277,14 @@ func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
 		}
 	}
 
-	// Build graph options
 	graphOpts := []graph.Option{
 		graph.WithCommitmentScheme(scheme),
-	}
-
-	// Auto-inject lineage recorder if manager is available
-	if lm := n.LineageManager(); lm != nil {
-		graphOpts = append(graphOpts, graph.WithLineageRecorder(&lineageRecorderAdapter{mgr: lm}))
 	}
 
 	// Apply user options (they can override)
 	graphOpts = append(graphOpts, opts...)
 
 	return graph.NewGraph(id, n.arctable, n.cas, graphOpts...)
-}
-
-// lineageRecorderAdapter adapts lineage.Manager to writer.LineageRecorder.
-type lineageRecorderAdapter struct {
-	mgr *lineage.Manager
-}
-
-func (a *lineageRecorderAdapter) Record(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid) error {
-	// namespace is ignored — lineage tracks by root CID
-	return a.mgr.Record(ctx, newRoot, oldRoot, 0)
 }
 
 // Commitment returns the default commitment scheme type from config.
@@ -335,16 +309,6 @@ func (n *Node) CAS() cas.Reader {
 // GraphManager returns the graph lifecycle manager.
 func (n *Node) GraphManager() *graph.Manager {
 	return n.graphManager
-}
-
-// LineageManager returns the lineage manager for version tracking.
-// It is lazily initialized on first access.
-func (n *Node) LineageManager() *lineage.Manager {
-	if n.lineageMgr == nil {
-		kv := lineage.NewKVStoreAdapter(n.kv)
-		n.lineageMgr = lineage.NewManager(kv)
-	}
-	return n.lineageMgr
 }
 
 // KVStore returns the underlying KVStore.

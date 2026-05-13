@@ -250,8 +250,6 @@ malt/
 │   │   └── unixfs/
 │   │       ├── layout.go             # Map/list-based UnixFS prototype
 │   │       └── layout_test.go        # Layout tests
-│   ├── lineage/
-│   │   └── lineage.go               # Auxiliary version-history metadata
 │   ├── manifest/
 │   │   └── directory.go             # Current directory manifest helper
 │   ├── resolver/

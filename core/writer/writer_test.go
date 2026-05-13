@@ -2,7 +2,6 @@ package writer
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
@@ -40,8 +39,7 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantic
 		t.Fatalf("failed to create mapping semantic: %v", err)
 	}
 
-	// Writer (no lineage recorder for basic tests)
-	w := NewWriter(semantic, e, nil)
+	w := NewWriter(semantic, e)
 
 	return w, e, semantic, kv
 }
@@ -62,35 +60,6 @@ func makeArcSet(pairs map[string]cid.Cid) *arcset.Set {
 		out["@payload"] = fakeCID("payload")
 	}
 	return arcset.NewSetFrom(out)
-}
-
-// mockLineageRecorder is a thread-safe mock for testing lineage recording.
-type mockLineageRecorder struct {
-	mu      sync.Mutex
-	records []struct{ newRoot, oldRoot cid.Cid }
-}
-
-func (m *mockLineageRecorder) Record(_ context.Context, _ string, newRoot, oldRoot cid.Cid) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.records = append(m.records, struct{ newRoot, oldRoot cid.Cid }{newRoot, oldRoot})
-	return nil
-}
-
-func (m *mockLineageRecorder) Count() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.records)
-}
-
-func (m *mockLineageRecorder) Last() (cid.Cid, cid.Cid) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.records) == 0 {
-		return cid.Undef, cid.Undef
-	}
-	last := m.records[len(m.records)-1]
-	return last.newRoot, last.oldRoot
 }
 
 // Tests.
@@ -465,49 +434,6 @@ func TestWriter_GetSnapshot(t *testing.T) {
 	}
 	if target != fakeCID("data-x") {
 		t.Errorf("snapshot arc 'x' wrong: got %s", target)
-	}
-}
-
-func TestWriter_LineageRecorder(t *testing.T) {
-	// Memory KVStore
-	kv := kvmemory.New()
-	e, _ := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	scheme, _ := kzg.NewScheme()
-	semantic, _ := mappingradix.NewMap(scheme, e)
-	rec := &mockLineageRecorder{}
-	w := NewWriter(semantic, e, rec)
-
-	ctx := context.Background()
-	namespace := "test"
-
-	// Create structure (should record lineage: root → cid.Undef)
-	arcs := makeArcSet(map[string]cid.Cid{"a": fakeCID("data-a")})
-	root, err := w.CreateStructure(ctx, namespace, arcs)
-	if err != nil {
-		t.Fatalf("CreateStructure failed: %v", err)
-	}
-
-	if rec.Count() != 1 {
-		t.Errorf("expected 1 lineage record after CreateStructure, got %d", rec.Count())
-	}
-
-	// Update (should record lineage: newRoot → root)
-	newTarget := fakeCID("data-b")
-	result, err := w.UpdateArc(ctx, namespace, root, "b", newTarget)
-	if err != nil {
-		t.Fatalf("UpdateArc failed: %v", err)
-	}
-
-	if rec.Count() != 2 {
-		t.Errorf("expected 2 lineage records after UpdateArc, got %d", rec.Count())
-	}
-
-	lastNew, lastOld := rec.Last()
-	if !lastNew.Equals(result.NewRoot) {
-		t.Errorf("lineage newRoot mismatch")
-	}
-	if !lastOld.Equals(root) {
-		t.Errorf("lineage oldRoot mismatch")
 	}
 }
 

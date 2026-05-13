@@ -10,9 +10,6 @@
     },
     "arctable": {
       "type": "versioned"
-    },
-    "lineage": {
-      "enabled": true
     }
   },
   "structure": {

@@ -194,9 +194,6 @@ as follows:
 - `core/graph`
   - current graph metadata and runtime composition, not the target semantic
     abstraction
-- `core/lineage`
-  - auxiliary version-history metadata pending integration with versioned
-    ArcTable
 - `core/querypath`
   - current query-path canonicalization helper for root-relative paths
 - `core/manifest`
@@ -268,7 +265,6 @@ malt/
 |   |   |-- ipld/      # Merkle DAG UnixFS import helpers
 |   |   `-- malt/
 |   |       `-- unixfs/ # current map/list-based UnixFS layout prototype
-|   |-- lineage/      # auxiliary version-history metadata
 |   |-- manifest/     # UnixFS directory-manifest helper
 |   |-- resolver/     # current read compatibility adapters
 |   |-- structure/    # list/map semantic abstractions and implementations
@@ -359,9 +355,9 @@ The explicit resolver is a map compatibility adapter:
 3. wrap the map proof as resolver evidence
 
 The current concrete `writer.Writer` should be treated as transitional. It
-combines map mutation, ArcTable delta handling, and lineage recording.
-Those responsibilities should converge toward layout-produced semantic
-mutations accepted by the gateway.
+combines map mutation and ArcTable delta handling. Those responsibilities
+should converge toward layout-produced semantic mutations accepted by the
+gateway.
 
 `ProofList` is the standard verifier-facing read artifact. It should cover map
 step proofs, terminal `@payload` proofs, list index/range proofs, and blob
@@ -460,9 +456,10 @@ interface. Versioned ArcTable can preserve concurrent roots without overwriting
 each other, but choosing which root becomes a published head is an application
 or deployment policy.
 
-The separate `lineage` package duplicates part of this conceptual space. Until
-the MVCC and namespace-scoped ArcTable design is settled, lineage should be
-treated as auxiliary and removable from the core narrative.
+The earlier separate lineage index duplicated part of this conceptual space and
+has been removed from the runtime. Version traversal should be derived from the
+versioned ArcTable or from application-level root publication metadata when a
+concrete use case requires it.
 
 ## CAS Boundary
 
@@ -488,8 +485,7 @@ authenticated structure management and proof generation.
 Correctness is cryptographic:
 
 - clients verify proofs or receipts against roots
-- daemon, resolver adapters, ArcTable, caches, and lineage metadata are
-  untrusted execution state
+- daemon, resolver adapters, ArcTable, and caches are untrusted execution state
 - bad state can affect latency or availability, but not accepted correctness
 
 Freshness, root publication, and multi-writer arbitration remain application or
@@ -519,9 +515,6 @@ Current config shape:
     },
     "arctable": {
       "type": "versioned"
-    },
-    "lineage": {
-      "enabled": true
     }
   },
   "structure": {
