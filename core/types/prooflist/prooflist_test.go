@@ -163,21 +163,93 @@ func TestValidateShapeRejectsUnanchoredSteps(t *testing.T) {
 				Target: mid,
 			},
 			{
-				Kind:   KindListIndex,
-				From:   mid,
-				Index:  &index0,
-				Length: &length,
-				Target: chunk0,
+				Kind:            KindListIndex,
+				From:            mid,
+				Index:           &index0,
+				Length:          &length,
+				Target:          chunk0,
+				EvidenceKind:    "structure",
+				EvidenceBackend: "list",
 			},
 			{
-				Kind:   KindListIndex,
-				From:   mid,
-				Index:  &index1,
-				Length: &length,
-				Target: chunk1,
+				Kind:            KindListIndex,
+				From:            mid,
+				Index:           &index1,
+				Length:          &length,
+				Target:          chunk1,
+				EvidenceKind:    "structure",
+				EvidenceBackend: "list",
 			},
 		},
 	}).ValidateShape(RequireSteps()); err != nil {
 		t.Fatalf("expected sibling list-index steps anchored at a prior target to pass: %v", err)
+	}
+}
+
+func TestValidateShapeRejectsNonLinearTraversalSteps(t *testing.T) {
+	root := testCID(t, "root")
+	first := testCID(t, "first")
+	sibling := testCID(t, "sibling")
+
+	if err := (ProofList{
+		Root: root,
+		Steps: []Step{
+			{
+				Kind:   KindMapStep,
+				From:   root,
+				Path:   "a",
+				Target: first,
+			},
+			{
+				Kind:   KindMapStep,
+				From:   root,
+				Path:   "b",
+				Target: sibling,
+			},
+		},
+	}).ValidateShape(RequireSteps()); err == nil {
+		t.Fatal("expected a traversal step that branches from an earlier anchor to be rejected")
+	}
+}
+
+func TestValidateShapeRejectsTraversalAfterListEvidence(t *testing.T) {
+	root := testCID(t, "root")
+	listRoot := testCID(t, "list-root")
+	chunk := testCID(t, "chunk")
+	next := testCID(t, "next")
+	index := uint64(0)
+	length := uint64(1)
+
+	if err := (ProofList{
+		Root: root,
+		Steps: []Step{
+			{
+				Kind:            KindMapStep,
+				From:            root,
+				Path:            "large.bin",
+				Target:          listRoot,
+				EvidenceKind:    "structure",
+				EvidenceBackend: "map",
+			},
+			{
+				Kind:            KindMapStep,
+				From:            listRoot,
+				Index:           &index,
+				Length:          &length,
+				Target:          chunk,
+				EvidenceKind:    "structure",
+				EvidenceBackend: "list",
+			},
+			{
+				Kind:            KindMapStep,
+				From:            chunk,
+				Path:            "forged",
+				Target:          next,
+				EvidenceKind:    "structure",
+				EvidenceBackend: "map",
+			},
+		},
+	}).ValidateShape(RequireSteps()); err == nil {
+		t.Fatal("expected traversal after structure/list evidence to be rejected")
 	}
 }

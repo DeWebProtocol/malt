@@ -76,7 +76,8 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 	if cfg.requireSteps && len(p.Steps) == 0 {
 		return fmt.Errorf("prooflist steps are empty")
 	}
-	anchored := map[string]struct{}{p.Root.String(): {}}
+	current := p.Root
+	listIndexPhase := false
 	for i, step := range p.Steps {
 		if !step.Kind.Known() {
 			return fmt.Errorf("prooflist step %d has unknown kind %q", i, step.Kind)
@@ -87,10 +88,24 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 		if !step.Target.Defined() {
 			return fmt.Errorf("prooflist step %d target CID is undefined", i)
 		}
-		if _, ok := anchored[step.From.String()]; !ok {
-			return fmt.Errorf("prooflist step %d from CID %s is not anchored to the root or an earlier target", i, step.From.String())
+		if !step.From.Equals(current) {
+			return fmt.Errorf("prooflist step %d from CID %s does not continue from current target %s", i, step.From.String(), current.String())
 		}
-		anchored[step.Target.String()] = struct{}{}
+		listIndexEvidence := step.structureListEvidence()
+		if step.Kind == KindListIndex && !listIndexEvidence {
+			return fmt.Errorf("prooflist step %d list_index kind does not match evidence labels %q/%q", i, step.EvidenceKind, step.EvidenceBackend)
+		}
+		if listIndexEvidence && step.Kind != KindListIndex {
+			return fmt.Errorf("prooflist step %d structure/list evidence does not match kind %q", i, step.Kind)
+		}
+		if listIndexEvidence {
+			listIndexPhase = true
+			continue
+		}
+		if listIndexPhase {
+			return fmt.Errorf("prooflist step %d traversal step appears after list index evidence", i)
+		}
+		current = step.Target
 	}
 	return nil
 }
@@ -111,4 +126,8 @@ func (k StepKind) Known() bool {
 	default:
 		return false
 	}
+}
+
+func (s Step) structureListEvidence() bool {
+	return s.EvidenceKind == "structure" && s.EvidenceBackend == "list"
 }
