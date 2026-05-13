@@ -413,6 +413,9 @@ Current boundary:
   implemented. Paper-facing formalization, write metadata semantics,
   graph-node terminology, and benchmark-facing proof reporting remain open TODO
   items.
+- Graph manager metadata is limited to lifecycle and runtime profile
+  compatibility. It does not store an authoritative current root or publish
+  freshness.
 
 It also gives the benchmark target:
 
