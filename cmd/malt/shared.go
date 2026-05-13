@@ -11,7 +11,6 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -67,74 +66,6 @@ func mustGraph() *graph.Graph {
 		}
 	}
 	return defaultGraph
-}
-
-func mustManagedGraph(graphID string, requireActive bool) (*graph.Graph, *graph.GraphMeta) {
-	node := mustNode()
-	ctx := context.Background()
-
-	var (
-		meta *graph.GraphMeta
-		err  error
-	)
-	if requireActive {
-		meta, err = node.GraphManager().RequireActive(ctx, graphID)
-	} else {
-		meta, err = node.GraphManager().GetGraph(ctx, graphID)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading graph %q: %v\n", graphID, err)
-		os.Exit(1)
-	}
-
-	g, err := node.OpenGraph(ctx, graphID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening graph %q: %v\n", graphID, err)
-		os.Exit(1)
-	}
-
-	return g, meta
-}
-
-func managedGraphHeadRoot(meta *graph.GraphMeta) (cid.Cid, error) {
-	if meta == nil {
-		return cid.Undef, fmt.Errorf("graph metadata is nil")
-	}
-	if !meta.Root.Defined() {
-		return cid.Undef, fmt.Errorf("graph %q has no head root", meta.ID)
-	}
-	return meta.Root, nil
-}
-
-func countSnapshotArcs(snapshot arcset.ArcSet) (int, error) {
-	count := 0
-	iter := snapshot.Iterate()
-	for {
-		_, _, ok := iter.Next()
-		if !ok {
-			break
-		}
-		count++
-	}
-	return count, iter.Err()
-}
-
-func updateManagedGraphRoot(graphID string, g *graph.Graph, newRoot cid.Cid) error {
-	node := mustNode()
-	ctx := context.Background()
-
-	snapshot, err := g.Snapshot(ctx, newRoot)
-	if err != nil {
-		return fmt.Errorf("snapshot new root: %w", err)
-	}
-
-	arcCount, err := countSnapshotArcs(snapshot)
-	if err != nil {
-		return fmt.Errorf("count arcs: %w", err)
-	}
-
-	_, err = node.GraphManager().UpdateGraph(ctx, graphID, newRoot, arcCount)
-	return err
 }
 
 // cleanupNode closes the default node if it was created.

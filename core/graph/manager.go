@@ -1,6 +1,6 @@
 // Package graph provides graph lifecycle management for MALT.
-// A graph represents a scoped collection of arcs authenticated by structure commitments.
-// Each graph has metadata (root CID, arc count, creation time) and a lifecycle state.
+// A graph is runtime metadata for reopening a namespace with a compatible
+// backend profile. It does not own a current root or freshness policy.
 // This file contains the Store and Manager types.
 package graph
 
@@ -13,16 +13,13 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/core/kvstore"
-	cid "github.com/ipfs/go-cid"
 )
 
 // GraphMeta represents a MALT graph with metadata.
 type GraphMeta struct {
 	ID           string     `json:"id"`
-	Root         cid.Cid    `json:"root"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
-	ArcCount     int        `json:"arc_count"`
 	Backend      string     `json:"backend"`       // per-graph commitment scheme used when reopening the graph
 	ArcTableType string     `json:"arctable_type"` // node-scoped ArcTable compatibility requirement for this graph
 	State        GraphState `json:"state"`
@@ -41,13 +38,6 @@ func (g *GraphMeta) IsFrozen() bool {
 // IsDeleted returns true if the graph is deleted.
 func (g *GraphMeta) IsDeleted() bool {
 	return g.State == StateDeleted
-}
-
-// UpdateRoot updates the root CID and arc count, recording the update time.
-func (g *GraphMeta) UpdateRoot(root cid.Cid, arcCount int) {
-	g.Root = root
-	g.ArcCount = arcCount
-	g.UpdatedAt = time.Now()
 }
 
 // graphKey returns the KVStore key for a graph by ID.
@@ -189,8 +179,9 @@ func (s *Store) List(ctx context.Context) ([]*GraphMeta, error) {
 	return graphs, nil
 }
 
-// Manager manages graph lifecycle: creation, access, state transitions.
-// It coordinates graph metadata with ArcTable namespaces and commitment backend selection.
+// Manager manages graph lifecycle: creation, access, and state transitions.
+// It coordinates graph metadata with ArcTable namespaces and commitment backend
+// selection, but it intentionally does not track an authoritative head root.
 type Manager struct {
 	store  *Store
 	mu     sync.RWMutex
@@ -206,7 +197,7 @@ func NewManager(store *Store) *Manager {
 }
 
 // CreateGraph creates a new graph metadata entry with the given runtime profile.
-// The graph starts in the "active" state with an undefined root.
+// The graph starts in the "active" state without publishing any root.
 func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, arcTableType string) (*GraphMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -228,10 +219,8 @@ func (m *Manager) CreateGraph(ctx context.Context, id string, backend string, ar
 	now := time.Now()
 	g := &GraphMeta{
 		ID:           id,
-		Root:         cid.Undef,
 		CreatedAt:    now,
 		UpdatedAt:    now,
-		ArcCount:     0,
 		Backend:      backend,
 		ArcTableType: arcTableType,
 		State:        StateActive,
@@ -271,39 +260,6 @@ func (m *Manager) GetGraph(ctx context.Context, id string) (*GraphMeta, error) {
 	m.graphs[id] = g
 	m.mu.Unlock()
 
-	return g, nil
-}
-
-// UpdateGraph updates a graph's root and arc count after a mutation.
-// Only active graphs can be updated.
-func (m *Manager) UpdateGraph(ctx context.Context, id string, root cid.Cid, arcCount int) (*GraphMeta, error) {
-	m.mu.Lock()
-	g, ok := m.graphs[id]
-	m.mu.Unlock()
-
-	if !ok {
-		var err error
-		g, err = m.store.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		m.mu.Lock()
-		m.graphs[id] = g
-		m.mu.Unlock()
-	}
-
-	if !g.IsActive() {
-		if g.IsFrozen() {
-			return nil, ErrFrozen
-		}
-		return nil, ErrDeleted
-	}
-
-	g.UpdateRoot(root, arcCount)
-
-	if err := m.store.Update(ctx, g); err != nil {
-		return nil, err
-	}
 	return g, nil
 }
 

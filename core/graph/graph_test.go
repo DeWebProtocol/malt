@@ -3,19 +3,10 @@ package graph
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/dewebprotocol/malt/core/kvstore/memory"
-	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
 )
-
-func newTestCID(data []byte) cid.Cid {
-	h, err := mh.Sum(data, mh.SHA2_256, -1)
-	if err != nil {
-		panic(err)
-	}
-	return cid.NewCidV1(cid.Raw, h)
-}
 
 func newTestStore() *Store {
 	return NewStore(memory.New())
@@ -31,7 +22,6 @@ func TestStoreCreateAndGet(t *testing.T) {
 
 	g := &GraphMeta{
 		ID:           "test-graph",
-		Root:         newTestCID([]byte("root1")),
 		State:        StateActive,
 		Backend:      "kzg",
 		ArcTableType: "overwrite",
@@ -128,14 +118,19 @@ func TestStoreUpdate(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore()
 
-	root := newTestCID([]byte("root1"))
-	g := &GraphMeta{ID: "update-test", Root: root, State: StateActive, ArcCount: 1}
+	g := &GraphMeta{
+		ID:           "update-test",
+		State:        StateActive,
+		Backend:      "kzg",
+		ArcTableType: "overwrite",
+		UpdatedAt:    time.Now(),
+	}
 	if err := s.Create(ctx, g); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	newRoot := newTestCID([]byte("root2"))
-	g.UpdateRoot(newRoot, 5)
+	g.Backend = "ipa"
+	g.UpdatedAt = g.UpdatedAt.Add(time.Second)
 
 	if err := s.Update(ctx, g); err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -145,11 +140,8 @@ func TestStoreUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	if !got.Root.Equals(newRoot) {
-		t.Error("root was not updated")
-	}
-	if got.ArcCount != 5 {
-		t.Errorf("expected ArcCount=5, got %d", got.ArcCount)
+	if got.Backend != "ipa" {
+		t.Errorf("expected backend ipa, got %q", got.Backend)
 	}
 }
 
@@ -167,9 +159,6 @@ func TestManagerCreateGraph(t *testing.T) {
 	}
 	if g.State != StateActive {
 		t.Errorf("expected StateActive, got %q", g.State)
-	}
-	if g.ArcCount != 0 {
-		t.Errorf("expected ArcCount=0, got %d", g.ArcCount)
 	}
 }
 
@@ -219,39 +208,6 @@ func TestManagerGetDeletedGraph(t *testing.T) {
 	_, err := m.GetGraph(ctx, "to-del")
 	if err != ErrDeleted {
 		t.Errorf("expected ErrDeleted, got %v", err)
-	}
-}
-
-func TestManagerUpdateGraph(t *testing.T) {
-	ctx := context.Background()
-	m := newTestManager()
-
-	m.CreateGraph(ctx, "up", "kzg", "overwrite")
-
-	root := newTestCID([]byte("root1"))
-	g, err := m.UpdateGraph(ctx, "up", root, 3)
-	if err != nil {
-		t.Fatalf("UpdateGraph failed: %v", err)
-	}
-	if !g.Root.Equals(root) {
-		t.Error("root not updated")
-	}
-	if g.ArcCount != 3 {
-		t.Errorf("expected ArcCount=3, got %d", g.ArcCount)
-	}
-}
-
-func TestManagerUpdateFrozenGraph(t *testing.T) {
-	ctx := context.Background()
-	m := newTestManager()
-
-	m.CreateGraph(ctx, "frozen", "kzg", "overwrite")
-	m.FreezeGraph(ctx, "frozen")
-
-	root := newTestCID([]byte("root1"))
-	_, err := m.UpdateGraph(ctx, "frozen", root, 1)
-	if err != ErrFrozen {
-		t.Errorf("expected ErrFrozen, got %v", err)
 	}
 }
 
@@ -339,21 +295,5 @@ func TestGraphStateTransitions(t *testing.T) {
 	g.State = StateDeleted
 	if !g.IsDeleted() {
 		t.Error("expected deleted after state change")
-	}
-}
-
-func TestGraphUpdateRoot(t *testing.T) {
-	root1 := newTestCID([]byte("root1"))
-	root2 := newTestCID([]byte("root2"))
-
-	g := &GraphMeta{ID: "update-root", Root: root1, ArcCount: 1}
-
-	g.UpdateRoot(root2, 5)
-
-	if !g.Root.Equals(root2) {
-		t.Error("root not updated")
-	}
-	if g.ArcCount != 5 {
-		t.Errorf("expected ArcCount=5, got %d", g.ArcCount)
 	}
 }

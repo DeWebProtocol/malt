@@ -178,6 +178,8 @@ Under this terminology:
   definition of MALT.
 - The current `core/graph` package is runtime metadata/composition code; it is
   not the target semantic abstraction.
+- Graph manager metadata tracks lifecycle and backend compatibility only; it
+  does not store or publish a current root.
 
 ## Map Semantic
 
