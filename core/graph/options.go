@@ -2,7 +2,6 @@ package graph
 
 import (
 	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/writer"
 )
 
 // Option configures a Graph instance.
@@ -10,9 +9,8 @@ type Option func(*Options)
 
 // Options holds configuration for Graph creation.
 type Options struct {
-	Scheme          commitment.IndexCommitment
-	Namespace       string
-	LineageRecorder writer.LineageRecorder
+	Scheme    commitment.IndexCommitment
+	Namespace string
 }
 
 func defaultOptions() *Options {
@@ -32,12 +30,5 @@ func WithCommitmentScheme(scheme commitment.IndexCommitment) Option {
 func WithNamespace(id string) Option {
 	return func(o *Options) {
 		o.Namespace = id
-	}
-}
-
-// WithLineageRecorder sets an optional lineage recorder for this Graph.
-func WithLineageRecorder(rec writer.LineageRecorder) Option {
-	return func(o *Options) {
-		o.LineageRecorder = rec
 	}
 }

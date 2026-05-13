@@ -1047,6 +1047,8 @@ func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 	if mutationResp.PutCount != 1 || mutationResp.ArcCount != 2 {
 		t.Fatalf("receipt counts = puts %d arcs %d, want 1/2", mutationResp.PutCount, mutationResp.ArcCount)
 	}
+	requireNoKVPrefix(t, node, "lineage:")
+	requireNoKVPrefix(t, node, "children:")
 
 	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+mutationResp.NewRoot+"/name", nil)
 	resp, err = http.DefaultClient.Do(req)
@@ -2244,4 +2246,19 @@ func fakeCID(data []byte) (cid.Cid, error) {
 		return cid.Undef, err
 	}
 	return cid.NewCidV1(cid.Raw, sum), nil
+}
+
+func requireNoKVPrefix(t *testing.T, node *api.Node, prefix string) {
+	t.Helper()
+	iter := node.KVStore().NewIterator(t.Context(), nil, nil)
+	defer iter.Close()
+	prefixBytes := []byte(prefix)
+	for iter.Next() {
+		if bytes.HasPrefix(iter.Key(), prefixBytes) {
+			t.Fatalf("unexpected KV key with prefix %q: %s", prefix, string(iter.Key()))
+		}
+	}
+	if err := iter.Err(); err != nil {
+		t.Fatalf("iterate KV keys: %v", err)
+	}
 }

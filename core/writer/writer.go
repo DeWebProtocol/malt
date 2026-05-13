@@ -1,6 +1,6 @@
 // Package writer implements the write-side API for MALT.
 // It provides the unified arc update procedure (UpdateArc) described in Sec 4.5,
-// coordinating map semantics, ArcTable (index), and lineage recording.
+// coordinating map semantics and ArcTable (index) updates.
 package writer
 
 import (
@@ -93,24 +93,16 @@ type BatchUpdateResult struct {
 	PerArc map[arcset.Path]UpdateResult
 }
 
-// LineageRecorder is an optional interface for recording structure root lineage.
-// Implementations track newRoot → oldRoot relationships for versioned resolution.
-type LineageRecorder interface {
-	// Record records a lineage relationship: newRoot was derived from oldRoot.
-	Record(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid) error
-}
-
 // Writer implements the write-side API for MALT.
-// It coordinates keyed-map semantics, ArcTable (index), and optional lineage recording
-// to execute the unified arc update procedure from Sec 4.5.
+// It coordinates keyed-map semantics and ArcTable (index) updates to execute
+// the unified arc update procedure from Sec 4.5.
 //
 // Symmetric to Resolver on the read side:
 //   - Resolver: (root, path) -> (target, transcript) via ArcTable lookup + semantic prove
-//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply + lineage
+//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply
 type Writer struct {
 	semantic mapping.Semantics
 	arctable arctable.ArcTable
-	rec      LineageRecorder
 }
 
 // NewWriter creates a new Writer.
@@ -118,12 +110,10 @@ type Writer struct {
 // Parameters:
 //   - semantic: keyed-map semantic (required)
 //   - arctable: Explicit Arc Table (required)
-//   - rec: optional LineageRecorder for versioned resolution (nil to disable)
-func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, rec LineageRecorder) *Writer {
+func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable) *Writer {
 	return &Writer{
 		semantic: semantic,
 		arctable: arctable,
-		rec:      rec,
 	}
 }
 
@@ -235,7 +225,6 @@ func hasDefinedPayloadBinding(arcs arcset.ArcSet) bool {
 //  1. Looks up the current binding: c = ArcTable.Get(root, path)
 //  2. Updates the commitment: newRoot = semantic.Update(root, path, c, newTarget)
 //  3. Applies the update to ArcTable using the full new arc set for newRoot
-//  4. Records lineage: RecordLineage(newRoot, root)
 //
 // The operation covers three semantic cases:
 //   - Insert (⊥ → c)
@@ -321,13 +310,6 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 
-	// Step 4: Record lineage
-	if w.rec != nil {
-		if err := w.rec.Record(ctx, namespace, newRoot, root); err != nil {
-			return nil, fmt.Errorf("LineageRecorder.Record failed: %w", err)
-		}
-	}
-
 	return &UpdateResult{
 		OldRoot:   root,
 		NewRoot:   newRoot,
@@ -344,7 +326,6 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 //  1. Looks up all current bindings
 //  2. Applies semantic.Update sequentially over the current keyed view
 //  3. Applies all updates to ArcTable
-//  4. Records lineage: RecordLineage(newRoot, root)
 func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid.Cid, updates map[string]cid.Cid) (*BatchUpdateResult, error) {
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
@@ -438,13 +419,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 
-	// Step 5: Record lineage
-	if w.rec != nil {
-		if err := w.rec.Record(ctx, namespace, newRoot, root); err != nil {
-			return nil, fmt.Errorf("LineageRecorder.Record failed: %w", err)
-		}
-	}
-
 	// Update NewRoot for all per-arc results
 	for path := range perArc {
 		r := perArc[path]
@@ -464,7 +438,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 // This is the initial commitment operation:
 //  1. Commits the arc set via the semantic layer
 //  2. Stores arcs in ArcTable (first version, no parent)
-//  3. Records lineage with cid.Undef as parent
 func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
@@ -490,13 +463,6 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	// Step 2: Store arcs in ArcTable (first version)
 	if err := w.arctable.Update(ctx, namespace, root, cid.Undef, normalizedSnapshot); err != nil {
 		return cid.Undef, fmt.Errorf("ArcTable.Update failed: %w", err)
-	}
-
-	// Step 3: Record lineage (root → cid.Undef means initial creation)
-	if w.rec != nil {
-		if err := w.rec.Record(ctx, namespace, root, cid.Undef); err != nil {
-			return cid.Undef, fmt.Errorf("LineageRecorder.Record failed: %w", err)
-		}
 	}
 
 	return root, nil

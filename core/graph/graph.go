@@ -1,5 +1,6 @@
 // Package graph provides the graph-scoped unit for MALT. Graph combines read
-// (Resolver) and write (Writer) capabilities around explicit arc state.
+// (Resolver) and write (Writer) capabilities around explicit arc state. It is
+// runtime composition, not an authoritative head or freshness owner.
 package graph
 
 import (
@@ -25,15 +26,14 @@ import (
 // Graph is a per-graph unit combining resolver (read) and writer (write).
 // It is stateless: the root CID is always passed as a parameter, never held internally.
 type Graph struct {
-	id              string
-	namespace       string
-	scheme          commitment.IndexCommitment
-	semantic        mapping.Semantics
-	listSemantic    list.Semantics
-	resolver        *resolver.Resolver
-	wr              *writer.Writer
-	arctable        arctable.ArcTable
-	lineageRecorder writer.LineageRecorder
+	id           string
+	namespace    string
+	scheme       commitment.IndexCommitment
+	semantic     mapping.Semantics
+	listSemantic list.Semantics
+	resolver     *resolver.Resolver
+	wr           *writer.Writer
+	arctable     arctable.ArcTable
 }
 
 // NewGraph creates a new per-graph instance with its own semantic layer,
@@ -86,18 +86,17 @@ func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Opt
 	res := resolver.NewResolver(explicitStep, implicitStep)
 
 	// Create per-graph writer
-	wr := writer.NewWriter(semantic, arctable, o.LineageRecorder)
+	wr := writer.NewWriter(semantic, arctable)
 
 	return &Graph{
-		id:              id,
-		namespace:       namespace,
-		scheme:          scheme,
-		semantic:        semantic,
-		listSemantic:    listSemantic,
-		resolver:        res,
-		wr:              wr,
-		arctable:        arctable,
-		lineageRecorder: o.LineageRecorder,
+		id:           id,
+		namespace:    namespace,
+		scheme:       scheme,
+		semantic:     semantic,
+		listSemantic: listSemantic,
+		resolver:     res,
+		wr:           wr,
+		arctable:     arctable,
 	}, nil
 }
 

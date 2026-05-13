@@ -228,9 +228,6 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if lm := s.node.LineageManager(); lm != nil {
-		_ = lm.Record(r.Context(), receipt.NewRoot, receipt.BaseRoot, receipt.ArcCount)
-	}
 
 	writeJSON(w, http.StatusCreated, &httpapi.SemanticMutationResponse{
 		BaseRoot:        receipt.BaseRoot.String(),

@@ -65,9 +65,6 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
     },
     "arctable": {
       "type": "overwrite"
-    },
-    "lineage": {
-      "enabled": true
     }
   },
   "structure": {

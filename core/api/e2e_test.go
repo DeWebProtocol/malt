@@ -139,13 +139,11 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	}
 }
 
-// ===== Chained Updates with Lineage =====
+// ===== Chained Root Updates =====
 
-func TestAPI_ChainedUpdatesWithLineage(t *testing.T) {
-	node, g := newTestGraph(t)
+func TestAPI_ChainedUpdatesResolveLatestRoot(t *testing.T) {
+	_, g := newTestGraph(t)
 	ctx := context.Background()
-
-	lm := node.LineageManager()
 
 	arcs := buildArcs(4)
 	snapshot := arcset.NewSetFrom(arcs)
@@ -154,7 +152,6 @@ func TestAPI_ChainedUpdatesWithLineage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Initial commit failed: %v", err)
 	}
-	lm.Record(ctx, root0, cid.Undef, len(arcs))
 
 	roots := []cid.Cid{root0}
 	currentArcs := make(map[string]cid.Cid)
@@ -174,29 +171,11 @@ func TestAPI_ChainedUpdatesWithLineage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Commit v%d failed: %v", i+1, err)
 		}
-		lm.Record(ctx, newRoot, roots[len(roots)-1], len(currentArcs))
 
 		roots = append(roots, newRoot)
 	}
 
-	// Verify lineage chain
 	current := roots[len(roots)-1]
-	ancestors, err := lm.Ancestors(ctx, current, 0)
-	if err != nil {
-		t.Fatalf("Ancestors failed: %v", err)
-	}
-	if len(ancestors) != 5 {
-		t.Errorf("expected 5 ancestors, got %d", len(ancestors))
-	}
-
-	depth, err := lm.Depth(ctx, current)
-	if err != nil {
-		t.Fatalf("Depth failed: %v", err)
-	}
-	if depth != 6 {
-		t.Errorf("expected depth 6, got %d", depth)
-	}
-
 	// Verify latest version is resolvable
 	_, err = g.Resolver().Resolve(current, "arc0")
 	if err != nil {
