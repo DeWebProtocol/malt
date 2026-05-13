@@ -78,6 +78,11 @@ type Store interface {
 	Get(ctx context.Context, c cid.Cid) ([]byte, error)
 }
 
+// NewDAGService adapts a CAS store to the Boxo UnixFS DAGService interfaces.
+func NewDAGService(store Store) ipld.DAGService {
+	return &casDAGService{store: store}
+}
+
 // ImportPath imports localPath into the supplied CAS using Boxo's UnixFS DAG
 // builders and returns the Merkle DAG root CID.
 func ImportPath(ctx context.Context, store Store, localPath string, opts Options) (*Result, error) {
@@ -91,7 +96,7 @@ func ImportPath(ctx context.Context, store Store, localPath string, opts Options
 		return nil, fmt.Errorf("resolve path %q: %w", localPath, err)
 	}
 	importer := &pathImporter{
-		dag:   &casDAGService{store: store},
+		dag:   NewDAGService(store),
 		opts:  opts,
 		seen:  make(map[string]struct{}),
 		build: cid.Prefix{Version: 1, Codec: cid.DagProtobuf, MhType: mh.SHA2_256, MhLength: -1},
@@ -115,7 +120,7 @@ func ImportFiles(ctx context.Context, store Store, files []File, opts Options) (
 		return nil, err
 	}
 	importer := &pathImporter{
-		dag:   &casDAGService{store: store},
+		dag:   NewDAGService(store),
 		opts:  opts,
 		seen:  make(map[string]struct{}),
 		build: cid.Prefix{Version: 1, Codec: cid.DagProtobuf, MhType: mh.SHA2_256, MhLength: -1},

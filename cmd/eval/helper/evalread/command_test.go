@@ -1,6 +1,11 @@
 package evalread
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+
+	"github.com/dewebprotocol/malt/internal/eval/readbench"
+)
 
 func TestParseArcFlagsRequiresPathAndCID(t *testing.T) {
 	if _, err := ParseArcFlags([]string{"missing-separator"}); err == nil {
@@ -21,5 +26,26 @@ func TestParseArcFlagsReturnsMap(t *testing.T) {
 	}
 	if got["@payload"] != "bafyroot" || got["name"] != "bafyname" {
 		t.Fatalf("arcs = %#v", got)
+	}
+}
+
+func TestParseSystemsCSVReturnsOrderedSystems(t *testing.T) {
+	got, err := ParseSystemsCSV("maltflat, merkledag, hamt")
+	if err != nil {
+		t.Fatalf("parse systems: %v", err)
+	}
+	want := []readbench.SystemName{
+		readbench.SystemMALTFlat,
+		readbench.SystemMerkleDAG,
+		readbench.SystemHAMT,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("systems = %q, want %q", got, want)
+	}
+}
+
+func TestParseSystemsCSVRejectsUnknownSystem(t *testing.T) {
+	if _, err := ParseSystemsCSV("maltflat,unknown"); err == nil {
+		t.Fatal("expected unknown system to fail")
 	}
 }

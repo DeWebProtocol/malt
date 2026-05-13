@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/core/api"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/core/metrics"
 	"github.com/dewebprotocol/malt/server"
 )
 
@@ -166,6 +168,7 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runner.RunJSONL(ctx, RunConfig{
+		Systems: []SystemName{SystemMALTFlat},
 		Fixture: FixtureConfig{
 			FixtureName:    "readbench-run",
 			DirectoryDepth: 2,
@@ -186,6 +189,9 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	}
 
 	proofRead := got[0]
+	if proofRead.System != SystemMALTFlat {
+		t.Fatalf("first system = %q, want %q", proofRead.System, SystemMALTFlat)
+	}
 	if proofRead.OperationKind != OperationResolvePath {
 		t.Fatalf("first operation = %q, want %q", proofRead.OperationKind, OperationResolvePath)
 	}
@@ -204,6 +210,9 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	if proofRead.ProofListStepCount == 0 {
 		t.Fatal("prooflist step count should be recorded")
 	}
+	if proofRead.EvidenceItemCount != proofRead.ProofListStepCount {
+		t.Fatalf("prooflist evidence items = %d, want prooflist step count %d", proofRead.EvidenceItemCount, proofRead.ProofListStepCount)
+	}
 	if proofRead.Proof.ProofListCount != 1 {
 		t.Fatalf("prooflist proof metric count = %d, want 1", proofRead.Proof.ProofListCount)
 	}
@@ -215,6 +224,9 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	}
 
 	rangeRead := got[1]
+	if rangeRead.System != SystemMALTFlat {
+		t.Fatalf("second system = %q, want %q", rangeRead.System, SystemMALTFlat)
+	}
 	if rangeRead.OperationKind != OperationContentRange {
 		t.Fatalf("second operation = %q, want %q", rangeRead.OperationKind, OperationContentRange)
 	}
@@ -230,11 +242,120 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	if rangeRead.ProofListStepCount == 0 {
 		t.Fatal("content range prooflist step count should be recorded")
 	}
+	if rangeRead.EvidenceItemCount != rangeRead.ProofListStepCount {
+		t.Fatalf("content range evidence items = %d, want prooflist step count %d", rangeRead.EvidenceItemCount, rangeRead.ProofListStepCount)
+	}
 	if rangeRead.Proof.ProofListCount != 1 {
 		t.Fatalf("content proof metric count = %d, want reset per operation", rangeRead.Proof.ProofListCount)
 	}
 	if rangeRead.CAS.GetCount == 0 || rangeRead.CAS.BytesGet == 0 {
 		t.Fatalf("content range CAS metrics should include bytes fetched: %+v", rangeRead.CAS)
+	}
+}
+
+func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
+	ctx := context.Background()
+	runner := NewRunner("http://127.0.0.1:0")
+
+	var out bytes.Buffer
+	err := runner.RunJSONL(ctx, RunConfig{
+		Systems: []SystemName{SystemMerkleDAG, SystemHAMT},
+		Fixture: FixtureConfig{
+			FixtureName:    "readbench-baseline",
+			DirectoryDepth: 2,
+			SmallFileBytes: 48,
+			LargeFileBytes: 300 * 1024,
+		},
+		RangeHeader: "bytes=7-19",
+		Iterations:  1,
+	}, &out)
+	if err != nil {
+		t.Fatalf("RunJSONL() error = %v", err)
+	}
+
+	got := decodeJSONLResults(t, out.Bytes())
+	if len(got) != 4 {
+		t.Fatalf("result count = %d, want 4\n%s", len(got), out.String())
+	}
+
+	wantSystems := []SystemName{SystemMerkleDAG, SystemMerkleDAG, SystemHAMT, SystemHAMT}
+	for i, result := range got {
+		if result.System != wantSystems[i] {
+			t.Fatalf("record %d system = %q, want %q", i, result.System, wantSystems[i])
+		}
+		if result.FixtureName != "readbench-baseline" {
+			t.Fatalf("record %d fixture = %q", i, result.FixtureName)
+		}
+		if result.CAS.GetCount == 0 || result.CAS.BytesGet == 0 {
+			t.Fatalf("record %d should include baseline CAS reads: %+v", i, result.CAS)
+		}
+		if result.EvidenceItemCount != int(result.CAS.GetCount) {
+			t.Fatalf("record %d evidence items = %d, want CAS get count %d", i, result.EvidenceItemCount, result.CAS.GetCount)
+		}
+		if result.ProofListStepCount != 0 {
+			t.Fatalf("record %d prooflist steps = %d, want 0 for IPLD baseline", i, result.ProofListStepCount)
+		}
+		if result.ArcTable != (metrics.ArcTableStats{}) {
+			t.Fatalf("record %d arctable metrics = %+v, want zero baseline metrics", i, result.ArcTable)
+		}
+		if result.Proof != (metrics.ProofStats{}) {
+			t.Fatalf("record %d proof metrics = %+v, want zero baseline metrics", i, result.Proof)
+		}
+	}
+
+	resolveRecords := []Result{got[0], got[2]}
+	for _, result := range resolveRecords {
+		if result.OperationKind != OperationResolvePath {
+			t.Fatalf("%s first operation = %q, want %q", result.System, result.OperationKind, OperationResolvePath)
+		}
+		if result.Path != "dir00/dir01/small.txt" {
+			t.Fatalf("%s resolve path = %q", result.System, result.Path)
+		}
+		if result.Target == "" {
+			t.Fatalf("%s resolve target should be recorded", result.System)
+		}
+		if result.ContentBytes != nil {
+			t.Fatalf("%s resolve content bytes = %v, want omitted", result.System, *result.ContentBytes)
+		}
+	}
+
+	rangeRecords := []Result{got[1], got[3]}
+	for _, result := range rangeRecords {
+		if result.OperationKind != OperationContentRange {
+			t.Fatalf("%s second operation = %q, want %q", result.System, result.OperationKind, OperationContentRange)
+		}
+		if result.Path != "dir00/dir01/large.bin" {
+			t.Fatalf("%s range path = %q", result.System, result.Path)
+		}
+		if result.RangeHeader != "bytes=7-19" {
+			t.Fatalf("%s range header = %q", result.System, result.RangeHeader)
+		}
+		if result.ContentBytes == nil || *result.ContentBytes != 13 {
+			t.Fatalf("%s content bytes = %v, want 13", result.System, result.ContentBytes)
+		}
+	}
+}
+
+func TestNormalizeRunConfigDefaultsToAllSystems(t *testing.T) {
+	got, err := normalizeRunConfig(RunConfig{
+		Fixture: FixtureConfig{LargeFileBytes: 300 * 1024},
+	})
+	if err != nil {
+		t.Fatalf("normalizeRunConfig() error = %v", err)
+	}
+	want := []SystemName{SystemMALTFlat, SystemMerkleDAG, SystemHAMT}
+	if !reflect.DeepEqual(got.Systems, want) {
+		t.Fatalf("systems = %q, want %q", got.Systems, want)
+	}
+}
+
+func TestNormalizeRunConfigRejectsUnknownSystem(t *testing.T) {
+	_, err := normalizeRunConfig(RunConfig{
+		Systems: []SystemName{"unknown"},
+		Fixture: FixtureConfig{LargeFileBytes: 300 * 1024},
+	})
+	if err == nil {
+		t.Fatal("expected unknown system to fail")
 	}
 }
 
