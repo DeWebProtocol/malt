@@ -91,7 +91,14 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 		if !step.From.Equals(current) {
 			return fmt.Errorf("prooflist step %d from CID %s does not continue from current target %s", i, step.From.String(), current.String())
 		}
-		if step.Kind == KindListIndex {
+		listIndexEvidence := step.structureListEvidence()
+		if step.Kind == KindListIndex && !listIndexEvidence {
+			return fmt.Errorf("prooflist step %d list_index kind does not match evidence labels %q/%q", i, step.EvidenceKind, step.EvidenceBackend)
+		}
+		if listIndexEvidence && step.Kind != KindListIndex {
+			return fmt.Errorf("prooflist step %d structure/list evidence does not match kind %q", i, step.Kind)
+		}
+		if listIndexEvidence {
 			listIndexPhase = true
 			continue
 		}
@@ -119,4 +126,8 @@ func (k StepKind) Known() bool {
 	default:
 		return false
 	}
+}
+
+func (s Step) structureListEvidence() bool {
+	return s.EvidenceKind == "structure" && s.EvidenceBackend == "list"
 }

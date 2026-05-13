@@ -385,28 +385,32 @@ func (s *Server) verifyProofList(g *graph.Graph, pl prooflist.ProofList) (bool, 
 	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
 		return false, err
 	}
-	if err := validateProofListQuery(pl); err != nil {
-		return false, err
-	}
+	var verifiedPath proofListVerifiedPath
 	for i, step := range pl.Steps {
 		ok, err := s.verifyProofListStep(g, i, step)
 		if err != nil || !ok {
 			return ok, err
 		}
+		if err := verifiedPath.addStep(step); err != nil {
+			return false, err
+		}
+	}
+	if err := validateProofListQuery(pl, verifiedPath); err != nil {
+		return false, err
 	}
 	return true, nil
 }
 
-func validateProofListQuery(pl prooflist.ProofList) error {
+func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifiedPath) error {
 	want := arcset.CanonicalizePath(querypath.CanonicalizeQueryPath(pl.Query)).String()
 	if want == "" {
 		return nil
 	}
-	got, hasPayloadBinding := proofListLogicalQueryPath(pl)
+	got := verifiedPath.logicalQueryPath()
 	if got == want {
 		return nil
 	}
-	if hasPayloadBinding {
+	if verifiedPath.hasPayloadBinding {
 		payloadQuery := "@payload"
 		if got != "" {
 			payloadQuery = got + "/@payload"
@@ -418,20 +422,29 @@ func validateProofListQuery(pl prooflist.ProofList) error {
 	return fmt.Errorf("prooflist query %q does not match ordered traversal path %q", want, got)
 }
 
-func proofListLogicalQueryPath(pl prooflist.ProofList) (string, bool) {
-	parts := make([]string, 0, len(pl.Steps))
-	hasPayloadBinding := false
-	for _, step := range pl.Steps {
-		switch step.Kind {
-		case prooflist.KindMapStep, prooflist.KindBlobBinding, prooflist.KindImplicitBlock, prooflist.KindLegacyUnknown:
-			if path := arcset.CanonicalizePath(step.Path).String(); path != "" {
-				parts = append(parts, path)
-			}
-		case prooflist.KindPayloadBinding:
-			hasPayloadBinding = true
-		}
+type proofListVerifiedPath struct {
+	parts             []string
+	hasPayloadBinding bool
+}
+
+func (p *proofListVerifiedPath) addStep(step prooflist.Step) error {
+	path := arcset.CanonicalizePath(step.Path).String()
+	if path == "" || step.EvidenceKind == "structure" && step.EvidenceBackend == "list" {
+		return nil
 	}
-	return strings.Join(parts, "/"), hasPayloadBinding
+	if p.hasPayloadBinding {
+		return fmt.Errorf("prooflist traversal step %q appears after terminal @payload binding", path)
+	}
+	if path == "@payload" {
+		p.hasPayloadBinding = true
+		return nil
+	}
+	p.parts = append(p.parts, path)
+	return nil
+}
+
+func (p proofListVerifiedPath) logicalQueryPath() string {
+	return strings.Join(p.parts, "/")
 }
 
 func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.Step) (bool, error) {

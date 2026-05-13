@@ -738,6 +738,90 @@ func TestServerVerifyRejectsBranchingProofList(t *testing.T) {
 	verifyRejects("branching", forged)
 }
 
+func TestServerVerifyRejectsForgedPayloadBindingKind(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	targetCID, err := mockCAS.Put(t.Context(), []byte("verify forged payload binding"))
+	if err != nil {
+		t.Fatalf("put target: %v", err)
+	}
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": targetCID.String()}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(ts.URL + "/resolve/" + createResp.Root + "/name")
+	if err != nil {
+		t.Fatalf("resolve name: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve name status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var resolveResp httpapi.ResolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	resp.Body.Close()
+	if resolveResp.ProofList == nil {
+		t.Fatal("resolve response missing ProofList")
+	}
+	if len(resolveResp.ProofList.Steps) != 1 {
+		t.Fatalf("prooflist steps = %d, want 1", len(resolveResp.ProofList.Steps))
+	}
+	if got := resolveResp.ProofList.Steps[0].Path; got != "name" {
+		t.Fatalf("prooflist step path = %q, want name", got)
+	}
+
+	forged := *resolveResp.ProofList
+	forged.Query = "@payload"
+	forged.Steps = append([]prooflist.Step(nil), resolveResp.ProofList.Steps...)
+	forged.Steps[0].Kind = prooflist.KindPayloadBinding
+
+	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: forged})
+	if err != nil {
+		t.Fatalf("marshal verify request: %v", err)
+	}
+	resp, err = http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify forged prooflist: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		var verifyResp httpapi.VerifyResponse
+		if err := json.NewDecoder(resp.Body).Decode(&verifyResp); err != nil {
+			t.Fatalf("decode verify response: %v", err)
+		}
+		if verifyResp.Valid {
+			t.Fatal("forged payload_binding kind verified; want rejection")
+		}
+		return
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("verify forged prooflist status = %d, want %d or invalid response", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
 func TestServerProofListReadEndpoints(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)
@@ -1558,6 +1642,25 @@ func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 	last := proofResp.Steps[len(proofResp.Steps)-1]
 	if last.Kind != prooflist.KindPayloadBinding || last.Path != "@payload" {
 		t.Fatalf("last proof step = %q/%q, want payload binding @payload", last.Kind, last.Path)
+	}
+	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: proofResp})
+	if err != nil {
+		t.Fatalf("marshal verify request: %v", err)
+	}
+	verifyRespHTTP, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify payload-binding prooflist request: %v", err)
+	}
+	defer verifyRespHTTP.Body.Close()
+	if verifyRespHTTP.StatusCode != http.StatusOK {
+		t.Fatalf("verify payload-binding prooflist status = %d, want %d", verifyRespHTTP.StatusCode, http.StatusOK)
+	}
+	var verifyResp httpapi.VerifyResponse
+	if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
+		t.Fatalf("decode verify payload-binding response: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatal("expected payload-binding prooflist verification to succeed")
 	}
 	for i, step := range proofResp.Steps {
 		if step.Kind == prooflist.KindListIndex {
