@@ -385,6 +385,9 @@ func (s *Server) verifyProofList(g *graph.Graph, pl prooflist.ProofList) (bool, 
 	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
 		return false, err
 	}
+	if err := validateProofListQuery(pl); err != nil {
+		return false, err
+	}
 	for i, step := range pl.Steps {
 		ok, err := s.verifyProofListStep(g, i, step)
 		if err != nil || !ok {
@@ -392,6 +395,43 @@ func (s *Server) verifyProofList(g *graph.Graph, pl prooflist.ProofList) (bool, 
 		}
 	}
 	return true, nil
+}
+
+func validateProofListQuery(pl prooflist.ProofList) error {
+	want := arcset.CanonicalizePath(querypath.CanonicalizeQueryPath(pl.Query)).String()
+	if want == "" {
+		return nil
+	}
+	got, hasPayloadBinding := proofListLogicalQueryPath(pl)
+	if got == want {
+		return nil
+	}
+	if hasPayloadBinding {
+		payloadQuery := "@payload"
+		if got != "" {
+			payloadQuery = got + "/@payload"
+		}
+		if want == payloadQuery {
+			return nil
+		}
+	}
+	return fmt.Errorf("prooflist query %q does not match ordered traversal path %q", want, got)
+}
+
+func proofListLogicalQueryPath(pl prooflist.ProofList) (string, bool) {
+	parts := make([]string, 0, len(pl.Steps))
+	hasPayloadBinding := false
+	for _, step := range pl.Steps {
+		switch step.Kind {
+		case prooflist.KindMapStep, prooflist.KindBlobBinding, prooflist.KindImplicitBlock, prooflist.KindLegacyUnknown:
+			if path := arcset.CanonicalizePath(step.Path).String(); path != "" {
+				parts = append(parts, path)
+			}
+		case prooflist.KindPayloadBinding:
+			hasPayloadBinding = true
+		}
+	}
+	return strings.Join(parts, "/"), hasPayloadBinding
 }
 
 func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.Step) (bool, error) {

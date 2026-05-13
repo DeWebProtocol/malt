@@ -635,6 +635,109 @@ func TestServerVerifyAcceptsProofList(t *testing.T) {
 	}
 }
 
+func TestServerVerifyRejectsBranchingProofList(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	payloadCID, err := mockCAS.Put(t.Context(), []byte("verify branch payload"))
+	if err != nil {
+		t.Fatalf("put payload: %v", err)
+	}
+	aCID, err := mockCAS.Put(t.Context(), []byte("verify branch a"))
+	if err != nil {
+		t.Fatalf("put a: %v", err)
+	}
+	bCID, err := mockCAS.Put(t.Context(), []byte("verify branch b"))
+	if err != nil {
+		t.Fatalf("put b: %v", err)
+	}
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"@payload": payloadCID.String(),
+			"a":        aCID.String(),
+			"b":        bCID.String(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root: %v", err)
+	}
+	resp.Body.Close()
+
+	resolve := func(path string) prooflist.ProofList {
+		t.Helper()
+		resp, err := http.Get(ts.URL + "/resolve/" + createResp.Root + "/" + path)
+		if err != nil {
+			t.Fatalf("resolve %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("resolve %s status = %d, want %d", path, resp.StatusCode, http.StatusOK)
+		}
+		var resolveResp httpapi.ResolveResponse
+		if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+			t.Fatalf("decode resolve %s: %v", path, err)
+		}
+		if resolveResp.ProofList == nil {
+			t.Fatalf("resolve %s missing ProofList", path)
+		}
+		return *resolveResp.ProofList
+	}
+
+	aProof := resolve("a")
+	bProof := resolve("b")
+	verifyRejects := func(name string, pl prooflist.ProofList) {
+		t.Helper()
+		verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: pl})
+		if err != nil {
+			t.Fatalf("marshal %s verify request: %v", name, err)
+		}
+		resp, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+		if err != nil {
+			t.Fatalf("verify %s prooflist: %v", name, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var verifyResp httpapi.VerifyResponse
+			if err := json.NewDecoder(resp.Body).Decode(&verifyResp); err != nil {
+				t.Fatalf("decode %s verify response: %v", name, err)
+			}
+			if verifyResp.Valid {
+				t.Fatalf("%s ProofList verified; want rejection", name)
+			}
+			return
+		}
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("verify %s proof status = %d, want %d or invalid response", name, resp.StatusCode, http.StatusBadRequest)
+		}
+	}
+
+	mismatchedQuery := aProof
+	mismatchedQuery.Query = "b"
+	verifyRejects("query-mismatched", mismatchedQuery)
+
+	forged := aProof
+	forged.Query = "a/b"
+	forged.Steps = append(append([]prooflist.Step(nil), aProof.Steps...), bProof.Steps...)
+	verifyRejects("branching", forged)
+}
+
 func TestServerProofListReadEndpoints(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)

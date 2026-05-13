@@ -181,3 +181,29 @@ func TestValidateShapeRejectsUnanchoredSteps(t *testing.T) {
 		t.Fatalf("expected sibling list-index steps anchored at a prior target to pass: %v", err)
 	}
 }
+
+func TestValidateShapeRejectsNonLinearTraversalSteps(t *testing.T) {
+	root := testCID(t, "root")
+	first := testCID(t, "first")
+	sibling := testCID(t, "sibling")
+
+	if err := (ProofList{
+		Root: root,
+		Steps: []Step{
+			{
+				Kind:   KindMapStep,
+				From:   root,
+				Path:   "a",
+				Target: first,
+			},
+			{
+				Kind:   KindMapStep,
+				From:   root,
+				Path:   "b",
+				Target: sibling,
+			},
+		},
+	}).ValidateShape(RequireSteps()); err == nil {
+		t.Fatal("expected a traversal step that branches from an earlier anchor to be rejected")
+	}
+}
