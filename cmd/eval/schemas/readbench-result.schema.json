@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/readbench-result.schema.json",
+  "title": "MALT read benchmark result",
+  "description": "One JSONL record emitted by malt-eval read for a single measured read operation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation_kind",
+    "iteration",
+    "fixture",
+    "path",
+    "elapsed_ns",
+    "prooflist_step_count",
+    "cas",
+    "arctable",
+    "proof"
+  ],
+  "properties": {
+    "operation_kind": {
+      "type": "string",
+      "enum": ["resolve_path", "content_range"]
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "range_header": {
+      "type": "string",
+      "description": "HTTP Range header used for content_range records."
+    },
+    "elapsed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "content_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "prooflist_step_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "target": {
+      "type": "string",
+      "description": "Resolved target CID for resolve_path records."
+    },
+    "cas": {
+      "$ref": "#/$defs/cas_stats"
+    },
+    "arctable": {
+      "$ref": "#/$defs/arctable_stats"
+    },
+    "proof": {
+      "$ref": "#/$defs/proof_stats"
+    }
+  },
+  "$defs": {
+    "counter": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cas_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["put_count", "get_count", "has_count", "bytes_put", "bytes_get"],
+      "properties": {
+        "put_count": { "$ref": "#/$defs/counter" },
+        "get_count": { "$ref": "#/$defs/counter" },
+        "has_count": { "$ref": "#/$defs/counter" },
+        "bytes_put": { "$ref": "#/$defs/counter" },
+        "bytes_get": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "arctable_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "get_count",
+        "batch_get_count",
+        "batch_get_path_count",
+        "update_count",
+        "update_arc_count",
+        "snapshot_count",
+        "snapshot_arc_count",
+        "iterate_count"
+      ],
+      "properties": {
+        "get_count": { "$ref": "#/$defs/counter" },
+        "batch_get_count": { "$ref": "#/$defs/counter" },
+        "batch_get_path_count": { "$ref": "#/$defs/counter" },
+        "update_count": { "$ref": "#/$defs/counter" },
+        "update_arc_count": { "$ref": "#/$defs/counter" },
+        "snapshot_count": { "$ref": "#/$defs/counter" },
+        "snapshot_arc_count": { "$ref": "#/$defs/counter" },
+        "iterate_count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "proof_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proof_list_count",
+        "step_count",
+        "evidence_bytes",
+        "proof_bytes",
+        "total_bytes"
+      ],
+      "properties": {
+        "proof_list_count": { "$ref": "#/$defs/counter" },
+        "step_count": { "$ref": "#/$defs/counter" },
+        "evidence_bytes": { "$ref": "#/$defs/counter" },
+        "proof_bytes": { "$ref": "#/$defs/counter" },
+        "total_bytes": { "$ref": "#/$defs/counter" }
+      }
+    }
+  }
+}
