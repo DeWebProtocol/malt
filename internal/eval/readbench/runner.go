@@ -151,6 +151,9 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 	if err != nil {
 		return err
 	}
+	if normalized.Iterations == 0 {
+		return nil
+	}
 
 	data := newFixtureData(normalized.Fixture)
 	fixture := &Fixture{

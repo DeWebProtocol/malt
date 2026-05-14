@@ -29,6 +29,7 @@ func ParseSystemsCSV(raw string) ([]SystemName, error) {
 	}
 	parts := strings.Split(raw, ",")
 	systems := make([]SystemName, 0, len(parts))
+	seen := make(map[SystemName]struct{}, len(parts))
 	for _, part := range parts {
 		system := SystemName(strings.TrimSpace(part))
 		if system == "" {
@@ -37,6 +38,10 @@ func ParseSystemsCSV(raw string) ([]SystemName, error) {
 		if !knownSystem(system) {
 			return nil, fmt.Errorf("unknown system %q", system)
 		}
+		if _, ok := seen[system]; ok {
+			return nil, fmt.Errorf("duplicate system %q", system)
+		}
+		seen[system] = struct{}{}
 		systems = append(systems, system)
 	}
 	if len(systems) == 0 {
@@ -50,10 +55,15 @@ func normalizeSystems(systems []SystemName) ([]SystemName, error) {
 		return DefaultSystems(), nil
 	}
 	normalized := make([]SystemName, 0, len(systems))
+	seen := make(map[SystemName]struct{}, len(systems))
 	for _, system := range systems {
 		if !knownSystem(system) {
 			return nil, fmt.Errorf("unknown system %q", system)
 		}
+		if _, ok := seen[system]; ok {
+			return nil, fmt.Errorf("duplicate system %q", system)
+		}
+		seen[system] = struct{}{}
 		normalized = append(normalized, system)
 	}
 	return normalized, nil

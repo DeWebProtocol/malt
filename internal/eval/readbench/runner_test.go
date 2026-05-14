@@ -359,6 +359,36 @@ func TestNormalizeRunConfigRejectsUnknownSystem(t *testing.T) {
 	}
 }
 
+func TestNormalizeRunConfigRejectsDuplicateSystem(t *testing.T) {
+	_, err := normalizeRunConfig(RunConfig{
+		Systems: []SystemName{SystemMALTFlat, SystemMALTFlat},
+		Fixture: FixtureConfig{LargeFileBytes: 300 * 1024},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate system to fail")
+	}
+}
+
+func TestRunJSONLZeroIterationsSkipsFixtureSetup(t *testing.T) {
+	ctx := context.Background()
+	runner := NewRunner("http://127.0.0.1:0")
+
+	var out bytes.Buffer
+	err := runner.RunJSONL(ctx, RunConfig{
+		Fixture: FixtureConfig{
+			FixtureName:    "readbench-zero-setup",
+			LargeFileBytes: 300 * 1024,
+		},
+		Iterations: 0,
+	}, &out)
+	if err != nil {
+		t.Fatalf("RunJSONL() error = %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("RunJSONL() wrote %q, want no records", out.String())
+	}
+}
+
 func TestRunJSONLAllowsZeroIterations(t *testing.T) {
 	ctx := context.Background()
 	baseURL, mockCAS := newTestDaemonWithCAS(t)

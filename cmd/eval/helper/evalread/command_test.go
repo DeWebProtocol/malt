@@ -49,3 +49,9 @@ func TestParseSystemsCSVRejectsUnknownSystem(t *testing.T) {
 		t.Fatal("expected unknown system to fail")
 	}
 }
+
+func TestParseSystemsCSVRejectsDuplicateSystem(t *testing.T) {
+	if _, err := ParseSystemsCSV("maltflat,merkledag,maltflat"); err == nil {
+		t.Fatal("expected duplicate system to fail")
+	}
+}
