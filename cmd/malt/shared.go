@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,73 +8,16 @@ import (
 
 	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	"github.com/dewebprotocol/malt/core/graph"
 	cid "github.com/ipfs/go-cid"
 )
 
-// defaultNode and defaultGraph are lazily initialized and reused by commands
-// that need direct in-process graph access.
-var (
-	defaultNode   *api.Node
-	defaultGraph  *graph.Graph
-	defaultClient *daemonclient.Client
-)
+var defaultClient *daemonclient.Client
 
 func loadRuntimeConfig() (*config.Config, error) {
 	if cfgFile != "" {
 		return config.LoadFromFile(cfgFile)
 	}
 	return config.Load()
-}
-
-// makeNode creates and configures a MALT node from config.
-func makeNode() (*api.Node, error) {
-	cfg, err := loadRuntimeConfig()
-	if err != nil {
-		return nil, err
-	}
-	return api.NewNode(api.WithConfig(cfg))
-}
-
-// mustNode creates a node or exits with an error.
-func mustNode() *api.Node {
-	if defaultNode == nil {
-		var err error
-		defaultNode, err = makeNode()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	return defaultNode
-}
-
-// mustGraph returns the default graph for direct in-process commands.
-func mustGraph() *graph.Graph {
-	if defaultGraph == nil {
-		node := mustNode()
-		var err error
-		defaultGraph, err = node.OpenGraph(context.Background(), "default")
-		if err == graph.ErrNotFound {
-			defaultGraph, err = node.NewGraph("default")
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating graph: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	return defaultGraph
-}
-
-// cleanupNode closes the default node if it was created.
-func cleanupNode() {
-	if defaultNode != nil {
-		_ = defaultNode.Close()
-		defaultNode = nil
-		defaultGraph = nil
-	}
-	defaultClient = nil
 }
 
 func mustDaemonClient() *daemonclient.Client {
