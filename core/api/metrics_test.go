@@ -36,14 +36,14 @@ func TestNodeMetricsSnapshotAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGraph failed: %v", err)
 	}
-	root, err := g.Commit(ctx, arcset.NewSetFrom(map[string]cid.Cid{
+	root, err := g.Writer().CreateStructure(ctx, g.Namespace(), arcset.NewSetFrom(map[string]cid.Cid{
 		"@payload": payloadCID,
 		"name":     newTestCID("name"),
 	}))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if _, err := g.Snapshot(ctx, root); err != nil {
+	if _, err := g.Writer().GetSnapshot(ctx, g.Namespace(), root); err != nil {
 		t.Fatalf("Snapshot failed: %v", err)
 	}
 
