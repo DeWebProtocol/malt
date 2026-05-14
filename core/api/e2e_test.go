@@ -53,7 +53,7 @@ func TestAPI_CreateAndResolve(t *testing.T) {
 	arcs := buildArcs(10)
 	snapshot := arcset.NewSetFrom(arcs)
 
-	root, err := g.Commit(ctx, snapshot)
+	root, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -70,8 +70,7 @@ func TestAPI_CreateAndResolve(t *testing.T) {
 			t.Errorf("target mismatch for %s: got %s, want %s", path, result.Target, expected)
 		}
 
-		proof := graph.NewTranscriptProof(result.Transcript)
-		valid, err := g.Verify(ctx, root, proof, expected)
+		valid, err := g.Resolver().VerifyTranscript(root, result.Transcript)
 		if err != nil {
 			t.Fatalf("Verify failed for %s: %v", path, err)
 		}
@@ -90,7 +89,7 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	arcs := buildArcs(10)
 	snapshot := arcset.NewSetFrom(arcs)
 
-	root1, err := g.Commit(ctx, snapshot)
+	root1, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot)
 	if err != nil {
 		t.Fatalf("Initial commit failed: %v", err)
 	}
@@ -101,8 +100,13 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-	proof := graph.NewTranscriptProof(result.Transcript)
-	valid, _ := g.Verify(ctx, root1, proof, arcs[path])
+	if !result.Target.Equals(arcs[path]) {
+		t.Fatalf("initial target mismatch: got %s, want %s", result.Target, arcs[path])
+	}
+	valid, err := g.Resolver().VerifyTranscript(root1, result.Transcript)
+	if err != nil {
+		t.Fatalf("initial transcript verification failed: %v", err)
+	}
 	if !valid {
 		t.Fatal("initial proof invalid")
 	}
@@ -111,7 +115,7 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	newTarget := fakeCID("updated_data5")
 	arcs[path] = newTarget
 	snapshot2 := arcset.NewSetFrom(arcs)
-	root2, err := g.Commit(ctx, snapshot2)
+	root2, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot2)
 	if err != nil {
 		t.Fatalf("Update commit failed: %v", err)
 	}
@@ -121,8 +125,10 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve after update failed: %v", err)
 	}
-	proof2 := graph.NewTranscriptProof(result2.Transcript)
-	valid, err = g.Verify(ctx, root2, proof2, newTarget)
+	if !result2.Target.Equals(newTarget) {
+		t.Fatalf("updated target mismatch: got %s, want %s", result2.Target, newTarget)
+	}
+	valid, err = g.Resolver().VerifyTranscript(root2, result2.Transcript)
 	if err != nil || !valid {
 		t.Fatalf("proof invalid after update: %v", err)
 	}
@@ -132,8 +138,14 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve on old root failed: %v", err)
 	}
-	proof1 := graph.NewTranscriptProof(result1.Transcript)
-	valid, _ = g.Verify(ctx, root1, proof1, fakeCID("data5"))
+	oldTarget := fakeCID("data5")
+	if !result1.Target.Equals(oldTarget) {
+		t.Fatalf("old root target mismatch: got %s, want %s", result1.Target, oldTarget)
+	}
+	valid, err = g.Resolver().VerifyTranscript(root1, result1.Transcript)
+	if err != nil {
+		t.Fatalf("old root transcript verification failed: %v", err)
+	}
 	if !valid {
 		t.Error("old root should still resolve to old target")
 	}
@@ -148,7 +160,7 @@ func TestAPI_ChainedUpdatesResolveLatestRoot(t *testing.T) {
 	arcs := buildArcs(4)
 	snapshot := arcset.NewSetFrom(arcs)
 
-	root0, err := g.Commit(ctx, snapshot)
+	root0, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot)
 	if err != nil {
 		t.Fatalf("Initial commit failed: %v", err)
 	}
@@ -167,7 +179,7 @@ func TestAPI_ChainedUpdatesResolveLatestRoot(t *testing.T) {
 		}
 		snapshot := arcset.NewSetFrom(currentArcs)
 
-		newRoot, err := g.Commit(ctx, snapshot)
+		newRoot, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot)
 		if err != nil {
 			t.Fatalf("Commit v%d failed: %v", i+1, err)
 		}
@@ -192,7 +204,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	arcs := buildArcs(10)
 	snapshot := arcset.NewSetFrom(arcs)
 
-	if _, err := g.Commit(ctx, snapshot); err != nil {
+	if _, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot); err != nil {
 		t.Fatalf("Initial commit failed: %v", err)
 	}
 
@@ -201,7 +213,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	newTarget := fakeCID("new_data")
 	arcs[newPath] = newTarget
 	snapshot2 := arcset.NewSetFrom(arcs)
-	root2, err := g.Commit(ctx, snapshot2)
+	root2, err := g.Writer().CreateStructure(ctx, g.Namespace(), snapshot2)
 	if err != nil {
 		t.Fatalf("Insert commit failed: %v", err)
 	}
@@ -227,10 +239,11 @@ func TestAPI_InsertDelete(t *testing.T) {
 	// Delete arc0 through the update path. Full Commit creates a fresh
 	// structure from the provided snapshot, while delete semantics are carried
 	// by the unified update procedure.
-	root3, _, err := g.Update(ctx, root2, map[string]cid.Cid{"arc0": cid.Undef})
+	updateResult, err := g.Writer().BatchUpdateArcs(ctx, g.Namespace(), root2, map[string]cid.Cid{"arc0": cid.Undef})
 	if err != nil {
 		t.Fatalf("Delete commit failed: %v", err)
 	}
+	root3 := updateResult.NewRoot
 
 	// Verify deleted
 	_, err = g.Resolver().Resolve(root3, "arc0")
@@ -248,7 +261,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	}
 
 	// Count arcs
-	snap3, err := g.Snapshot(ctx, root3)
+	snap3, err := g.Writer().GetSnapshot(ctx, g.Namespace(), root3)
 	if err != nil {
 		t.Fatalf("Snapshot for root3 failed: %v", err)
 	}
