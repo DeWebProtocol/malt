@@ -14,6 +14,7 @@ import (
 
 type options struct {
 	cfgFile    string
+	systemsCSV string
 	fixture    string
 	depth      int
 	smallBytes int
@@ -26,11 +27,12 @@ type options struct {
 
 // NewCommand creates the unified `malt-eval read` subcommand.
 func NewCommand() *cobra.Command {
-	return newCommand("read", "Run a MALT-only read benchmark and emit JSONL", os.Stdout)
+	return newCommand("read", "Run a read benchmark across MALT and IPLD UnixFS baselines", os.Stdout)
 }
 
 func newCommand(use, short string, out io.Writer) *cobra.Command {
 	opts := &options{
+		systemsCSV: readbench.DefaultSystemsCSV,
 		depth:      readbench.DefaultDirectoryDepth,
 		smallBytes: readbench.DefaultSmallFileBytes,
 		largeBytes: readbench.DefaultLargeFileBytes,
@@ -48,6 +50,7 @@ func newCommand(use, short string, out io.Writer) *cobra.Command {
 		},
 	}
 	cmd.PersistentFlags().StringVarP(&opts.cfgFile, "config", "c", "", "config file (default: ~/.malt/malt.json)")
+	cmd.Flags().StringVar(&opts.systemsCSV, "systems", opts.systemsCSV, "Comma-separated systems: maltflat, merkledag, hamt")
 	cmd.Flags().StringVar(&opts.fixture, "fixture", opts.fixture, "name for the deterministic read fixture (defaults to a fresh readbench-* fixture)")
 	cmd.Flags().IntVar(&opts.depth, "depth", opts.depth, "directory depth for fixture paths")
 	cmd.Flags().IntVar(&opts.smallBytes, "small-bytes", opts.smallBytes, "small raw file size in bytes")
@@ -59,23 +62,32 @@ func newCommand(use, short string, out io.Writer) *cobra.Command {
 }
 
 func run(cmd *cobra.Command, opts *options) error {
-	cfg, err := loadConfig(opts.cfgFile)
-	if err != nil {
-		return err
-	}
 	arcs, err := ParseArcFlags(opts.arcFlags)
 	if err != nil {
 		return err
 	}
-	if len(arcs) == 0 {
-		return fmt.Errorf("--arc is required at least once and must include @payload")
+	systems, err := ParseSystemsCSV(opts.systemsCSV)
+	if err != nil {
+		return err
 	}
-	if _, ok := arcs["@payload"]; !ok {
-		return fmt.Errorf("--arc is required at least once and must include @payload")
+	var apiBaseURL string
+	if systemsInclude(systems, readbench.SystemMALTFlat) {
+		cfg, err := loadConfig(opts.cfgFile)
+		if err != nil {
+			return err
+		}
+		apiBaseURL = cfg.APIBaseURL()
+		if len(arcs) == 0 {
+			return fmt.Errorf("--arc is required at least once and must include @payload")
+		}
+		if _, ok := arcs["@payload"]; !ok {
+			return fmt.Errorf("--arc is required at least once and must include @payload")
+		}
 	}
 
-	runner := readbench.NewRunner(cfg.APIBaseURL())
+	runner := readbench.NewRunner(apiBaseURL)
 	return runner.RunJSONL(cmd.Context(), readbench.RunConfig{
+		Systems: systems,
 		Fixture: readbench.FixtureConfig{
 			FixtureName:    opts.fixture,
 			DirectoryDepth: opts.depth,
@@ -86,6 +98,20 @@ func run(cmd *cobra.Command, opts *options) error {
 		RangeHeader: opts.rangeValue,
 		Iterations:  opts.iterations,
 	}, opts.out)
+}
+
+// ParseSystemsCSV parses comma-separated read benchmark system names.
+func ParseSystemsCSV(raw string) ([]readbench.SystemName, error) {
+	return readbench.ParseSystemsCSV(raw)
+}
+
+func systemsInclude(systems []readbench.SystemName, target readbench.SystemName) bool {
+	for _, system := range systems {
+		if system == target {
+			return true
+		}
+	}
+	return false
 }
 
 func loadConfig(path string) (*config.Config, error) {

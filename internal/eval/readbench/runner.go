@@ -1,4 +1,4 @@
-// Package readbench provides a MALT-only read benchmark runner.
+// Package readbench provides read benchmark runners for MALT and IPLD UnixFS baselines.
 package readbench
 
 import (
@@ -50,12 +50,13 @@ type FixtureConfig struct {
 
 // RunConfig controls one JSONL benchmark run.
 type RunConfig struct {
+	Systems     []SystemName
 	Fixture     FixtureConfig
 	RangeHeader string
 	Iterations  int
 }
 
-// Fixture describes the deterministic MALT-only dataset.
+// Fixture describes the deterministic read benchmark dataset.
 type Fixture struct {
 	FixtureName string
 	SmallPath   string
@@ -65,6 +66,7 @@ type Fixture struct {
 
 // Result is one benchmark JSONL record.
 type Result struct {
+	System             SystemName            `json:"system"`
 	OperationKind      OperationKind         `json:"operation_kind"`
 	Iteration          int                   `json:"iteration"`
 	FixtureName        string                `json:"fixture"`
@@ -73,6 +75,7 @@ type Result struct {
 	ElapsedNS          int64                 `json:"elapsed_ns"`
 	ContentBytes       *int                  `json:"content_bytes,omitempty"`
 	ProofListStepCount int                   `json:"prooflist_step_count"`
+	EvidenceItemCount  int                   `json:"evidence_item_count"`
 	Target             string                `json:"target,omitempty"`
 	CAS                metrics.CASStats      `json:"cas"`
 	ArcTable           metrics.ArcTableStats `json:"arctable"`
@@ -99,7 +102,7 @@ func NewRunner(baseURL string) *Runner {
 	}
 }
 
-// PrepareFixture creates a deterministic MALT-only read fixture under an explicit root.
+// PrepareFixture creates a deterministic MALT read fixture under an explicit root.
 func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixture, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("read benchmark runner is nil")
@@ -108,6 +111,7 @@ func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixtur
 	if err != nil {
 		return nil, err
 	}
+	data := newFixtureData(normalized)
 
 	if len(cfg.Arcs) == 0 {
 		return nil, fmt.Errorf("create root structure: Arcs is required in FixtureConfig")
@@ -118,23 +122,21 @@ func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixtur
 	}
 	r.root = rootResp.Root
 
-	smallPath := fixturePath(normalized.DirectoryDepth, "small.txt")
-	largePath := fixturePath(normalized.DirectoryDepth, "large.bin")
-	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, smallPath, deterministicBytes("small", normalized.SmallFileBytes)); err != nil {
+	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, data.smallPath, data.smallData); err != nil {
 		return nil, fmt.Errorf("write small fixture: %w", err)
 	} else {
 		r.root = writeResp.NewRoot
 	}
-	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, largePath, deterministicBytes("large", normalized.LargeFileBytes)); err != nil {
+	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, data.largePath, data.largeData); err != nil {
 		return nil, fmt.Errorf("write large fixture: %w", err)
 	} else {
 		r.root = writeResp.NewRoot
 	}
 
 	return &Fixture{
-		FixtureName: normalized.FixtureName,
-		SmallPath:   smallPath,
-		LargePath:   largePath,
+		FixtureName: data.fixtureName,
+		SmallPath:   data.smallPath,
+		LargePath:   data.largePath,
 		Root:        r.root,
 	}, nil
 }
@@ -149,10 +151,39 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 	if err != nil {
 		return err
 	}
+	if normalized.Iterations == 0 {
+		return nil
+	}
 
-	fixture, err := r.PrepareFixture(ctx, normalized.Fixture)
-	if err != nil {
-		return err
+	data := newFixtureData(normalized.Fixture)
+	fixture := &Fixture{
+		FixtureName: data.fixtureName,
+		SmallPath:   data.smallPath,
+		LargePath:   data.largePath,
+	}
+	baselines := make(map[SystemName]*baselineSystem)
+	for _, system := range normalized.Systems {
+		switch system {
+		case SystemMALTFlat:
+			if fixture.Root == "" {
+				prepared, err := r.PrepareFixture(ctx, normalized.Fixture)
+				if err != nil {
+					return err
+				}
+				fixture = prepared
+			}
+		case SystemMerkleDAG, SystemHAMT:
+			if _, ok := baselines[system]; ok {
+				continue
+			}
+			baseline, err := newBaselineSystem(ctx, system, data)
+			if err != nil {
+				return err
+			}
+			baselines[system] = baseline
+		default:
+			return fmt.Errorf("unknown system %q", system)
+		}
 	}
 
 	ops := []operation{
@@ -162,13 +193,26 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 
 	enc := json.NewEncoder(w)
 	for iteration := 0; iteration < normalized.Iterations; iteration++ {
-		for _, op := range ops {
-			result, err := r.measureOperation(ctx, iteration, fixture.FixtureName, op)
-			if err != nil {
-				return err
-			}
-			if err := enc.Encode(result); err != nil {
-				return fmt.Errorf("write JSONL result: %w", err)
+		for _, system := range normalized.Systems {
+			for _, op := range ops {
+				var (
+					result *Result
+					err    error
+				)
+				switch system {
+				case SystemMALTFlat:
+					result, err = r.measureOperation(ctx, iteration, fixture.FixtureName, op)
+				case SystemMerkleDAG, SystemHAMT:
+					result, err = baselines[system].measureOperation(ctx, iteration, fixture.FixtureName, op)
+				default:
+					return fmt.Errorf("unknown system %q", system)
+				}
+				if err != nil {
+					return err
+				}
+				if err := enc.Encode(result); err != nil {
+					return fmt.Errorf("write JSONL result: %w", err)
+				}
 			}
 		}
 	}
@@ -217,6 +261,7 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 	}
 
 	return &Result{
+		System:             SystemMALTFlat,
 		OperationKind:      op.kind,
 		Iteration:          iteration,
 		FixtureName:        fixture,
@@ -225,6 +270,7 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 		ElapsedNS:          elapsed,
 		ContentBytes:       contentBytes,
 		ProofListStepCount: stepCount,
+		EvidenceItemCount:  stepCount,
 		Target:             target,
 		CAS:                snapshot.CAS,
 		ArcTable:           snapshot.ArcTable,
@@ -253,6 +299,10 @@ func (r *Runner) metricsSnapshot(ctx context.Context) (metrics.Snapshot, error) 
 }
 
 func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
+	systems, err := normalizeSystems(cfg.Systems)
+	if err != nil {
+		return RunConfig{}, err
+	}
 	fixture, err := normalizeFixtureConfig(cfg.Fixture)
 	if err != nil {
 		return RunConfig{}, err
@@ -263,6 +313,7 @@ func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 	if strings.TrimSpace(cfg.RangeHeader) == "" {
 		cfg.RangeHeader = DefaultRangeHeader
 	}
+	cfg.Systems = systems
 	cfg.Fixture = fixture
 	return cfg, nil
 }

@@ -221,7 +221,8 @@ Current command model:
 - `malt verify ...`
   - verifies a ProofList
 - `malt-eval read`
-  - MALT-only read benchmark driver
+  - read benchmark driver for `maltflat`, IPLD UnixFS, and IPLD UnixFS+HAMT
+    baselines
 - `malt-eval write`
   - Git trace write-amplification replay driver
 - `malt-eval metrics`
@@ -425,6 +426,8 @@ Metrics:
 
 - path lookup latency
 - range read latency
+- evidence item count (`ProofList` steps for MALT, CAS block fetches for IPLD
+  baselines)
 - chunk update cost
 - directory mutation cost
 - proof size
