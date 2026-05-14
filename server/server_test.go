@@ -1406,6 +1406,122 @@ func TestServerResolveHeadAndReadShareUnixFSDirectoryTarget(t *testing.T) {
 	}
 }
 
+func TestServerHeadGetAndResolveSharePathResolution(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	fileBody := []byte("shared path target")
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/nested/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	if err != nil {
+		t.Fatalf("create unixfs file request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create unixfs file status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode unixfs write response: %v", err)
+	}
+	resp.Body.Close()
+
+	for _, tc := range []struct {
+		path string
+		kind string
+		body []byte
+	}{
+		{path: "docs", kind: "dir"},
+		{path: "docs/nested/readme.txt", kind: "file", body: fileBody},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			headReq, _ := http.NewRequest(http.MethodHead, ts.URL+"/"+writeResp.NewRoot+"/"+tc.path, nil)
+			resp, err := http.DefaultClient.Do(headReq)
+			if err != nil {
+				t.Fatalf("HEAD request failed: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				t.Fatalf("HEAD status = %d, want %d", resp.StatusCode, http.StatusOK)
+			}
+			if got := resp.Header.Get("X-Malt-Kind"); got != tc.kind {
+				resp.Body.Close()
+				t.Fatalf("HEAD kind = %q, want %q", got, tc.kind)
+			}
+			headTarget := resp.Header.Get("X-Malt-Payload")
+			if headTarget == "" {
+				headTarget = resp.Header.Get("X-Malt-Key")
+			}
+			resp.Body.Close()
+			if headTarget == "" {
+				t.Fatal("HEAD target headers are missing")
+			}
+
+			resp, err = http.Get(ts.URL + "/resolve/" + writeResp.NewRoot + "/" + tc.path)
+			if err != nil {
+				t.Fatalf("resolve request failed: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				t.Fatalf("resolve status = %d, want %d", resp.StatusCode, http.StatusOK)
+			}
+			var resolveResp httpapi.ResolveResponse
+			if err := json.NewDecoder(resp.Body).Decode(&resolveResp); err != nil {
+				t.Fatalf("decode resolve response: %v", err)
+			}
+			resp.Body.Close()
+			if resolveResp.Target != headTarget {
+				t.Fatalf("resolve target = %q, HEAD target = %q; want shared path resolution", resolveResp.Target, headTarget)
+			}
+
+			resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/" + tc.path)
+			if err != nil {
+				t.Fatalf("GET request failed: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				t.Fatalf("GET status = %d, want %d", resp.StatusCode, http.StatusOK)
+			}
+			if tc.body != nil {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("read GET body: %v", err)
+				}
+				if !bytes.Equal(body, tc.body) {
+					t.Fatalf("GET body = %q, want %q", body, tc.body)
+				}
+			} else {
+				_, _ = io.Copy(io.Discard, resp.Body)
+			}
+			readProof := requireProofListHeader(t, resp)
+			resp.Body.Close()
+			readTarget, err := readProof.LastStepTarget()
+			if err != nil {
+				t.Fatalf("GET proof target: %v", err)
+			}
+			if readTarget.String() != resolveResp.Target {
+				t.Fatalf("GET proof target = %q, resolve target = %q; want shared path resolution", readTarget.String(), resolveResp.Target)
+			}
+		})
+	}
+}
+
 func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	node := newTestNode(t)
 	arcs, ok := node.ArcTable().(interface {

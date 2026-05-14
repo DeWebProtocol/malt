@@ -888,6 +888,55 @@ func TestAddInputsWithUnixFSWorkflow(t *testing.T) {
 
 }
 
+func TestAddResolveVerifyDaemonClientFlow(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+	defaultClient = daemon
+	t.Cleanup(func() { defaultClient = nil })
+
+	root := newTestRoot(ctx, t, daemon, casClient)
+	inputRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(inputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir input root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputRoot, "note.txt"), []byte("daemon-client proof"), 0o644); err != nil {
+		t.Fatalf("write note: %v", err)
+	}
+
+	added, err := addInputsWithUnixFS(ctx, daemon, casClient, []string{inputRoot}, root, addBuildOptions{})
+	if err != nil {
+		t.Fatalf("add with unixfs: %v", err)
+	}
+	if added.NewRoot == "" {
+		t.Fatal("add result new root is empty")
+	}
+
+	proofJSON := captureStdout(t, func() {
+		if err := runResolve(testCommandWithContext(ctx), []string{added.NewRoot, filepath.Base(inputRoot) + "/note.txt"}); err != nil {
+			t.Fatalf("run resolve: %v", err)
+		}
+	})
+	if !strings.Contains(proofJSON, `"prooflist"`) {
+		t.Fatalf("resolve output missing prooflist:\n%s", proofJSON)
+	}
+
+	proofPath := filepath.Join(t.TempDir(), "resolve-proof.json")
+	if err := os.WriteFile(proofPath, []byte(proofJSON), 0o644); err != nil {
+		t.Fatalf("write resolve proof: %v", err)
+	}
+
+	cmd := testCommandWithContext(ctx)
+	cmd.Flags().String("prooflist", proofPath, "")
+	verifyOut := captureStdout(t, func() {
+		if err := runVerify(cmd, nil); err != nil {
+			t.Fatalf("run verify: %v", err)
+		}
+	})
+	if !strings.Contains(verifyOut, "valid: true") {
+		t.Fatalf("verify output = %q, want valid true", verifyOut)
+	}
+}
+
 func TestAddInputsWithUnixFSAddsIncrementally(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
