@@ -1,6 +1,8 @@
 // Package graph provides graph lifecycle management for MALT.
 // A graph is runtime metadata for reopening a namespace with a compatible
 // backend profile. It does not own a current root or freshness policy.
+// The current daemon path creates an ad hoc default Graph instead of exposing
+// this lifecycle manager as a public API.
 // This file contains the Store and Manager types.
 package graph
 

@@ -57,7 +57,7 @@ func TestOpenGraphUsesStoredBackend(t *testing.T) {
 		t.Fatalf("OpenGraph failed: %v", err)
 	}
 
-	root, err := g.Commit(context.Background(), arcset.NewSetFrom(map[string]cid.Cid{
+	root, err := g.Writer().CreateStructure(context.Background(), g.Namespace(), arcset.NewSetFrom(map[string]cid.Cid{
 		"@payload": newTestCID("payload"),
 		"name":     newTestCID("alice"),
 	}))
@@ -89,7 +89,7 @@ func TestOpenGraphUsesStoredIPABackend(t *testing.T) {
 		t.Fatalf("OpenGraph failed: %v", err)
 	}
 
-	root, err := g.Commit(context.Background(), arcset.NewSetFrom(map[string]cid.Cid{
+	root, err := g.Writer().CreateStructure(context.Background(), g.Namespace(), arcset.NewSetFrom(map[string]cid.Cid{
 		"@payload": newTestCID("payload"),
 		"name":     newTestCID("alice"),
 	}))

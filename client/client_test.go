@@ -583,6 +583,80 @@ func TestClientContentRangeReadReturnsProofListHeader(t *testing.T) {
 	}
 }
 
+func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := api.NewNode(api.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+	ctx := context.Background()
+
+	createResp, err := client.CreatePayloadRoot(ctx, nil)
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+	fileBody := append(bytes.Repeat([]byte{'a'}, 262144), []byte("tail")...)
+	writeResp, err := client.AddUnixFSFile(ctx, createResp.Root, "large.bin", fileBody)
+	if err != nil {
+		t.Fatalf("add unixfs file: %v", err)
+	}
+
+	content, status, headers, err := client.GetContent(ctx, writeResp.NewRoot, "large.bin", "")
+	if err != nil {
+		t.Fatalf("GetContent: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	if !bytes.Equal(content, fileBody) {
+		t.Fatalf("content length = %d, want %d", len(content), len(fileBody))
+	}
+
+	proof, err := ProofListFromHeaders(headers)
+	if err != nil {
+		t.Fatalf("prooflist header: %v", err)
+	}
+	if err := proof.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("prooflist shape: %v", err)
+	}
+	var indexes []uint64
+	for _, step := range proof.Steps {
+		if step.Kind != prooflist.KindListIndex {
+			continue
+		}
+		if step.Index == nil {
+			t.Fatalf("list-index step missing index: %+v", step)
+		}
+		if step.Length == nil || *step.Length != 2 {
+			t.Fatalf("list-index length = %v, want 2", step.Length)
+		}
+		if step.EvidenceBackend != "list" {
+			t.Fatalf("list-index evidence backend = %q, want list", step.EvidenceBackend)
+		}
+		indexes = append(indexes, *step.Index)
+	}
+	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
+		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	}
+
+	verifyResp, err := client.Verify(ctx, &httpapi.VerifyRequest{ProofList: *proof})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatal("expected list-backed content ProofList to verify")
+	}
+}
+
 func TestClientRestartSafety(t *testing.T) {
 	cfg, casClient := persistentTestConfig(t)
 	node, err := api.NewNode(api.WithConfig(cfg))
