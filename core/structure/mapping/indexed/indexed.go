@@ -1,4 +1,6 @@
 // Package indexed implements the canonical-path ordered baseline map semantic.
+// It is retained for comparison; core/graph wires mapping/radix in the current
+// runtime path.
 package indexed
 
 import (
@@ -34,9 +36,9 @@ type entry struct {
 	value cid.Cid
 }
 
-// NewMap creates the default keyed-map semantic over an index-addressed
-// commitment backend. The default placement rule orders bindings by canonical
-// path and authenticates binding cells rather than bare values.
+// NewMap creates the baseline keyed-map semantic over an index-addressed
+// commitment backend. Its placement rule orders bindings by canonical path and
+// authenticates binding cells rather than bare values.
 func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error) {
 	if scheme == nil {
 		return nil, fmt.Errorf("scheme is nil")

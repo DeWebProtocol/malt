@@ -182,7 +182,9 @@ Under this terminology:
 - The current `core/graph` package is runtime metadata/composition code; it is
   not the target semantic abstraction.
 - Graph manager metadata tracks lifecycle and backend compatibility only; it
-  does not store or publish a current root.
+  does not store or publish a current root. The daemon currently creates an ad
+  hoc default `Graph` and does not expose GraphManager lifecycle APIs as the
+  public runtime path.
 
 ## Map Semantic
 
@@ -198,7 +200,9 @@ Native operations:
 
 The current default implementation is `core/structure/mapping/radix`, a
 digest-keyed radix map over an index commitment backend. The older
-`core/structure/mapping/indexed` package remains as a simpler comparison path.
+`core/structure/mapping/indexed` package remains as a simpler baseline and
+comparison implementation. It is not the production map semantic wired by
+`core/graph`.
 
 The explicit path resolver should be understood as a compatibility layer above
 map reads. It may implement longest-prefix path matching, but map itself
@@ -306,6 +310,8 @@ Verification is local to the client:
   - public map semantic abstraction and shared map types
 - `core/structure/mapping/radix`
   - primary map implementation
+- `core/structure/mapping/indexed`
+  - baseline comparison map implementation, not the current runtime map path
 - `core/structure/list`
   - public list semantic abstraction and shared list types
 - `core/structure/list/tree`
@@ -314,6 +320,9 @@ Verification is local to the client:
   - stateless primitive commitment backends
 - `core/arctable`
   - namespace-scoped arcset persistence/materialization
+- `core/arctable/bloom`
+  - optional ArcTable negative-lookup optimization hook, disabled unless an
+    ArcTable is constructed with a BloomCache
 - `core/layout/malt/unixfs`
   - current pure MALT UnixFS-style layout prototype over map/list semantics
 - `core/resolver`

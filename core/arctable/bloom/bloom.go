@@ -1,5 +1,7 @@
 // Package bloom provides Bloom Filter implementations for ArcTable.
 // Bloom filters provide fast negative membership tests.
+// They are optional optimization hooks behind ArcTable implementations, not
+// semantic state or part of the root-centric trust boundary.
 //
 // Bloom Filter properties:
 //   - False negative: If Test returns false, the item is definitely not in the set

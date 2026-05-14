@@ -111,6 +111,9 @@ Native writes:
 
 The current public package is `core/structure/mapping`.
 The primary implementation is `core/structure/mapping/radix`.
+`core/structure/mapping/indexed` is retained as a simpler baseline and
+comparison implementation. It is not the production map semantic wired by
+`core/graph`, which constructs `mapping/radix`.
 
 The current explicit resolver is best understood as a compatibility layer above
 map reads. It can implement longest-prefix path policy, but the map semantic
@@ -176,12 +179,17 @@ as follows:
   - target public map semantic abstraction and shared types
 - `core/structure/mapping/radix`
   - primary map implementation
+- `core/structure/mapping/indexed`
+  - baseline comparison implementation, not the current runtime map path
 - `core/structure/list`
   - target public list semantic abstraction and shared types
 - `core/structure/list/tree`
   - primary list implementation
 - `core/arctable`
   - namespace-scoped arcset persistence/materialization
+- `core/arctable/bloom`
+  - optional negative-lookup optimization hook behind ArcTable implementations,
+    disabled unless the ArcTable is constructed with a BloomCache
 - `core/commitment`
   - stateless primitive commitment backends
 - `core/layout/malt/unixfs`
@@ -301,6 +309,10 @@ It owns:
 - commitment proof construction
 - root update computation
 
+`mapping/indexed` is a baseline comparison implementation for the same public
+map interface. It should not be treated as the production map semantic used by
+`core/graph`, resolver adapters, or the current UnixFS-style layout path.
+
 No external writer should redefine map semantics. A layout or write adapter may
 only produce semantic mutations and orchestrate calls into map semantic
 operations.
@@ -415,7 +427,9 @@ Current boundary:
   items.
 - Graph manager metadata is limited to lifecycle and runtime profile
   compatibility. It does not store an authoritative current root or publish
-  freshness.
+  freshness. The current daemon path creates an ad hoc default `Graph` through
+  `Node.NewGraph("default")` and does not expose the managed graph lifecycle as
+  a public API.
 
 It also gives the benchmark target:
 
@@ -470,6 +484,11 @@ The earlier separate lineage index duplicated part of this conceptual space and
 has been removed from the runtime. Version traversal should be derived from the
 versioned ArcTable or from application-level root publication metadata when a
 concrete use case requires it.
+
+`core/arctable/bloom` is retained as the optional negative-lookup optimization
+behind ArcTable implementations. The default root-centric runtime does not make
+it part of read/write semantics or trust, so it is dormant optimization
+machinery rather than deletion-ready dead code.
 
 ## CAS Boundary
 
