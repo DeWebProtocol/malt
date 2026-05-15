@@ -73,6 +73,8 @@ subcommands.
 
 Current runtime shape:
 
+- `malt init`
+  - creates the local configuration file and state-root directory
 - `malt daemon`
   - long-running local process
   - owns hot proving/index state

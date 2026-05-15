@@ -214,6 +214,8 @@ evaluation binary named `malt-eval` with workload-specific subcommands.
 
 Current command model:
 
+- `malt init`
+  - creates the local configuration file and state-root directory
 - `malt daemon`
   - long-running local process
   - owns hot structure state

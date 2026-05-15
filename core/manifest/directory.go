@@ -1,4 +1,5 @@
-// Package manifest implements the locked directory manifest JSON for bucket trees.
+// Package manifest implements the locked directory manifest JSON used by the
+// UnixFS application layout.
 //
 // Wire shape (locked):
 //
@@ -6,7 +7,8 @@
 //
 // Rules: top-level object with required "entries"; entries sorted lexicographically;
 // each entry is one immediate child name; empty directory is {"entries":[]}.
-// Child type and key are not stored; they are derived via bucket root + path resolution.
+// Child type and key are not stored; root-relative path resolution derives them
+// from the current MALT structure.
 package manifest
 
 import (
