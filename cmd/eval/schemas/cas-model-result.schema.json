@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/cas-model-result.schema.json",
+  "title": "CAS model result",
+  "description": "One JSONL record emitted by the cas_model evaluation suite.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation",
+    "dependency_shape",
+    "size",
+    "iteration",
+    "elapsed_ns",
+    "configured_latency_ms",
+    "configured_jitter_ms",
+    "cas"
+  ],
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": ["put", "get", "has"]
+    },
+    "dependency_shape": {
+      "type": "string",
+      "enum": ["chain", "batch"]
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "elapsed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "configured_latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "configured_jitter_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cas": {
+      "$ref": "#/$defs/cas_stats"
+    }
+  },
+  "$defs": {
+    "counter": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cas_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["put_count", "get_count", "has_count", "bytes_put", "bytes_get"],
+      "properties": {
+        "put_count": { "$ref": "#/$defs/counter" },
+        "get_count": { "$ref": "#/$defs/counter" },
+        "has_count": { "$ref": "#/$defs/counter" },
+        "bytes_put": { "$ref": "#/$defs/counter" },
+        "bytes_get": { "$ref": "#/$defs/counter" }
+      }
+    }
+  }
+}

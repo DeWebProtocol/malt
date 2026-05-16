@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/proof-overhead-result.schema.json",
+  "title": "Proof overhead result",
+  "description": "One JSONL record emitted by the proof_overhead evaluation suite.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "structure",
+    "commitment",
+    "size",
+    "iteration",
+    "method",
+    "proof_bytes",
+    "evidence_count"
+  ],
+  "properties": {
+    "structure": {
+      "type": "string"
+    },
+    "commitment": {
+      "type": "string",
+      "description": "Requested commitment backend. Measured records currently use ipa or kzg; unsupported records may name a backend the suite could not measure."
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "method": {
+      "type": "string",
+      "enum": ["measured", "unsupported"]
+    },
+    "commit_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "prove_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verify_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "proof_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidence_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verified": {
+      "type": "boolean"
+    },
+    "error": {
+      "type": "string"
+    }
+  }
+}
