@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dewebprotocol.dev/malt/eval/run-manifest.schema.json",
+  "title": "MALT evaluation run manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "started_at", "finished_at", "machine", "suites"],
+  "properties": {
+    "schema_version": {
+      "const": "malt-eval/v1"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goos", "goarch", "go_version"],
+      "properties": {
+        "hostname": {"type": "string"},
+        "goos": {"type": "string"},
+        "goarch": {"type": "string"},
+        "go_version": {"type": "string"}
+      }
+    },
+    "suites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"}
+        }
+      }
+    }
+  }
+}
