@@ -71,10 +71,11 @@ type CommitMutation struct {
 
 // ApplyResult is returned by one evaluated system after applying a commit.
 type ApplyResult struct {
-	Root              string             `json:"root,omitempty"`
-	AppliedMutations  int                `json:"applied_mutations"`
-	MaterializedPaths int                `json:"materialized_paths"`
-	Accounting        evalstore.Snapshot `json:"accounting"`
+	Root                    string             `json:"root,omitempty"`
+	AppliedMutations        int                `json:"applied_mutations"`
+	MaterializedPaths       int                `json:"materialized_paths"`
+	MaterializationStrategy string             `json:"materialization_strategy,omitempty"`
+	Accounting              evalstore.Snapshot `json:"accounting"`
 }
 
 // ResultRecord is one JSONL measurement point for one system at one commit.

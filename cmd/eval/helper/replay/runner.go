@@ -30,6 +30,24 @@ func RunCommit(ctx context.Context, commit CommitMutation, systems []SystemAdapt
 	if enc == nil {
 		return fmt.Errorf("json encoder is nil")
 	}
+	return RunCommitRecords(ctx, commit, systems, func(record ResultRecord) error {
+		if err := enc.Encode(record); err != nil {
+			return fmt.Errorf("encode %s commit %s: %w", record.System, record.Commit, err)
+		}
+		return nil
+	})
+}
+
+// RunCommitRecords applies one commit to every system and emits structured
+// records through emit. Callers that need framework-specific envelopes can
+// write records directly without JSON encode/decode round trips.
+func RunCommitRecords(ctx context.Context, commit CommitMutation, systems []SystemAdapter, emit func(ResultRecord) error) error {
+	if emit == nil {
+		return fmt.Errorf("record emitter is nil")
+	}
+	if len(systems) == 0 {
+		return fmt.Errorf("at least one system is required")
+	}
 	for _, system := range systems {
 		if system == nil {
 			return fmt.Errorf("system adapter is nil")
@@ -50,8 +68,8 @@ func RunCommit(ctx context.Context, commit CommitMutation, systems []SystemAdapt
 			Result:      result,
 			Accounting:  result.Accounting,
 		}
-		if err := enc.Encode(record); err != nil {
-			return fmt.Errorf("encode %s commit %s: %w", system.Name(), commit.Commit, err)
+		if err := emit(record); err != nil {
+			return fmt.Errorf("emit %s commit %s: %w", system.Name(), commit.Commit, err)
 		}
 	}
 	return nil
