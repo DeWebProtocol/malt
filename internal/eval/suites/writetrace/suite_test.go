@@ -65,6 +65,88 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	}
 }
 
+func TestParseConfigSupportsRepositoryListWithInheritedDefaults(t *testing.T) {
+	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+		"repo_ref": "main",
+		"commit_limit": 10,
+		"cache_dir": "/tmp/shared-cache",
+		"first_parent": true,
+		"repositories": [
+			{
+				"name": "alpha",
+				"repo_url": "https://example.test/alpha.git"
+			},
+			{
+				"name": "beta",
+				"repo_path": "/tmp/beta",
+				"repo_ref": "release",
+				"commit_limit": 0,
+				"cache_dir": "/tmp/beta-cache",
+				"first_parent": false
+			}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+
+	repos, err := cfg.RepositoriesOrSingle()
+	if err != nil {
+		t.Fatalf("RepositoriesOrSingle: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("repo count = %d, want 2", len(repos))
+	}
+	if repos[0].Name != "alpha" || repos[0].RepoURL != "https://example.test/alpha.git" {
+		t.Fatalf("repo 0 identity = %+v", repos[0])
+	}
+	if repos[0].RepoRef != "main" || repos[0].CommitLimit != 10 || repos[0].CacheDir != "/tmp/shared-cache" || !repos[0].FirstParent {
+		t.Fatalf("repo 0 inherited defaults = %+v", repos[0])
+	}
+	if repos[1].Name != "beta" || repos[1].RepoPath != "/tmp/beta" {
+		t.Fatalf("repo 1 identity = %+v", repos[1])
+	}
+	if repos[1].RepoRef != "release" || repos[1].CommitLimit != 0 || repos[1].CacheDir != "/tmp/beta-cache" || repos[1].FirstParent {
+		t.Fatalf("repo 1 overrides = %+v", repos[1])
+	}
+}
+
+func TestParseConfigKeepsSingleRepositoryCompatibility(t *testing.T) {
+	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+		"repo_path": "/tmp/single",
+		"repo_ref": "HEAD",
+		"commit_limit": 3
+	}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	repos, err := cfg.RepositoriesOrSingle()
+	if err != nil {
+		t.Fatalf("RepositoriesOrSingle: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("repo count = %d, want 1", len(repos))
+	}
+	if repos[0].RepoPath != "/tmp/single" || repos[0].RepoRef != "HEAD" || repos[0].CommitLimit != 3 {
+		t.Fatalf("single repo = %+v", repos[0])
+	}
+}
+
+func TestParseConfigRejectsRepositoryListMixedWithSingleRepoFields(t *testing.T) {
+	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+		"repo_path": "/tmp/single",
+		"repositories": [
+			{"repo_path": "/tmp/other"}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if _, err := cfg.RepositoriesOrSingle(); err == nil {
+		t.Fatal("RepositoriesOrSingle should reject repositories mixed with repo_path")
+	}
+}
+
 func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
@@ -125,6 +207,54 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		if record.Result.Accounting.Categories == nil || record.Accounting.Categories == nil {
 			t.Fatalf("record %d accounting missing: %+v", i, record)
 		}
+	}
+}
+
+func TestSuiteRunReplaysRepositoryListWithAliases(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repoA := initWriteTraceRepo(t)
+	repoB := initWriteTraceRepo(t)
+	outDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
+		t.Fatalf("mkdir raw dir: %v", err)
+	}
+
+	cfg := json.RawMessage(`{
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"repositories": [
+			{"name": "alpha", "repo_path": ` + strconvQuote(repoA) + `, "commit_limit": 1},
+			{"name": "beta", "repo_path": ` + strconvQuote(repoB) + `, "commit_limit": 1}
+		]
+	}`)
+	err := (writetrace.Suite{}).Run(ctx, framework.Env{
+		RunID:     "run-write-trace-repos-test",
+		OutputDir: outDir,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(outDir, "raw", "write_trace.jsonl"))
+	if len(envelopes) != 2 {
+		t.Fatalf("envelope count = %d, want 2", len(envelopes))
+	}
+	var records []replay.ResultRecord
+	for i, envelope := range envelopes {
+		var record replay.ResultRecord
+		if err := json.Unmarshal(envelope.Record, &record); err != nil {
+			t.Fatalf("unmarshal record %d: %v", i, err)
+		}
+		records = append(records, record)
+	}
+	if records[0].Repo != "alpha" || records[0].Index != 0 {
+		t.Fatalf("record 0 = %+v, want alpha index 0", records[0])
+	}
+	if records[1].Repo != "beta" || records[1].Index != 0 {
+		t.Fatalf("record 1 = %+v, want beta index 0", records[1])
 	}
 }
 

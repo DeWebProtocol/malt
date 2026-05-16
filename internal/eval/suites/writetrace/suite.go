@@ -3,6 +3,7 @@ package writetrace
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/evalwrite"
 	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
@@ -26,11 +27,24 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 	if err := cfg.validate(); err != nil {
 		return err
 	}
+	repositories, err := cfg.RepositoriesOrSingle()
+	if err != nil {
+		return err
+	}
 
+	for i, repo := range repositories {
+		if err := runRepository(ctx, env, cfg, repo, i, len(repositories)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runRepository(ctx context.Context, env framework.Env, cfg Config, repo RepositoryConfig, index, repoCount int) (err error) {
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreMode(cfg.StoreMode),
 		Backend: evalstore.StoreBackend(cfg.StoreBackend),
-		RootDir: cfg.StoreDir,
+		RootDir: storeDirForRepository(cfg.StoreDir, repo, index, repoCount),
 	})
 	if err != nil {
 		return err
@@ -47,14 +61,17 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 	}
 
 	source := gittrace.Source{
-		RepoURL:     cfg.RepoURL,
-		RepoPath:    cfg.RepoPath,
-		CacheDir:    cfg.CacheDir,
-		Ref:         cfg.RepoRef,
-		Limit:       cfg.CommitLimit,
-		FirstParent: cfg.FirstParent,
+		RepoURL:     repo.RepoURL,
+		RepoPath:    repo.RepoPath,
+		CacheDir:    repo.CacheDir,
+		Ref:         repo.RepoRef,
+		Limit:       repo.CommitLimit,
+		FirstParent: repo.FirstParent,
 	}
 	return source.Walk(ctx, func(commit replay.CommitMutation) error {
+		if repo.Name != "" {
+			commit.Repo = repo.Name
+		}
 		return replay.RunCommitRecords(ctx, commit, systems, func(record replay.ResultRecord) error {
 			return env.WriteRecord(SuiteName, record)
 		})
@@ -62,3 +79,10 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 }
 
 var _ framework.Suite = Suite{}
+
+func storeDirForRepository(base string, repo RepositoryConfig, index, repoCount int) string {
+	if base == "" || repoCount <= 1 {
+		return base
+	}
+	return filepath.Join(base, repo.StoreName(index))
+}
