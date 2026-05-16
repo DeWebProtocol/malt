@@ -7,6 +7,7 @@ import (
 	"github.com/dewebprotocol/malt/cmd/eval/helper/evalrun"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/evalschema"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/evalsuites"
+	"github.com/dewebprotocol/malt/cmd/eval/helper/evalsummary"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/evalwrite"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(
 		evalrun.NewCommand(evalsuites.NewRegistry()),
 		evalschema.NewCommand(),
+		evalsummary.NewCommand(),
 		evalread.NewCommand(),
 		evalwrite.NewCommand(),
 		evalmetrics.NewCommand(),

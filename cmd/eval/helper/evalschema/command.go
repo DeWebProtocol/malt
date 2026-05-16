@@ -20,10 +20,15 @@ type Schema struct {
 // DefaultSchemas returns schemas known to the evaluator CLI.
 func DefaultSchemas() []Schema {
 	return []Schema{
+		{Name: "cas-model-result", Path: "cmd/eval/schemas/cas-model-result.schema.json"},
 		{Name: "common-record", Path: "cmd/eval/schemas/common-record.schema.json"},
+		{Name: "proof-overhead-result", Path: "cmd/eval/schemas/proof-overhead-result.schema.json"},
+		{Name: "read-query-result", Path: "cmd/eval/schemas/read-query-result.schema.json"},
 		{Name: "readbench-result", Path: "cmd/eval/schemas/readbench-result.schema.json"},
 		{Name: "run-manifest", Path: "cmd/eval/schemas/run-manifest.schema.json"},
 		{Name: "run-plan", Path: "cmd/eval/schemas/run-plan.schema.json"},
+		{Name: "storage-overhead-result", Path: "cmd/eval/schemas/storage-overhead-result.schema.json"},
+		{Name: "write-trace-result", Path: "cmd/eval/schemas/write-trace-result.schema.json"},
 	}
 }
 
