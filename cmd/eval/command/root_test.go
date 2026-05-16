@@ -11,7 +11,7 @@ func TestRootCommandExposesEvaluationSubcommands(t *testing.T) {
 		t.Fatalf("root command Use = %q, want malt-eval", cmd.Use)
 	}
 
-	for _, name := range []string{"run", "read", "write", "metrics"} {
+	for _, name := range []string{"run", "schema", "read", "write", "metrics"} {
 		if found, _, err := cmd.Find([]string{name}); err != nil || found == nil || found.Name() != name {
 			t.Fatalf("subcommand %q not found: found=%v err=%v", name, found, err)
 		}
