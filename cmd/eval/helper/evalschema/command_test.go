@@ -56,3 +56,18 @@ func TestCommandRejectsUnknownSchema(t *testing.T) {
 		t.Fatal("Execute should reject unknown schema")
 	}
 }
+
+func TestDefaultCommandPrintsNamedSchemaOutsideRepoRoot(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var out bytes.Buffer
+	cmd := NewCommandWithOutput(&out)
+	cmd.SetArgs([]string{"--name", "run-plan"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "MALT evaluation run plan") {
+		t.Fatalf("schema output did not contain run-plan schema: %s", got)
+	}
+}

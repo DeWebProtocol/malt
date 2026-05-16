@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/dewebprotocol/malt/internal/eval/summary"
 )
 
 // RunOptions controls framework execution behavior.
@@ -54,6 +56,9 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 			return fmt.Errorf("run suite %s: %w", suitePlan.Name, err)
 		}
 		manifest.Suites = append(manifest.Suites, SuiteManifest{Name: suitePlan.Name})
+	}
+	if err := summary.Summarize(plan.OutputDir, filepath.Join(plan.OutputDir, "summary")); err != nil {
+		return fmt.Errorf("summarize run: %w", err)
 	}
 	manifest.FinishedAt = clock().UTC().Format(time.RFC3339Nano)
 	return writeManifest(plan.OutputDir, manifest)

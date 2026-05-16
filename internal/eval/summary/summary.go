@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/dewebprotocol/malt/internal/eval/framework"
 )
 
 var metadataColumns = []string{"schema_version", "run_id", "suite", "emitted_at"}
@@ -28,6 +26,14 @@ var figureNames = map[string]string{
 type suiteTable struct {
 	rows       []map[string]string
 	recordKeys map[string]struct{}
+}
+
+type recordEnvelope struct {
+	SchemaVersion string          `json:"schema_version"`
+	RunID         string          `json:"run_id"`
+	Suite         string          `json:"suite"`
+	EmittedAt     string          `json:"emitted_at"`
+	Record        json.RawMessage `json:"record"`
 }
 
 // Summarize reads framework raw envelopes from inputDir/raw and writes figure
@@ -120,20 +126,20 @@ func readRawFile(path, fileSuite string, tables map[string]*suiteTable) error {
 	return nil
 }
 
-func decodeEnvelope(data []byte) (framework.RecordEnvelope, error) {
-	var envelope framework.RecordEnvelope
+func decodeEnvelope(data []byte) (recordEnvelope, error) {
+	var envelope recordEnvelope
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	if err := dec.Decode(&envelope); err != nil {
-		return framework.RecordEnvelope{}, err
+		return recordEnvelope{}, err
 	}
 	if dec.More() {
-		return framework.RecordEnvelope{}, fmt.Errorf("unexpected trailing JSON")
+		return recordEnvelope{}, fmt.Errorf("unexpected trailing JSON")
 	}
 	return envelope, nil
 }
 
-func envelopeRow(envelope framework.RecordEnvelope, recordKeys map[string]struct{}) (map[string]string, error) {
+func envelopeRow(envelope recordEnvelope, recordKeys map[string]struct{}) (map[string]string, error) {
 	row := map[string]string{
 		"schema_version": envelope.SchemaVersion,
 		"run_id":         envelope.RunID,

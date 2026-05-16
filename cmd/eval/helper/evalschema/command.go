@@ -8,33 +8,44 @@ import (
 	"os"
 	"sort"
 
+	evalschemas "github.com/dewebprotocol/malt/cmd/eval/schemas"
 	"github.com/spf13/cobra"
 )
 
 // Schema identifies one evaluator JSON schema file.
 type Schema struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Content []byte `json:"-"`
 }
 
 // DefaultSchemas returns schemas known to the evaluator CLI.
 func DefaultSchemas() []Schema {
-	return []Schema{
-		{Name: "cas-model-result", Path: "cmd/eval/schemas/cas-model-result.schema.json"},
-		{Name: "common-record", Path: "cmd/eval/schemas/common-record.schema.json"},
-		{Name: "proof-overhead-result", Path: "cmd/eval/schemas/proof-overhead-result.schema.json"},
-		{Name: "read-query-result", Path: "cmd/eval/schemas/read-query-result.schema.json"},
-		{Name: "readbench-result", Path: "cmd/eval/schemas/readbench-result.schema.json"},
-		{Name: "run-manifest", Path: "cmd/eval/schemas/run-manifest.schema.json"},
-		{Name: "run-plan", Path: "cmd/eval/schemas/run-plan.schema.json"},
-		{Name: "storage-overhead-result", Path: "cmd/eval/schemas/storage-overhead-result.schema.json"},
-		{Name: "write-trace-result", Path: "cmd/eval/schemas/write-trace-result.schema.json"},
+	entries := evalschemas.Entries()
+	schemas := make([]Schema, 0, len(entries))
+	for _, entry := range entries {
+		content, err := evalschemas.Read(entry.Name)
+		if err != nil {
+			panic(err)
+		}
+		schemas = append(schemas, Schema{
+			Name:    entry.Name,
+			Path:    entry.Path,
+			Content: content,
+		})
 	}
+	return schemas
 }
 
 // NewCommand creates `malt-eval schema`.
 func NewCommand() *cobra.Command {
 	return NewCommandWithSchemas(os.Stdout, DefaultSchemas())
+}
+
+// NewCommandWithOutput creates a schema command using the default embedded
+// schema registry and a caller-supplied output writer.
+func NewCommandWithOutput(out io.Writer) *cobra.Command {
+	return NewCommandWithSchemas(out, DefaultSchemas())
 }
 
 // NewCommandWithSchemas creates a schema command for tests or custom registries.
@@ -67,11 +78,15 @@ func run(out io.Writer, schemas []Schema, name string) error {
 		if schema.Name != name {
 			continue
 		}
-		data, err := os.ReadFile(schema.Path)
-		if err != nil {
-			return err
+		data := schema.Content
+		if data == nil {
+			var err error
+			data, err = os.ReadFile(schema.Path)
+			if err != nil {
+				return err
+			}
 		}
-		_, err = out.Write(data)
+		_, err := out.Write(data)
 		return err
 	}
 	return fmt.Errorf("unknown schema %q", name)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,6 +68,14 @@ func TestRunnerCreatesEvaluationOutputLayout(t *testing.T) {
 	}
 	if manifest.StartedAt != clock().Format(time.RFC3339Nano) || manifest.FinishedAt != clock().Format(time.RFC3339Nano) {
 		t.Fatalf("manifest times = %s/%s", manifest.StartedAt, manifest.FinishedAt)
+	}
+
+	summaryBytes, err := os.ReadFile(filepath.Join(plan.OutputDir, "summary", "figure_write_trace.csv"))
+	if err != nil {
+		t.Fatalf("read summary csv: %v", err)
+	}
+	if got := string(summaryBytes); !strings.Contains(got, "limit") || !strings.Contains(got, "run-001") {
+		t.Fatalf("summary csv did not include flattened fake record: %s", got)
 	}
 }
 
