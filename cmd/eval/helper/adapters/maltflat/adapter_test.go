@@ -56,6 +56,19 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	if rootHead.NewPersistedBytes != uint64(len(result.Root)) {
 		t.Fatalf("root/head bytes = %d, want emitted root string length %d", rootHead.NewPersistedBytes, len(result.Root))
 	}
+	if result.MaterializationStrategy != maltflat.MaterializationStrategyLiveSnapshotRebuild {
+		t.Fatalf("materialization strategy = %q, want %q", result.MaterializationStrategy, maltflat.MaterializationStrategyLiveSnapshotRebuild)
+	}
+}
+
+func TestDefaultOptionsUsePaperConfiguration(t *testing.T) {
+	opts := maltflat.DefaultOptions()
+	if opts.ArcTableMode != maltflat.ArcTableModeVersioned {
+		t.Fatalf("default ArcTable mode = %q, want %q", opts.ArcTableMode, maltflat.ArcTableModeVersioned)
+	}
+	if opts.CommitmentBackend != maltflat.CommitmentBackendKZG {
+		t.Fatalf("default commitment backend = %q, want %q", opts.CommitmentBackend, maltflat.CommitmentBackendKZG)
+	}
 }
 
 type fakeSnapshot map[string][]byte
