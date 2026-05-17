@@ -13,9 +13,10 @@ const SchemaVersion = "malt-eval/v1"
 
 // Plan is the top-level evaluation run plan consumed by `malt-eval run`.
 type Plan struct {
-	RunID     string      `json:"run_id"`
-	OutputDir string      `json:"output_dir,omitempty"`
-	Suites    []SuitePlan `json:"suites"`
+	RunID             string      `json:"run_id"`
+	OutputDir         string      `json:"output_dir,omitempty"`
+	Suites            []SuitePlan `json:"suites"`
+	outputDirExplicit bool
 }
 
 // SuitePlan configures one registered evaluation suite.
@@ -43,6 +44,7 @@ func LoadPlan(path string) (Plan, error) {
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return Plan{}, fmt.Errorf("parse plan: %w", err)
 	}
+	plan.outputDirExplicit = jsonHasKey(data, "output_dir")
 	if err := plan.Normalize(); err != nil {
 		return Plan{}, err
 	}
@@ -75,4 +77,42 @@ func (p *Plan) Normalize() error {
 		p.Suites[i].Name = name
 	}
 	return nil
+}
+
+// OverrideRunID applies a CLI run-id override. If the plan did not explicitly
+// configure output_dir, the output directory is recomputed from the final run id
+// during the next Normalize call.
+func (p *Plan) OverrideRunID(runID string) {
+	if p == nil {
+		return
+	}
+	if strings.TrimSpace(runID) == "" {
+		return
+	}
+	p.RunID = strings.TrimSpace(runID)
+	if !p.outputDirExplicit {
+		p.OutputDir = ""
+	}
+}
+
+// OverrideOutputDir applies a CLI output-dir override and marks the directory
+// as explicit so later run-id overrides do not rewrite it.
+func (p *Plan) OverrideOutputDir(outputDir string) {
+	if p == nil {
+		return
+	}
+	if strings.TrimSpace(outputDir) == "" {
+		return
+	}
+	p.OutputDir = strings.TrimSpace(outputDir)
+	p.outputDirExplicit = true
+}
+
+func jsonHasKey(data []byte, key string) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return false
+	}
+	_, ok := object[key]
+	return ok
 }

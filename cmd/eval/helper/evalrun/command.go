@@ -47,10 +47,10 @@ func run(cmd *cobra.Command, registry framework.Registry, opts *options) error {
 		return err
 	}
 	if strings.TrimSpace(opts.outputDir) != "" {
-		plan.OutputDir = opts.outputDir
+		plan.OverrideOutputDir(opts.outputDir)
 	}
 	if strings.TrimSpace(opts.runID) != "" {
-		plan.RunID = opts.runID
+		plan.OverrideRunID(opts.runID)
 	}
 	return framework.Run(cmd.Context(), plan, registry, framework.RunOptions{})
 }

@@ -79,6 +79,59 @@ func TestRunnerCreatesEvaluationOutputLayout(t *testing.T) {
 	}
 }
 
+func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
+	tmp := t.TempDir()
+	reg := NewRegistry()
+	if err := reg.Register(fakeSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plan := Plan{
+		RunID:     "rerun",
+		OutputDir: filepath.Join(tmp, "rerun"),
+		Suites: []SuitePlan{{
+			Name:   "write_trace",
+			Config: json.RawMessage(`{"limit": 1}`),
+		}},
+	}
+
+	if err := Run(context.Background(), plan, reg, RunOptions{}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(plan.OutputDir, "summary", "stale.csv"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale summary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(plan.OutputDir, "logs", "stale.log"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale log: %v", err)
+	}
+
+	plan.Suites[0].Config = json.RawMessage(`{"limit": 2}`)
+	if err := Run(context.Background(), plan, reg, RunOptions{}); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	rawBytes, err := os.ReadFile(filepath.Join(plan.OutputDir, "raw", "write_trace.jsonl"))
+	if err != nil {
+		t.Fatalf("read raw output: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(rawBytes)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("raw line count after rerun = %d, want 1\n%s", len(lines), rawBytes)
+	}
+	var envelope RecordEnvelope
+	if err := json.Unmarshal([]byte(lines[0]), &envelope); err != nil {
+		t.Fatalf("unmarshal rerun envelope: %v", err)
+	}
+	if strings.Contains(string(envelope.Record), `"limit":1`) || !strings.Contains(string(envelope.Record), `"limit":2`) {
+		t.Fatalf("rerun record = %s, want only latest limit", envelope.Record)
+	}
+	if _, err := os.Stat(filepath.Join(plan.OutputDir, "summary", "stale.csv")); !os.IsNotExist(err) {
+		t.Fatalf("stale summary file still present or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(plan.OutputDir, "logs", "stale.log")); !os.IsNotExist(err) {
+		t.Fatalf("stale log file still present or stat failed unexpectedly: %v", err)
+	}
+}
+
 func TestRunnerFailsForUnknownEnabledSuite(t *testing.T) {
 	plan := Plan{
 		RunID:     "run-unknown",

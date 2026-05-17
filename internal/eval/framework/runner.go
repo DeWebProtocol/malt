@@ -25,10 +25,8 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	if clock == nil {
 		clock = time.Now
 	}
-	for _, dir := range []string{"raw", "summary", "logs"} {
-		if err := os.MkdirAll(filepath.Join(plan.OutputDir, dir), 0o755); err != nil {
-			return err
-		}
+	if err := prepareOutputLayout(plan.OutputDir); err != nil {
+		return err
 	}
 
 	startedAt := clock().UTC().Format(time.RFC3339Nano)
@@ -62,6 +60,19 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	}
 	manifest.FinishedAt = clock().UTC().Format(time.RFC3339Nano)
 	return writeManifest(plan.OutputDir, manifest)
+}
+
+func prepareOutputLayout(outputDir string) error {
+	for _, dir := range []string{"raw", "summary", "logs"} {
+		path := filepath.Join(outputDir, dir)
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeManifest(outputDir string, manifest Manifest) error {
