@@ -27,7 +27,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 	if err := cfg.validate(); err != nil {
 		return err
 	}
-	repositories, err := cfg.RepositoriesOrSingle()
+	repositories, err := cfg.RepositoryTargets()
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 	return nil
 }
 
-func runRepository(ctx context.Context, env framework.Env, cfg Config, repo RepositoryConfig, index, repoCount int) (err error) {
+func runRepository(ctx context.Context, env framework.Env, cfg Config, repo RepositoryTarget, index, repoCount int) (err error) {
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreMode(cfg.StoreMode),
 		Backend: evalstore.StoreBackend(cfg.StoreBackend),
@@ -62,16 +62,13 @@ func runRepository(ctx context.Context, env framework.Env, cfg Config, repo Repo
 
 	source := gittrace.Source{
 		RepoURL:     repo.RepoURL,
-		RepoPath:    repo.RepoPath,
-		CacheDir:    repo.CacheDir,
-		Ref:         repo.RepoRef,
-		Limit:       repo.CommitLimit,
-		FirstParent: repo.FirstParent,
+		CacheDir:    cfg.CacheDir,
+		Ref:         "HEAD",
+		Limit:       cfg.MaxCommitsPerRepo,
+		FirstParent: cfg.FirstParent,
 	}
 	return source.Walk(ctx, func(commit replay.CommitMutation) error {
-		if repo.Name != "" {
-			commit.Repo = repo.Name
-		}
+		commit.Repo = repo.RepoID
 		return replay.RunCommitRecords(ctx, commit, systems, func(record replay.ResultRecord) error {
 			return env.WriteRecord(SuiteName, record)
 		})
@@ -80,7 +77,7 @@ func runRepository(ctx context.Context, env framework.Env, cfg Config, repo Repo
 
 var _ framework.Suite = Suite{}
 
-func storeDirForRepository(base string, repo RepositoryConfig, index, repoCount int) string {
+func storeDirForRepository(base string, repo RepositoryTarget, index, repoCount int) string {
 	if base == "" || repoCount <= 1 {
 		return base
 	}

@@ -4,9 +4,9 @@ package writetrace
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
+	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 )
@@ -15,41 +15,21 @@ const SuiteName = "write_trace"
 
 // Config controls the write_trace evaluation suite.
 type Config struct {
-	RepoURL      string             `json:"repo_url,omitempty"`
-	RepoPath     string             `json:"repo_path,omitempty"`
-	RepoRef      string             `json:"repo_ref,omitempty"`
-	CommitLimit  int                `json:"commit_limit,omitempty"`
-	CacheDir     string             `json:"cache_dir,omitempty"`
-	StoreDir     string             `json:"store_dir,omitempty"`
-	StoreMode    string             `json:"store_mode,omitempty"`
-	StoreBackend string             `json:"store_backend,omitempty"`
-	Systems      SystemList         `json:"systems,omitempty"`
-	FirstParent  bool               `json:"first_parent"`
-	Repositories []RepositoryConfig `json:"repositories,omitempty"`
+	RepoURLs          []string   `json:"repo_urls,omitempty"`
+	MaxCommitsPerRepo int        `json:"max_commits_per_repo,omitempty"`
+	CacheDir          string     `json:"cache_dir,omitempty"`
+	StoreDir          string     `json:"store_dir,omitempty"`
+	StoreMode         string     `json:"store_mode,omitempty"`
+	StoreBackend      string     `json:"store_backend,omitempty"`
+	Systems           SystemList `json:"systems,omitempty"`
+	FirstParent       bool       `json:"first_parent"`
 }
 
-// RepositoryConfig describes one Git repository replay target after defaults
-// have been applied.
-type RepositoryConfig struct {
-	Name           string `json:"name,omitempty"`
-	RepoURL        string `json:"repo_url,omitempty"`
-	RepoPath       string `json:"repo_path,omitempty"`
-	RepoRef        string `json:"repo_ref,omitempty"`
-	CommitLimit    int    `json:"commit_limit,omitempty"`
-	commitLimitSet bool
-	CacheDir       string `json:"cache_dir,omitempty"`
-	FirstParent    bool   `json:"first_parent"`
-	firstParentSet bool
-}
-
-type repositoryConfigJSON struct {
-	Name        string `json:"name,omitempty"`
-	RepoURL     string `json:"repo_url,omitempty"`
-	RepoPath    string `json:"repo_path,omitempty"`
-	RepoRef     string `json:"repo_ref,omitempty"`
-	CommitLimit *int   `json:"commit_limit,omitempty"`
-	CacheDir    string `json:"cache_dir,omitempty"`
-	FirstParent *bool  `json:"first_parent,omitempty"`
+// RepositoryTarget is one repository-level replay target resolved from a repo
+// URL list. RepoID is result metadata; StoreName is only a local run key.
+type RepositoryTarget struct {
+	RepoURL string
+	RepoID  string
 }
 
 // SystemList accepts either a JSON array or a comma-separated JSON string.
@@ -58,7 +38,6 @@ type SystemList []string
 // DefaultConfig returns the same replay defaults used by malt-eval write.
 func DefaultConfig() Config {
 	return Config{
-		RepoRef:      "HEAD",
 		CacheDir:     ".eval-cache/repos",
 		StoreDir:     ".eval-cache/write-stores",
 		StoreMode:    string(evalstore.StoreModeIsolated),
@@ -87,114 +66,45 @@ func (c Config) SystemsCSV() string {
 }
 
 func (c Config) validate() error {
-	_, err := c.RepositoriesOrSingle()
+	_, err := c.RepositoryTargets()
 	return err
 }
 
-// RepositoriesOrSingle returns normalized repositories. It preserves the
-// original single-repository fields for compatibility and applies suite-level
-// defaults to repositories[] entries.
-func (c Config) RepositoriesOrSingle() ([]RepositoryConfig, error) {
-	if c.CommitLimit < 0 {
-		return nil, fmt.Errorf("commit_limit must be non-negative")
+// RepositoryTargets returns normalized repository targets from repo_urls.
+func (c Config) RepositoryTargets() ([]RepositoryTarget, error) {
+	if c.MaxCommitsPerRepo < 0 {
+		return nil, fmt.Errorf("max_commits_per_repo must be non-negative")
 	}
-	if len(c.Repositories) > 0 {
-		if strings.TrimSpace(c.RepoURL) != "" || strings.TrimSpace(c.RepoPath) != "" {
-			return nil, fmt.Errorf("repositories cannot be combined with repo_url or repo_path")
+	if len(c.RepoURLs) == 0 {
+		return nil, fmt.Errorf("repo_urls must contain at least one repository URL")
+	}
+	repos := make([]RepositoryTarget, 0, len(c.RepoURLs))
+	seen := make(map[string]int, len(c.RepoURLs))
+	for i, raw := range c.RepoURLs {
+		repoURL := strings.TrimSpace(raw)
+		if repoURL == "" {
+			return nil, fmt.Errorf("repo_urls[%d] must not be empty", i)
 		}
-		repos := make([]RepositoryConfig, 0, len(c.Repositories))
-		for i, repo := range c.Repositories {
-			repo = c.applyRepositoryDefaults(repo)
-			if err := repo.validate(i); err != nil {
-				return nil, err
-			}
-			repos = append(repos, repo)
+		repoID, err := gittrace.CanonicalRepoIDFromURL(repoURL)
+		if err != nil {
+			return nil, fmt.Errorf("repo_urls[%d]: %w", i, err)
 		}
-		return repos, nil
+		if previous, ok := seen[repoID]; ok {
+			return nil, fmt.Errorf("repo_urls[%d] duplicates repository %q from repo_urls[%d]", i, repoID, previous)
+		}
+		seen[repoID] = i
+		repos = append(repos, RepositoryTarget{RepoURL: repoURL, RepoID: repoID})
 	}
-	repo := RepositoryConfig{
-		RepoURL:     c.RepoURL,
-		RepoPath:    c.RepoPath,
-		RepoRef:     c.RepoRef,
-		CommitLimit: c.CommitLimit,
-		CacheDir:    c.CacheDir,
-		FirstParent: c.FirstParent,
-	}
-	repo = c.applyRepositoryDefaults(repo)
-	if err := repo.validate(0); err != nil {
-		return nil, err
-	}
-	return []RepositoryConfig{repo}, nil
+	return repos, nil
 }
 
-func (c Config) applyRepositoryDefaults(repo RepositoryConfig) RepositoryConfig {
-	if strings.TrimSpace(repo.RepoRef) == "" {
-		repo.RepoRef = c.RepoRef
-	}
-	if !repo.commitLimitSet && c.CommitLimit != 0 {
-		repo.CommitLimit = c.CommitLimit
-	}
-	if strings.TrimSpace(repo.CacheDir) == "" {
-		repo.CacheDir = c.CacheDir
-	}
-	if !repo.firstParentSet {
-		repo.FirstParent = c.FirstParent
-	}
-	return repo
-}
-
-func (r RepositoryConfig) validate(index int) error {
-	if strings.TrimSpace(r.RepoURL) == "" && strings.TrimSpace(r.RepoPath) == "" {
-		return fmt.Errorf("repository %d: one of repo_url or repo_path is required", index)
-	}
-	if r.CommitLimit < 0 {
-		return fmt.Errorf("repository %d: commit_limit must be non-negative", index)
-	}
-	return nil
-}
-
-// StoreName returns a stable filesystem-safe name for this repository.
-func (r RepositoryConfig) StoreName(index int) string {
-	label := "repo"
-	if name := sanitizeName(r.Name); name != "" {
-		label = name
-	} else if strings.TrimSpace(r.RepoPath) != "" {
-		if name := sanitizeName(filepath.Base(r.RepoPath)); name != "" {
-			label = name
-		}
-	} else if strings.TrimSpace(r.RepoURL) != "" {
-		trimmed := strings.TrimSuffix(r.RepoURL, ".git")
-		parts := strings.FieldsFunc(trimmed, func(r rune) bool {
-			return r == '/' || r == '\\' || r == ':'
-		})
-		if len(parts) > 0 {
-			if name := sanitizeName(parts[len(parts)-1]); name != "" {
-				label = name
-			}
-		}
+// StoreName returns a stable filesystem-safe name for this repository target.
+func (r RepositoryTarget) StoreName(index int) string {
+	label := sanitizeName(r.RepoID)
+	if label == "" {
+		label = "repo"
 	}
 	return fmt.Sprintf("%03d-%s", index, label)
-}
-
-func (r *RepositoryConfig) UnmarshalJSON(data []byte) error {
-	var parsed repositoryConfigJSON
-	if err := configjson.Decode(data, "write_trace repository", &parsed); err != nil {
-		return err
-	}
-	r.Name = strings.TrimSpace(parsed.Name)
-	r.RepoURL = strings.TrimSpace(parsed.RepoURL)
-	r.RepoPath = strings.TrimSpace(parsed.RepoPath)
-	r.RepoRef = strings.TrimSpace(parsed.RepoRef)
-	r.CacheDir = strings.TrimSpace(parsed.CacheDir)
-	if parsed.CommitLimit != nil {
-		r.CommitLimit = *parsed.CommitLimit
-		r.commitLimitSet = true
-	}
-	if parsed.FirstParent != nil {
-		r.FirstParent = *parsed.FirstParent
-		r.firstParentSet = true
-	}
-	return nil
 }
 
 func (s *SystemList) UnmarshalJSON(data []byte) error {

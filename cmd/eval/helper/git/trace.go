@@ -304,6 +304,52 @@ func repoName(path, repoURL string) string {
 	return filepath.Base(path)
 }
 
+// CanonicalRepoIDFromURL derives the evaluation repository identity from a Git
+// URL. The identity is semantic result metadata, so it uses owner/repo rather
+// than the local cache path or branch/ref name.
+func CanonicalRepoIDFromURL(repoURL string) (string, error) {
+	path := repoIdentityPath(repoURL)
+	path = strings.TrimRight(strings.TrimSpace(path), `/\`)
+	if strings.HasSuffix(strings.ToLower(path), ".git") {
+		path = path[:len(path)-len(".git")]
+	}
+	path = strings.ReplaceAll(path, "\\", "/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
+	}
+	parts := strings.Split(path, "/")
+	filtered := parts[:0]
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	switch {
+	case len(filtered) >= 2:
+		return strings.ToLower(filtered[len(filtered)-2] + "/" + filtered[len(filtered)-1]), nil
+	case len(filtered) == 1:
+		return strings.ToLower(filtered[0]), nil
+	default:
+		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
+	}
+}
+
+func repoIdentityPath(repoURL string) string {
+	trimmed := strings.TrimSpace(repoURL)
+	if !strings.Contains(trimmed, "://") && strings.Contains(trimmed, "@") {
+		afterUser := strings.SplitN(trimmed, "@", 2)[1]
+		if _, path, ok := strings.Cut(afterUser, ":"); ok {
+			return path
+		}
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" {
+		return parsed.Path
+	}
+	return trimmed
+}
+
 const (
 	cacheNameHashLen = 12
 	maxCacheNameLen  = 80
