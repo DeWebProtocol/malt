@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,6 +133,41 @@ func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
 	}
 }
 
+func TestRunnerRemovesStaleManifestBeforeFailedRerun(t *testing.T) {
+	tmp := t.TempDir()
+	successRegistry := NewRegistry()
+	if err := successRegistry.Register(fakeSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register success suite: %v", err)
+	}
+	plan := Plan{
+		RunID:     "failed-rerun",
+		OutputDir: filepath.Join(tmp, "failed-rerun"),
+		Suites: []SuitePlan{{
+			Name:   "write_trace",
+			Config: json.RawMessage(`{"limit": 1}`),
+		}},
+	}
+
+	if err := Run(context.Background(), plan, successRegistry, RunOptions{}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	manifestPath := filepath.Join(plan.OutputDir, "manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("initial manifest missing: %v", err)
+	}
+
+	failingRegistry := NewRegistry()
+	if err := failingRegistry.Register(failingSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register failing suite: %v", err)
+	}
+	if err := Run(context.Background(), plan, failingRegistry, RunOptions{}); err == nil {
+		t.Fatal("second Run should fail")
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("stale manifest should be removed before failed rerun, stat err=%v", err)
+	}
+}
+
 func TestRunnerFailsForUnknownEnabledSuite(t *testing.T) {
 	plan := Plan{
 		RunID:     "run-unknown",
@@ -164,6 +200,16 @@ func (s fakeSuite) Run(ctx context.Context, env Env, cfg json.RawMessage) error 
 	return env.WriteRecord(s.name, map[string]any{
 		"limit": parsed.Limit,
 	})
+}
+
+type failingSuite struct {
+	name string
+}
+
+func (s failingSuite) Name() string { return s.name }
+
+func (s failingSuite) Run(context.Context, Env, json.RawMessage) error {
+	return errors.New("suite failed")
 }
 
 func boolPtr(v bool) *bool {

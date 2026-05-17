@@ -63,6 +63,10 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 }
 
 func prepareOutputLayout(outputDir string) error {
+	manifestPath := filepath.Join(outputDir, "manifest.json")
+	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	for _, dir := range []string{"raw", "summary", "logs"} {
 		path := filepath.Join(outputDir, dir)
 		if err := os.RemoveAll(path); err != nil {
