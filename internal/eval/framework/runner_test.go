@@ -168,6 +168,45 @@ func TestRunnerRemovesStaleManifestBeforeFailedRerun(t *testing.T) {
 	}
 }
 
+func TestRunnerPreflightsSuitesBeforeRefreshingOutput(t *testing.T) {
+	tmp := t.TempDir()
+	outputDir := filepath.Join(tmp, "preflight")
+	for _, dir := range []string{"raw", "summary", "logs"} {
+		if err := os.MkdirAll(filepath.Join(outputDir, dir), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	sentinels := map[string]string{
+		filepath.Join(outputDir, "manifest.json"):            "previous manifest\n",
+		filepath.Join(outputDir, "raw", "write_trace.jsonl"): "previous raw\n",
+		filepath.Join(outputDir, "summary", "stale.csv"):     "previous summary\n",
+		filepath.Join(outputDir, "logs", "previous-run.log"): "previous logs\n",
+	}
+	for path, content := range sentinels {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write sentinel %s: %v", path, err)
+		}
+	}
+	plan := Plan{
+		RunID:     "preflight",
+		OutputDir: outputDir,
+		Suites:    []SuitePlan{{Name: "missing"}},
+	}
+
+	if err := Run(context.Background(), plan, NewRegistry(), RunOptions{}); err == nil {
+		t.Fatal("Run should fail for unknown enabled suite")
+	}
+	for path, want := range sentinels {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read sentinel %s after failed preflight: %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("sentinel %s = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestRunnerFailsForUnknownEnabledSuite(t *testing.T) {
 	plan := Plan{
 		RunID:     "run-unknown",

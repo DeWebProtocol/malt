@@ -67,6 +67,9 @@ func Summarize(inputDir, outDir string) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("create summary directory: %w", err)
 	}
+	if err := removeGeneratedFigures(outDir); err != nil {
+		return err
+	}
 
 	suites := make([]string, 0, len(tables))
 	for suite := range tables {
@@ -76,6 +79,30 @@ func Summarize(inputDir, outDir string) error {
 	for _, suite := range suites {
 		if err := writeSuiteCSV(outDir, suite, tables[suite]); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func removeGeneratedFigures(outDir string) error {
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read summary directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "figure_") || !strings.HasSuffix(name, ".csv") {
+			continue
+		}
+		path := filepath.Join(outDir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale summary csv %s: %w", path, err)
 		}
 	}
 	return nil

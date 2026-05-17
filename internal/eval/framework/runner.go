@@ -21,6 +21,9 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	if err := plan.Normalize(); err != nil {
 		return err
 	}
+	if err := preflightSuites(plan, registry); err != nil {
+		return err
+	}
 	clock := opts.Clock
 	if clock == nil {
 		clock = time.Now
@@ -60,6 +63,18 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	}
 	manifest.FinishedAt = clock().UTC().Format(time.RFC3339Nano)
 	return writeManifest(plan.OutputDir, manifest)
+}
+
+func preflightSuites(plan Plan, registry Registry) error {
+	for _, suitePlan := range plan.Suites {
+		if !suitePlan.EnabledOrDefault() {
+			continue
+		}
+		if _, ok := registry.Lookup(suitePlan.Name); !ok {
+			return fmt.Errorf("suite %q is not registered; available suites: %v", suitePlan.Name, registry.Names())
+		}
+	}
+	return nil
 }
 
 func prepareOutputLayout(outputDir string) error {
