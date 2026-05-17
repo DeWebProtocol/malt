@@ -60,6 +60,9 @@ func (p *Plan) Normalize() error {
 		p.RunID = "run-" + time.Now().UTC().Format("20060102T150405Z")
 	} else {
 		p.RunID = strings.TrimSpace(p.RunID)
+		if err := validateRunID(p.RunID); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(p.OutputDir) == "" {
 		p.OutputDir = filepath.Join("results", p.RunID)
@@ -75,6 +78,16 @@ func (p *Plan) Normalize() error {
 			return fmt.Errorf("suite %d name is empty", i)
 		}
 		p.Suites[i].Name = name
+	}
+	return nil
+}
+
+func validateRunID(runID string) error {
+	if runID == "." || runID == ".." {
+		return fmt.Errorf("run_id %q must not be a dot path segment", runID)
+	}
+	if strings.ContainsAny(runID, `/\`) {
+		return fmt.Errorf("run_id %q must not contain path separators", runID)
 	}
 	return nil
 }

@@ -8,7 +8,9 @@
   "properties": {
     "run_id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^(?!\\.\\.?$)[^/\\\\]+$",
+      "description": "Run identifier used for result metadata and the default results/<run_id> output path. It must not be a dot segment or contain path separators."
     },
     "output_dir": {
       "type": "string",

@@ -46,6 +46,24 @@ func TestSuiteRecordsPersistedAndLogicalStorageOverhead(t *testing.T) {
 		if record.Size != 2 || record.PayloadBytes != 8 {
 			t.Fatalf("record dimensions = %+v, want size 2 payload 8", record)
 		}
+		if record.System != "maltflat" {
+			t.Fatalf("system = %q, want maltflat", record.System)
+		}
+		if record.CommitmentBackend != "kzg" || record.ArcTableMode != "versioned" {
+			t.Fatalf("backend labels = %+v, want kzg/versioned", record)
+		}
+		switch record.Structure {
+		case "map":
+			if record.MapBackend != "radix" {
+				t.Fatalf("map backend = %q, want radix", record.MapBackend)
+			}
+		case "list":
+			if record.ListBackend != "tree" {
+				t.Fatalf("list backend = %q, want tree", record.ListBackend)
+			}
+		default:
+			t.Fatalf("unexpected structure = %q", record.Structure)
+		}
 		if record.LogicalPayloadBytes != 16 {
 			t.Fatalf("logical_payload_bytes = %d, want 16", record.LogicalPayloadBytes)
 		}

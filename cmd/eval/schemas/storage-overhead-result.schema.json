@@ -7,6 +7,9 @@
   "additionalProperties": false,
   "required": [
     "structure",
+    "system",
+    "commitment_backend",
+    "arctable_mode",
     "size",
     "payload_bytes",
     "method",
@@ -18,6 +21,28 @@
   "properties": {
     "structure": {
       "type": "string"
+    },
+    "system": {
+      "type": "string",
+      "enum": ["maltflat"]
+    },
+    "commitment_backend": {
+      "type": "string",
+      "enum": ["kzg"]
+    },
+    "arctable_mode": {
+      "type": "string",
+      "enum": ["versioned"]
+    },
+    "map_backend": {
+      "type": "string",
+      "description": "Map semantic backend for map records.",
+      "enum": ["radix"]
+    },
+    "list_backend": {
+      "type": "string",
+      "description": "List semantic backend for list records.",
+      "enum": ["tree"]
     },
     "size": {
       "type": "integer",
