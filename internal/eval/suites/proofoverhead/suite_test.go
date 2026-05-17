@@ -168,6 +168,12 @@ func TestSuiteAcceptsSingleCommitmentConfigValue(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsUnknownFields(t *testing.T) {
+	if _, err := parseConfig(json.RawMessage(`{"sizse": [1]}`)); err == nil {
+		t.Fatal("parseConfig should reject unknown fields")
+	}
+}
+
 func readProofRecords(t *testing.T, path string) []Result {
 	t.Helper()
 	f, err := os.Open(path)

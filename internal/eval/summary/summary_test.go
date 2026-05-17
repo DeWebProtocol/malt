@@ -136,6 +136,27 @@ func TestSummarizeRefreshesGeneratedFigureCSVs(t *testing.T) {
 	}
 }
 
+func TestSummarizeRejectsUnsafeEnvelopeSuiteName(t *testing.T) {
+	tmp := t.TempDir()
+	runDir := filepath.Join(tmp, "run")
+	rawDir := filepath.Join(runDir, "raw")
+	outDir := filepath.Join(runDir, "summary")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		t.Fatalf("mkdir raw: %v", err)
+	}
+	line := `{"schema_version":"malt.eval.v1","run_id":"run-1","suite":"x/../../escaped","emitted_at":"2026-05-16T00:00:00Z","record":{"value":1}}` + "\n"
+	if err := os.WriteFile(filepath.Join(rawDir, "safe.jsonl"), []byte(line), 0o644); err != nil {
+		t.Fatalf("write malicious raw envelope: %v", err)
+	}
+
+	if err := Summarize(runDir, outDir); err == nil {
+		t.Fatal("Summarize should reject unsafe suite names from raw envelopes")
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "escaped.csv")); !os.IsNotExist(err) {
+		t.Fatalf("escaped summary file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
 func writeEnvelope(t *testing.T, rawDir, suite, record string) {
 	t.Helper()
 	var compact bytes.Buffer

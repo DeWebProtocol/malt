@@ -17,6 +17,7 @@ import (
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -91,8 +92,8 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 		PayloadBytes: 64,
 	}
 	if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return Config{}, fmt.Errorf("parse storage_overhead config: %w", err)
+		if err := configjson.Decode(raw, suiteName, &cfg); err != nil {
+			return Config{}, err
 		}
 	}
 	if cfg.Structures == nil {

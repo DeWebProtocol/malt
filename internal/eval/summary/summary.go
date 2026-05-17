@@ -135,6 +135,9 @@ func readRawFile(path, fileSuite string, tables map[string]*suiteTable) error {
 		if suite == "" {
 			return fmt.Errorf("decode %s:%d: suite is empty", path, lineNumber)
 		}
+		if err := validateSuiteName(suite); err != nil {
+			return fmt.Errorf("decode %s:%d: %w", path, lineNumber, err)
+		}
 		table := tables[suite]
 		if table == nil {
 			table = &suiteTable{recordKeys: map[string]struct{}{}}
@@ -218,7 +221,10 @@ func flattenValue(key string, value any, row map[string]string, recordKeys map[s
 }
 
 func writeSuiteCSV(outDir, suite string, table *suiteTable) error {
-	path := filepath.Join(outDir, figureCSVName(suite))
+	path, err := figureCSVPath(outDir, suite)
+	if err != nil {
+		return err
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
@@ -260,9 +266,45 @@ func writeSuiteCSV(outDir, suite string, table *suiteTable) error {
 	return nil
 }
 
+func figureCSVPath(outDir, suite string) (string, error) {
+	if err := validateSuiteName(suite); err != nil {
+		return "", err
+	}
+	name := figureCSVName(suite)
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("unsafe figure csv name %q", name)
+	}
+	path := filepath.Join(outDir, name)
+	rel, err := filepath.Rel(outDir, path)
+	if err != nil {
+		return "", fmt.Errorf("resolve summary csv path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("summary csv path escapes output directory: %s", path)
+	}
+	return path, nil
+}
+
 func figureCSVName(suite string) string {
 	if name, ok := figureNames[suite]; ok {
 		return name
 	}
 	return "figure_" + suite + ".csv"
+}
+
+func validateSuiteName(suite string) error {
+	if suite == "" {
+		return fmt.Errorf("suite is empty")
+	}
+	for _, r := range suite {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-':
+		default:
+			return fmt.Errorf("unsafe suite name %q", suite)
+		}
+	}
+	return nil
 }

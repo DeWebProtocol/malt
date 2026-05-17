@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
+	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 )
 
 const SuiteName = "write_trace"
@@ -47,8 +48,8 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return cfg, nil
 	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse write_trace config: %w", err)
+	if err := configjson.Decode(raw, SuiteName, &cfg); err != nil {
+		return Config{}, err
 	}
 	cfg.Systems = normalizeSystems(cfg.Systems)
 	return cfg, nil

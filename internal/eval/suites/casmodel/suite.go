@@ -11,6 +11,7 @@ import (
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/metrics"
 	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -88,8 +89,8 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 		Iterations:   1,
 	}
 	if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return Config{}, fmt.Errorf("parse cas_model config: %w", err)
+		if err := configjson.Decode(raw, suiteName, &cfg); err != nil {
+			return Config{}, err
 		}
 	}
 	if cfg.ChainLengths == nil {

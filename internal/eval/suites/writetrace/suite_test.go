@@ -65,6 +65,12 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsUnknownFields(t *testing.T) {
+	if _, err := writetrace.ParseConfig(json.RawMessage(`{"commit_limti": 7}`)); err == nil {
+		t.Fatal("ParseConfig should reject unknown fields")
+	}
+}
+
 func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
