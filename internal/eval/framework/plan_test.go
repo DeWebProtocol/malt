@@ -17,7 +17,7 @@ func TestLoadPlanDefaultsAndPreservesSuiteConfig(t *testing.T) {
 				"name": "write_trace",
 				"config": {
 					"systems": ["maltflat", "merkledag"],
-					"commit_limit": 25
+					"max_commits_per_repo": 25
 				}
 			},
 			{
@@ -53,13 +53,13 @@ func TestLoadPlanDefaultsAndPreservesSuiteConfig(t *testing.T) {
 	}
 
 	var cfg struct {
-		Systems     []string `json:"systems"`
-		CommitLimit int      `json:"commit_limit"`
+		Systems           []string `json:"systems"`
+		MaxCommitsPerRepo int      `json:"max_commits_per_repo"`
 	}
 	if err := json.Unmarshal(plan.Suites[0].Config, &cfg); err != nil {
 		t.Fatalf("unmarshal suite config: %v", err)
 	}
-	if cfg.CommitLimit != 25 || len(cfg.Systems) != 2 || cfg.Systems[0] != "maltflat" {
+	if cfg.MaxCommitsPerRepo != 25 || len(cfg.Systems) != 2 || cfg.Systems[0] != "maltflat" {
 		t.Fatalf("suite config = %#v", cfg)
 	}
 }
