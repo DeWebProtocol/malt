@@ -1,8 +1,10 @@
 package framework
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +43,16 @@ func LoadPlan(path string) (Plan, error) {
 		return Plan{}, err
 	}
 	var plan Plan
-	if err := json.Unmarshal(data, &plan); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&plan); err != nil {
+		return Plan{}, fmt.Errorf("parse plan: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Plan{}, fmt.Errorf("parse plan: unexpected trailing JSON")
+		}
 		return Plan{}, fmt.Errorf("parse plan: %w", err)
 	}
 	plan.outputDirExplicit = jsonHasKey(data, "output_dir")
