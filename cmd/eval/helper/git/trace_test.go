@@ -173,9 +173,10 @@ func TestCacheNameForURLIncludesFullRepositoryIdentity(t *testing.T) {
 
 func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/ipfs/kubo.git":        "ipfs/kubo",
-		"git@github.com:ethereum/go-ethereum.git": "ethereum/go-ethereum",
-		"file:///tmp/eval/repos/fork/kubo.git":    "fork/kubo",
+		"https://github.com/ipfs/kubo.git":                "github.com/ipfs/kubo",
+		"git@github.com:ethereum/go-ethereum.git":         "github.com/ethereum/go-ethereum",
+		"file:///tmp/eval/repos/github.com/fork/kubo.git": "github.com/fork/kubo",
+		"https://gitlab.com/group/subgroup/project.git":   "gitlab.com/group/subgroup/project",
 	}
 	for raw, want := range cases {
 		got, err := gittrace.CanonicalRepoIDFromURL(raw)

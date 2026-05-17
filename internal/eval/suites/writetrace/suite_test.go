@@ -85,10 +85,10 @@ func TestParseConfigBuildsRepositoryTargetsFromURLList(t *testing.T) {
 	if len(repos) != 2 {
 		t.Fatalf("repo count = %d, want 2", len(repos))
 	}
-	if repos[0].RepoID != "ipfs/kubo" || repos[0].RepoURL != "https://github.com/ipfs/kubo.git" {
+	if repos[0].RepoID != "github.com/ipfs/kubo" || repos[0].RepoURL != "https://github.com/ipfs/kubo.git" {
 		t.Fatalf("repo 0 target = %+v", repos[0])
 	}
-	if repos[1].RepoID != "ethereum/go-ethereum" || repos[1].RepoURL != "git@github.com:ethereum/go-ethereum.git" {
+	if repos[1].RepoID != "github.com/ethereum/go-ethereum" || repos[1].RepoURL != "git@github.com:ethereum/go-ethereum.git" {
 		t.Fatalf("repo 1 target = %+v", repos[1])
 	}
 	if cfg.MaxCommitsPerRepo != 10 || cfg.CacheDir != "/tmp/shared-cache" || !cfg.FirstParent {
@@ -110,10 +110,10 @@ func TestRepositoryStoreNameUsesIndexedCanonicalRepoID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RepositoryTargets: %v", err)
 	}
-	if got := repos[0].StoreName(0); got != "000-ipfs-kubo" {
+	if got := repos[0].StoreName(0); got != "000-github.com-ipfs-kubo" {
 		t.Fatalf("repo 0 store name = %q", got)
 	}
-	if got := repos[1].StoreName(1); got != "001-fork-kubo" {
+	if got := repos[1].StoreName(1); got != "001-github.com-fork-kubo" {
 		t.Fatalf("repo 1 store name = %q", got)
 	}
 }
@@ -157,7 +157,7 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	ctx := context.Background()
-	repo := initWriteTraceRepo(t, "ipfs", "kubo.git")
+	repo := initWriteTraceRepo(t, "github.com", "ipfs", "kubo.git")
 	outDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
 		t.Fatalf("mkdir raw dir: %v", err)
@@ -195,7 +195,7 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		records = append(records, record)
 	}
 
-	if records[0].Repo != "ipfs/kubo" || records[0].System != "maltflat" || records[0].Index != 0 {
+	if records[0].Repo != "github.com/ipfs/kubo" || records[0].System != "maltflat" || records[0].Index != 0 {
 		t.Fatalf("first record identity = %+v, want canonical repo/maltflat/index 0", records[0])
 	}
 	if records[1].MutationSet[0].Kind != replay.MutationRename || records[1].MutationSet[0].OldPath != "README.md" || records[1].MutationSet[0].Path != "docs/README.md" {
@@ -222,8 +222,8 @@ func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	ctx := context.Background()
-	repoA := initWriteTraceRepo(t, "ipfs", "kubo.git")
-	repoB := initWriteTraceRepo(t, "fork", "kubo.git")
+	repoA := initWriteTraceRepo(t, "github.com", "ipfs", "kubo.git")
+	repoB := initWriteTraceRepo(t, "github.com", "fork", "kubo.git")
 	outDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
 		t.Fatalf("mkdir raw dir: %v", err)
@@ -260,17 +260,17 @@ func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
 		}
 		records = append(records, record)
 	}
-	if records[0].Repo != "ipfs/kubo" || records[0].Index != 0 {
-		t.Fatalf("record 0 = %+v, want ipfs/kubo index 0", records[0])
+	if records[0].Repo != "github.com/ipfs/kubo" || records[0].Index != 0 {
+		t.Fatalf("record 0 = %+v, want github.com/ipfs/kubo index 0", records[0])
 	}
-	if records[1].Repo != "fork/kubo" || records[1].Index != 0 {
-		t.Fatalf("record 1 = %+v, want fork/kubo index 0", records[1])
+	if records[1].Repo != "github.com/fork/kubo" || records[1].Index != 0 {
+		t.Fatalf("record 1 = %+v, want github.com/fork/kubo index 0", records[1])
 	}
 }
 
-func initWriteTraceRepo(t *testing.T, owner, repoName string) string {
+func initWriteTraceRepo(t *testing.T, pathParts ...string) string {
 	t.Helper()
-	repo := filepath.Join(t.TempDir(), owner, repoName)
+	repo := filepath.Join(append([]string{t.TempDir()}, pathParts...)...)
 	if err := os.MkdirAll(repo, 0755); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
