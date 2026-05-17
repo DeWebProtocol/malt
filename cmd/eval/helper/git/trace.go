@@ -304,6 +304,75 @@ func repoName(path, repoURL string) string {
 	return filepath.Base(path)
 }
 
+// CanonicalRepoIDFromURL derives the evaluation repository identity from a Git
+// URL. The identity is semantic result metadata, so it uses host plus the full
+// namespace path rather than the local cache path or branch/ref name.
+func CanonicalRepoIDFromURL(repoURL string) (string, error) {
+	host, path := repoIdentityParts(repoURL)
+	path = strings.TrimRight(strings.TrimSpace(path), `/\`)
+	if strings.HasSuffix(strings.ToLower(path), ".git") {
+		path = path[:len(path)-len(".git")]
+	}
+	path = strings.ReplaceAll(path, "\\", "/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
+	}
+	filtered := nonEmptyPathParts(path)
+	if len(filtered) == 0 {
+		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
+	}
+	if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
+		return host + "/" + strings.ToLower(strings.Join(filtered, "/")), nil
+	}
+	if hostIndex := firstHostPathSegment(filtered); hostIndex >= 0 && hostIndex < len(filtered)-1 {
+		return strings.ToLower(strings.Join(filtered[hostIndex:], "/")), nil
+	}
+	switch {
+	case len(filtered) >= 2:
+		return strings.ToLower(filtered[len(filtered)-2] + "/" + filtered[len(filtered)-1]), nil
+	case len(filtered) == 1:
+		return strings.ToLower(filtered[0]), nil
+	default:
+		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
+	}
+}
+
+func nonEmptyPathParts(path string) []string {
+	parts := strings.Split(path, "/")
+	filtered := parts[:0]
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	return filtered
+}
+
+func firstHostPathSegment(parts []string) int {
+	for i, part := range parts {
+		if strings.Contains(part, ".") {
+			return i
+		}
+	}
+	return -1
+}
+
+func repoIdentityParts(repoURL string) (string, string) {
+	trimmed := strings.TrimSpace(repoURL)
+	if !strings.Contains(trimmed, "://") && strings.Contains(trimmed, "@") {
+		afterUser := strings.SplitN(trimmed, "@", 2)[1]
+		if host, path, ok := strings.Cut(afterUser, ":"); ok {
+			return host, path
+		}
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" {
+		return parsed.Host, parsed.Path
+	}
+	return "", trimmed
+}
+
 const (
 	cacheNameHashLen = 12
 	maxCacheNameLen  = 80

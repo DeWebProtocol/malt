@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +24,8 @@ func TestSuiteName(t *testing.T) {
 
 func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
-		"repo_url": "https://example.test/repo.git",
-		"repo_path": "/tmp/repo",
-		"repo_ref": "main",
-		"commit_limit": 7,
+		"repo_urls": ["https://github.com/ipfs/kubo.git"],
+		"max_commits_per_repo": 7,
 		"cache_dir": "/tmp/cache",
 		"store_dir": "/tmp/stores",
 		"store_mode": "shared",
@@ -37,10 +36,10 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
-	if cfg.RepoURL != "https://example.test/repo.git" || cfg.RepoPath != "/tmp/repo" || cfg.RepoRef != "main" {
+	if len(cfg.RepoURLs) != 1 || cfg.RepoURLs[0] != "https://github.com/ipfs/kubo.git" {
 		t.Fatalf("repo config = %+v, want JSON values", cfg)
 	}
-	if cfg.CommitLimit != 7 || cfg.CacheDir != "/tmp/cache" || cfg.StoreDir != "/tmp/stores" {
+	if cfg.MaxCommitsPerRepo != 7 || cfg.CacheDir != "/tmp/cache" || cfg.StoreDir != "/tmp/stores" {
 		t.Fatalf("storage/limit config = %+v, want JSON values", cfg)
 	}
 	if cfg.StoreMode != "shared" || cfg.StoreBackend != "fs" || cfg.FirstParent {
@@ -54,7 +53,7 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig defaults: %v", err)
 	}
-	if defaults.RepoRef != "HEAD" || defaults.CacheDir != ".eval-cache/repos" || defaults.StoreDir != ".eval-cache/write-stores" {
+	if defaults.CacheDir != ".eval-cache/repos" || defaults.StoreDir != ".eval-cache/write-stores" {
 		t.Fatalf("defaults = %+v, want write command paths/ref", defaults)
 	}
 	if defaults.StoreMode != "isolated" || defaults.StoreBackend != "memory" || !defaults.FirstParent {
@@ -65,9 +64,91 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	}
 }
 
+func TestParseConfigBuildsRepositoryTargetsFromURLList(t *testing.T) {
+	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+		"max_commits_per_repo": 10,
+		"cache_dir": "/tmp/shared-cache",
+		"first_parent": true,
+		"repo_urls": [
+			"https://github.com/ipfs/kubo.git",
+			"git@github.com:ethereum/go-ethereum.git"
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+
+	repos, err := cfg.RepositoryTargets()
+	if err != nil {
+		t.Fatalf("RepositoryTargets: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("repo count = %d, want 2", len(repos))
+	}
+	if repos[0].RepoID != "github.com/ipfs/kubo" || repos[0].RepoURL != "https://github.com/ipfs/kubo.git" {
+		t.Fatalf("repo 0 target = %+v", repos[0])
+	}
+	if repos[1].RepoID != "github.com/ethereum/go-ethereum" || repos[1].RepoURL != "git@github.com:ethereum/go-ethereum.git" {
+		t.Fatalf("repo 1 target = %+v", repos[1])
+	}
+	if cfg.MaxCommitsPerRepo != 10 || cfg.CacheDir != "/tmp/shared-cache" || !cfg.FirstParent {
+		t.Fatalf("suite defaults = %+v", cfg)
+	}
+}
+
+func TestRepositoryStoreNameUsesIndexedCanonicalRepoID(t *testing.T) {
+	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+		"repo_urls": [
+			"https://github.com/ipfs/kubo.git",
+			"https://github.com/fork/kubo.git"
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	repos, err := cfg.RepositoryTargets()
+	if err != nil {
+		t.Fatalf("RepositoryTargets: %v", err)
+	}
+	if got := repos[0].StoreName(0); got != "000-github.com-ipfs-kubo" {
+		t.Fatalf("repo 0 store name = %q", got)
+	}
+	if got := repos[1].StoreName(1); got != "001-github.com-fork-kubo" {
+		t.Fatalf("repo 1 store name = %q", got)
+	}
+}
+
+func TestParseConfigRejectsDuplicateCanonicalRepoIDs(t *testing.T) {
+	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+		"repo_urls": [
+			"https://github.com/ipfs/kubo.git",
+			"git@github.com:ipfs/kubo.git"
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if _, err := cfg.RepositoryTargets(); err == nil {
+		t.Fatal("RepositoryTargets should reject duplicate canonical repo IDs")
+	}
+}
+
 func TestParseConfigRejectsUnknownFields(t *testing.T) {
 	if _, err := writetrace.ParseConfig(json.RawMessage(`{"commit_limti": 7}`)); err == nil {
 		t.Fatal("ParseConfig should reject unknown fields")
+	}
+}
+
+func TestParseConfigRejectsLegacyRepositoryFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"repo_url": "https://github.com/ipfs/kubo.git"}`,
+		`{"repo_ref": "main"}`,
+		`{"commit_limit": 7}`,
+		`{"repositories": [{"repo_url": "https://github.com/ipfs/kubo.git"}]}`,
+	} {
+		if _, err := writetrace.ParseConfig(json.RawMessage(raw)); err == nil {
+			t.Fatalf("ParseConfig should reject legacy field in %s", raw)
+		}
 	}
 }
 
@@ -76,15 +157,17 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	ctx := context.Background()
-	repo := initWriteTraceRepo(t)
+	repo := initWriteTraceRepo(t, "github.com", "ipfs", "kubo.git")
 	outDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
 		t.Fatalf("mkdir raw dir: %v", err)
 	}
+	cacheDir := t.TempDir()
 
 	cfg := json.RawMessage(`{
-		"repo_path": ` + strconvQuote(repo) + `,
-		"commit_limit": 3,
+		"repo_urls": [` + strconvQuote(fileURL(repo)) + `],
+		"max_commits_per_repo": 3,
+		"cache_dir": ` + strconvQuote(cacheDir) + `,
 		"store_backend": "memory",
 		"systems": ["maltflat"]
 	}`)
@@ -112,8 +195,8 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		records = append(records, record)
 	}
 
-	if records[0].Repo != filepath.Base(repo) || records[0].System != "maltflat" || records[0].Index != 0 {
-		t.Fatalf("first record identity = %+v, want repo/maltflat/index 0", records[0])
+	if records[0].Repo != "github.com/ipfs/kubo" || records[0].System != "maltflat" || records[0].Index != 0 {
+		t.Fatalf("first record identity = %+v, want canonical repo/maltflat/index 0", records[0])
 	}
 	if records[1].MutationSet[0].Kind != replay.MutationRename || records[1].MutationSet[0].OldPath != "README.md" || records[1].MutationSet[0].Path != "docs/README.md" {
 		t.Fatalf("rename mutation = %+v, want README.md -> docs/README.md", records[1].MutationSet)
@@ -134,9 +217,63 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 	}
 }
 
-func initWriteTraceRepo(t *testing.T) string {
+func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repoA := initWriteTraceRepo(t, "github.com", "ipfs", "kubo.git")
+	repoB := initWriteTraceRepo(t, "github.com", "fork", "kubo.git")
+	outDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
+		t.Fatalf("mkdir raw dir: %v", err)
+	}
+	cacheDir := t.TempDir()
+
+	cfg := json.RawMessage(`{
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"max_commits_per_repo": 1,
+		"cache_dir": ` + strconvQuote(cacheDir) + `,
+		"repo_urls": [
+			` + strconvQuote(fileURL(repoA)) + `,
+			` + strconvQuote(fileURL(repoB)) + `
+		]
+	}`)
+	err := (writetrace.Suite{}).Run(ctx, framework.Env{
+		RunID:     "run-write-trace-repos-test",
+		OutputDir: outDir,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(outDir, "raw", "write_trace.jsonl"))
+	if len(envelopes) != 2 {
+		t.Fatalf("envelope count = %d, want 2", len(envelopes))
+	}
+	var records []replay.ResultRecord
+	for i, envelope := range envelopes {
+		var record replay.ResultRecord
+		if err := json.Unmarshal(envelope.Record, &record); err != nil {
+			t.Fatalf("unmarshal record %d: %v", i, err)
+		}
+		records = append(records, record)
+	}
+	if records[0].Repo != "github.com/ipfs/kubo" || records[0].Index != 0 {
+		t.Fatalf("record 0 = %+v, want github.com/ipfs/kubo index 0", records[0])
+	}
+	if records[1].Repo != "github.com/fork/kubo" || records[1].Index != 0 {
+		t.Fatalf("record 1 = %+v, want github.com/fork/kubo index 0", records[1])
+	}
+}
+
+func initWriteTraceRepo(t *testing.T, pathParts ...string) string {
 	t.Helper()
-	repo := t.TempDir()
+	repo := filepath.Join(append([]string{t.TempDir()}, pathParts...)...)
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
 	runGit(t, repo, "init", "-b", "main")
 	runGit(t, repo, "config", "user.email", "bench@example.test")
 	runGit(t, repo, "config", "user.name", "Bench Test")
@@ -160,6 +297,10 @@ func initWriteTraceRepo(t *testing.T) string {
 	runGit(t, repo, "add", "-A")
 	runGit(t, repo, "commit", "-m", "delete readme")
 	return repo
+}
+
+func fileURL(path string) string {
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }
 
 func readWriteTraceEnvelopes(t *testing.T, path string) []framework.RecordEnvelope {

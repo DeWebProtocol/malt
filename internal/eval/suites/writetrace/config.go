@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 )
@@ -14,16 +15,21 @@ const SuiteName = "write_trace"
 
 // Config controls the write_trace evaluation suite.
 type Config struct {
-	RepoURL      string     `json:"repo_url,omitempty"`
-	RepoPath     string     `json:"repo_path,omitempty"`
-	RepoRef      string     `json:"repo_ref,omitempty"`
-	CommitLimit  int        `json:"commit_limit,omitempty"`
-	CacheDir     string     `json:"cache_dir,omitempty"`
-	StoreDir     string     `json:"store_dir,omitempty"`
-	StoreMode    string     `json:"store_mode,omitempty"`
-	StoreBackend string     `json:"store_backend,omitempty"`
-	Systems      SystemList `json:"systems,omitempty"`
-	FirstParent  bool       `json:"first_parent"`
+	RepoURLs          []string   `json:"repo_urls,omitempty"`
+	MaxCommitsPerRepo int        `json:"max_commits_per_repo,omitempty"`
+	CacheDir          string     `json:"cache_dir,omitempty"`
+	StoreDir          string     `json:"store_dir,omitempty"`
+	StoreMode         string     `json:"store_mode,omitempty"`
+	StoreBackend      string     `json:"store_backend,omitempty"`
+	Systems           SystemList `json:"systems,omitempty"`
+	FirstParent       bool       `json:"first_parent"`
+}
+
+// RepositoryTarget is one repository-level replay target resolved from a repo
+// URL list. RepoID is result metadata; StoreName is only a local run key.
+type RepositoryTarget struct {
+	RepoURL string
+	RepoID  string
 }
 
 // SystemList accepts either a JSON array or a comma-separated JSON string.
@@ -32,7 +38,6 @@ type SystemList []string
 // DefaultConfig returns the same replay defaults used by malt-eval write.
 func DefaultConfig() Config {
 	return Config{
-		RepoRef:      "HEAD",
 		CacheDir:     ".eval-cache/repos",
 		StoreDir:     ".eval-cache/write-stores",
 		StoreMode:    string(evalstore.StoreModeIsolated),
@@ -61,13 +66,45 @@ func (c Config) SystemsCSV() string {
 }
 
 func (c Config) validate() error {
-	if strings.TrimSpace(c.RepoURL) == "" && strings.TrimSpace(c.RepoPath) == "" {
-		return fmt.Errorf("one of repo_url or repo_path is required")
+	_, err := c.RepositoryTargets()
+	return err
+}
+
+// RepositoryTargets returns normalized repository targets from repo_urls.
+func (c Config) RepositoryTargets() ([]RepositoryTarget, error) {
+	if c.MaxCommitsPerRepo < 0 {
+		return nil, fmt.Errorf("max_commits_per_repo must be non-negative")
 	}
-	if c.CommitLimit < 0 {
-		return fmt.Errorf("commit_limit must be non-negative")
+	if len(c.RepoURLs) == 0 {
+		return nil, fmt.Errorf("repo_urls must contain at least one repository URL")
 	}
-	return nil
+	repos := make([]RepositoryTarget, 0, len(c.RepoURLs))
+	seen := make(map[string]int, len(c.RepoURLs))
+	for i, raw := range c.RepoURLs {
+		repoURL := strings.TrimSpace(raw)
+		if repoURL == "" {
+			return nil, fmt.Errorf("repo_urls[%d] must not be empty", i)
+		}
+		repoID, err := gittrace.CanonicalRepoIDFromURL(repoURL)
+		if err != nil {
+			return nil, fmt.Errorf("repo_urls[%d]: %w", i, err)
+		}
+		if previous, ok := seen[repoID]; ok {
+			return nil, fmt.Errorf("repo_urls[%d] duplicates repository %q from repo_urls[%d]", i, repoID, previous)
+		}
+		seen[repoID] = i
+		repos = append(repos, RepositoryTarget{RepoURL: repoURL, RepoID: repoID})
+	}
+	return repos, nil
+}
+
+// StoreName returns a stable filesystem-safe name for this repository target.
+func (r RepositoryTarget) StoreName(index int) string {
+	label := sanitizeName(r.RepoID)
+	if label == "" {
+		label = "repo"
+	}
+	return fmt.Sprintf("%03d-%s", index, label)
 }
 
 func (s *SystemList) UnmarshalJSON(data []byte) error {
@@ -106,4 +143,27 @@ func normalizeSystems(values []string) SystemList {
 		out = append(out, value)
 	}
 	return out
+}
+
+func sanitizeName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-_.")
 }

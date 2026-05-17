@@ -171,6 +171,24 @@ func TestCacheNameForURLIncludesFullRepositoryIdentity(t *testing.T) {
 	}
 }
 
+func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/ipfs/kubo.git":                "github.com/ipfs/kubo",
+		"git@github.com:ethereum/go-ethereum.git":         "github.com/ethereum/go-ethereum",
+		"file:///tmp/eval/repos/github.com/fork/kubo.git": "github.com/fork/kubo",
+		"https://gitlab.com/group/subgroup/project.git":   "gitlab.com/group/subgroup/project",
+	}
+	for raw, want := range cases {
+		got, err := gittrace.CanonicalRepoIDFromURL(raw)
+		if err != nil {
+			t.Fatalf("CanonicalRepoIDFromURL(%q): %v", raw, err)
+		}
+		if got != want {
+			t.Fatalf("CanonicalRepoIDFromURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestCacheNameForURLIsBoundedForLongLocalPaths(t *testing.T) {
 	name := gittrace.CacheNameForURL("C:\\" + strings.Repeat("long-path-segment\\", 20) + "project.git")
 	if len(name) > 80 {
