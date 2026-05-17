@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dewebprotocol/malt/core/arctable/overwrite"
+	"github.com/dewebprotocol/malt/core/arctable"
+	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
@@ -18,13 +19,20 @@ import (
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
-	"github.com/dewebprotocol/malt/core/structure/mapping/indexed"
+	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 	cid "github.com/ipfs/go-cid"
 )
 
 const suiteName = "proof_overhead"
+
+const (
+	arcTableModeVersioned = "versioned"
+	mapBackendRadix       = "radix"
+	listBackendTree       = "tree"
+)
 
 // Suite implements the proof overhead evaluation.
 type Suite struct{}
@@ -41,6 +49,9 @@ type Config struct {
 type Result struct {
 	Structure       string `json:"structure"`
 	Commitment      string `json:"commitment"`
+	ArcTableMode    string `json:"arctable_mode,omitempty"`
+	MapBackend      string `json:"map_backend,omitempty"`
+	ListBackend     string `json:"list_backend,omitempty"`
 	Size            int    `json:"size"`
 	Iteration       int    `json:"iteration"`
 	Method          string `json:"method"`
@@ -97,8 +108,8 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 			Iterations int             `json:"iterations"`
 			Commitment json.RawMessage `json:"commitment"`
 		}
-		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return Config{}, fmt.Errorf("parse proof_overhead config: %w", err)
+		if err := configjson.Decode(raw, suiteName, &parsed); err != nil {
+			return Config{}, err
 		}
 		cfg.Structures = parsed.Structures
 		cfg.Sizes = parsed.Sizes
@@ -150,11 +161,13 @@ func parseCommitments(raw json.RawMessage) ([]string, error) {
 
 func measure(ctx context.Context, structureName, commitmentName string, size, iteration int) (Result, error) {
 	base := Result{
-		Structure:  structureName,
-		Commitment: commitmentName,
-		Size:       size,
-		Iteration:  iteration,
+		Structure:    structureName,
+		Commitment:   commitmentName,
+		ArcTableMode: arcTableModeVersioned,
+		Size:         size,
+		Iteration:    iteration,
 	}
+	labelStructureBackend(&base)
 	scheme, err := newScheme(commitmentName)
 	if err != nil {
 		base.Method = "unsupported"
@@ -187,7 +200,7 @@ func measureMap(ctx context.Context, scheme commitment.IndexCommitment, commitme
 		return Result{}, err
 	}
 	defer table.Close()
-	semantics, err := indexed.NewMap(scheme, table)
+	semantics, err := mappingradix.NewMap(scheme, table)
 	if err != nil {
 		return Result{}, err
 	}
@@ -267,9 +280,10 @@ func measureList(ctx context.Context, scheme commitment.IndexCommitment, commitm
 }
 
 func measuredResult(structureName, commitmentName string, size, iteration int, commitElapsed, proveElapsed, verifyElapsed int64, proof structure.Proof, verified bool) Result {
-	return Result{
+	result := Result{
 		Structure:       structureName,
 		Commitment:      commitmentName,
+		ArcTableMode:    arcTableModeVersioned,
 		Size:            size,
 		Iteration:       iteration,
 		Method:          "measured",
@@ -279,6 +293,17 @@ func measuredResult(structureName, commitmentName string, size, iteration int, c
 		ProofBytes:      len(proof),
 		EvidenceCount:   evidenceCount(structureName, proof),
 		Verified:        &verified,
+	}
+	labelStructureBackend(&result)
+	return result
+}
+
+func labelStructureBackend(result *Result) {
+	switch result.Structure {
+	case "map":
+		result.MapBackend = mapBackendRadix
+	case "list":
+		result.ListBackend = listBackendTree
 	}
 }
 
@@ -293,8 +318,8 @@ func newScheme(name string) (commitment.IndexCommitment, error) {
 	}
 }
 
-func newArcTable() (*overwrite.ArcTable, error) {
-	return overwrite.NewArcTable(overwrite.WithKVStore(memory.New()))
+func newArcTable() (arctable.ArcTable, error) {
+	return versioned.NewArcTable(versioned.WithKVStore(memory.New()))
 }
 
 func deterministicCIDs(prefix string, size int) ([]cid.Cid, error) {

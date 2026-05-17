@@ -48,6 +48,38 @@ func TestCommandRunsPlanWithOverrides(t *testing.T) {
 	}
 }
 
+func TestCommandRunIDOverrideUpdatesDefaultOutputDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	planPath := filepath.Join(tmp, "plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+		"run_id": "from-plan",
+		"suites": [{"name": "fake_suite"}]
+	}`), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	reg := framework.NewRegistry()
+	if err := reg.Register(fakeSuite{}); err != nil {
+		t.Fatalf("register fake suite: %v", err)
+	}
+	cmd := NewCommand(reg)
+	cmd.SetArgs([]string{"--plan", planPath, "--run-id", "from-flags"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	expected := filepath.Join(tmp, "results", "from-flags", "manifest.json")
+	if _, err := os.Stat(expected); err != nil {
+		t.Fatalf("expected manifest at %s: %v", expected, err)
+	}
+	old := filepath.Join(tmp, "results", "from-plan", "manifest.json")
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("old output path should not exist, stat err=%v", err)
+	}
+}
+
 func TestCommandRequiresPlan(t *testing.T) {
 	cmd := NewCommand(framework.NewRegistry())
 	cmd.SetArgs(nil)

@@ -8,6 +8,7 @@
   "required": [
     "structure",
     "commitment",
+    "arctable_mode",
     "size",
     "iteration",
     "method",
@@ -21,6 +22,21 @@
     "commitment": {
       "type": "string",
       "description": "Requested commitment backend. Measured records currently use ipa or kzg; unsupported records may name a backend the suite could not measure."
+    },
+    "arctable_mode": {
+      "type": "string",
+      "description": "ArcTable mode used by measured semantic structures.",
+      "enum": ["versioned"]
+    },
+    "map_backend": {
+      "type": "string",
+      "description": "Map semantic backend for map records.",
+      "enum": ["radix"]
+    },
+    "list_backend": {
+      "type": "string",
+      "description": "List semantic backend for list records.",
+      "enum": ["tree"]
     },
     "size": {
       "type": "integer",

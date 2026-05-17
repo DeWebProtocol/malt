@@ -46,6 +46,21 @@ func TestSuiteMeasuresMapAndListProofOverhead(t *testing.T) {
 		if record.Commitment != "ipa" || record.Size != 2 || record.Iteration != 0 {
 			t.Fatalf("record dimensions = %+v, want ipa size 2 iteration 0", record)
 		}
+		switch record.Structure {
+		case "map":
+			if record.MapBackend != "radix" {
+				t.Fatalf("map backend = %q, want radix", record.MapBackend)
+			}
+		case "list":
+			if record.ListBackend != "tree" {
+				t.Fatalf("list backend = %q, want tree", record.ListBackend)
+			}
+		default:
+			t.Fatalf("unexpected structure = %q", record.Structure)
+		}
+		if record.ArcTableMode != "versioned" {
+			t.Fatalf("arctable mode = %q, want versioned", record.ArcTableMode)
+		}
 		if record.CommitElapsedNS < 0 || record.ProveElapsedNS < 0 || record.VerifyElapsedNS < 0 {
 			t.Fatalf("elapsed fields must be non-negative: %+v", record)
 		}
@@ -58,7 +73,7 @@ func TestSuiteMeasuresMapAndListProofOverhead(t *testing.T) {
 	}
 }
 
-func TestSuiteReportsUnsupportedProofMethodWithoutFabricatingMetrics(t *testing.T) {
+func TestSuiteUsesRuntimeRadixMapForLargeMapProofs(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "raw"), 0o755); err != nil {
 		t.Fatalf("mkdir raw: %v", err)
@@ -69,6 +84,38 @@ func TestSuiteReportsUnsupportedProofMethodWithoutFabricatingMetrics(t *testing.
 		"sizes": [257],
 		"iterations": 1,
 		"commitment": ["ipa"]
+	}`)
+	if err := (Suite{}).Run(context.Background(), framework.Env{
+		RunID:     "run-proof-radix-map",
+		OutputDir: tmp,
+	}, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	records := readProofRecords(t, filepath.Join(tmp, "raw", "proof_overhead.jsonl"))
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	record := records[0]
+	if record.Method != "measured" {
+		t.Fatalf("method = %q, want measured for runtime radix map: %+v", record.Method, record)
+	}
+	if record.MapBackend != "radix" || record.ArcTableMode != "versioned" {
+		t.Fatalf("runtime backend labels = %+v, want radix/versioned", record)
+	}
+}
+
+func TestSuiteReportsUnsupportedProofMethodWithoutFabricatingMetrics(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "raw"), 0o755); err != nil {
+		t.Fatalf("mkdir raw: %v", err)
+	}
+
+	cfg := json.RawMessage(`{
+		"structures": ["map"],
+		"sizes": [1],
+		"iterations": 1,
+		"commitment": ["unknown"]
 	}`)
 	if err := (Suite{}).Run(context.Background(), framework.Env{
 		RunID:     "run-proof-unsupported",
@@ -118,6 +165,12 @@ func TestSuiteAcceptsSingleCommitmentConfigValue(t *testing.T) {
 	}
 	if records[0].Commitment != "ipa" || records[0].Method != "measured" {
 		t.Fatalf("record = %+v, want measured ipa record", records[0])
+	}
+}
+
+func TestParseConfigRejectsUnknownFields(t *testing.T) {
+	if _, err := parseConfig(json.RawMessage(`{"sizse": [1]}`)); err == nil {
+		t.Fatal("parseConfig should reject unknown fields")
 	}
 }
 

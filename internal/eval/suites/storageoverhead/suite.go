@@ -8,19 +8,28 @@ import (
 	"fmt"
 
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/core/arctable/overwrite"
-	"github.com/dewebprotocol/malt/core/commitment/ipa"
+	"github.com/dewebprotocol/malt/core/arctable/versioned"
+	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
-	"github.com/dewebprotocol/malt/core/structure/mapping/indexed"
+	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 	cid "github.com/ipfs/go-cid"
 )
 
 const suiteName = "storage_overhead"
+
+const (
+	systemMALTFlat        = "maltflat"
+	commitmentBackendKZG  = "kzg"
+	arcTableModeVersioned = "versioned"
+	mapBackendRadix       = "radix"
+	listBackendTree       = "tree"
+)
 
 // Suite implements the storage overhead evaluation.
 type Suite struct{}
@@ -35,6 +44,11 @@ type Config struct {
 // Result is one storage overhead record.
 type Result struct {
 	Structure           string             `json:"structure"`
+	System              string             `json:"system"`
+	CommitmentBackend   string             `json:"commitment_backend"`
+	ArcTableMode        string             `json:"arctable_mode"`
+	MapBackend          string             `json:"map_backend,omitempty"`
+	ListBackend         string             `json:"list_backend,omitempty"`
 	Size                int                `json:"size"`
 	PayloadBytes        int                `json:"payload_bytes"`
 	Method              string             `json:"method"`
@@ -78,8 +92,8 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 		PayloadBytes: 64,
 	}
 	if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return Config{}, fmt.Errorf("parse storage_overhead config: %w", err)
+		if err := configjson.Decode(raw, suiteName, &cfg); err != nil {
+			return Config{}, err
 		}
 	}
 	if cfg.Structures == nil {
@@ -101,10 +115,14 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 
 func measure(ctx context.Context, structureName string, size, payloadBytes int) (Result, error) {
 	base := Result{
-		Structure:    structureName,
-		Size:         size,
-		PayloadBytes: payloadBytes,
+		Structure:         structureName,
+		System:            systemMALTFlat,
+		CommitmentBackend: commitmentBackendKZG,
+		ArcTableMode:      arcTableModeVersioned,
+		Size:              size,
+		PayloadBytes:      payloadBytes,
 	}
+	labelStructureBackend(&base)
 	switch structureName {
 	case "map", "list":
 	default:
@@ -143,6 +161,11 @@ func measure(ctx context.Context, structureName string, size, payloadBytes int) 
 	accounting := normalizeSnapshot(system.Meter.Snapshot())
 	return Result{
 		Structure:           structureName,
+		System:              systemMALTFlat,
+		CommitmentBackend:   commitmentBackendKZG,
+		ArcTableMode:        arcTableModeVersioned,
+		MapBackend:          structureMapBackend(structureName),
+		ListBackend:         structureListBackend(structureName),
 		Size:                size,
 		PayloadBytes:        payloadBytes,
 		Method:              "measured",
@@ -166,11 +189,11 @@ func writePayloads(ctx context.Context, system *evalstore.System, size, payloadB
 }
 
 func commitAndProve(ctx context.Context, system *evalstore.System, structureName string, values []cid.Cid) (structure.Proof, cid.Cid, error) {
-	scheme, err := ipa.NewScheme()
+	scheme, err := kzg.NewScheme()
 	if err != nil {
 		return nil, cid.Undef, err
 	}
-	table, err := overwrite.NewArcTable(overwrite.WithKVStore(system.StateKV))
+	table, err := versioned.NewArcTable(versioned.WithKVStore(system.StateKV))
 	if err != nil {
 		return nil, cid.Undef, err
 	}
@@ -179,7 +202,7 @@ func commitAndProve(ctx context.Context, system *evalstore.System, structureName
 	namespace := "storage-overhead"
 	switch structureName {
 	case "map":
-		semantics, err := indexed.NewMap(scheme, table)
+		semantics, err := mappingradix.NewMap(scheme, table)
 		if err != nil {
 			return nil, cid.Undef, err
 		}
@@ -229,6 +252,25 @@ func commitAndProve(ctx context.Context, system *evalstore.System, structureName
 	default:
 		return nil, cid.Undef, fmt.Errorf("unsupported structure %q", structureName)
 	}
+}
+
+func labelStructureBackend(result *Result) {
+	result.MapBackend = structureMapBackend(result.Structure)
+	result.ListBackend = structureListBackend(result.Structure)
+}
+
+func structureMapBackend(structureName string) string {
+	if structureName == "map" {
+		return mapBackendRadix
+	}
+	return ""
+}
+
+func structureListBackend(structureName string) string {
+	if structureName == "list" {
+		return listBackendTree
+	}
+	return ""
 }
 
 func normalizeSnapshot(snapshot evalstore.Snapshot) evalstore.Snapshot {

@@ -64,6 +64,56 @@ func TestLoadPlanDefaultsAndPreservesSuiteConfig(t *testing.T) {
 	}
 }
 
+func TestLoadPlanRejectsUnknownTopLevelFields(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "plan.json")
+	raw := `{
+		"run_id": "paper-eval",
+		"output_dr": "results/wrong",
+		"suites": [{"name": "write_trace"}]
+	}`
+	if err := os.WriteFile(planPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	if _, err := LoadPlan(planPath); err == nil {
+		t.Fatal("LoadPlan should reject unknown top-level fields")
+	}
+}
+
+func TestLoadPlanRejectsUnknownSuiteFields(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "plan.json")
+	raw := `{
+		"run_id": "paper-eval",
+		"suites": [
+			{
+				"name": "write_trace",
+				"enabledd": false
+			}
+		]
+	}`
+	if err := os.WriteFile(planPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	if _, err := LoadPlan(planPath); err == nil {
+		t.Fatal("LoadPlan should reject unknown suite fields")
+	}
+}
+
+func TestPlanRejectsRunIDPathSegments(t *testing.T) {
+	for _, runID := range []string{".", "..", "../outside", "nested/run", `nested\run`} {
+		plan := Plan{
+			RunID:  runID,
+			Suites: []SuitePlan{{Name: "write_trace"}},
+		}
+		if err := plan.Normalize(); err == nil {
+			t.Fatalf("Normalize should reject run_id %q", runID)
+		}
+	}
+}
+
 func TestRegistryRejectsDuplicateAndMissingSuites(t *testing.T) {
 	reg := NewRegistry()
 	suite := fakeSuite{name: "write_trace"}

@@ -74,6 +74,12 @@ func TestSuiteEmitsDeterministicCASModelRecords(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsUnknownFields(t *testing.T) {
+	if _, err := parseConfig(json.RawMessage(`{"iterationz": 1}`)); err == nil {
+		t.Fatal("parseConfig should reject unknown fields")
+	}
+}
+
 func readCASModelRecords(t *testing.T, path string) []Result {
 	t.Helper()
 	f, err := os.Open(path)

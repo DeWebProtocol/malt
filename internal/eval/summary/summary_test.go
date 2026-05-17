@@ -93,6 +93,70 @@ func TestSummarizeUsesDeterministicHeader(t *testing.T) {
 	}
 }
 
+func TestSummarizeRefreshesGeneratedFigureCSVs(t *testing.T) {
+	tmp := t.TempDir()
+	runDir := filepath.Join(tmp, "run")
+	rawDir := filepath.Join(runDir, "raw")
+	outDir := filepath.Join(runDir, "summary")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		t.Fatalf("mkdir raw: %v", err)
+	}
+	writeEnvelope(t, rawDir, "write_trace", `{"iteration":1}`)
+	if err := Summarize(runDir, outDir); err != nil {
+		t.Fatalf("first Summarize: %v", err)
+	}
+	stalePath := filepath.Join(outDir, "figure_write_trace.csv")
+	if _, err := os.Stat(stalePath); err != nil {
+		t.Fatalf("initial figure missing: %v", err)
+	}
+	notesPath := filepath.Join(outDir, "notes.txt")
+	if err := os.WriteFile(notesPath, []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+	if err := os.Remove(filepath.Join(rawDir, "write_trace.jsonl")); err != nil {
+		t.Fatalf("remove write trace raw: %v", err)
+	}
+	writeEnvelope(t, rawDir, "read_query", `{"query":"/a"}`)
+
+	if err := Summarize(runDir, outDir); err != nil {
+		t.Fatalf("second Summarize: %v", err)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("stale write trace figure still present or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "figure_read_query.csv")); err != nil {
+		t.Fatalf("current read query figure missing: %v", err)
+	}
+	notes, err := os.ReadFile(notesPath)
+	if err != nil {
+		t.Fatalf("read notes: %v", err)
+	}
+	if string(notes) != "keep\n" {
+		t.Fatalf("notes = %q, want keep", notes)
+	}
+}
+
+func TestSummarizeRejectsUnsafeEnvelopeSuiteName(t *testing.T) {
+	tmp := t.TempDir()
+	runDir := filepath.Join(tmp, "run")
+	rawDir := filepath.Join(runDir, "raw")
+	outDir := filepath.Join(runDir, "summary")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		t.Fatalf("mkdir raw: %v", err)
+	}
+	line := `{"schema_version":"malt.eval.v1","run_id":"run-1","suite":"x/../../escaped","emitted_at":"2026-05-16T00:00:00Z","record":{"value":1}}` + "\n"
+	if err := os.WriteFile(filepath.Join(rawDir, "safe.jsonl"), []byte(line), 0o644); err != nil {
+		t.Fatalf("write malicious raw envelope: %v", err)
+	}
+
+	if err := Summarize(runDir, outDir); err == nil {
+		t.Fatal("Summarize should reject unsafe suite names from raw envelopes")
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "escaped.csv")); !os.IsNotExist(err) {
+		t.Fatalf("escaped summary file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
 func writeEnvelope(t *testing.T, rawDir, suite, record string) {
 	t.Helper()
 	var compact bytes.Buffer
