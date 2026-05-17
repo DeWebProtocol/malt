@@ -111,6 +111,17 @@ func TestParseConfigSupportsRepositoryListWithInheritedDefaults(t *testing.T) {
 	}
 }
 
+func TestRepositoryStoreNameIncludesIndexForIsolation(t *testing.T) {
+	first := writetrace.RepositoryConfig{Name: "alpha"}.StoreName(0)
+	second := writetrace.RepositoryConfig{Name: "alpha"}.StoreName(1)
+	if first != "000-alpha" || second != "001-alpha" {
+		t.Fatalf("store names = %q/%q, want indexed names", first, second)
+	}
+	if first == second {
+		t.Fatal("store names should not collide for repositories with the same sanitized label")
+	}
+}
+
 func TestParseConfigKeepsSingleRepositoryCompatibility(t *testing.T) {
 	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
 		"repo_path": "/tmp/single",
@@ -150,6 +161,19 @@ func TestParseConfigRejectsRepositoryListMixedWithSingleRepoFields(t *testing.T)
 func TestParseConfigRejectsUnknownFields(t *testing.T) {
 	if _, err := writetrace.ParseConfig(json.RawMessage(`{"commit_limti": 7}`)); err == nil {
 		t.Fatal("ParseConfig should reject unknown fields")
+	}
+}
+
+func TestParseConfigRejectsUnknownRepositoryFields(t *testing.T) {
+	if _, err := writetrace.ParseConfig(json.RawMessage(`{
+		"repositories": [
+			{
+				"repo_path": "/tmp/repo",
+				"repo_reff": "main"
+			}
+		]
+	}`)); err == nil {
+		t.Fatal("ParseConfig should reject unknown repositories[] fields")
 	}
 }
 

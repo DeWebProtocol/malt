@@ -155,31 +155,30 @@ func (r RepositoryConfig) validate(index int) error {
 
 // StoreName returns a stable filesystem-safe name for this repository.
 func (r RepositoryConfig) StoreName(index int) string {
+	label := "repo"
 	if name := sanitizeName(r.Name); name != "" {
-		return name
-	}
-	if strings.TrimSpace(r.RepoPath) != "" {
+		label = name
+	} else if strings.TrimSpace(r.RepoPath) != "" {
 		if name := sanitizeName(filepath.Base(r.RepoPath)); name != "" {
-			return name
+			label = name
 		}
-	}
-	if strings.TrimSpace(r.RepoURL) != "" {
+	} else if strings.TrimSpace(r.RepoURL) != "" {
 		trimmed := strings.TrimSuffix(r.RepoURL, ".git")
 		parts := strings.FieldsFunc(trimmed, func(r rune) bool {
 			return r == '/' || r == '\\' || r == ':'
 		})
 		if len(parts) > 0 {
 			if name := sanitizeName(parts[len(parts)-1]); name != "" {
-				return name
+				label = name
 			}
 		}
 	}
-	return fmt.Sprintf("repo-%d", index)
+	return fmt.Sprintf("%03d-%s", index, label)
 }
 
 func (r *RepositoryConfig) UnmarshalJSON(data []byte) error {
 	var parsed repositoryConfigJSON
-	if err := json.Unmarshal(data, &parsed); err != nil {
+	if err := configjson.Decode(data, "write_trace repository", &parsed); err != nil {
 		return err
 	}
 	r.Name = strings.TrimSpace(parsed.Name)
