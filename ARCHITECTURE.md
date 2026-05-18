@@ -235,6 +235,12 @@ Current command model:
     baselines
 - `malt-eval write`
   - Git trace write-amplification replay driver
+- `malt-eval run`
+  - evaluation framework runner for JSON plans and structured run directories
+- `malt-eval schema`
+  - lists or prints embedded evaluator JSON schemas
+- `malt-eval summarize`
+  - regenerates figure CSVs from framework raw envelopes
 - `malt-eval metrics`
   - daemon evaluation metrics client
 
@@ -258,30 +264,39 @@ Path-miss behavior is a file-layout and product-runtime invariant. The reserved
 malt/
 |-- client/          # thin daemon HTTP client
 |-- cmd/
+|   |-- eval/
+|   |   |-- command/
+|   |   |-- helper/
+|   |   |-- schemas/
+|   |   `-- malt-eval/
 |   `-- malt/
 |-- config/
+|-- daemon/
 |-- httpapi/         # shared daemon API payloads
 |-- server/          # daemon HTTP server
+|-- internal/
+|   |-- eval/          # evaluation framework, suites, summaries, readbench
+|   `-- merkledagimport/ # Merkle-DAG UnixFS baseline import helpers
 |-- core/
 |   |-- api/          # Node: top-level component wiring
 |   |-- arctable/     # namespace-scoped arcset persistence/materialization
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities
 |   |-- commitment/   # primitive commitment backends
+|   |-- gateway/      # root-centric semantic materialization boundary
 |   |-- graph/        # current metadata/runtime composition
 |   |-- kvstore/      # KV backends
-|   |-- metrics/      # node-local evaluation counters
-|   |-- querypath/    # root-relative query path canonicalization
 |   |-- layout/
-|   |   |-- ipld/      # Merkle DAG UnixFS import helpers
 |   |   `-- malt/
 |   |       `-- unixfs/ # current map/list-based UnixFS layout prototype
 |   |-- manifest/     # UnixFS directory-manifest helper
+|   |-- metrics/      # node-local evaluation counters
+|   |-- querypath/    # root-relative query path canonicalization
 |   |-- resolver/     # current read compatibility adapters
 |   |-- structure/    # list/map semantic abstractions and implementations
 |   |-- types/        # arc sets, evidence, proof-related types
 |   `-- writer/       # current concrete write adapter
-`-- integration/
+`-- logger/
 ```
 
 ## Map Semantic Implementation
@@ -375,8 +390,9 @@ should converge toward layout-produced semantic mutations accepted by the
 gateway.
 
 `ProofList` is the standard verifier-facing read artifact. It should cover map
-step proofs, terminal `@payload` proofs, list index/range proofs, and blob
-target binding proofs from the queried root to the destination.
+step proofs, terminal `@payload` proofs, list index proofs, composed list-index
+evidence for range reads, and blob target binding proofs from the queried root
+to the destination.
 
 The current daemon has two HTTP proof-bearing read surfaces:
 
@@ -389,7 +405,7 @@ The current daemon has two HTTP proof-bearing read surfaces:
 `HEAD /{root}/{path}` is intentionally stat-only and returns stat headers
 without generating proof metadata.
 
-## Flattened UnixFS-Style Layout
+## MALT UnixFS-Style Layout
 
 The current code includes a first pure MALT structure UnixFS-like layout in
 `core/layout/malt/unixfs`.
@@ -407,6 +423,14 @@ Current implementation:
 This layout is not the definition of MALT. It is an application model that
 demonstrates that list/map semantics can express practical file-system
 semantics.
+
+`malt add --target malt --model unixfs` currently accepts `--layout flat` and
+`--layout hierarchical`, with `flat` as the default. Both names currently route
+through the same staged hybrid materialization path: ordinary directories are
+materialized as map roots, and directory/root maps also include descendant
+full-path bindings for longest-prefix reads. A future implementation split can
+evaluate pure root-map `flat` behavior separately from pure per-directory
+`hierarchical` behavior.
 
 Current boundary:
 

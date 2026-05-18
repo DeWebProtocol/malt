@@ -30,7 +30,7 @@ freshness, and multi-writer arbitration are application or deployment policy,
 not the gateway correctness interface. In the HTTP deployment, successful
 default blob and directory `GET /{root}/{path}` reads carry `ProofList`
 metadata in response headers; large-file range reads return selected bytes plus
-the corresponding range-covering `ProofList`.
+the corresponding composed list-index `ProofList` evidence.
 
 Current core semantics are:
 
@@ -94,6 +94,13 @@ Current runtime shape:
     `cmd/eval/schemas/readbench-result.schema.json`
 - `malt-eval write`
   - Git trace write-amplification replay driver
+- `malt-eval run`
+  - evaluation framework runner for JSON plans
+  - writes raw suite envelopes, `manifest.json`, logs, and summary CSVs
+- `malt-eval schema`
+  - lists or prints embedded evaluator JSON schemas
+- `malt-eval summarize`
+  - regenerates figure CSVs from a framework run directory
 - `malt-eval metrics`
   - daemon evaluation metrics client
 - daemon API
@@ -169,7 +176,7 @@ communicated, and whether concurrent roots are merged.
 | ArcTable | Namespace-scoped arcset persistence/materialization | overwrite, versioned |
 | Commitment Backend | Stateless primitive authentication | KZG, IPA |
 | Gateway | Deployment surface for semantic mutations and verifiable reads | daemon HTTP API |
-| Application Layout | Product data model built above semantic layer | flattened UnixFS-style root layout |
+| Application Layout | Product data model built above semantic layer | MALT UnixFS-style root layout |
 
 Under this terminology:
 
@@ -229,7 +236,7 @@ layout that maps byte ranges to list index ranges, then calls list semantics.
 The current implementation is `core/structure/list/tree`, a tree-shaped
 stable-indexed layout over the same primitive commitment interface.
 
-## Flattened UnixFS-Style Layout
+## MALT UnixFS-Style Layout
 
 The current prototype includes a first pure MALT structure version of
 UnixFS-like file and directory semantics in `core/layout/malt/unixfs`.
@@ -241,6 +248,14 @@ UnixFS-like file and directory semantics in `core/layout/malt/unixfs`.
 - payload and chunks remain CAS CIDs
 - path lookup composes map reads
 - file range reads map byte ranges to list index reads
+
+`malt add --target malt --model unixfs` currently accepts `--layout flat` and
+`--layout hierarchical`, with `flat` as the default. Both names currently use
+the same staged hybrid materialization path: ordinary directories are
+materialized as map roots, and directory/root maps also include descendant
+full-path bindings for longest-prefix reads. A future implementation split can
+separate pure root-map `flat` behavior from pure per-directory
+`hierarchical` behavior for evaluation.
 
 This layout gives a clean benchmark target:
 
@@ -379,10 +394,12 @@ malt/
 |   |-- eval/
 |   |   |-- command/
 |   |   |-- helper/
+|   |   |-- schemas/
 |   |   |-- malt-eval/
 |   |   `-- ...
 |   `-- malt/
 |-- config/
+|-- daemon/
 |-- httpapi/         # shared daemon request/response payload types
 |-- core/
 |   |-- api/          # top-level wiring via Node
@@ -390,8 +407,12 @@ malt/
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities
 |   |-- commitment/   # primitive commitment backends
+|   |-- gateway/      # root-centric semantic materialization boundary
 |   |-- graph/        # current runtime metadata/composition
 |   |-- kvstore/      # KV backends
+|   |-- layout/
+|   |   `-- malt/
+|   |       `-- unixfs/ # current map/list-based UnixFS layout prototype
 |   |-- metrics/      # node-local evaluation counters
 |   |-- querypath/    # root-relative query path canonicalization
 |   |-- manifest/     # UnixFS directory-manifest helper
@@ -399,8 +420,11 @@ malt/
 |   |-- structure/    # list/map semantic abstractions and implementations
 |   |-- types/        # arc sets, evidence, proof-related types
 |   `-- writer/       # current concrete write adapter
+|-- internal/
+|   |-- eval/          # evaluation framework, suites, summaries, readbench
+|   `-- merkledagimport/ # Merkle-DAG UnixFS baseline import helpers
 |-- server/          # daemon HTTP server
-`-- integration/
+`-- logger/
 ```
 
 ## More Detail

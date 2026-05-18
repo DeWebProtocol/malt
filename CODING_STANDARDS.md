@@ -201,12 +201,18 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `chore`
 malt/
 ├── cmd/
 │   ├── malt/
-│   │   ├── main.go                  # CLI root
+│   │   ├── main.go                  # CLI entrypoint
+│   │   ├── root.go                  # CLI root command
 │   │   ├── daemon.go                # Daemon command
-│   │   ├── bucket*.go               # Bucket commands
+│   │   ├── init.go                  # Local config/state initialization
 │   │   ├── add.go                   # File/directory ingest
-│   │   ├── cat.go                   # Bucket content read
-│   │   └── get.go                   # Bucket export
+│   │   ├── resolve.go               # Root-relative resolve command
+│   │   └── verify.go                # ProofList verification command
+│   └── eval/
+│       ├── command/                 # malt-eval root command assembly
+│       ├── helper/                  # Evaluation helper commands
+│       ├── schemas/                 # Embedded evaluator JSON schemas
+│       └── malt-eval/               # malt-eval entrypoint
 ├── config/
 │   └── config.go                    # Configuration
 ├── core/
@@ -233,8 +239,8 @@ malt/
 │   │   └── versioned/
 │   │       ├── versioned.go         # Versioned ArcTable impl
 │   │       └── versioned_test.go    # Unit tests
-│   ├── bucketpath/
-│   │   └── path.go                  # Current bucket path boundary helper
+│   ├── querypath/
+│   │   └── path.go                  # Root-relative query path helper
 │   ├── kvstore/
 │   │   ├── kv.go                    # KVStore interface
 │   │   ├── memory/
@@ -247,9 +253,8 @@ malt/
 │   │   ├── graph.go                 # Current runtime composition
 │   │   └── manager.go               # Current metadata lifecycle
 │   ├── layout/
-│   │   └── unixfs/
-│   │       ├── layout.go             # Map/list-based UnixFS prototype
-│   │       └── layout_test.go        # Layout tests
+│   │   └── malt/
+│   │       └── unixfs/               # Map/list-based UnixFS prototype
 │   ├── manifest/
 │   │   └── directory.go             # Current directory manifest helper
 │   ├── resolver/
