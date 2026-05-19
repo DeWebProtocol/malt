@@ -35,7 +35,7 @@ This repository contains the Go implementation of MALT:
 - `arcset.ArcSet` is the interface for immutable arc-set views.
 - `arcset.Set` is the default in-memory implementation.
 - `list` and `map` are semantic abstractions, not merely concrete implementations.
-- `list` describes complex graph nodes with indexed/ranged child references.
+- `list` describes complex graph nodes with indexed child references.
 - `map` describes authenticated relations among graph nodes.
 - `core/structure/mapping/indexed` is a baseline comparison map implementation;
   `core/graph` wires the radix implementation for the current runtime path.
@@ -45,7 +45,12 @@ This repository contains the Go implementation of MALT:
   of exposing graph lifecycle APIs.
 - current `resolver` and `writer` code is adapter/runtime machinery, not the semantic owner.
 - explicit resolution is a compatibility layer above map reads.
-- list semantics use index/range reads and append/replace/truncate writes, not path resolution.
+- list semantics use first-class index reads and logical range reads over index
+  intervals. The target range verifier model composes file-layout metadata
+  proof with per-index list proofs; the current prototype emits path/`@payload`
+  proof plus per-index list proofs, while explicit `@size`/`@chunksize`
+  metadata proof and body/range binding remain ProofList-schema TODOs. List
+  semantics use append/replace/truncate writes, not path resolution.
 - every map semantic object carries reserved `@payload` as its terminal materialization binding.
 - layouts translate source-domain data into MALT semantic mutations.
 - the gateway accepts converted semantic mutations and returns `result + ProofList` for standardized reads.

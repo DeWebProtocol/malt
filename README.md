@@ -30,13 +30,15 @@ freshness, and multi-writer arbitration are application or deployment policy,
 not the gateway correctness interface. In the HTTP deployment, successful
 default blob and directory `GET /{root}/{path}` reads carry `ProofList`
 metadata in response headers; large-file range reads return selected bytes plus
-the corresponding composed list-index `ProofList` evidence.
+path/`@payload` proof and the corresponding composed list-index `ProofList`
+evidence. Explicit `@size`/`@chunksize` metadata proof and response-body range
+binding are still ProofList-schema TODOs.
 
 Current core semantics are:
 
 - `list`
-  - describes complex graph nodes with ordered/indexed/ranged child references
-  - query: index or range
+  - describes complex graph nodes with ordered/indexed child references
+  - query: index, plus layout-level range reads over index intervals
   - mutation: append, replace, or truncate
   - use case: chunk sequences for large or mutable files
 - `map`
@@ -125,9 +127,11 @@ Vary: X-Malt-Proof
 ```
 
 The proof header is generated for file bytes, directory JSON responses, and
-byte-range reads. For list-backed file ranges, the `ProofList` includes the
-touched list-index steps. Clients that only need content bytes can opt out of
-default proof generation with either `?proof=false` or request header
+byte-range reads. For list-backed file ranges, the current `ProofList` includes
+path/`@payload` proof plus the touched list-index steps; explicit file metadata
+proof is still being formalized. Clients that only need content bytes can opt
+out of default proof generation with either
+`?proof=false` or request header
 `X-Malt-Proof: omit`; the `Vary` response header advertises the header-based
 variance to shared HTTP caches.
 
@@ -224,8 +228,10 @@ complex graph nodes.
 
 Native operations:
 
-- read an index or range and return keys plus proof
-- verify an index or range query under a root
+- read an index and return keys plus proof
+- verify an index query under a root
+- represent file range reads today as path/`@payload` proof plus composed index
+  proofs; explicit metadata proof is a schema TODO
 - append a key
 - replace an existing key
 - truncate the sequence

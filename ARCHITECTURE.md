@@ -65,19 +65,22 @@ directory reads with `ProofList` metadata in `X-Malt-ProofList` response
 headers encoded as `base64url-json`. Clients can opt out of default proof
 generation with `?proof=false` or `X-Malt-Proof: omit`; default GET responses
 advertise that request-header variance with `Vary: X-Malt-Proof`. Large-file
-byte-range reads include ProofLists covering the selected list entries. File
+byte-range reads include path/`@payload` proof plus ProofLists covering the
+selected list entries. Explicit `@size`/`@chunksize` metadata proof and
+response-body range binding are still ProofList-schema TODOs. File
 routes are product surfaces around the same root-centric materialization
 namespace.
 
 ### List Semantic
 
-The list semantic authenticates stable-indexed or ranged child references inside
-complex graph nodes.
+The list semantic authenticates stable-indexed child references inside complex
+graph nodes.
 
-Native reads:
+Read semantics:
 
-- index query
-- range query
+- first-class index query
+- logical range read over index intervals, represented today as path/`@payload`
+  proof plus composed index proofs
 - length-aware proof
 
 Native writes:
@@ -87,7 +90,8 @@ Native writes:
 - truncate
 
 List does not have path-resolution semantics. Application layouts translate
-byte ranges or file operations into list index/range operations.
+byte ranges or file operations into list index operations and compose metadata
+proof with per-index proofs for range reads.
 
 The current public package is `core/structure/list`.
 The primary implementation is `core/structure/list/tree`.
@@ -392,7 +396,8 @@ gateway.
 `ProofList` is the standard verifier-facing read artifact. It should cover map
 step proofs, terminal `@payload` proofs, list index proofs, composed list-index
 evidence for range reads, and blob target binding proofs from the queried root
-to the destination.
+to the destination. Explicit file metadata proofs for `@size` / `@chunksize`
+and response-body range binding remain schema TODOs.
 
 The current daemon has two HTTP proof-bearing read surfaces:
 
@@ -482,12 +487,15 @@ Open TODOs for the next discussion:
   gateway materialization and how much of the current UnixFS convenience route
   remains public API versus test/demo scaffolding
 - formalize the current `ProofList` schema and verification semantics for path
-  lookup, terminal `@payload`, blob bindings, and list range reads
+  lookup, terminal `@payload`, blob bindings, composed list-index evidence for
+  range reads, explicit `@size`/`@chunksize` metadata proof, and response-body
+  range binding
 - decide how UnixFS reads should map onto gateway read queries and `ProofList`
 - define the final UnixFS write receipt and application-level concurrency
   contract for the already-wired root APIs
-- decide whether list needs a first-class range proof API or whether composed
-  index proofs are sufficient for the first benchmark
+- decide after the first benchmark whether list needs a future compact
+  range-proof API; the current prototype uses path/`@payload` proof plus
+  composed index proofs while metadata proof remains a schema TODO
 
 ## ArcTable and Versioning
 
