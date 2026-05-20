@@ -30,6 +30,23 @@ type Query struct {
 	Length uint64
 }
 
+// RangeMetadata is authenticated measurement metadata for a byte-addressable
+// list. ChunkSize is the fixed segment width used to map byte ranges to list
+// indexes.
+type RangeMetadata struct {
+	ChildCount uint64
+	TotalSize  uint64
+	ChunkSize  uint64
+}
+
+// RangeResult is the verifiable result of a byte-range query over a measured
+// list. Segments contains the minimal list targets needed to satisfy the
+// requested range.
+type RangeResult struct {
+	Metadata RangeMetadata
+	Segments []cid.Cid
+}
+
 // Semantics defines the public stable-indexed list semantics.
 //
 // Commit is the bootstrap path from a materialized list view. All other
@@ -54,4 +71,15 @@ type Semantics interface {
 
 	// Truncate shrinks the committed length while preserving the remaining prefix.
 	Truncate(ctx context.Context, namespace string, root cid.Cid, newLen uint64) (cid.Cid, error)
+}
+
+// MeasuredSemantics is an optional list extension for byte-addressable list
+// layouts. The range proof is composed from authenticated metadata and the
+// index proofs for the minimum segment set covering [start, end). A nil end
+// means the authenticated total size.
+type MeasuredSemantics interface {
+	Semantics
+
+	ProveRange(ctx context.Context, namespace string, root cid.Cid, start uint64, end *uint64) (RangeResult, structure.Proof, error)
+	VerifyRange(root cid.Cid, start uint64, end *uint64, expected RangeResult, proof structure.Proof) (bool, error)
 }

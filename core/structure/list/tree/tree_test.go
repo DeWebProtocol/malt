@@ -147,6 +147,94 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 	}
 }
 
+func TestTreeListFixedRangeProofsUseOptionalEnd(t *testing.T) {
+	ctx := context.Background()
+	chunks := makeValues(5)
+	chunkSize := uint64(4)
+	totalSize := uint64(18)
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-fixed-range-" + name
+
+			semantic := newList(t, factory, kv)
+			root, err := semantic.CommitFixed(ctx, namespace, chunks, chunkSize, totalSize)
+			if err != nil {
+				t.Fatalf("CommitFixed failed: %v", err)
+			}
+
+			assertVerifiedQuery(t, semantic, namespace, root, 4, list.Query{
+				Key:    chunks[4],
+				Length: uint64(len(chunks)),
+			})
+
+			end := uint64(10)
+			result, proof, err := semantic.ProveRange(ctx, namespace, root, 3, &end)
+			if err != nil {
+				t.Fatalf("ProveRange bounded failed: %v", err)
+			}
+			if result.Metadata.ChildCount != uint64(len(chunks)) {
+				t.Fatalf("child count = %d, want %d", result.Metadata.ChildCount, len(chunks))
+			}
+			if result.Metadata.TotalSize != totalSize {
+				t.Fatalf("total size = %d, want %d", result.Metadata.TotalSize, totalSize)
+			}
+			if result.Metadata.ChunkSize != chunkSize {
+				t.Fatalf("chunk size = %d, want %d", result.Metadata.ChunkSize, chunkSize)
+			}
+			wantBounded := chunks[:3]
+			if len(result.Segments) != len(wantBounded) {
+				t.Fatalf("bounded segment count = %d, want %d", len(result.Segments), len(wantBounded))
+			}
+			for i, want := range wantBounded {
+				if !result.Segments[i].Equals(want) {
+					t.Fatalf("bounded segment %d = %s, want %s", i, result.Segments[i], want)
+				}
+			}
+			ok, err := semantic.VerifyRange(root, 3, &end, result, proof)
+			if err != nil {
+				t.Fatalf("VerifyRange bounded failed: %v", err)
+			}
+			if !ok {
+				t.Fatal("VerifyRange bounded returned false")
+			}
+
+			toEOF, proof, err := semantic.ProveRange(ctx, namespace, root, 12, nil)
+			if err != nil {
+				t.Fatalf("ProveRange EOF failed: %v", err)
+			}
+			wantEOF := chunks[3:]
+			if len(toEOF.Segments) != len(wantEOF) {
+				t.Fatalf("EOF segment count = %d, want %d", len(toEOF.Segments), len(wantEOF))
+			}
+			for i, want := range wantEOF {
+				if !toEOF.Segments[i].Equals(want) {
+					t.Fatalf("EOF segment %d = %s, want %s", i, toEOF.Segments[i], want)
+				}
+			}
+			ok, err = semantic.VerifyRange(root, 12, nil, toEOF, proof)
+			if err != nil {
+				t.Fatalf("VerifyRange EOF failed: %v", err)
+			}
+			if !ok {
+				t.Fatal("VerifyRange EOF returned false")
+			}
+
+			tampered := result
+			tampered.Segments = append([]cid.Cid(nil), result.Segments...)
+			tampered.Segments[1] = newPayloadCID([]byte("wrong segment"))
+			ok, err = semantic.VerifyRange(root, 3, &end, tampered, proof)
+			if err != nil {
+				t.Fatalf("VerifyRange tampered failed: %v", err)
+			}
+			if ok {
+				t.Fatal("VerifyRange accepted tampered segment CID")
+			}
+		})
+	}
+}
+
 func TestTreeListSemanticUpdates(t *testing.T) {
 	ctx := context.Background()
 	initial := makeValues(255)

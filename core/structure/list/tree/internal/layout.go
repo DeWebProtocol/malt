@@ -36,7 +36,16 @@ const (
 	NodeWidth = BranchingFactor
 
 	lengthMarkerPrefix = "malt:list:length:v1:"
+	fixedMetaPrefix    = "malt:list:fixed-meta:v1:"
 )
+
+// FixedMetadata is the authenticated root metadata for fixed-width measured
+// lists.
+type FixedMetadata struct {
+	ChildCount uint64
+	TotalSize  uint64
+	ChunkSize  uint64
+}
 
 // ValidateCommitment checks whether the supplied index commitment can support
 // the v1 list layout.
@@ -216,6 +225,64 @@ func DecodeLengthMarker(marker cid.Cid) (uint64, error) {
 		return 0, fmt.Errorf("length marker prefix mismatch")
 	}
 	return binary.BigEndian.Uint64(decoded.Digest[len(lengthMarkerPrefix):]), nil
+}
+
+// EncodeFixedMetadata encodes fixed-width measured list metadata as a
+// self-describing identity CID.
+func EncodeFixedMetadata(meta FixedMetadata) (cid.Cid, error) {
+	payload := make([]byte, len(fixedMetaPrefix)+24)
+	copy(payload, []byte(fixedMetaPrefix))
+	binary.BigEndian.PutUint64(payload[len(fixedMetaPrefix):], meta.ChildCount)
+	binary.BigEndian.PutUint64(payload[len(fixedMetaPrefix)+8:], meta.TotalSize)
+	binary.BigEndian.PutUint64(payload[len(fixedMetaPrefix)+16:], meta.ChunkSize)
+
+	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, sum), nil
+}
+
+// DecodeFixedMetadata parses fixed-width measured list metadata from an
+// identity CID.
+func DecodeFixedMetadata(marker cid.Cid) (FixedMetadata, error) {
+	if !marker.Defined() {
+		return FixedMetadata{}, fmt.Errorf("fixed metadata marker is undefined")
+	}
+
+	decoded, err := mh.Decode(marker.Hash())
+	if err != nil {
+		return FixedMetadata{}, err
+	}
+	if decoded.Code != mh.IDENTITY {
+		return FixedMetadata{}, fmt.Errorf("fixed metadata marker is not identity-encoded")
+	}
+	if len(decoded.Digest) != len(fixedMetaPrefix)+24 {
+		return FixedMetadata{}, fmt.Errorf("fixed metadata marker payload has unexpected size %d", len(decoded.Digest))
+	}
+	if string(decoded.Digest[:len(fixedMetaPrefix)]) != fixedMetaPrefix {
+		return FixedMetadata{}, fmt.Errorf("fixed metadata marker prefix mismatch")
+	}
+	return FixedMetadata{
+		ChildCount: binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix):]),
+		TotalSize:  binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix)+8:]),
+		ChunkSize:  binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix)+16:]),
+	}, nil
+}
+
+// DecodeRootLength parses the child count authenticated in a root metadata
+// marker. Plain lists encode only length; fixed measured lists encode length as
+// ChildCount inside their metadata marker.
+func DecodeRootLength(marker cid.Cid) (uint64, error) {
+	length, err := DecodeLengthMarker(marker)
+	if err == nil {
+		return length, nil
+	}
+	meta, metaErr := DecodeFixedMetadata(marker)
+	if metaErr == nil {
+		return meta.ChildCount, nil
+	}
+	return 0, err
 }
 
 // RequiredHeight returns the minimal non-root height required for length values.
