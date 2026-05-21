@@ -36,6 +36,10 @@ const (
 	// NodeWidth is the fixed slot width for all committed non-root nodes.
 	NodeWidth = DefaultFanout
 
+	// LegacyNodeWidth is the v1 non-root width. Legacy children do not reserve
+	// slot 0 for metadata; all slots are content slots.
+	LegacyNodeWidth = BranchingFactor
+
 	lengthMarkerPrefix = "malt:list:length:v1:"
 	fixedMetaPrefix    = "malt:list:fixed-meta:v1:"
 	nodeMetaPrefix     = "malt:list:node-meta:v2:"
@@ -82,14 +86,30 @@ func EmptyNodeSlots() []cid.Cid {
 	return make([]cid.Cid, NodeWidth)
 }
 
-// ContentSlots returns the data-bearing portion of a slot vector. Slot 0 is
-// metadata for every v2 list node. The isRoot parameter is retained for callers
-// that still pass the node role while the physical layout is now uniform.
-func ContentSlots(slots []cid.Cid, _ bool) []cid.Cid {
+// ContentSlots returns the data-bearing portion of a slot vector.
+func ContentSlots(slots []cid.Cid, isRoot bool) []cid.Cid {
 	if len(slots) == 0 {
 		return nil
 	}
+	if !isRoot && len(slots) == LegacyNodeWidth {
+		return slots
+	}
 	return slots[1:]
+}
+
+// ContentSlotIndex maps a logical child digit to its physical committed slot.
+func ContentSlotIndex(slots []cid.Cid, isRoot bool, digit int) (uint64, error) {
+	if digit < 0 {
+		return 0, fmt.Errorf("content digit %d is negative", digit)
+	}
+	content := ContentSlots(slots, isRoot)
+	if digit >= len(content) {
+		return 0, fmt.Errorf("content digit %d exceeds content width %d", digit, len(content))
+	}
+	if !isRoot && len(slots) == LegacyNodeWidth {
+		return uint64(digit), nil
+	}
+	return uint64(digit) + 1, nil
 }
 
 // NodeSlotPath returns the canonical ArcTable key for a materialized list node slot.
