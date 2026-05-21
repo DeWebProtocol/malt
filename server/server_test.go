@@ -1900,6 +1900,43 @@ func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {
 		t.Fatal("expected list-range prooflist verification to succeed")
 	}
 
+	forgedTarget, err := fakeCID([]byte("forged measured list range target"))
+	if err != nil {
+		t.Fatalf("forge target cid: %v", err)
+	}
+	forgedProof := proofResp
+	forgedProof.Steps = append([]prooflist.Step(nil), proofResp.Steps...)
+	foundRange := false
+	for i := range forgedProof.Steps {
+		if forgedProof.Steps[i].Kind == prooflist.KindListRange {
+			forgedProof.Steps[i].Target = forgedTarget
+			foundRange = true
+			break
+		}
+	}
+	if !foundRange {
+		t.Fatal("prooflist missing list-range step to forge")
+	}
+	verifyBody, err = json.Marshal(&httpapi.VerifyRequest{ProofList: forgedProof})
+	if err != nil {
+		t.Fatalf("marshal forged target verify request: %v", err)
+	}
+	verifyRespHTTP, err = http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify forged target list-range prooflist request: %v", err)
+	}
+	defer verifyRespHTTP.Body.Close()
+	if verifyRespHTTP.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
+			t.Fatalf("decode forged target verify response: %v", err)
+		}
+		if verifyResp.Valid {
+			t.Fatal("expected forged list-range target prooflist verification to fail")
+		}
+	} else if verifyRespHTTP.StatusCode != http.StatusBadRequest {
+		t.Fatalf("verify forged target prooflist status = %d, want %d or invalid response", verifyRespHTTP.StatusCode, http.StatusBadRequest)
+	}
+
 	openEndedProof := proofResp
 	openEndedProof.Steps = append([]prooflist.Step(nil), proofResp.Steps...)
 	for i := range openEndedProof.Steps {

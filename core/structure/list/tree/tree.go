@@ -683,7 +683,7 @@ func (s *TreeList) appendInto(ctx context.Context, namespace string, root cid.Ci
 	}
 
 	if height == 0 {
-		nextSlots := cloneSlots(slots)
+		nextSlots := cloneSlotsForMetadataMutation(slots)
 		content := layout.ContentSlots(nextSlots, false)
 		if index >= uint64(len(content)) {
 			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
@@ -707,7 +707,7 @@ func (s *TreeList) appendInto(ctx context.Context, namespace string, root cid.Ci
 	digit := int(index / childSpan)
 	localIndex := index % childSpan
 
-	nextSlots := cloneSlots(slots)
+	nextSlots := cloneSlotsForMetadataMutation(slots)
 	marker, err := plainNodeMetadata(height, index+1)
 	if err != nil {
 		return cid.Undef, err
@@ -1043,6 +1043,15 @@ func cloneBytes(data []byte) []byte {
 
 func cloneSlots(slots []cid.Cid) []cid.Cid {
 	return append([]cid.Cid(nil), slots...)
+}
+
+func cloneSlotsForMetadataMutation(slots []cid.Cid) []cid.Cid {
+	if len(slots) != layout.LegacyNodeWidth {
+		return cloneSlots(slots)
+	}
+	nextSlots := layout.EmptyNodeSlots()
+	copy(layout.ContentSlots(nextSlots, false), slots)
+	return nextSlots
 }
 
 var _ list.Semantics = (*TreeList)(nil)
