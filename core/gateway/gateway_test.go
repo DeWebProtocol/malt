@@ -3,6 +3,7 @@ package gateway_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
@@ -10,6 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/gateway"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
@@ -241,6 +243,79 @@ func TestExecutorCreatesListFromDeltaAndReturnsStableReceipt(t *testing.T) {
 	}
 }
 
+func TestExecutorRejectsListLengthProofWhenVerifyReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	exec := newExecutor(t)
+	first := testCID("first")
+	second := testCID("second")
+	inserted := testCID("inserted")
+	baseRoot, err := exec.Lists.Commit(ctx, exec.Namespace, list.NewViewFromSlice([]cid.Cid{first, second}))
+	if err != nil {
+		t.Fatalf("Commit base list failed: %v", err)
+	}
+	exec.Lists = &verifyFalseList{
+		Semantics: exec.Lists,
+		reject: func(index uint64, call int) bool {
+			return call == 1 && index == 0
+		},
+	}
+
+	_, err = exec.Apply(ctx, gateway.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []gateway.ArcSetDelta{{
+			Object: baseRoot,
+			Kind:   arcset.KindList,
+			Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{{
+				Index: uint64Ptr(0),
+				After: arcset.NewCASTarget(inserted),
+			}}),
+		}},
+	})
+	if err == nil {
+		t.Fatal("Apply succeeded with invalid list length proof")
+	}
+	if !strings.Contains(err.Error(), "list length proof failed") {
+		t.Fatalf("Apply error = %v, want list length proof failure", err)
+	}
+}
+
+func TestExecutorRejectsListPreconditionProofWhenVerifyReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	exec := newExecutor(t)
+	first := testCID("first")
+	oldSecond := testCID("old-second")
+	newSecond := testCID("new-second")
+	baseRoot, err := exec.Lists.Commit(ctx, exec.Namespace, list.NewViewFromSlice([]cid.Cid{first, oldSecond}))
+	if err != nil {
+		t.Fatalf("Commit base list failed: %v", err)
+	}
+	exec.Lists = &verifyFalseList{
+		Semantics: exec.Lists,
+		reject: func(index uint64, call int) bool {
+			return index == 1
+		},
+	}
+
+	_, err = exec.Apply(ctx, gateway.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []gateway.ArcSetDelta{{
+			Object: baseRoot,
+			Kind:   arcset.KindList,
+			Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{{
+				Index:  uint64Ptr(1),
+				Before: arcset.NewCASTarget(oldSecond),
+				After:  arcset.NewCASTarget(newSecond),
+			}}),
+		}},
+	})
+	if err == nil {
+		t.Fatal("Apply succeeded with invalid list precondition proof")
+	}
+	if !strings.Contains(err.Error(), "list proof failed at index 1") {
+		t.Fatalf("Apply error = %v, want list precondition proof failure", err)
+	}
+}
+
 func TestExecutorReplaysFixedMeasuredListToExpectedRoot(t *testing.T) {
 	ctx := context.Background()
 	scheme, err := kzg.NewScheme()
@@ -387,6 +462,20 @@ func newExecutor(t *testing.T) gateway.Executor {
 		Lists:     lists,
 		ArcTable:  arcs,
 	}
+}
+
+type verifyFalseList struct {
+	list.Semantics
+	reject func(index uint64, call int) bool
+	calls  int
+}
+
+func (l *verifyFalseList) Verify(root cid.Cid, index uint64, expected list.Query, proof structure.Proof) (bool, error) {
+	l.calls++
+	if l.reject != nil && l.reject(index, l.calls) {
+		return false, nil
+	}
+	return l.Semantics.Verify(root, index, expected, proof)
 }
 
 func mustCanonicalMap(t *testing.T, entries map[string]cid.Cid) *arcset.CanonicalArcSet {

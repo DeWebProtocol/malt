@@ -271,8 +271,11 @@ func (e Executor) commitListDelta(ctx context.Context, namespace string, delta A
 				return cid.Undef, err
 			}
 			ok, err := e.Lists.Verify(delta.Object, index, query, proof)
-			if err != nil || !ok {
+			if err != nil {
 				return cid.Undef, err
+			}
+			if !ok {
+				return cid.Undef, fmt.Errorf("list proof failed at index %d", index)
 			}
 			if !query.Key.Equals(change.Before.CID()) {
 				return cid.Undef, fmt.Errorf("old value mismatch at list index %d", index)
@@ -374,8 +377,11 @@ func (e Executor) listLength(ctx context.Context, namespace string, root cid.Cid
 		return 0, err
 	}
 	ok, err := e.Lists.Verify(root, 0, query, proof)
-	if err != nil || !ok {
+	if err != nil {
 		return 0, err
+	}
+	if !ok {
+		return 0, errors.New("list length proof failed")
 	}
 	return query.Length, nil
 }
