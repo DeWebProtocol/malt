@@ -2,6 +2,7 @@ package unixfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -134,7 +135,10 @@ func (l *Layout) appendRootMutationDeltas(ctx context.Context, plan *MutationPla
 	}
 	oldKind, err := l.nodeType(ctx, oldNodeRoot)
 	if err != nil {
-		return l.appendRootCreationDeltas(ctx, plan, nodeRoot)
+		if errors.Is(err, ErrNotFound) {
+			return l.appendRootCreationDeltas(ctx, plan, nodeRoot)
+		}
+		return err
 	}
 	if oldKind != kind {
 		return l.appendRootCreationDeltas(ctx, plan, nodeRoot)

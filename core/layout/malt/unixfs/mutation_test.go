@@ -3,11 +3,14 @@ package unixfs_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
+	"github.com/dewebprotocol/malt/core/structure"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
@@ -151,6 +154,66 @@ func TestRootMutationPlanIncludesDescendantsBeforeRoot(t *testing.T) {
 	}
 }
 
+func TestRootMutationPlanPropagatesOldRootNodeTypeError(t *testing.T) {
+	ctx := context.Background()
+	oldTypeErr := errors.New("old root type lookup failed")
+	failMap := &failingProveMap{err: oldTypeErr}
+	layout := newLayoutWithMapDecorator(t, 8, newSpyBatchCAS(), func(inner mapping.Semantics) mapping.Semantics {
+		failMap.Semantics = inner
+		return failMap
+	})
+
+	oldRoot, err := layout.AddFile(ctx, cid.Undef, "hello.txt", []byte("old"))
+	if err != nil {
+		t.Fatalf("AddFile old failed: %v", err)
+	}
+	newRoot, err := layout.AddFile(ctx, oldRoot, "hello.txt", []byte("new"))
+	if err != nil {
+		t.Fatalf("AddFile new failed: %v", err)
+	}
+	failMap.root = oldRoot
+
+	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
+	if err == nil {
+		t.Fatalf("MutationPlanForRoot succeeded with %d deltas, want old root type error", len(plan.Deltas))
+	}
+	if !errors.Is(err, oldTypeErr) {
+		t.Fatalf("MutationPlanForRoot error = %v, want %v", err, oldTypeErr)
+	}
+}
+
+func TestRootMutationPlanFallsBackWhenOldRootNodeTypeNotFound(t *testing.T) {
+	ctx := context.Background()
+	failMap := &failingProveMap{err: fmt.Errorf("old root missing: %w", unixfs.ErrNotFound)}
+	layout := newLayoutWithMapDecorator(t, 8, newSpyBatchCAS(), func(inner mapping.Semantics) mapping.Semantics {
+		failMap.Semantics = inner
+		return failMap
+	})
+
+	oldRoot, err := layout.AddFile(ctx, cid.Undef, "hello.txt", []byte("old"))
+	if err != nil {
+		t.Fatalf("AddFile old failed: %v", err)
+	}
+	newRoot, err := layout.AddFile(ctx, oldRoot, "hello.txt", []byte("new"))
+	if err != nil {
+		t.Fatalf("AddFile new failed: %v", err)
+	}
+	failMap.root = oldRoot
+
+	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
+	if err != nil {
+		t.Fatalf("MutationPlanForRoot failed: %v", err)
+	}
+	if len(plan.Deltas) == 0 {
+		t.Fatal("MutationPlanForRoot produced no creation deltas")
+	}
+	for i, delta := range plan.Deltas {
+		if delta.Object.Defined() {
+			t.Fatalf("delta %d object = %s, want undefined creation delta object", i, delta.Object)
+		}
+	}
+}
+
 func TestLargeFileAppendMutationPlanReusesOldMeasuredList(t *testing.T) {
 	ctx := context.Background()
 	layout := newLayout(t, 4)
@@ -209,6 +272,19 @@ func TestLargeFileAppendMutationPlanReusesOldMeasuredList(t *testing.T) {
 	if change.After == nil || change.After.Kind() != arcset.TargetKindCAS {
 		t.Fatalf("append change after = %v, want CAS target", change.After)
 	}
+}
+
+type failingProveMap struct {
+	mapping.Semantics
+	root cid.Cid
+	err  error
+}
+
+func (m *failingProveMap) Prove(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
+	if m.root.Defined() && root.Equals(m.root) {
+		return mapping.Binding{}, nil, m.err
+	}
+	return m.Semantics.Prove(ctx, namespace, root, key)
 }
 
 func hasAfterChange(delta *arcset.CanonicalArcDelta, coordinate string, targetKind arcset.TargetKind) bool {

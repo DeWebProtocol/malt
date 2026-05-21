@@ -14,6 +14,7 @@ import (
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
+	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	cid "github.com/ipfs/go-cid"
 )
@@ -24,6 +25,11 @@ func newLayout(t *testing.T, chunkSize int) *unixfs.Layout {
 }
 
 func newLayoutWithBlocks(t *testing.T, chunkSize int, blocks cas.Client) *unixfs.Layout {
+	t.Helper()
+	return newLayoutWithMapDecorator(t, chunkSize, blocks, nil)
+}
+
+func newLayoutWithMapDecorator(t *testing.T, chunkSize int, blocks cas.Client, decorate func(mapping.Semantics) mapping.Semantics) *unixfs.Layout {
 	t.Helper()
 
 	kv := kvmemory.New()
@@ -39,6 +45,10 @@ func newLayoutWithBlocks(t *testing.T, chunkSize int, blocks cas.Client) *unixfs
 	if err != nil {
 		t.Fatalf("radix.NewMap failed: %v", err)
 	}
+	var mapSemantics mapping.Semantics = maps
+	if decorate != nil {
+		mapSemantics = decorate(mapSemantics)
+	}
 	lists, err := tree.NewList(scheme, arcs)
 	if err != nil {
 		t.Fatalf("tree.NewList failed: %v", err)
@@ -47,7 +57,7 @@ func newLayoutWithBlocks(t *testing.T, chunkSize int, blocks cas.Client) *unixfs
 	layout, err := unixfs.New(unixfs.Options{
 		Namespace: "unixfs-" + strings.ReplaceAll(t.Name(), "/", "-"),
 		ChunkSize: chunkSize,
-		Map:       maps,
+		Map:       mapSemantics,
 		List:      lists,
 		Blocks:    blocks,
 	})
