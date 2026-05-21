@@ -211,7 +211,7 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	mut, err := semanticMutationFromRequest(baseRoot, req.Puts)
+	mut, err := semanticMutationFromRequest(baseRoot, req.Deltas)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -227,11 +227,11 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 		BaseRoot:        receipt.BaseRoot.String(),
 		NewRoot:         receipt.NewRoot.String(),
 		ResultRoot:      receipt.NewRoot.String(),
-		PutCount:        receipt.PutCount,
+		DeltaCount:      receipt.DeltaCount,
 		ArcCount:        receipt.ArcCount,
-		MALTObjectCount: receipt.PutCount,
-		MapCount:        countSemanticPuts(mut.Puts, arcset.KindMap),
-		ListCount:       countSemanticPuts(mut.Puts, arcset.KindList),
+		MALTObjectCount: receipt.DeltaCount,
+		MapCount:        countSemanticDeltas(mut.Deltas, arcset.KindMap),
+		ListCount:       countSemanticDeltas(mut.Deltas, arcset.KindList),
 	})
 }
 
@@ -835,24 +835,24 @@ func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.
 
 	mut := gateway.SemanticMutation{
 		BaseRoot: baseRoot,
-		Puts:     make([]gateway.ArcSetPut, 0, len(plan.Puts)),
+		Deltas:   make([]gateway.ArcSetDelta, 0, len(plan.Deltas)),
 	}
-	for _, put := range plan.Puts {
+	for _, delta := range plan.Deltas {
 		// UnixFS replay rematerializes deterministic roots; do not treat the
 		// already-materialized object as a versioned ArcTable parent.
-		gatewayPut := gateway.ArcSetPut{
-			Object:       cid.Undef,
-			ExpectedRoot: put.ExpectedRoot,
-			Kind:         put.Kind,
-			ArcSet:       put.ArcSet,
+		gatewayDelta := gateway.ArcSetDelta{
+			Object:       delta.Object,
+			ExpectedRoot: delta.ExpectedRoot,
+			Kind:         delta.Kind,
+			Changes:      delta.Changes,
 		}
-		if put.FixedList != nil {
-			gatewayPut.Commit.FixedList = &gateway.FixedListCommit{
-				TotalSize: put.FixedList.TotalSize,
-				ChunkSize: put.FixedList.ChunkSize,
+		if delta.FixedList != nil {
+			gatewayDelta.Commit.FixedList = &gateway.FixedListCommit{
+				TotalSize: delta.FixedList.TotalSize,
+				ChunkSize: delta.FixedList.ChunkSize,
 			}
 		}
-		mut.Puts = append(mut.Puts, gatewayPut)
+		mut.Deltas = append(mut.Deltas, gatewayDelta)
 	}
 	return mut
 }
@@ -1197,96 +1197,123 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 	return out, nil
 }
 
-func semanticMutationFromRequest(baseRoot cid.Cid, putRequests []httpapi.SemanticMutationPut) (gateway.SemanticMutation, error) {
-	puts := make([]gateway.ArcSetPut, 0, len(putRequests))
-	for i, putReq := range putRequests {
-		put, err := semanticPutFromRequest(putReq)
+func semanticMutationFromRequest(baseRoot cid.Cid, deltaRequests []httpapi.SemanticMutationDelta) (gateway.SemanticMutation, error) {
+	deltas := make([]gateway.ArcSetDelta, 0, len(deltaRequests))
+	for i, deltaReq := range deltaRequests {
+		delta, err := semanticDeltaFromRequest(deltaReq)
 		if err != nil {
-			return gateway.SemanticMutation{}, fmt.Errorf("put %d: %w", i, err)
+			return gateway.SemanticMutation{}, fmt.Errorf("delta %d: %w", i, err)
 		}
-		puts = append(puts, put)
+		deltas = append(deltas, delta)
 	}
 
 	return gateway.SemanticMutation{
 		BaseRoot: baseRoot,
-		Puts:     puts,
+		Deltas:   deltas,
 	}, nil
 }
 
-func semanticPutFromRequest(req httpapi.SemanticMutationPut) (gateway.ArcSetPut, error) {
+func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (gateway.ArcSetDelta, error) {
 	object := cid.Undef
 	if req.Object != "" {
 		parsed, err := decodeCID(req.Object)
 		if err != nil {
-			return gateway.ArcSetPut{}, fmt.Errorf("invalid object: %w", err)
+			return gateway.ArcSetDelta{}, fmt.Errorf("invalid object: %w", err)
 		}
 		object = parsed
 	}
+	expectedRoot := cid.Undef
+	if req.ExpectedRoot != "" {
+		parsed, err := decodeCID(req.ExpectedRoot)
+		if err != nil {
+			return gateway.ArcSetDelta{}, fmt.Errorf("invalid expected root: %w", err)
+		}
+		expectedRoot = parsed
+	}
 
 	kind := arcset.Kind(req.Kind)
-	entries := make([]arcset.ArcEntry, 0, len(req.Entries))
-	for i, entryReq := range req.Entries {
-		entry, err := semanticEntryFromRequest(kind, entryReq)
+	changes := make([]arcset.ArcChange, 0, len(req.Changes))
+	for i, changeReq := range req.Changes {
+		change, err := semanticChangeFromRequest(kind, changeReq)
 		if err != nil {
-			return gateway.ArcSetPut{}, fmt.Errorf("entry %d: %w", i, err)
+			return gateway.ArcSetDelta{}, fmt.Errorf("change %d: %w", i, err)
 		}
-		entries = append(entries, entry)
+		changes = append(changes, change)
 	}
 
-	set, err := arcset.NewCanonicalArcSet(kind, entries)
+	delta, err := arcset.NewCanonicalArcDelta(kind, changes)
 	if err != nil {
-		return gateway.ArcSetPut{}, err
+		return gateway.ArcSetDelta{}, err
 	}
-	return gateway.ArcSetPut{
-		Object: object,
-		Kind:   kind,
-		ArcSet: set,
-	}, nil
+	out := gateway.ArcSetDelta{
+		Object:       object,
+		ExpectedRoot: expectedRoot,
+		Kind:         kind,
+		Changes:      delta,
+	}
+	if req.Commit != nil && req.Commit.FixedList != nil {
+		out.Commit.FixedList = &gateway.FixedListCommit{
+			TotalSize: req.Commit.FixedList.TotalSize,
+			ChunkSize: req.Commit.FixedList.ChunkSize,
+		}
+	}
+	return out, nil
 }
 
-func semanticEntryFromRequest(kind arcset.Kind, req httpapi.SemanticMutationEntry) (arcset.ArcEntry, error) {
-	target, err := decodeCID(req.Target)
-	if err != nil {
-		return arcset.ArcEntry{}, fmt.Errorf("invalid target: %w", err)
-	}
-
-	targetRef, err := semanticTargetRef(req.TargetKind, target)
-	if err != nil {
-		return arcset.ArcEntry{}, err
-	}
-
+func semanticChangeFromRequest(kind arcset.Kind, req httpapi.SemanticMutationChange) (arcset.ArcChange, error) {
 	var coord arcset.CanonicalCoordinate
+	var err error
 	switch kind {
 	case arcset.KindMap:
 		if req.Path == "" {
-			return arcset.ArcEntry{}, fmt.Errorf("path is required for map entries")
+			return arcset.ArcChange{}, fmt.Errorf("path is required for map changes")
 		}
 		coord, err = arcset.NewMapCoordinate(req.Path)
 	case arcset.KindList:
 		if req.Index == nil {
-			return arcset.ArcEntry{}, fmt.Errorf("index is required for list entries")
+			return arcset.ArcChange{}, fmt.Errorf("index is required for list changes")
 		}
 		if *req.Index > uint64(1<<63-1) {
-			return arcset.ArcEntry{}, fmt.Errorf("index is too large")
+			return arcset.ArcChange{}, fmt.Errorf("index is too large")
 		}
 		coord, err = arcset.NewListCoordinate(int64(*req.Index))
 	default:
-		return arcset.ArcEntry{}, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, kind)
+		return arcset.ArcChange{}, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, kind)
 	}
 	if err != nil {
-		return arcset.ArcEntry{}, err
+		return arcset.ArcChange{}, err
 	}
 
-	return arcset.ArcEntry{
-		Coordinate: coord,
-		Target:     targetRef,
-	}, nil
+	change := arcset.ArcChange{Coordinate: coord}
+	if req.Before != nil {
+		before, err := semanticTargetFromRequest(*req.Before)
+		if err != nil {
+			return arcset.ArcChange{}, fmt.Errorf("before: %w", err)
+		}
+		change.Before = &before
+	}
+	if req.After != nil {
+		after, err := semanticTargetFromRequest(*req.After)
+		if err != nil {
+			return arcset.ArcChange{}, fmt.Errorf("after: %w", err)
+		}
+		change.After = &after
+	}
+	return change, nil
 }
 
-func countSemanticPuts(puts []gateway.ArcSetPut, kind arcset.Kind) int {
+func semanticTargetFromRequest(req httpapi.SemanticMutationTarget) (arcset.TargetRef, error) {
+	target, err := decodeCID(req.Target)
+	if err != nil {
+		return arcset.TargetRef{}, fmt.Errorf("invalid target: %w", err)
+	}
+	return semanticTargetRef(req.TargetKind, target)
+}
+
+func countSemanticDeltas(deltas []gateway.ArcSetDelta, kind arcset.Kind) int {
 	count := 0
-	for _, put := range puts {
-		if put.Kind == kind {
+	for _, delta := range deltas {
+		if delta.Kind == kind {
 			count++
 		}
 	}

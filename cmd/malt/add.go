@@ -1097,19 +1097,21 @@ func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemoncli
 	if err != nil {
 		return cid.Undef, err
 	}
-	entries := make([]httpapi.SemanticMutationEntry, len(chunks))
+	changes := make([]httpapi.SemanticMutationChange, len(chunks))
 	for i, chunk := range chunks {
 		index := uint64(i)
-		entries[i] = httpapi.SemanticMutationEntry{
-			Index:      &index,
-			Target:     chunk.String(),
-			TargetKind: "cas",
+		changes[i] = httpapi.SemanticMutationChange{
+			Index: &index,
+			After: &httpapi.SemanticMutationTarget{
+				Target:     chunk.String(),
+				TargetKind: "cas",
+			},
 		}
 	}
 	resp, err := daemon.ApplyRootSemanticMutation(ctx, tempRootResp.Root, &httpapi.SemanticMutationRequest{
-		Puts: []httpapi.SemanticMutationPut{{
+		Deltas: []httpapi.SemanticMutationDelta{{
 			Kind:    "list",
-			Entries: entries,
+			Changes: changes,
 		}},
 	})
 	if err != nil {

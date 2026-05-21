@@ -166,10 +166,26 @@ type ArcEntry struct {
 	Target     TargetRef
 }
 
+// ArcChange is one canonical coordinate transition in a semantic mutation.
+// A nil Before means the coordinate is expected to be absent. A nil After means
+// the coordinate is deleted.
+type ArcChange struct {
+	Coordinate CanonicalCoordinate
+	Before     *TargetRef
+	After      *TargetRef
+}
+
 // CanonicalArcSet is an immutable semantic representation of map or list entries.
 type CanonicalArcSet struct {
 	kind    Kind
 	entries []ArcEntry
+}
+
+// CanonicalArcDelta is an immutable semantic representation of coordinate
+// transitions for one map or list object.
+type CanonicalArcDelta struct {
+	kind    Kind
+	changes []ArcChange
 }
 
 // NewCanonicalArcSet creates a validated canonical arc set from entries.
@@ -270,12 +286,82 @@ func NewCanonicalListArcSetFromIndexed(arcs map[uint64]cid.Cid) (*CanonicalArcSe
 	return NewCanonicalArcSet(KindList, entries)
 }
 
+// NewCanonicalArcDelta creates a validated canonical delta from coordinate
+// transitions.
+func NewCanonicalArcDelta(kind Kind, changes []ArcChange) (*CanonicalArcDelta, error) {
+	if err := validateKind(kind); err != nil {
+		return nil, err
+	}
+	if len(changes) == 0 {
+		return nil, fmt.Errorf("canonical arc delta is empty")
+	}
+
+	normalized := make([]ArcChange, len(changes))
+	for i, change := range changes {
+		coord, err := validateCoordinate(kind, change.Coordinate)
+		if err != nil {
+			return nil, err
+		}
+		normalized[i] = ArcChange{Coordinate: coord}
+		if change.Before != nil {
+			before := *change.Before
+			if err := validateTarget(before); err != nil {
+				return nil, fmt.Errorf("before target: %w", err)
+			}
+			normalized[i].Before = &before
+		}
+		if change.After != nil {
+			after := *change.After
+			if err := validateTarget(after); err != nil {
+				return nil, fmt.Errorf("after target: %w", err)
+			}
+			normalized[i].After = &after
+		}
+		if normalized[i].Before == nil && normalized[i].After == nil {
+			return nil, fmt.Errorf("canonical arc delta change %s is empty", coord.String())
+		}
+		if normalized[i].Before != nil && normalized[i].After != nil && targetRefEqual(*normalized[i].Before, *normalized[i].After) {
+			return nil, fmt.Errorf("canonical arc delta change %s is a no-op", coord.String())
+		}
+	}
+
+	normalized = sortChanges(normalized)
+	if err := rejectDuplicateChanges(normalized); err != nil {
+		return nil, err
+	}
+	return &CanonicalArcDelta{kind: kind, changes: cloneChanges(normalized)}, nil
+}
+
 // Kind returns the semantic kind for this canonical arc set.
 func (s *CanonicalArcSet) Kind() Kind {
 	if s == nil {
 		return ""
 	}
 	return s.kind
+}
+
+// Kind returns the semantic kind for this canonical delta.
+func (d *CanonicalArcDelta) Kind() Kind {
+	if d == nil {
+		return ""
+	}
+	return d.kind
+}
+
+// Changes returns cloned canonical changes in deterministic coordinate order.
+func (d *CanonicalArcDelta) Changes() []ArcChange {
+	if d == nil {
+		return nil
+	}
+	return cloneChanges(d.changes)
+}
+
+// Len returns the number of canonical changes.
+func (d *CanonicalArcDelta) Len() int {
+	if d == nil {
+		return 0
+	}
+	return len(d.changes)
 }
 
 // Entries returns cloned canonical entries in deterministic coordinate order.
@@ -440,6 +526,28 @@ func sortAndCollapseEntries(entries []ArcEntry) []ArcEntry {
 	return out
 }
 
+func sortChanges(changes []ArcChange) []ArcChange {
+	out := cloneChanges(changes)
+	less := func(i, j int) bool {
+		return bytes.Compare(out[i].Coordinate.bytes, out[j].Coordinate.bytes) < 0
+	}
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && less(j, j-1); j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
+}
+
+func rejectDuplicateChanges(changes []ArcChange) error {
+	for i := 1; i < len(changes); i++ {
+		if bytes.Equal(changes[i-1].Coordinate.bytes, changes[i].Coordinate.bytes) {
+			return fmt.Errorf("%w: %s", ErrDuplicateCoordinate, changes[i].Coordinate.String())
+		}
+	}
+	return nil
+}
+
 func rejectConflictingDuplicates(entries []ArcEntry) error {
 	for i := 1; i < len(entries); i++ {
 		if bytes.Equal(entries[i-1].Coordinate.bytes, entries[i].Coordinate.bytes) &&
@@ -493,6 +601,30 @@ func cloneEntry(entry ArcEntry) ArcEntry {
 		Coordinate: entry.Coordinate.clone(),
 		Target:     entry.Target,
 	}
+}
+
+func cloneChanges(changes []ArcChange) []ArcChange {
+	if changes == nil {
+		return nil
+	}
+	out := make([]ArcChange, len(changes))
+	for i, change := range changes {
+		out[i] = cloneChange(change)
+	}
+	return out
+}
+
+func cloneChange(change ArcChange) ArcChange {
+	out := ArcChange{Coordinate: change.Coordinate.clone()}
+	if change.Before != nil {
+		before := *change.Before
+		out.Before = &before
+	}
+	if change.After != nil {
+		after := *change.After
+		out.After = &after
+	}
+	return out
 }
 
 func targetRefEqual(a, b TargetRef) bool {

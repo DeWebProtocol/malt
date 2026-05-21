@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
@@ -27,18 +28,18 @@ func TestSmallFileMutationPlanIncludesMapPayload(t *testing.T) {
 	if !plan.BaseRoot.Equals(root) {
 		t.Fatalf("plan BaseRoot = %s, want %s", plan.BaseRoot, root)
 	}
-	if len(plan.Puts) != 1 {
-		t.Fatalf("put count = %d, want 1", len(plan.Puts))
+	if len(plan.Deltas) != 1 {
+		t.Fatalf("delta count = %d, want 1", len(plan.Deltas))
 	}
-	put := plan.Puts[0]
-	if put.Kind != arcset.KindMap {
-		t.Fatalf("put kind = %q, want map", put.Kind)
+	delta := plan.Deltas[0]
+	if delta.Kind != arcset.KindMap {
+		t.Fatalf("delta kind = %q, want map", delta.Kind)
 	}
-	if put.ArcSet.Kind() != arcset.KindMap {
-		t.Fatalf("arcset kind = %q, want map", put.ArcSet.Kind())
+	if delta.Changes.Kind() != arcset.KindMap {
+		t.Fatalf("delta changes kind = %q, want map", delta.Changes.Kind())
 	}
-	if !hasEntry(put.ArcSet, "@payload", arcset.TargetKindCAS) {
-		t.Fatal("file map arcset missing CAS @payload binding")
+	if !hasAfterChange(delta.Changes, "@payload", arcset.TargetKindCAS) {
+		t.Fatal("file map delta missing CAS @payload binding")
 	}
 }
 
@@ -55,36 +56,36 @@ func TestLargeFileMutationPlanIncludesFileMapAndOrderedList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MutationPlanForPath failed: %v", err)
 	}
-	if len(plan.Puts) != 2 {
-		t.Fatalf("put count = %d, want 2", len(plan.Puts))
+	if len(plan.Deltas) != 2 {
+		t.Fatalf("delta count = %d, want 2", len(plan.Deltas))
 	}
-	if plan.Puts[0].Kind != arcset.KindMap {
-		t.Fatalf("put 0 kind = %q, want map", plan.Puts[0].Kind)
+	if plan.Deltas[0].Kind != arcset.KindMap {
+		t.Fatalf("delta 0 kind = %q, want map", plan.Deltas[0].Kind)
 	}
-	if !hasEntry(plan.Puts[0].ArcSet, "@payload", arcset.TargetKindList) {
-		t.Fatal("file map arcset missing list @payload binding")
+	if !hasAfterChange(plan.Deltas[0].Changes, "@payload", arcset.TargetKindList) {
+		t.Fatal("file map delta missing list @payload binding")
 	}
-	if plan.Puts[1].Kind != arcset.KindList {
-		t.Fatalf("put 1 kind = %q, want list", plan.Puts[1].Kind)
+	if plan.Deltas[1].Kind != arcset.KindList {
+		t.Fatalf("delta 1 kind = %q, want list", plan.Deltas[1].Kind)
 	}
-	if !plan.Puts[1].ExpectedRoot.Equals(plan.Puts[1].Object) {
-		t.Fatalf("list put expected root = %s, want object %s", plan.Puts[1].ExpectedRoot, plan.Puts[1].Object)
+	if !plan.Deltas[1].ExpectedRoot.Defined() {
+		t.Fatal("list delta expected root is undefined")
 	}
-	if plan.Puts[1].FixedList == nil {
-		t.Fatal("large file list put missing fixed-list commit metadata")
+	if plan.Deltas[1].FixedList == nil {
+		t.Fatal("large file list delta missing fixed-list commit metadata")
 	}
-	if plan.Puts[1].FixedList.TotalSize != 12 || plan.Puts[1].FixedList.ChunkSize != 4 {
-		t.Fatalf("fixed list metadata = %+v, want total=12 chunk=4", plan.Puts[1].FixedList)
+	if plan.Deltas[1].FixedList.TotalSize != 12 || plan.Deltas[1].FixedList.ChunkSize != 4 {
+		t.Fatalf("fixed list metadata = %+v, want total=12 chunk=4", plan.Deltas[1].FixedList)
 	}
 
-	got := entryCoordinates(plan.Puts[1].ArcSet)
+	got := changeCoordinates(plan.Deltas[1].Changes)
 	want := []string{"0", "1", "2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("list coordinates = %#v, want %#v", got, want)
 	}
-	for _, entry := range plan.Puts[1].ArcSet.Entries() {
-		if entry.Target.Kind() != arcset.TargetKindCAS {
-			t.Fatalf("list entry %s target kind = %q, want cas", entry.Coordinate.String(), entry.Target.Kind())
+	for _, change := range plan.Deltas[1].Changes.Changes() {
+		if change.After == nil || change.After.Kind() != arcset.TargetKindCAS {
+			t.Fatalf("list change %s after target kind = %v, want cas", change.Coordinate.String(), change.After)
 		}
 	}
 }
@@ -110,10 +111,10 @@ func TestDirectoryMutationPlanSortsEntriesAndRejectsReservedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MutationPlanForPath(dir) failed: %v", err)
 	}
-	if len(plan.Puts) != 1 {
-		t.Fatalf("put count = %d, want 1", len(plan.Puts))
+	if len(plan.Deltas) != 1 {
+		t.Fatalf("delta count = %d, want 1", len(plan.Deltas))
 	}
-	got := entryCoordinates(plan.Puts[0].ArcSet)
+	got := changeCoordinates(plan.Deltas[0].Changes)
 	want := []string{"@payload", "@type", "a.txt", "b.txt"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("directory map coordinates = %#v, want %#v", got, want)
@@ -136,34 +137,94 @@ func TestRootMutationPlanIncludesDescendantsBeforeRoot(t *testing.T) {
 	if !plan.BaseRoot.Equals(cid.Undef) {
 		t.Fatalf("plan BaseRoot = %s, want undefined", plan.BaseRoot)
 	}
-	if len(plan.Puts) != 4 {
-		t.Fatalf("put count = %d, want 4", len(plan.Puts))
+	if len(plan.Deltas) != 4 {
+		t.Fatalf("delta count = %d, want 4", len(plan.Deltas))
 	}
-	if plan.Puts[0].Kind != arcset.KindList {
-		t.Fatalf("put 0 kind = %q, want list payload first", plan.Puts[0].Kind)
+	if plan.Deltas[0].Kind != arcset.KindList {
+		t.Fatalf("delta 0 kind = %q, want list payload first", plan.Deltas[0].Kind)
 	}
-	if plan.Puts[len(plan.Puts)-1].Kind != arcset.KindMap {
-		t.Fatalf("last put kind = %q, want root map", plan.Puts[len(plan.Puts)-1].Kind)
+	if plan.Deltas[len(plan.Deltas)-1].Kind != arcset.KindMap {
+		t.Fatalf("last delta kind = %q, want root map", plan.Deltas[len(plan.Deltas)-1].Kind)
 	}
-	if !plan.Puts[len(plan.Puts)-1].Object.Equals(root) {
-		t.Fatalf("last put object = %s, want root %s", plan.Puts[len(plan.Puts)-1].Object, root)
+	if !plan.Deltas[len(plan.Deltas)-1].ExpectedRoot.Equals(root) {
+		t.Fatalf("last delta expected root = %s, want root %s", plan.Deltas[len(plan.Deltas)-1].ExpectedRoot, root)
 	}
 }
 
-func hasEntry(set *arcset.CanonicalArcSet, coordinate string, targetKind arcset.TargetKind) bool {
-	for _, entry := range set.Entries() {
-		if entry.Coordinate.String() == coordinate && entry.Target.Kind() == targetKind {
+func TestLargeFileAppendMutationPlanReusesOldMeasuredList(t *testing.T) {
+	ctx := context.Background()
+	layout := newLayout(t, 4)
+	oldData := strings.Repeat("a", 255*4)
+	newData := oldData + "bbbb"
+
+	oldRoot, err := layout.AddFile(ctx, cid.Undef, "blob.bin", []byte(oldData))
+	if err != nil {
+		t.Fatalf("AddFile old failed: %v", err)
+	}
+	oldResolution, err := layout.Resolve(ctx, oldRoot, "blob.bin")
+	if err != nil {
+		t.Fatalf("Resolve old failed: %v", err)
+	}
+	newRoot, err := layout.AddFile(ctx, oldRoot, "blob.bin", []byte(newData))
+	if err != nil {
+		t.Fatalf("AddFile new failed: %v", err)
+	}
+	newResolution, err := layout.Resolve(ctx, newRoot, "blob.bin")
+	if err != nil {
+		t.Fatalf("Resolve new failed: %v", err)
+	}
+
+	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
+	if err != nil {
+		t.Fatalf("MutationPlanForRoot failed: %v", err)
+	}
+	var listDelta *unixfs.MutationDelta
+	for i := range plan.Deltas {
+		if plan.Deltas[i].Kind == arcset.KindList {
+			listDelta = &plan.Deltas[i]
+			break
+		}
+	}
+	if listDelta == nil {
+		t.Fatal("plan missing list delta")
+	}
+	if !listDelta.Object.Equals(oldResolution.Payload) {
+		t.Fatalf("list delta object = %s, want old payload %s", listDelta.Object, oldResolution.Payload)
+	}
+	if !listDelta.ExpectedRoot.Equals(newResolution.Payload) {
+		t.Fatalf("list delta expected root = %s, want new payload %s", listDelta.ExpectedRoot, newResolution.Payload)
+	}
+	if listDelta.FixedList == nil || listDelta.FixedList.TotalSize != uint64(len(newData)) || listDelta.FixedList.ChunkSize != 4 {
+		t.Fatalf("fixed list metadata = %+v, want total=%d chunk=4", listDelta.FixedList, len(newData))
+	}
+	got := changeCoordinates(listDelta.Changes)
+	want := []string{"255"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("list delta coordinates = %#v, want %#v", got, want)
+	}
+	change := listDelta.Changes.Changes()[0]
+	if change.Before != nil {
+		t.Fatalf("append change before = %v, want nil", change.Before)
+	}
+	if change.After == nil || change.After.Kind() != arcset.TargetKindCAS {
+		t.Fatalf("append change after = %v, want CAS target", change.After)
+	}
+}
+
+func hasAfterChange(delta *arcset.CanonicalArcDelta, coordinate string, targetKind arcset.TargetKind) bool {
+	for _, change := range delta.Changes() {
+		if change.Coordinate.String() == coordinate && change.After != nil && change.After.Kind() == targetKind {
 			return true
 		}
 	}
 	return false
 }
 
-func entryCoordinates(set *arcset.CanonicalArcSet) []string {
-	entries := set.Entries()
-	out := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		out = append(out, entry.Coordinate.String())
+func changeCoordinates(delta *arcset.CanonicalArcDelta) []string {
+	changes := delta.Changes()
+	out := make([]string, 0, len(changes))
+	for _, change := range changes {
+		out = append(out, change.Coordinate.String())
 	}
 	return out
 }

@@ -420,6 +420,103 @@ func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, k
 	return newRoot, newIndex, err
 }
 
+// AppendFixed extends a fixed-width measured list by one chunk and returns the
+// updated measured root. The existing measured list must end on a chunk
+// boundary; extending a partial final chunk requires replacing that chunk first.
+func (s *TreeList) AppendFixed(ctx context.Context, namespace string, root cid.Cid, key cid.Cid, totalSize uint64) (cid.Cid, uint64, error) {
+	if !key.Defined() {
+		return cid.Undef, 0, fmt.Errorf("key is undefined")
+	}
+	rootSlots, length, err := s.loadRoot(ctx, namespace, root)
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+	meta, err := fixedRangeMetadata(rootSlots[0])
+	if err != nil {
+		return cid.Undef, 0, fmt.Errorf("root is not a fixed measured list")
+	}
+	if err := validateFixedMetadata(meta); err != nil {
+		return cid.Undef, 0, err
+	}
+	if meta.ChildCount != length {
+		return cid.Undef, 0, fmt.Errorf("measured child count %d does not match list length %d", meta.ChildCount, length)
+	}
+	if meta.TotalSize != meta.ChildCount*meta.ChunkSize {
+		return cid.Undef, 0, fmt.Errorf("fixed measured append requires chunk-aligned current total size")
+	}
+	newLength := chunkCount(totalSize, meta.ChunkSize)
+	if newLength != length+1 {
+		return cid.Undef, 0, fmt.Errorf("fixed measured append child count = %d, want %d", newLength, length+1)
+	}
+
+	newIndex := length
+	oldHeight := layout.RequiredHeight(length)
+	newHeight := layout.RequiredHeight(newLength)
+
+	if newHeight > oldHeight {
+		nextRootSlots := layout.EmptyRootSlots()
+		rootMarker, err := measuredNodeMetadata(newHeight, newLength, 0, meta.ChunkSize, totalSize)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+		nextRootSlots[0] = rootMarker
+		content := layout.ContentSlots(nextRootSlots, true)
+		content[0] = root
+
+		childSpan, err := layout.SubtreeCapacity(newHeight - 1)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+		rootDigit := int(newIndex / childSpan)
+		localIndex := newIndex % childSpan
+		childStart := uint64(rootDigit) * childSpan
+		childRoot, err := s.buildMeasuredSparseSubtree(ctx, namespace, newHeight-1, localIndex, childStart, key, meta.ChunkSize, totalSize)
+		if err != nil {
+			return cid.Undef, 0, err
+		}
+		content[rootDigit] = childRoot
+
+		newRoot, err := s.commitSlots(ctx, namespace, nextRootSlots)
+		return newRoot, newIndex, err
+	}
+
+	nextRootSlots := cloneSlots(rootSlots)
+	rootMarker, err := measuredNodeMetadata(newHeight, newLength, 0, meta.ChunkSize, totalSize)
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+	nextRootSlots[0] = rootMarker
+	content := layout.ContentSlots(nextRootSlots, true)
+
+	if oldHeight == 0 {
+		if content[newIndex].Defined() {
+			return cid.Undef, 0, fmt.Errorf("append slot %d is already occupied", newIndex)
+		}
+		content[newIndex] = key
+		newRoot, err := s.commitSlots(ctx, namespace, nextRootSlots)
+		return newRoot, newIndex, err
+	}
+
+	childSpan, err := layout.SubtreeCapacity(oldHeight - 1)
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+	digit := int(newIndex / childSpan)
+	localIndex := newIndex % childSpan
+	childStart := uint64(digit) * childSpan
+	if content[digit].Defined() {
+		content[digit], err = s.appendFixedInto(ctx, namespace, content[digit], oldHeight-1, localIndex, childStart, key, meta.ChunkSize, totalSize)
+	} else {
+		content[digit], err = s.buildMeasuredSparseSubtree(ctx, namespace, oldHeight-1, localIndex, childStart, key, meta.ChunkSize, totalSize)
+	}
+	if err != nil {
+		return cid.Undef, 0, err
+	}
+
+	newRoot, err := s.commitSlots(ctx, namespace, nextRootSlots)
+	return newRoot, newIndex, err
+}
+
 func (s *TreeList) Truncate(ctx context.Context, namespace string, root cid.Cid, newLen uint64) (cid.Cid, error) {
 	rootSlots, oldLen, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
@@ -755,6 +852,80 @@ func (s *TreeList) buildSparseSubtree(ctx context.Context, namespace string, hei
 	return s.commitSlots(ctx, namespace, slots)
 }
 
+func (s *TreeList) appendFixedInto(ctx context.Context, namespace string, root cid.Cid, height int, index, startIndex uint64, key cid.Cid, chunkSize, totalSize uint64) (cid.Cid, error) {
+	slots, err := s.loadNode(ctx, namespace, root, false)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	nextSlots := cloneSlots(slots)
+	marker, err := measuredNodeMetadata(height, index+1, startIndex, chunkSize, totalSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	nextSlots[0] = marker
+	content := layout.ContentSlots(nextSlots, false)
+
+	if height == 0 {
+		if index >= uint64(len(content)) {
+			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
+		}
+		if content[index].Defined() {
+			return cid.Undef, fmt.Errorf("append slot %d is already occupied", index)
+		}
+		content[index] = key
+		return s.commitSlots(ctx, namespace, nextSlots)
+	}
+
+	childSpan, err := layout.SubtreeCapacity(height - 1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	digit := int(index / childSpan)
+	localIndex := index % childSpan
+	childStart := startIndex + uint64(digit)*childSpan
+	if content[digit].Defined() {
+		content[digit], err = s.appendFixedInto(ctx, namespace, content[digit], height-1, localIndex, childStart, key, chunkSize, totalSize)
+	} else {
+		content[digit], err = s.buildMeasuredSparseSubtree(ctx, namespace, height-1, localIndex, childStart, key, chunkSize, totalSize)
+	}
+	if err != nil {
+		return cid.Undef, err
+	}
+	return s.commitSlots(ctx, namespace, nextSlots)
+}
+
+func (s *TreeList) buildMeasuredSparseSubtree(ctx context.Context, namespace string, height int, index, startIndex uint64, key cid.Cid, chunkSize, totalSize uint64) (cid.Cid, error) {
+	slots := layout.EmptyNodeSlots()
+	marker, err := measuredNodeMetadata(height, index+1, startIndex, chunkSize, totalSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	slots[0] = marker
+	content := layout.ContentSlots(slots, false)
+
+	if height == 0 {
+		if index >= uint64(len(content)) {
+			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
+		}
+		content[index] = key
+		return s.commitSlots(ctx, namespace, slots)
+	}
+
+	childSpan, err := layout.SubtreeCapacity(height - 1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	digit := int(index / childSpan)
+	localIndex := index % childSpan
+	childStart := startIndex + uint64(digit)*childSpan
+	content[digit], err = s.buildMeasuredSparseSubtree(ctx, namespace, height-1, localIndex, childStart, key, chunkSize, totalSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return s.commitSlots(ctx, namespace, slots)
+}
+
 func (s *TreeList) commitEmptyRoot(ctx context.Context, namespace string) (cid.Cid, error) {
 	slots := layout.EmptyRootSlots()
 	lengthMarker, err := plainNodeMetadata(0, 0)
@@ -944,6 +1115,22 @@ func plainNodeMetadata(height int, childCount uint64) (cid.Cid, error) {
 	return layout.EncodeNodeMetadata(layout.NodeMetadata{
 		Height:     uint64(height),
 		ChildCount: childCount,
+	})
+}
+
+func measuredNodeMetadata(height int, childCount, startIndex, chunkSize, totalSize uint64) (cid.Cid, error) {
+	if height < 0 {
+		return cid.Undef, fmt.Errorf("height must be non-negative")
+	}
+	nodeSize, err := measuredNodeSize(startIndex, childCount, chunkSize, totalSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return layout.EncodeNodeMetadata(layout.NodeMetadata{
+		Height:     uint64(height),
+		ChildCount: childCount,
+		TotalSize:  nodeSize,
+		ChunkSize:  chunkSize,
 	})
 }
 
