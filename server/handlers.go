@@ -464,6 +464,9 @@ func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.S
 			}
 			return g.ListSemantic().Verify(step.From, *step.Index, list.Query{Key: step.Target, Length: *step.Length}, structure.Proof(step.Proof))
 		case "measured_list":
+			if !step.Target.Equals(step.From) {
+				return false, nil
+			}
 			if step.Start == nil {
 				return false, fmt.Errorf("prooflist step %d list range start is missing", index)
 			}

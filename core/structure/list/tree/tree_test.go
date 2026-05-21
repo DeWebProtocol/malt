@@ -239,6 +239,50 @@ func TestTreeListProvesLegacyMultiLevelRootsAfterRestart(t *testing.T) {
 	}
 }
 
+func TestTreeListAppendIntoLegacyChildPreservesSlotZero(t *testing.T) {
+	ctx := context.Background()
+	values := makeValues(300)
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-legacy-append-" + name
+			scheme := factory(t)
+			_, e, err := newListWithArcTable(scheme, kv)
+			if err != nil {
+				t.Fatalf("newListWithArcTable failed: %v", err)
+			}
+			root := commitLegacyPlainListRoot(t, ctx, scheme, e, namespace, values)
+
+			restarted, err := tree.NewList(scheme, e)
+			if err != nil {
+				t.Fatalf("NewList after restart failed: %v", err)
+			}
+			appended := newPayloadCID([]byte("appended to legacy child"))
+			appendedRoot, appendedIndex, err := restarted.Append(ctx, namespace, root, appended)
+			if err != nil {
+				t.Fatalf("Append into legacy child failed: %v", err)
+			}
+			if appendedIndex != uint64(len(values)) {
+				t.Fatalf("append index = %d, want %d", appendedIndex, len(values))
+			}
+
+			assertVerifiedQuery(t, restarted, namespace, appendedRoot, 0, list.Query{
+				Key:    values[0],
+				Length: uint64(len(values) + 1),
+			})
+			assertVerifiedQuery(t, restarted, namespace, appendedRoot, uint64(layout.BranchingFactor), list.Query{
+				Key:    values[layout.BranchingFactor],
+				Length: uint64(len(values) + 1),
+			})
+			assertVerifiedQuery(t, restarted, namespace, appendedRoot, appendedIndex, list.Query{
+				Key:    appended,
+				Length: uint64(len(values) + 1),
+			})
+		})
+	}
+}
+
 func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
 	ctx := context.Background()
 	values := makeValues(300)
