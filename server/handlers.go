@@ -802,6 +802,16 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *
 }
 
 func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
+	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
+		if codec.SemanticKindOf(newRoot) != codec.SemanticKindMap {
+			return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
+		}
+		return gateway.WriteReceipt{
+			BaseRoot: oldRoot,
+			NewRoot:  newRoot,
+		}, nil
+	}
+
 	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
 	if err != nil {
 		return gateway.WriteReceipt{}, err

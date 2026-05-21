@@ -1374,6 +1374,63 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	}
 }
 
+func TestServerUnixFSIdempotentFileWriteReturnsSameRoot(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	body := []byte("stable contents")
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("initial unixfs write failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("initial unixfs write status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var firstWrite httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&firstWrite); err != nil {
+		t.Fatalf("decode initial write response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/"+firstWrite.NewRoot+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("idempotent unixfs write failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		errorBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("idempotent unixfs write status = %d, want %d: %s", resp.StatusCode, http.StatusCreated, string(errorBody))
+	}
+	var secondWrite httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&secondWrite); err != nil {
+		t.Fatalf("decode idempotent write response: %v", err)
+	}
+	if secondWrite.NewRoot != firstWrite.NewRoot {
+		t.Fatalf("idempotent write root = %q, want same root %q", secondWrite.NewRoot, firstWrite.NewRoot)
+	}
+	if secondWrite.ArcCount != 0 {
+		t.Fatalf("idempotent write arc_count = %d, want 0", secondWrite.ArcCount)
+	}
+}
+
 func TestServerResolveHeadAndReadShareUnixFSDirectoryTarget(t *testing.T) {
 	node := newTestNode(t)
 
