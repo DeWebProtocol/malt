@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
+	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	cid "github.com/ipfs/go-cid"
@@ -118,6 +119,64 @@ func TestAppendListIndexStepsClassifiesKnownListQueries(t *testing.T) {
 	}
 	if !bytes.Equal(pl.Steps[1].Proof, []byte("index 1 proof")) {
 		t.Fatalf("list index proof bytes were not preserved")
+	}
+}
+
+func TestAppendListRangeStepClassifiesMeasuredListQuery(t *testing.T) {
+	listRoot := testCID(t, "list")
+	chunk0 := testCID(t, "chunk-0")
+	chunk1 := testCID(t, "chunk-1")
+	start := uint64(2)
+	end := uint64(6)
+
+	pl, err := unixfs.ProofListFromSteps(listRoot, "blob.bin", nil)
+	if err != nil {
+		t.Fatalf("ProofListFromSteps failed: %v", err)
+	}
+	err = unixfs.AppendListRangeStep(pl, "blob.bin", listRoot, start, end, list.RangeResult{
+		Metadata: list.RangeMetadata{
+			ChildCount: 2,
+			TotalSize:  8,
+			ChunkSize:  4,
+		},
+		Segments: []cid.Cid{chunk0, chunk1},
+	}, []byte("range proof"))
+	if err != nil {
+		t.Fatalf("AppendListRangeStep failed: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("ValidateShape failed: %v", err)
+	}
+	if len(pl.Steps) != 1 {
+		t.Fatalf("steps len = %d, want 1", len(pl.Steps))
+	}
+	step := pl.Steps[0]
+	if step.Kind != prooflist.KindListRange {
+		t.Fatalf("step kind = %q, want %q", step.Kind, prooflist.KindListRange)
+	}
+	if step.Start == nil || *step.Start != start {
+		t.Fatalf("step start = %v, want %d", step.Start, start)
+	}
+	if step.End == nil || *step.End != end {
+		t.Fatalf("step end = %v, want %d", step.End, end)
+	}
+	if step.ChildCount == nil || *step.ChildCount != 2 {
+		t.Fatalf("step child count = %v, want 2", step.ChildCount)
+	}
+	if step.TotalSize == nil || *step.TotalSize != 8 {
+		t.Fatalf("step total size = %v, want 8", step.TotalSize)
+	}
+	if step.ChunkSize == nil || *step.ChunkSize != 4 {
+		t.Fatalf("step chunk size = %v, want 4", step.ChunkSize)
+	}
+	if len(step.Segments) != 2 || !step.Segments[0].Equals(chunk0) || !step.Segments[1].Equals(chunk1) {
+		t.Fatalf("step segments = %v, want [%s %s]", step.Segments, chunk0, chunk1)
+	}
+	if step.EvidenceKind != "structure" || step.EvidenceBackend != "measured_list" {
+		t.Fatalf("step evidence labels = %q/%q, want structure/measured_list", step.EvidenceKind, step.EvidenceBackend)
+	}
+	if !bytes.Equal(step.Proof, []byte("range proof")) {
+		t.Fatalf("list range proof bytes were not preserved")
 	}
 }
 

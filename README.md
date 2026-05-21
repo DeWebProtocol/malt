@@ -30,9 +30,9 @@ freshness, and multi-writer arbitration are application or deployment policy,
 not the gateway correctness interface. In the HTTP deployment, successful
 default blob and directory `GET /{root}/{path}` reads carry `ProofList`
 metadata in response headers; large-file range reads return selected bytes plus
-path/`@payload` proof and the corresponding composed list-index `ProofList`
-evidence. Explicit `@size`/`@chunksize` metadata proof and response-body range
-binding are still ProofList-schema TODOs.
+path/`@payload` proof and a measured-list range `ProofList` step that composes
+fixed chunk metadata proof with the required index proofs. Response-body range
+binding is still a ProofList-schema TODO.
 
 Current core semantics are:
 
@@ -128,9 +128,10 @@ Vary: X-Malt-Proof
 
 The proof header is generated for file bytes, directory JSON responses, and
 byte-range reads. For list-backed file ranges, the current `ProofList` includes
-path/`@payload` proof plus the touched list-index steps; explicit file metadata
-proof is still being formalized. Clients that only need content bytes can opt
-out of default proof generation with either
+path/`@payload` proof plus a measured-list range step carrying authenticated
+fixed chunk metadata, the covered segment CID list, and the composed index
+proofs. Clients that only need content bytes can opt out of default proof
+generation with either
 `?proof=false` or request header
 `X-Malt-Proof: omit`; the `Vary` response header advertises the header-based
 variance to shared HTTP caches.
@@ -230,8 +231,8 @@ Native operations:
 
 - read an index and return keys plus proof
 - verify an index query under a root
-- represent file range reads today as path/`@payload` proof plus composed index
-  proofs; explicit metadata proof is a schema TODO
+- optionally prove a byte range for measured fixed-width lists by returning
+  authenticated metadata plus the minimum covered segment CID list
 - append a key
 - replace an existing key
 - truncate the sequence

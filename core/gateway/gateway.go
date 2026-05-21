@@ -30,6 +30,10 @@ var (
 
 	// ErrNilArcSet is returned when a put has no canonical arcset.
 	ErrNilArcSet = errors.New("nil arcset")
+
+	// ErrExpectedRootMismatch is returned when a replayed put does not reproduce
+	// the root declared by the mutation plan.
+	ErrExpectedRootMismatch = errors.New("expected root mismatch")
 )
 
 // SemanticMutation is the gateway write boundary emitted by application layouts.
@@ -40,9 +44,23 @@ type SemanticMutation struct {
 
 // ArcSetPut replaces one touched semantic object's full canonical arcset.
 type ArcSetPut struct {
-	Object cid.Cid
-	Kind   arcset.Kind
-	ArcSet *arcset.CanonicalArcSet
+	Object       cid.Cid
+	ExpectedRoot cid.Cid
+	Kind         arcset.Kind
+	ArcSet       *arcset.CanonicalArcSet
+	Commit       CommitDescriptor
+}
+
+// CommitDescriptor records how a logical canonical arcset should be committed
+// into a concrete semantic root. The zero value is the default map/list commit.
+type CommitDescriptor struct {
+	FixedList *FixedListCommit
+}
+
+// FixedListCommit describes the measured fixed-width list commit profile.
+type FixedListCommit struct {
+	TotalSize uint64
+	ChunkSize uint64
 }
 
 // WriteReceipt records the library-level outcome of applying a semantic mutation.
@@ -78,6 +96,12 @@ func ValidateSemanticMutation(mut SemanticMutation) error {
 		}
 		if !objectKindMatches(put.Object, put.Kind) {
 			return fmt.Errorf("put %d: %w", i, ErrObjectKindMismatch)
+		}
+		if !objectKindMatches(put.ExpectedRoot, put.Kind) {
+			return fmt.Errorf("put %d expected root: %w", i, ErrObjectKindMismatch)
+		}
+		if put.Commit.FixedList != nil && put.Kind != arcset.KindList {
+			return fmt.Errorf("put %d fixed list commit on %q: %w", i, put.Kind, ErrObjectKindMismatch)
 		}
 	}
 	return nil
@@ -129,6 +153,9 @@ func (e Executor) commitPut(ctx context.Context, namespace string, put ArcSetPut
 		if err != nil {
 			return cid.Undef, 0, err
 		}
+		if err := checkExpectedRoot(put.ExpectedRoot, root); err != nil {
+			return cid.Undef, 0, err
+		}
 		if e.ArcTable != nil {
 			snapshot, err := canonicalMapSnapshot(put.ArcSet)
 			if err != nil {
@@ -143,18 +170,34 @@ func (e Executor) commitPut(ctx context.Context, namespace string, put ArcSetPut
 		if e.Lists == nil {
 			return cid.Undef, 0, errors.New("list semantics is nil")
 		}
-		view, err := canonicalListView(put.ArcSet)
+		values, err := canonicalListValues(put.ArcSet)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
-		root, err := e.Lists.Commit(ctx, namespace, view)
+		root, err := e.commitList(ctx, namespace, values, put.Commit)
 		if err != nil {
+			return cid.Undef, 0, err
+		}
+		if err := checkExpectedRoot(put.ExpectedRoot, root); err != nil {
 			return cid.Undef, 0, err
 		}
 		return root, put.ArcSet.Len(), nil
 	default:
 		return cid.Undef, 0, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, put.Kind)
 	}
+}
+
+func (e Executor) commitList(ctx context.Context, namespace string, values []cid.Cid, descriptor CommitDescriptor) (cid.Cid, error) {
+	if descriptor.FixedList == nil {
+		return e.Lists.Commit(ctx, namespace, list.NewViewFromSlice(values))
+	}
+	measured, ok := e.Lists.(interface {
+		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
+	})
+	if !ok {
+		return cid.Undef, errors.New("list semantics does not support fixed list commits")
+	}
+	return measured.CommitFixed(ctx, namespace, values, descriptor.FixedList.ChunkSize, descriptor.FixedList.TotalSize)
 }
 
 func canonicalMapView(set *arcset.CanonicalArcSet) (mapping.View, error) {
@@ -181,7 +224,7 @@ func canonicalMapSnapshot(set *arcset.CanonicalArcSet) (arcset.ArcSet, error) {
 	return arcset.NewArcSetFromPaths(entries)
 }
 
-func canonicalListView(set *arcset.CanonicalArcSet) (list.View, error) {
+func canonicalListValues(set *arcset.CanonicalArcSet) ([]cid.Cid, error) {
 	entries := set.Entries()
 	values := make([]cid.Cid, len(entries))
 	for i, entry := range entries {
@@ -195,7 +238,14 @@ func canonicalListView(set *arcset.CanonicalArcSet) (list.View, error) {
 		}
 		values[i] = entry.Target.CID()
 	}
-	return list.NewViewFromSlice(values), nil
+	return values, nil
+}
+
+func checkExpectedRoot(expectedRoot, actualRoot cid.Cid) error {
+	if !expectedRoot.Defined() || expectedRoot.Equals(actualRoot) {
+		return nil
+	}
+	return fmt.Errorf("%w: got %s want %s", ErrExpectedRootMismatch, actualRoot, expectedRoot)
 }
 
 func objectKindMatches(object cid.Cid, kind arcset.Kind) bool {

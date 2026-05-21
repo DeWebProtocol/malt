@@ -7,6 +7,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/structure"
+	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	cid "github.com/ipfs/go-cid"
 )
@@ -80,6 +81,44 @@ func AppendListIndexSteps(pl *prooflist.ProofList, queriedPath string, steps []L
 			Proof:           cloneProofBytes(layoutStep.Proof),
 		})
 	}
+	return nil
+}
+
+// AppendListRangeStep appends one measured-list range evidence step. The proof
+// payload is produced by the list semantic and internally composes metadata and
+// index proofs for the minimum segment set.
+func AppendListRangeStep(pl *prooflist.ProofList, queriedPath string, root cid.Cid, start, end uint64, result list.RangeResult, proof structure.Proof) error {
+	if pl == nil {
+		return fmt.Errorf("prooflist is nil")
+	}
+	if !root.Defined() {
+		return fmt.Errorf("list range root is undefined")
+	}
+	childCount := result.Metadata.ChildCount
+	totalSize := result.Metadata.TotalSize
+	chunkSize := result.Metadata.ChunkSize
+	segments := append([]cid.Cid(nil), result.Segments...)
+	for i, segment := range segments {
+		if !segment.Defined() {
+			return fmt.Errorf("list range segment %d is undefined", i)
+		}
+	}
+	pl.Steps = append(pl.Steps, prooflist.Step{
+		Kind:            prooflist.KindListRange,
+		From:            root,
+		Query:           queriedPath,
+		Coordinate:      fmt.Sprintf("%d:%d", start, end),
+		Start:           &start,
+		End:             &end,
+		ChildCount:      &childCount,
+		TotalSize:       &totalSize,
+		ChunkSize:       &chunkSize,
+		Target:          root,
+		Segments:        segments,
+		EvidenceKind:    "structure",
+		EvidenceBackend: "measured_list",
+		Proof:           cloneProofBytes(proof),
+	})
 	return nil
 }
 

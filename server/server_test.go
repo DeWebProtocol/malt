@@ -1787,7 +1787,7 @@ func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 	}
 }
 
-func TestServerDefaultGETRangeIncludesTouchedListIndexes(t *testing.T) {
+func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -1848,23 +1848,36 @@ func TestServerDefaultGETRangeIncludesTouchedListIndexes(t *testing.T) {
 		t.Fatalf("prooflist shape: %v", err)
 	}
 
-	var indexes []uint64
+	var ranges []prooflist.Step
 	for _, step := range proofResp.Steps {
-		if step.Kind == prooflist.KindListIndex {
-			if step.Index == nil {
-				t.Fatalf("list-index step missing index: %+v", step)
-			}
-			if step.Length == nil || *step.Length != 2 {
-				t.Fatalf("list-index step length = %v, want 2", step.Length)
-			}
-			indexes = append(indexes, *step.Index)
-			if step.EvidenceBackend != "list" {
-				t.Fatalf("list-index evidence backend = %q, want list", step.EvidenceBackend)
-			}
+		if step.Kind == prooflist.KindListRange {
+			ranges = append(ranges, step)
 		}
 	}
-	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
-		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	if len(ranges) != 1 {
+		t.Fatalf("list-range steps = %d, want 1", len(ranges))
+	}
+	rangeStep := ranges[0]
+	if rangeStep.Start == nil || *rangeStep.Start != 262142 {
+		t.Fatalf("list-range start = %v, want 262142", rangeStep.Start)
+	}
+	if rangeStep.End == nil || *rangeStep.End != 262146 {
+		t.Fatalf("list-range end = %v, want 262146", rangeStep.End)
+	}
+	if rangeStep.ChildCount == nil || *rangeStep.ChildCount != 2 {
+		t.Fatalf("list-range child count = %v, want 2", rangeStep.ChildCount)
+	}
+	if rangeStep.TotalSize == nil || *rangeStep.TotalSize != uint64(len(fileBody)) {
+		t.Fatalf("list-range total size = %v, want %d", rangeStep.TotalSize, len(fileBody))
+	}
+	if rangeStep.ChunkSize == nil || *rangeStep.ChunkSize != fixedListChunkSize {
+		t.Fatalf("list-range chunk size = %v, want %d", rangeStep.ChunkSize, fixedListChunkSize)
+	}
+	if len(rangeStep.Segments) != 2 {
+		t.Fatalf("list-range segments = %d, want 2", len(rangeStep.Segments))
+	}
+	if rangeStep.EvidenceBackend != "measured_list" {
+		t.Fatalf("list-range evidence backend = %q, want measured_list", rangeStep.EvidenceBackend)
 	}
 
 	verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: proofResp})
@@ -1873,18 +1886,81 @@ func TestServerDefaultGETRangeIncludesTouchedListIndexes(t *testing.T) {
 	}
 	verifyRespHTTP, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
 	if err != nil {
-		t.Fatalf("verify list-index prooflist request: %v", err)
+		t.Fatalf("verify list-range prooflist request: %v", err)
 	}
 	defer verifyRespHTTP.Body.Close()
 	if verifyRespHTTP.StatusCode != http.StatusOK {
-		t.Fatalf("verify list-index prooflist status = %d, want %d", verifyRespHTTP.StatusCode, http.StatusOK)
+		t.Fatalf("verify list-range prooflist status = %d, want %d", verifyRespHTTP.StatusCode, http.StatusOK)
 	}
 	var verifyResp httpapi.VerifyResponse
 	if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
-		t.Fatalf("decode verify list-index response: %v", err)
+		t.Fatalf("decode verify list-range response: %v", err)
 	}
 	if !verifyResp.Valid {
-		t.Fatal("expected list-index prooflist verification to succeed")
+		t.Fatal("expected list-range prooflist verification to succeed")
+	}
+
+	forgedTarget, err := fakeCID([]byte("forged measured list range target"))
+	if err != nil {
+		t.Fatalf("forge target cid: %v", err)
+	}
+	forgedProof := proofResp
+	forgedProof.Steps = append([]prooflist.Step(nil), proofResp.Steps...)
+	foundRange := false
+	for i := range forgedProof.Steps {
+		if forgedProof.Steps[i].Kind == prooflist.KindListRange {
+			forgedProof.Steps[i].Target = forgedTarget
+			foundRange = true
+			break
+		}
+	}
+	if !foundRange {
+		t.Fatal("prooflist missing list-range step to forge")
+	}
+	verifyBody, err = json.Marshal(&httpapi.VerifyRequest{ProofList: forgedProof})
+	if err != nil {
+		t.Fatalf("marshal forged target verify request: %v", err)
+	}
+	verifyRespHTTP, err = http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify forged target list-range prooflist request: %v", err)
+	}
+	defer verifyRespHTTP.Body.Close()
+	if verifyRespHTTP.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
+			t.Fatalf("decode forged target verify response: %v", err)
+		}
+		if verifyResp.Valid {
+			t.Fatal("expected forged list-range target prooflist verification to fail")
+		}
+	} else if verifyRespHTTP.StatusCode != http.StatusBadRequest {
+		t.Fatalf("verify forged target prooflist status = %d, want %d or invalid response", verifyRespHTTP.StatusCode, http.StatusBadRequest)
+	}
+
+	openEndedProof := proofResp
+	openEndedProof.Steps = append([]prooflist.Step(nil), proofResp.Steps...)
+	for i := range openEndedProof.Steps {
+		if openEndedProof.Steps[i].Kind == prooflist.KindListRange {
+			openEndedProof.Steps[i].End = nil
+		}
+	}
+	verifyBody, err = json.Marshal(&httpapi.VerifyRequest{ProofList: openEndedProof})
+	if err != nil {
+		t.Fatalf("marshal open-ended verify request: %v", err)
+	}
+	verifyRespHTTP, err = http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify open-ended list-range prooflist request: %v", err)
+	}
+	defer verifyRespHTTP.Body.Close()
+	if verifyRespHTTP.StatusCode != http.StatusOK {
+		t.Fatalf("verify open-ended list-range prooflist status = %d, want %d", verifyRespHTTP.StatusCode, http.StatusOK)
+	}
+	if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
+		t.Fatalf("decode verify open-ended list-range response: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatal("expected open-ended list-range prooflist verification to succeed")
 	}
 }
 
@@ -2205,7 +2281,7 @@ func TestServerDefaultGETRangeProofHeader(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Range GET should include proof header with list index steps
+	// Range GET should include proof header with measured list range evidence.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/"+writeResp.NewRoot+"/large.bin", nil)
 	req.Header.Set("Range", "bytes=262142-262145")
 	resp, err = http.DefaultClient.Do(req)
@@ -2252,18 +2328,25 @@ func TestServerDefaultGETRangeProofHeader(t *testing.T) {
 		t.Fatalf("proof list validation: %v", err)
 	}
 
-	// Range GET proof should include list index steps for the touched chunks
-	var indexes []uint64
+	// Range GET proof should include one measured list-range step for the touched chunks.
+	var rangeSteps []prooflist.Step
 	for _, step := range pl.Steps {
-		if step.Kind == prooflist.KindListIndex {
-			if step.Index == nil {
-				t.Fatalf("list-index step missing index: %+v", step)
-			}
-			indexes = append(indexes, *step.Index)
+		if step.Kind == prooflist.KindListRange {
+			rangeSteps = append(rangeSteps, step)
 		}
 	}
-	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
-		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	if len(rangeSteps) != 1 {
+		t.Fatalf("list-range steps = %d, want 1", len(rangeSteps))
+	}
+	rangeStep := rangeSteps[0]
+	if rangeStep.Start == nil || *rangeStep.Start != 262142 {
+		t.Fatalf("list-range start = %v, want 262142", rangeStep.Start)
+	}
+	if rangeStep.End == nil || *rangeStep.End != 262146 {
+		t.Fatalf("list-range end = %v, want 262146", rangeStep.End)
+	}
+	if len(rangeStep.Segments) != 2 {
+		t.Fatalf("list-range segments = %d, want 2", len(rangeStep.Segments))
 	}
 }
 

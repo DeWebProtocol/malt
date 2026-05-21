@@ -628,24 +628,33 @@ func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
 	if err := proof.ValidateShape(prooflist.RequireSteps()); err != nil {
 		t.Fatalf("prooflist shape: %v", err)
 	}
-	var indexes []uint64
+	var ranges []prooflist.Step
 	for _, step := range proof.Steps {
-		if step.Kind != prooflist.KindListIndex {
-			continue
+		if step.Kind == prooflist.KindListRange {
+			ranges = append(ranges, step)
 		}
-		if step.Index == nil {
-			t.Fatalf("list-index step missing index: %+v", step)
-		}
-		if step.Length == nil || *step.Length != 2 {
-			t.Fatalf("list-index length = %v, want 2", step.Length)
-		}
-		if step.EvidenceBackend != "list" {
-			t.Fatalf("list-index evidence backend = %q, want list", step.EvidenceBackend)
-		}
-		indexes = append(indexes, *step.Index)
 	}
-	if len(indexes) != 2 || indexes[0] != 0 || indexes[1] != 1 {
-		t.Fatalf("list-index steps = %v, want [0 1]", indexes)
+	if len(ranges) != 1 {
+		t.Fatalf("list-range steps = %d, want 1", len(ranges))
+	}
+	rangeStep := ranges[0]
+	if rangeStep.Start == nil || *rangeStep.Start != 0 {
+		t.Fatalf("list-range start = %v, want 0", rangeStep.Start)
+	}
+	if rangeStep.End == nil || *rangeStep.End != uint64(len(fileBody)) {
+		t.Fatalf("list-range end = %v, want %d", rangeStep.End, len(fileBody))
+	}
+	if rangeStep.ChildCount == nil || *rangeStep.ChildCount != 2 {
+		t.Fatalf("list-range child count = %v, want 2", rangeStep.ChildCount)
+	}
+	if rangeStep.ChunkSize == nil || *rangeStep.ChunkSize != 262144 {
+		t.Fatalf("list-range chunk size = %v, want 262144", rangeStep.ChunkSize)
+	}
+	if rangeStep.EvidenceBackend != "measured_list" {
+		t.Fatalf("list-range evidence backend = %q, want measured_list", rangeStep.EvidenceBackend)
+	}
+	if len(rangeStep.Segments) != 2 {
+		t.Fatalf("list-range segments = %d, want 2", len(rangeStep.Segments))
 	}
 
 	verifyResp, err := client.Verify(ctx, &httpapi.VerifyRequest{ProofList: *proof})

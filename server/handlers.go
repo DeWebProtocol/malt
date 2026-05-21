@@ -420,7 +420,7 @@ type proofListVerifiedPath struct {
 
 func (p *proofListVerifiedPath) addStep(step prooflist.Step) error {
 	path := arcset.CanonicalizePath(step.Path).String()
-	if path == "" || step.EvidenceKind == "structure" && step.EvidenceBackend == "list" {
+	if path == "" || step.EvidenceKind == "structure" && (step.EvidenceBackend == "list" || step.EvidenceBackend == "measured_list") {
 		return nil
 	}
 	if p.hasPayloadBinding {
@@ -463,6 +463,34 @@ func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.S
 				return false, fmt.Errorf("prooflist step %d list length is missing", index)
 			}
 			return g.ListSemantic().Verify(step.From, *step.Index, list.Query{Key: step.Target, Length: *step.Length}, structure.Proof(step.Proof))
+		case "measured_list":
+			if !step.Target.Equals(step.From) {
+				return false, nil
+			}
+			if step.Start == nil {
+				return false, fmt.Errorf("prooflist step %d list range start is missing", index)
+			}
+			if step.ChildCount == nil {
+				return false, fmt.Errorf("prooflist step %d list range child count is missing", index)
+			}
+			if step.TotalSize == nil {
+				return false, fmt.Errorf("prooflist step %d list range total size is missing", index)
+			}
+			if step.ChunkSize == nil {
+				return false, fmt.Errorf("prooflist step %d list range chunk size is missing", index)
+			}
+			measured, ok := g.ListSemantic().(list.MeasuredSemantics)
+			if !ok {
+				return false, fmt.Errorf("prooflist step %d has measured list evidence but graph list semantic does not support measured ranges", index)
+			}
+			return measured.VerifyRange(step.From, *step.Start, step.End, list.RangeResult{
+				Metadata: list.RangeMetadata{
+					ChildCount: *step.ChildCount,
+					TotalSize:  *step.TotalSize,
+					ChunkSize:  *step.ChunkSize,
+				},
+				Segments: append([]cid.Cid(nil), step.Segments...),
+			}, structure.Proof(step.Proof))
 		default:
 			return false, fmt.Errorf("prooflist step %d has unsupported structure evidence backend %q", index, step.EvidenceBackend)
 		}
@@ -599,6 +627,17 @@ func (s *Server) readProofList(ctx context.Context, g *graph.Graph, resolved *pa
 		listRoot, err := decodeCID(resolved.stat.Key)
 		if err != nil {
 			return nil, err
+		}
+		if measured, ok := g.ListSemantic().(list.MeasuredSemantics); ok {
+			rangeStart := uint64(start)
+			rangeEnd := uint64(endExclusive)
+			result, proof, err := measured.ProveRange(ctx, g.Namespace(), listRoot, rangeStart, &rangeEnd)
+			if err == nil {
+				if err := unixfs.AppendListRangeStep(&pl, resolved.queryPath, listRoot, rangeStart, rangeEnd, result, proof); err != nil {
+					return nil, err
+				}
+				return &pl, nil
+			}
 		}
 		steps, err := s.listIndexStepsForRange(ctx, g, listRoot, start, endExclusive)
 		if err != nil {
@@ -804,11 +843,19 @@ func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.
 	for _, put := range plan.Puts {
 		// UnixFS replay rematerializes deterministic roots; do not treat the
 		// already-materialized object as a versioned ArcTable parent.
-		mut.Puts = append(mut.Puts, gateway.ArcSetPut{
-			Object: cid.Undef,
-			Kind:   put.Kind,
-			ArcSet: put.ArcSet,
-		})
+		gatewayPut := gateway.ArcSetPut{
+			Object:       cid.Undef,
+			ExpectedRoot: put.ExpectedRoot,
+			Kind:         put.Kind,
+			ArcSet:       put.ArcSet,
+		}
+		if put.FixedList != nil {
+			gatewayPut.Commit.FixedList = &gateway.FixedListCommit{
+				TotalSize: put.FixedList.TotalSize,
+				ChunkSize: put.FixedList.ChunkSize,
+			}
+		}
+		mut.Puts = append(mut.Puts, gatewayPut)
 	}
 	return mut
 }

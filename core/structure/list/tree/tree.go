@@ -23,13 +23,25 @@ type TreeList struct {
 }
 
 type proofEnvelope struct {
-	LengthProof []byte      `json:"length_proof"`
-	Steps       []proofStep `json:"steps,omitempty"`
+	LengthProof  []byte      `json:"length_proof"`
+	LengthTarget []byte      `json:"length_target,omitempty"`
+	Steps        []proofStep `json:"steps,omitempty"`
 }
 
 type proofStep struct {
-	Target []byte `json:"target"`
-	Proof  []byte `json:"proof"`
+	Target []byte  `json:"target"`
+	Proof  []byte  `json:"proof"`
+	Slot   *uint64 `json:"slot,omitempty"`
+}
+
+type rangeProofEnvelope struct {
+	MetadataProof []byte            `json:"metadata_proof"`
+	IndexProofs   []rangeIndexProof `json:"index_proofs,omitempty"`
+}
+
+type rangeIndexProof struct {
+	Index uint64 `json:"index"`
+	Proof []byte `json:"proof"`
 }
 
 func NewList(scheme commitment.IndexCommitment, arctable arctable.ArcTable) (*TreeList, error) {
@@ -50,7 +62,26 @@ func (s *TreeList) Commit(ctx context.Context, namespace string, view list.View)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return s.buildFromValues(ctx, namespace, values, layout.RequiredHeight(uint64(len(values))), true)
+	return s.buildPlainFromValues(ctx, namespace, values, layout.RequiredHeight(uint64(len(values))))
+}
+
+// CommitFixed commits fixed-width measured list chunks. The resulting root
+// remains compatible with base index proofs while also supporting byte-range
+// proofs over authenticated fixed chunk metadata.
+func (s *TreeList) CommitFixed(ctx context.Context, namespace string, chunks []cid.Cid, chunkSize, totalSize uint64) (cid.Cid, error) {
+	if chunkSize == 0 {
+		return cid.Undef, fmt.Errorf("chunk size must be positive")
+	}
+	if uint64(len(chunks)) != chunkCount(totalSize, chunkSize) {
+		return cid.Undef, fmt.Errorf("chunk count %d does not match total size %d and chunk size %d", len(chunks), totalSize, chunkSize)
+	}
+	for i, chunk := range chunks {
+		if !chunk.Defined() {
+			return cid.Undef, fmt.Errorf("chunk at index %d is undefined", i)
+		}
+	}
+	values := append([]cid.Cid(nil), chunks...)
+	return s.buildMeasuredFromValues(ctx, namespace, values, layout.RequiredHeight(uint64(len(values))), 0, chunkSize, totalSize)
 }
 
 func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, index uint64) (list.Query, structure.Proof, error) {
@@ -60,11 +91,16 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 	}
 
 	query := list.Query{Length: length}
-	_, lengthProof, err := layout.ProveSlot(s.scheme, root, rootSlots, 0)
+	lengthTarget, lengthProof, err := layout.ProveSlot(s.scheme, root, rootSlots, 0)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
 	envelope := proofEnvelope{LengthProof: lengthProof}
+	if target, err := lengthTarget.AsCID(); err != nil {
+		return list.Query{}, nil, err
+	} else if needsExplicitLengthTarget(target, length) {
+		envelope.LengthTarget = lengthTarget.Bytes()
+	}
 
 	if index >= length {
 		query.Key = cid.Undef
@@ -80,16 +116,16 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 	currentRoot := root
 	currentSlots := rootSlots
 	for level, digit := range digits {
-		slot := uint64(digit)
-		if level == 0 {
-			slot++
+		slot, err := layout.ContentSlotIndex(currentSlots, level == 0, digit)
+		if err != nil {
+			return list.Query{}, nil, err
 		}
 
 		target, proof, err := layout.ProveSlot(s.scheme, currentRoot, currentSlots, slot)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
-		envelope.Steps = append(envelope.Steps, newProofStep(target, proof))
+		envelope.Steps = append(envelope.Steps, newProofStep(target, proof, slot))
 
 		if level == len(digits)-1 {
 			query.Key, err = target.AsCID()
@@ -124,11 +160,11 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 		return false, fmt.Errorf("missing length proof")
 	}
 
-	lengthMarker, err := layout.EncodeLengthMarker(expected.Length)
+	lengthTarget, err := lengthTargetForVerify(expected.Length, envelope.LengthTarget)
 	if err != nil {
 		return false, err
 	}
-	ok, err := layout.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(lengthMarker), envelope.LengthProof)
+	ok, err := layout.VerifySlot(s.scheme, root, 0, lengthTarget, envelope.LengthProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -161,11 +197,11 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 			return false, err
 		}
 
-		slot := uint64(digit)
-		if level == 0 {
-			slot++
+		slots, err := contentSlotsForVerify(step, level == 0, digit)
+		if err != nil {
+			return false, err
 		}
-		ok, err := layout.VerifySlot(s.scheme, currentRoot, slot, target, step.Proof)
+		ok, err := s.verifyAnyContentSlot(currentRoot, slots, target, step.Proof)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -180,6 +216,113 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	}
 
 	return false, nil
+}
+
+func (s *TreeList) ProveRange(ctx context.Context, namespace string, root cid.Cid, start uint64, end *uint64) (list.RangeResult, structure.Proof, error) {
+	rootSlots, _, err := s.loadRoot(ctx, namespace, root)
+	if err != nil {
+		return list.RangeResult{}, nil, err
+	}
+	meta, err := fixedRangeMetadata(rootSlots[0])
+	if err != nil {
+		return list.RangeResult{}, nil, err
+	}
+	if err := validateFixedMetadata(meta); err != nil {
+		return list.RangeResult{}, nil, err
+	}
+
+	_, metadataProof, err := layout.ProveSlot(s.scheme, root, rootSlots, 0)
+	if err != nil {
+		return list.RangeResult{}, nil, err
+	}
+	result := list.RangeResult{
+		Metadata: list.RangeMetadata{
+			ChildCount: meta.ChildCount,
+			TotalSize:  meta.TotalSize,
+			ChunkSize:  meta.ChunkSize,
+		},
+	}
+	envelope := rangeProofEnvelope{MetadataProof: metadataProof}
+
+	endExclusive, empty, err := normalizeRange(start, end, meta.TotalSize)
+	if err != nil {
+		return list.RangeResult{}, nil, err
+	}
+	if empty {
+		return encodeRangeProof(result, envelope)
+	}
+
+	first := start / meta.ChunkSize
+	last := (endExclusive - 1) / meta.ChunkSize
+	result.Segments = make([]cid.Cid, 0, last-first+1)
+	envelope.IndexProofs = make([]rangeIndexProof, 0, last-first+1)
+	for index := first; index <= last; index++ {
+		query, proof, err := s.Prove(ctx, namespace, root, index)
+		if err != nil {
+			return list.RangeResult{}, nil, err
+		}
+		if !query.Key.Defined() {
+			return list.RangeResult{}, nil, fmt.Errorf("missing segment at index %d", index)
+		}
+		result.Segments = append(result.Segments, query.Key)
+		envelope.IndexProofs = append(envelope.IndexProofs, rangeIndexProof{
+			Index: index,
+			Proof: cloneBytes(proof),
+		})
+	}
+	return encodeRangeProof(result, envelope)
+}
+
+func (s *TreeList) VerifyRange(root cid.Cid, start uint64, end *uint64, expected list.RangeResult, proof structure.Proof) (bool, error) {
+	var envelope rangeProofEnvelope
+	if err := json.Unmarshal(proof, &envelope); err != nil {
+		return false, err
+	}
+	if len(envelope.MetadataProof) == 0 {
+		return false, fmt.Errorf("missing metadata proof")
+	}
+	meta := layout.FixedMetadata{
+		ChildCount: expected.Metadata.ChildCount,
+		TotalSize:  expected.Metadata.TotalSize,
+		ChunkSize:  expected.Metadata.ChunkSize,
+	}
+	if err := validateFixedMetadata(meta); err != nil {
+		return false, err
+	}
+	ok, err := s.verifyFixedMetadataSlot(root, meta, envelope.MetadataProof)
+	if err != nil || !ok {
+		return ok, err
+	}
+
+	endExclusive, empty, err := normalizeRange(start, end, meta.TotalSize)
+	if err != nil {
+		return false, err
+	}
+	if empty {
+		return len(expected.Segments) == 0 && len(envelope.IndexProofs) == 0, nil
+	}
+
+	first := start / meta.ChunkSize
+	last := (endExclusive - 1) / meta.ChunkSize
+	wantCount := int(last - first + 1)
+	if len(expected.Segments) != wantCount || len(envelope.IndexProofs) != wantCount {
+		return false, nil
+	}
+	for i := 0; i < wantCount; i++ {
+		index := first + uint64(i)
+		indexProof := envelope.IndexProofs[i]
+		if indexProof.Index != index {
+			return false, nil
+		}
+		ok, err := s.Verify(root, index, list.Query{
+			Key:    expected.Segments[i],
+			Length: meta.ChildCount,
+		}, structure.Proof(indexProof.Proof))
+		if err != nil || !ok {
+			return ok, err
+		}
+	}
+	return true, nil
 }
 
 func (s *TreeList) Replace(ctx context.Context, namespace string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
@@ -207,6 +350,9 @@ func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, k
 	if err != nil {
 		return cid.Undef, 0, err
 	}
+	if _, err := fixedRangeMetadata(rootSlots[0]); err == nil {
+		return cid.Undef, 0, fmt.Errorf("append is not supported for fixed measured list roots")
+	}
 
 	newIndex := length
 	newLength := length + 1
@@ -220,11 +366,11 @@ func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, k
 		}
 
 		nextRootSlots := layout.EmptyRootSlots()
-		lengthMarker, err := layout.EncodeLengthMarker(newLength)
+		rootMarker, err := plainNodeMetadata(newHeight, newLength)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
-		nextRootSlots[0] = lengthMarker
+		nextRootSlots[0] = rootMarker
 		content := layout.ContentSlots(nextRootSlots, true)
 		content[0] = grownRoot
 
@@ -245,11 +391,11 @@ func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, k
 	}
 
 	nextRootSlots := cloneSlots(rootSlots)
-	lengthMarker, err := layout.EncodeLengthMarker(newLength)
+	rootMarker, err := plainNodeMetadata(newHeight, newLength)
 	if err != nil {
 		return cid.Undef, 0, err
 	}
-	nextRootSlots[0] = lengthMarker
+	nextRootSlots[0] = rootMarker
 	content := layout.ContentSlots(nextRootSlots, true)
 
 	if oldHeight == 0 {
@@ -282,9 +428,12 @@ func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, k
 }
 
 func (s *TreeList) Truncate(ctx context.Context, namespace string, root cid.Cid, newLen uint64) (cid.Cid, error) {
-	_, oldLen, err := s.loadRoot(ctx, namespace, root)
+	rootSlots, oldLen, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
+	}
+	if _, err := fixedRangeMetadata(rootSlots[0]); err == nil && newLen != oldLen {
+		return cid.Undef, fmt.Errorf("truncate is not supported for fixed measured list roots")
 	}
 	if newLen > oldLen {
 		return cid.Undef, fmt.Errorf("new length %d exceeds current length %d", newLen, oldLen)
@@ -301,20 +450,20 @@ func (s *TreeList) Truncate(ctx context.Context, namespace string, root cid.Cid,
 	return s.rebuildPrefix(ctx, namespace, root, true, oldHeight, true, newHeight, newLen)
 }
 
-func (s *TreeList) buildFromValues(ctx context.Context, namespace string, values []cid.Cid, height int, isRoot bool) (cid.Cid, error) {
-	var slots []cid.Cid
-	if isRoot {
-		slots = layout.EmptyRootSlots()
-		lengthMarker, err := layout.EncodeLengthMarker(uint64(len(values)))
-		if err != nil {
-			return cid.Undef, err
-		}
-		slots[0] = lengthMarker
-	} else {
-		slots = layout.EmptyNodeSlots()
+func (s *TreeList) buildPlainFromValues(ctx context.Context, namespace string, values []cid.Cid, height int) (cid.Cid, error) {
+	if height < 0 {
+		return cid.Undef, fmt.Errorf("height must be non-negative")
 	}
-
-	content := layout.ContentSlots(slots, isRoot)
+	marker, err := layout.EncodeNodeMetadata(layout.NodeMetadata{
+		Height:     uint64(height),
+		ChildCount: uint64(len(values)),
+	})
+	if err != nil {
+		return cid.Undef, err
+	}
+	slots := layout.EmptyRootSlots()
+	slots[0] = marker
+	content := layout.ContentSlots(slots, true)
 	if height == 0 {
 		copy(content, values)
 		return s.commitSlots(ctx, namespace, slots)
@@ -329,7 +478,52 @@ func (s *TreeList) buildFromValues(ctx context.Context, namespace string, values
 		if end > len(values) {
 			end = len(values)
 		}
-		childRoot, err := s.buildFromValues(ctx, namespace, values[start:end], height-1, false)
+		childRoot, err := s.buildPlainFromValues(ctx, namespace, values[start:end], height-1)
+		if err != nil {
+			return cid.Undef, err
+		}
+		content[childIdx] = childRoot
+		start = end
+	}
+
+	return s.commitSlots(ctx, namespace, slots)
+}
+
+func (s *TreeList) buildMeasuredFromValues(ctx context.Context, namespace string, values []cid.Cid, height int, startIndex, chunkSize, totalSize uint64) (cid.Cid, error) {
+	if height < 0 {
+		return cid.Undef, fmt.Errorf("height must be non-negative")
+	}
+	nodeSize, err := measuredNodeSize(startIndex, uint64(len(values)), chunkSize, totalSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	marker, err := layout.EncodeNodeMetadata(layout.NodeMetadata{
+		Height:     uint64(height),
+		ChildCount: uint64(len(values)),
+		TotalSize:  nodeSize,
+		ChunkSize:  chunkSize,
+	})
+	if err != nil {
+		return cid.Undef, err
+	}
+	slots := layout.EmptyRootSlots()
+	slots[0] = marker
+	content := layout.ContentSlots(slots, true)
+	if height == 0 {
+		copy(content, values)
+		return s.commitSlots(ctx, namespace, slots)
+	}
+
+	childSpan, err := layout.SubtreeCapacity(height - 1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	for childIdx, start := 0, 0; start < len(values); childIdx++ {
+		end := start + int(childSpan)
+		if end > len(values) {
+			end = len(values)
+		}
+		childRoot, err := s.buildMeasuredFromValues(ctx, namespace, values[start:end], height-1, startIndex+uint64(start), chunkSize, totalSize)
 		if err != nil {
 			return cid.Undef, err
 		}
@@ -380,14 +574,14 @@ func (s *TreeList) rebuildPrefix(
 	var nextSlots []cid.Cid
 	if targetRoot {
 		nextSlots = layout.EmptyRootSlots()
-		lengthMarker, err := layout.EncodeLengthMarker(keepLen)
-		if err != nil {
-			return cid.Undef, err
-		}
-		nextSlots[0] = lengthMarker
 	} else {
 		nextSlots = layout.EmptyNodeSlots()
 	}
+	marker, err := plainNodeMetadata(targetHeight, keepLen)
+	if err != nil {
+		return cid.Undef, err
+	}
+	nextSlots[0] = marker
 	nextContent := layout.ContentSlots(nextSlots, targetRoot)
 
 	if targetHeight == 0 {
@@ -489,14 +683,20 @@ func (s *TreeList) appendInto(ctx context.Context, namespace string, root cid.Ci
 	}
 
 	if height == 0 {
-		if index >= uint64(len(slots)) {
+		nextSlots := cloneSlotsForMetadataMutation(slots)
+		content := layout.ContentSlots(nextSlots, false)
+		if index >= uint64(len(content)) {
 			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
 		}
-		if slots[index].Defined() {
+		if content[index].Defined() {
 			return cid.Undef, fmt.Errorf("append slot %d is already occupied", index)
 		}
-		nextSlots := cloneSlots(slots)
-		nextSlots[index] = key
+		marker, err := plainNodeMetadata(height, index+1)
+		if err != nil {
+			return cid.Undef, err
+		}
+		nextSlots[0] = marker
+		content[index] = key
 		return s.commitSlots(ctx, namespace, nextSlots)
 	}
 
@@ -507,11 +707,17 @@ func (s *TreeList) appendInto(ctx context.Context, namespace string, root cid.Ci
 	digit := int(index / childSpan)
 	localIndex := index % childSpan
 
-	nextSlots := cloneSlots(slots)
-	if nextSlots[digit].Defined() {
-		nextSlots[digit], err = s.appendInto(ctx, namespace, nextSlots[digit], height-1, localIndex, key)
+	nextSlots := cloneSlotsForMetadataMutation(slots)
+	marker, err := plainNodeMetadata(height, index+1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	nextSlots[0] = marker
+	nextContent := layout.ContentSlots(nextSlots, false)
+	if nextContent[digit].Defined() {
+		nextContent[digit], err = s.appendInto(ctx, namespace, nextContent[digit], height-1, localIndex, key)
 	} else {
-		nextSlots[digit], err = s.buildSparseSubtree(ctx, namespace, height-1, localIndex, key)
+		nextContent[digit], err = s.buildSparseSubtree(ctx, namespace, height-1, localIndex, key)
 	}
 	if err != nil {
 		return cid.Undef, err
@@ -522,10 +728,16 @@ func (s *TreeList) appendInto(ctx context.Context, namespace string, root cid.Ci
 func (s *TreeList) buildSparseSubtree(ctx context.Context, namespace string, height int, index uint64, key cid.Cid) (cid.Cid, error) {
 	if height == 0 {
 		slots := layout.EmptyNodeSlots()
-		if index >= uint64(len(slots)) {
+		marker, err := plainNodeMetadata(height, index+1)
+		if err != nil {
+			return cid.Undef, err
+		}
+		slots[0] = marker
+		content := layout.ContentSlots(slots, false)
+		if index >= uint64(len(content)) {
 			return cid.Undef, fmt.Errorf("index %d out of leaf range", index)
 		}
-		slots[index] = key
+		content[index] = key
 		return s.commitSlots(ctx, namespace, slots)
 	}
 
@@ -537,7 +749,13 @@ func (s *TreeList) buildSparseSubtree(ctx context.Context, namespace string, hei
 	localIndex := index % childSpan
 
 	slots := layout.EmptyNodeSlots()
-	slots[digit], err = s.buildSparseSubtree(ctx, namespace, height-1, localIndex, key)
+	marker, err := plainNodeMetadata(height, index+1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	slots[0] = marker
+	content := layout.ContentSlots(slots, false)
+	content[digit], err = s.buildSparseSubtree(ctx, namespace, height-1, localIndex, key)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -546,7 +764,7 @@ func (s *TreeList) buildSparseSubtree(ctx context.Context, namespace string, hei
 
 func (s *TreeList) commitEmptyRoot(ctx context.Context, namespace string) (cid.Cid, error) {
 	slots := layout.EmptyRootSlots()
-	lengthMarker, err := layout.EncodeLengthMarker(0)
+	lengthMarker, err := plainNodeMetadata(0, 0)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -559,7 +777,7 @@ func (s *TreeList) loadRoot(ctx context.Context, namespace string, root cid.Cid)
 	if err != nil {
 		return nil, 0, err
 	}
-	length, err := layout.DecodeLengthMarker(slots[0])
+	length, err := layout.DecodeRootLength(slots[0])
 	if err != nil {
 		return nil, 0, err
 	}
@@ -575,10 +793,21 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 	if err != nil {
 		return nil, err
 	}
-	if err := layout.ValidateSlots(s.scheme, root, slots); err != nil {
-		return nil, err
+	validateErr := layout.ValidateSlots(s.scheme, root, slots)
+	if validateErr == nil {
+		return slots, nil
 	}
-	return slots, nil
+	if !isRoot && width != layout.LegacyNodeWidth {
+		legacySlots, err := layout.LoadSlots(ctx, s.arctable, namespace, root, layout.LegacyNodeWidth)
+		if err != nil {
+			return nil, validateErr
+		}
+		if err := layout.ValidateSlots(s.scheme, root, legacySlots); err == nil {
+			return legacySlots, nil
+		}
+		return nil, validateErr
+	}
+	return nil, validateErr
 }
 
 func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
@@ -603,12 +832,42 @@ func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []ci
 	return listRoot, nil
 }
 
+func (s *TreeList) verifyFixedMetadataSlot(root cid.Cid, meta layout.FixedMetadata, proof []byte) (bool, error) {
+	nodeMarker, err := layout.EncodeNodeMetadata(layout.NodeMetadata{
+		Height:     uint64(layout.RequiredHeight(meta.ChildCount)),
+		ChildCount: meta.ChildCount,
+		TotalSize:  meta.TotalSize,
+		ChunkSize:  meta.ChunkSize,
+	})
+	if err != nil {
+		return false, err
+	}
+	ok, err := layout.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(nodeMarker), proof)
+	if err != nil || ok {
+		return ok, err
+	}
+
+	legacyMarker, err := layout.EncodeFixedMetadata(meta)
+	if err != nil {
+		return false, err
+	}
+	return layout.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(legacyMarker), proof)
+}
+
 func encodeProof(query list.Query, envelope proofEnvelope) (list.Query, structure.Proof, error) {
 	proofBytes, err := json.Marshal(envelope)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
 	return query, structure.Proof(proofBytes), nil
+}
+
+func encodeRangeProof(result list.RangeResult, envelope rangeProofEnvelope) (list.RangeResult, structure.Proof, error) {
+	proofBytes, err := json.Marshal(envelope)
+	if err != nil {
+		return list.RangeResult{}, nil, err
+	}
+	return result, structure.Proof(proofBytes), nil
 }
 
 func valuesFromView(view list.View) ([]cid.Cid, error) {
@@ -630,13 +889,15 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 	return values, nil
 }
 
-func newProofStep(target commitment.Cell, proof []byte) proofStep {
+func newProofStep(target commitment.Cell, proof []byte, slot uint64) proofStep {
+	provedSlot := slot
 	if !target.Defined() {
-		return proofStep{Proof: proof}
+		return proofStep{Proof: proof, Slot: &provedSlot}
 	}
 	return proofStep{
 		Target: target.Bytes(),
 		Proof:  proof,
+		Slot:   &provedSlot,
 	}
 }
 
@@ -647,8 +908,174 @@ func parseStepTarget(step proofStep) (commitment.Cell, error) {
 	return commitment.NewCell(step.Target), nil
 }
 
+func (s *TreeList) verifyAnyContentSlot(root cid.Cid, slots []uint64, target commitment.Cell, proof []byte) (bool, error) {
+	var verifyErr error
+	for _, slot := range slots {
+		// Backends may mutate proof buffers while decoding; keep retries isolated.
+		proofCopy := append([]byte(nil), proof...)
+		ok, err := layout.VerifySlot(s.scheme, root, slot, target, proofCopy)
+		if err != nil {
+			verifyErr = err
+			continue
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	if verifyErr != nil {
+		return false, verifyErr
+	}
+	return false, nil
+}
+
+func contentSlotsForVerify(step proofStep, isRoot bool, digit int) ([]uint64, error) {
+	v2Slot := uint64(digit) + 1
+	if step.Slot == nil {
+		if isRoot {
+			return []uint64{v2Slot}, nil
+		}
+		return []uint64{v2Slot, uint64(digit)}, nil
+	}
+	slot := *step.Slot
+	if isRoot {
+		if slot != v2Slot {
+			return nil, fmt.Errorf("root content digit %d proved slot %d, want %d", digit, slot, v2Slot)
+		}
+		return []uint64{slot}, nil
+	}
+	if slot != uint64(digit) && slot != v2Slot {
+		return nil, fmt.Errorf("content digit %d proved unsupported slot %d", digit, slot)
+	}
+	return []uint64{slot}, nil
+}
+
+func needsExplicitLengthTarget(marker cid.Cid, length uint64) bool {
+	legacy, err := layout.EncodeLengthMarker(length)
+	if err != nil {
+		return true
+	}
+	return !marker.Equals(legacy)
+}
+
+func lengthTargetForVerify(expectedLength uint64, explicit []byte) (commitment.Cell, error) {
+	if len(explicit) == 0 {
+		lengthMarker, err := layout.EncodeLengthMarker(expectedLength)
+		if err != nil {
+			return nil, err
+		}
+		return commitment.CellFromCID(lengthMarker), nil
+	}
+	cell := commitment.NewCell(explicit)
+	marker, err := cell.AsCID()
+	if err != nil {
+		return nil, err
+	}
+	length, err := layout.DecodeRootLength(marker)
+	if err != nil {
+		return nil, err
+	}
+	if length != expectedLength {
+		return nil, fmt.Errorf("length target commits child count %d, expected %d", length, expectedLength)
+	}
+	return cell, nil
+}
+
+func fixedRangeMetadata(marker cid.Cid) (layout.FixedMetadata, error) {
+	meta, err := layout.DecodeFixedMetadata(marker)
+	if err != nil {
+		return layout.FixedMetadata{}, fmt.Errorf("root does not carry fixed range metadata: %w", err)
+	}
+	return meta, nil
+}
+
+func validateFixedMetadata(meta layout.FixedMetadata) error {
+	if meta.ChunkSize == 0 {
+		return fmt.Errorf("chunk size is zero")
+	}
+	if meta.ChildCount != chunkCount(meta.TotalSize, meta.ChunkSize) {
+		return fmt.Errorf("child count %d does not match total size %d and chunk size %d", meta.ChildCount, meta.TotalSize, meta.ChunkSize)
+	}
+	return nil
+}
+
+func plainNodeMetadata(height int, childCount uint64) (cid.Cid, error) {
+	if height < 0 {
+		return cid.Undef, fmt.Errorf("height must be non-negative")
+	}
+	return layout.EncodeNodeMetadata(layout.NodeMetadata{
+		Height:     uint64(height),
+		ChildCount: childCount,
+	})
+}
+
+func measuredNodeSize(startIndex, childCount, chunkSize, totalSize uint64) (uint64, error) {
+	if chunkSize == 0 {
+		return 0, fmt.Errorf("chunk size is zero")
+	}
+	if childCount == 0 {
+		return 0, nil
+	}
+	if startIndex > ^uint64(0)/chunkSize {
+		return 0, fmt.Errorf("measured node start index %d overflows chunk size %d", startIndex, chunkSize)
+	}
+	endIndex := startIndex + childCount
+	if endIndex < startIndex {
+		return 0, fmt.Errorf("measured node child count overflows")
+	}
+	if endIndex > ^uint64(0)/chunkSize {
+		return 0, fmt.Errorf("measured node end index %d overflows chunk size %d", endIndex, chunkSize)
+	}
+	startByte := startIndex * chunkSize
+	if startByte >= totalSize {
+		return 0, nil
+	}
+	endByte := endIndex * chunkSize
+	if endByte > totalSize {
+		endByte = totalSize
+	}
+	return endByte - startByte, nil
+}
+
+func normalizeRange(start uint64, end *uint64, totalSize uint64) (endExclusive uint64, empty bool, err error) {
+	endExclusive = totalSize
+	if end != nil {
+		endExclusive = *end
+		if endExclusive > totalSize {
+			endExclusive = totalSize
+		}
+	}
+	if start > endExclusive {
+		return 0, false, fmt.Errorf("range start %d exceeds end %d", start, endExclusive)
+	}
+	if start >= totalSize || endExclusive == start {
+		return endExclusive, true, nil
+	}
+	return endExclusive, false, nil
+}
+
+func chunkCount(totalSize, chunkSize uint64) uint64 {
+	if totalSize == 0 {
+		return 0
+	}
+	return ((totalSize - 1) / chunkSize) + 1
+}
+
+func cloneBytes(data []byte) []byte {
+	return append([]byte(nil), data...)
+}
+
 func cloneSlots(slots []cid.Cid) []cid.Cid {
 	return append([]cid.Cid(nil), slots...)
 }
 
+func cloneSlotsForMetadataMutation(slots []cid.Cid) []cid.Cid {
+	if len(slots) != layout.LegacyNodeWidth {
+		return cloneSlots(slots)
+	}
+	nextSlots := layout.EmptyNodeSlots()
+	copy(layout.ContentSlots(nextSlots, false), slots)
+	return nextSlots
+}
+
 var _ list.Semantics = (*TreeList)(nil)
+var _ list.MeasuredSemantics = (*TreeList)(nil)

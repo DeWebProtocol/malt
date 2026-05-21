@@ -10,6 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/gateway"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -214,6 +215,84 @@ func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("expected list proof to verify")
+	}
+}
+
+func TestExecutorReplaysFixedMeasuredListToExpectedRoot(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("kzg.NewScheme failed: %v", err)
+	}
+	chunks := []cid.Cid{testCID("chunk-0"), testCID("chunk-1")}
+	chunkSize := uint64(4)
+	totalSize := uint64(7)
+
+	sourceArcs, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
+	if err != nil {
+		t.Fatalf("source overwrite.NewArcTable failed: %v", err)
+	}
+	sourceLists, err := listtree.NewList(scheme, sourceArcs)
+	if err != nil {
+		t.Fatalf("source tree.NewList failed: %v", err)
+	}
+	expectedRoot, err := sourceLists.CommitFixed(ctx, "source", chunks, chunkSize, totalSize)
+	if err != nil {
+		t.Fatalf("CommitFixed failed: %v", err)
+	}
+
+	replayArcs, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
+	if err != nil {
+		t.Fatalf("replay overwrite.NewArcTable failed: %v", err)
+	}
+	replayMaps, err := mappingradix.NewMap(scheme, replayArcs)
+	if err != nil {
+		t.Fatalf("replay radix.NewMap failed: %v", err)
+	}
+	replayLists, err := listtree.NewList(scheme, replayArcs)
+	if err != nil {
+		t.Fatalf("replay tree.NewList failed: %v", err)
+	}
+	exec := gateway.Executor{
+		Namespace: "measured-replay",
+		Maps:      replayMaps,
+		Lists:     replayLists,
+		ArcTable:  replayArcs,
+	}
+
+	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
+		BaseRoot: testCID("base"),
+		Puts: []gateway.ArcSetPut{{
+			ExpectedRoot: expectedRoot,
+			Kind:         arcset.KindList,
+			ArcSet:       mustCanonicalList(t, chunks),
+			Commit: gateway.CommitDescriptor{
+				FixedList: &gateway.FixedListCommit{
+					TotalSize: totalSize,
+					ChunkSize: chunkSize,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	if !receipt.NewRoot.Equals(expectedRoot) {
+		t.Fatalf("replayed root = %s, want expected measured root %s", receipt.NewRoot, expectedRoot)
+	}
+
+	measured := exec.Lists.(list.MeasuredSemantics)
+	end := totalSize
+	result, proof, err := measured.ProveRange(ctx, exec.Namespace, expectedRoot, 0, &end)
+	if err != nil {
+		t.Fatalf("ProveRange on replayed root failed: %v", err)
+	}
+	ok, err := measured.VerifyRange(expectedRoot, 0, &end, result, proof)
+	if err != nil {
+		t.Fatalf("VerifyRange on replayed root failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("VerifyRange on replayed root returned false")
 	}
 }
 

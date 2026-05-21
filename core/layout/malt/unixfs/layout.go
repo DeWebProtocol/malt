@@ -433,6 +433,11 @@ func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error
 	for i, result := range results {
 		chunks[i] = result.CID
 	}
+	if measured, ok := l.lists.(interface {
+		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
+	}); ok {
+		return measured.CommitFixed(ctx, l.namespace, chunks, uint64(l.chunkSize), uint64(len(data)))
+	}
 	return l.lists.Commit(ctx, l.namespace, list.NewViewFromSlice(chunks))
 }
 

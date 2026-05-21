@@ -67,6 +67,15 @@ func TestLargeFileMutationPlanIncludesFileMapAndOrderedList(t *testing.T) {
 	if plan.Puts[1].Kind != arcset.KindList {
 		t.Fatalf("put 1 kind = %q, want list", plan.Puts[1].Kind)
 	}
+	if !plan.Puts[1].ExpectedRoot.Equals(plan.Puts[1].Object) {
+		t.Fatalf("list put expected root = %s, want object %s", plan.Puts[1].ExpectedRoot, plan.Puts[1].Object)
+	}
+	if plan.Puts[1].FixedList == nil {
+		t.Fatal("large file list put missing fixed-list commit metadata")
+	}
+	if plan.Puts[1].FixedList.TotalSize != 12 || plan.Puts[1].FixedList.ChunkSize != 4 {
+		t.Fatalf("fixed list metadata = %+v, want total=12 chunk=4", plan.Puts[1].FixedList)
+	}
 
 	got := entryCoordinates(plan.Puts[1].ArcSet)
 	want := []string{"0", "1", "2"}
