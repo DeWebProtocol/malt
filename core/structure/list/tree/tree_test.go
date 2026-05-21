@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
@@ -100,6 +101,27 @@ func assertVerifiedQuery(t *testing.T, semantic *tree.TreeList, namespace string
 	if !ok {
 		t.Fatalf("Verify(%d) returned false", index)
 	}
+}
+
+func stripProofStepSlots(t *testing.T, proof []byte) []byte {
+	t.Helper()
+
+	var envelope struct {
+		LengthProof  []byte                       `json:"length_proof"`
+		LengthTarget []byte                       `json:"length_target,omitempty"`
+		Steps        []map[string]json.RawMessage `json:"steps,omitempty"`
+	}
+	if err := json.Unmarshal(proof, &envelope); err != nil {
+		t.Fatalf("decode proof envelope: %v", err)
+	}
+	for _, step := range envelope.Steps {
+		delete(step, "slot")
+	}
+	stripped, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("encode proof envelope without step slots: %v", err)
+	}
+	return stripped
 }
 
 func commitLegacyPlainListRoot(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, values []cid.Cid) cid.Cid {
@@ -235,6 +257,82 @@ func TestTreeListProvesLegacyMultiLevelRootsAfterRestart(t *testing.T) {
 				Key:    values[256],
 				Length: uint64(len(values)),
 			})
+		})
+	}
+}
+
+func TestTreeListVerifiesLegacyMultiLevelProofWithoutStepSlots(t *testing.T) {
+	ctx := context.Background()
+	values := makeValues(300)
+	index := uint64(layout.BranchingFactor)
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-legacy-proof-without-slots-" + name
+			scheme := factory(t)
+			_, e, err := newListWithArcTable(scheme, kv)
+			if err != nil {
+				t.Fatalf("newListWithArcTable failed: %v", err)
+			}
+			root := commitLegacyPlainListRoot(t, ctx, scheme, e, namespace, values)
+
+			restarted, err := tree.NewList(scheme, e)
+			if err != nil {
+				t.Fatalf("NewList after restart failed: %v", err)
+			}
+			query, proof, err := restarted.Prove(ctx, namespace, root, index)
+			if err != nil {
+				t.Fatalf("Prove(%d) failed: %v", index, err)
+			}
+			ok, err := restarted.Verify(root, index, query, proof)
+			if err != nil {
+				t.Fatalf("Verify(%d) with explicit slots failed: %v", index, err)
+			}
+			if !ok {
+				t.Fatalf("Verify(%d) with explicit slots returned false", index)
+			}
+			legacyProof := stripProofStepSlots(t, proof)
+
+			ok, err = restarted.Verify(root, index, query, legacyProof)
+			if err != nil {
+				t.Fatalf("Verify(%d) failed: %v", index, err)
+			}
+			if !ok {
+				t.Fatalf("Verify(%d) returned false", index)
+			}
+		})
+	}
+}
+
+func TestTreeListVerifiesModernMultiLevelProofWithoutStepSlots(t *testing.T) {
+	ctx := context.Background()
+	values := makeValues(300)
+	index := uint64(layout.BranchingFactor)
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-modern-proof-without-slots-" + name
+
+			semantic := newList(t, factory, kv)
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(values))
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
+			query, proof, err := semantic.Prove(ctx, namespace, root, index)
+			if err != nil {
+				t.Fatalf("Prove(%d) failed: %v", index, err)
+			}
+			legacyProof := stripProofStepSlots(t, proof)
+
+			ok, err := semantic.Verify(root, index, query, legacyProof)
+			if err != nil {
+				t.Fatalf("Verify(%d) failed: %v", index, err)
+			}
+			if !ok {
+				t.Fatalf("Verify(%d) returned false", index)
+			}
 		})
 	}
 }
