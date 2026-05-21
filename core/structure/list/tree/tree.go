@@ -197,11 +197,11 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 			return false, err
 		}
 
-		slot, err := contentSlotForVerify(step, level == 0, digit)
+		slots, err := contentSlotsForVerify(step, level == 0, digit)
 		if err != nil {
 			return false, err
 		}
-		ok, err := layout.VerifySlot(s.scheme, currentRoot, slot, target, step.Proof)
+		ok, err := s.verifyAnyContentSlot(currentRoot, slots, target, step.Proof)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -908,22 +908,45 @@ func parseStepTarget(step proofStep) (commitment.Cell, error) {
 	return commitment.NewCell(step.Target), nil
 }
 
-func contentSlotForVerify(step proofStep, isRoot bool, digit int) (uint64, error) {
+func (s *TreeList) verifyAnyContentSlot(root cid.Cid, slots []uint64, target commitment.Cell, proof []byte) (bool, error) {
+	var verifyErr error
+	for _, slot := range slots {
+		// Backends may mutate proof buffers while decoding; keep retries isolated.
+		proofCopy := append([]byte(nil), proof...)
+		ok, err := layout.VerifySlot(s.scheme, root, slot, target, proofCopy)
+		if err != nil {
+			verifyErr = err
+			continue
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	if verifyErr != nil {
+		return false, verifyErr
+	}
+	return false, nil
+}
+
+func contentSlotsForVerify(step proofStep, isRoot bool, digit int) ([]uint64, error) {
 	v2Slot := uint64(digit) + 1
 	if step.Slot == nil {
-		return v2Slot, nil
+		if isRoot {
+			return []uint64{v2Slot}, nil
+		}
+		return []uint64{v2Slot, uint64(digit)}, nil
 	}
 	slot := *step.Slot
 	if isRoot {
 		if slot != v2Slot {
-			return 0, fmt.Errorf("root content digit %d proved slot %d, want %d", digit, slot, v2Slot)
+			return nil, fmt.Errorf("root content digit %d proved slot %d, want %d", digit, slot, v2Slot)
 		}
-		return slot, nil
+		return []uint64{slot}, nil
 	}
 	if slot != uint64(digit) && slot != v2Slot {
-		return 0, fmt.Errorf("content digit %d proved unsupported slot %d", digit, slot)
+		return nil, fmt.Errorf("content digit %d proved unsupported slot %d", digit, slot)
 	}
-	return slot, nil
+	return []uint64{slot}, nil
 }
 
 func needsExplicitLengthTarget(marker cid.Cid, length uint64) bool {
