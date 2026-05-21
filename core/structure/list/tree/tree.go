@@ -29,8 +29,9 @@ type proofEnvelope struct {
 }
 
 type proofStep struct {
-	Target []byte `json:"target"`
-	Proof  []byte `json:"proof"`
+	Target []byte  `json:"target"`
+	Proof  []byte  `json:"proof"`
+	Slot   *uint64 `json:"slot,omitempty"`
 }
 
 type rangeProofEnvelope struct {
@@ -115,13 +116,16 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 	currentRoot := root
 	currentSlots := rootSlots
 	for level, digit := range digits {
-		slot := uint64(digit) + 1
+		slot, err := layout.ContentSlotIndex(currentSlots, level == 0, digit)
+		if err != nil {
+			return list.Query{}, nil, err
+		}
 
 		target, proof, err := layout.ProveSlot(s.scheme, currentRoot, currentSlots, slot)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
-		envelope.Steps = append(envelope.Steps, newProofStep(target, proof))
+		envelope.Steps = append(envelope.Steps, newProofStep(target, proof, slot))
 
 		if level == len(digits)-1 {
 			query.Key, err = target.AsCID()
@@ -193,7 +197,10 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 			return false, err
 		}
 
-		slot := uint64(digit) + 1
+		slot, err := contentSlotForVerify(step, level == 0, digit)
+		if err != nil {
+			return false, err
+		}
 		ok, err := layout.VerifySlot(s.scheme, currentRoot, slot, target, step.Proof)
 		if err != nil || !ok {
 			return ok, err
@@ -786,10 +793,21 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 	if err != nil {
 		return nil, err
 	}
-	if err := layout.ValidateSlots(s.scheme, root, slots); err != nil {
-		return nil, err
+	validateErr := layout.ValidateSlots(s.scheme, root, slots)
+	if validateErr == nil {
+		return slots, nil
 	}
-	return slots, nil
+	if !isRoot && width != layout.LegacyNodeWidth {
+		legacySlots, err := layout.LoadSlots(ctx, s.arctable, namespace, root, layout.LegacyNodeWidth)
+		if err != nil {
+			return nil, validateErr
+		}
+		if err := layout.ValidateSlots(s.scheme, root, legacySlots); err == nil {
+			return legacySlots, nil
+		}
+		return nil, validateErr
+	}
+	return nil, validateErr
 }
 
 func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
@@ -871,13 +889,15 @@ func valuesFromView(view list.View) ([]cid.Cid, error) {
 	return values, nil
 }
 
-func newProofStep(target commitment.Cell, proof []byte) proofStep {
+func newProofStep(target commitment.Cell, proof []byte, slot uint64) proofStep {
+	provedSlot := slot
 	if !target.Defined() {
-		return proofStep{Proof: proof}
+		return proofStep{Proof: proof, Slot: &provedSlot}
 	}
 	return proofStep{
 		Target: target.Bytes(),
 		Proof:  proof,
+		Slot:   &provedSlot,
 	}
 }
 
@@ -886,6 +906,24 @@ func parseStepTarget(step proofStep) (commitment.Cell, error) {
 		return nil, nil
 	}
 	return commitment.NewCell(step.Target), nil
+}
+
+func contentSlotForVerify(step proofStep, isRoot bool, digit int) (uint64, error) {
+	v2Slot := uint64(digit) + 1
+	if step.Slot == nil {
+		return v2Slot, nil
+	}
+	slot := *step.Slot
+	if isRoot {
+		if slot != v2Slot {
+			return 0, fmt.Errorf("root content digit %d proved slot %d, want %d", digit, slot, v2Slot)
+		}
+		return slot, nil
+	}
+	if slot != uint64(digit) && slot != v2Slot {
+		return 0, fmt.Errorf("content digit %d proved unsupported slot %d", digit, slot)
+	}
+	return slot, nil
 }
 
 func needsExplicitLengthTarget(marker cid.Cid, length uint64) bool {

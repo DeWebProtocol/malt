@@ -102,6 +102,71 @@ func assertVerifiedQuery(t *testing.T, semantic *tree.TreeList, namespace string
 	}
 }
 
+func commitLegacyPlainListRoot(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, values []cid.Cid) cid.Cid {
+	t.Helper()
+	return commitLegacyPlainListNode(t, ctx, scheme, e, namespace, values, layout.RequiredHeight(uint64(len(values))), true)
+}
+
+func commitLegacyPlainListNode(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, values []cid.Cid, height int, isRoot bool) cid.Cid {
+	t.Helper()
+
+	var slots []cid.Cid
+	if isRoot {
+		slots = layout.EmptyRootSlots()
+		marker, err := layout.EncodeLengthMarker(uint64(len(values)))
+		if err != nil {
+			t.Fatalf("encode legacy length marker: %v", err)
+		}
+		slots[0] = marker
+	} else {
+		slots = make([]cid.Cid, layout.BranchingFactor)
+	}
+	content := slots
+	if isRoot {
+		content = slots[1:]
+	}
+
+	if height == 0 {
+		copy(content, values)
+		return commitLegacySlots(t, ctx, scheme, e, namespace, slots)
+	}
+
+	childSpan, err := layout.SubtreeCapacity(height - 1)
+	if err != nil {
+		t.Fatalf("legacy child span: %v", err)
+	}
+	for childIdx, start := 0, 0; start < len(values); childIdx++ {
+		end := start + int(childSpan)
+		if end > len(values) {
+			end = len(values)
+		}
+		content[childIdx] = commitLegacyPlainListNode(t, ctx, scheme, e, namespace, values[start:end], height-1, false)
+		start = end
+	}
+	return commitLegacySlots(t, ctx, scheme, e, namespace, slots)
+}
+
+func commitLegacySlots(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, slots []cid.Cid) cid.Cid {
+	t.Helper()
+
+	root, err := layout.CommitSlots(scheme, slots)
+	if err != nil {
+		t.Fatalf("commit legacy slots: %v", err)
+	}
+	commBytes, err := codec.ExtractCommitment(root)
+	if err != nil {
+		t.Fatalf("extract legacy commitment: %v", err)
+	}
+	listRoot, err := codec.NewTypedCID(codec.SemanticKindList, codec.BackendKindOf(root), commBytes)
+	if err != nil {
+		t.Fatalf("wrap legacy list root: %v", err)
+	}
+	if err := layout.StoreSlots(ctx, e, namespace, listRoot, slots); err != nil {
+		t.Fatalf("store legacy slots: %v", err)
+	}
+	return listRoot
+}
+
 func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 	ctx := context.Background()
 	values := makeValues(300)
@@ -139,6 +204,33 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 			})
 
 			restarted := newList(t, factory, kv)
+			assertVerifiedQuery(t, restarted, namespace, root, 256, list.Query{
+				Key:    values[256],
+				Length: uint64(len(values)),
+			})
+		})
+	}
+}
+
+func TestTreeListProvesLegacyMultiLevelRootsAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	values := makeValues(300)
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-legacy-multilevel-" + name
+			scheme := factory(t)
+			_, e, err := newListWithArcTable(scheme, kv)
+			if err != nil {
+				t.Fatalf("newListWithArcTable failed: %v", err)
+			}
+			root := commitLegacyPlainListRoot(t, ctx, scheme, e, namespace, values)
+
+			restarted, err := tree.NewList(scheme, e)
+			if err != nil {
+				t.Fatalf("NewList after restart failed: %v", err)
+			}
 			assertVerifiedQuery(t, restarted, namespace, root, 256, list.Query{
 				Key:    values[256],
 				Length: uint64(len(values)),
