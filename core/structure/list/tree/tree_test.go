@@ -147,6 +147,107 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 	}
 }
 
+func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
+	ctx := context.Background()
+	values := makeValues(300)
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-child-meta-" + name
+			scheme := factory(t)
+			semantic, e, err := newListWithArcTable(scheme, kv)
+			if err != nil {
+				t.Fatalf("newListWithArcTable failed: %v", err)
+			}
+
+			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(values))
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
+
+			childRoot, err := e.Get(ctx, namespace, cid.Undef, layout.NodeSlotPath(root, 1))
+			if err != nil {
+				t.Fatalf("fetch first child root: %v", err)
+			}
+			childSlots, err := layout.LoadSlots(ctx, e, namespace, childRoot, layout.NodeWidth)
+			if err != nil {
+				t.Fatalf("load child slots: %v", err)
+			}
+			childLen, err := layout.DecodeRootLength(childSlots[0])
+			if err != nil {
+				t.Fatalf("decode child metadata: %v", err)
+			}
+			if childLen != uint64(layout.BranchingFactor) {
+				t.Fatalf("child length = %d, want %d", childLen, layout.BranchingFactor)
+			}
+			if !childSlots[1].Equals(values[0]) {
+				t.Fatalf("child logical index 0 stored at slot 1 = %s, want %s", childSlots[1], values[0])
+			}
+		})
+	}
+}
+
+func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
+	ctx := context.Background()
+	chunks := makeValues(300)
+	chunkSize := uint64(4)
+	totalSize := uint64(len(chunks)-1)*chunkSize + 3
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			kv := kvmemory.New()
+			namespace := "tree-child-range-meta-" + name
+			scheme := factory(t)
+			semantic, e, err := newListWithArcTable(scheme, kv)
+			if err != nil {
+				t.Fatalf("newListWithArcTable failed: %v", err)
+			}
+
+			root, err := semantic.CommitFixed(ctx, namespace, chunks, chunkSize, totalSize)
+			if err != nil {
+				t.Fatalf("CommitFixed failed: %v", err)
+			}
+
+			firstChildRoot, err := e.Get(ctx, namespace, cid.Undef, layout.NodeSlotPath(root, 1))
+			if err != nil {
+				t.Fatalf("fetch first child root: %v", err)
+			}
+			firstChildSlots, err := layout.LoadSlots(ctx, e, namespace, firstChildRoot, layout.NodeWidth)
+			if err != nil {
+				t.Fatalf("load first child slots: %v", err)
+			}
+			firstMeta, err := layout.DecodeFixedMetadata(firstChildSlots[0])
+			if err != nil {
+				t.Fatalf("decode first child fixed metadata: %v", err)
+			}
+			if firstMeta.ChildCount != uint64(layout.BranchingFactor) || firstMeta.TotalSize != uint64(layout.BranchingFactor)*chunkSize || firstMeta.ChunkSize != chunkSize {
+				t.Fatalf("first child metadata = %+v, want count=%d total=%d chunk=%d", firstMeta, layout.BranchingFactor, uint64(layout.BranchingFactor)*chunkSize, chunkSize)
+			}
+
+			secondChildRoot, err := e.Get(ctx, namespace, cid.Undef, layout.NodeSlotPath(root, 2))
+			if err != nil {
+				t.Fatalf("fetch second child root: %v", err)
+			}
+			secondChildSlots, err := layout.LoadSlots(ctx, e, namespace, secondChildRoot, layout.NodeWidth)
+			if err != nil {
+				t.Fatalf("load second child slots: %v", err)
+			}
+			secondMeta, err := layout.DecodeFixedMetadata(secondChildSlots[0])
+			if err != nil {
+				t.Fatalf("decode second child fixed metadata: %v", err)
+			}
+			wantSecondSize := totalSize - uint64(layout.BranchingFactor)*chunkSize
+			if secondMeta.ChildCount != uint64(len(chunks)-layout.BranchingFactor) || secondMeta.TotalSize != wantSecondSize || secondMeta.ChunkSize != chunkSize {
+				t.Fatalf("second child metadata = %+v, want count=%d total=%d chunk=%d", secondMeta, len(chunks)-layout.BranchingFactor, wantSecondSize, chunkSize)
+			}
+			if !secondChildSlots[1].Equals(chunks[layout.BranchingFactor]) {
+				t.Fatalf("second child logical index 0 stored at slot 1 = %s, want %s", secondChildSlots[1], chunks[layout.BranchingFactor])
+			}
+		})
+	}
+}
+
 func TestTreeListFixedRangeProofsUseOptionalEnd(t *testing.T) {
 	ctx := context.Background()
 	chunks := makeValues(5)
@@ -230,6 +331,13 @@ func TestTreeListFixedRangeProofsUseOptionalEnd(t *testing.T) {
 			}
 			if ok {
 				t.Fatal("VerifyRange accepted tampered segment CID")
+			}
+
+			if _, _, err := semantic.Append(ctx, namespace, root, newPayloadCID([]byte("new chunk"))); err == nil {
+				t.Fatal("Append should reject fixed measured list roots")
+			}
+			if _, err := semantic.Truncate(ctx, namespace, root, uint64(len(chunks)-1)); err == nil {
+				t.Fatal("Truncate should reject fixed measured list roots")
 			}
 		})
 	}

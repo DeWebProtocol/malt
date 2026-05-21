@@ -22,21 +22,23 @@ const (
 
 	// BranchingFactor is the number of content slots per committed list node.
 	//
-	// Slot 0 in the root node is reserved for the authenticated length marker,
-	// so the root exposes (DefaultFanout-1) content slots.
+	// Slot 0 in every list node is reserved for authenticated node metadata, so
+	// all nodes expose (DefaultFanout-1) content slots.
 	//
-	// For simplicity, v1 uses the same branching factor for all non-root nodes.
+	// For simplicity, v2 uses the same branching factor for root and non-root
+	// nodes.
 	BranchingFactor = DefaultFanout - 1
 
 	// RootWidth is the fixed slot width for the committed root node.
-	// Slot 0 is the authenticated length marker.
+	// Slot 0 is the authenticated node metadata marker.
 	RootWidth = DefaultFanout
 
 	// NodeWidth is the fixed slot width for all committed non-root nodes.
-	NodeWidth = BranchingFactor
+	NodeWidth = DefaultFanout
 
 	lengthMarkerPrefix = "malt:list:length:v1:"
 	fixedMetaPrefix    = "malt:list:fixed-meta:v1:"
+	nodeMetaPrefix     = "malt:list:node-meta:v2:"
 )
 
 // FixedMetadata is the authenticated root metadata for fixed-width measured
@@ -47,8 +49,19 @@ type FixedMetadata struct {
 	ChunkSize  uint64
 }
 
+// NodeMetadata is the authenticated metadata stored in slot 0 of every v2 list
+// tree node. ChunkSize == 0 identifies a plain list node; ChunkSize > 0
+// identifies a fixed-width measured node whose TotalSize is the byte span
+// covered by that subtree.
+type NodeMetadata struct {
+	Height     uint64
+	ChildCount uint64
+	TotalSize  uint64
+	ChunkSize  uint64
+}
+
 // ValidateCommitment checks whether the supplied index commitment can support
-// the v1 list layout.
+// the v2 list layout.
 func ValidateCommitment(scheme commitment.IndexCommitment) error {
 	if scheme == nil {
 		return fmt.Errorf("index commitment is nil")
@@ -69,12 +82,14 @@ func EmptyNodeSlots() []cid.Cid {
 	return make([]cid.Cid, NodeWidth)
 }
 
-// ContentSlots returns the data-bearing portion of a slot vector.
-func ContentSlots(slots []cid.Cid, isRoot bool) []cid.Cid {
-	if isRoot {
-		return slots[1:]
+// ContentSlots returns the data-bearing portion of a slot vector. Slot 0 is
+// metadata for every v2 list node. The isRoot parameter is retained for callers
+// that still pass the node role while the physical layout is now uniform.
+func ContentSlots(slots []cid.Cid, _ bool) []cid.Cid {
+	if len(slots) == 0 {
+		return nil
 	}
-	return slots
+	return slots[1:]
 }
 
 // NodeSlotPath returns the canonical ArcTable key for a materialized list node slot.
@@ -258,9 +273,25 @@ func DecodeFixedMetadata(marker cid.Cid) (FixedMetadata, error) {
 		return FixedMetadata{}, fmt.Errorf("fixed metadata marker is not identity-encoded")
 	}
 	if len(decoded.Digest) != len(fixedMetaPrefix)+24 {
+		nodeMeta, nodeErr := DecodeNodeMetadata(marker)
+		if nodeErr == nil && nodeMeta.ChunkSize > 0 {
+			return FixedMetadata{
+				ChildCount: nodeMeta.ChildCount,
+				TotalSize:  nodeMeta.TotalSize,
+				ChunkSize:  nodeMeta.ChunkSize,
+			}, nil
+		}
 		return FixedMetadata{}, fmt.Errorf("fixed metadata marker payload has unexpected size %d", len(decoded.Digest))
 	}
 	if string(decoded.Digest[:len(fixedMetaPrefix)]) != fixedMetaPrefix {
+		nodeMeta, nodeErr := DecodeNodeMetadata(marker)
+		if nodeErr == nil && nodeMeta.ChunkSize > 0 {
+			return FixedMetadata{
+				ChildCount: nodeMeta.ChildCount,
+				TotalSize:  nodeMeta.TotalSize,
+				ChunkSize:  nodeMeta.ChunkSize,
+			}, nil
+		}
 		return FixedMetadata{}, fmt.Errorf("fixed metadata marker prefix mismatch")
 	}
 	return FixedMetadata{
@@ -268,6 +299,63 @@ func DecodeFixedMetadata(marker cid.Cid) (FixedMetadata, error) {
 		TotalSize:  binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix)+8:]),
 		ChunkSize:  binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix)+16:]),
 	}, nil
+}
+
+// EncodeNodeMetadata encodes authenticated v2 list node metadata as a
+// self-describing identity CID.
+func EncodeNodeMetadata(meta NodeMetadata) (cid.Cid, error) {
+	if meta.ChunkSize == 0 && meta.TotalSize != 0 {
+		return cid.Undef, fmt.Errorf("plain node metadata cannot carry total size %d", meta.TotalSize)
+	}
+	if meta.ChunkSize > 0 && meta.ChildCount == 0 && meta.TotalSize != 0 {
+		return cid.Undef, fmt.Errorf("measured empty node cannot carry total size %d", meta.TotalSize)
+	}
+	payload := make([]byte, len(nodeMetaPrefix)+32)
+	copy(payload, []byte(nodeMetaPrefix))
+	binary.BigEndian.PutUint64(payload[len(nodeMetaPrefix):], meta.Height)
+	binary.BigEndian.PutUint64(payload[len(nodeMetaPrefix)+8:], meta.ChildCount)
+	binary.BigEndian.PutUint64(payload[len(nodeMetaPrefix)+16:], meta.TotalSize)
+	binary.BigEndian.PutUint64(payload[len(nodeMetaPrefix)+24:], meta.ChunkSize)
+
+	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, sum), nil
+}
+
+// DecodeNodeMetadata parses authenticated v2 list node metadata.
+func DecodeNodeMetadata(marker cid.Cid) (NodeMetadata, error) {
+	if !marker.Defined() {
+		return NodeMetadata{}, fmt.Errorf("node metadata marker is undefined")
+	}
+
+	decoded, err := mh.Decode(marker.Hash())
+	if err != nil {
+		return NodeMetadata{}, err
+	}
+	if decoded.Code != mh.IDENTITY {
+		return NodeMetadata{}, fmt.Errorf("node metadata marker is not identity-encoded")
+	}
+	if len(decoded.Digest) != len(nodeMetaPrefix)+32 {
+		return NodeMetadata{}, fmt.Errorf("node metadata marker payload has unexpected size %d", len(decoded.Digest))
+	}
+	if string(decoded.Digest[:len(nodeMetaPrefix)]) != nodeMetaPrefix {
+		return NodeMetadata{}, fmt.Errorf("node metadata marker prefix mismatch")
+	}
+	meta := NodeMetadata{
+		Height:     binary.BigEndian.Uint64(decoded.Digest[len(nodeMetaPrefix):]),
+		ChildCount: binary.BigEndian.Uint64(decoded.Digest[len(nodeMetaPrefix)+8:]),
+		TotalSize:  binary.BigEndian.Uint64(decoded.Digest[len(nodeMetaPrefix)+16:]),
+		ChunkSize:  binary.BigEndian.Uint64(decoded.Digest[len(nodeMetaPrefix)+24:]),
+	}
+	if meta.ChunkSize == 0 && meta.TotalSize != 0 {
+		return NodeMetadata{}, fmt.Errorf("plain node metadata carries total size %d", meta.TotalSize)
+	}
+	if meta.ChunkSize > 0 && meta.ChildCount == 0 && meta.TotalSize != 0 {
+		return NodeMetadata{}, fmt.Errorf("measured empty node carries total size %d", meta.TotalSize)
+	}
+	return meta, nil
 }
 
 // DecodeRootLength parses the child count authenticated in a root metadata
@@ -281,6 +369,10 @@ func DecodeRootLength(marker cid.Cid) (uint64, error) {
 	meta, metaErr := DecodeFixedMetadata(marker)
 	if metaErr == nil {
 		return meta.ChildCount, nil
+	}
+	nodeMeta, nodeMetaErr := DecodeNodeMetadata(marker)
+	if nodeMetaErr == nil {
+		return nodeMeta.ChildCount, nil
 	}
 	return 0, err
 }

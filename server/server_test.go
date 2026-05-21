@@ -1899,6 +1899,32 @@ func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {
 	if !verifyResp.Valid {
 		t.Fatal("expected list-range prooflist verification to succeed")
 	}
+
+	openEndedProof := proofResp
+	openEndedProof.Steps = append([]prooflist.Step(nil), proofResp.Steps...)
+	for i := range openEndedProof.Steps {
+		if openEndedProof.Steps[i].Kind == prooflist.KindListRange {
+			openEndedProof.Steps[i].End = nil
+		}
+	}
+	verifyBody, err = json.Marshal(&httpapi.VerifyRequest{ProofList: openEndedProof})
+	if err != nil {
+		t.Fatalf("marshal open-ended verify request: %v", err)
+	}
+	verifyRespHTTP, err = http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+	if err != nil {
+		t.Fatalf("verify open-ended list-range prooflist request: %v", err)
+	}
+	defer verifyRespHTTP.Body.Close()
+	if verifyRespHTTP.StatusCode != http.StatusOK {
+		t.Fatalf("verify open-ended list-range prooflist status = %d, want %d", verifyRespHTTP.StatusCode, http.StatusOK)
+	}
+	if err := json.NewDecoder(verifyRespHTTP.Body).Decode(&verifyResp); err != nil {
+		t.Fatalf("decode verify open-ended list-range response: %v", err)
+	}
+	if !verifyResp.Valid {
+		t.Fatal("expected open-ended list-range prooflist verification to succeed")
+	}
 }
 
 func TestServerDefaultGETReturnsProofHeader(t *testing.T) {

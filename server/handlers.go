@@ -467,9 +467,6 @@ func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.S
 			if step.Start == nil {
 				return false, fmt.Errorf("prooflist step %d list range start is missing", index)
 			}
-			if step.End == nil {
-				return false, fmt.Errorf("prooflist step %d list range end is missing", index)
-			}
 			if step.ChildCount == nil {
 				return false, fmt.Errorf("prooflist step %d list range child count is missing", index)
 			}
@@ -843,11 +840,19 @@ func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.
 	for _, put := range plan.Puts {
 		// UnixFS replay rematerializes deterministic roots; do not treat the
 		// already-materialized object as a versioned ArcTable parent.
-		mut.Puts = append(mut.Puts, gateway.ArcSetPut{
-			Object: cid.Undef,
-			Kind:   put.Kind,
-			ArcSet: put.ArcSet,
-		})
+		gatewayPut := gateway.ArcSetPut{
+			Object:       cid.Undef,
+			ExpectedRoot: put.ExpectedRoot,
+			Kind:         put.Kind,
+			ArcSet:       put.ArcSet,
+		}
+		if put.FixedList != nil {
+			gatewayPut.Commit.FixedList = &gateway.FixedListCommit{
+				TotalSize: put.FixedList.TotalSize,
+				ChunkSize: put.FixedList.ChunkSize,
+			}
+		}
+		mut.Puts = append(mut.Puts, gatewayPut)
 	}
 	return mut
 }

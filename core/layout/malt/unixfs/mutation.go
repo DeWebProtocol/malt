@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 )
@@ -21,9 +22,18 @@ type MutationPlan struct {
 
 // MutationPut binds one materialized semantic root to its canonical arc set.
 type MutationPut struct {
-	Object cid.Cid
-	Kind   arcset.Kind
-	ArcSet *arcset.CanonicalArcSet
+	Object       cid.Cid
+	ExpectedRoot cid.Cid
+	Kind         arcset.Kind
+	ArcSet       *arcset.CanonicalArcSet
+	FixedList    *FixedListCommit
+}
+
+// FixedListCommit carries the measured fixed-width list commit profile needed
+// to replay a list root exactly from logical list entries.
+type FixedListCommit struct {
+	TotalSize uint64
+	ChunkSize uint64
 }
 
 // MutationPlanForPath exposes canonical map/list arcsets for the UnixFS node
@@ -52,9 +62,10 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 		BaseRoot: root,
 		Puts: []MutationPut{
 			{
-				Object: nodeRoot,
-				Kind:   arcset.KindMap,
-				ArcSet: nodeArcSet,
+				Object:       nodeRoot,
+				ExpectedRoot: nodeRoot,
+				Kind:         arcset.KindMap,
+				ArcSet:       nodeArcSet,
 			},
 		},
 	}
@@ -82,10 +93,16 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	if err != nil {
 		return nil, err
 	}
+	fixedList, err := l.fixedListCommitForPayload(ctx, payload, info)
+	if err != nil {
+		return nil, err
+	}
 	plan.Puts = append(plan.Puts, MutationPut{
-		Object: payload,
-		Kind:   arcset.KindList,
-		ArcSet: listArcSet,
+		Object:       payload,
+		ExpectedRoot: payload,
+		Kind:         arcset.KindList,
+		ArcSet:       listArcSet,
+		FixedList:    fixedList,
 	})
 	return plan, nil
 }
@@ -155,10 +172,16 @@ func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan,
 			if err != nil {
 				return err
 			}
+			fixedList, err := l.fixedListCommitForPayload(ctx, payload, info)
+			if err != nil {
+				return err
+			}
 			plan.Puts = append(plan.Puts, MutationPut{
-				Object: payload,
-				Kind:   arcset.KindList,
-				ArcSet: listArcSet,
+				Object:       payload,
+				ExpectedRoot: payload,
+				Kind:         arcset.KindList,
+				ArcSet:       listArcSet,
+				FixedList:    fixedList,
 			})
 		}
 	default:
@@ -170,9 +193,10 @@ func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan,
 		return err
 	}
 	plan.Puts = append(plan.Puts, MutationPut{
-		Object: nodeRoot,
-		Kind:   arcset.KindMap,
-		ArcSet: nodeArcSet,
+		Object:       nodeRoot,
+		ExpectedRoot: nodeRoot,
+		Kind:         arcset.KindMap,
+		ArcSet:       nodeArcSet,
 	})
 	return nil
 }
@@ -288,6 +312,31 @@ func (l *Layout) canonicalListArcSet(ctx context.Context, root cid.Cid, length u
 		})
 	}
 	return arcset.NewCanonicalArcSet(arcset.KindList, entries)
+}
+
+func (l *Layout) fixedListCommitForPayload(ctx context.Context, payload cid.Cid, info *fileInfo) (*FixedListCommit, error) {
+	measured, ok := l.lists.(list.MeasuredSemantics)
+	if !ok {
+		return nil, nil
+	}
+	end := uint64(0)
+	result, _, err := measured.ProveRange(ctx, l.namespace, payload, 0, &end)
+	if err != nil {
+		return nil, nil
+	}
+	if result.Metadata.ChildCount != chunkCount(info.size, info.chunkSize) {
+		return nil, fmt.Errorf("fixed list child count = %d, want %d", result.Metadata.ChildCount, chunkCount(info.size, info.chunkSize))
+	}
+	if result.Metadata.TotalSize != info.size {
+		return nil, fmt.Errorf("fixed list total size = %d, want %d", result.Metadata.TotalSize, info.size)
+	}
+	if result.Metadata.ChunkSize != info.chunkSize {
+		return nil, fmt.Errorf("fixed list chunk size = %d, want %d", result.Metadata.ChunkSize, info.chunkSize)
+	}
+	return &FixedListCommit{
+		TotalSize: result.Metadata.TotalSize,
+		ChunkSize: result.Metadata.ChunkSize,
+	}, nil
 }
 
 func mapEntry(key string, target arcset.TargetRef) (arcset.ArcEntry, error) {
