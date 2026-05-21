@@ -422,12 +422,20 @@ func TestClientRootSemanticMutation(t *testing.T) {
 
 	nextName := fakeCIDString("root-next-name")
 	resp, err := client.ApplyRootSemanticMutation(ctx, createResp.Root, &httpapi.SemanticMutationRequest{
-		Puts: []httpapi.SemanticMutationPut{{
+		Deltas: []httpapi.SemanticMutationDelta{{
 			Object: createResp.Root,
 			Kind:   "map",
-			Entries: []httpapi.SemanticMutationEntry{
-				{Path: "@payload", Target: fakeCIDString("root-next-payload")},
-				{Path: "name", Target: nextName},
+			Changes: []httpapi.SemanticMutationChange{
+				{
+					Path:   "@payload",
+					Before: &httpapi.SemanticMutationTarget{Target: fakeCIDString("payload")},
+					After:  &httpapi.SemanticMutationTarget{Target: fakeCIDString("root-next-payload")},
+				},
+				{
+					Path:   "name",
+					Before: &httpapi.SemanticMutationTarget{Target: fakeCIDString("initial-name")},
+					After:  &httpapi.SemanticMutationTarget{Target: nextName},
+				},
 			},
 		}},
 	})
@@ -437,8 +445,8 @@ func TestClientRootSemanticMutation(t *testing.T) {
 	if resp.BaseRoot != createResp.Root || resp.NewRoot == "" || resp.NewRoot == createResp.Root {
 		t.Fatalf("unexpected root semantic mutation response: %+v", resp)
 	}
-	if resp.PutCount != 1 || resp.ArcCount != 2 {
-		t.Fatalf("semantic mutation counts = puts %d arcs %d, want 1/2", resp.PutCount, resp.ArcCount)
+	if resp.DeltaCount != 1 || resp.ArcCount != 2 {
+		t.Fatalf("semantic mutation counts = deltas %d arcs %d, want 1/2", resp.DeltaCount, resp.ArcCount)
 	}
 
 	resolved, err := client.ResolveRoot(ctx, resp.NewRoot, "name")

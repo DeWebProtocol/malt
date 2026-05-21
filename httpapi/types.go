@@ -23,22 +23,41 @@ type MetricsResponse struct {
 
 // SemanticMutationRequest materializes a root-relative semantic mutation.
 type SemanticMutationRequest struct {
-	Puts []SemanticMutationPut `json:"puts"`
+	Deltas []SemanticMutationDelta `json:"deltas"`
 }
 
-// SemanticMutationPut replaces one semantic object's full canonical arc set.
-type SemanticMutationPut struct {
-	Object  string                  `json:"object,omitempty"`
-	Kind    string                  `json:"kind"`
-	Entries []SemanticMutationEntry `json:"entries"`
+// SemanticMutationDelta applies coordinate-level changes to one semantic object.
+type SemanticMutationDelta struct {
+	Object       string                    `json:"object,omitempty"`
+	ExpectedRoot string                    `json:"expected_root,omitempty"`
+	Kind         string                    `json:"kind"`
+	Changes      []SemanticMutationChange  `json:"changes"`
+	Commit       *SemanticCommitDescriptor `json:"commit,omitempty"`
 }
 
-// SemanticMutationEntry is one canonical coordinate-to-target binding.
-type SemanticMutationEntry struct {
-	Path       string  `json:"path,omitempty"`
-	Index      *uint64 `json:"index,omitempty"`
-	Target     string  `json:"target"`
-	TargetKind string  `json:"target_kind,omitempty"`
+// SemanticMutationChange is one canonical coordinate transition.
+type SemanticMutationChange struct {
+	Path   string                  `json:"path,omitempty"`
+	Index  *uint64                 `json:"index,omitempty"`
+	Before *SemanticMutationTarget `json:"before,omitempty"`
+	After  *SemanticMutationTarget `json:"after,omitempty"`
+}
+
+// SemanticMutationTarget is a typed mutation target CID.
+type SemanticMutationTarget struct {
+	Target     string `json:"target"`
+	TargetKind string `json:"target_kind,omitempty"`
+}
+
+// SemanticCommitDescriptor records the commit profile for a delta.
+type SemanticCommitDescriptor struct {
+	FixedList *SemanticFixedListCommit `json:"fixed_list,omitempty"`
+}
+
+// SemanticFixedListCommit describes a measured fixed-width list commit.
+type SemanticFixedListCommit struct {
+	TotalSize uint64 `json:"total_size"`
+	ChunkSize uint64 `json:"chunk_size"`
 }
 
 // SemanticMutationResponse returns a gateway materialization receipt.
@@ -46,7 +65,7 @@ type SemanticMutationResponse struct {
 	BaseRoot        string `json:"base_root"`
 	NewRoot         string `json:"new_root"`
 	ResultRoot      string `json:"result_root,omitempty"`
-	PutCount        int    `json:"put_count"`
+	DeltaCount      int    `json:"delta_count"`
 	ArcCount        int    `json:"arc_count"`
 	MALTObjectCount int    `json:"malt_object_count,omitempty"`
 	MapCount        int    `json:"map_count,omitempty"`

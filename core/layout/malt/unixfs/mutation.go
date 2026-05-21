@@ -2,6 +2,7 @@ package unixfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -11,21 +12,20 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// MutationPlan is a layout-produced semantic mutation snapshot for one
-// UnixFS node. It is an adapter artifact for gateway-style consumers; the
-// gateway materializes the plan, while root publication remains application
-// policy.
+// MutationPlan is a layout-produced semantic mutation delta for one UnixFS
+// change. It is an adapter artifact for gateway-style consumers; the gateway
+// materializes the plan, while root publication remains application policy.
 type MutationPlan struct {
 	BaseRoot cid.Cid
-	Puts     []MutationPut
+	Deltas   []MutationDelta
 }
 
-// MutationPut binds one materialized semantic root to its canonical arc set.
-type MutationPut struct {
+// MutationDelta binds one semantic root transition to its canonical arc delta.
+type MutationDelta struct {
 	Object       cid.Cid
 	ExpectedRoot cid.Cid
 	Kind         arcset.Kind
-	ArcSet       *arcset.CanonicalArcSet
+	Changes      *arcset.CanonicalArcDelta
 	FixedList    *FixedListCommit
 }
 
@@ -36,10 +36,10 @@ type FixedListCommit struct {
 	ChunkSize uint64
 }
 
-// MutationPlanForPath exposes canonical map/list arcsets for the UnixFS node
-// already reachable at path. For directories it includes only the terminal
-// directory map, not descendant subtrees. For large files it includes the file
-// map plus the terminal payload list composed from individual list index reads.
+// MutationPlanForPath exposes creation deltas for the UnixFS node already
+// reachable at path. For directories it includes only the terminal directory
+// map, not descendant subtrees. For large files it includes the file map plus
+// the terminal payload list composed from individual list index reads.
 func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path string) (*MutationPlan, error) {
 	if !root.Defined() {
 		return nil, fmt.Errorf("root is undefined")
@@ -60,15 +60,12 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	}
 	plan := &MutationPlan{
 		BaseRoot: root,
-		Puts: []MutationPut{
-			{
-				Object:       nodeRoot,
-				ExpectedRoot: nodeRoot,
-				Kind:         arcset.KindMap,
-				ArcSet:       nodeArcSet,
-			},
-		},
 	}
+	nodeDelta, err := mutationDeltaFromArcSets(cid.Undef, nodeRoot, arcset.KindMap, nil, nodeArcSet)
+	if err != nil {
+		return nil, err
+	}
+	plan.Deltas = append(plan.Deltas, nodeDelta)
 
 	if kind != typeFile {
 		return plan, nil
@@ -97,19 +94,19 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	if err != nil {
 		return nil, err
 	}
-	plan.Puts = append(plan.Puts, MutationPut{
-		Object:       payload,
-		ExpectedRoot: payload,
-		Kind:         arcset.KindList,
-		ArcSet:       listArcSet,
-		FixedList:    fixedList,
-	})
+	listDelta, err := mutationDeltaFromArcSets(cid.Undef, payload, arcset.KindList, nil, listArcSet)
+	if err != nil {
+		return nil, err
+	}
+	listDelta.FixedList = fixedList
+	plan.Deltas = append(plan.Deltas, listDelta)
 	return plan, nil
 }
 
-// MutationPlanForRoot exposes canonical map/list arcsets for the complete
-// UnixFS tree rooted at root. Child payloads and maps are emitted before their
-// parent directories so the final put is the canonical current-root map.
+// MutationPlanForRoot exposes canonical map/list deltas for the complete UnixFS
+// tree transition from baseRoot to root. Child payloads and maps are emitted
+// before their parent directories so the final delta is the canonical current
+// root map.
 func (l *Layout) MutationPlanForRoot(ctx context.Context, baseRoot cid.Cid, root cid.Cid) (*MutationPlan, error) {
 	if !root.Defined() {
 		return nil, fmt.Errorf("root is undefined")
@@ -118,18 +115,137 @@ func (l *Layout) MutationPlanForRoot(ctx context.Context, baseRoot cid.Cid, root
 	plan := &MutationPlan{
 		BaseRoot: baseRoot,
 	}
-	if err := l.appendRootMutationPuts(ctx, plan, root); err != nil {
+	if err := l.appendRootMutationDeltas(ctx, plan, baseRoot, root); err != nil {
 		return nil, err
 	}
 	return plan, nil
 }
 
-func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan, nodeRoot cid.Cid) error {
+func (l *Layout) appendRootMutationDeltas(ctx context.Context, plan *MutationPlan, oldNodeRoot, nodeRoot cid.Cid) error {
+	if oldNodeRoot.Defined() && oldNodeRoot.Equals(nodeRoot) {
+		return nil
+	}
+	if !oldNodeRoot.Defined() {
+		return l.appendRootCreationDeltas(ctx, plan, nodeRoot)
+	}
+
 	kind, err := l.nodeType(ctx, nodeRoot)
 	if err != nil {
 		return err
 	}
+	oldKind, err := l.nodeType(ctx, oldNodeRoot)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return l.appendRootCreationDeltas(ctx, plan, nodeRoot)
+		}
+		return err
+	}
+	if oldKind != kind {
+		return l.appendRootCreationDeltas(ctx, plan, nodeRoot)
+	}
 
+	switch kind {
+	case typeDirectory:
+		oldPayload, _, ok, err := l.lookup(ctx, oldNodeRoot, payloadPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: missing @payload", ErrNotFound)
+		}
+		oldNames, err := l.loadDirectoryManifest(ctx, oldPayload)
+		if err != nil {
+			return err
+		}
+		oldChildren := make(map[string]cid.Cid, len(oldNames))
+		for _, name := range oldNames {
+			child, _, ok, err := l.lookup(ctx, oldNodeRoot, arcset.CanonicalizePath(name))
+			if err != nil {
+				return err
+			}
+			if ok {
+				oldChildren[name] = child
+			}
+		}
+
+		payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: missing @payload", ErrNotFound)
+		}
+		names, err := l.loadDirectoryManifest(ctx, payload)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			child, _, ok, err := l.lookup(ctx, nodeRoot, arcset.CanonicalizePath(name))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("%w: missing directory entry %s", ErrNotFound, name)
+			}
+			if err := l.appendRootMutationDeltas(ctx, plan, oldChildren[name], child); err != nil {
+				return err
+			}
+		}
+	case typeFile:
+		oldPayload, _, oldPayloadOK, err := l.lookup(ctx, oldNodeRoot, payloadPath)
+		if err != nil {
+			return err
+		}
+		var oldInfo *fileInfo
+		if oldPayloadOK && codec.SemanticKindOf(oldPayload) == codec.SemanticKindList {
+			oldInfo, err = l.fileInfo(ctx, oldNodeRoot, oldPayload)
+			if err != nil {
+				return err
+			}
+		}
+		payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: missing @payload", ErrNotFound)
+		}
+		if codec.SemanticKindOf(payload) == codec.SemanticKindList {
+			info, err := l.fileInfo(ctx, nodeRoot, payload)
+			if err != nil {
+				return err
+			}
+			if err := l.appendListMutationDelta(ctx, plan, oldPayload, oldInfo, payload, info); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported unixfs node kind %q", kind)
+	}
+
+	oldNodeArcSet, err := l.canonicalNodeArcSet(ctx, oldNodeRoot, oldKind)
+	if err != nil {
+		return err
+	}
+	nodeArcSet, err := l.canonicalNodeArcSet(ctx, nodeRoot, kind)
+	if err != nil {
+		return err
+	}
+	delta, err := mutationDeltaFromArcSets(oldNodeRoot, nodeRoot, arcset.KindMap, oldNodeArcSet, nodeArcSet)
+	if err != nil {
+		return err
+	}
+	if delta.Changes != nil {
+		plan.Deltas = append(plan.Deltas, delta)
+	}
+	return nil
+}
+
+func (l *Layout) appendRootCreationDeltas(ctx context.Context, plan *MutationPlan, nodeRoot cid.Cid) error {
+	kind, err := l.nodeType(ctx, nodeRoot)
+	if err != nil {
+		return err
+	}
 	switch kind {
 	case typeDirectory:
 		payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
@@ -151,7 +267,7 @@ func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan,
 			if !ok {
 				return fmt.Errorf("%w: missing directory entry %s", ErrNotFound, name)
 			}
-			if err := l.appendRootMutationPuts(ctx, plan, child); err != nil {
+			if err := l.appendRootCreationDeltas(ctx, plan, child); err != nil {
 				return err
 			}
 		}
@@ -168,21 +284,9 @@ func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan,
 			if err != nil {
 				return err
 			}
-			listArcSet, err := l.canonicalListArcSet(ctx, payload, chunkCount(info.size, info.chunkSize))
-			if err != nil {
+			if err := l.appendListMutationDelta(ctx, plan, cid.Undef, nil, payload, info); err != nil {
 				return err
 			}
-			fixedList, err := l.fixedListCommitForPayload(ctx, payload, info)
-			if err != nil {
-				return err
-			}
-			plan.Puts = append(plan.Puts, MutationPut{
-				Object:       payload,
-				ExpectedRoot: payload,
-				Kind:         arcset.KindList,
-				ArcSet:       listArcSet,
-				FixedList:    fixedList,
-			})
 		}
 	default:
 		return fmt.Errorf("unsupported unixfs node kind %q", kind)
@@ -192,12 +296,11 @@ func (l *Layout) appendRootMutationPuts(ctx context.Context, plan *MutationPlan,
 	if err != nil {
 		return err
 	}
-	plan.Puts = append(plan.Puts, MutationPut{
-		Object:       nodeRoot,
-		ExpectedRoot: nodeRoot,
-		Kind:         arcset.KindMap,
-		ArcSet:       nodeArcSet,
-	})
+	delta, err := mutationDeltaFromArcSets(cid.Undef, nodeRoot, arcset.KindMap, nil, nodeArcSet)
+	if err != nil {
+		return err
+	}
+	plan.Deltas = append(plan.Deltas, delta)
 	return nil
 }
 
@@ -314,6 +417,60 @@ func (l *Layout) canonicalListArcSet(ctx context.Context, root cid.Cid, length u
 	return arcset.NewCanonicalArcSet(arcset.KindList, entries)
 }
 
+func (l *Layout) appendListMutationDelta(ctx context.Context, plan *MutationPlan, oldPayload cid.Cid, oldInfo *fileInfo, payload cid.Cid, info *fileInfo) error {
+	if oldPayload.Defined() && oldPayload.Equals(payload) {
+		return nil
+	}
+
+	newLen := chunkCount(info.size, info.chunkSize)
+	newArcSet, err := l.canonicalListArcSet(ctx, payload, newLen)
+	if err != nil {
+		return err
+	}
+	fixedList, err := l.fixedListCommitForPayload(ctx, payload, info)
+	if err != nil {
+		return err
+	}
+
+	object := cid.Undef
+	var oldArcSet *arcset.CanonicalArcSet
+	if oldPayload.Defined() && oldInfo != nil && oldInfo.chunkSize == info.chunkSize && canReuseMeasuredListDelta(oldInfo, info) {
+		oldLen := chunkCount(oldInfo.size, oldInfo.chunkSize)
+		oldArcSet, err = l.canonicalListArcSet(ctx, oldPayload, oldLen)
+		if err != nil {
+			return err
+		}
+		object = oldPayload
+	}
+
+	delta, err := mutationDeltaFromArcSets(object, payload, arcset.KindList, oldArcSet, newArcSet)
+	if err != nil {
+		return err
+	}
+	if delta.Changes == nil {
+		return nil
+	}
+	delta.FixedList = fixedList
+	plan.Deltas = append(plan.Deltas, delta)
+	return nil
+}
+
+func canReuseMeasuredListDelta(oldInfo, newInfo *fileInfo) bool {
+	if oldInfo == nil || newInfo == nil || oldInfo.chunkSize != newInfo.chunkSize {
+		return false
+	}
+	oldLen := chunkCount(oldInfo.size, oldInfo.chunkSize)
+	newLen := chunkCount(newInfo.size, newInfo.chunkSize)
+	switch {
+	case newLen == oldLen:
+		return oldInfo.size == newInfo.size
+	case newLen > oldLen:
+		return oldInfo.size == oldLen*oldInfo.chunkSize
+	default:
+		return false
+	}
+}
+
 func (l *Layout) fixedListCommitForPayload(ctx context.Context, payload cid.Cid, info *fileInfo) (*FixedListCommit, error) {
 	measured, ok := l.lists.(list.MeasuredSemantics)
 	if !ok {
@@ -337,6 +494,97 @@ func (l *Layout) fixedListCommitForPayload(ctx context.Context, payload cid.Cid,
 		TotalSize: result.Metadata.TotalSize,
 		ChunkSize: result.Metadata.ChunkSize,
 	}, nil
+}
+
+func mutationDeltaFromArcSets(object, expectedRoot cid.Cid, kind arcset.Kind, before, after *arcset.CanonicalArcSet) (MutationDelta, error) {
+	changes, err := canonicalArcSetChanges(kind, before, after)
+	if err != nil {
+		return MutationDelta{}, err
+	}
+	out := MutationDelta{
+		Object:       object,
+		ExpectedRoot: expectedRoot,
+		Kind:         kind,
+	}
+	if len(changes) == 0 {
+		return out, nil
+	}
+	delta, err := arcset.NewCanonicalArcDelta(kind, changes)
+	if err != nil {
+		return MutationDelta{}, err
+	}
+	out.Changes = delta
+	return out, nil
+}
+
+func canonicalArcSetChanges(kind arcset.Kind, before, after *arcset.CanonicalArcSet) ([]arcset.ArcChange, error) {
+	if before != nil && before.Kind() != kind {
+		return nil, fmt.Errorf("before arcset kind = %q, want %q", before.Kind(), kind)
+	}
+	if after != nil && after.Kind() != kind {
+		return nil, fmt.Errorf("after arcset kind = %q, want %q", after.Kind(), kind)
+	}
+
+	beforeEntries := canonicalEntriesByCoordinate(before)
+	afterEntries := canonicalEntriesByCoordinate(after)
+	seen := make(map[string]struct{}, len(beforeEntries)+len(afterEntries))
+	changes := make([]arcset.ArcChange, 0)
+
+	for key, beforeEntry := range beforeEntries {
+		seen[key] = struct{}{}
+		afterEntry, ok := afterEntries[key]
+		if !ok {
+			beforeTarget := beforeEntry.Target
+			changes = append(changes, arcset.ArcChange{
+				Coordinate: beforeEntry.Coordinate,
+				Before:     &beforeTarget,
+			})
+			continue
+		}
+		if targetRefEqual(beforeEntry.Target, afterEntry.Target) {
+			continue
+		}
+		beforeTarget := beforeEntry.Target
+		afterTarget := afterEntry.Target
+		changes = append(changes, arcset.ArcChange{
+			Coordinate: beforeEntry.Coordinate,
+			Before:     &beforeTarget,
+			After:      &afterTarget,
+		})
+	}
+	for key, afterEntry := range afterEntries {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		afterTarget := afterEntry.Target
+		changes = append(changes, arcset.ArcChange{
+			Coordinate: afterEntry.Coordinate,
+			After:      &afterTarget,
+		})
+	}
+	return changes, nil
+}
+
+func canonicalEntriesByCoordinate(set *arcset.CanonicalArcSet) map[string]arcset.ArcEntry {
+	if set == nil {
+		return nil
+	}
+	entries := set.Entries()
+	out := make(map[string]arcset.ArcEntry, len(entries))
+	for _, entry := range entries {
+		out[entry.Coordinate.String()] = entry
+	}
+	return out
+}
+
+func targetRefEqual(a, b arcset.TargetRef) bool {
+	if a.Kind() != b.Kind() {
+		return false
+	}
+	if !a.CID().Defined() && !b.CID().Defined() {
+		return true
+	}
+	return a.CID().Equals(b.CID())
 }
 
 func mapEntry(key string, target arcset.TargetRef) (arcset.ArcEntry, error) {

@@ -1017,12 +1017,20 @@ func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 	nextPayload := fakeCIDString("next-payload")
 	nextName := fakeCIDString("next-name")
 	mutationBody, _ := json.Marshal(&httpapi.SemanticMutationRequest{
-		Puts: []httpapi.SemanticMutationPut{{
+		Deltas: []httpapi.SemanticMutationDelta{{
 			Object: createResp.Root,
 			Kind:   "map",
-			Entries: []httpapi.SemanticMutationEntry{
-				{Path: "@payload", Target: nextPayload},
-				{Path: "name", Target: nextName},
+			Changes: []httpapi.SemanticMutationChange{
+				{
+					Path:   "@payload",
+					Before: &httpapi.SemanticMutationTarget{Target: initialPayload},
+					After:  &httpapi.SemanticMutationTarget{Target: nextPayload},
+				},
+				{
+					Path:   "name",
+					Before: &httpapi.SemanticMutationTarget{Target: fakeCIDString("initial-name")},
+					After:  &httpapi.SemanticMutationTarget{Target: nextName},
+				},
 			},
 		}},
 	})
@@ -1044,8 +1052,8 @@ func TestServerSemanticMutationUpdatesRoot(t *testing.T) {
 	if mutationResp.NewRoot == "" || mutationResp.NewRoot == createResp.Root {
 		t.Fatalf("new_root = %q, want a new defined root", mutationResp.NewRoot)
 	}
-	if mutationResp.PutCount != 1 || mutationResp.ArcCount != 2 {
-		t.Fatalf("receipt counts = puts %d arcs %d, want 1/2", mutationResp.PutCount, mutationResp.ArcCount)
+	if mutationResp.DeltaCount != 1 || mutationResp.ArcCount != 2 {
+		t.Fatalf("receipt counts = deltas %d arcs %d, want 1/2", mutationResp.DeltaCount, mutationResp.ArcCount)
 	}
 	requireNoKVPrefix(t, node, "lineage:")
 	requireNoKVPrefix(t, node, "children:")
@@ -1091,25 +1099,26 @@ func TestServerSemanticMutationRejectsInvalidRoot(t *testing.T) {
 		{
 			name: "list only root",
 			req: httpapi.SemanticMutationRequest{
-				Puts: []httpapi.SemanticMutationPut{{
+				Deltas: []httpapi.SemanticMutationDelta{{
 					Object: createResp.Root,
 					Kind:   "list",
-					Entries: []httpapi.SemanticMutationEntry{{
-						Index:  &index,
-						Target: fakeCIDString("chunk"),
+					Changes: []httpapi.SemanticMutationChange{{
+						Index: &index,
+						After: &httpapi.SemanticMutationTarget{Target: fakeCIDString("chunk")},
 					}},
 				}},
 			},
 		},
 		{
-			name: "map missing payload",
+			name: "map old value mismatch",
 			req: httpapi.SemanticMutationRequest{
-				Puts: []httpapi.SemanticMutationPut{{
+				Deltas: []httpapi.SemanticMutationDelta{{
 					Object: createResp.Root,
 					Kind:   "map",
-					Entries: []httpapi.SemanticMutationEntry{{
+					Changes: []httpapi.SemanticMutationChange{{
 						Path:   "name",
-						Target: fakeCIDString("next-name"),
+						Before: &httpapi.SemanticMutationTarget{Target: fakeCIDString("wrong-old-name")},
+						After:  &httpapi.SemanticMutationTarget{Target: fakeCIDString("next-name")},
 					}},
 				}},
 			},
@@ -1128,6 +1137,45 @@ func TestServerSemanticMutationRejectsInvalidRoot(t *testing.T) {
 				t.Fatalf("semantic mutation status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestServerSemanticMutationRejectsLegacyPuts(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": fakeCIDString("initial-name")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"puts": []map[string]any{{
+			"object": createResp.Root,
+			"kind":   "map",
+			"entries": []map[string]string{{
+				"path":   "name",
+				"target": fakeCIDString("next-name"),
+			}},
+		}},
+	})
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/_mutate", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("legacy puts mutation request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("legacy puts status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 }
 
@@ -1157,12 +1205,20 @@ func TestServerRootSemanticMutationMaterializesWithoutPublishingRoot(t *testing.
 
 	nextName := fakeCIDString("root-next-name")
 	mutationBody, _ := json.Marshal(map[string]any{
-		"puts": []map[string]any{{
+		"deltas": []map[string]any{{
 			"object": createResp.Root,
 			"kind":   "map",
-			"entries": []map[string]string{
-				{"path": "@payload", "target": fakeCIDString("root-next-payload")},
-				{"path": "name", "target": nextName},
+			"changes": []map[string]any{
+				{
+					"path":   "@payload",
+					"before": map[string]string{"target": fakeCIDString("payload")},
+					"after":  map[string]string{"target": fakeCIDString("root-next-payload")},
+				},
+				{
+					"path":   "name",
+					"before": map[string]string{"target": fakeCIDString("initial-name")},
+					"after":  map[string]string{"target": nextName},
+				},
 			},
 		}},
 	})
@@ -1315,6 +1371,63 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("partial content path status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestServerUnixFSIdempotentFileWriteReturnsSameRoot(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create structure status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	body := []byte("stable contents")
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("initial unixfs write failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("initial unixfs write status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var firstWrite httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&firstWrite); err != nil {
+		t.Fatalf("decode initial write response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/"+firstWrite.NewRoot+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("idempotent unixfs write failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		errorBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("idempotent unixfs write status = %d, want %d: %s", resp.StatusCode, http.StatusCreated, string(errorBody))
+	}
+	var secondWrite httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&secondWrite); err != nil {
+		t.Fatalf("decode idempotent write response: %v", err)
+	}
+	if secondWrite.NewRoot != firstWrite.NewRoot {
+		t.Fatalf("idempotent write root = %q, want same root %q", secondWrite.NewRoot, firstWrite.NewRoot)
+	}
+	if secondWrite.ArcCount != 0 {
+		t.Fatalf("idempotent write arc_count = %d, want 0", secondWrite.ArcCount)
 	}
 }
 

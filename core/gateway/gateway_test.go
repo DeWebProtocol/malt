@@ -3,6 +3,7 @@ package gateway_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
@@ -10,6 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/gateway"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
@@ -21,8 +23,14 @@ import (
 func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 	root := testCID("root")
 	payload := testCID("payload")
-	mapSet := mustCanonicalMap(t, map[string]cid.Cid{"@payload": payload})
-	listSet := mustCanonicalList(t, []cid.Cid{payload})
+	mapDelta := mustCanonicalDelta(t, arcset.KindMap, []deltaChangeSpec{{
+		Path:  "@payload",
+		After: arcset.NewCASTarget(payload),
+	}})
+	listDelta := mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{{
+		Index: uint64Ptr(0),
+		After: arcset.NewCASTarget(payload),
+	}})
 
 	tests := []struct {
 		name string
@@ -32,40 +40,40 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 		{
 			name: "missing base root",
 			mut: gateway.SemanticMutation{
-				Puts: []gateway.ArcSetPut{{
-					Object: root,
-					Kind:   arcset.KindMap,
-					ArcSet: mapSet,
+				Deltas: []gateway.ArcSetDelta{{
+					Object:  root,
+					Kind:    arcset.KindMap,
+					Changes: mapDelta,
 				}},
 			},
 			want: gateway.ErrInvalidBaseRoot,
 		},
 		{
-			name: "empty puts",
+			name: "empty deltas",
 			mut: gateway.SemanticMutation{
 				BaseRoot: root,
 			},
-			want: gateway.ErrEmptyPuts,
+			want: gateway.ErrEmptyDeltas,
 		},
 		{
-			name: "nil arcset",
+			name: "nil delta",
 			mut: gateway.SemanticMutation{
 				BaseRoot: root,
-				Puts: []gateway.ArcSetPut{{
+				Deltas: []gateway.ArcSetDelta{{
 					Object: root,
 					Kind:   arcset.KindMap,
 				}},
 			},
-			want: gateway.ErrNilArcSet,
+			want: gateway.ErrNilDelta,
 		},
 		{
-			name: "put kind mismatch",
+			name: "delta kind mismatch",
 			mut: gateway.SemanticMutation{
 				BaseRoot: root,
-				Puts: []gateway.ArcSetPut{{
-					Object: root,
-					Kind:   arcset.KindMap,
-					ArcSet: listSet,
+				Deltas: []gateway.ArcSetDelta{{
+					Object:  root,
+					Kind:    arcset.KindMap,
+					Changes: listDelta,
 				}},
 			},
 			want: gateway.ErrObjectKindMismatch,
@@ -74,10 +82,10 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 			name: "object kind mismatch",
 			mut: gateway.SemanticMutation{
 				BaseRoot: root,
-				Puts: []gateway.ArcSetPut{{
-					Object: mustTypedRoot(t, codec.SemanticKindList),
-					Kind:   arcset.KindMap,
-					ArcSet: mapSet,
+				Deltas: []gateway.ArcSetDelta{{
+					Object:  mustTypedRoot(t, codec.SemanticKindList),
+					Kind:    arcset.KindMap,
+					Changes: mapDelta,
 				}},
 			},
 			want: gateway.ErrObjectKindMismatch,
@@ -97,14 +105,17 @@ func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
 func TestValidateSemanticMutationIsRootCentric(t *testing.T) {
 	root := testCID("root-centric-base")
 	payload := testCID("root-centric-payload")
-	set := mustCanonicalMap(t, map[string]cid.Cid{"@payload": payload})
+	delta := mustCanonicalDelta(t, arcset.KindMap, []deltaChangeSpec{{
+		Path:  "@payload",
+		After: arcset.NewCASTarget(payload),
+	}})
 
 	err := gateway.ValidateSemanticMutation(gateway.SemanticMutation{
 		BaseRoot: root,
-		Puts: []gateway.ArcSetPut{{
-			Object: root,
-			Kind:   arcset.KindMap,
-			ArcSet: set,
+		Deltas: []gateway.ArcSetDelta{{
+			Object:  root,
+			Kind:    arcset.KindMap,
+			Changes: delta,
 		}},
 	})
 	if err != nil {
@@ -119,25 +130,38 @@ func TestCanonicalMapWithoutPayloadIsRejected(t *testing.T) {
 	if !errors.Is(err, arcset.ErrMissingPayloadBinding) {
 		t.Fatalf("NewCanonicalMapArcSet error = %v, want %v", err, arcset.ErrMissingPayloadBinding)
 	}
+
+	exec := newExecutor(t)
+	_, err = exec.Apply(context.Background(), gateway.SemanticMutation{
+		BaseRoot: testCID("base"),
+		Deltas: []gateway.ArcSetDelta{{
+			Kind: arcset.KindMap,
+			Changes: mustCanonicalDelta(t, arcset.KindMap, []deltaChangeSpec{{
+				Path:  "child",
+				After: arcset.NewMapTarget(testCID("child")),
+			}}),
+		}},
+	})
+	if !errors.Is(err, arcset.ErrMissingPayloadBinding) {
+		t.Fatalf("map create delta error = %v, want %v", err, arcset.ErrMissingPayloadBinding)
+	}
 }
 
-func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
+func TestExecutorCreatesMapFromDeltaAndReturnsStableReceipt(t *testing.T) {
 	ctx := context.Background()
 	exec := newExecutor(t)
 	baseRoot := testCID("base")
 	payload := testCID("payload")
 	child := testCID("child")
-	set := mustCanonicalMap(t, map[string]cid.Cid{
-		"@payload": payload,
-		"child":    child,
-	})
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
 		BaseRoot: baseRoot,
-		Puts: []gateway.ArcSetPut{{
-			Object: baseRoot,
-			Kind:   arcset.KindMap,
-			ArcSet: set,
+		Deltas: []gateway.ArcSetDelta{{
+			Kind: arcset.KindMap,
+			Changes: mustCanonicalDelta(t, arcset.KindMap, []deltaChangeSpec{
+				{Path: "@payload", After: arcset.NewCASTarget(payload)},
+				{Path: "child", After: arcset.NewMapTarget(child)},
+			}),
 		}},
 	})
 	if err != nil {
@@ -149,8 +173,8 @@ func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
 		t.Fatalf("new root kind = %s, want %s", codec.SemanticKindOf(receipt.NewRoot), codec.SemanticKindMap)
 	}
-	if receipt.PutCount != 1 {
-		t.Fatalf("put count = %d, want 1", receipt.PutCount)
+	if receipt.DeltaCount != 1 {
+		t.Fatalf("delta count = %d, want 1", receipt.DeltaCount)
 	}
 	if receipt.ArcCount != 2 {
 		t.Fatalf("arc count = %d, want 2", receipt.ArcCount)
@@ -173,20 +197,21 @@ func TestExecutorAppliesMapReplacementAndReturnsStableReceipt(t *testing.T) {
 	}
 }
 
-func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
+func TestExecutorCreatesListFromDeltaAndReturnsStableReceipt(t *testing.T) {
 	ctx := context.Background()
 	exec := newExecutor(t)
 	baseRoot := testCID("base")
 	first := testCID("first")
 	second := testCID("second")
-	set := mustCanonicalList(t, []cid.Cid{first, second})
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
 		BaseRoot: baseRoot,
-		Puts: []gateway.ArcSetPut{{
-			Object: baseRoot,
-			Kind:   arcset.KindList,
-			ArcSet: set,
+		Deltas: []gateway.ArcSetDelta{{
+			Kind: arcset.KindList,
+			Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{
+				{Index: uint64Ptr(0), After: arcset.NewCASTarget(first)},
+				{Index: uint64Ptr(1), After: arcset.NewCASTarget(second)},
+			}),
 		}},
 	})
 	if err != nil {
@@ -195,8 +220,8 @@ func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
 	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindList {
 		t.Fatalf("new root kind = %s, want %s", codec.SemanticKindOf(receipt.NewRoot), codec.SemanticKindList)
 	}
-	if receipt.PutCount != 1 {
-		t.Fatalf("put count = %d, want 1", receipt.PutCount)
+	if receipt.DeltaCount != 1 {
+		t.Fatalf("delta count = %d, want 1", receipt.DeltaCount)
 	}
 	if receipt.ArcCount != 2 {
 		t.Fatalf("arc count = %d, want 2", receipt.ArcCount)
@@ -215,6 +240,79 @@ func TestExecutorAppliesListReplacementAndReturnsStableReceipt(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("expected list proof to verify")
+	}
+}
+
+func TestExecutorRejectsListLengthProofWhenVerifyReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	exec := newExecutor(t)
+	first := testCID("first")
+	second := testCID("second")
+	inserted := testCID("inserted")
+	baseRoot, err := exec.Lists.Commit(ctx, exec.Namespace, list.NewViewFromSlice([]cid.Cid{first, second}))
+	if err != nil {
+		t.Fatalf("Commit base list failed: %v", err)
+	}
+	exec.Lists = &verifyFalseList{
+		Semantics: exec.Lists,
+		reject: func(index uint64, call int) bool {
+			return call == 1 && index == 0
+		},
+	}
+
+	_, err = exec.Apply(ctx, gateway.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []gateway.ArcSetDelta{{
+			Object: baseRoot,
+			Kind:   arcset.KindList,
+			Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{{
+				Index: uint64Ptr(0),
+				After: arcset.NewCASTarget(inserted),
+			}}),
+		}},
+	})
+	if err == nil {
+		t.Fatal("Apply succeeded with invalid list length proof")
+	}
+	if !strings.Contains(err.Error(), "list length proof failed") {
+		t.Fatalf("Apply error = %v, want list length proof failure", err)
+	}
+}
+
+func TestExecutorRejectsListPreconditionProofWhenVerifyReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	exec := newExecutor(t)
+	first := testCID("first")
+	oldSecond := testCID("old-second")
+	newSecond := testCID("new-second")
+	baseRoot, err := exec.Lists.Commit(ctx, exec.Namespace, list.NewViewFromSlice([]cid.Cid{first, oldSecond}))
+	if err != nil {
+		t.Fatalf("Commit base list failed: %v", err)
+	}
+	exec.Lists = &verifyFalseList{
+		Semantics: exec.Lists,
+		reject: func(index uint64, call int) bool {
+			return index == 1
+		},
+	}
+
+	_, err = exec.Apply(ctx, gateway.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []gateway.ArcSetDelta{{
+			Object: baseRoot,
+			Kind:   arcset.KindList,
+			Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{{
+				Index:  uint64Ptr(1),
+				Before: arcset.NewCASTarget(oldSecond),
+				After:  arcset.NewCASTarget(newSecond),
+			}}),
+		}},
+	})
+	if err == nil {
+		t.Fatal("Apply succeeded with invalid list precondition proof")
+	}
+	if !strings.Contains(err.Error(), "list proof failed at index 1") {
+		t.Fatalf("Apply error = %v, want list precondition proof failure", err)
 	}
 }
 
@@ -262,10 +360,13 @@ func TestExecutorReplaysFixedMeasuredListToExpectedRoot(t *testing.T) {
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
 		BaseRoot: testCID("base"),
-		Puts: []gateway.ArcSetPut{{
+		Deltas: []gateway.ArcSetDelta{{
 			ExpectedRoot: expectedRoot,
 			Kind:         arcset.KindList,
-			ArcSet:       mustCanonicalList(t, chunks),
+			Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{
+				{Index: uint64Ptr(0), After: arcset.NewCASTarget(chunks[0])},
+				{Index: uint64Ptr(1), After: arcset.NewCASTarget(chunks[1])},
+			}),
 			Commit: gateway.CommitDescriptor{
 				FixedList: &gateway.FixedListCommit{
 					TotalSize: totalSize,
@@ -296,30 +397,40 @@ func TestExecutorReplaysFixedMeasuredListToExpectedRoot(t *testing.T) {
 	}
 }
 
-func TestExecutorAppliesPutsInOrderAndUsesFinalRoot(t *testing.T) {
+func TestExecutorAppliesDeltasInOrderAndUsesFinalRoot(t *testing.T) {
 	ctx := context.Background()
 	exec := newExecutor(t)
 	baseRoot := testCID("base")
-	mapSet := mustCanonicalMap(t, map[string]cid.Cid{
-		"@payload": testCID("payload"),
-	})
-	listSet := mustCanonicalList(t, []cid.Cid{testCID("chunk")})
+	payload := testCID("payload")
+	chunk := testCID("chunk")
 
 	receipt, err := exec.Apply(ctx, gateway.SemanticMutation{
 		BaseRoot: baseRoot,
-		Puts: []gateway.ArcSetPut{
-			{Object: baseRoot, Kind: arcset.KindMap, ArcSet: mapSet},
-			{Object: cid.Undef, Kind: arcset.KindList, ArcSet: listSet},
+		Deltas: []gateway.ArcSetDelta{
+			{
+				Kind: arcset.KindMap,
+				Changes: mustCanonicalDelta(t, arcset.KindMap, []deltaChangeSpec{{
+					Path:  "@payload",
+					After: arcset.NewCASTarget(payload),
+				}}),
+			},
+			{
+				Kind: arcset.KindList,
+				Changes: mustCanonicalDelta(t, arcset.KindList, []deltaChangeSpec{{
+					Index: uint64Ptr(0),
+					After: arcset.NewCASTarget(chunk),
+				}}),
+			},
 		},
 	})
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
 	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindList {
-		t.Fatalf("new root kind = %s, want final put kind %s", codec.SemanticKindOf(receipt.NewRoot), codec.SemanticKindList)
+		t.Fatalf("new root kind = %s, want final delta kind %s", codec.SemanticKindOf(receipt.NewRoot), codec.SemanticKindList)
 	}
-	if receipt.PutCount != 2 {
-		t.Fatalf("put count = %d, want 2", receipt.PutCount)
+	if receipt.DeltaCount != 2 {
+		t.Fatalf("delta count = %d, want 2", receipt.DeltaCount)
 	}
 	if receipt.ArcCount != 2 {
 		t.Fatalf("arc count = %d, want 2", receipt.ArcCount)
@@ -351,6 +462,20 @@ func newExecutor(t *testing.T) gateway.Executor {
 		Lists:     lists,
 		ArcTable:  arcs,
 	}
+}
+
+type verifyFalseList struct {
+	list.Semantics
+	reject func(index uint64, call int) bool
+	calls  int
+}
+
+func (l *verifyFalseList) Verify(root cid.Cid, index uint64, expected list.Query, proof structure.Proof) (bool, error) {
+	l.calls++
+	if l.reject != nil && l.reject(index, l.calls) {
+		return false, nil
+	}
+	return l.Semantics.Verify(root, index, expected, proof)
 }
 
 func mustCanonicalMap(t *testing.T, entries map[string]cid.Cid) *arcset.CanonicalArcSet {

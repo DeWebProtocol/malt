@@ -22,32 +22,32 @@ var (
 	// ErrInvalidBaseRoot is returned when an update mutation has no base root.
 	ErrInvalidBaseRoot = errors.New("invalid base root")
 
-	// ErrEmptyPuts is returned when a semantic mutation carries no arcset replacements.
-	ErrEmptyPuts = errors.New("empty puts")
+	// ErrEmptyDeltas is returned when a semantic mutation carries no arc deltas.
+	ErrEmptyDeltas = errors.New("empty deltas")
 
-	// ErrObjectKindMismatch is returned when a put kind disagrees with its object or arcset kind.
+	// ErrObjectKindMismatch is returned when a delta kind disagrees with its object or changes kind.
 	ErrObjectKindMismatch = errors.New("object kind mismatch")
 
-	// ErrNilArcSet is returned when a put has no canonical arcset.
-	ErrNilArcSet = errors.New("nil arcset")
+	// ErrNilDelta is returned when a mutation has no canonical delta.
+	ErrNilDelta = errors.New("nil delta")
 
-	// ErrExpectedRootMismatch is returned when a replayed put does not reproduce
-	// the root declared by the mutation plan.
+	// ErrExpectedRootMismatch is returned when a replayed delta does not
+	// reproduce the root declared by the mutation plan.
 	ErrExpectedRootMismatch = errors.New("expected root mismatch")
 )
 
 // SemanticMutation is the gateway write boundary emitted by application layouts.
 type SemanticMutation struct {
 	BaseRoot cid.Cid
-	Puts     []ArcSetPut
+	Deltas   []ArcSetDelta
 }
 
-// ArcSetPut replaces one touched semantic object's full canonical arcset.
-type ArcSetPut struct {
+// ArcSetDelta applies coordinate-level changes to one semantic object.
+type ArcSetDelta struct {
 	Object       cid.Cid
 	ExpectedRoot cid.Cid
 	Kind         arcset.Kind
-	ArcSet       *arcset.CanonicalArcSet
+	Changes      *arcset.CanonicalArcDelta
 	Commit       CommitDescriptor
 }
 
@@ -65,10 +65,10 @@ type FixedListCommit struct {
 
 // WriteReceipt records the library-level outcome of applying a semantic mutation.
 type WriteReceipt struct {
-	BaseRoot cid.Cid
-	NewRoot  cid.Cid
-	PutCount int
-	ArcCount int
+	BaseRoot   cid.Cid
+	NewRoot    cid.Cid
+	DeltaCount int
+	ArcCount   int
 }
 
 // Executor submits semantic mutations to the current map/list semantic backends.
@@ -84,30 +84,30 @@ func ValidateSemanticMutation(mut SemanticMutation) error {
 	if !mut.BaseRoot.Defined() {
 		return ErrInvalidBaseRoot
 	}
-	if len(mut.Puts) == 0 {
-		return ErrEmptyPuts
+	if len(mut.Deltas) == 0 {
+		return ErrEmptyDeltas
 	}
-	for i, put := range mut.Puts {
-		if put.ArcSet == nil {
-			return fmt.Errorf("put %d: %w", i, ErrNilArcSet)
+	for i, delta := range mut.Deltas {
+		if delta.Changes == nil {
+			return fmt.Errorf("delta %d: %w", i, ErrNilDelta)
 		}
-		if put.Kind != put.ArcSet.Kind() {
-			return fmt.Errorf("put %d: %w", i, ErrObjectKindMismatch)
+		if delta.Kind != delta.Changes.Kind() {
+			return fmt.Errorf("delta %d: %w", i, ErrObjectKindMismatch)
 		}
-		if !objectKindMatches(put.Object, put.Kind) {
-			return fmt.Errorf("put %d: %w", i, ErrObjectKindMismatch)
+		if !objectKindMatches(delta.Object, delta.Kind) {
+			return fmt.Errorf("delta %d: %w", i, ErrObjectKindMismatch)
 		}
-		if !objectKindMatches(put.ExpectedRoot, put.Kind) {
-			return fmt.Errorf("put %d expected root: %w", i, ErrObjectKindMismatch)
+		if !objectKindMatches(delta.ExpectedRoot, delta.Kind) {
+			return fmt.Errorf("delta %d expected root: %w", i, ErrObjectKindMismatch)
 		}
-		if put.Commit.FixedList != nil && put.Kind != arcset.KindList {
-			return fmt.Errorf("put %d fixed list commit on %q: %w", i, put.Kind, ErrObjectKindMismatch)
+		if delta.Commit.FixedList != nil && delta.Kind != arcset.KindList {
+			return fmt.Errorf("delta %d fixed list commit on %q: %w", i, delta.Kind, ErrObjectKindMismatch)
 		}
 	}
 	return nil
 }
 
-// Apply commits full canonical arcset replacements in order.
+// Apply commits canonical arc deltas in order.
 //
 // The executor treats BaseRoot as the caller's update base for receipt and
 // validation purposes only. It does not publish heads, arbitrate freshness, or
@@ -122,69 +122,240 @@ func (e Executor) Apply(ctx context.Context, mut SemanticMutation) (WriteReceipt
 
 	var newRoot cid.Cid
 	arcCount := 0
-	for i, put := range mut.Puts {
-		root, count, err := e.commitPut(ctx, e.Namespace, put)
+	for i, delta := range mut.Deltas {
+		root, count, err := e.commitDelta(ctx, e.Namespace, delta)
 		if err != nil {
-			return WriteReceipt{}, fmt.Errorf("put %d: %w", i, err)
+			return WriteReceipt{}, fmt.Errorf("delta %d: %w", i, err)
 		}
 		newRoot = root
 		arcCount += count
 	}
 
 	return WriteReceipt{
-		BaseRoot: mut.BaseRoot,
-		NewRoot:  newRoot,
-		PutCount: len(mut.Puts),
-		ArcCount: arcCount,
+		BaseRoot:   mut.BaseRoot,
+		NewRoot:    newRoot,
+		DeltaCount: len(mut.Deltas),
+		ArcCount:   arcCount,
 	}, nil
 }
 
-func (e Executor) commitPut(ctx context.Context, namespace string, put ArcSetPut) (cid.Cid, int, error) {
-	switch put.Kind {
+func (e Executor) commitDelta(ctx context.Context, namespace string, delta ArcSetDelta) (cid.Cid, int, error) {
+	switch delta.Kind {
 	case arcset.KindMap:
 		if e.Maps == nil {
 			return cid.Undef, 0, errors.New("map semantics is nil")
 		}
-		view, err := canonicalMapView(put.ArcSet)
+		root, err := e.commitMapDelta(ctx, namespace, delta)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
-		root, err := e.Maps.Commit(ctx, namespace, view)
-		if err != nil {
+		if err := checkExpectedRoot(delta.ExpectedRoot, root); err != nil {
 			return cid.Undef, 0, err
 		}
-		if err := checkExpectedRoot(put.ExpectedRoot, root); err != nil {
-			return cid.Undef, 0, err
-		}
-		if e.ArcTable != nil {
-			snapshot, err := canonicalMapSnapshot(put.ArcSet)
-			if err != nil {
-				return cid.Undef, 0, err
-			}
-			if err := e.ArcTable.Update(ctx, namespace, root, put.Object, snapshot); err != nil {
-				return cid.Undef, 0, err
-			}
-		}
-		return root, put.ArcSet.Len(), nil
+		return root, delta.Changes.Len(), nil
 	case arcset.KindList:
 		if e.Lists == nil {
 			return cid.Undef, 0, errors.New("list semantics is nil")
 		}
-		values, err := canonicalListValues(put.ArcSet)
+		root, err := e.commitListDelta(ctx, namespace, delta)
 		if err != nil {
 			return cid.Undef, 0, err
 		}
-		root, err := e.commitList(ctx, namespace, values, put.Commit)
-		if err != nil {
+		if err := checkExpectedRoot(delta.ExpectedRoot, root); err != nil {
 			return cid.Undef, 0, err
 		}
-		if err := checkExpectedRoot(put.ExpectedRoot, root); err != nil {
-			return cid.Undef, 0, err
-		}
-		return root, put.ArcSet.Len(), nil
+		return root, delta.Changes.Len(), nil
 	default:
-		return cid.Undef, 0, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, put.Kind)
+		return cid.Undef, 0, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, delta.Kind)
 	}
+}
+
+func (e Executor) commitMapDelta(ctx context.Context, namespace string, delta ArcSetDelta) (cid.Cid, error) {
+	changes := delta.Changes.Changes()
+	if !delta.Object.Defined() {
+		entries := make(map[arcset.Path]cid.Cid, len(changes))
+		hasPayload := false
+		for _, change := range changes {
+			if change.Before != nil {
+				return cid.Undef, fmt.Errorf("create map delta has before value for %s", change.Coordinate.String())
+			}
+			if change.After == nil {
+				return cid.Undef, fmt.Errorf("create map delta deletes %s", change.Coordinate.String())
+			}
+			key := arcset.CanonicalizePath(change.Coordinate.String())
+			if key.String() == "@payload" {
+				hasPayload = true
+			}
+			entries[key] = change.After.CID()
+		}
+		if !hasPayload {
+			return cid.Undef, arcset.ErrMissingPayloadBinding
+		}
+		view := mapping.NewViewFromPaths(entries)
+		root, err := e.Maps.Commit(ctx, namespace, view)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if e.ArcTable != nil {
+			snapshot, err := arcset.NewArcSetFromPaths(entries)
+			if err != nil {
+				return cid.Undef, err
+			}
+			if err := e.ArcTable.Update(ctx, namespace, root, cid.Undef, snapshot); err != nil {
+				return cid.Undef, err
+			}
+		}
+		return root, nil
+	}
+
+	root := delta.Object
+	logical := make(map[arcset.Path]cid.Cid, len(changes))
+	for _, change := range changes {
+		key := arcset.CanonicalizePath(change.Coordinate.String())
+		oldValue := cid.Undef
+		if change.Before != nil {
+			oldValue = change.Before.CID()
+		}
+		newValue := cid.Undef
+		if change.After != nil {
+			newValue = change.After.CID()
+		}
+		if key.String() == "@payload" && !newValue.Defined() {
+			return cid.Undef, arcset.ErrMissingPayloadBinding
+		}
+		nextRoot, err := e.Maps.Update(ctx, namespace, root, key, oldValue, newValue)
+		if err != nil {
+			return cid.Undef, err
+		}
+		root = nextRoot
+		logical[key] = newValue
+	}
+	if e.ArcTable != nil {
+		deltaSet, err := arcset.NewArcSetFromPaths(logical)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if err := e.ArcTable.Update(ctx, namespace, root, delta.Object, deltaSet); err != nil {
+			return cid.Undef, err
+		}
+	}
+	return root, nil
+}
+
+func (e Executor) commitListDelta(ctx context.Context, namespace string, delta ArcSetDelta) (cid.Cid, error) {
+	changes := delta.Changes.Changes()
+	if !delta.Object.Defined() {
+		values, err := listCreateValues(changes)
+		if err != nil {
+			return cid.Undef, err
+		}
+		return e.commitList(ctx, namespace, values, delta.Commit)
+	}
+
+	length, err := e.listLength(ctx, namespace, delta.Object)
+	if err != nil {
+		return cid.Undef, err
+	}
+	root := delta.Object
+	deleteFrom := length
+	deleteSeen := map[uint64]struct{}{}
+
+	for _, change := range changes {
+		index, err := listChangeIndex(change)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if change.Before != nil {
+			query, proof, err := e.Lists.Prove(ctx, namespace, delta.Object, index)
+			if err != nil {
+				return cid.Undef, err
+			}
+			ok, err := e.Lists.Verify(delta.Object, index, query, proof)
+			if err != nil {
+				return cid.Undef, err
+			}
+			if !ok {
+				return cid.Undef, fmt.Errorf("list proof failed at index %d", index)
+			}
+			if !query.Key.Equals(change.Before.CID()) {
+				return cid.Undef, fmt.Errorf("old value mismatch at list index %d", index)
+			}
+		}
+		if change.After == nil {
+			if change.Before == nil {
+				return cid.Undef, fmt.Errorf("list delete at %d is missing before value", index)
+			}
+			if index < deleteFrom {
+				deleteFrom = index
+			}
+			deleteSeen[index] = struct{}{}
+		}
+	}
+	if len(deleteSeen) > 0 {
+		if deleteFrom >= length {
+			return cid.Undef, fmt.Errorf("list delete starts beyond length")
+		}
+		for index := deleteFrom; index < length; index++ {
+			if _, ok := deleteSeen[index]; !ok {
+				return cid.Undef, fmt.Errorf("list delta deletes non-suffix index %d", index)
+			}
+		}
+	}
+
+	for _, change := range changes {
+		if change.After == nil {
+			continue
+		}
+		index, err := listChangeIndex(change)
+		if err != nil {
+			return cid.Undef, err
+		}
+		switch {
+		case index < length:
+			if change.Before == nil {
+				return cid.Undef, fmt.Errorf("list replace at %d is missing before value", index)
+			}
+			root, err = e.Lists.Replace(ctx, namespace, root, index, change.Before.CID(), change.After.CID())
+		case index == length:
+			if delta.Commit.FixedList != nil {
+				appender, ok := e.Lists.(interface {
+					AppendFixed(context.Context, string, cid.Cid, cid.Cid, uint64) (cid.Cid, uint64, error)
+				})
+				if !ok {
+					return cid.Undef, errors.New("list semantics does not support fixed list append")
+				}
+				var newIndex uint64
+				totalSize := fixedAppendTotalSize(index+1, delta.Commit.FixedList.ChunkSize, delta.Commit.FixedList.TotalSize)
+				root, newIndex, err = appender.AppendFixed(ctx, namespace, root, change.After.CID(), totalSize)
+				if err == nil && newIndex != index {
+					return cid.Undef, fmt.Errorf("fixed list append index = %d, want %d", newIndex, index)
+				}
+			} else {
+				var newIndex uint64
+				root, newIndex, err = e.Lists.Append(ctx, namespace, root, change.After.CID())
+				if err == nil && newIndex != index {
+					return cid.Undef, fmt.Errorf("list append index = %d, want %d", newIndex, index)
+				}
+			}
+			length++
+		default:
+			return cid.Undef, fmt.Errorf("list delta is sparse at index %d", index)
+		}
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+	if len(deleteSeen) > 0 {
+		if delta.Commit.FixedList != nil {
+			return cid.Undef, errors.New("fixed list truncate is not supported")
+		}
+		var err error
+		root, err = e.Lists.Truncate(ctx, namespace, root, deleteFrom)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+	return root, nil
 }
 
 func (e Executor) commitList(ctx context.Context, namespace string, values []cid.Cid, descriptor CommitDescriptor) (cid.Cid, error) {
@@ -200,45 +371,56 @@ func (e Executor) commitList(ctx context.Context, namespace string, values []cid
 	return measured.CommitFixed(ctx, namespace, values, descriptor.FixedList.ChunkSize, descriptor.FixedList.TotalSize)
 }
 
-func canonicalMapView(set *arcset.CanonicalArcSet) (mapping.View, error) {
-	entries := make(map[arcset.Path]cid.Cid, set.Len())
-	for _, entry := range set.Entries() {
-		path := arcset.CanonicalizePath(entry.Coordinate.String())
-		if path.IsEmpty() || path.String() != entry.Coordinate.String() {
-			return nil, fmt.Errorf("invalid canonical map coordinate %q", entry.Coordinate.String())
-		}
-		entries[path] = entry.Target.CID()
+func (e Executor) listLength(ctx context.Context, namespace string, root cid.Cid) (uint64, error) {
+	query, proof, err := e.Lists.Prove(ctx, namespace, root, 0)
+	if err != nil {
+		return 0, err
 	}
-	return mapping.NewViewFromPaths(entries), nil
+	ok, err := e.Lists.Verify(root, 0, query, proof)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, errors.New("list length proof failed")
+	}
+	return query.Length, nil
 }
 
-func canonicalMapSnapshot(set *arcset.CanonicalArcSet) (arcset.ArcSet, error) {
-	entries := make(map[arcset.Path]cid.Cid, set.Len())
-	for _, entry := range set.Entries() {
-		path := arcset.CanonicalizePath(entry.Coordinate.String())
-		if path.IsEmpty() || path.String() != entry.Coordinate.String() {
-			return nil, fmt.Errorf("invalid canonical map coordinate %q", entry.Coordinate.String())
+func listCreateValues(changes []arcset.ArcChange) ([]cid.Cid, error) {
+	values := make([]cid.Cid, len(changes))
+	for i, change := range changes {
+		if change.Before != nil {
+			return nil, fmt.Errorf("create list delta has before value at %s", change.Coordinate.String())
 		}
-		entries[path] = entry.Target.CID()
-	}
-	return arcset.NewArcSetFromPaths(entries)
-}
-
-func canonicalListValues(set *arcset.CanonicalArcSet) ([]cid.Cid, error) {
-	entries := set.Entries()
-	values := make([]cid.Cid, len(entries))
-	for i, entry := range entries {
-		raw := entry.Coordinate.Bytes()
-		if len(raw) != 8 {
-			return nil, fmt.Errorf("invalid canonical list coordinate %q", entry.Coordinate.String())
+		if change.After == nil {
+			return nil, fmt.Errorf("create list delta deletes %s", change.Coordinate.String())
 		}
-		index := binary.BigEndian.Uint64(raw)
+		index, err := listChangeIndex(change)
+		if err != nil {
+			return nil, err
+		}
 		if index != uint64(i) {
-			return nil, fmt.Errorf("canonical list arcset is sparse at index %d", index)
+			return nil, fmt.Errorf("create list delta is sparse at index %d", index)
 		}
-		values[i] = entry.Target.CID()
+		values[i] = change.After.CID()
 	}
 	return values, nil
+}
+
+func listChangeIndex(change arcset.ArcChange) (uint64, error) {
+	raw := change.Coordinate.Bytes()
+	if len(raw) != 8 {
+		return 0, fmt.Errorf("invalid canonical list coordinate %q", change.Coordinate.String())
+	}
+	return binary.BigEndian.Uint64(raw), nil
+}
+
+func fixedAppendTotalSize(childCount, chunkSize, finalTotalSize uint64) uint64 {
+	total := childCount * chunkSize
+	if total > finalTotalSize {
+		return finalTotalSize
+	}
+	return total
 }
 
 func checkExpectedRoot(expectedRoot, actualRoot cid.Cid) error {
