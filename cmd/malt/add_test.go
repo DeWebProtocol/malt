@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"github.com/dewebprotocol/malt/core/cas/ipfs"
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/codec"
+	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/server"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -793,6 +796,37 @@ func TestAddInputsWithUnixFSLargeFileThroughStaging(t *testing.T) {
 	}
 	if len(body) != len(large) || string(body[:64]) != string(large[:64]) {
 		t.Fatal("large body mismatch")
+	}
+
+	rangeStart := addFixedChunkSize - 2
+	rangeEndExclusive := addFixedChunkSize + 2
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEndExclusive-1)
+	rangeBody, status, headers, err := daemon.GetContent(ctx, result.NewRoot, base+"/large.bin", rangeHeader)
+	if err != nil {
+		t.Fatalf("get large range: %v", err)
+	}
+	if status != http.StatusPartialContent {
+		t.Fatalf("large range status = %d, want %d", status, http.StatusPartialContent)
+	}
+	if string(rangeBody) != string(large[rangeStart:rangeEndExclusive]) {
+		t.Fatalf("large range body = %q, want %q", rangeBody, large[rangeStart:rangeEndExclusive])
+	}
+	pl, err := daemonclient.ProofListFromHeaders(headers)
+	if err != nil {
+		t.Fatalf("large range prooflist: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("large range prooflist shape: %v", err)
+	}
+	hasRangeStep := false
+	for _, step := range pl.Steps {
+		if step.Kind == prooflist.KindListRange {
+			hasRangeStep = true
+			break
+		}
+	}
+	if !hasRangeStep {
+		t.Fatalf("large range ProofList is missing list_range step: %+v", pl.Steps)
 	}
 }
 
