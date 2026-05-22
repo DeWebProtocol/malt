@@ -1069,7 +1069,7 @@ func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient,
 		}
 		key = blockCID
 	} else {
-		listRoot, err := uploadAsList(ctx, casClient, daemon, localPath)
+		listRoot, err := uploadAsList(ctx, casClient, daemon, localPath, uint64(info.Size()))
 		if err != nil {
 			return 0, 0, err
 		}
@@ -1083,7 +1083,7 @@ func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient,
 	return info.Size(), listObjects, nil
 }
 
-func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, localPath string) (cid.Cid, error) {
+func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, localPath string, totalSize uint64) (cid.Cid, error) {
 	chunks, err := uploadFlatChunks(ctx, casClient, localPath)
 	if err != nil {
 		return cid.Undef, err
@@ -1112,6 +1112,12 @@ func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemoncli
 		Deltas: []httpapi.SemanticMutationDelta{{
 			Kind:    "list",
 			Changes: changes,
+			Commit: &httpapi.SemanticCommitDescriptor{
+				FixedList: &httpapi.SemanticFixedListCommit{
+					TotalSize: totalSize,
+					ChunkSize: addFixedChunkSize,
+				},
+			},
 		}},
 	})
 	if err != nil {
