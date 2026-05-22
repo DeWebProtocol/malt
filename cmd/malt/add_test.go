@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -797,19 +798,25 @@ func TestAddInputsWithUnixFSLargeFileThroughStaging(t *testing.T) {
 		t.Fatal("large body mismatch")
 	}
 
-	rangeBody, status, headers, err := daemon.GetContent(ctx, result.NewRoot, base+"/large.bin", "bytes=262142-262145")
+	rangeStart := addFixedChunkSize - 2
+	rangeEndExclusive := addFixedChunkSize + 2
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEndExclusive-1)
+	rangeBody, status, headers, err := daemon.GetContent(ctx, result.NewRoot, base+"/large.bin", rangeHeader)
 	if err != nil {
 		t.Fatalf("get large range: %v", err)
 	}
 	if status != http.StatusPartialContent {
 		t.Fatalf("large range status = %d, want %d", status, http.StatusPartialContent)
 	}
-	if string(rangeBody) != string(large[262142:262146]) {
-		t.Fatalf("large range body = %q, want %q", rangeBody, large[262142:262146])
+	if string(rangeBody) != string(large[rangeStart:rangeEndExclusive]) {
+		t.Fatalf("large range body = %q, want %q", rangeBody, large[rangeStart:rangeEndExclusive])
 	}
 	pl, err := daemonclient.ProofListFromHeaders(headers)
 	if err != nil {
 		t.Fatalf("large range prooflist: %v", err)
+	}
+	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
+		t.Fatalf("large range prooflist shape: %v", err)
 	}
 	hasRangeStep := false
 	for _, step := range pl.Steps {
