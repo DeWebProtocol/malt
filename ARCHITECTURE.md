@@ -65,11 +65,12 @@ directory reads with `ProofList` metadata in `X-Malt-ProofList` response
 headers encoded as `base64url-json`. Clients can opt out of default proof
 generation with `?proof=false` or `X-Malt-Proof: omit`; default GET responses
 advertise that request-header variance with `Vary: X-Malt-Proof`. Large-file
-byte-range reads include path/`@payload` proof plus ProofLists covering the
-selected list entries. Explicit `@size`/`@chunksize` metadata proof and
-response-body range binding are still ProofList-schema TODOs. File
-routes are product surfaces around the same root-centric materialization
-namespace.
+byte-range reads include path/`@payload` proof plus one measured-list
+`list_range` step. That step carries authenticated fixed chunk metadata, the
+covered segment CIDs, and a proof payload composed from the metadata slot proof
+and the required index proofs. Response-body range binding is still a
+ProofList-schema TODO. File routes are product surfaces around the same
+root-centric materialization namespace.
 
 ### List Semantic
 
@@ -79,8 +80,8 @@ graph nodes.
 Read semantics:
 
 - first-class index query
-- logical range read over index intervals, represented today as path/`@payload`
-  proof plus composed index proofs
+- optional measured range query over byte intervals when the implementation
+  authenticates byte-layout metadata
 - length-aware proof
 
 Native writes:
@@ -90,8 +91,9 @@ Native writes:
 - truncate
 
 List does not have path-resolution semantics. Application layouts translate
-byte ranges or file operations into list index operations and compose metadata
-proof with per-index proofs for range reads.
+byte ranges or file operations into list queries. The current fixed-width
+measured list maps byte ranges to a minimum segment set and proves the
+authenticated metadata plus the required index proofs.
 
 The current public package is `core/structure/list`.
 The primary implementation is `core/structure/list/tree`.
@@ -394,10 +396,11 @@ should converge toward layout-produced semantic mutations accepted by the
 gateway.
 
 `ProofList` is the standard verifier-facing read artifact. It should cover map
-step proofs, terminal `@payload` proofs, list index proofs, composed list-index
-evidence for range reads, and blob target binding proofs from the queried root
-to the destination. Explicit file metadata proofs for `@size` / `@chunksize`
-and response-body range binding remain schema TODOs.
+step proofs, terminal `@payload` proofs, list index proofs, measured-list
+`list_range` evidence for range reads, and blob target binding proofs from the
+queried root to the destination. Current `list_range` steps carry fixed chunk
+metadata, covered segment CIDs, and metadata/index proof payload. Response-body
+range binding remains a schema TODO.
 
 The current daemon has two HTTP proof-bearing read surfaces:
 
@@ -487,15 +490,15 @@ Open TODOs for the next discussion:
   gateway materialization and how much of the current UnixFS convenience route
   remains public API versus test/demo scaffolding
 - formalize the current `ProofList` schema and verification semantics for path
-  lookup, terminal `@payload`, blob bindings, composed list-index evidence for
-  range reads, explicit `@size`/`@chunksize` metadata proof, and response-body
-  range binding
+  lookup, terminal `@payload`, blob bindings, measured-list `list_range`
+  evidence for range reads, and response-body range binding
 - decide how UnixFS reads should map onto gateway read queries and `ProofList`
 - define the final UnixFS write receipt and application-level concurrency
   contract for the already-wired root APIs
 - decide after the first benchmark whether list needs a future compact
-  range-proof API; the current prototype uses path/`@payload` proof plus
-  composed index proofs while metadata proof remains a schema TODO
+  range-proof API; the current prototype uses path/`@payload` proof plus one
+  measured-list `list_range` step carrying metadata, segment CIDs, and
+  metadata/index proofs
 
 ## ArcTable and Versioning
 
