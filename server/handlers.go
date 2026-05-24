@@ -865,10 +865,6 @@ func decodeEvidence(kind string, payload []byte) (evidence.Evidence, error) {
 	switch kind {
 	case "explicit":
 		return evidence.NewExplicitEvidence(payload), nil
-	case "implicit":
-		return evidence.NewImplicitEvidence(payload), nil
-	case "hamt":
-		return evidence.NewHAMTEvidence(payload), nil
 	default:
 		return nil, fmt.Errorf("unknown evidence kind %q", kind)
 	}

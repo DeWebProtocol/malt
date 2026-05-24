@@ -1,8 +1,8 @@
 // Package step defines the Step interface for single-step resolution.
-// Different implementations handle different resolution strategies:
-// - explicit: MALT explicit arc resolution
-// - implicit: Merkle-DAG implicit resolution
-// - hamt: HAMT-based resolution
+//
+// Core runtime wiring ships the explicit MALT arc implementation. Eval-only
+// compatibility packages may implement this interface for legacy comparison
+// paths, but they are not part of the product resolver boundary.
 package step
 
 import (

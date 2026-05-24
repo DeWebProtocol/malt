@@ -61,7 +61,7 @@ func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifi
 
 func (v proofVerifier) verifyStep(index int, step prooflist.Step) (bool, error) {
 	switch step.EvidenceKind {
-	case "explicit", "implicit", "hamt":
+	case "explicit":
 		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)
 		if err != nil {
 			return false, fmt.Errorf("invalid evidence at step %d: %w", index, err)
@@ -71,6 +71,8 @@ func (v proofVerifier) verifyStep(index int, step prooflist.Step) (bool, error) 
 			Target:   step.Target,
 			Evidence: ev,
 		}}})
+	case "implicit", "hamt":
+		return false, fmt.Errorf("prooflist step %d uses legacy evidence kind %q; server verifier supports explicit evidence only", index, step.EvidenceKind)
 	case "structure":
 		switch step.EvidenceBackend {
 		case "map":

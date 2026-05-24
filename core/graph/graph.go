@@ -11,7 +11,6 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
@@ -36,9 +35,10 @@ type RuntimeGraph struct {
 // Parameters:
 //   - id: unique graph identifier
 //   - arctable: shared ArcTable (namespace by namespace) — from Node
-//   - cas: shared read-side CAS client — from Node (nil for testing/mocks)
+//   - cas: retained for Node constructor compatibility; explicit graph reads do
+//     not use CAS for implicit traversal.
 //   - opts: functional options (WithCommitmentScheme, WithNamespace, etc.)
-func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Option) (*RuntimeGraph, error) {
+func NewGraph(id string, arctable arctable.ArcTable, _ cas.Reader, opts ...Option) (*RuntimeGraph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)
@@ -72,12 +72,8 @@ func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Opt
 	// Create per-graph explicit resolver
 	explicitStep := explicit.NewResolver(arctable, semantic, namespace)
 
-	// Create per-graph implicit resolver
-	implicitStep := implicit.NewResolver(cas)
-
-	// Create per-graph resolver with explicit native resolution and optional
-	// interoperability steps for legacy CID traversal.
-	res := resolver.NewResolver(explicitStep, implicitStep)
+	// Create per-graph resolver with explicit native MALT resolution.
+	res := resolver.NewResolver(explicitStep)
 
 	// Create per-graph writer
 	wr := writer.NewWriter(semantic, arctable, listSemantic)

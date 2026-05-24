@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dewebprotocol/malt/cmd/eval/internal/compat/hamt"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/compat/implicit"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/compat/implicit/codec"
 	"github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/resolver/step/hamt"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit/codec"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"

@@ -72,6 +72,24 @@ func TestUnixFSLayoutIsOutsideCore(t *testing.T) {
 	assertRepositoryExcludes(t, "..", "core/layout/malt/"+"unixfs")
 }
 
+func TestCoreGraphDoesNotWireImplicitResolver(t *testing.T) {
+	assertFileExcludes(t, "../core/graph/graph.go", []string{
+		"resolver/step/implicit",
+		"implicit.NewResolver",
+	})
+}
+
+func TestResolverCompatPackagesAreOutsideCore(t *testing.T) {
+	for _, dir := range []string{
+		"../core/resolver/step/implicit",
+		"../core/resolver/step/hamt",
+	} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("%s should not exist under core resolver", dir)
+		}
+	}
+}
+
 func assertFileExcludes(t *testing.T, file string, forbidden []string) {
 	t.Helper()
 	data, err := os.ReadFile(file)

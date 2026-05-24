@@ -5,13 +5,11 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
-	"github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	kvstore_memory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -69,7 +67,6 @@ const testNamespace = "test-graph"
 func TestResolverExplicitOnly(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -84,8 +81,7 @@ func TestResolverExplicitOnly(t *testing.T) {
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	tests := []struct {
 		path     string
@@ -122,7 +118,6 @@ func TestResolverExplicitOnly(t *testing.T) {
 func TestResolverCanonicalizesResolvePath(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	target, _ := newPayloadCID([]byte("target"))
@@ -132,8 +127,7 @@ func TestResolverCanonicalizesResolvePath(t *testing.T) {
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(root, "/a//b/")
 	if err != nil {
@@ -150,7 +144,6 @@ func TestResolverCanonicalizesResolvePath(t *testing.T) {
 func TestResolverExplicitLongestPrefix(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	k1, _ := newPayloadCID([]byte("target1"))
@@ -165,8 +158,7 @@ func TestResolverExplicitLongestPrefix(t *testing.T) {
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(root, "a/b/c/d")
 	if err == nil && !result.Target.Equals(k3) {
@@ -174,21 +166,17 @@ func TestResolverExplicitLongestPrefix(t *testing.T) {
 	}
 }
 
-func TestResolverImplicitStep(t *testing.T) {
+func TestResolverStopsAtNonMaltPayload(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	payloadCID, _ := newPayloadCID([]byte("raw-block-data"))
 	arcsMap := map[string]cid.Cid{"data": payloadCID}
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
-	c.AddBlock(payloadCID, []byte("raw-block-data"))
-
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(root, "data")
 	if err != nil {
@@ -205,7 +193,6 @@ func TestResolverImplicitStep(t *testing.T) {
 func TestResolverTranscript(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	innerCID, _ := newPayloadCID([]byte("inner"))
@@ -218,8 +205,7 @@ func TestResolverTranscript(t *testing.T) {
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(root, "inner")
 	if err != nil {
@@ -244,7 +230,6 @@ func TestResolverTranscript(t *testing.T) {
 func TestResolverPayloadRedirect(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	payloadCID, _ := newPayloadCID([]byte("payload-data"))
@@ -255,8 +240,7 @@ func TestResolverPayloadRedirect(t *testing.T) {
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(root, "")
 	if err != nil {
@@ -284,7 +268,6 @@ func TestResolverPayloadRedirect(t *testing.T) {
 func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	commitment := make([]byte, codec.KZGCommitmentSize)
@@ -300,8 +283,7 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 	})
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	keyResult, err := g.ResolveKey(root, "file")
 	if err != nil {
@@ -343,7 +325,6 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 func TestResolverMissingPayloadBindingFails(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	ctx := context.Background()
 	targetCID, _ := newPayloadCID([]byte("target-data"))
@@ -351,8 +332,7 @@ func TestResolverMissingPayloadBindingFails(t *testing.T) {
 	root := commitStructure(t, ctx, semantic, e, testNamespace, arcsMap)
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(root, "")
 	if err == nil {
@@ -360,17 +340,14 @@ func TestResolverMissingPayloadBindingFails(t *testing.T) {
 	}
 }
 
-func TestResolverNonMaltEmptyPath(t *testing.T) {
+func TestResolverNonMaltEmptyPathIsTerminal(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	payloadCID, _ := newPayloadCID([]byte("raw-data"))
-	c.AddBlock(payloadCID, []byte("raw-data"))
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(payloadCID, "")
 	if err != nil {
@@ -384,17 +361,14 @@ func TestResolverNonMaltEmptyPath(t *testing.T) {
 	}
 }
 
-func TestResolverNonMaltUnresolvedPathReportsRemaining(t *testing.T) {
+func TestResolverNonMaltPathReportsRemaining(t *testing.T) {
 	e := newTestArcTable()
 	semantic := newSemantic(t, e)
-	c := mock.NewCAS()
 
 	payloadCID, _ := newPayloadCID([]byte("raw-data"))
-	c.AddBlock(payloadCID, []byte("raw-data"))
 
 	explicitR := explicit.NewResolver(e, semantic, testNamespace)
-	implicitR := implicit.NewResolver(c)
-	g := resolver.NewResolver(explicitR, implicitR)
+	g := resolver.NewResolver(explicitR)
 
 	result, err := g.Resolve(payloadCID, "missing/path")
 	if err != nil {

@@ -633,6 +633,34 @@ func TestServerVerifyAcceptsProofList(t *testing.T) {
 	if !verifyResp.Valid {
 		t.Fatal("expected ProofList to verify")
 	}
+
+	for _, legacyKind := range []string{"implicit", "hamt"} {
+		t.Run("rejects "+legacyKind+" evidence", func(t *testing.T) {
+			forged := *resolveResp.ProofList
+			forged.Steps = append([]prooflist.Step(nil), resolveResp.ProofList.Steps...)
+			forged.Steps[0].EvidenceKind = legacyKind
+
+			verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: forged})
+			if err != nil {
+				t.Fatalf("marshal legacy verify request: %v", err)
+			}
+			resp, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+			if err != nil {
+				t.Fatalf("legacy verify request: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("legacy verify status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+			}
+			var errorResp httpapi.ErrorResponse
+			if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+				t.Fatalf("decode legacy verify error: %v", err)
+			}
+			if !strings.Contains(errorResp.Error, "server verifier supports explicit evidence only") {
+				t.Fatalf("legacy verify error = %q, want explicit-only verifier message", errorResp.Error)
+			}
+		})
+	}
 }
 
 func TestServerVerifyRejectsBranchingProofList(t *testing.T) {
