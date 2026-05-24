@@ -205,12 +205,27 @@ malt/
 │   │   ├── root.go                  # CLI root command
 │   │   ├── daemon.go                # Daemon command
 │   │   ├── init.go                  # Local config/state initialization
-│   │   ├── add.go                   # File/directory ingest
+│   │   ├── add.go                   # File/directory ingest command wiring
+│   │   ├── add_options.go           # Ingest option parsing
+│   │   ├── add_workflow.go          # Ingest workflow orchestration
+│   │   ├── add_staging.go           # Ingest staging helpers
+│   │   ├── add_materialize.go       # MALT materialization helpers
+│   │   ├── add_tree.go              # Directory tree ingest helpers
+│   │   ├── add_merkledag.go         # MerkleDAG ingest helpers
 │   │   ├── resolve.go               # Root-relative resolve command
 │   │   └── verify.go                # ProofList verification command
+│   ├── internal/
+│   │   └── merkledagimport/         # Command-local MerkleDAG import support
 │   └── eval/
 │       ├── command/                 # malt-eval root command assembly
 │       ├── helper/                  # Evaluation helper commands
+│       ├── internal/
+│       │   ├── baseline/
+│       │   │   └── indexedmap/      # Indexed map baseline for evaluation
+│       │   ├── compat/
+│       │   │   ├── implicit/        # Merkle DAG implicit compatibility
+│       │   │   └── hamt/            # HAMT compatibility resolver
+│       │   └── eval/                # Evaluation harness internals
 │       ├── schemas/                 # Embedded evaluator JSON schemas
 │       └── malt-eval/               # malt-eval entrypoint
 ├── config/
@@ -252,9 +267,6 @@ malt/
 │   ├── graph/
 │   │   ├── graph.go                 # Current runtime composition
 │   │   └── manager.go               # Current metadata lifecycle
-│   ├── layout/
-│   │   └── malt/
-│   │       └── unixfs/               # Map/list-based UnixFS prototype
 │   ├── manifest/
 │   │   └── directory.go             # Current directory manifest helper
 │   ├── resolver/
@@ -262,12 +274,11 @@ malt/
 │   │   ├── resolver_test.go         # Unit tests
 │   │   └── step/
 │   │       ├── step.go              # Step interface
-│   │       ├── explicit/
-│   │       │   └── explicit.go      # MALT explicit step
-│   │       ├── implicit/
-│   │       │   └── implicit.go      # Merkle DAG implicit step
-│   │       └── hamt/
-│   │           └── hamt.go          # HAMT step
+│   │       └── explicit/
+│   │           └── explicit.go      # MALT explicit step
+│   ├── writer/
+│   │   ├── mutation.go              # Semantic mutation model
+│   │   └── writer.go                # Mutation executor
 │   ├── commitment/
 │   │   ├── commitment.go            # Primitive commitment interface
 │   │   ├── kzg/
@@ -283,8 +294,6 @@ malt/
 │   │       ├── mapping.go           # Map semantic interface
 │   │       ├── radix/
 │   │       │   └── radix.go         # Radix map implementation
-│   │       └── indexed/
-│   │           └── indexed.go       # Indexed baseline map
 │   ├── codec/
 │   │   └── codec.go                 # MALT CID codecs
 │   └── types/
@@ -292,10 +301,23 @@ malt/
 │       │   └── arcset.go            # Arc set types
 │       └── evidence/
 │           └── evidence.go          # Evidence types
+├── layout/
+│   └── unixfs/
+│       ├── layout.go                # UnixFS client/layout facade
+│       ├── mutation.go              # UnixFS mutation planning
+│       └── prooflist.go             # UnixFS proof helpers
 ├── httpapi/
 │   └── types.go                     # Daemon API payload types
 ├── server/
-│   └── server.go                    # Daemon HTTP server
+│   ├── server.go                    # Daemon HTTP server setup
+│   ├── routes_write.go              # Generic writer routes
+│   ├── routes_unixfs_compat.go      # UnixFS compatibility write route
+│   ├── routes_resolve.go            # Resolver routes
+│   ├── routes_verify.go             # Proof verification routes
+│   ├── routes_content.go            # Content routes
+│   ├── routes_admin.go              # Health and metrics routes
+│   ├── service_graph.go             # Graph resolver/writer service adapter
+│   └── service_verify.go            # ProofList verifier service
 └── logger/
     └── logger.go                    # Logging utilities
 ```

@@ -328,9 +328,10 @@ It owns:
 - commitment proof construction
 - root update computation
 
-`mapping/indexed` is a baseline comparison implementation for the same public
-map interface. It should not be treated as the production map semantic used by
-`core/graph`, resolver adapters, or the current UnixFS-style layout path.
+`cmd/eval/internal/baseline/indexedmap` is a baseline comparison
+implementation for the same public map interface. It is eval-local and should
+not be treated as the production map semantic used by `core/graph`, resolver
+adapters, or the current UnixFS-style layout path.
 
 No external writer should redefine map semantics. A layout or write adapter may
 only produce semantic mutations and orchestrate calls into map semantic
