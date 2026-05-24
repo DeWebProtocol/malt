@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,14 @@ func TestGenericWriteRoutesDoNotOwnUnixFSCompatibility(t *testing.T) {
 	})
 }
 
+func TestServerDoesNotTranslateUnixFSMutationPlans(t *testing.T) {
+	assertRepositoryExcludes(t, ".", "semanticMutationFrom"+"UnixFSPlan")
+}
+
+func TestUnixFSLayoutIsOutsideCore(t *testing.T) {
+	assertRepositoryExcludes(t, "..", "core/layout/malt/"+"unixfs")
+}
+
 func assertFileExcludes(t *testing.T, file string, forbidden []string) {
 	t.Helper()
 	data, err := os.ReadFile(file)
@@ -74,5 +83,47 @@ func assertFileExcludes(t *testing.T, file string, forbidden []string) {
 		if strings.Contains(text, symbol) {
 			t.Fatalf("%s should not contain %q", file, symbol)
 		}
+	}
+}
+
+func assertRepositoryExcludes(t *testing.T, root string, forbidden string) {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", root, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		assertTreeExcludes(t, filepath.Join(root, entry.Name()), forbidden)
+	}
+}
+
+func assertTreeExcludes(t *testing.T, path string, forbidden string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s): %v", path, err)
+	}
+	if !info.IsDir() {
+		if !strings.HasSuffix(path, ".go") {
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("%s should not contain %q", path, forbidden)
+		}
+		return
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", path, err)
+	}
+	for _, entry := range entries {
+		assertTreeExcludes(t, filepath.Join(path, entry.Name()), forbidden)
 	}
 }

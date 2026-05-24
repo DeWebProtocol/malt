@@ -16,9 +16,9 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/kvstore"
-	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/structure/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	cid "github.com/ipfs/go-cid"
 )
 

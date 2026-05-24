@@ -9,12 +9,14 @@ import (
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/writer"
 	cid "github.com/ipfs/go-cid"
 )
 
 // MutationPlan is a layout-produced semantic mutation delta for one UnixFS
-// change. It is an adapter artifact for gateway-style consumers; the gateway
-// materializes the plan, while root publication remains application policy.
+// change. It is an adapter artifact for writer-style consumers; the graph
+// writer materializes the plan, while root publication remains application
+// policy.
 type MutationPlan struct {
 	BaseRoot cid.Cid
 	Deltas   []MutationDelta
@@ -36,10 +38,42 @@ type FixedListCommit struct {
 	ChunkSize uint64
 }
 
+// WriterMutation converts a layout plan into the graph writer mutation protocol.
+func (p *MutationPlan) WriterMutation(fallbackRoot cid.Cid) writer.SemanticMutation {
+	if p == nil {
+		return writer.SemanticMutation{BaseRoot: fallbackRoot}
+	}
+	baseRoot := p.BaseRoot
+	if !baseRoot.Defined() {
+		baseRoot = fallbackRoot
+	}
+
+	mut := writer.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas:   make([]writer.ArcSetDelta, 0, len(p.Deltas)),
+	}
+	for _, delta := range p.Deltas {
+		writerDelta := writer.ArcSetDelta{
+			Object:       delta.Object,
+			ExpectedRoot: delta.ExpectedRoot,
+			Kind:         delta.Kind,
+			Changes:      delta.Changes,
+		}
+		if delta.FixedList != nil {
+			writerDelta.Commit.FixedList = &writer.FixedListCommit{
+				TotalSize: delta.FixedList.TotalSize,
+				ChunkSize: delta.FixedList.ChunkSize,
+			}
+		}
+		mut.Deltas = append(mut.Deltas, writerDelta)
+	}
+	return mut
+}
+
 // MutationPlanForPath exposes creation deltas for the UnixFS node already
 // reachable at path. For directories it includes only the terminal directory
-// map, not descendant subtrees. For large files it includes the file map plus
-// the terminal payload list composed from individual list index reads.
+// map, not descendant subtrees. For large files it emits the terminal payload
+// list before the file map so writer receipts end on the UnixFS node root.
 func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path string) (*MutationPlan, error) {
 	if !root.Defined() {
 		return nil, fmt.Errorf("root is undefined")
@@ -65,9 +99,9 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	if err != nil {
 		return nil, err
 	}
-	plan.Deltas = append(plan.Deltas, nodeDelta)
 
 	if kind != typeFile {
+		plan.Deltas = append(plan.Deltas, nodeDelta)
 		return plan, nil
 	}
 
@@ -79,6 +113,7 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
 	}
 	if codec.SemanticKindOf(payload) != codec.SemanticKindList {
+		plan.Deltas = append(plan.Deltas, nodeDelta)
 		return plan, nil
 	}
 
@@ -100,6 +135,7 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	}
 	listDelta.FixedList = fixedList
 	plan.Deltas = append(plan.Deltas, listDelta)
+	plan.Deltas = append(plan.Deltas, nodeDelta)
 	return plan, nil
 }
 

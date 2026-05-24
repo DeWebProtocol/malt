@@ -15,7 +15,6 @@ import (
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
@@ -25,6 +24,7 @@ import (
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/core/writer"
 	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -330,7 +330,7 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime,
 	if err != nil {
 		return writer.WriteReceipt{}, err
 	}
-	mut := semanticMutationFromUnixFSPlan(plan, newRoot)
+	mut := plan.WriterMutation(newRoot)
 	receipt, err := s.applyWriterMutation(ctx, g, mut)
 	if err != nil {
 		return writer.WriteReceipt{}, err
@@ -343,36 +343,6 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime,
 
 func (s *Server) applyWriterMutation(ctx context.Context, g graph.Runtime, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
 	return graphService{runtime: g}.ApplyMutation(ctx, mut)
-}
-
-func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.Cid) writer.SemanticMutation {
-	baseRoot := plan.BaseRoot
-	if !baseRoot.Defined() {
-		baseRoot = fallbackRoot
-	}
-
-	mut := writer.SemanticMutation{
-		BaseRoot: baseRoot,
-		Deltas:   make([]writer.ArcSetDelta, 0, len(plan.Deltas)),
-	}
-	for _, delta := range plan.Deltas {
-		// UnixFS replay rematerializes deterministic roots; do not treat the
-		// already-materialized object as a versioned ArcTable parent.
-		writerDelta := writer.ArcSetDelta{
-			Object:       delta.Object,
-			ExpectedRoot: delta.ExpectedRoot,
-			Kind:         delta.Kind,
-			Changes:      delta.Changes,
-		}
-		if delta.FixedList != nil {
-			writerDelta.Commit.FixedList = &writer.FixedListCommit{
-				TotalSize: delta.FixedList.TotalSize,
-				ChunkSize: delta.FixedList.ChunkSize,
-			}
-		}
-		mut.Deltas = append(mut.Deltas, writerDelta)
-	}
-	return mut
 }
 
 func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {

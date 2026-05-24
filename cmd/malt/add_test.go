@@ -97,6 +97,16 @@ func TestMountAddInputsPathModes(t *testing.T) {
 	}
 }
 
+func TestAddUsesClientWriterMutationFacade(t *testing.T) {
+	data, err := os.ReadFile("add.go")
+	if err != nil {
+		t.Fatalf("ReadFile(add.go): %v", err)
+	}
+	if strings.Contains(string(data), "httpapi.SemanticMutationRequest") {
+		t.Fatal("add.go should use client writer mutation facade instead of constructing httpapi.SemanticMutationRequest")
+	}
+}
+
 func TestNormalizeAddBuildOptions(t *testing.T) {
 	tests := []struct {
 		name           string

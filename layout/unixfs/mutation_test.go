@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/structure"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -46,6 +46,46 @@ func TestSmallFileMutationPlanIncludesMapPayload(t *testing.T) {
 	}
 }
 
+func TestMutationPlanBuildsWriterMutation(t *testing.T) {
+	payload := testCID(t, "payload")
+	expectedRoot := testCID(t, "expected-root")
+	fallbackRoot := testCID(t, "fallback-root")
+
+	coord, err := arcset.NewMapCoordinate("@payload")
+	if err != nil {
+		t.Fatalf("NewMapCoordinate: %v", err)
+	}
+	after := arcset.NewCASTarget(payload)
+	changes, err := arcset.NewCanonicalArcDelta(arcset.KindMap, []arcset.ArcChange{{
+		Coordinate: coord,
+		After:      &after,
+	}})
+	if err != nil {
+		t.Fatalf("NewCanonicalArcDelta: %v", err)
+	}
+
+	plan := &unixfs.MutationPlan{
+		Deltas: []unixfs.MutationDelta{{
+			ExpectedRoot: expectedRoot,
+			Kind:         arcset.KindMap,
+			Changes:      changes,
+		}},
+	}
+	mut := plan.WriterMutation(fallbackRoot)
+	if !mut.BaseRoot.Equals(fallbackRoot) {
+		t.Fatalf("BaseRoot = %s, want fallback %s", mut.BaseRoot, fallbackRoot)
+	}
+	if len(mut.Deltas) != 1 {
+		t.Fatalf("delta count = %d, want 1", len(mut.Deltas))
+	}
+	if !mut.Deltas[0].ExpectedRoot.Equals(expectedRoot) {
+		t.Fatalf("ExpectedRoot = %s, want %s", mut.Deltas[0].ExpectedRoot, expectedRoot)
+	}
+	if mut.Deltas[0].Kind != arcset.KindMap || mut.Deltas[0].Changes != changes {
+		t.Fatalf("unexpected writer delta: %+v", mut.Deltas[0])
+	}
+}
+
 func TestLargeFileMutationPlanIncludesFileMapAndOrderedList(t *testing.T) {
 	ctx := context.Background()
 	layout := newLayout(t, 4)
@@ -62,34 +102,39 @@ func TestLargeFileMutationPlanIncludesFileMapAndOrderedList(t *testing.T) {
 	if len(plan.Deltas) != 2 {
 		t.Fatalf("delta count = %d, want 2", len(plan.Deltas))
 	}
-	if plan.Deltas[0].Kind != arcset.KindMap {
-		t.Fatalf("delta 0 kind = %q, want map", plan.Deltas[0].Kind)
+	if plan.Deltas[0].Kind != arcset.KindList {
+		t.Fatalf("delta 0 kind = %q, want list", plan.Deltas[0].Kind)
 	}
-	if !hasAfterChange(plan.Deltas[0].Changes, "@payload", arcset.TargetKindList) {
+	if plan.Deltas[1].Kind != arcset.KindMap {
+		t.Fatalf("delta 1 kind = %q, want map", plan.Deltas[1].Kind)
+	}
+	if !hasAfterChange(plan.Deltas[1].Changes, "@payload", arcset.TargetKindList) {
 		t.Fatal("file map delta missing list @payload binding")
 	}
-	if plan.Deltas[1].Kind != arcset.KindList {
-		t.Fatalf("delta 1 kind = %q, want list", plan.Deltas[1].Kind)
-	}
-	if !plan.Deltas[1].ExpectedRoot.Defined() {
+	if !plan.Deltas[0].ExpectedRoot.Defined() {
 		t.Fatal("list delta expected root is undefined")
 	}
-	if plan.Deltas[1].FixedList == nil {
+	if plan.Deltas[0].FixedList == nil {
 		t.Fatal("large file list delta missing fixed-list commit metadata")
 	}
-	if plan.Deltas[1].FixedList.TotalSize != 12 || plan.Deltas[1].FixedList.ChunkSize != 4 {
-		t.Fatalf("fixed list metadata = %+v, want total=12 chunk=4", plan.Deltas[1].FixedList)
+	if plan.Deltas[0].FixedList.TotalSize != 12 || plan.Deltas[0].FixedList.ChunkSize != 4 {
+		t.Fatalf("fixed list metadata = %+v, want total=12 chunk=4", plan.Deltas[0].FixedList)
 	}
 
-	got := changeCoordinates(plan.Deltas[1].Changes)
+	got := changeCoordinates(plan.Deltas[0].Changes)
 	want := []string{"0", "1", "2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("list coordinates = %#v, want %#v", got, want)
 	}
-	for _, change := range plan.Deltas[1].Changes.Changes() {
+	for _, change := range plan.Deltas[0].Changes.Changes() {
 		if change.After == nil || change.After.Kind() != arcset.TargetKindCAS {
 			t.Fatalf("list change %s after target kind = %v, want cas", change.Coordinate.String(), change.After)
 		}
+	}
+
+	mut := plan.WriterMutation(root)
+	if !mut.Deltas[len(mut.Deltas)-1].ExpectedRoot.Equals(plan.Deltas[1].ExpectedRoot) {
+		t.Fatal("writer mutation should end on the file map root, not the payload list root")
 	}
 }
 

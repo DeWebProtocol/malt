@@ -15,6 +15,8 @@ import (
 	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/manifest"
+	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/core/writer"
 	"github.com/dewebprotocol/malt/httpapi"
 	"github.com/dewebprotocol/malt/internal/merkledagimport"
 	cid "github.com/ipfs/go-cid"
@@ -1097,23 +1099,33 @@ func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemoncli
 	if err != nil {
 		return cid.Undef, err
 	}
-	changes := make([]httpapi.SemanticMutationChange, len(chunks))
+	baseRoot, err := cid.Decode(tempRootResp.Root)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("decode temporary root CID: %w", err)
+	}
+	changes := make([]arcset.ArcChange, len(chunks))
 	for i, chunk := range chunks {
-		index := uint64(i)
-		changes[i] = httpapi.SemanticMutationChange{
-			Index: &index,
-			After: &httpapi.SemanticMutationTarget{
-				Target:     chunk.String(),
-				TargetKind: "cas",
-			},
+		coord, err := arcset.NewListCoordinate(int64(i))
+		if err != nil {
+			return cid.Undef, err
+		}
+		after := arcset.NewCASTarget(chunk)
+		changes[i] = arcset.ArcChange{
+			Coordinate: coord,
+			After:      &after,
 		}
 	}
-	resp, err := daemon.ApplyRootSemanticMutation(ctx, tempRootResp.Root, &httpapi.SemanticMutationRequest{
-		Deltas: []httpapi.SemanticMutationDelta{{
-			Kind:    "list",
-			Changes: changes,
-			Commit: &httpapi.SemanticCommitDescriptor{
-				FixedList: &httpapi.SemanticFixedListCommit{
+	delta, err := arcset.NewCanonicalArcDelta(arcset.KindList, changes)
+	if err != nil {
+		return cid.Undef, err
+	}
+	resp, err := daemon.ApplySemanticMutation(ctx, writer.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []writer.ArcSetDelta{{
+			Kind:    arcset.KindList,
+			Changes: delta,
+			Commit: writer.CommitDescriptor{
+				FixedList: &writer.FixedListCommit{
 					TotalSize: totalSize,
 					ChunkSize: addFixedChunkSize,
 				},
