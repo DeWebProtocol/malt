@@ -52,8 +52,8 @@
 - Treat `@payload` as a reserved binding on map semantic objects, not as a
   layout-local convention.
 - Layout packages should translate source-domain data into semantic mutations;
-  gateway-facing code should accept those mutations and return
-  `result + ProofList` for reads.
+  writer-facing code should accept those mutations, while resolver-facing reads
+  should return `result + ProofList`.
 
 ## Code Style
 

@@ -35,7 +35,7 @@ var (
 	ErrExpectedRootMismatch = errors.New("expected root mismatch")
 )
 
-// SemanticMutation is the gateway write boundary emitted by application layouts.
+// SemanticMutation is the writer mutation boundary emitted by application layouts.
 type SemanticMutation struct {
 	BaseRoot cid.Cid
 	Deltas   []ArcSetDelta

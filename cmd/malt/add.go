@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	daemonclient "github.com/dewebprotocol/malt/client"
-	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/writer"
@@ -686,82 +685,6 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 		listObjects += childLists
 	}
 	return files, bytesUploaded, listObjects, nestedMat, symlinkRoots, nil
-}
-
-func flatUnixFSBatchEntries(ctx context.Context, casClient addCASClient, root *addNode) ([]httpapi.UnixFSBatchEntry, error) {
-	entries := make([]httpapi.UnixFSBatchEntry, 0)
-	var walk func(prefix string, node *addNode) error
-	walk = func(prefix string, node *addNode) error {
-		if node == nil {
-			return nil
-		}
-		if prefix != "" {
-			switch node.Kind {
-			case "dir":
-				manifestCID, err := putAddDirectoryManifest(ctx, casClient, node)
-				if err != nil {
-					return err
-				}
-				entries = append(entries, httpapi.UnixFSBatchEntry{
-					Path:   prefix,
-					Target: manifestCID.String(),
-				})
-			case "mapdir":
-				entries = append(entries, httpapi.UnixFSBatchEntry{
-					Path:   prefix,
-					Target: node.Key.String(),
-				})
-				return nil
-			case "file":
-				entry := httpapi.UnixFSBatchEntry{Path: prefix}
-				if len(node.Chunks) > 0 {
-					entry.Chunks = make([]string, len(node.Chunks))
-					for i, chunk := range node.Chunks {
-						entry.Chunks[i] = chunk.String()
-					}
-				} else {
-					entry.Target = node.Key.String()
-				}
-				entries = append(entries, entry)
-				return nil
-			}
-		}
-		names := make([]string, 0, len(node.Children))
-		for name := range node.Children {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		for _, name := range names {
-			childPath := name
-			if prefix != "" {
-				childPath = path.Join(prefix, name)
-			}
-			if err := walk(childPath, node.Children[name]); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := walk("", root); err != nil {
-		return nil, err
-	}
-	return entries, nil
-}
-
-func putAddDirectoryManifest(ctx context.Context, casClient addCASClient, node *addNode) (cid.Cid, error) {
-	names := make([]string, 0, len(node.Children))
-	for name := range node.Children {
-		names = append(names, name)
-	}
-	payload, err := manifest.Normalize(&manifest.DirectoryManifest{Entries: names}).MarshalJSON()
-	if err != nil {
-		return cid.Undef, fmt.Errorf("marshal directory manifest: %w", err)
-	}
-	manifestCID, err := casClient.PutWithCodec(ctx, payload, codec.CodecMaltManifest)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("upload directory manifest: %w", err)
-	}
-	return manifestCID, nil
 }
 
 func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, rawInputs []string, opts addBuildOptions) (*addBuildResult, error) {

@@ -2,10 +2,12 @@ package writer
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
+	"github.com/dewebprotocol/malt/core/codec"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/list"
@@ -79,6 +81,28 @@ func fakeCID(seed string) cid.Cid {
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
+func mustTypedRoot(t *testing.T, kind codec.SemanticKind) cid.Cid {
+	t.Helper()
+
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("kzg.NewScheme failed: %v", err)
+	}
+	root, err := scheme.Commit(nil)
+	if err != nil {
+		t.Fatalf("scheme.Commit failed: %v", err)
+	}
+	commitment, err := codec.ExtractCommitment(root)
+	if err != nil {
+		t.Fatalf("ExtractCommitment failed: %v", err)
+	}
+	typed, err := codec.NewTypedCID(kind, codec.BackendKindKZG, commitment)
+	if err != nil {
+		t.Fatalf("NewTypedCID failed: %v", err)
+	}
+	return typed
+}
+
 func makeArcSet(pairs map[string]cid.Cid) *arcset.Set {
 	out := make(map[string]cid.Cid, len(pairs)+1)
 	for path, target := range pairs {
@@ -122,6 +146,109 @@ func targetRefPtr(target arcset.TargetRef) *arcset.TargetRef {
 }
 
 // Tests.
+
+func TestValidateSemanticMutationRejectsInvalidShape(t *testing.T) {
+	root := fakeCID("root")
+	payload := fakeCID("payload")
+	mapDelta := mustWriterDelta(t, arcset.KindMap, []arcset.ArcChange{{
+		Coordinate: mustMapCoordinate(t, "@payload"),
+		After:      targetRefPtr(arcset.NewCASTarget(payload)),
+	}})
+	listDelta := mustWriterDelta(t, arcset.KindList, []arcset.ArcChange{{
+		Coordinate: mustListCoordinate(t, 0),
+		After:      targetRefPtr(arcset.NewCASTarget(payload)),
+	}})
+
+	tests := []struct {
+		name string
+		mut  SemanticMutation
+		want error
+	}{
+		{
+			name: "missing base root",
+			mut: SemanticMutation{
+				Deltas: []ArcSetDelta{{
+					Object:  root,
+					Kind:    arcset.KindMap,
+					Changes: mapDelta,
+				}},
+			},
+			want: ErrInvalidBaseRoot,
+		},
+		{
+			name: "empty deltas",
+			mut: SemanticMutation{
+				BaseRoot: root,
+			},
+			want: ErrEmptyDeltas,
+		},
+		{
+			name: "nil delta",
+			mut: SemanticMutation{
+				BaseRoot: root,
+				Deltas: []ArcSetDelta{{
+					Object: root,
+					Kind:   arcset.KindMap,
+				}},
+			},
+			want: ErrNilDelta,
+		},
+		{
+			name: "delta kind mismatch",
+			mut: SemanticMutation{
+				BaseRoot: root,
+				Deltas: []ArcSetDelta{{
+					Object:  root,
+					Kind:    arcset.KindMap,
+					Changes: listDelta,
+				}},
+			},
+			want: ErrObjectKindMismatch,
+		},
+		{
+			name: "object kind mismatch",
+			mut: SemanticMutation{
+				BaseRoot: root,
+				Deltas: []ArcSetDelta{{
+					Object:  mustTypedRoot(t, codec.SemanticKindList),
+					Kind:    arcset.KindMap,
+					Changes: mapDelta,
+				}},
+			},
+			want: ErrObjectKindMismatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSemanticMutation(tt.mut)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("ValidateSemanticMutation error = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateSemanticMutationIsRootCentric(t *testing.T) {
+	root := fakeCID("root-centric-base")
+	payload := fakeCID("root-centric-payload")
+	delta := mustWriterDelta(t, arcset.KindMap, []arcset.ArcChange{{
+		Coordinate: mustMapCoordinate(t, "@payload"),
+		After:      targetRefPtr(arcset.NewCASTarget(payload)),
+	}})
+
+	err := ValidateSemanticMutation(SemanticMutation{
+		BaseRoot: root,
+		Deltas: []ArcSetDelta{{
+			Object:  root,
+			Kind:    arcset.KindMap,
+			Changes: delta,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ValidateSemanticMutation failed without bucket id: %v", err)
+	}
+}
 
 func TestWriterApplySemanticMapMutation(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)

@@ -16,8 +16,8 @@ This repository contains the Go implementation of MALT:
 - list/map semantic abstractions over immutable CAS payloads
 - namespace-scoped ArcTable-backed arcset persistence/materialization
 - stateless primitive commitment backends
-- the current `core/layout/malt/unixfs` prototype built from list/map/CAS blob composition
-- runtime adapters for current resolver / writer / graph packages
+- the current `layout/unixfs` prototype built from list/map/CAS blob composition
+- graph contracts plus resolver read and writer mutation ports
 - daemon/API surface, CLI, and local CAS integration
 
 ## Adjacent Repositories
@@ -37,13 +37,16 @@ This repository contains the Go implementation of MALT:
 - `list` and `map` are semantic abstractions, not merely concrete implementations.
 - `list` describes complex graph nodes with indexed child references.
 - `map` describes authenticated relations among graph nodes.
-- `core/structure/mapping/indexed` is a baseline comparison map implementation;
-  `core/graph` wires the radix implementation for the current runtime path.
-- current `core/graph` code is runtime metadata/composition, not the target semantic abstraction.
+- `cmd/eval/internal/baseline/indexedmap` is a baseline comparison map
+  implementation; `core/graph` wires the radix implementation for the current
+  runtime path.
+- `core/graph` defines graph contracts and runtime composition around resolver
+  and writer ports.
 - `GraphManager` and `GraphMeta` are dormant lifecycle metadata machinery in the
   current daemon path; daemon startup creates an ad hoc default `Graph` instead
   of exposing graph lifecycle APIs.
-- current `resolver` and `writer` code is adapter/runtime machinery, not the semantic owner.
+- `resolver` is the read/proof port and `writer` is the mutation port; neither
+  owns the list/map semantic definitions.
 - explicit resolution is a compatibility layer above map reads.
 - list semantics use first-class index reads and logical range reads over index
   intervals. The target range verifier model composes file-layout metadata
@@ -53,8 +56,10 @@ This repository contains the Go implementation of MALT:
   semantics use append/replace/truncate writes, not path resolution.
 - every map semantic object carries reserved `@payload` as its terminal materialization binding.
 - layouts translate source-domain data into MALT semantic mutations.
-- the gateway accepts converted semantic mutations and returns `result + ProofList` for standardized reads.
-- `core/layout/malt/unixfs` is the current application-layout prototype; it should not be treated as the core semantic abstraction.
+- the server executes resolver/writer ports; reads return `result + ProofList`
+  and writes accept layout-produced semantic mutations.
+- `layout/unixfs` is the current application-layout prototype; it should not be
+  treated as the core semantic abstraction.
 - unresolved graph-node, arc, resolver, and UnixFS runtime-integration questions should be tracked as TODOs for later design discussion.
 - `bucket` is an operational namespace/collection boundary for runtime state, not a core list/map or arcset semantic.
 - `querypath` and `manifest` are current root-relative file-layout helpers and should not leak into core semantic rules.

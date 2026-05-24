@@ -100,11 +100,31 @@ func TestEvalHarnessLivesUnderCmdEval(t *testing.T) {
 }
 
 func TestIndexedBaselineMapLivesUnderCmdEval(t *testing.T) {
-	if _, err := os.Stat("../core/structure/mapping/indexed"); !os.IsNotExist(err) {
-		t.Fatalf("../core/structure/mapping/indexed should not exist in core")
+	indexedDir := filepath.Join("..", "core", "structure", "mapping", "indexed")
+	if _, err := os.Stat(indexedDir); !os.IsNotExist(err) {
+		t.Fatalf("%s should not exist in core", indexedDir)
 	}
 	if info, err := os.Stat("../cmd/eval/internal/baseline/indexedmap"); err != nil || !info.IsDir() {
 		t.Fatalf("../cmd/eval/internal/baseline/indexedmap should exist as an eval-local baseline")
+	}
+}
+
+func TestGatewayShimIsDeleted(t *testing.T) {
+	removedDir := filepath.Join("..", "core", "gate"+"way")
+	if _, err := os.Stat(removedDir); !os.IsNotExist(err) {
+		t.Fatalf("%s should not exist after writer owns mutations", removedDir)
+	}
+	assertRepositoryExcludes(t, "..", "core/"+"gate"+"way")
+}
+
+func TestLegacyUnixFSFlatBatchAPIIsDeleted(t *testing.T) {
+	for _, symbol := range []string{
+		"UnixFS" + "Batch" + "Request",
+		"UnixFS" + "Batch" + "Entry",
+		"UnixFS" + "Batch" + "Response",
+		"flatUnixFS" + "BatchEntries",
+	} {
+		assertRepositoryExcludes(t, "..", symbol)
 	}
 }
 
