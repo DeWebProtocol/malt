@@ -107,6 +107,30 @@ func TestAddUsesClientWriterMutationFacade(t *testing.T) {
 	}
 }
 
+func TestAddCommandFileStaysCommandWiring(t *testing.T) {
+	data, err := os.ReadFile("add.go")
+	if err != nil {
+		t.Fatalf("ReadFile(add.go): %v", err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"type addNode struct",
+		"func addInputsWithMerkleDAGUnixFS(",
+		"func buildAddStagingTree(",
+		"func materializeDirectory(",
+		"func stageDirectoryInput(",
+		"func stageSingleFile(",
+		"func uploadAsList(",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("add.go should remain command wiring and not contain %q", forbidden)
+		}
+	}
+	if lines := strings.Count(text, "\n") + 1; lines > 260 {
+		t.Fatalf("add.go has %d lines, want at most 260 lines of command wiring", lines)
+	}
+}
+
 func TestNormalizeAddBuildOptions(t *testing.T) {
 	tests := []struct {
 		name           string
