@@ -9,7 +9,7 @@ import (
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/internal/merkledagimport"
+	"github.com/dewebprotocol/malt/cmd/internal/merkledagimport"
 )
 
 // Options configures a Merkle DAG baseline adapter.

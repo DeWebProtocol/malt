@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,9 +11,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 )
@@ -154,35 +151,6 @@ func decodeCID(raw string) (cid.Cid, error) {
 		return cid.Undef, fmt.Errorf("empty CID")
 	}
 	return cid.Decode(raw)
-}
-
-func encodeTranscript(transcript *resolver.Transcript) []httpapi.StepEvidence {
-	if transcript == nil {
-		return nil
-	}
-	steps := make([]httpapi.StepEvidence, len(transcript.Steps))
-	for i, step := range transcript.Steps {
-		steps[i] = httpapi.StepEvidence{
-			Path:     step.Path.String(),
-			Target:   step.Target.String(),
-			Evidence: base64.StdEncoding.EncodeToString(step.Evidence.Bytes()),
-			Kind:     evidenceKind(step.Evidence.Kind()),
-		}
-	}
-	return steps
-}
-
-func evidenceKind(kind evidence.EvidenceKind) string {
-	switch kind {
-	case evidence.EvidenceKindExplicit:
-		return "explicit"
-	case evidence.EvidenceKindImplicit:
-		return "implicit"
-	case evidence.EvidenceKindHAMT:
-		return "hamt"
-	default:
-		return "unknown"
-	}
 }
 
 func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {

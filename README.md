@@ -399,6 +399,8 @@ Current defaults:
 malt/
 |-- client/          # thin daemon HTTP client
 |-- cmd/
+|   |-- internal/
+|   |   `-- merkledagimport/ # command-local Merkle-DAG UnixFS import helpers
 |   |-- eval/
 |   |   |-- command/
 |   |   |-- helper/
@@ -424,8 +426,6 @@ malt/
 |   |-- structure/    # list/map semantic abstractions and implementations
 |   |-- types/        # arc sets, evidence, proof-related types
 |   `-- writer/       # writer mutation port and executor
-|-- internal/
-|   `-- merkledagimport/ # Merkle-DAG UnixFS baseline import helpers
 |-- layout/
 |   `-- unixfs/       # map/list-based UnixFS layout prototype
 |-- server/          # daemon HTTP server

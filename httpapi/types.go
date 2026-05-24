@@ -125,20 +125,11 @@ type UnixFSWriteResponse struct {
 	ArcCount int    `json:"arc_count"`
 }
 
-// StepEvidence is a single transcript step.
-type StepEvidence struct {
-	Path     string `json:"path"`
-	Target   string `json:"target"`
-	Evidence string `json:"evidence"`
-	Kind     string `json:"kind"`
-}
-
 // ResolveResponse returns a resolved target and, by default, verifier-facing
 // ProofList evidence.
 type ResolveResponse struct {
-	Target     string               `json:"target"`
-	ProofList  *prooflist.ProofList `json:"prooflist,omitempty"`
-	Transcript []StepEvidence       `json:"transcript,omitempty"`
+	Target    string               `json:"target"`
+	ProofList *prooflist.ProofList `json:"prooflist,omitempty"`
 }
 
 // CreateStructureRequest creates a new structure from an arc set.

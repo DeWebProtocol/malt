@@ -7,7 +7,7 @@ import (
 	"github.com/dewebprotocol/malt/cmd/eval/helper/adapters/merkledag"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/internal/merkledagimport"
+	"github.com/dewebprotocol/malt/cmd/internal/merkledagimport"
 )
 
 func TestAdapterImportsOnlyTraceLiveFilesFromSnapshot(t *testing.T) {

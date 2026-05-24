@@ -109,6 +109,17 @@ func TestIndexedBaselineMapLivesUnderCmdEval(t *testing.T) {
 	}
 }
 
+func TestMerkleDAGImportLivesUnderCmdBoundary(t *testing.T) {
+	legacyDir := filepath.Join("..", "internal", "merkledag"+"import")
+	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+		t.Fatalf("%s should not exist outside cmd", legacyDir)
+	}
+	if info, err := os.Stat(filepath.Join("..", "cmd", "internal", "merkledag"+"import")); err != nil || !info.IsDir() {
+		t.Fatalf("../cmd/internal/merkledagimport should exist as command-local MerkleDAG import support")
+	}
+	assertRepositoryExcludes(t, "..", "malt/internal/"+"merkledagimport")
+}
+
 func TestGatewayShimIsDeleted(t *testing.T) {
 	removedDir := filepath.Join("..", "core", "gate"+"way")
 	if _, err := os.Stat(removedDir); !os.IsNotExist(err) {
@@ -126,6 +137,23 @@ func TestLegacyUnixFSFlatBatchAPIIsDeleted(t *testing.T) {
 	} {
 		assertRepositoryExcludes(t, "..", symbol)
 	}
+}
+
+func TestResolveResponseDoesNotExposeLegacyTranscriptAPI(t *testing.T) {
+	assertFileExcludes(t, "../httpapi/types.go", []string{
+		"type Step" + "Evidence struct",
+		"Transcript []Step" + "Evidence",
+	})
+	assertFileExcludes(t, "server.go", []string{
+		"encode" + "Transcript",
+		"evidence" + "Kind(",
+	})
+}
+
+func TestServerStaleUnixFSArcCountersAreDeleted(t *testing.T) {
+	assertFileExcludes(t, "handlers.go", []string{
+		"unixFS" + "ArcCount",
+	})
 }
 
 func assertFileExcludes(t *testing.T, file string, forbidden []string) {

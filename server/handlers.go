@@ -479,41 +479,6 @@ func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.C
 	}
 }
 
-func (s *Server) unixFSArcCount(ctx context.Context, layout *unixfs.Layout, root cid.Cid) int {
-	count, err := unixFSArcCountAt(ctx, layout, root, "")
-	if err != nil {
-		return 0
-	}
-	return count
-}
-
-func unixFSArcCountAt(ctx context.Context, layout *unixfs.Layout, root cid.Cid, p string) (int, error) {
-	stat, err := layout.Stat(ctx, root, p)
-	if err != nil {
-		return 0, err
-	}
-	switch stat.Kind {
-	case "file":
-		return 4, nil
-	case "directory":
-		count := 2 + len(stat.Entries)
-		for _, entry := range stat.Entries {
-			childPath := entry
-			if p != "" {
-				childPath = path.Join(p, entry)
-			}
-			childCount, err := unixFSArcCountAt(ctx, layout, root, childPath)
-			if err != nil {
-				return 0, err
-			}
-			count += childCount
-		}
-		return count, nil
-	default:
-		return 0, fmt.Errorf("unsupported unixfs node kind %q", stat.Kind)
-	}
-}
-
 func (s *Server) listFileSize(ctx context.Context, g graph.Runtime, listRoot cid.Cid) (int64, uint64, error) {
 	q, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, ^uint64(0))
 	if err != nil {

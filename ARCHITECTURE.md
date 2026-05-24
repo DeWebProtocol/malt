@@ -269,6 +269,8 @@ Path-miss behavior is a file-layout and product-runtime invariant. The reserved
 malt/
 |-- client/          # thin daemon HTTP client
 |-- cmd/
+|   |-- internal/
+|   |   `-- merkledagimport/ # command-local Merkle-DAG UnixFS import helpers
 |   |-- eval/
 |   |   |-- command/
 |   |   |-- helper/
@@ -279,9 +281,6 @@ malt/
 |-- daemon/
 |-- httpapi/         # shared daemon API payloads
 |-- server/          # daemon HTTP server
-|-- internal/
-|   |-- eval/          # evaluation framework, suites, summaries, readbench
-|   `-- merkledagimport/ # Merkle-DAG UnixFS baseline import helpers
 |-- core/
 |   |-- api/          # Node: top-level component wiring
 |   |-- arctable/     # namespace-scoped arcset persistence/materialization
