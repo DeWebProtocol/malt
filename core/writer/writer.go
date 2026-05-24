@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/dewebprotocol/malt/core/arctable"
+	"github.com/dewebprotocol/malt/core/structure/list"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
@@ -101,8 +102,9 @@ type BatchUpdateResult struct {
 //   - Resolver: (root, path) -> (target, transcript) via ArcTable lookup + semantic prove
 //   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply
 type Writer struct {
-	semantic mapping.Semantics
-	arctable arctable.ArcTable
+	semantic     mapping.Semantics
+	listSemantic list.Semantics
+	arctable     arctable.ArcTable
 }
 
 // NewWriter creates a new Writer.
@@ -110,10 +112,15 @@ type Writer struct {
 // Parameters:
 //   - semantic: keyed-map semantic (required)
 //   - arctable: Explicit Arc Table (required)
-func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable) *Writer {
+func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, lists ...list.Semantics) *Writer {
+	var listSemantic list.Semantics
+	if len(lists) > 0 {
+		listSemantic = lists[0]
+	}
 	return &Writer{
-		semantic: semantic,
-		arctable: arctable,
+		semantic:     semantic,
+		listSemantic: listSemantic,
+		arctable:     arctable,
 	}
 }
 

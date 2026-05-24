@@ -15,7 +15,6 @@ import (
 
 	"github.com/dewebprotocol/malt/core/cas"
 	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/gateway"
 	"github.com/dewebprotocol/malt/core/graph"
 	"github.com/dewebprotocol/malt/core/layout/malt/unixfs"
 	"github.com/dewebprotocol/malt/core/manifest"
@@ -28,6 +27,7 @@ import (
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
+	"github.com/dewebprotocol/malt/core/writer"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 )
@@ -174,7 +174,7 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, bytes.NewReader(payload))
 }
 
-func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, g *graph.Graph, root cid.Cid, queryPath string) {
+func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, g graph.Runtime, root cid.Cid, queryPath string) {
 	resolved, err := s.resolvePath(r.Context(), g, root, queryPath, !shouldOmitDefaultProof(r))
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -217,7 +217,7 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	receipt, err := s.applyGatewaySemanticMutation(r.Context(), g, mut)
+	receipt, err := s.applyWriterMutation(r.Context(), g, mut)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -372,7 +372,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.VerifyResponse{Valid: valid})
 }
 
-func (s *Server) verifyProofList(g *graph.Graph, pl prooflist.ProofList) (bool, error) {
+func (s *Server) verifyProofList(g graph.Runtime, pl prooflist.ProofList) (bool, error) {
 	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
 		return false, err
 	}
@@ -438,7 +438,7 @@ func (p proofListVerifiedPath) logicalQueryPath() string {
 	return strings.Join(p.parts, "/")
 }
 
-func (s *Server) verifyProofListStep(g *graph.Graph, index int, step prooflist.Step) (bool, error) {
+func (s *Server) verifyProofListStep(g graph.Runtime, index int, step prooflist.Step) (bool, error) {
 	switch step.EvidenceKind {
 	case "explicit", "implicit", "hamt":
 		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)
@@ -503,7 +503,7 @@ var (
 	errPathNotFound = errors.New("path not found")
 )
 
-func (s *Server) resolvePath(ctx context.Context, g *graph.Graph, root cid.Cid, rawPath string, wantProof bool) (*pathResolution, error) {
+func (s *Server) resolvePath(ctx context.Context, g graph.Runtime, root cid.Cid, rawPath string, wantProof bool) (*pathResolution, error) {
 	cleanPath := querypath.CanonicalizeQueryPath(rawPath)
 	keyResult, err := g.Resolver().ResolveKey(root, cleanPath)
 	if err != nil {
@@ -555,7 +555,7 @@ func (s *Server) resolvePath(ctx context.Context, g *graph.Graph, root cid.Cid, 
 	return resolved, nil
 }
 
-func (s *Server) statForResolvedKey(ctx context.Context, g *graph.Graph, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
+func (s *Server) statForResolvedKey(ctx context.Context, g graph.Runtime, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
 	switch codec.SemanticKindOf(key) {
 	case codec.SemanticKindManifest:
 		stat, err := s.statFromFlatTarget(ctx, g, key)
@@ -617,7 +617,7 @@ func statReadTarget(stat *httpapi.PathStatResponse) (cid.Cid, error) {
 	return decodeCID(target)
 }
 
-func (s *Server) readProofList(ctx context.Context, g *graph.Graph, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
+func (s *Server) readProofList(ctx context.Context, g graph.Runtime, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
 	if resolved == nil || resolved.proofList == nil {
 		return nil, fmt.Errorf("resolution prooflist is missing")
 	}
@@ -650,7 +650,7 @@ func (s *Server) readProofList(ctx context.Context, g *graph.Graph, resolved *pa
 	return &pl, nil
 }
 
-func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target cid.Cid) (*httpapi.PathStatResponse, error) {
+func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target cid.Cid) (*httpapi.PathStatResponse, error) {
 	switch codec.SemanticKindOf(target) {
 	case codec.SemanticKindManifest:
 		entries, err := s.readDirectoryManifest(ctx, target)
@@ -704,7 +704,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g *graph.Graph, target 
 	}
 }
 
-func (s *Server) legacyPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
+func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
 	keyResult, err := g.Resolver().ResolveKey(root, path)
 	if err != nil {
 		return nil, err
@@ -764,7 +764,7 @@ func (s *Server) legacyPathStat(ctx context.Context, g *graph.Graph, root cid.Ci
 	}
 }
 
-func (s *Server) unixFSLayout(g *graph.Graph) (*unixfs.Layout, error) {
+func (s *Server) unixFSLayout(g graph.Runtime) (*unixfs.Layout, error) {
 	blocks, ok := s.node.CAS().(cas.Client)
 	if !ok {
 		return nil, fmt.Errorf("configured CAS does not support writes")
@@ -790,7 +790,7 @@ func (s *Server) readDirectoryManifest(ctx context.Context, manifestCID cid.Cid)
 	return m.Entries, nil
 }
 
-func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, root cid.Cid) (cid.Cid, error) {
+func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, root cid.Cid) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, nil
 	}
@@ -804,12 +804,12 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g *graph.Graph, layout *
 	return cid.Undef, nil
 }
 
-func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (gateway.WriteReceipt, error) {
+func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
 	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
 		if codec.SemanticKindOf(newRoot) != codec.SemanticKindMap {
-			return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
+			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
 		}
-		return gateway.WriteReceipt{
+		return writer.WriteReceipt{
 			BaseRoot: oldRoot,
 			NewRoot:  newRoot,
 		}, nil
@@ -817,64 +817,58 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g *graph.Graph, 
 
 	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
 	if err != nil {
-		return gateway.WriteReceipt{}, err
+		return writer.WriteReceipt{}, err
 	}
 	mut := semanticMutationFromUnixFSPlan(plan, newRoot)
-	receipt, err := s.applyGatewaySemanticMutation(ctx, g, mut)
+	receipt, err := s.applyWriterMutation(ctx, g, mut)
 	if err != nil {
-		return gateway.WriteReceipt{}, err
+		return writer.WriteReceipt{}, err
 	}
 	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
-		return gateway.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
+		return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
 	}
 	return receipt, nil
 }
 
-func (s *Server) applyGatewaySemanticMutation(ctx context.Context, g *graph.Graph, mut gateway.SemanticMutation) (gateway.WriteReceipt, error) {
-	exec := gateway.Executor{
-		Namespace: g.Namespace(),
-		Maps:      g.Semantic(),
-		Lists:     g.ListSemantic(),
-		ArcTable:  s.node.ArcTable(),
-	}
-	return exec.Apply(ctx, mut)
+func (s *Server) applyWriterMutation(ctx context.Context, g graph.Runtime, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
+	return g.Writer().Apply(ctx, g.Namespace(), mut)
 }
 
-func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.Cid) gateway.SemanticMutation {
+func semanticMutationFromUnixFSPlan(plan *unixfs.MutationPlan, fallbackRoot cid.Cid) writer.SemanticMutation {
 	baseRoot := plan.BaseRoot
 	if !baseRoot.Defined() {
 		baseRoot = fallbackRoot
 	}
 
-	mut := gateway.SemanticMutation{
+	mut := writer.SemanticMutation{
 		BaseRoot: baseRoot,
-		Deltas:   make([]gateway.ArcSetDelta, 0, len(plan.Deltas)),
+		Deltas:   make([]writer.ArcSetDelta, 0, len(plan.Deltas)),
 	}
 	for _, delta := range plan.Deltas {
 		// UnixFS replay rematerializes deterministic roots; do not treat the
 		// already-materialized object as a versioned ArcTable parent.
-		gatewayDelta := gateway.ArcSetDelta{
+		writerDelta := writer.ArcSetDelta{
 			Object:       delta.Object,
 			ExpectedRoot: delta.ExpectedRoot,
 			Kind:         delta.Kind,
 			Changes:      delta.Changes,
 		}
 		if delta.FixedList != nil {
-			gatewayDelta.Commit.FixedList = &gateway.FixedListCommit{
+			writerDelta.Commit.FixedList = &writer.FixedListCommit{
 				TotalSize: delta.FixedList.TotalSize,
 				ChunkSize: delta.FixedList.ChunkSize,
 			}
 		}
-		mut.Deltas = append(mut.Deltas, gatewayDelta)
+		mut.Deltas = append(mut.Deltas, writerDelta)
 	}
 	return mut
 }
 
-func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
+func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
 	return s.copyLegacyPathToUnixFS(ctx, g, layout, legacyRoot, "", cid.Undef, "")
 }
 
-func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g *graph.Graph, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
+func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
 	stat, err := s.legacyPathStat(ctx, g, legacyRoot, legacyPath)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("migrate legacy path %q: %w", legacyPath, err)
@@ -944,7 +938,7 @@ func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.Pat
 	return m.Entries, nil
 }
 
-func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi.PathStatResponse) ([]byte, error) {
+func (s *Server) readStatFile(ctx context.Context, g graph.Runtime, stat *httpapi.PathStatResponse) ([]byte, error) {
 	if stat == nil || stat.Kind != "file" {
 		return nil, fmt.Errorf("file stat is required")
 	}
@@ -971,7 +965,7 @@ func (s *Server) readStatFile(ctx context.Context, g *graph.Graph, stat *httpapi
 	}
 }
 
-func (s *Server) readContentPayload(ctx context.Context, g *graph.Graph, stat *httpapi.PathStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
+func (s *Server) readContentPayload(ctx context.Context, g graph.Runtime, stat *httpapi.PathStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
 	switch stat.StorageKind {
 	case "raw":
 		raw, err := s.node.CAS().Get(ctx, key)
@@ -986,7 +980,7 @@ func (s *Server) readContentPayload(ctx context.Context, g *graph.Graph, stat *h
 	}
 }
 
-func (s *Server) unixFSPathStat(ctx context.Context, g *graph.Graph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
+func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		return nil, err
@@ -1054,7 +1048,7 @@ func unixFSArcCountAt(ctx context.Context, layout *unixfs.Layout, root cid.Cid, 
 	}
 }
 
-func (s *Server) listFileSize(ctx context.Context, g *graph.Graph, listRoot cid.Cid) (int64, uint64, error) {
+func (s *Server) listFileSize(ctx context.Context, g graph.Runtime, listRoot cid.Cid) (int64, uint64, error) {
 	q, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, ^uint64(0))
 	if err != nil {
 		return 0, 0, err
@@ -1075,7 +1069,7 @@ func (s *Server) listFileSize(ctx context.Context, g *graph.Graph, listRoot cid.
 	return size, count, nil
 }
 
-func (s *Server) readListRange(ctx context.Context, g *graph.Graph, listRoot cid.Cid, start, endExclusive int64) ([]byte, error) {
+func (s *Server) readListRange(ctx context.Context, g graph.Runtime, listRoot cid.Cid, start, endExclusive int64) ([]byte, error) {
 	if endExclusive <= start {
 		return []byte{}, nil
 	}
@@ -1111,7 +1105,7 @@ func (s *Server) readListRange(ctx context.Context, g *graph.Graph, listRoot cid
 	return out.Bytes(), nil
 }
 
-func (s *Server) listIndexStepsForRange(ctx context.Context, g *graph.Graph, listRoot cid.Cid, start, endExclusive int64) ([]unixfs.ListIndexStep, error) {
+func (s *Server) listIndexStepsForRange(ctx context.Context, g graph.Runtime, listRoot cid.Cid, start, endExclusive int64) ([]unixfs.ListIndexStep, error) {
 	if endExclusive <= start {
 		return nil, nil
 	}
@@ -1210,28 +1204,28 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 	return out, nil
 }
 
-func semanticMutationFromRequest(baseRoot cid.Cid, deltaRequests []httpapi.SemanticMutationDelta) (gateway.SemanticMutation, error) {
-	deltas := make([]gateway.ArcSetDelta, 0, len(deltaRequests))
+func semanticMutationFromRequest(baseRoot cid.Cid, deltaRequests []httpapi.SemanticMutationDelta) (writer.SemanticMutation, error) {
+	deltas := make([]writer.ArcSetDelta, 0, len(deltaRequests))
 	for i, deltaReq := range deltaRequests {
 		delta, err := semanticDeltaFromRequest(deltaReq)
 		if err != nil {
-			return gateway.SemanticMutation{}, fmt.Errorf("delta %d: %w", i, err)
+			return writer.SemanticMutation{}, fmt.Errorf("delta %d: %w", i, err)
 		}
 		deltas = append(deltas, delta)
 	}
 
-	return gateway.SemanticMutation{
+	return writer.SemanticMutation{
 		BaseRoot: baseRoot,
 		Deltas:   deltas,
 	}, nil
 }
 
-func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (gateway.ArcSetDelta, error) {
+func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (writer.ArcSetDelta, error) {
 	object := cid.Undef
 	if req.Object != "" {
 		parsed, err := decodeCID(req.Object)
 		if err != nil {
-			return gateway.ArcSetDelta{}, fmt.Errorf("invalid object: %w", err)
+			return writer.ArcSetDelta{}, fmt.Errorf("invalid object: %w", err)
 		}
 		object = parsed
 	}
@@ -1239,7 +1233,7 @@ func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (gateway.ArcSet
 	if req.ExpectedRoot != "" {
 		parsed, err := decodeCID(req.ExpectedRoot)
 		if err != nil {
-			return gateway.ArcSetDelta{}, fmt.Errorf("invalid expected root: %w", err)
+			return writer.ArcSetDelta{}, fmt.Errorf("invalid expected root: %w", err)
 		}
 		expectedRoot = parsed
 	}
@@ -1249,23 +1243,23 @@ func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (gateway.ArcSet
 	for i, changeReq := range req.Changes {
 		change, err := semanticChangeFromRequest(kind, changeReq)
 		if err != nil {
-			return gateway.ArcSetDelta{}, fmt.Errorf("change %d: %w", i, err)
+			return writer.ArcSetDelta{}, fmt.Errorf("change %d: %w", i, err)
 		}
 		changes = append(changes, change)
 	}
 
 	delta, err := arcset.NewCanonicalArcDelta(kind, changes)
 	if err != nil {
-		return gateway.ArcSetDelta{}, err
+		return writer.ArcSetDelta{}, err
 	}
-	out := gateway.ArcSetDelta{
+	out := writer.ArcSetDelta{
 		Object:       object,
 		ExpectedRoot: expectedRoot,
 		Kind:         kind,
 		Changes:      delta,
 	}
 	if req.Commit != nil && req.Commit.FixedList != nil {
-		out.Commit.FixedList = &gateway.FixedListCommit{
+		out.Commit.FixedList = &writer.FixedListCommit{
 			TotalSize: req.Commit.FixedList.TotalSize,
 			ChunkSize: req.Commit.FixedList.ChunkSize,
 		}
@@ -1323,7 +1317,7 @@ func semanticTargetFromRequest(req httpapi.SemanticMutationTarget) (arcset.Targe
 	return semanticTargetRef(req.TargetKind, target)
 }
 
-func countSemanticDeltas(deltas []gateway.ArcSetDelta, kind arcset.Kind) int {
+func countSemanticDeltas(deltas []writer.ArcSetDelta, kind arcset.Kind) int {
 	count := 0
 	for _, delta := range deltas {
 		if delta.Kind == kind {
@@ -1383,7 +1377,7 @@ func resolveMiss(_ cid.Cid, _ string, result *resolver.ResolveResult) bool {
 	return !result.RemainingPath.IsEmpty()
 }
 
-func mandatoryMapPayload(ctx context.Context, g *graph.Graph, root cid.Cid) (cid.Cid, error) {
+func mandatoryMapPayload(ctx context.Context, g graph.Runtime, root cid.Cid) (cid.Cid, error) {
 	payload, err := g.Writer().GetArc(ctx, g.Namespace(), root, explicit.PayloadArc.String())
 	if err != nil {
 		return cid.Undef, err

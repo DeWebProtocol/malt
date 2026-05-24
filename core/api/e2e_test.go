@@ -21,7 +21,7 @@ func fakeCID(seed string) cid.Cid {
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
-func newTestGraph(t *testing.T) (*Node, *graph.Graph) {
+func newTestGraph(t *testing.T) (*Node, graph.Runtime) {
 	t.Helper()
 	node, err := NewNode(WithConfig(testRuntimeConfig(t)))
 	if err != nil {

@@ -26,7 +26,7 @@ type Server struct {
 	node         *api.Node
 	addr         string
 	server       *http.Server
-	defaultGraph *graph.Graph
+	defaultGraph graph.Runtime
 	graphMu      sync.Mutex
 }
 
@@ -128,7 +128,7 @@ func (s *Server) handleRemovedPublicRoute(w http.ResponseWriter, r *http.Request
 	writeError(w, http.StatusNotFound, "not found")
 }
 
-func (s *Server) getOrCreateGraph(ctx context.Context) (*graph.Graph, error) {
+func (s *Server) getOrCreateGraph(ctx context.Context) (graph.Runtime, error) {
 	s.graphMu.Lock()
 	defer s.graphMu.Unlock()
 	if s.defaultGraph != nil {

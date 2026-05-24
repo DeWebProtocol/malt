@@ -2,11 +2,14 @@ package writer
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/core/structure/list"
+	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
@@ -44,6 +47,31 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantic
 	return w, e, semantic, kv
 }
 
+func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantics, list.Semantics, *kvg) {
+	t.Helper()
+
+	kv := kvmemory.New()
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("failed to create ArcTable: %v", err)
+	}
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("failed to create KZG scheme: %v", err)
+	}
+	semantic, err := mappingradix.NewMap(scheme, e)
+	if err != nil {
+		t.Fatalf("failed to create mapping semantic: %v", err)
+	}
+	listSemantic, err := listtree.NewList(scheme, e)
+	if err != nil {
+		t.Fatalf("failed to create list semantic: %v", err)
+	}
+
+	w := NewWriter(semantic, e, listSemantic)
+	return w, e, semantic, listSemantic, kv
+}
+
 type kvg = kvmemory.KV
 
 func fakeCID(seed string) cid.Cid {
@@ -62,7 +90,207 @@ func makeArcSet(pairs map[string]cid.Cid) *arcset.Set {
 	return arcset.NewSetFrom(out)
 }
 
+func mustWriterDelta(t *testing.T, kind arcset.Kind, changes []arcset.ArcChange) *arcset.CanonicalArcDelta {
+	t.Helper()
+	delta, err := arcset.NewCanonicalArcDelta(kind, changes)
+	if err != nil {
+		t.Fatalf("NewCanonicalArcDelta failed: %v", err)
+	}
+	return delta
+}
+
+func mustMapCoordinate(t *testing.T, path string) arcset.CanonicalCoordinate {
+	t.Helper()
+	coord, err := arcset.NewMapCoordinate(path)
+	if err != nil {
+		t.Fatalf("NewMapCoordinate failed: %v", err)
+	}
+	return coord
+}
+
+func mustListCoordinate(t *testing.T, index int64) arcset.CanonicalCoordinate {
+	t.Helper()
+	coord, err := arcset.NewListCoordinate(index)
+	if err != nil {
+		t.Fatalf("NewListCoordinate failed: %v", err)
+	}
+	return coord
+}
+
+func targetRefPtr(target arcset.TargetRef) *arcset.TargetRef {
+	return &target
+}
+
 // Tests.
+
+func TestWriterApplySemanticMapMutation(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test"
+	oldChild := fakeCID("old-child")
+	newChild := fakeCID("new-child")
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"child": oldChild,
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	receipt, err := w.Apply(ctx, namespace, SemanticMutation{
+		BaseRoot: root,
+		Deltas: []ArcSetDelta{{
+			Object: root,
+			Kind:   arcset.KindMap,
+			Changes: mustWriterDelta(t, arcset.KindMap, []arcset.ArcChange{{
+				Coordinate: mustMapCoordinate(t, "child"),
+				Before:     targetRefPtr(arcset.NewMapTarget(oldChild)),
+				After:      targetRefPtr(arcset.NewMapTarget(newChild)),
+			}}),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	if receipt.DeltaCount != 1 || receipt.ArcCount != 1 {
+		t.Fatalf("receipt counts = deltas %d arcs %d, want 1/1", receipt.DeltaCount, receipt.ArcCount)
+	}
+
+	got, err := w.GetArc(ctx, namespace, receipt.NewRoot, "child")
+	if err != nil {
+		t.Fatalf("GetArc failed: %v", err)
+	}
+	if !got.Equals(newChild) {
+		t.Fatalf("child target = %s, want %s", got, newChild)
+	}
+}
+
+func TestWriterApplySemanticListCreateMutation(t *testing.T) {
+	w, _, _, lists, _ := newTestWriterWithList(t)
+	ctx := context.Background()
+	namespace := "test"
+	first := fakeCID("first")
+	second := fakeCID("second")
+
+	receipt, err := w.Apply(ctx, namespace, SemanticMutation{
+		BaseRoot: fakeCID("base"),
+		Deltas: []ArcSetDelta{{
+			Kind: arcset.KindList,
+			Changes: mustWriterDelta(t, arcset.KindList, []arcset.ArcChange{
+				{Coordinate: mustListCoordinate(t, 0), After: targetRefPtr(arcset.NewCASTarget(first))},
+				{Coordinate: mustListCoordinate(t, 1), After: targetRefPtr(arcset.NewCASTarget(second))},
+			}),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	query, proof, err := lists.Prove(ctx, namespace, receipt.NewRoot, 1)
+	if err != nil {
+		t.Fatalf("Prove failed: %v", err)
+	}
+	if query.Length != 2 || !query.Key.Equals(second) {
+		t.Fatalf("query = %+v, want length 2 key %s", query, second)
+	}
+	ok, err := lists.Verify(receipt.NewRoot, 1, query, proof)
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("list proof did not verify")
+	}
+}
+
+func TestWriterApplySemanticListAppendMutation(t *testing.T) {
+	w, _, _, lists, _ := newTestWriterWithList(t)
+	ctx := context.Background()
+	namespace := "test"
+	first := fakeCID("first")
+	second := fakeCID("second")
+	third := fakeCID("third")
+	root, err := lists.Commit(ctx, namespace, list.NewViewFromSlice([]cid.Cid{first, second}))
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	receipt, err := w.Apply(ctx, namespace, SemanticMutation{
+		BaseRoot: root,
+		Deltas: []ArcSetDelta{{
+			Object: root,
+			Kind:   arcset.KindList,
+			Changes: mustWriterDelta(t, arcset.KindList, []arcset.ArcChange{{
+				Coordinate: mustListCoordinate(t, 2),
+				After:      targetRefPtr(arcset.NewCASTarget(third)),
+			}}),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	query, proof, err := lists.Prove(ctx, namespace, receipt.NewRoot, 2)
+	if err != nil {
+		t.Fatalf("Prove failed: %v", err)
+	}
+	if query.Length != 3 || !query.Key.Equals(third) {
+		t.Fatalf("query = %+v, want length 3 key %s", query, third)
+	}
+	ok, err := lists.Verify(receipt.NewRoot, 2, query, proof)
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("list proof did not verify")
+	}
+}
+
+func TestWriterApplyFixedMeasuredListAppendMutation(t *testing.T) {
+	w, _, _, lists, _ := newTestWriterWithList(t)
+	ctx := context.Background()
+	namespace := "test"
+	chunkSize := uint64(4)
+	chunks := make([]cid.Cid, 256)
+	for i := range chunks {
+		chunks[i] = fakeCID("fixed-chunk-" + strconv.Itoa(i))
+	}
+	fixed := lists.(interface {
+		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
+	})
+	baseRoot, err := fixed.CommitFixed(ctx, namespace, chunks[:255], chunkSize, uint64(255)*chunkSize)
+	if err != nil {
+		t.Fatalf("CommitFixed base failed: %v", err)
+	}
+	expectedRoot, err := fixed.CommitFixed(ctx, namespace, chunks, chunkSize, uint64(256)*chunkSize)
+	if err != nil {
+		t.Fatalf("CommitFixed expected failed: %v", err)
+	}
+
+	receipt, err := w.Apply(ctx, namespace, SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []ArcSetDelta{{
+			Object:       baseRoot,
+			ExpectedRoot: expectedRoot,
+			Kind:         arcset.KindList,
+			Changes: mustWriterDelta(t, arcset.KindList, []arcset.ArcChange{{
+				Coordinate: mustListCoordinate(t, 255),
+				After:      targetRefPtr(arcset.NewCASTarget(chunks[255])),
+			}}),
+			Commit: CommitDescriptor{
+				FixedList: &FixedListCommit{
+					TotalSize: uint64(256) * chunkSize,
+					ChunkSize: chunkSize,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	if !receipt.NewRoot.Equals(expectedRoot) {
+		t.Fatalf("new root = %s, want %s", receipt.NewRoot, expectedRoot)
+	}
+}
 
 func TestWriter_UpdateArc_Insert(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
