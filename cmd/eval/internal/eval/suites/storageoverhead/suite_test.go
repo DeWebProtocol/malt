@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
 )
 
 func TestSuiteRecordsPersistedAndLogicalStorageOverhead(t *testing.T) {

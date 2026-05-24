@@ -90,6 +90,24 @@ func TestResolverCompatPackagesAreOutsideCore(t *testing.T) {
 	}
 }
 
+func TestEvalHarnessLivesUnderCmdEval(t *testing.T) {
+	if _, err := os.Stat("../internal/eval"); !os.IsNotExist(err) {
+		t.Fatalf("../internal/eval should not exist outside cmd/eval")
+	}
+	if info, err := os.Stat("../cmd/eval/internal/eval"); err != nil || !info.IsDir() {
+		t.Fatalf("../cmd/eval/internal/eval should exist as an eval-local harness package")
+	}
+}
+
+func TestIndexedBaselineMapLivesUnderCmdEval(t *testing.T) {
+	if _, err := os.Stat("../core/structure/mapping/indexed"); !os.IsNotExist(err) {
+		t.Fatalf("../core/structure/mapping/indexed should not exist in core")
+	}
+	if info, err := os.Stat("../cmd/eval/internal/baseline/indexedmap"); err != nil || !info.IsDir() {
+		t.Fatalf("../cmd/eval/internal/baseline/indexedmap should exist as an eval-local baseline")
+	}
+}
+
 func assertFileExcludes(t *testing.T, file string, forbidden []string) {
 	t.Helper()
 	data, err := os.ReadFile(file)

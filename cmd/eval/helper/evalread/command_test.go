@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/eval/readbench"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/readbench"
 )
 
 func TestParseArcFlagsRequiresPathAndCID(t *testing.T) {

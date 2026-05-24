@@ -9,7 +9,7 @@ import (
 	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
 )
 
 // Suite replays Git commit traces and writes framework raw records.

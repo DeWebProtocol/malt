@@ -1,16 +1,16 @@
-package indexed_test
+package indexedmap_test
 
 import (
 	"context"
 	"testing"
 
+	indexedmap "github.com/dewebprotocol/malt/cmd/eval/internal/baseline/indexedmap"
 	"github.com/dewebprotocol/malt/core/arctable/overwrite"
 	"github.com/dewebprotocol/malt/core/commitment"
 	"github.com/dewebprotocol/malt/core/commitment/ipa"
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
-	mappingindexed "github.com/dewebprotocol/malt/core/structure/mapping/indexed"
 	"github.com/dewebprotocol/malt/core/types/arcset"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -47,9 +47,9 @@ func newMap(t *testing.T, factory schemeFactory) mapping.Semantics {
 	if err != nil {
 		t.Fatalf("overwrite.NewArcTable failed: %v", err)
 	}
-	semantic, err := mappingindexed.NewMap(factory(t), e)
+	semantic, err := indexedmap.NewMap(factory(t), e)
 	if err != nil {
-		t.Fatalf("indexed.NewMap failed: %v", err)
+		t.Fatalf("indexedmap.NewMap failed: %v", err)
 	}
 	return semantic
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/configjson"
 	"github.com/dewebprotocol/malt/core/arctable"
 	"github.com/dewebprotocol/malt/core/arctable/versioned"
 	"github.com/dewebprotocol/malt/core/cas"
@@ -21,8 +23,6 @@ import (
 	"github.com/dewebprotocol/malt/core/structure/mapping"
 	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/internal/eval/framework"
-	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
 	cid "github.com/ipfs/go-cid"
 )
 

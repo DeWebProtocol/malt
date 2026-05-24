@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dewebprotocol/malt/internal/eval/summary"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/summary"
 )
 
 // RunOptions controls framework execution behavior.

@@ -1,7 +1,6 @@
-// Package indexed implements the canonical-path ordered baseline map semantic.
-// It is retained for comparison; core/graph wires mapping/radix in the current
-// runtime path.
-package indexed
+// Package indexedmap implements the canonical-path ordered baseline map
+// semantic for eval comparison. Core runtime graph wiring uses mapping/radix.
+package indexedmap
 
 import (
 	"context"

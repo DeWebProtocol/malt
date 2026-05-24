@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/readbench"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/internal/eval/framework"
-	"github.com/dewebprotocol/malt/internal/eval/readbench"
 )
 
 // Name is the fixed evaluation framework suite name.

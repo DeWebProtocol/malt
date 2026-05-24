@@ -8,10 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/eval/framework"
-	"github.com/dewebprotocol/malt/internal/eval/readbench"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/readbench"
 )
 
 func TestSuiteNameIsReadQuery(t *testing.T) {
@@ -311,7 +312,7 @@ type schemaObject struct {
 func readResultSchema(t *testing.T) jsonSchema {
 	t.Helper()
 
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "cmd", "eval", "schemas", "read-query-result.schema.json"))
+	data, err := os.ReadFile(filepath.Join(schemaDir(t), "read-query-result.schema.json"))
 	if err != nil {
 		t.Fatalf("read schema %s: %v", ResultSchemaPath, err)
 	}
@@ -320,6 +321,15 @@ func readResultSchema(t *testing.T) jsonSchema {
 		t.Fatalf("parse schema %s: %v", ResultSchemaPath, err)
 	}
 	return schema
+}
+
+func schemaDir(t *testing.T) string {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "..", "schemas")
 }
 
 func readbenchResultJSONFields(t *testing.T) (map[string]struct{}, map[string]struct{}) {

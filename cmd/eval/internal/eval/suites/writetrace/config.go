@@ -8,7 +8,7 @@ import (
 
 	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/internal/eval/suites/configjson"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/configjson"
 )
 
 const SuiteName = "write_trace"

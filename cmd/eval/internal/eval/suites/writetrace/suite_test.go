@@ -12,8 +12,8 @@ import (
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/adapters/maltflat"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
-	"github.com/dewebprotocol/malt/internal/eval/framework"
-	"github.com/dewebprotocol/malt/internal/eval/suites/writetrace"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/writetrace"
 )
 
 func TestSuiteName(t *testing.T) {
