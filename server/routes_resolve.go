@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/graph/resolver"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -67,7 +67,7 @@ func (s *Server) resolvePath(ctx context.Context, svc graphService, root cid.Cid
 	}
 
 	transcript := keyResult.Transcript
-	if codec.SemanticKindOf(key) == codec.SemanticKindMap {
+	if maltcid.SemanticKindOf(key) == maltcid.SemanticKindMap {
 		payloadResult, err := svc.ResolveMapPayload(key)
 		if err != nil {
 			return nil, err

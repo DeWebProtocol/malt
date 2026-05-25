@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
 	"github.com/spf13/cobra"
 )
 

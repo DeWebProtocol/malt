@@ -66,7 +66,7 @@ func run(cmd *cobra.Command, opts *options) error {
 	if err != nil {
 		return err
 	}
-	systems, err := ParseSystemsCSV(opts.systemsCSV)
+	systems, err := readbench.ParseSystemsCSV(opts.systemsCSV)
 	if err != nil {
 		return err
 	}
@@ -98,11 +98,6 @@ func run(cmd *cobra.Command, opts *options) error {
 		RangeHeader: opts.rangeValue,
 		Iterations:  opts.iterations,
 	}, opts.out)
-}
-
-// ParseSystemsCSV parses comma-separated read benchmark system names.
-func ParseSystemsCSV(raw string) ([]readbench.SystemName, error) {
-	return readbench.ParseSystemsCSV(raw)
 }
 
 func systemsInclude(systems []readbench.SystemName, target readbench.SystemName) bool {

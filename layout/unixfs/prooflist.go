@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/structure"
-	"github.com/dewebprotocol/malt/core/structure/list"
-	"github.com/dewebprotocol/malt/core/types/prooflist"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/auth/semantic/list"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -132,7 +132,7 @@ func (l *Layout) ListIndexStepsForFileRange(ctx context.Context, root cid.Cid, p
 	if err != nil {
 		return nil, err
 	}
-	if codec.SemanticKindOf(info.payload) != codec.SemanticKindList {
+	if maltcid.SemanticKindOf(info.payload) != maltcid.SemanticKindList {
 		return nil, nil
 	}
 	if offset >= info.size {

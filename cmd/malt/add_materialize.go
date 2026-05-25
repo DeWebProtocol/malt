@@ -7,9 +7,9 @@ import (
 	"slices"
 	"strings"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
-	"github.com/dewebprotocol/malt/core/manifest"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	cid "github.com/ipfs/go-cid"
 )
 

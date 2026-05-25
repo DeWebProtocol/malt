@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/storage/kv"
 )
 
 // MeteredKV wraps a KVStore and charges every successful put as a changed record.

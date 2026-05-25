@@ -13,12 +13,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/prooflist"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/runtime/node"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -2542,7 +2542,7 @@ func TestServerHEADDoesNotReturnProofHeaders(t *testing.T) {
 	}
 }
 
-func newTestNode(t *testing.T) *api.Node {
+func newTestNode(t *testing.T) *node.Node {
 	t.Helper()
 
 	cfg := config.DefaultConfig()
@@ -2551,7 +2551,7 @@ func newTestNode(t *testing.T) *api.Node {
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
 	cfg.CAS.Mode = "mock"
 
-	node, err := api.NewNode(api.WithConfig(cfg))
+	node, err := node.NewNode(node.WithConfig(cfg))
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}
@@ -2588,7 +2588,7 @@ func fakeCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, sum), nil
 }
 
-func requireNoKVPrefix(t *testing.T, node *api.Node, prefix string) {
+func requireNoKVPrefix(t *testing.T, node *node.Node, prefix string) {
 	t.Helper()
 	iter := node.KVStore().NewIterator(t.Context(), nil, nil)
 	defer iter.Close()

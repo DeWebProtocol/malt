@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	cid "github.com/ipfs/go-cid"
 )
 

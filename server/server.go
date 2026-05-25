@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dewebprotocol/malt/core/api"
-	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/graph"
+	"github.com/dewebprotocol/malt/runtime/node"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -20,7 +20,7 @@ const defaultRootGraphID = "default"
 
 // Server serves the daemon HTTP API.
 type Server struct {
-	node         *api.Node
+	node         *node.Node
 	addr         string
 	server       *http.Server
 	defaultGraph graph.Runtime
@@ -28,7 +28,7 @@ type Server struct {
 }
 
 // New creates a new daemon server.
-func New(node *api.Node, addr string) *Server {
+func New(node *node.Node, addr string) *Server {
 	return &Server{
 		node: node,
 		addr: addr,

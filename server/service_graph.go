@@ -3,13 +3,13 @@ package server
 import (
 	"context"
 
-	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/querypath"
-	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/prooflist"
-	"github.com/dewebprotocol/malt/core/writer"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt/graph"
+	"github.com/dewebprotocol/malt/graph/querypath"
+	"github.com/dewebprotocol/malt/graph/resolver"
+	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/graph/writer"
 	cid "github.com/ipfs/go-cid"
 )
 

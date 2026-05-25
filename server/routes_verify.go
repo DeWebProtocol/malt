@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
 )
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {

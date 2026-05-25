@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/storage/cas"
+	"github.com/dewebprotocol/malt/storage/kv"
 	cid "github.com/ipfs/go-cid"
 )
 

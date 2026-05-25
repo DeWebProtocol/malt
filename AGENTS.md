@@ -38,10 +38,11 @@ This repository contains the Go implementation of MALT:
 - `list` describes complex graph nodes with indexed child references.
 - `map` describes authenticated relations among graph nodes.
 - `cmd/eval/internal/baseline/indexedmap` is a baseline comparison map
-  implementation; `core/graph` wires the radix implementation for the current
+  implementation; `runtime/graph` wires the radix implementation for the current
   runtime path.
-- `core/graph` defines graph contracts and runtime composition around resolver
-  and writer ports.
+- `graph` defines graph contracts plus resolver read and writer mutation ports.
+- `runtime/graph` owns concrete graph runtime composition around resolver and
+  writer executors.
 - `GraphManager` and `GraphMeta` are dormant lifecycle metadata machinery in the
   current daemon path; daemon startup creates an ad hoc default `Graph` instead
   of exposing graph lifecycle APIs.
@@ -65,7 +66,7 @@ This repository contains the Go implementation of MALT:
 - `querypath` and `manifest` are current root-relative file-layout helpers and should not leak into core semantic rules.
 - head publication, freshness, merge, and multi-writer arbitration belong to application/deployment policy.
 - overwrite ArcTable is the simple current-state implementation; versioned ArcTable is the default MVCC-style implementation.
-- `core/arctable/bloom` is an optional ArcTable negative-lookup optimization
+- `runtime/arctable/bloom` is an optional ArcTable negative-lookup optimization
   hook, not semantic state and not deletion-ready dead code.
 
 ## Go Workflow

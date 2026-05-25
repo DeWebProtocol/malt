@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dewebprotocol/malt/core/kvstore"
-	kvbadger "github.com/dewebprotocol/malt/core/kvstore/badger"
-	kvfs "github.com/dewebprotocol/malt/core/kvstore/fs"
-	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
+	"github.com/dewebprotocol/malt/storage/kv"
+	kvbadger "github.com/dewebprotocol/malt/storage/kv/badger"
+	kvfs "github.com/dewebprotocol/malt/storage/kv/fs"
+	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
 )
 
 // StoreMode controls whether evaluated systems share CAS state.

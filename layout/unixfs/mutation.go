@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/structure/list"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/writer"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/semantic/list"
+	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -112,7 +112,7 @@ func (l *Layout) MutationPlanForPath(ctx context.Context, root cid.Cid, path str
 	if !ok {
 		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
 	}
-	if codec.SemanticKindOf(payload) != codec.SemanticKindList {
+	if maltcid.SemanticKindOf(payload) != maltcid.SemanticKindList {
 		plan.Deltas = append(plan.Deltas, nodeDelta)
 		return plan, nil
 	}
@@ -233,7 +233,7 @@ func (l *Layout) appendRootMutationDeltas(ctx context.Context, plan *MutationPla
 			return err
 		}
 		var oldInfo *fileInfo
-		if oldPayloadOK && codec.SemanticKindOf(oldPayload) == codec.SemanticKindList {
+		if oldPayloadOK && maltcid.SemanticKindOf(oldPayload) == maltcid.SemanticKindList {
 			oldInfo, err = l.fileInfo(ctx, oldNodeRoot, oldPayload)
 			if err != nil {
 				return err
@@ -246,7 +246,7 @@ func (l *Layout) appendRootMutationDeltas(ctx context.Context, plan *MutationPla
 		if !ok {
 			return fmt.Errorf("%w: missing @payload", ErrNotFound)
 		}
-		if codec.SemanticKindOf(payload) == codec.SemanticKindList {
+		if maltcid.SemanticKindOf(payload) == maltcid.SemanticKindList {
 			info, err := l.fileInfo(ctx, nodeRoot, payload)
 			if err != nil {
 				return err
@@ -315,7 +315,7 @@ func (l *Layout) appendRootCreationDeltas(ctx context.Context, plan *MutationPla
 		if !ok {
 			return fmt.Errorf("%w: missing @payload", ErrNotFound)
 		}
-		if codec.SemanticKindOf(payload) == codec.SemanticKindList {
+		if maltcid.SemanticKindOf(payload) == maltcid.SemanticKindList {
 			info, err := l.fileInfo(ctx, nodeRoot, payload)
 			if err != nil {
 				return err
@@ -635,10 +635,10 @@ func mapEntry(key string, target arcset.TargetRef) (arcset.ArcEntry, error) {
 }
 
 func payloadTargetKind(payload cid.Cid) arcset.TargetKind {
-	switch codec.SemanticKindOf(payload) {
-	case codec.SemanticKindMap:
+	switch maltcid.SemanticKindOf(payload) {
+	case maltcid.SemanticKindMap:
 		return arcset.TargetKindMap
-	case codec.SemanticKindList:
+	case maltcid.SemanticKindList:
 		return arcset.TargetKindList
 	default:
 		return arcset.TargetKindCAS

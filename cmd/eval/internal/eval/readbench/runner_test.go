@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/runtime/metrics"
+	"github.com/dewebprotocol/malt/runtime/node"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	"github.com/dewebprotocol/malt/server"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 )
 
 func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
@@ -447,7 +447,7 @@ func newTestDaemonWithCAS(t *testing.T) (string, *casmock.CAS) {
 	cfg.State.RootDir = t.TempDir()
 	cfg.State.KVStore.Type = "memory"
 
-	node, err := api.NewNode(api.WithConfig(cfg), api.WithCAS(mockCAS))
+	node, err := node.NewNode(node.WithConfig(cfg), node.WithCAS(mockCAS))
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}

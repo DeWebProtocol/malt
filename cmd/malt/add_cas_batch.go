@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/core/cas"
+	"github.com/dewebprotocol/malt/storage/cas"
 	cid "github.com/ipfs/go-cid"
 )
 

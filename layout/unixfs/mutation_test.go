@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/structure"
-	"github.com/dewebprotocol/malt/core/structure/mapping"
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/layout/unixfs"
 	cid "github.com/ipfs/go-cid"
 )

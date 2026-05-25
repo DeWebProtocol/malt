@@ -72,8 +72,14 @@ func TestUnixFSLayoutIsOutsideCore(t *testing.T) {
 	assertRepositoryExcludes(t, "..", "core/layout/malt/"+"unixfs")
 }
 
-func TestCoreGraphDoesNotWireImplicitResolver(t *testing.T) {
-	assertFileExcludes(t, "../core/graph/graph.go", []string{
+func TestCoreUmbrellaIsRemoved(t *testing.T) {
+	if _, err := os.Stat("../core"); !os.IsNotExist(err) {
+		t.Fatalf("../core should not exist after the auth/graph/runtime/storage split")
+	}
+}
+
+func TestGraphDoesNotWireImplicitResolver(t *testing.T) {
+	assertFileExcludes(t, "../runtime/graph/graph.go", []string{
 		"resolver/step/implicit",
 		"implicit.NewResolver",
 	})
@@ -81,13 +87,38 @@ func TestCoreGraphDoesNotWireImplicitResolver(t *testing.T) {
 
 func TestResolverCompatPackagesAreOutsideCore(t *testing.T) {
 	for _, dir := range []string{
-		"../core/resolver/step/implicit",
-		"../core/resolver/step/hamt",
+		"../graph/resolver/step/implicit",
+		"../graph/resolver/step/hamt",
 	} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Fatalf("%s should not exist under core resolver", dir)
+			t.Fatalf("%s should not exist under graph resolver", dir)
 		}
 	}
+}
+
+func TestAuthCoreDoesNotImportOperationalLayers(t *testing.T) {
+	for _, forbidden := range []string{
+		"github.com/dewebprotocol/malt/api",
+		"github.com/dewebprotocol/malt/cmd",
+		"github.com/dewebprotocol/malt/config",
+		"github.com/dewebprotocol/malt/daemon",
+		"github.com/dewebprotocol/malt/layout",
+		"github.com/dewebprotocol/malt/runtime",
+		"github.com/dewebprotocol/malt/sdk",
+		"github.com/dewebprotocol/malt/server",
+		"github.com/dewebprotocol/malt/storage",
+	} {
+		assertTreeExcludes(t, "../auth", forbidden)
+	}
+}
+
+func TestAPIDTOsDoNotImportRuntimeMetrics(t *testing.T) {
+	assertTreeExcludes(t, "../api", "github.com/dewebprotocol/malt/runtime/metrics")
+}
+
+func TestStorageDoesNotImportRuntimeOrLayouts(t *testing.T) {
+	assertTreeExcludes(t, "../storage", "github.com/dewebprotocol/malt/runtime")
+	assertTreeExcludes(t, "../storage", "github.com/dewebprotocol/malt/layout")
 }
 
 func TestEvalHarnessLivesUnderCmdEval(t *testing.T) {
@@ -100,9 +131,9 @@ func TestEvalHarnessLivesUnderCmdEval(t *testing.T) {
 }
 
 func TestIndexedBaselineMapLivesUnderCmdEval(t *testing.T) {
-	indexedDir := filepath.Join("..", "core", "structure", "mapping", "indexed")
+	indexedDir := filepath.Join("..", "auth", "semantic", "mapping", "indexed")
 	if _, err := os.Stat(indexedDir); !os.IsNotExist(err) {
-		t.Fatalf("%s should not exist in core", indexedDir)
+		t.Fatalf("%s should not exist in auth semantic core", indexedDir)
 	}
 	if info, err := os.Stat("../cmd/eval/internal/baseline/indexedmap"); err != nil || !info.IsDir() {
 		t.Fatalf("../cmd/eval/internal/baseline/indexedmap should exist as an eval-local baseline")
@@ -140,7 +171,7 @@ func TestLegacyUnixFSFlatBatchAPIIsDeleted(t *testing.T) {
 }
 
 func TestResolveResponseDoesNotExposeLegacyTranscriptAPI(t *testing.T) {
-	assertFileExcludes(t, "../httpapi/types.go", []string{
+	assertFileExcludes(t, "../api/http/types.go", []string{
 		"type Step" + "Evidence struct",
 		"Transcript []Step" + "Evidence",
 	})

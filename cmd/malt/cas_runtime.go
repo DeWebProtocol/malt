@@ -1,6 +1,6 @@
 package main
 
-import "github.com/dewebprotocol/malt/core/cas/ipfs"
+import "github.com/dewebprotocol/malt/storage/cas/ipfs"
 
 func makeCASClient() (*ipfs.Client, error) {
 	cfg, err := loadRuntimeConfig()

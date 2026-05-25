@@ -230,83 +230,37 @@ malt/
 │       └── malt-eval/               # malt-eval entrypoint
 ├── config/
 │   └── config.go                    # Configuration
-├── core/
-│   ├── api/
-│   │   ├── node.go                  # MALT Node (entry point)
-│   │   ├── options.go               # Functional options
-│   ├── cas/
-│   │   ├── cas.go                   # CAS interface
-│   │   ├── mock/
-│   │   │   └── mock.go              # Mock CAS impl
-│   │   └── ipfs/
-│   │       └── ipfs.go              # IPFS/Kubo HTTP CAS adapter
-│   ├── arctable/
-│   │   ├── arctable.go                   # ArcTable interface
-│   │   ├── bloom/
-│   │   │   ├── bloom.go             # Bloom filter interface
-│   │   │   ├── standard.go          # StandardBloom impl
-│   │   │   ├── cache.go             # BloomCache impl
-│   │   │   ├── bloom_test.go        # Unit tests
-│   │   │   └── bloom_benchmark_test.go  # Benchmark tests
-│   │   ├── overwrite/
-│   │   │   ├── arctable.go               # Overwrite ArcTable impl
-│   │   │   └── arctable_test.go     # Unit tests
-│   │   └── versioned/
-│   │       ├── versioned.go         # Versioned ArcTable impl
-│   │       └── versioned_test.go    # Unit tests
-│   ├── querypath/
-│   │   └── path.go                  # Root-relative query path helper
-│   ├── kvstore/
-│   │   ├── kv.go                    # KVStore interface
-│   │   ├── memory/
-│   │   │   └── memory.go            # In-memory impl
-│   │   ├── badger/
-│   │   │   └── badger.go            # BadgerDB impl
-│   │   └── fs/
-│   │       └── fs.go                # Filesystem KV impl
-│   ├── graph/
-│   │   ├── graph.go                 # Current runtime composition
-│   │   └── manager.go               # Current metadata lifecycle
-│   ├── manifest/
-│   │   └── directory.go             # Current directory manifest helper
-│   ├── resolver/
-│   │   ├── resolver.go              # Current read adapter loop
-│   │   ├── resolver_test.go         # Unit tests
-│   │   └── step/
-│   │       ├── step.go              # Step interface
-│   │       └── explicit/
-│   │           └── explicit.go      # MALT explicit step
-│   ├── writer/
-│   │   ├── mutation.go              # Semantic mutation model
-│   │   └── writer.go                # Mutation executor
-│   ├── commitment/
-│   │   ├── commitment.go            # Primitive commitment interface
-│   │   ├── kzg/
-│   │   │   └── kzg.go               # KZG backend
-│   │   └── ipa/
-│   │       └── ipa.go               # IPA backend
-│   ├── structure/
-│   │   ├── list/
-│   │   │   ├── list.go              # List semantic interface
-│   │   │   └── tree/
-│   │   │       └── tree.go          # Tree list implementation
-│   │   └── mapping/
-│   │       ├── mapping.go           # Map semantic interface
-│   │       ├── radix/
-│   │       │   └── radix.go         # Radix map implementation
-│   ├── codec/
-│   │   └── codec.go                 # MALT CID codecs
-│   └── types/
-│       ├── arcset/
-│       │   └── arcset.go            # Arc set types
-│       └── evidence/
-│           └── evidence.go          # Evidence types
+├── auth/
+│   ├── arcset/                      # Canonical arcs and coordinates
+│   ├── commitment/                  # Primitive commitment interfaces/backends
+│   ├── proof/                       # Evidence and ProofList artifacts
+│   └── semantic/                    # List/map semantic interfaces
+├── graph/
+│   ├── interfaces.go                # Graph contracts
+│   ├── querypath/                   # Root-relative query path helper
+│   ├── resolver/                    # Read/proof port and explicit steps
+│   └── writer/                      # Mutation port and executor
+├── runtime/
+│   ├── arctable/                    # Root-relative materialization state
+│   ├── graph/                       # Concrete graph runtime composition
+│   ├── metrics/                     # Node-local evaluation counters
+│   ├── node/                        # Runtime node factory and wiring
+│   └── semantic/                    # ArcTable-backed list/map implementations
+├── storage/
+│   ├── cas/                         # CAS interfaces and adapters
+│   └── kv/                          # KV interfaces and adapters
+├── wire/
+│   └── maltcid/                     # MALT map/list root CID codecs
 ├── layout/
 │   └── unixfs/
 │       ├── layout.go                # UnixFS client/layout facade
 │       ├── mutation.go              # UnixFS mutation planning
-│       └── prooflist.go             # UnixFS proof helpers
-├── httpapi/
+│       ├── prooflist.go             # UnixFS proof helpers
+│       ├── manifest/                # UnixFS directory manifest helper
+│       └── wire/                    # UnixFS layout-specific codecs
+├── sdk/
+│   └── client/                      # Go client facade over daemon API
+├── api/http/
 │   └── types.go                     # Daemon API payload types
 ├── server/
 │   ├── server.go                    # Daemon HTTP server setup

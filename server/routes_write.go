@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/arcset"
 )
 
 func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) {

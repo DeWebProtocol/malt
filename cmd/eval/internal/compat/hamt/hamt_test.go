@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/cmd/eval/internal/compat/hamt"
-	"github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )

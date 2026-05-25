@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 )
 
