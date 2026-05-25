@@ -291,7 +291,8 @@ Current boundary:
   `core/resolver` the semantic owners.
 - Graph-level node/arc terminology, paper-facing formalization of writer
   semantic mutations and `ProofList` schemas, write receipt semantics, and
-  benchmark-facing proof reporting remain explicit TODO items.
+  benchmark-facing proof reporting remain proposal-stage MIPs in the sibling
+  documents repository.
 
 ## CAS Boundary
 

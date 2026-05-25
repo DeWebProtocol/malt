@@ -49,11 +49,11 @@ This repository contains the Go implementation of MALT:
   owns the list/map semantic definitions.
 - explicit resolution is a compatibility layer above map reads.
 - list semantics use first-class index reads and logical range reads over index
-  intervals. The target range verifier model composes file-layout metadata
-  proof with per-index list proofs; the current prototype emits path/`@payload`
-  proof plus per-index list proofs, while explicit `@size`/`@chunksize`
-  metadata proof and body/range binding remain ProofList-schema TODOs. List
-  semantics use append/replace/truncate writes, not path resolution.
+  intervals. Current range evidence uses path/`@payload` proof plus one
+  measured-list `list_range` step carrying authenticated fixed chunk metadata,
+  segment CIDs, and metadata/index proof payload; response-body range binding
+  remains a ProofList-schema TODO. List semantics use
+  append/replace/truncate writes, not path resolution.
 - every map semantic object carries reserved `@payload` as its terminal materialization binding.
 - layouts translate source-domain data into MALT semantic mutations.
 - the server executes resolver/writer ports; reads return `result + ProofList`

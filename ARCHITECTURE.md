@@ -353,7 +353,8 @@ The current interface exposes:
 This already approximates the target list semantic shape:
 
 - `Prove` is the list read path for index queries
-- first-class `Range` proof support remains a TODO for file range workloads
+- optional `MeasuredSemantics` exposes `ProveRange` and `VerifyRange` for
+  byte-addressable fixed-chunk lists
 - `Verify` validates read proof
 - `Append`, `Replace`, and `Truncate` are list write operations
 
@@ -455,8 +456,8 @@ Current boundary:
   remain runtime and compatibility adapters rather than semantic owners.
 - The current writer semantic-mutation and `ProofList` schemas are
   implemented. Paper-facing formalization, write metadata semantics,
-  graph-node terminology, and benchmark-facing proof reporting remain open TODO
-  items.
+  graph-node terminology, and benchmark-facing proof reporting remain tracked
+  as proposal-stage MIPs in the sibling documents repository.
 - Graph manager metadata is limited to lifecycle and runtime profile
   compatibility. It does not store an authoritative current root or publish
   freshness. The current daemon path creates an ad hoc default `Graph` through
@@ -479,7 +480,7 @@ Metrics:
 - proof size
 - write amplification
 
-Open TODOs for the next discussion:
+Open proposal-stage MIPs for the next discussion:
 
 - define graph node and arc terminology precisely enough to map onto current
   map/list semantics
