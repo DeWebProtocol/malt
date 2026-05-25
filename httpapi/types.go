@@ -72,40 +72,6 @@ type SemanticMutationResponse struct {
 	ListCount       int    `json:"list_count,omitempty"`
 }
 
-// MapCreateRequest creates a map root inside the current namespace.
-type MapCreateRequest struct {
-	Bindings map[string]string `json:"bindings"`
-}
-
-// MapCreateResponse returns a created map root.
-type MapCreateResponse struct {
-	Root string `json:"root"`
-}
-
-// MapSnapshotResponse returns a map root snapshot.
-type MapSnapshotResponse struct {
-	Root     string            `json:"root"`
-	Bindings map[string]string `json:"bindings"`
-}
-
-// MapResolveResponse returns a resolved key under a map root.
-type MapResolveResponse struct {
-	Key string `json:"key"`
-}
-
-// ListCreateRequest creates a list root from ordered chunk CIDs.
-type ListCreateRequest struct {
-	Chunks    []string `json:"chunks"`
-	ChunkSize int      `json:"chunk_size"`
-}
-
-// ListStatResponse is the response shape for list create/stat.
-type ListStatResponse struct {
-	Root       string `json:"root"`
-	ChunkCount int    `json:"chunk_count"`
-	ChunkSize  int    `json:"chunk_size"`
-}
-
 // PathStatResponse is the locked stat contract for content inspection.
 type PathStatResponse struct {
 	Kind        string   `json:"kind"`              // file|dir
@@ -140,12 +106,6 @@ type CreateStructureRequest struct {
 // CreateStructureResponse returns the created root.
 type CreateStructureResponse struct {
 	Root string `json:"root"`
-}
-
-// SnapshotResponse returns a root snapshot.
-type SnapshotResponse struct {
-	Root string            `json:"root"`
-	Arcs map[string]string `json:"arcs"`
 }
 
 // VerifyRequest verifies a ProofList.
