@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/runtime/metrics"
 	"github.com/dewebprotocol/malt/runtime/node"
@@ -333,6 +335,76 @@ func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
 		if result.ContentBytes == nil || *result.ContentBytes != 13 {
 			t.Fatalf("%s content bytes = %v, want 13", result.System, result.ContentBytes)
 		}
+	}
+}
+
+func TestMetricsSnapshotCopiesAllCASFieldsFromAPI(t *testing.T) {
+	apiSnapshot := httpapi.MetricsResponse{
+		Snapshot: httpapi.MetricsSnapshot{
+			CAS: httpapi.CASStats{
+				PutCount: 1,
+				GetCount: 2,
+				HasCount: 3,
+				BytesPut: 4,
+				BytesGet: 5,
+			},
+			ArcTable: httpapi.ArcTableStats{
+				GetCount:          6,
+				BatchGetCount:     7,
+				BatchGetPathCount: 8,
+				UpdateCount:       9,
+				UpdateArcCount:    10,
+				SnapshotCount:     11,
+				SnapshotArcCount:  12,
+				IterateCount:      13,
+			},
+			Proof: httpapi.ProofStats{
+				ProofListCount: 14,
+				StepCount:      15,
+				EvidenceBytes:  16,
+				ProofBytes:     17,
+				TotalBytes:     18,
+			},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/metrics" {
+			t.Fatalf("unexpected metrics request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(apiSnapshot); err != nil {
+			t.Fatalf("encode metrics response: %v", err)
+		}
+	}))
+	defer ts.Close()
+
+	snapshot, err := NewRunner(ts.URL).metricsSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("metricsSnapshot() error = %v", err)
+	}
+
+	if snapshot.CAS != (metrics.CASStats{PutCount: 1, GetCount: 2, HasCount: 3, BytesPut: 4, BytesGet: 5}) {
+		t.Fatalf("CAS snapshot = %+v", snapshot.CAS)
+	}
+	if snapshot.ArcTable != (metrics.ArcTableStats{
+		GetCount:          6,
+		BatchGetCount:     7,
+		BatchGetPathCount: 8,
+		UpdateCount:       9,
+		UpdateArcCount:    10,
+		SnapshotCount:     11,
+		SnapshotArcCount:  12,
+		IterateCount:      13,
+	}) {
+		t.Fatalf("ArcTable snapshot = %+v", snapshot.ArcTable)
+	}
+	if snapshot.Proof != (metrics.ProofStats{
+		ProofListCount: 14,
+		StepCount:      15,
+		EvidenceBytes:  16,
+		ProofBytes:     17,
+		TotalBytes:     18,
+	}) {
+		t.Fatalf("Proof snapshot = %+v", snapshot.Proof)
 	}
 }
 

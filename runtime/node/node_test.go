@@ -8,6 +8,8 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/graph"
+	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -99,6 +101,29 @@ func TestOpenGraphUsesStoredIPABackend(t *testing.T) {
 
 	if got := maltcid.GetMaltCodec(root); got != maltcid.CodecMaltIPA {
 		t.Fatalf("root codec = %x, want %x", got, maltcid.CodecMaltIPA)
+	}
+}
+
+func TestNewGraphReturnsRuntimeContractWithNamespaceOption(t *testing.T) {
+	node, err := NewNode(WithConfig(testConfig(t)))
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+
+	g, err := node.NewGraph("default-id", runtimegraph.WithNamespace("custom-namespace"))
+	if err != nil {
+		t.Fatalf("NewGraph failed: %v", err)
+	}
+	var _ graph.Runtime = g
+	if g.ID() != "default-id" {
+		t.Fatalf("graph ID = %q, want default-id", g.ID())
+	}
+	if g.Namespace() != "custom-namespace" {
+		t.Fatalf("graph namespace = %q, want custom-namespace", g.Namespace())
+	}
+	if g.Resolver() == nil || g.Writer() == nil {
+		t.Fatalf("runtime graph must provide resolver and writer ports")
 	}
 }
 
