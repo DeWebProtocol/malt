@@ -12,19 +12,20 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/manifest"
-	"github.com/dewebprotocol/malt/core/resolver"
-	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/structure/list"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/evidence"
-	"github.com/dewebprotocol/malt/core/types/prooflist"
-	"github.com/dewebprotocol/malt/core/writer"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/proof/evidence"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt/auth/semantic/list"
+	"github.com/dewebprotocol/malt/graph"
+	"github.com/dewebprotocol/malt/graph/resolver"
+	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
+	"github.com/dewebprotocol/malt/graph/writer"
 	"github.com/dewebprotocol/malt/layout/unixfs"
+	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
+	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
+	"github.com/dewebprotocol/malt/storage/cas"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -67,11 +68,12 @@ var (
 )
 
 func (s *Server) statForResolvedKey(ctx context.Context, g graph.Runtime, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
-	switch codec.SemanticKindOf(key) {
-	case codec.SemanticKindManifest:
+	if unixfswire.IsManifestCID(key) {
 		stat, err := s.statFromFlatTarget(ctx, g, key)
 		return stat, key, err
-	case codec.SemanticKindMap:
+	}
+	switch maltcid.SemanticKindOf(key) {
+	case maltcid.SemanticKindMap:
 		if stat, err := s.unixFSPathStat(ctx, g, key, ""); err == nil {
 			target, err := statReadTarget(stat)
 			if err != nil {
@@ -89,7 +91,7 @@ func (s *Server) statForResolvedKey(ctx context.Context, g graph.Runtime, key ci
 			Key:         key.String(),
 			Payload:     payload.String(),
 		}, payload, nil
-	case codec.SemanticKindList:
+	case maltcid.SemanticKindList:
 		size, _, err := s.listFileSize(ctx, g, key)
 		if err != nil {
 			return nil, cid.Undef, err
@@ -162,8 +164,7 @@ func (s *Server) readProofList(ctx context.Context, g graph.Runtime, resolved *p
 }
 
 func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target cid.Cid) (*httpapi.PathStatResponse, error) {
-	switch codec.SemanticKindOf(target) {
-	case codec.SemanticKindManifest:
+	if unixfswire.IsManifestCID(target) {
 		entries, err := s.readDirectoryManifest(ctx, target)
 		if err != nil {
 			return nil, err
@@ -175,7 +176,9 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target
 			Payload:     target.String(),
 			Entries:     entries,
 		}, nil
-	case codec.SemanticKindMap:
+	}
+	switch maltcid.SemanticKindOf(target) {
+	case maltcid.SemanticKindMap:
 		if stat, err := s.unixFSPathStat(ctx, g, target, ""); err == nil {
 			return stat, nil
 		}
@@ -189,7 +192,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target
 			Key:         target.String(),
 			Payload:     payload.String(),
 		}, nil
-	case codec.SemanticKindList:
+	case maltcid.SemanticKindList:
 		size, _, err := s.listFileSize(ctx, g, target)
 		if err != nil {
 			return nil, err
@@ -230,10 +233,11 @@ func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.C
 		return nil, errPathNotFound
 	}
 
-	switch codec.SemanticKindOf(key) {
-	case codec.SemanticKindManifest:
+	if unixfswire.IsManifestCID(key) {
 		return s.statFromFlatTarget(ctx, g, key)
-	case codec.SemanticKindMap:
+	}
+	switch maltcid.SemanticKindOf(key) {
+	case maltcid.SemanticKindMap:
 		if stat, err := s.unixFSPathStat(ctx, g, key, ""); err == nil {
 			return stat, nil
 		}
@@ -248,7 +252,7 @@ func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.C
 			Payload:     payload.String(),
 		}
 		return resp, nil
-	case codec.SemanticKindList:
+	case maltcid.SemanticKindList:
 		size, _, err := s.listFileSize(ctx, g, key)
 		if err != nil {
 			return nil, err
@@ -317,7 +321,7 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout 
 
 func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
 	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
-		if codec.SemanticKindOf(newRoot) != codec.SemanticKindMap {
+		if maltcid.SemanticKindOf(newRoot) != maltcid.SemanticKindMap {
 			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
 		}
 		return writer.WriteReceipt{
@@ -335,7 +339,7 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime,
 	if err != nil {
 		return writer.WriteReceipt{}, err
 	}
-	if codec.SemanticKindOf(receipt.NewRoot) != codec.SemanticKindMap {
+	if maltcid.SemanticKindOf(receipt.NewRoot) != maltcid.SemanticKindMap {
 		return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
 	}
 	return receipt, nil

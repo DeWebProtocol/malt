@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/runtime/node"
 	"github.com/dewebprotocol/malt/server"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 )
 
 // RunOptions configures daemon process startup.
@@ -52,7 +52,7 @@ func Run(cfg *config.Config, opts RunOptions) error {
 	}
 
 	var (
-		nodeOpts    []api.Option
+		nodeOpts    []node.Option
 		mockSrv     *casmock.HTTPServer
 		mockSrvErr  chan error
 		mockCASInst *casmock.CAS
@@ -64,7 +64,7 @@ func Run(cfg *config.Config, opts RunOptions) error {
 			return err
 		}
 		mockCASInst = casmock.NewCAS(mockOpts...)
-		nodeOpts = append(nodeOpts, api.WithCAS(mockCASInst))
+		nodeOpts = append(nodeOpts, node.WithCAS(mockCASInst))
 		mockSrv = casmock.NewHTTPServer(effective.CAS.EmbeddedMock.Listen, mockCASInst)
 		mockSrvErr = make(chan error, 1)
 		go func() {
@@ -74,8 +74,8 @@ func Run(cfg *config.Config, opts RunOptions) error {
 		}()
 	}
 
-	nodeOpts = append(nodeOpts, api.WithConfig(&effective))
-	node, err := api.NewNode(nodeOpts...)
+	nodeOpts = append(nodeOpts, node.WithConfig(&effective))
+	node, err := node.NewNode(nodeOpts...)
 	if err != nil {
 		return err
 	}

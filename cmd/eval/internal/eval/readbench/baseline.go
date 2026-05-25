@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/cmd/internal/merkledagimport"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/runtime/metrics"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"

@@ -6,16 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dewebprotocol/malt/core/arctable/overwrite"
-	"github.com/dewebprotocol/malt/core/cas"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/commitment/ipa"
-	kvmemory "github.com/dewebprotocol/malt/core/kvstore/memory"
-	"github.com/dewebprotocol/malt/core/structure/list/tree"
-	"github.com/dewebprotocol/malt/core/structure/mapping"
-	mappingradix "github.com/dewebprotocol/malt/core/structure/mapping/radix"
+	"github.com/dewebprotocol/malt/auth/commitment/ipa"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/layout/unixfs"
+	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
+	"github.com/dewebprotocol/malt/runtime/semantic/list/tree"
+	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt/storage/cas"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
+	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -121,8 +121,8 @@ func TestAddAndReadSmallFile(t *testing.T) {
 	if len(resolution.Steps) != 3 {
 		t.Fatalf("resolution step count = %d, want 3", len(resolution.Steps))
 	}
-	if codec.SemanticKindOf(resolution.Payload) != codec.SemanticKindUnknown {
-		t.Fatalf("small file payload kind = %s, want unknown/raw", codec.SemanticKindOf(resolution.Payload))
+	if maltcid.SemanticKindOf(resolution.Payload) != maltcid.SemanticKindUnknown {
+		t.Fatalf("small file payload kind = %s, want unknown/raw", maltcid.SemanticKindOf(resolution.Payload))
 	}
 }
 
@@ -140,8 +140,8 @@ func TestAddAndReadLargeFileRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-	if codec.SemanticKindOf(resolution.Payload) != codec.SemanticKindList {
-		t.Fatalf("large file payload kind = %s, want list", codec.SemanticKindOf(resolution.Payload))
+	if maltcid.SemanticKindOf(resolution.Payload) != maltcid.SemanticKindList {
+		t.Fatalf("large file payload kind = %s, want list", maltcid.SemanticKindOf(resolution.Payload))
 	}
 
 	full, err := layout.ReadFile(ctx, root, "blob.bin")

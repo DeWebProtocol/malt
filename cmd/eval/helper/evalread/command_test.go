@@ -1,10 +1,9 @@
 package evalread
 
 import (
-	"reflect"
+	"bytes"
+	"strings"
 	"testing"
-
-	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/readbench"
 )
 
 func TestParseArcFlagsRequiresPathAndCID(t *testing.T) {
@@ -29,29 +28,29 @@ func TestParseArcFlagsReturnsMap(t *testing.T) {
 	}
 }
 
-func TestParseSystemsCSVReturnsOrderedSystems(t *testing.T) {
-	got, err := ParseSystemsCSV("maltflat, merkledag, hamt")
-	if err != nil {
-		t.Fatalf("parse systems: %v", err)
+func TestCommandAcceptsReadbenchParsedBaselineSystems(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newCommand("read", "test read", &out)
+	cmd.SetArgs([]string{"--systems", "hamt, merkledag", "--iterations", "0"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
 	}
-	want := []readbench.SystemName{
-		readbench.SystemMALTFlat,
-		readbench.SystemMerkleDAG,
-		readbench.SystemHAMT,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("systems = %q, want %q", got, want)
+	if out.Len() != 0 {
+		t.Fatalf("output length = %d, want no output for zero iterations", out.Len())
 	}
 }
 
-func TestParseSystemsCSVRejectsUnknownSystem(t *testing.T) {
-	if _, err := ParseSystemsCSV("maltflat,unknown"); err == nil {
-		t.Fatal("expected unknown system to fail")
-	}
-}
+func TestCommandReturnsReadbenchParserErrorForInvalidSystems(t *testing.T) {
+	var out bytes.Buffer
+	cmd := newCommand("read", "test read", &out)
+	cmd.SetArgs([]string{"--systems", "hamt,unknown", "--iterations", "0"})
 
-func TestParseSystemsCSVRejectsDuplicateSystem(t *testing.T) {
-	if _, err := ParseSystemsCSV("maltflat,merkledag,maltflat"); err == nil {
-		t.Fatal("expected duplicate system to fail")
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected invalid systems to fail")
+	}
+	if !strings.Contains(err.Error(), `unknown system "unknown"`) {
+		t.Fatalf("error = %v, want readbench parser error", err)
 	}
 }

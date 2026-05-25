@@ -5,17 +5,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
+	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/runtime/metrics"
+	"github.com/dewebprotocol/malt/runtime/node"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	"github.com/dewebprotocol/malt/server"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 )
 
 func TestPrepareFixtureCreatesDeterministicMALTUnixFSPaths(t *testing.T) {
@@ -336,6 +338,76 @@ func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
 	}
 }
 
+func TestMetricsSnapshotCopiesAllCASFieldsFromAPI(t *testing.T) {
+	apiSnapshot := httpapi.MetricsResponse{
+		Snapshot: httpapi.MetricsSnapshot{
+			CAS: httpapi.CASStats{
+				PutCount: 1,
+				GetCount: 2,
+				HasCount: 3,
+				BytesPut: 4,
+				BytesGet: 5,
+			},
+			ArcTable: httpapi.ArcTableStats{
+				GetCount:          6,
+				BatchGetCount:     7,
+				BatchGetPathCount: 8,
+				UpdateCount:       9,
+				UpdateArcCount:    10,
+				SnapshotCount:     11,
+				SnapshotArcCount:  12,
+				IterateCount:      13,
+			},
+			Proof: httpapi.ProofStats{
+				ProofListCount: 14,
+				StepCount:      15,
+				EvidenceBytes:  16,
+				ProofBytes:     17,
+				TotalBytes:     18,
+			},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/metrics" {
+			t.Fatalf("unexpected metrics request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(apiSnapshot); err != nil {
+			t.Fatalf("encode metrics response: %v", err)
+		}
+	}))
+	defer ts.Close()
+
+	snapshot, err := NewRunner(ts.URL).metricsSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("metricsSnapshot() error = %v", err)
+	}
+
+	if snapshot.CAS != (metrics.CASStats{PutCount: 1, GetCount: 2, HasCount: 3, BytesPut: 4, BytesGet: 5}) {
+		t.Fatalf("CAS snapshot = %+v", snapshot.CAS)
+	}
+	if snapshot.ArcTable != (metrics.ArcTableStats{
+		GetCount:          6,
+		BatchGetCount:     7,
+		BatchGetPathCount: 8,
+		UpdateCount:       9,
+		UpdateArcCount:    10,
+		SnapshotCount:     11,
+		SnapshotArcCount:  12,
+		IterateCount:      13,
+	}) {
+		t.Fatalf("ArcTable snapshot = %+v", snapshot.ArcTable)
+	}
+	if snapshot.Proof != (metrics.ProofStats{
+		ProofListCount: 14,
+		StepCount:      15,
+		EvidenceBytes:  16,
+		ProofBytes:     17,
+		TotalBytes:     18,
+	}) {
+		t.Fatalf("Proof snapshot = %+v", snapshot.Proof)
+	}
+}
+
 func TestNormalizeRunConfigDefaultsToAllSystems(t *testing.T) {
 	got, err := normalizeRunConfig(RunConfig{
 		Fixture: FixtureConfig{LargeFileBytes: 300 * 1024},
@@ -447,7 +519,7 @@ func newTestDaemonWithCAS(t *testing.T) (string, *casmock.CAS) {
 	cfg.State.RootDir = t.TempDir()
 	cfg.State.KVStore.Type = "memory"
 
-	node, err := api.NewNode(api.WithConfig(cfg), api.WithCAS(mockCAS))
+	node, err := node.NewNode(node.WithConfig(cfg), node.WithCAS(mockCAS))
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}

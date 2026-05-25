@@ -9,9 +9,9 @@ import (
 
 	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
 	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/configjson"
-	"github.com/dewebprotocol/malt/core/cas"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/runtime/metrics"
+	"github.com/dewebprotocol/malt/storage/cas"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 )
 

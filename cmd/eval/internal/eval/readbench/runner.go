@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
-	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/runtime/metrics"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 )
 
 const (
@@ -295,7 +295,32 @@ func (r *Runner) metricsSnapshot(ctx context.Context) (metrics.Snapshot, error) 
 	if err != nil {
 		return zero, err
 	}
-	return resp.Snapshot, nil
+	return metrics.Snapshot{
+		CAS: metrics.CASStats{
+			PutCount: resp.Snapshot.CAS.PutCount,
+			GetCount: resp.Snapshot.CAS.GetCount,
+			HasCount: resp.Snapshot.CAS.HasCount,
+			BytesPut: resp.Snapshot.CAS.BytesPut,
+			BytesGet: resp.Snapshot.CAS.BytesGet,
+		},
+		ArcTable: metrics.ArcTableStats{
+			GetCount:          resp.Snapshot.ArcTable.GetCount,
+			BatchGetCount:     resp.Snapshot.ArcTable.BatchGetCount,
+			BatchGetPathCount: resp.Snapshot.ArcTable.BatchGetPathCount,
+			UpdateCount:       resp.Snapshot.ArcTable.UpdateCount,
+			UpdateArcCount:    resp.Snapshot.ArcTable.UpdateArcCount,
+			SnapshotCount:     resp.Snapshot.ArcTable.SnapshotCount,
+			SnapshotArcCount:  resp.Snapshot.ArcTable.SnapshotArcCount,
+			IterateCount:      resp.Snapshot.ArcTable.IterateCount,
+		},
+		Proof: metrics.ProofStats{
+			ProofListCount: resp.Snapshot.Proof.ProofListCount,
+			StepCount:      resp.Snapshot.Proof.StepCount,
+			EvidenceBytes:  resp.Snapshot.Proof.EvidenceBytes,
+			ProofBytes:     resp.Snapshot.Proof.ProofBytes,
+			TotalBytes:     resp.Snapshot.Proof.TotalBytes,
+		},
+	}, nil
 }
 
 func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {

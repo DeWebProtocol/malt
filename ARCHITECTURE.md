@@ -27,7 +27,7 @@ List and map are semantic abstractions:
 ArcTable is namespace-scoped arcset persistence/materialization and does
 not provide correctness by itself. Commitment backends are stateless
 vector-commitment primitives used to authenticate semantic-layer
-representations. `core/graph` is the abstraction boundary around resolver and
+representations. `graph` is the abstraction boundary around resolver and
 writer ports: resolver is the read/proof path, writer is the mutation path.
 Layouts translate source-domain data into writer semantic mutations. Server
 routes execute graph ports; client-side layout code composes layout mutations.
@@ -96,8 +96,8 @@ byte ranges or file operations into list queries. The current fixed-width
 measured list maps byte ranges to a minimum segment set and proves the
 authenticated metadata plus the required index proofs.
 
-The current public package is `core/structure/list`.
-The primary implementation is `core/structure/list/tree`.
+The current public package is `auth/semantic/list`.
+The primary implementation is `runtime/semantic/list/tree`.
 
 ### Map Semantic
 
@@ -116,11 +116,11 @@ Native writes:
 - delete existing key
 - reserved `@payload` binding for every map semantic object
 
-The current public package is `core/structure/mapping`.
-The primary implementation is `core/structure/mapping/radix`.
+The current public package is `auth/semantic/mapping`.
+The primary implementation is `runtime/semantic/mapping/radix`.
 The older indexed map baseline lives under
 `cmd/eval/internal/baseline/indexedmap` as an evaluation comparison
-implementation. It is not a production map semantic wired by `core/graph`,
+implementation. It is not a production map semantic wired by `graph`,
 which constructs `mapping/radix`.
 
 The current explicit resolver is best understood as a compatibility layer above
@@ -180,36 +180,37 @@ Current in-tree backends:
 
 ## Current Implementation Status
 
-Some package names still reflect an older runtime-first design. Interpret them
-as follows:
+Current package roles are:
 
-- `core/structure/mapping`
+- `auth/semantic/mapping`
   - target public map semantic abstraction and shared types
-- `core/structure/mapping/radix`
+- `runtime/semantic/mapping/radix`
   - primary map implementation
-- `core/structure/list`
+- `auth/semantic/list`
   - target public list semantic abstraction and shared types
-- `core/structure/list/tree`
+- `runtime/semantic/list/tree`
   - primary list implementation
-- `core/arctable`
+- `runtime/arctable`
   - namespace-scoped arcset persistence/materialization
-- `core/arctable/bloom`
+- `runtime/arctable/bloom`
   - optional negative-lookup optimization hook behind ArcTable implementations,
     disabled unless the ArcTable is constructed with a BloomCache
-- `core/commitment`
+- `auth/commitment`
   - stateless primitive commitment backends
 - `layout/unixfs`
   - current pure MALT UnixFS-style layout prototype built directly over
     `mapping.Semantics`, `list.Semantics`, and CAS
-- `core/resolver`
+- `graph/resolver`
   - resolver read port and explicit proof path
-- `core/writer`
+- `graph/writer`
   - writer mutation model and executor
-- `core/graph`
-  - graph contracts plus runtime composition around resolver and writer ports
-- `core/querypath`
+- `graph`
+  - graph abstraction contracts
+- `runtime/graph`
+  - concrete graph runtime composition around resolver and writer executors
+- `graph/querypath`
   - current query-path canonicalization helper for root-relative paths
-- `core/manifest`
+- `layout/unixfs/manifest`
   - current UnixFS directory-manifest helper above the semantic layer
 
 ## Runtime Packaging
@@ -267,7 +268,6 @@ Path-miss behavior is a file-layout and product-runtime invariant. The reserved
 
 ```text
 malt/
-|-- client/          # thin daemon HTTP client
 |-- cmd/
 |   |-- internal/
 |   |   `-- merkledagimport/ # command-local Merkle-DAG UnixFS import helpers
@@ -279,31 +279,31 @@ malt/
 |   `-- malt/
 |-- config/
 |-- daemon/
-|-- httpapi/         # shared daemon API payloads
+|-- api/http/         # shared daemon API payloads
 |-- server/          # daemon HTTP server
-|-- core/
-|   |-- api/          # Node: top-level component wiring
-|   |-- arctable/     # namespace-scoped arcset persistence/materialization
-|   |-- cas/          # CAS clients and adapters
-|   |-- codec/        # MALT CID codecs and CID utilities
+|-- auth/             # data-authentication core
+|   |-- arcset/       # canonical arcs and coordinates
 |   |-- commitment/   # primitive commitment backends
-|   |-- graph/        # graph contracts and runtime composition
-|   |-- kvstore/      # KV backends
-|   |-- manifest/     # UnixFS directory-manifest helper
-|   |-- metrics/      # node-local evaluation counters
+|   |-- proof/        # evidence and ProofList artifacts
+|   `-- semantic/     # list/map semantic interfaces
+|-- graph/            # resolver/writer graph contracts
 |   |-- querypath/    # root-relative query path canonicalization
 |   |-- resolver/     # resolver read port and explicit proof path
-|   |-- structure/    # list/map semantic abstractions and implementations
-|   |-- types/        # arc sets, evidence, proof-related types
 |   `-- writer/       # writer mutation model and executor
 |-- layout/
 |   `-- unixfs/       # current map/list-based UnixFS layout prototype
+|-- runtime/          # node, graph composition, ArcTable, metrics, and semantic implementations
+|-- sdk/
+|   `-- client/       # Go daemon client facade
+|-- storage/          # CAS and KV storage libraries
+|-- wire/
+|   `-- maltcid/      # MALT map/list root CID codecs
 `-- logger/
 ```
 
 ## Map Semantic Implementation
 
-`core/structure/mapping` defines the public keyed-map interface.
+`auth/semantic/mapping` defines the public keyed-map interface.
 
 The current interface exposes:
 
@@ -330,7 +330,7 @@ It owns:
 
 `cmd/eval/internal/baseline/indexedmap` is a baseline comparison
 implementation for the same public map interface. It is eval-local and should
-not be treated as the production map semantic used by `core/graph`, resolver
+not be treated as the production map semantic used by `graph`, resolver
 adapters, or the current UnixFS-style layout path.
 
 No external writer should redefine map semantics. A layout or write adapter may
@@ -339,7 +339,7 @@ operations.
 
 ## List Semantic Implementation
 
-`core/structure/list` defines the public stable-indexed list interface.
+`auth/semantic/list` defines the public stable-indexed list interface.
 
 The current interface exposes:
 
@@ -372,7 +372,7 @@ List should not be forced through path-based resolution.
 ## Graph Ports, Layout, and Adapters
 
 The old architecture treated resolver and writer as central runtime layers. The
-current interpretation is narrower and makes `core/graph` the boundary around
+current interpretation is narrower and makes `graph` the boundary around
 read and write ports:
 
 - layouts translate source-domain data into MALT semantic mutations
@@ -452,7 +452,7 @@ Current boundary:
 - The public CLI exposes ingestion through `malt add`; reads are available
   through the daemon API and proof-bearing resolve/content endpoints.
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
-  and `cas.Client`; current `core/graph`, `core/writer`, and `core/resolver`
+  and `cas.Client`; current `graph`, `graph/writer`, and `graph/resolver`
   remain runtime and compatibility adapters rather than semantic owners.
 - The current writer semantic-mutation and `ProofList` schemas are
   implemented. Paper-facing formalization, write metadata semantics,
@@ -521,7 +521,7 @@ has been removed from the runtime. Version traversal should be derived from the
 versioned ArcTable or from application-level root publication metadata when a
 concrete use case requires it.
 
-`core/arctable/bloom` is retained as the optional negative-lookup optimization
+`runtime/arctable/bloom` is retained as the optional negative-lookup optimization
 behind ArcTable implementations. The default root-centric runtime does not make
 it part of read/write semantics or trust, so it is dormant optimization
 machinery rather than deletion-ready dead code.

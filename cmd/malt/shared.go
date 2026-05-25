@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/config"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	cid "github.com/ipfs/go-cid"
 )
 

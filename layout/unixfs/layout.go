@@ -17,13 +17,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/manifest"
-	"github.com/dewebprotocol/malt/core/structure"
-	"github.com/dewebprotocol/malt/core/structure/list"
-	"github.com/dewebprotocol/malt/core/structure/mapping"
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/auth/semantic/list"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
+	"github.com/dewebprotocol/malt/storage/cas"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -539,7 +539,7 @@ func (l *Layout) readPayloadRange(ctx context.Context, info *fileInfo, offset, l
 		return nil, nil
 	}
 
-	if codec.SemanticKindOf(info.payload) == codec.SemanticKindList {
+	if maltcid.SemanticKindOf(info.payload) == maltcid.SemanticKindList {
 		return l.readListRange(ctx, info.payload, offset, length, info.chunkSize)
 	}
 
@@ -802,10 +802,10 @@ func cloneBytes(data []byte) []byte {
 }
 
 func storageKind(c cid.Cid) string {
-	switch codec.SemanticKindOf(c) {
-	case codec.SemanticKindList:
+	switch maltcid.SemanticKindOf(c) {
+	case maltcid.SemanticKindList:
 		return "list"
-	case codec.SemanticKindMap:
+	case maltcid.SemanticKindMap:
 		return "map"
 	default:
 		return "raw"

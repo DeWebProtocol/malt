@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/kvstore"
+	"github.com/dewebprotocol/malt/storage/cas"
+	"github.com/dewebprotocol/malt/storage/kv"
 	cid "github.com/ipfs/go-cid"
 )
 

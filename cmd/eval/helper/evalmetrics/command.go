@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
 	"github.com/dewebprotocol/malt/config"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	"github.com/spf13/cobra"
 )
 

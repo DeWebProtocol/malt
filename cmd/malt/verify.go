@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/dewebprotocol/malt/core/types/prooflist"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/spf13/cobra"
 )
 

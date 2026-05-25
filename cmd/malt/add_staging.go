@@ -12,9 +12,9 @@ import (
 	"slices"
 	"strings"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/writer"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/graph/writer"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	cid "github.com/ipfs/go-cid"
 )
 

@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/api/http"
 )
 
 func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {

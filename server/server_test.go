@@ -13,12 +13,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	listsemantic "github.com/dewebprotocol/malt/auth/semantic/list"
+	mappingsemantic "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/prooflist"
-	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/graph"
+	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
+	"github.com/dewebprotocol/malt/runtime/node"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -129,6 +133,54 @@ func TestServerCreateRootOnlyAcceptsUnderscoreRoute(t *testing.T) {
 	if resp.StatusCode == http.StatusCreated {
 		t.Fatalf("POST /not-a-create-route unexpectedly created a root")
 	}
+}
+
+func TestServerGraphServiceUsesInjectedRuntime(t *testing.T) {
+	srv := New(newTestNode(t), "127.0.0.1:0")
+	injected := &stubGraphRuntime{id: "injected", namespace: "mock"}
+	srv.defaultGraph = injected
+
+	svc, err := srv.graphService(t.Context())
+	if err != nil {
+		t.Fatalf("graphService: %v", err)
+	}
+	if svc.runtime != injected {
+		t.Fatalf("graphService runtime = %T, want injected runtime", svc.runtime)
+	}
+	if svc.runtime.ID() != "injected" || svc.runtime.Namespace() != "mock" {
+		t.Fatalf("runtime identity = %q/%q", svc.runtime.ID(), svc.runtime.Namespace())
+	}
+}
+
+var _ graph.Runtime = (*stubGraphRuntime)(nil)
+
+type stubGraphRuntime struct {
+	id        string
+	namespace string
+}
+
+func (g *stubGraphRuntime) ID() string {
+	return g.id
+}
+
+func (g *stubGraphRuntime) Namespace() string {
+	return g.namespace
+}
+
+func (g *stubGraphRuntime) Resolver() graph.Resolver {
+	return nil
+}
+
+func (g *stubGraphRuntime) Writer() graph.Writer {
+	return nil
+}
+
+func (g *stubGraphRuntime) Semantic() mappingsemantic.Semantics {
+	return nil
+}
+
+func (g *stubGraphRuntime) ListSemantic() listsemantic.Semantics {
+	return nil
 }
 
 func TestServerLegacyGraphRoutesRemoved(t *testing.T) {
@@ -1718,6 +1770,79 @@ func TestServerUnixFSWriteRootDoesNotSelfParent(t *testing.T) {
 	}
 }
 
+func TestServerManifestRootUsesManifestDirectoryPath(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+	srv := New(node, "127.0.0.1:0")
+	g, err := srv.getOrCreateGraph(t.Context())
+	if err != nil {
+		t.Fatalf("get graph: %v", err)
+	}
+
+	manifestData := []byte(`{"entries":["large.bin","raw.txt"]}`)
+	manifestCID, err := unixfswire.NewManifestCID(manifestData)
+	if err != nil {
+		t.Fatalf("NewManifestCID: %v", err)
+	}
+	mockCAS.AddBlock(manifestCID, manifestData)
+
+	stat, target, err := srv.statForResolvedKey(t.Context(), g, manifestCID)
+	if err != nil {
+		t.Fatalf("statForResolvedKey manifest: %v", err)
+	}
+	requireManifestStat(t, stat, manifestCID, []string{"large.bin", "raw.txt"})
+	if !target.Equals(manifestCID) {
+		t.Fatalf("stat target = %s, want manifest %s", target, manifestCID)
+	}
+
+	flat, err := srv.statFromFlatTarget(t.Context(), g, manifestCID)
+	if err != nil {
+		t.Fatalf("statFromFlatTarget manifest: %v", err)
+	}
+	requireManifestStat(t, flat, manifestCID, []string{"large.bin", "raw.txt"})
+
+	legacy, err := srv.legacyPathStat(t.Context(), g, manifestCID, "")
+	if err != nil {
+		t.Fatalf("legacyPathStat manifest: %v", err)
+	}
+	requireManifestStat(t, legacy, manifestCID, []string{"large.bin", "raw.txt"})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/" + manifestCID.String())
+	if err != nil {
+		t.Fatalf("GET manifest root: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET manifest status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var got httpapi.PathStatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode manifest stat: %v", err)
+	}
+	requireManifestStat(t, &got, manifestCID, []string{"large.bin", "raw.txt"})
+}
+
+func requireManifestStat(t *testing.T, stat *httpapi.PathStatResponse, manifestCID cid.Cid, entries []string) {
+	t.Helper()
+	if stat == nil {
+		t.Fatal("manifest stat is nil")
+	}
+	if stat.Kind != "dir" || stat.StorageKind != "manifest" {
+		t.Fatalf("manifest stat kind/storage = %q/%q, want dir/manifest", stat.Kind, stat.StorageKind)
+	}
+	if stat.Key != manifestCID.String() || stat.Payload != manifestCID.String() {
+		t.Fatalf("manifest key/payload = %q/%q, want %q", stat.Key, stat.Payload, manifestCID.String())
+	}
+	if strings.Join(stat.Entries, ",") != strings.Join(entries, ",") {
+		t.Fatalf("manifest entries = %v, want %v", stat.Entries, entries)
+	}
+}
+
 func TestServerStatAndContentContracts(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)
@@ -2542,7 +2667,7 @@ func TestServerHEADDoesNotReturnProofHeaders(t *testing.T) {
 	}
 }
 
-func newTestNode(t *testing.T) *api.Node {
+func newTestNode(t *testing.T) *node.Node {
 	t.Helper()
 
 	cfg := config.DefaultConfig()
@@ -2551,7 +2676,7 @@ func newTestNode(t *testing.T) *api.Node {
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
 	cfg.CAS.Mode = "mock"
 
-	node, err := api.NewNode(api.WithConfig(cfg))
+	node, err := node.NewNode(node.WithConfig(cfg))
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}
@@ -2588,7 +2713,7 @@ func fakeCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, sum), nil
 }
 
-func requireNoKVPrefix(t *testing.T, node *api.Node, prefix string) {
+func requireNoKVPrefix(t *testing.T, node *node.Node, prefix string) {
 	t.Helper()
 	iter := node.KVStore().NewIterator(t.Context(), nil, nil)
 	defer iter.Close()

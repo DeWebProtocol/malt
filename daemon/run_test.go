@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/cas/mock"
+	"github.com/dewebprotocol/malt/storage/cas/mock"
 )
 
 func TestEmbeddedMockCASOptionsDefaultToNoLatency(t *testing.T) {

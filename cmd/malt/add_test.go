@@ -10,15 +10,16 @@ import (
 	"strings"
 	"testing"
 
-	daemonclient "github.com/dewebprotocol/malt/client"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/core/api"
-	"github.com/dewebprotocol/malt/core/cas"
-	"github.com/dewebprotocol/malt/core/cas/ipfs"
-	casmock "github.com/dewebprotocol/malt/core/cas/mock"
-	"github.com/dewebprotocol/malt/core/codec"
-	"github.com/dewebprotocol/malt/core/types/prooflist"
+	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
+	"github.com/dewebprotocol/malt/runtime/node"
+	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	"github.com/dewebprotocol/malt/server"
+	"github.com/dewebprotocol/malt/storage/cas"
+	"github.com/dewebprotocol/malt/storage/cas/ipfs"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -411,7 +412,7 @@ func TestAddInputsMALTSymlinkFileUsesRegularFilePayload(t *testing.T) {
 	if parentTarget.String() != stat.Key {
 		t.Fatalf("symlink file parent target = %s, want stat key %s", parentTarget, stat.Key)
 	}
-	if codec.SemanticKindOf(parentTarget) == codec.SemanticKindMap {
+	if maltcid.SemanticKindOf(parentTarget) == maltcid.SemanticKindMap {
 		t.Fatalf("symlink file parent target should be a regular file payload, got map %s", parentTarget)
 	}
 	body, _, _, err := daemon.GetContent(ctx, result.NewRoot, base+"/linked.txt", "")
@@ -626,12 +627,12 @@ func TestAddCASBatcherDeduplicatesBlocks(t *testing.T) {
 	if !first.Equals(second) {
 		t.Fatalf("duplicate CID = %s, want %s", second, first)
 	}
-	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), codec.CodecMaltManifest)
+	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), unixfswire.CodecMaltManifest)
 	if err != nil {
 		t.Fatalf("PutWithCodec: %v", err)
 	}
-	if typed.Prefix().Codec != codec.CodecMaltManifest {
-		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, codec.CodecMaltManifest)
+	if typed.Prefix().Codec != unixfswire.CodecMaltManifest {
+		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, unixfswire.CodecMaltManifest)
 	}
 	if err := batcher.Flush(ctx); err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -1201,7 +1202,7 @@ func newAddTestClients(t *testing.T) (*daemonclient.Client, *ipfs.Client) {
 	cfg.CAS.Mode = "external"
 	cfg.CAS.BaseURL = casTS.URL
 
-	node, err := api.NewNode(api.WithConfig(cfg))
+	node, err := node.NewNode(node.WithConfig(cfg))
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}

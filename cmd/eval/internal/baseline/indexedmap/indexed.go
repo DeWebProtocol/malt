@@ -9,11 +9,11 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/dewebprotocol/malt/core/arctable"
-	"github.com/dewebprotocol/malt/core/commitment"
-	"github.com/dewebprotocol/malt/core/structure"
-	"github.com/dewebprotocol/malt/core/structure/mapping"
-	"github.com/dewebprotocol/malt/core/types/arcset"
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/commitment"
+	"github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/runtime/arctable"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
