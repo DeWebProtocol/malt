@@ -15,7 +15,7 @@ arcsets for fast lookup, but does not provide correctness. Commitment backends
 are stateless vector-commitment proof primitives. The list/map layer is the
 semantic abstraction exposed above them.
 
-Gateway reads use the standard shape:
+Graph reads use the standard verifier-facing shape:
 
 ```text
 Read(root, query) -> result + ProofList
@@ -23,11 +23,13 @@ VerifyRead(root, query, result, ProofList) -> valid / invalid
 ```
 
 A structure root exposes authenticated read/write semantics, but those
-semantics are owned by `list` and `map`, not by the current runtime `graph`
-object. Root-centric gateway materialization accepts semantic mutations
-produced by layouts and returns an operational receipt. Root publication,
+semantics are owned by `list` and `map`. `core/graph` is the abstraction
+boundary that combines the resolver read port and writer mutation port around a
+namespace-scoped runtime. Layouts translate source-domain changes into
+`writer.SemanticMutation` values; the server executes those mutations through
+the writer port and returns an operational receipt. Root publication,
 freshness, and multi-writer arbitration are application or deployment policy,
-not the gateway correctness interface. In the HTTP deployment, successful
+not the writer correctness interface. In the HTTP deployment, successful
 default blob and directory `GET /{root}/{path}` reads carry `ProofList`
 metadata in response headers; large-file range reads return selected bytes plus
 path/`@payload` proof and a measured-list range `ProofList` step that composes
@@ -180,7 +182,8 @@ communicated, and whether concurrent roots are merged.
 | Semantic Layer | Abstract list/map semantics | `list`, `map` |
 | ArcTable | Namespace-scoped arcset persistence/materialization | overwrite, versioned |
 | Commitment Backend | Stateless primitive authentication | KZG, IPA |
-| Gateway | Deployment surface for semantic mutations and verifiable reads | daemon HTTP API |
+| Graph Ports | Runtime read/write boundary over graph state | resolver, writer |
+| Server API | Deployment surface for graph ports | daemon HTTP API |
 | Application Layout | Product data model built above semantic layer | MALT UnixFS-style root layout |
 
 Under this terminology:
@@ -189,12 +192,12 @@ Under this terminology:
 - ArcTable is materialization and lookup state used by those semantics.
 - Commitment backends authenticate semantic-layer arcset/cell/node representations.
 - Layouts translate source-domain data into MALT semantic mutations.
-- The gateway accepts those semantic mutations and returns `result + ProofList`
-  on reads.
-- Resolver and writer code paths are runtime adapters, not the core semantic
-  definition of MALT.
-- The current `core/graph` package is runtime metadata/composition code; it is
-  not the target semantic abstraction.
+- `core/graph` exposes resolver and writer ports. The resolver is the read
+  path; the writer is the mutation path.
+- Server routes execute resolver/writer ports. Client-side layout code composes
+  source data into writer mutations.
+- Resolver and writer code paths are ports over the semantic layer, not the
+  semantic definition of MALT itself.
 - Graph manager metadata tracks lifecycle and backend compatibility only; it
   does not store or publish a current root. The daemon currently creates an ad
   hoc default `Graph` and does not expose GraphManager lifecycle APIs as the
@@ -213,10 +216,9 @@ Native operations:
   semantic object
 
 The current default implementation is `core/structure/mapping/radix`, a
-digest-keyed radix map over an index commitment backend. The older
-`core/structure/mapping/indexed` package remains as a simpler baseline and
-comparison implementation. It is not the production map semantic wired by
-`core/graph`.
+digest-keyed radix map over an index commitment backend. The older indexed map
+baseline now lives under `cmd/eval/internal/baseline/indexedmap` for evaluation
+comparison. It is not a production map semantic wired by `core/graph`.
 
 The explicit path resolver should be understood as a compatibility layer above
 map reads. It may implement longest-prefix path matching, but map itself
@@ -246,7 +248,7 @@ stable-indexed layout over the same primitive commitment interface.
 ## MALT UnixFS-Style Layout
 
 The current prototype includes a first pure MALT structure version of
-UnixFS-like file and directory semantics in `core/layout/malt/unixfs`.
+UnixFS-like file and directory semantics in `layout/unixfs`.
 
 - directories and files are committed as map roots
 - directory entries are map bindings from path segment to child root
@@ -274,23 +276,22 @@ mutation, proof size, and write amplification.
 
 Current boundary:
 
-- `core/layout/malt/unixfs` remains the direct map/list/CAS library layer for the
+- `layout/unixfs` remains the direct map/list/CAS library layer for the
   UnixFS-style layout and translates source-domain file/directory data into
-  MALT semantic mutations.
-- `POST /{root}/_mutate` is the gateway write boundary. The root-centric daemon
+  `writer.SemanticMutation` values.
+- `POST /{root}/_mutate` is the writer mutation route. The root-centric daemon
   also exposes `POST /{root}/{path}` as a UnixFS layout convenience: it stages a
   file or directory operation, converts the resulting layout state into a
-  semantic mutation, and then uses the same gateway materialization path as
-  `_mutate`.
+  semantic mutation, and then uses the same writer route semantics as `_mutate`.
 - The public CLI currently exposes write ingestion through `malt add`; reads
   are available through the daemon API and proof-bearing resolve/content
   endpoints.
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
-  and `cas.Client`; it does not make current `core/graph`, `core/writer`, or
+  and CAS access; it does not make `core/graph`, `core/writer`, or
   `core/resolver` the semantic owners.
-- Graph-level node/arc terminology, paper-facing formalization of the current
-  gateway semantic-mutation and `ProofList` schemas, write receipt semantics,
-  and benchmark-facing proof reporting remain explicit TODO items.
+- Graph-level node/arc terminology, paper-facing formalization of writer
+  semantic mutations and `ProofList` schemas, write receipt semantics, and
+  benchmark-facing proof reporting remain explicit TODO items.
 
 ## CAS Boundary
 
@@ -334,8 +335,8 @@ Verification is local to the client:
   - public map semantic abstraction and shared map types
 - `core/structure/mapping/radix`
   - primary map implementation
-- `core/structure/mapping/indexed`
-  - baseline comparison map implementation, not the current runtime map path
+- `cmd/eval/internal/baseline/indexedmap`
+  - baseline comparison map implementation for evaluator-only use
 - `core/structure/list`
   - public list semantic abstraction and shared list types
 - `core/structure/list/tree`
@@ -347,14 +348,14 @@ Verification is local to the client:
 - `core/arctable/bloom`
   - optional ArcTable negative-lookup optimization hook, disabled unless an
     ArcTable is constructed with a BloomCache
-- `core/layout/malt/unixfs`
+- `layout/unixfs`
   - current pure MALT UnixFS-style layout prototype over map/list semantics
 - `core/resolver`
-  - current runtime compatibility/read adapter code
+  - resolver read port and explicit proof path
 - `core/writer`
-  - current concrete map/arcs write adapter, not the target abstract writer
+  - writer mutation port and executor
 - `core/graph`
-  - current runtime metadata/composition package, not the semantic abstraction
+  - graph abstraction contracts plus runtime composition
 - `core/querypath`
   - current query-path canonicalization helper for root-relative paths
 - `core/manifest`
@@ -398,6 +399,8 @@ Current defaults:
 malt/
 |-- client/          # thin daemon HTTP client
 |-- cmd/
+|   |-- internal/
+|   |   `-- merkledagimport/ # command-local Merkle-DAG UnixFS import helpers
 |   |-- eval/
 |   |   |-- command/
 |   |   |-- helper/
@@ -414,22 +417,17 @@ malt/
 |   |-- cas/          # CAS clients and adapters
 |   |-- codec/        # MALT CID codecs and CID utilities
 |   |-- commitment/   # primitive commitment backends
-|   |-- gateway/      # root-centric semantic materialization boundary
-|   |-- graph/        # current runtime metadata/composition
+|   |-- graph/        # graph contracts and runtime composition
 |   |-- kvstore/      # KV backends
-|   |-- layout/
-|   |   `-- malt/
-|   |       `-- unixfs/ # current map/list-based UnixFS layout prototype
 |   |-- metrics/      # node-local evaluation counters
 |   |-- querypath/    # root-relative query path canonicalization
 |   |-- manifest/     # UnixFS directory-manifest helper
-|   |-- resolver/     # current read compatibility adapters
+|   |-- resolver/     # resolver read port and explicit proof path
 |   |-- structure/    # list/map semantic abstractions and implementations
 |   |-- types/        # arc sets, evidence, proof-related types
-|   `-- writer/       # current concrete write adapter
-|-- internal/
-|   |-- eval/          # evaluation framework, suites, summaries, readbench
-|   `-- merkledagimport/ # Merkle-DAG UnixFS baseline import helpers
+|   `-- writer/       # writer mutation port and executor
+|-- layout/
+|   `-- unixfs/       # map/list-based UnixFS layout prototype
 |-- server/          # daemon HTTP server
 `-- logger/
 ```

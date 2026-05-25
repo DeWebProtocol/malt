@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/readbench"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/internal/eval/readbench"
 	"github.com/spf13/cobra"
 )
 

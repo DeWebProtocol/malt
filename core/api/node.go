@@ -228,7 +228,7 @@ func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string
 // OpenGraph opens a managed graph using the runtime profile stored in GraphMeta.
 // The persisted backend selects the commitment scheme; the persisted ArcTable type
 // must match the node's shared ArcTable implementation.
-func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
+func (n *Node) OpenGraph(ctx context.Context, id string) (graph.Runtime, error) {
 	meta, err := n.graphManager.GetGraph(ctx, id)
 	if err != nil {
 		return nil, err
@@ -261,7 +261,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*graph.Graph, error) {
 //   - opts: functional options (graph.WithCommitmentScheme, graph.WithNamespace, etc.)
 //
 // The Node auto-injects shared infrastructure (ArcTable, CAS).
-func (n *Node) NewGraph(id string, opts ...graph.Option) (*graph.Graph, error) {
+func (n *Node) NewGraph(id string, opts ...graph.Option) (graph.Runtime, error) {
 	o := &graph.Options{}
 	for _, opt := range opts {
 		opt(o)

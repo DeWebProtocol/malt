@@ -633,6 +633,34 @@ func TestServerVerifyAcceptsProofList(t *testing.T) {
 	if !verifyResp.Valid {
 		t.Fatal("expected ProofList to verify")
 	}
+
+	for _, legacyKind := range []string{"implicit", "hamt"} {
+		t.Run("rejects "+legacyKind+" evidence", func(t *testing.T) {
+			forged := *resolveResp.ProofList
+			forged.Steps = append([]prooflist.Step(nil), resolveResp.ProofList.Steps...)
+			forged.Steps[0].EvidenceKind = legacyKind
+
+			verifyBody, err := json.Marshal(&httpapi.VerifyRequest{ProofList: forged})
+			if err != nil {
+				t.Fatalf("marshal legacy verify request: %v", err)
+			}
+			resp, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(verifyBody))
+			if err != nil {
+				t.Fatalf("legacy verify request: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("legacy verify status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+			}
+			var errorResp httpapi.ErrorResponse
+			if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+				t.Fatalf("decode legacy verify error: %v", err)
+			}
+			if !strings.Contains(errorResp.Error, "server verifier supports explicit evidence only") {
+				t.Fatalf("legacy verify error = %q, want explicit-only verifier message", errorResp.Error)
+			}
+		})
+	}
 }
 
 func TestServerVerifyRejectsBranchingProofList(t *testing.T) {
@@ -1258,7 +1286,7 @@ func TestServerRootSemanticMutationMaterializesWithoutPublishingRoot(t *testing.
 	}
 }
 
-func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
+func TestServerUnixFSWritesPublishWriterReadableRoot(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -1297,7 +1325,7 @@ func TestServerUnixFSWritesPublishGatewayReadableRoot(t *testing.T) {
 		t.Fatalf("directory write old_root = %q, want %q", dirResp.OldRoot, root)
 	}
 
-	fileBody := []byte("hello from gateway unixfs")
+	fileBody := []byte("hello from writer unixfs")
 	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
@@ -1635,7 +1663,7 @@ func TestServerHeadGetAndResolveSharePathResolution(t *testing.T) {
 	}
 }
 
-func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
+func TestServerUnixFSWriteRootDoesNotSelfParent(t *testing.T) {
 	node := newTestNode(t)
 	arcs, ok := node.ArcTable().(interface {
 		GetParent(context.Context, string, cid.Cid) (cid.Cid, error)
@@ -1683,10 +1711,10 @@ func TestServerUnixFSGatewayRootDoesNotSelfParent(t *testing.T) {
 	}
 	parent, err := arcs.GetParent(t.Context(), "demo", rootCID)
 	if err != nil {
-		t.Fatalf("read gateway root parent: %v", err)
+		t.Fatalf("read unixfs write root parent: %v", err)
 	}
 	if parent.Equals(rootCID) {
-		t.Fatalf("gateway root self-parented: %s", rootCID)
+		t.Fatalf("unixfs write root self-parented: %s", rootCID)
 	}
 }
 

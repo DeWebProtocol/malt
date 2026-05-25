@@ -1,7 +1,5 @@
-// Package resolver implements the MALT resolution loop with prefix consumption.
-// Native explicit-arc resolution is the primary path. Ordinary Merkle/IPLD
-// traversal is used as an interoperability path when resolution crosses into
-// legacy CID space.
+// Package resolver implements the MALT explicit-arc resolution loop with
+// prefix consumption.
 package resolver
 
 import (
@@ -15,28 +13,14 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Resolver handles resolution with prefix consumption. It dispatches to
-// different step executors based on CID codec and continues traversal until the
-// path is consumed or resolution fails.
-//
-// Architecture:
-//   - typed MALT roots (map/list) → explicitStep
-//   - All other CIDs (dag-pb, dag-cbor, raw, etc.) → implicitStep
-//
-// The implicitStep internally handles different data structures:
-//   - UnixFS: File/directory traversal
-//   - HAMT: Hash-based routing for dictionaries
-//   - Plain DAG: IPLD node traversal
 type Resolver struct {
 	explicitStep step.Step
-	implicitStep step.Step
 }
 
-// NewResolver creates a new resolver with explicit and implicit step executors.
-func NewResolver(explicit, implicit step.Step) *Resolver {
+// NewResolver creates a new MALT-native resolver with an explicit step executor.
+func NewResolver(explicit step.Step) *Resolver {
 	return &Resolver{
 		explicitStep: explicit,
-		implicitStep: implicit,
 	}
 }
 
@@ -79,28 +63,14 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 		var ev evidence.Evidence
 		var err error
 
-		// Dispatch based on key kind.
-		if codec.IsMaltCid(currentCID) {
-			// Explicit step: use explicit step executor for longest-prefix match.
-			if r.explicitStep == nil {
-				return &ResolveResult{
-					Target:        currentCID,
-					RemainingPath: remainingPath,
-					Transcript:    transcript,
-				}, nil
-			}
-			matchedPath, target, ev, err = r.explicitStep.Resolve(currentCID, remainingPath)
-		} else {
-			// Implicit step: use implicit step executor for DAG traversal.
-			if r.implicitStep == nil {
-				return &ResolveResult{
-					Target:        currentCID,
-					RemainingPath: remainingPath,
-					Transcript:    transcript,
-				}, nil
-			}
-			matchedPath, target, ev, err = r.implicitStep.Resolve(currentCID, remainingPath)
+		if !codec.IsMaltCid(currentCID) || r.explicitStep == nil {
+			return &ResolveResult{
+				Target:        currentCID,
+				RemainingPath: remainingPath,
+				Transcript:    transcript,
+			}, nil
 		}
+		matchedPath, target, ev, err = r.explicitStep.Resolve(currentCID, remainingPath)
 
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrResolutionFailed, err)
@@ -140,12 +110,9 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 	}, nil
 }
 
-// Resolve resolves a path from a root CID.
-// It supports both explicit arcs (for MALT commitments) and implicit Merkle-DAG traversal (for payload CIDs).
-// The resolution continues until:
-//   - The path is fully consumed
-//   - A resolution step fails (no matching arc or link)
-//   - The target cannot be resolved further
+// Resolve resolves a path from a root CID through explicit MALT arcs only.
+// It stops with RemainingPath set when it reaches a non-MALT CID, a terminal
+// list root, or a root with no matching explicit arc.
 func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 	keyResult, err := r.ResolveKey(root, path)
 	if err != nil {
@@ -189,10 +156,6 @@ func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool,
 		switch stepEv.Evidence.Kind() {
 		case evidence.EvidenceKindExplicit:
 			s = r.explicitStep
-		case evidence.EvidenceKindImplicit, evidence.EvidenceKindHAMT:
-			// Both implicit and HAMT evidence are verified by implicit step
-			// (HAMT is detected and handled inside the implicit step)
-			s = r.implicitStep
 		default:
 			return false, fmt.Errorf("%w: %v", ErrUnknownEvidenceKind, stepEv.Evidence.Kind())
 		}

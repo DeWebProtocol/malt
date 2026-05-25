@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
 	"github.com/spf13/cobra"
 )
 

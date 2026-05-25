@@ -4,7 +4,7 @@ package hamt
 import (
 	"github.com/dewebprotocol/malt/cmd/eval/helper/adapters/merkledag"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/internal/merkledagimport"
+	"github.com/dewebprotocol/malt/cmd/internal/merkledagimport"
 )
 
 // New creates an IPLD UnixFS + HAMT adapter.

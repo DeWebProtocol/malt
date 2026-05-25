@@ -1,6 +1,6 @@
-// Package graph provides the graph-scoped unit for MALT. Graph combines read
-// (Resolver) and write (Writer) capabilities around explicit arc state. It is
-// runtime composition, not an authoritative head or freshness owner.
+// Package graph provides graph contracts and runtime wiring for MALT. A graph
+// combines read (Resolver) and write (Writer) ports around explicit arc state.
+// Runtime graph values do not own authoritative heads or freshness policy.
 package graph
 
 import (
@@ -11,7 +11,6 @@ import (
 	"github.com/dewebprotocol/malt/core/commitment/kzg"
 	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/core/resolver/step/implicit"
 	"github.com/dewebprotocol/malt/core/structure/list"
 	listtree "github.com/dewebprotocol/malt/core/structure/list/tree"
 	"github.com/dewebprotocol/malt/core/structure/mapping"
@@ -19,15 +18,15 @@ import (
 	"github.com/dewebprotocol/malt/core/writer"
 )
 
-// Graph is a per-graph unit combining resolver (read) and writer (write).
+// RuntimeGraph is a per-graph unit combining resolver (read) and writer (write).
 // It is stateless: the root CID is always passed as a parameter, never held internally.
-type Graph struct {
+type RuntimeGraph struct {
 	id           string
 	namespace    string
 	semantic     mapping.Semantics
 	listSemantic list.Semantics
-	resolver     *resolver.Resolver
-	wr           *writer.Writer
+	resolver     Resolver
+	wr           Writer
 }
 
 // NewGraph creates a new per-graph instance with its own semantic layer,
@@ -36,9 +35,10 @@ type Graph struct {
 // Parameters:
 //   - id: unique graph identifier
 //   - arctable: shared ArcTable (namespace by namespace) — from Node
-//   - cas: shared read-side CAS client — from Node (nil for testing/mocks)
+//   - cas: retained for Node constructor compatibility; explicit graph reads do
+//     not use CAS for implicit traversal.
 //   - opts: functional options (WithCommitmentScheme, WithNamespace, etc.)
-func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Option) (*Graph, error) {
+func NewGraph(id string, arctable arctable.ArcTable, _ cas.Reader, opts ...Option) (*RuntimeGraph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)
@@ -72,17 +72,13 @@ func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Opt
 	// Create per-graph explicit resolver
 	explicitStep := explicit.NewResolver(arctable, semantic, namespace)
 
-	// Create per-graph implicit resolver
-	implicitStep := implicit.NewResolver(cas)
-
-	// Create per-graph resolver with explicit native resolution and optional
-	// interoperability steps for legacy CID traversal.
-	res := resolver.NewResolver(explicitStep, implicitStep)
+	// Create per-graph resolver with explicit native MALT resolution.
+	res := resolver.NewResolver(explicitStep)
 
 	// Create per-graph writer
-	wr := writer.NewWriter(semantic, arctable)
+	wr := writer.NewWriter(semantic, arctable, listSemantic)
 
-	return &Graph{
+	return &RuntimeGraph{
 		id:           id,
 		namespace:    namespace,
 		semantic:     semantic,
@@ -93,31 +89,31 @@ func NewGraph(id string, arctable arctable.ArcTable, cas cas.Reader, opts ...Opt
 }
 
 // ID returns the graph identifier.
-func (g *Graph) ID() string {
+func (g *RuntimeGraph) ID() string {
 	return g.id
 }
 
 // Namespace returns the ArcTable namespace for this graph.
-func (g *Graph) Namespace() string {
+func (g *RuntimeGraph) Namespace() string {
 	return g.namespace
 }
 
 // Semantic returns the per-graph keyed-map semantic.
-func (g *Graph) Semantic() mapping.Semantics {
+func (g *RuntimeGraph) Semantic() mapping.Semantics {
 	return g.semantic
 }
 
 // ListSemantic returns the per-graph list semantic.
-func (g *Graph) ListSemantic() list.Semantics {
+func (g *RuntimeGraph) ListSemantic() list.Semantics {
 	return g.listSemantic
 }
 
 // Resolver returns the per-graph resolver.
-func (g *Graph) Resolver() *resolver.Resolver {
+func (g *RuntimeGraph) Resolver() Resolver {
 	return g.resolver
 }
 
 // Writer returns the per-graph writer.
-func (g *Graph) Writer() *writer.Writer {
+func (g *RuntimeGraph) Writer() Writer {
 	return g.wr
 }

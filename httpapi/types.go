@@ -60,7 +60,7 @@ type SemanticFixedListCommit struct {
 	ChunkSize uint64 `json:"chunk_size"`
 }
 
-// SemanticMutationResponse returns a gateway materialization receipt.
+// SemanticMutationResponse returns a writer mutation receipt.
 type SemanticMutationResponse struct {
 	BaseRoot        string `json:"base_root"`
 	NewRoot         string `json:"new_root"`
@@ -125,41 +125,11 @@ type UnixFSWriteResponse struct {
 	ArcCount int    `json:"arc_count"`
 }
 
-// UnixFSBatchRequest applies a flat UnixFS path-map mutation.
-type UnixFSBatchRequest struct {
-	BaseRoot string             `json:"base_root,omitempty"`
-	Entries  []UnixFSBatchEntry `json:"entries"`
-}
-
-// UnixFSBatchEntry binds one query path to a payload CID or chunk list.
-type UnixFSBatchEntry struct {
-	Path   string   `json:"path"`
-	Target string   `json:"target,omitempty"`
-	Chunks []string `json:"chunks,omitempty"`
-}
-
-// UnixFSBatchResponse returns the result of a flat UnixFS batch write.
-type UnixFSBatchResponse struct {
-	OldRoot  string `json:"old_root,omitempty"`
-	NewRoot  string `json:"new_root"`
-	PutCount int    `json:"put_count"`
-	ArcCount int    `json:"arc_count"`
-}
-
-// StepEvidence is a single transcript step.
-type StepEvidence struct {
-	Path     string `json:"path"`
-	Target   string `json:"target"`
-	Evidence string `json:"evidence"`
-	Kind     string `json:"kind"`
-}
-
 // ResolveResponse returns a resolved target and, by default, verifier-facing
 // ProofList evidence.
 type ResolveResponse struct {
-	Target     string               `json:"target"`
-	ProofList  *prooflist.ProofList `json:"prooflist,omitempty"`
-	Transcript []StepEvidence       `json:"transcript,omitempty"`
+	Target    string               `json:"target"`
+	ProofList *prooflist.ProofList `json:"prooflist,omitempty"`
 }
 
 // CreateStructureRequest creates a new structure from an arc set.

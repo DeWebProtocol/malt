@@ -2,12 +2,12 @@
 package evalsuites
 
 import (
-	"github.com/dewebprotocol/malt/internal/eval/framework"
-	"github.com/dewebprotocol/malt/internal/eval/suites/casmodel"
-	"github.com/dewebprotocol/malt/internal/eval/suites/proofoverhead"
-	"github.com/dewebprotocol/malt/internal/eval/suites/readquery"
-	"github.com/dewebprotocol/malt/internal/eval/suites/storageoverhead"
-	"github.com/dewebprotocol/malt/internal/eval/suites/writetrace"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/casmodel"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/proofoverhead"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/readquery"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/storageoverhead"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/writetrace"
 )
 
 // NewRegistry returns the production suite registry.

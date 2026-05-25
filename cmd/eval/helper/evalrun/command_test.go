@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dewebprotocol/malt/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
 )
 
 func TestCommandRunsPlanWithOverrides(t *testing.T) {

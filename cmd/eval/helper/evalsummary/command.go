@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dewebprotocol/malt/internal/eval/summary"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/summary"
 	"github.com/spf13/cobra"
 )
 

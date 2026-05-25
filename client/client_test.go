@@ -16,8 +16,10 @@ import (
 	casmock "github.com/dewebprotocol/malt/core/cas/mock"
 	"github.com/dewebprotocol/malt/core/manifest"
 	"github.com/dewebprotocol/malt/core/metrics"
+	"github.com/dewebprotocol/malt/core/types/arcset"
 	"github.com/dewebprotocol/malt/core/types/prooflist"
 	"github.com/dewebprotocol/malt/httpapi"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	"github.com/dewebprotocol/malt/server"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -455,6 +457,69 @@ func TestClientRootSemanticMutation(t *testing.T) {
 	}
 	if resolved.Target != nextName {
 		t.Fatalf("resolved target = %q, want %q", resolved.Target, nextName)
+	}
+}
+
+func TestUnixFSClientAppliesPlanThroughWriterEndpoint(t *testing.T) {
+	baseRoot := cidFromBytes([]byte("base-root"))
+	expectedRoot := cidFromBytes([]byte("expected-root"))
+	payload := cidFromBytes([]byte("payload"))
+
+	coord, err := arcset.NewMapCoordinate("@payload")
+	if err != nil {
+		t.Fatalf("NewMapCoordinate: %v", err)
+	}
+	after := arcset.NewCASTarget(payload)
+	changes, err := arcset.NewCanonicalArcDelta(arcset.KindMap, []arcset.ArcChange{{
+		Coordinate: coord,
+		After:      &after,
+	}})
+	if err != nil {
+		t.Fatalf("NewCanonicalArcDelta: %v", err)
+	}
+	plan := &unixfs.MutationPlan{
+		BaseRoot: baseRoot,
+		Deltas: []unixfs.MutationDelta{{
+			ExpectedRoot: expectedRoot,
+			Kind:         arcset.KindMap,
+			Changes:      changes,
+		}},
+	}
+
+	var gotPath string
+	var gotReq httpapi.SemanticMutationRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(&httpapi.SemanticMutationResponse{
+			BaseRoot:   baseRoot.String(),
+			NewRoot:    expectedRoot.String(),
+			DeltaCount: 1,
+			ArcCount:   1,
+		})
+	}))
+	t.Cleanup(ts.Close)
+
+	resp, err := NewWithBaseURL(ts.URL).UnixFS().ApplyPlan(context.Background(), plan, cid.Undef)
+	if err != nil {
+		t.Fatalf("ApplyPlan: %v", err)
+	}
+	if gotPath != "/"+baseRoot.String()+"/_mutate" {
+		t.Fatalf("path = %q, want writer endpoint", gotPath)
+	}
+	if len(gotReq.Deltas) != 1 || gotReq.Deltas[0].Kind != "map" {
+		t.Fatalf("unexpected deltas: %+v", gotReq.Deltas)
+	}
+	change := gotReq.Deltas[0].Changes[0]
+	if change.Path != "@payload" || change.After == nil || change.After.Target != payload.String() || change.After.TargetKind != "cas" {
+		t.Fatalf("unexpected change: %+v", change)
+	}
+	if resp.NewRoot != expectedRoot.String() {
+		t.Fatalf("NewRoot = %q, want %q", resp.NewRoot, expectedRoot)
 	}
 }
 

@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,9 +11,7 @@ import (
 
 	"github.com/dewebprotocol/malt/core/api"
 	"github.com/dewebprotocol/malt/core/graph"
-	"github.com/dewebprotocol/malt/core/resolver"
 	"github.com/dewebprotocol/malt/core/types/arcset"
-	"github.com/dewebprotocol/malt/core/types/evidence"
 	"github.com/dewebprotocol/malt/httpapi"
 	cid "github.com/ipfs/go-cid"
 )
@@ -26,7 +23,7 @@ type Server struct {
 	node         *api.Node
 	addr         string
 	server       *http.Server
-	defaultGraph *graph.Graph
+	defaultGraph graph.Runtime
 	graphMu      sync.Mutex
 }
 
@@ -84,7 +81,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /lineage/{root}/descendants", s.handleRemovedPublicRoute)
 	mux.HandleFunc("POST /{root}/_batch-update", s.handleRemovedPublicRoute)
 
-	// Semantic mutation is the gateway write boundary.
+	// Semantic mutation is the writer route boundary.
 	mux.HandleFunc("POST /{root}/_mutate", s.handleSemanticMutation)
 
 	// Resolve - explicit proof-producing path resolution.
@@ -93,7 +90,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Core read/write (/{root}/{path...} format). POST is a UnixFS layout
 	// convenience that converts file operations into semantic mutations before
-	// gateway materialization.
+	// writer application.
 	mux.HandleFunc("GET /{root}", s.handleContent)
 	mux.HandleFunc("GET /{root}/{path...}", s.handleContent)
 	mux.HandleFunc("POST /{root}/{path...}", s.handleWrite)
@@ -128,7 +125,7 @@ func (s *Server) handleRemovedPublicRoute(w http.ResponseWriter, r *http.Request
 	writeError(w, http.StatusNotFound, "not found")
 }
 
-func (s *Server) getOrCreateGraph(ctx context.Context) (*graph.Graph, error) {
+func (s *Server) getOrCreateGraph(ctx context.Context) (graph.Runtime, error) {
 	s.graphMu.Lock()
 	defer s.graphMu.Unlock()
 	if s.defaultGraph != nil {
@@ -154,35 +151,6 @@ func decodeCID(raw string) (cid.Cid, error) {
 		return cid.Undef, fmt.Errorf("empty CID")
 	}
 	return cid.Decode(raw)
-}
-
-func encodeTranscript(transcript *resolver.Transcript) []httpapi.StepEvidence {
-	if transcript == nil {
-		return nil
-	}
-	steps := make([]httpapi.StepEvidence, len(transcript.Steps))
-	for i, step := range transcript.Steps {
-		steps[i] = httpapi.StepEvidence{
-			Path:     step.Path.String(),
-			Target:   step.Target.String(),
-			Evidence: base64.StdEncoding.EncodeToString(step.Evidence.Bytes()),
-			Kind:     evidenceKind(step.Evidence.Kind()),
-		}
-	}
-	return steps
-}
-
-func evidenceKind(kind evidence.EvidenceKind) string {
-	switch kind {
-	case evidence.EvidenceKindExplicit:
-		return "explicit"
-	case evidence.EvidenceKindImplicit:
-		return "implicit"
-	case evidence.EvidenceKindHAMT:
-		return "hamt"
-	default:
-		return "unknown"
-	}
 }
 
 func snapshotToMap(snapshot arcset.ArcSet) (map[string]string, int, error) {
