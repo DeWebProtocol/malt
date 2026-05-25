@@ -69,7 +69,7 @@ func TestServerDoesNotTranslateUnixFSMutationPlans(t *testing.T) {
 }
 
 func TestUnixFSLayoutIsOutsideCore(t *testing.T) {
-	assertRepositoryExcludes(t, "..", "core/layout/malt/"+"unixfs")
+	assertRepositoryExcludes(t, "..", "co"+"re/layout/malt/"+"unixfs")
 }
 
 func TestCoreUmbrellaIsRemoved(t *testing.T) {
