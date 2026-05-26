@@ -64,6 +64,79 @@ func TestGenericWriteRoutesDoNotOwnUnixFSCompatibility(t *testing.T) {
 	})
 }
 
+func TestEntrypointsUseUnixFSFacadeForLayoutDetails(t *testing.T) {
+	for _, file := range []string{
+		"handlers.go",
+		"../cmd/malt/add_materialize.go",
+	} {
+		assertFileExcludes(t, file, []string{
+			"layout/unixfs/manifest",
+			"layout/unixfs/wire",
+			"layout/unixfs/internal/manifest",
+			"layout/unixfs/internal/format",
+			"manifest.ParseDirectoryJSON",
+			"manifest.MarshalDirectoryEntries",
+			"unixfsformat.",
+		})
+	}
+}
+
+func TestUnixFSManifestFormatImplementationsAreInternal(t *testing.T) {
+	for _, dir := range []string{
+		"../layout/unixfs/manifest",
+		"../layout/unixfs/wire",
+		"../layout/unixfs/internal/wire",
+	} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("%s should not exist outside layout/unixfs/internal/format", dir)
+		}
+	}
+	for _, dir := range []string{
+		"../layout/unixfs/internal/manifest",
+		"../layout/unixfs/internal/format",
+	} {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			t.Fatalf("%s should exist as an internal implementation package", dir)
+		}
+	}
+}
+
+func TestUnixFSWriteRouteUsesStreamFacade(t *testing.T) {
+	data, err := os.ReadFile("routes_unixfs_compat.go")
+	if err != nil {
+		t.Fatalf("ReadFile(routes_unixfs_compat.go): %v", err)
+	}
+	if !strings.Contains(string(data), "AddFileStream(") {
+		t.Fatal("routes_unixfs_compat.go should stream file bodies through the UnixFS layout facade")
+	}
+	assertFileExcludes(t, "routes_unixfs_compat.go", []string{
+		"io.ReadAll(r.Body)",
+		"layout.AddFile(",
+	})
+}
+
+func TestCLIAddDelegatesUnixFSPlanningToLayout(t *testing.T) {
+	assertFileExcludes(t, "../cmd/malt/add_staging.go", []string{
+		"FixedListPayloadMutation",
+		"StreamPayloadChunks",
+		"CreatePayloadRoot",
+		"ApplySemanticMutation",
+		"func uploadAsList",
+		"info.Size() <=",
+		"os.ReadFile",
+	})
+	assertFileExcludes(t, "../cmd/malt/add_materialize.go", []string{
+		"DirectoryManifestPayload",
+		"DirectoryRootBindings",
+		"CountDefinedBindings",
+		"func loadCurrentDirRecursive",
+		"func materializeDirectoryWithBatcher",
+	})
+	if _, err := os.Stat("../cmd/malt/add_tree.go"); !os.IsNotExist(err) {
+		t.Fatal("../cmd/malt/add_tree.go should not exist after staged planner moved to layout/unixfs")
+	}
+}
+
 func TestServerDoesNotTranslateUnixFSMutationPlans(t *testing.T) {
 	assertRepositoryExcludes(t, ".", "semanticMutationFrom"+"UnixFSPlan")
 }

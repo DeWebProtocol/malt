@@ -259,8 +259,14 @@ func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req
 
 // AddUnixFSFile uploads a file into a root's UnixFS tree.
 func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data []byte) (*httpapi.UnixFSWriteResponse, error) {
+	return c.AddUnixFSFileStream(ctx, root, rawPath, bytes.NewReader(data))
+}
+
+// AddUnixFSFileStream streams a file into a root's UnixFS tree.
+func (c *Client) AddUnixFSFileStream(ctx context.Context, root, rawPath string, r io.Reader) (*httpapi.UnixFSWriteResponse, error) {
 	var resp httpapi.UnixFSWriteResponse
-	if err := c.doRaw(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/"+rawPath, nil, "application/octet-stream", bytes.NewReader(data), &resp); err != nil {
+	route, query := unixFSWriteRoute(root, rawPath)
+	if err := c.doRaw(ctx, http.MethodPost, route, query, "application/octet-stream", r, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -269,10 +275,19 @@ func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data [
 // AddUnixFSDirectory creates a directory node in a root's UnixFS tree.
 func (c *Client) AddUnixFSDirectory(ctx context.Context, root, rawPath string) (*httpapi.UnixFSWriteResponse, error) {
 	var resp httpapi.UnixFSWriteResponse
-	if err := c.do(ctx, http.MethodPost, "/"+url.PathEscape(root)+"/"+rawPath, map[string]string{"type": "dir"}, nil, &resp); err != nil {
+	route, query := unixFSWriteRoute(root, rawPath)
+	query["type"] = "dir"
+	if err := c.do(ctx, http.MethodPost, route, query, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func unixFSWriteRoute(root, rawPath string) (string, map[string]string) {
+	if strings.TrimSpace(root) == "" {
+		return "/_unixfs", map[string]string{"path": rawPath}
+	}
+	return "/" + url.PathEscape(root) + "/" + rawPath, map[string]string{}
 }
 
 // CreateRootStructure creates a root-scoped structure.

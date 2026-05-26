@@ -1,5 +1,5 @@
 // Package wire defines UnixFS layout-specific wire constants.
-package wire
+package format
 
 import (
 	"fmt"

@@ -210,7 +210,7 @@ Current package roles are:
   - concrete graph runtime composition around resolver and writer executors
 - `graph/querypath`
   - current query-path canonicalization helper for root-relative paths
-- `layout/unixfs/manifest`
+- `layout/unixfs/internal/manifest`
   - current UnixFS directory-manifest helper above the semantic layer
 
 ## Runtime Packaging

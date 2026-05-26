@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	cid "github.com/ipfs/go-cid"
 )
@@ -70,7 +71,7 @@ func addInputsWithMALTStagedUnixFS(ctx context.Context, daemon *daemonclient.Cli
 		if err != nil {
 			return nil, err
 		}
-		rootNode = mergeAddNodes(existing, staged.Root)
+		rootNode = unixfs.MergeStagedNodes(existing, staged.Root)
 	}
 	mat, err := materializeDirectory(ctx, daemon, casClient, rootNode)
 	if err != nil {

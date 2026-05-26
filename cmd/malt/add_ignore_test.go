@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 )
 
@@ -210,9 +211,9 @@ func assertAddNotIgnored(t *testing.T, filter *addIgnoreFilter, root, rel string
 	}
 }
 
-func addNodeExists(root *addNode, p string) bool {
+func addNodeExists(root *unixfs.StagedNode, p string) bool {
 	cur := root
-	for _, part := range splitAddPath(p) {
+	for _, part := range unixfs.SplitStagedPath(p) {
 		if cur == nil || cur.Children == nil {
 			return false
 		}

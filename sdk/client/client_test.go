@@ -15,7 +15,6 @@ import (
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/layout/unixfs"
-	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
 	"github.com/dewebprotocol/malt/runtime/node"
 	"github.com/dewebprotocol/malt/server"
 	"github.com/dewebprotocol/malt/storage/cas/ipfs"
@@ -655,6 +654,43 @@ func TestClientContentRangeReadReturnsProofListHeader(t *testing.T) {
 	}
 }
 
+func TestClientAddUnixFSFileStream(t *testing.T) {
+	cfg := testConfig(t)
+	node, err := node.NewNode(node.WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("create test node: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = node.Close()
+	})
+
+	ts := httptest.NewServer(server.New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	cfg.RPC.Listen = ts.Listener.Addr().String()
+	client := New(cfg)
+	ctx := context.Background()
+
+	createResp, err := client.CreatePayloadRoot(ctx, nil)
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+	writeResp, err := client.AddUnixFSFileStream(ctx, createResp.Root, "stream.txt", strings.NewReader("streamed body"))
+	if err != nil {
+		t.Fatalf("add unixfs file stream: %v", err)
+	}
+	content, status, _, err := client.GetContent(ctx, writeResp.NewRoot, "stream.txt", "")
+	if err != nil {
+		t.Fatalf("GetContent: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	if string(content) != "streamed body" {
+		t.Fatalf("content = %q, want streamed body", content)
+	}
+}
+
 func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(node.WithConfig(cfg))
@@ -676,7 +712,7 @@ func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create root structure: %v", err)
 	}
-	fileBody := append(bytes.Repeat([]byte{'a'}, 262144), []byte("tail")...)
+	fileBody := append(bytes.Repeat([]byte{'a'}, unixfs.DefaultChunkSize), []byte("tail")...)
 	writeResp, err := client.AddUnixFSFile(ctx, createResp.Root, "large.bin", fileBody)
 	if err != nil {
 		t.Fatalf("add unixfs file: %v", err)
@@ -719,8 +755,8 @@ func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
 	if rangeStep.ChildCount == nil || *rangeStep.ChildCount != 2 {
 		t.Fatalf("list-range child count = %v, want 2", rangeStep.ChildCount)
 	}
-	if rangeStep.ChunkSize == nil || *rangeStep.ChunkSize != 262144 {
-		t.Fatalf("list-range chunk size = %v, want 262144", rangeStep.ChunkSize)
+	if rangeStep.ChunkSize == nil || *rangeStep.ChunkSize != unixfs.DefaultChunkSize {
+		t.Fatalf("list-range chunk size = %v, want %d", rangeStep.ChunkSize, unixfs.DefaultChunkSize)
 	}
 	if rangeStep.EvidenceBackend != "measured_list" {
 		t.Fatalf("list-range evidence backend = %q, want measured_list", rangeStep.EvidenceBackend)
@@ -755,7 +791,7 @@ func TestClientRestartSafety(t *testing.T) {
 	}
 	root := createResp.Root
 
-	chunk1 := bytes.Repeat([]byte{'x'}, 262144)
+	chunk1 := bytes.Repeat([]byte{'x'}, unixfs.DefaultChunkSize)
 	chunk2 := []byte("tail")
 	chunk1CID, err := casClient.Put(ctx, chunk1)
 	if err != nil {
@@ -878,7 +914,7 @@ func withPayloadBinding(bindings map[string]string) map[string]string {
 
 func mustPutManifest(t *testing.T, ctx context.Context, casClient *ipfs.Client, entries []string) cid.Cid {
 	t.Helper()
-	payload, err := (&manifest.DirectoryManifest{Entries: entries}).MarshalJSON()
+	payload, err := unixfs.DirectoryManifestPayload(entries)
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}

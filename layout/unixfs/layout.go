@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -21,7 +22,6 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
 	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -192,6 +192,20 @@ func (l *Layout) AddFile(ctx context.Context, root cid.Cid, path string, data []
 	return l.addFile(ctx, root, segments, data)
 }
 
+// AddFileStream writes data read from r at path and returns the updated root
+// directory. The current planner materializes the stream before committing so
+// it can compute the payload size and chunk list consistently.
+func (l *Layout) AddFileStream(ctx context.Context, root cid.Cid, path string, r io.Reader) (cid.Cid, error) {
+	if r == nil {
+		return cid.Undef, fmt.Errorf("file stream is nil")
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("read file stream: %w", err)
+	}
+	return l.AddFile(ctx, root, path, data)
+}
+
 // Resolve traverses directory arcs and materializes the terminal @payload.
 func (l *Layout) Resolve(ctx context.Context, root cid.Cid, path string) (*Resolution, error) {
 	nodeRoot, steps, err := l.resolveNode(ctx, root, path)
@@ -261,7 +275,7 @@ func (l *Layout) Stat(ctx context.Context, root cid.Cid, path string) (*Stat, er
 			Kind:        typeFile,
 			NodeRoot:    nodeRoot,
 			Payload:     payload,
-			StorageKind: storageKind(info.payload),
+			StorageKind: StorageKindFromCID(info.payload),
 			Size:        info.size,
 			ChunkSize:   info.chunkSize,
 		}, nil
@@ -417,13 +431,13 @@ func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error
 		return l.blocks.Put(ctx, data)
 	}
 
-	blocks := make([]cas.Block, 0, (len(data)+l.chunkSize-1)/l.chunkSize)
-	for start := 0; start < len(data); start += l.chunkSize {
-		end := start + l.chunkSize
-		if end > len(data) {
-			end = len(data)
-		}
-		blocks = append(blocks, cas.Block{Data: data[start:end]})
+	chunkData, err := PayloadChunks(data, l.chunkSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	blocks := make([]cas.Block, 0, len(chunkData))
+	for _, chunk := range chunkData {
+		blocks = append(blocks, cas.Block{Data: chunk})
 	}
 	results, err := cas.PutBlocks(ctx, l.blocks, blocks)
 	if err != nil {
@@ -557,6 +571,45 @@ func (l *Layout) readPayloadRange(ctx context.Context, info *fileInfo, offset, l
 	return cloneBytes(data[offset:end]), nil
 }
 
+// ListPayloadSize returns the byte size and chunk count for a fixed-width list
+// payload using the layout chunk size. It is intended for compatibility paths
+// that already resolved a file payload to a list root and therefore do not have
+// the containing UnixFS file node available.
+func (l *Layout) ListPayloadSize(ctx context.Context, root cid.Cid) (uint64, uint64, error) {
+	chunkSize := uint64(l.chunkSize)
+	query, _, err := l.lists.Prove(ctx, l.namespace, root, ^uint64(0))
+	if err != nil {
+		return 0, 0, err
+	}
+	count := query.Length
+	if count == 0 {
+		return 0, 0, nil
+	}
+	last, _, err := l.lists.Prove(ctx, l.namespace, root, count-1)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !last.Key.Defined() {
+		return 0, 0, fmt.Errorf("%w: missing chunk %d", ErrNotFound, count-1)
+	}
+	lastChunk, err := l.blocks.Get(ctx, last.Key)
+	if err != nil {
+		return 0, 0, err
+	}
+	size := (count-1)*chunkSize + uint64(len(lastChunk))
+	return size, count, nil
+}
+
+// ReadListPayloadRange reads a byte range from a fixed-width list payload using
+// the layout chunk size. It is the payload-level counterpart of ReadFileRange
+// for callers that already hold the list root.
+func (l *Layout) ReadListPayloadRange(ctx context.Context, root cid.Cid, offset, length uint64) ([]byte, error) {
+	if length == 0 {
+		return nil, nil
+	}
+	return l.readListRange(ctx, root, offset, length, uint64(l.chunkSize))
+}
+
 func (l *Layout) readListRange(ctx context.Context, root cid.Cid, offset, length, chunkSize uint64) ([]byte, error) {
 	startIndex := offset / chunkSize
 	endOffset := offset + length
@@ -678,8 +731,7 @@ func (l *Layout) addDirectoryEntry(ctx context.Context, root cid.Cid, name strin
 }
 
 func (l *Layout) commitDirectoryManifest(ctx context.Context, entries []string) (cid.Cid, error) {
-	m := manifest.Normalize(&manifest.DirectoryManifest{Entries: entries})
-	payload, err := m.MarshalJSON()
+	payload, err := DirectoryManifestPayload(entries)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -687,15 +739,7 @@ func (l *Layout) commitDirectoryManifest(ctx context.Context, entries []string) 
 }
 
 func (l *Layout) loadDirectoryManifest(ctx context.Context, payload cid.Cid) ([]string, error) {
-	data, err := l.blocks.Get(ctx, payload)
-	if err != nil {
-		return nil, err
-	}
-	m, err := manifest.ParseDirectoryJSON(data)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Clone(m.Entries), nil
+	return readDirectoryManifestEntries(ctx, l.blocks, payload)
 }
 
 func splitRelativePath(path string) ([]string, error) {
@@ -799,15 +843,4 @@ func cloneBytes(data []byte) []byte {
 	out := make([]byte, len(data))
 	copy(out, data)
 	return out
-}
-
-func storageKind(c cid.Cid) string {
-	switch maltcid.SemanticKindOf(c) {
-	case maltcid.SemanticKindList:
-		return "list"
-	case maltcid.SemanticKindMap:
-		return "map"
-	default:
-		return "raw"
-	}
 }
