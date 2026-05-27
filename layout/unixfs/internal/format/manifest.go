@@ -1,4 +1,4 @@
-// Package wire defines UnixFS layout-specific wire constants.
+// Package format defines UnixFS layout-specific format constants.
 package format
 
 import (
