@@ -368,7 +368,14 @@ func repoIdentityParts(repoURL string) (string, string) {
 		}
 	}
 	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" {
-		return parsed.Host, parsed.Path
+		path := parsed.Path
+		if path == "" && strings.EqualFold(parsed.Scheme, "file") {
+			path = parsed.Opaque
+		}
+		if unescaped, err := url.PathUnescape(path); err == nil {
+			path = unescaped
+		}
+		return parsed.Host, path
 	}
 	return "", trimmed
 }
