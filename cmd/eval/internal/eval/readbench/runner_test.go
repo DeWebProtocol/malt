@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/config"
@@ -335,6 +336,13 @@ func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
 		if result.ContentBytes == nil || *result.ContentBytes != 13 {
 			t.Fatalf("%s content bytes = %v, want 13", result.System, result.ContentBytes)
 		}
+	}
+}
+
+func TestPositiveElapsedNSClampsSameTickMeasurement(t *testing.T) {
+	now := time.Now()
+	if got := positiveElapsedNS(now, now); got != 1 {
+		t.Fatalf("positiveElapsedNS(same tick) = %d, want 1", got)
 	}
 }
 

@@ -253,7 +253,7 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 	default:
 		return nil, fmt.Errorf("unsupported operation kind %q", op.kind)
 	}
-	elapsed := time.Since(start).Nanoseconds()
+	elapsed := positiveElapsedNS(start, time.Now())
 
 	snapshot, err := r.metricsSnapshot(ctx)
 	if err != nil {
@@ -276,6 +276,14 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 		ArcTable:           snapshot.ArcTable,
 		Proof:              snapshot.Proof,
 	}, nil
+}
+
+func positiveElapsedNS(start, end time.Time) int64 {
+	elapsed := end.Sub(start).Nanoseconds()
+	if elapsed <= 0 {
+		return 1
+	}
+	return elapsed
 }
 
 func (r *Runner) resetMetrics(ctx context.Context) error {

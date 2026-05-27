@@ -110,7 +110,7 @@ func (b *baselineSystem) measureOperation(ctx context.Context, iteration int, fi
 	default:
 		return nil, fmt.Errorf("unsupported operation kind %q", op.kind)
 	}
-	elapsed := time.Since(start).Nanoseconds()
+	elapsed := positiveElapsedNS(start, time.Now())
 	casStats := b.store.SnapshotStats()
 
 	return &Result{
