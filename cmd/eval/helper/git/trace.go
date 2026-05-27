@@ -309,6 +309,7 @@ func repoName(path, repoURL string) string {
 // namespace path rather than the local cache path or branch/ref name.
 func CanonicalRepoIDFromURL(repoURL string) (string, error) {
 	host, path := repoIdentityParts(repoURL)
+	path = unescapeRepoPath(path)
 	path = strings.TrimRight(strings.TrimSpace(path), `/\`)
 	if strings.HasSuffix(strings.ToLower(path), ".git") {
 		path = path[:len(path)-len(".git")]
@@ -372,12 +373,20 @@ func repoIdentityParts(repoURL string) (string, string) {
 		if path == "" && strings.EqualFold(parsed.Scheme, "file") {
 			path = parsed.Opaque
 		}
-		if unescaped, err := url.PathUnescape(path); err == nil {
-			path = unescaped
-		}
 		return parsed.Host, path
 	}
 	return "", trimmed
+}
+
+func unescapeRepoPath(path string) string {
+	for i := 0; i < 4; i++ {
+		unescaped, err := url.PathUnescape(path)
+		if err != nil || unescaped == path {
+			return path
+		}
+		path = unescaped
+	}
+	return path
 }
 
 const (

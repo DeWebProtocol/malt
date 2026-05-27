@@ -173,12 +173,15 @@ func TestCacheNameForURLIncludesFullRepositoryIdentity(t *testing.T) {
 
 func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/ipfs/kubo.git":                                                          "github.com/ipfs/kubo",
-		"git@github.com:ethereum/go-ethereum.git":                                                   "github.com/ethereum/go-ethereum",
-		"file:///tmp/eval/repos/github.com/fork/kubo.git":                                           "github.com/fork/kubo",
-		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo.git": "github.com/ipfs/kubo",
-		"file:C:%5cUsers%5cAdmini~1%5cAppData%5cLocal%5cTemp%5c001%5cgithub.com%5cipfs%5ckubo.git":  "github.com/ipfs/kubo",
-		"https://gitlab.com/group/subgroup/project.git":                                             "gitlab.com/group/subgroup/project",
+		"https://github.com/ipfs/kubo.git":                                                                                              "github.com/ipfs/kubo",
+		"git@github.com:ethereum/go-ethereum.git":                                                                                       "github.com/ethereum/go-ethereum",
+		"file:///tmp/eval/repos/github.com/fork/kubo.git":                                                                               "github.com/fork/kubo",
+		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo.git":                                     "github.com/ipfs/kubo",
+		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo":                                         "github.com/ipfs/kubo",
+		"file:/c:%255cusers%255cadmini~1%255cappdata%255clocal%255ctemp%255c001%255cgithub.com%255cipfs%255ckubo.git":                   "github.com/ipfs/kubo",
+		"file:/c:%25255cusers%25255cadmini~1%25255cappdata%25255clocal%25255ctemp%25255c001%25255cgithub.com%25255cipfs%25255ckubo.git": "github.com/ipfs/kubo",
+		"file:C:%5cUsers%5cAdmini~1%5cAppData%5cLocal%5cTemp%5c001%5cgithub.com%5cipfs%5ckubo.git":                                      "github.com/ipfs/kubo",
+		"https://gitlab.com/group/subgroup/project.git":                                                                                 "gitlab.com/group/subgroup/project",
 	}
 	for raw, want := range cases {
 		got, err := gittrace.CanonicalRepoIDFromURL(raw)

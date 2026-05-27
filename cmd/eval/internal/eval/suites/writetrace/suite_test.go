@@ -96,6 +96,28 @@ func TestParseConfigBuildsRepositoryTargetsFromURLList(t *testing.T) {
 	}
 }
 
+func TestParseConfigCanonicalizesWindowsFileURLList(t *testing.T) {
+	cases := []string{
+		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo",
+		"file:/c:%25255cusers%25255cadmini~1%25255cappdata%25255clocal%25255ctemp%25255c001%25255cgithub.com%25255cipfs%25255ckubo.git",
+	}
+	for _, repoURL := range cases {
+		cfg, err := writetrace.ParseConfig(json.RawMessage(`{
+			"repo_urls": [` + strconvQuote(repoURL) + `]
+		}`))
+		if err != nil {
+			t.Fatalf("ParseConfig: %v", err)
+		}
+		repos, err := cfg.RepositoryTargets()
+		if err != nil {
+			t.Fatalf("RepositoryTargets: %v", err)
+		}
+		if len(repos) != 1 || repos[0].RepoID != "github.com/ipfs/kubo" {
+			t.Fatalf("repo targets = %+v, want canonical github.com/ipfs/kubo", repos)
+		}
+	}
+}
+
 func TestRepositoryStoreNameUsesIndexedCanonicalRepoID(t *testing.T) {
 	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
 		"repo_urls": [
