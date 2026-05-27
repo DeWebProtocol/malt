@@ -163,25 +163,11 @@ func TestSourceWalkDoesNotMutateRepoPathCheckoutOnFailure(t *testing.T) {
 	}
 }
 
-func TestCacheNameForURLIncludesFullRepositoryIdentity(t *testing.T) {
-	first := gittrace.CacheNameForURL("https://github.com/orgA/project.git")
-	second := gittrace.CacheNameForURL("https://github.com/orgB/project.git")
-	if first == second {
-		t.Fatalf("cache names collide: %q", first)
-	}
-}
-
-func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
+func TestCanonicalRepoIDFromURLUsesGitHubHTTPSOwnerAndRepo(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/ipfs/kubo.git":                                                                                              "github.com/ipfs/kubo",
-		"git@github.com:ethereum/go-ethereum.git":                                                                                       "github.com/ethereum/go-ethereum",
-		"file:///tmp/eval/repos/github.com/fork/kubo.git":                                                                               "github.com/fork/kubo",
-		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo.git":                                     "github.com/ipfs/kubo",
-		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo":                                         "github.com/ipfs/kubo",
-		"file:/c:%255cusers%255cadmini~1%255cappdata%255clocal%255ctemp%255c001%255cgithub.com%255cipfs%255ckubo.git":                   "github.com/ipfs/kubo",
-		"file:/c:%25255cusers%25255cadmini~1%25255cappdata%25255clocal%25255ctemp%25255c001%25255cgithub.com%25255cipfs%25255ckubo.git": "github.com/ipfs/kubo",
-		"file:C:%5cUsers%5cAdmini~1%5cAppData%5cLocal%5cTemp%5c001%5cgithub.com%5cipfs%5ckubo.git":                                      "github.com/ipfs/kubo",
-		"https://gitlab.com/group/subgroup/project.git":                                                                                 "gitlab.com/group/subgroup/project",
+		"https://github.com/ipfs/kubo.git":        "github.com/ipfs/kubo",
+		"https://github.com/IPFS/Kubo":            "github.com/ipfs/kubo",
+		"https://github.com/ethereum/go-ethereum": "github.com/ethereum/go-ethereum",
 	}
 	for raw, want := range cases {
 		got, err := gittrace.CanonicalRepoIDFromURL(raw)
@@ -194,10 +180,31 @@ func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
 	}
 }
 
-func TestCacheNameForURLIsBoundedForLongLocalPaths(t *testing.T) {
-	name := gittrace.CacheNameForURL("C:\\" + strings.Repeat("long-path-segment\\", 20) + "project.git")
-	if len(name) > 80 {
-		t.Fatalf("cache name length = %d, want <= 80: %q", len(name), name)
+func TestCanonicalRepoIDFromURLRejectsNonGitHubHTTPSFormats(t *testing.T) {
+	for _, raw := range []string{
+		"git@github.com:ethereum/go-ethereum.git",
+		"file:///tmp/eval/repos/github.com/fork/kubo.git",
+		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo",
+		"http://github.com/ipfs/kubo.git",
+		"https://gitlab.com/group/project.git",
+		"https://github.com/ipfs",
+		"https://github.com/ipfs/kubo/extra",
+	} {
+		if _, err := gittrace.CanonicalRepoIDFromURL(raw); err == nil {
+			t.Fatalf("CanonicalRepoIDFromURL(%q) should reject non-GitHub HTTPS repo URL", raw)
+		}
+	}
+}
+
+func TestCachePathForURLUsesOwnerRepoUnderBasePath(t *testing.T) {
+	base := filepath.Join("tmp", "eval-cache")
+	got, err := gittrace.CachePathForURL(base, "https://github.com/ipfs/kubo.git")
+	if err != nil {
+		t.Fatalf("CachePathForURL: %v", err)
+	}
+	want := filepath.Join(base, "ipfs", "kubo")
+	if got != want {
+		t.Fatalf("cache path = %q, want %q", got, want)
 	}
 }
 
@@ -208,7 +215,10 @@ func TestEnsureCloneRejectsMismatchedExistingOrigin(t *testing.T) {
 	ctx := context.Background()
 	cacheDir := t.TempDir()
 	url := "https://github.com/orgA/project.git"
-	cachePath := filepath.Join(cacheDir, gittrace.CacheNameForURL(url))
+	cachePath, err := gittrace.CachePathForURL(cacheDir, url)
+	if err != nil {
+		t.Fatalf("CachePathForURL: %v", err)
+	}
 	if err := os.MkdirAll(cachePath, 0755); err != nil {
 		t.Fatalf("mkdir cache path: %v", err)
 	}

@@ -4,8 +4,6 @@ package git
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -85,21 +83,18 @@ func (s Source) repositoryPath(ctx context.Context) (string, error) {
 
 // EnsureClone returns a local clone for repoURL under cacheDir.
 func EnsureClone(ctx context.Context, repoURL, cacheDir string) (string, error) {
-	if strings.TrimSpace(repoURL) == "" {
-		return "", fmt.Errorf("repo URL is required")
-	}
 	if cacheDir == "" {
 		cacheDir = filepath.Join(".eval-cache", "repos")
 	}
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	path, err := CachePathForURL(cacheDir, repoURL)
+	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(cacheDir, CacheNameForURL(repoURL))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
 		if err := verifyCachedOrigin(ctx, path, repoURL); err != nil {
-			return "", err
-		}
-		if err := runGit(ctx, path, "fetch", "--prune", "origin"); err != nil {
 			return "", err
 		}
 		return path, nil
@@ -292,125 +287,65 @@ func pathDepth(path string) int {
 }
 
 func repoName(path, repoURL string) string {
-	if repoURL != "" {
-		trimmed := strings.TrimSuffix(repoURL, ".git")
-		parts := strings.FieldsFunc(trimmed, func(r rune) bool {
-			return r == '/' || r == '\\' || r == ':'
-		})
-		if len(parts) > 0 {
-			return parts[len(parts)-1]
-		}
+	if repoID, err := CanonicalRepoIDFromURL(repoURL); err == nil {
+		return repoID
 	}
 	return filepath.Base(path)
 }
 
-// CanonicalRepoIDFromURL derives the evaluation repository identity from a Git
-// URL. The identity is semantic result metadata, so it uses host plus the full
-// namespace path rather than the local cache path or branch/ref name.
+// CanonicalRepoIDFromURL derives the evaluation repository identity from a
+// GitHub HTTPS repository URL.
 func CanonicalRepoIDFromURL(repoURL string) (string, error) {
-	host, path := repoIdentityParts(repoURL)
-	path = unescapeRepoPath(path)
-	path = strings.TrimRight(strings.TrimSpace(path), `/\`)
-	if strings.HasSuffix(strings.ToLower(path), ".git") {
-		path = path[:len(path)-len(".git")]
+	repo, err := parseGitHubHTTPSRepoURL(repoURL)
+	if err != nil {
+		return "", err
 	}
-	path = strings.ReplaceAll(path, "\\", "/")
-	path = strings.Trim(path, "/")
-	if path == "" {
-		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
-	}
-	filtered := nonEmptyPathParts(path)
-	if len(filtered) == 0 {
-		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
-	}
-	if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
-		return host + "/" + strings.ToLower(strings.Join(filtered, "/")), nil
-	}
-	if hostIndex := firstHostPathSegment(filtered); hostIndex >= 0 && hostIndex < len(filtered)-1 {
-		return strings.ToLower(strings.Join(filtered[hostIndex:], "/")), nil
-	}
-	switch {
-	case len(filtered) >= 2:
-		return strings.ToLower(filtered[len(filtered)-2] + "/" + filtered[len(filtered)-1]), nil
-	case len(filtered) == 1:
-		return strings.ToLower(filtered[0]), nil
-	default:
-		return "", fmt.Errorf("repo URL %q does not contain a repository path", repoURL)
-	}
+	return "github.com/" + repo.owner + "/" + repo.name, nil
 }
 
-func nonEmptyPathParts(path string) []string {
-	parts := strings.Split(path, "/")
-	filtered := parts[:0]
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			filtered = append(filtered, part)
-		}
+// CachePathForURL returns the local clone path for a GitHub HTTPS repository
+// under baseDir.
+func CachePathForURL(baseDir, repoURL string) (string, error) {
+	repo, err := parseGitHubHTTPSRepoURL(repoURL)
+	if err != nil {
+		return "", err
 	}
-	return filtered
+	return filepath.Join(baseDir, repo.owner, repo.name), nil
 }
 
-func firstHostPathSegment(parts []string) int {
-	for i, part := range parts {
-		if strings.Contains(part, ".") {
-			return i
-		}
-	}
-	return -1
+type githubRepo struct {
+	owner string
+	name  string
 }
 
-func repoIdentityParts(repoURL string) (string, string) {
+func parseGitHubHTTPSRepoURL(repoURL string) (githubRepo, error) {
 	trimmed := strings.TrimSpace(repoURL)
-	if !strings.Contains(trimmed, "://") && strings.Contains(trimmed, "@") {
-		afterUser := strings.SplitN(trimmed, "@", 2)[1]
-		if host, path, ok := strings.Cut(afterUser, ":"); ok {
-			return host, path
-		}
+	if trimmed == "" {
+		return githubRepo{}, fmt.Errorf("repo URL is required")
 	}
-	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" {
-		path := parsed.Path
-		if path == "" && strings.EqualFold(parsed.Scheme, "file") {
-			path = parsed.Opaque
-		}
-		return parsed.Host, path
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return githubRepo{}, fmt.Errorf("parse repo URL %q: %w", repoURL, err)
 	}
-	return "", trimmed
-}
-
-func unescapeRepoPath(path string) string {
-	for i := 0; i < 4; i++ {
-		unescaped, err := url.PathUnescape(path)
-		if err != nil || unescaped == path {
-			return path
-		}
-		path = unescaped
+	if parsed.Scheme != "https" || strings.ToLower(parsed.Host) != "github.com" {
+		return githubRepo{}, fmt.Errorf("repo URL %q must be https://github.com/<owner>/<repo>", repoURL)
 	}
-	return path
-}
-
-const (
-	cacheNameHashLen = 12
-	maxCacheNameLen  = 80
-)
-
-// CacheNameForURL returns a deterministic cache directory name for a full repo URL.
-func CacheNameForURL(repoURL string) string {
-	normalized := normalizeRepoURL(repoURL)
-	sum := sha256.Sum256([]byte(normalized))
-	prefix := sanitizeCachePrefix(normalized)
-	if prefix == "" {
-		prefix = "repo"
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return githubRepo{}, fmt.Errorf("repo URL %q must not include query or fragment", repoURL)
 	}
-	hash := hex.EncodeToString(sum[:])[:cacheNameHashLen]
-	maxPrefixLen := maxCacheNameLen - cacheNameHashLen - len("-")
-	if len(prefix) > maxPrefixLen {
-		prefix = strings.Trim(prefix[:maxPrefixLen], "-")
-		if prefix == "" {
-			prefix = "repo"
-		}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) != 2 {
+		return githubRepo{}, fmt.Errorf("repo URL %q must be https://github.com/<owner>/<repo>", repoURL)
 	}
-	return fmt.Sprintf("%s-%s", prefix, hash)
+	owner := strings.ToLower(strings.TrimSpace(parts[0]))
+	name := strings.ToLower(strings.TrimSpace(parts[1]))
+	if strings.HasSuffix(name, ".git") {
+		name = name[:len(name)-len(".git")]
+	}
+	if owner == "" || name == "" || owner == "." || owner == ".." || name == "." || name == ".." {
+		return githubRepo{}, fmt.Errorf("repo URL %q must include non-empty owner and repo", repoURL)
+	}
+	return githubRepo{owner: owner, name: name}, nil
 }
 
 func verifyCachedOrigin(ctx context.Context, path, repoURL string) error {
@@ -418,50 +353,18 @@ func verifyCachedOrigin(ctx context.Context, path, repoURL string) error {
 	if err != nil {
 		return fmt.Errorf("verify cached origin for %s: %w", path, err)
 	}
-	got := normalizeRepoURL(strings.TrimSpace(out))
-	want := normalizeRepoURL(repoURL)
+	got, err := CanonicalRepoIDFromURL(strings.TrimSpace(out))
+	if err != nil {
+		return fmt.Errorf("cached repo %s origin is not a GitHub HTTPS repo URL: %w", path, err)
+	}
+	want, err := CanonicalRepoIDFromURL(repoURL)
+	if err != nil {
+		return err
+	}
 	if got != want {
 		return fmt.Errorf("cached repo %s origin mismatch: got %q want %q", path, got, want)
 	}
 	return nil
-}
-
-func normalizeRepoURL(repoURL string) string {
-	trimmed := strings.TrimSpace(repoURL)
-	trimmed = strings.TrimRight(trimmed, "/")
-	if strings.HasSuffix(strings.ToLower(trimmed), ".git") {
-		trimmed = trimmed[:len(trimmed)-len(".git")]
-	}
-	if !strings.Contains(trimmed, "://") && strings.Contains(trimmed, "@") {
-		afterUser := strings.SplitN(trimmed, "@", 2)[1]
-		host, path, ok := strings.Cut(afterUser, ":")
-		if ok {
-			return strings.ToLower(host) + "/" + strings.Trim(path, "/")
-		}
-	}
-	if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
-		return strings.ToLower(parsed.Host) + "/" + strings.Trim(parsed.Path, "/")
-	}
-	return trimmed
-}
-
-func sanitizeCachePrefix(value string) string {
-	lowered := strings.ToLower(value)
-	var builder strings.Builder
-	lastDash := false
-	for _, r := range lowered {
-		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_'
-		if ok {
-			builder.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			builder.WriteByte('-')
-			lastDash = true
-		}
-	}
-	return strings.Trim(builder.String(), "-")
 }
 
 type objectSnapshot struct {
