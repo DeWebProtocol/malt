@@ -39,8 +39,11 @@ func TestLoadPlanDefaultsAndPreservesSuiteConfig(t *testing.T) {
 	if plan.RunID != "paper-eval" {
 		t.Fatalf("run id = %q, want paper-eval", plan.RunID)
 	}
-	if plan.OutputDir != filepath.Join("results", "paper-eval") {
+	if plan.OutputDir != filepath.Join("output", "paper-eval") {
 		t.Fatalf("output dir = %q", plan.OutputDir)
+	}
+	if plan.ResultDir != filepath.Join("result", "paper-eval") {
+		t.Fatalf("result dir = %q", plan.ResultDir)
 	}
 	if len(plan.Suites) != 2 {
 		t.Fatalf("suites len = %d, want 2", len(plan.Suites))
@@ -64,12 +67,71 @@ func TestLoadPlanDefaultsAndPreservesSuiteConfig(t *testing.T) {
 	}
 }
 
+func TestLoadPlanSupportsExplicitOutputAndResultDirs(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "plan.json")
+	raw := `{
+		"run_id": "paper-eval",
+		"output_dir": "output/custom-work",
+		"result_dir": "result/custom-result",
+		"suites": [{"name": "write_trace"}]
+	}`
+	if err := os.WriteFile(planPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	plan, err := LoadPlan(planPath)
+	if err != nil {
+		t.Fatalf("LoadPlan: %v", err)
+	}
+	if plan.OutputDir != filepath.Join("output", "custom-work") {
+		t.Fatalf("output dir = %q", plan.OutputDir)
+	}
+	if plan.ResultDir != filepath.Join("result", "custom-result") {
+		t.Fatalf("result dir = %q", plan.ResultDir)
+	}
+}
+
+func TestPlanRejectsOverlappingOutputAndResultDirs(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		outputDir string
+		resultDir string
+	}{
+		{
+			name:      "same",
+			outputDir: filepath.Join("runs", "same-dir"),
+			resultDir: filepath.Join("runs", "same-dir"),
+		},
+		{
+			name:      "result inside output",
+			outputDir: filepath.Join("runs", "same-dir"),
+			resultDir: filepath.Join("runs", "same-dir", "result"),
+		},
+		{
+			name:      "output inside result",
+			outputDir: filepath.Join("runs", "same-dir", "output"),
+			resultDir: filepath.Join("runs", "same-dir"),
+		},
+	} {
+		plan := Plan{
+			RunID:     "same-dir",
+			OutputDir: tc.outputDir,
+			ResultDir: tc.resultDir,
+			Suites:    []SuitePlan{{Name: "write_trace"}},
+		}
+		if err := plan.Normalize(); err == nil {
+			t.Fatalf("%s: Normalize should reject overlapping output_dir and result_dir", tc.name)
+		}
+	}
+}
+
 func TestLoadPlanRejectsUnknownTopLevelFields(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "plan.json")
 	raw := `{
 		"run_id": "paper-eval",
-		"output_dr": "results/wrong",
+		"output_dr": "output/wrong",
 		"suites": [{"name": "write_trace"}]
 	}`
 	if err := os.WriteFile(planPath, []byte(raw), 0o644); err != nil {

@@ -17,8 +17,6 @@ const SuiteName = "write_trace"
 type Config struct {
 	RepoURLs          []string   `json:"repo_urls,omitempty"`
 	MaxCommitsPerRepo int        `json:"max_commits_per_repo,omitempty"`
-	CacheDir          string     `json:"cache_dir,omitempty"`
-	StoreDir          string     `json:"store_dir,omitempty"`
 	StoreMode         string     `json:"store_mode,omitempty"`
 	StoreBackend      string     `json:"store_backend,omitempty"`
 	Systems           SystemList `json:"systems,omitempty"`
@@ -35,11 +33,9 @@ type RepositoryTarget struct {
 // SystemList accepts either a JSON array or a comma-separated JSON string.
 type SystemList []string
 
-// DefaultConfig returns the same replay defaults used by malt-eval write.
+// DefaultConfig returns framework-managed write-trace replay defaults.
 func DefaultConfig() Config {
 	return Config{
-		CacheDir:     ".eval-cache/repos",
-		StoreDir:     ".eval-cache/write-stores",
 		StoreMode:    string(evalstore.StoreModeIsolated),
 		StoreBackend: string(evalstore.StoreBackendMemory),
 		Systems:      SystemList{"maltflat", "merkledag", "hamt"},

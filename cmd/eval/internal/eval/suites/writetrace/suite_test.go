@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,8 +26,6 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
 		"repo_urls": ["https://github.com/ipfs/kubo.git"],
 		"max_commits_per_repo": 7,
-		"cache_dir": "/tmp/cache",
-		"store_dir": "/tmp/stores",
 		"store_mode": "shared",
 		"store_backend": "fs",
 		"systems": ["maltflat", "hamt"],
@@ -38,8 +37,8 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	if len(cfg.RepoURLs) != 1 || cfg.RepoURLs[0] != "https://github.com/ipfs/kubo.git" {
 		t.Fatalf("repo config = %+v, want JSON values", cfg)
 	}
-	if cfg.MaxCommitsPerRepo != 7 || cfg.CacheDir != "/tmp/cache" || cfg.StoreDir != "/tmp/stores" {
-		t.Fatalf("storage/limit config = %+v, want JSON values", cfg)
+	if cfg.MaxCommitsPerRepo != 7 {
+		t.Fatalf("limit config = %+v, want JSON value", cfg)
 	}
 	if cfg.StoreMode != "shared" || cfg.StoreBackend != "fs" || cfg.FirstParent {
 		t.Fatalf("mode config = %+v, want JSON values", cfg)
@@ -52,9 +51,6 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig defaults: %v", err)
 	}
-	if defaults.CacheDir != ".eval-cache/repos" || defaults.StoreDir != ".eval-cache/write-stores" {
-		t.Fatalf("defaults = %+v, want write command paths/ref", defaults)
-	}
 	if defaults.StoreMode != "isolated" || defaults.StoreBackend != "memory" || !defaults.FirstParent {
 		t.Fatalf("defaults = %+v, want isolated memory first-parent", defaults)
 	}
@@ -66,7 +62,6 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 func TestParseConfigBuildsRepositoryTargetsFromURLList(t *testing.T) {
 	cfg, err := writetrace.ParseConfig(json.RawMessage(`{
 		"max_commits_per_repo": 10,
-		"cache_dir": "/tmp/shared-cache",
 		"first_parent": true,
 		"repo_urls": [
 			"https://github.com/ipfs/kubo.git",
@@ -90,7 +85,7 @@ func TestParseConfigBuildsRepositoryTargetsFromURLList(t *testing.T) {
 	if repos[1].RepoID != "github.com/ethereum/go-ethereum" || repos[1].RepoURL != "https://github.com/ethereum/go-ethereum" {
 		t.Fatalf("repo 1 target = %+v", repos[1])
 	}
-	if cfg.MaxCommitsPerRepo != 10 || cfg.CacheDir != "/tmp/shared-cache" || !cfg.FirstParent {
+	if cfg.MaxCommitsPerRepo != 10 || !cfg.FirstParent {
 		t.Fatalf("suite defaults = %+v", cfg)
 	}
 }
@@ -164,6 +159,8 @@ func TestParseConfigRejectsLegacyRepositoryFields(t *testing.T) {
 		`{"repo_url": "https://github.com/ipfs/kubo.git"}`,
 		`{"repo_ref": "main"}`,
 		`{"commit_limit": 7}`,
+		`{"cache_dir": "/tmp/cache"}`,
+		`{"store_dir": "/tmp/stores"}`,
 		`{"repositories": [{"repo_url": "https://github.com/ipfs/kubo.git"}]}`,
 	} {
 		if _, err := writetrace.ParseConfig(json.RawMessage(raw)); err == nil {
@@ -177,30 +174,34 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	ctx := context.Background()
-	repo := initWriteTraceRepo(t, "github.com", "ipfs", "kubo.git")
-	outDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(resultDir, "raw"), 0755); err != nil {
 		t.Fatalf("mkdir raw dir: %v", err)
 	}
-	cacheDir := t.TempDir()
-	seedCachedWriteTraceRepo(t, cacheDir, repo, "ipfs", "kubo")
 
 	cfg := json.RawMessage(`{
 		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
 		"max_commits_per_repo": 3,
-		"cache_dir": ` + strconvQuote(cacheDir) + `,
 		"store_backend": "memory",
 		"systems": ["maltflat"]
 	}`)
 	err := (writetrace.Suite{}).Run(ctx, framework.Env{
 		RunID:     "run-write-trace-test",
-		OutputDir: outDir,
+		OutputDir: outputDir,
+		ResultDir: resultDir,
 	}, cfg)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(outputDir, "repos", "ipfs", "kubo", ".git")); err != nil {
+		t.Fatalf("managed clone should remain under output workspace: %v", err)
+	}
 
-	envelopes := readWriteTraceEnvelopes(t, filepath.Join(outDir, "raw", "write_trace.jsonl"))
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(resultDir, "raw", "write_trace.jsonl"))
 	if len(envelopes) != 3 {
 		t.Fatalf("envelope count = %d, want 3", len(envelopes))
 	}
@@ -243,21 +244,20 @@ func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	ctx := context.Background()
-	repoA := initWriteTraceRepo(t, "github.com", "ipfs", "kubo.git")
-	repoB := initWriteTraceRepo(t, "github.com", "fork", "kubo.git")
-	outDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(outDir, "raw"), 0755); err != nil {
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "fork", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(resultDir, "raw"), 0755); err != nil {
 		t.Fatalf("mkdir raw dir: %v", err)
 	}
-	cacheDir := t.TempDir()
-	seedCachedWriteTraceRepo(t, cacheDir, repoA, "ipfs", "kubo")
-	seedCachedWriteTraceRepo(t, cacheDir, repoB, "fork", "kubo")
 
 	cfg := json.RawMessage(`{
 		"store_backend": "memory",
 		"systems": ["maltflat"],
 		"max_commits_per_repo": 1,
-		"cache_dir": ` + strconvQuote(cacheDir) + `,
 		"repo_urls": [
 			` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `,
 			` + strconvQuote(githubRepoURL("fork", "kubo")) + `
@@ -265,13 +265,22 @@ func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
 	}`)
 	err := (writetrace.Suite{}).Run(ctx, framework.Env{
 		RunID:     "run-write-trace-repos-test",
-		OutputDir: outDir,
+		OutputDir: outputDir,
+		ResultDir: resultDir,
 	}, cfg)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	for _, path := range []string{
+		filepath.Join(outputDir, "repos", "ipfs", "kubo", ".git"),
+		filepath.Join(outputDir, "repos", "fork", "kubo", ".git"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("managed clone %s should remain under output workspace: %v", path, err)
+		}
+	}
 
-	envelopes := readWriteTraceEnvelopes(t, filepath.Join(outDir, "raw", "write_trace.jsonl"))
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(resultDir, "raw", "write_trace.jsonl"))
 	if len(envelopes) != 2 {
 		t.Fatalf("envelope count = %d, want 2", len(envelopes))
 	}
@@ -291,9 +300,8 @@ func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
 	}
 }
 
-func initWriteTraceRepo(t *testing.T, pathParts ...string) string {
+func initWriteTraceRepoAt(t *testing.T, repo string) string {
 	t.Helper()
-	repo := filepath.Join(append([]string{t.TempDir()}, pathParts...)...)
 	if err := os.MkdirAll(repo, 0755); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
@@ -322,15 +330,16 @@ func initWriteTraceRepo(t *testing.T, pathParts ...string) string {
 	return repo
 }
 
-func seedCachedWriteTraceRepo(t *testing.T, cacheDir, sourceRepo, owner, name string) string {
+func installGitHubInsteadOf(t *testing.T, githubRoot string) {
 	t.Helper()
-	cachePath := filepath.Join(cacheDir, owner, name)
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
-		t.Fatalf("mkdir cache parent: %v", err)
+	configPath := filepath.Join(t.TempDir(), "gitconfig")
+	baseURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(githubRoot) + "/"}).String()
+	data := []byte("[url \"" + baseURL + "\"]\n\tinsteadOf = https://github.com/\n")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write git config: %v", err)
 	}
-	runGit(t, "", "clone", sourceRepo, cachePath)
-	runGit(t, cachePath, "remote", "set-url", "origin", githubRepoURL(owner, name))
-	return cachePath
+	t.Setenv("GIT_CONFIG_GLOBAL", configPath)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 }
 
 func githubRepoURL(owner, name string) string {

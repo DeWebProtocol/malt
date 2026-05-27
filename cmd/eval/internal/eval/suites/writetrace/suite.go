@@ -44,7 +44,7 @@ func runRepository(ctx context.Context, env framework.Env, cfg Config, repo Repo
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreMode(cfg.StoreMode),
 		Backend: evalstore.StoreBackend(cfg.StoreBackend),
-		RootDir: storeDirForRepository(cfg.StoreDir, repo, index, repoCount),
+		RootDir: storeDirForRepository(env.WorkPath("write-stores"), repo, index, repoCount),
 	})
 	if err != nil {
 		return err
@@ -61,11 +61,11 @@ func runRepository(ctx context.Context, env framework.Env, cfg Config, repo Repo
 	}
 
 	source := gittrace.Source{
-		RepoURL:     repo.RepoURL,
-		CacheDir:    cfg.CacheDir,
-		Ref:         "HEAD",
-		Limit:       cfg.MaxCommitsPerRepo,
-		FirstParent: cfg.FirstParent,
+		RepoURL:      repo.RepoURL,
+		CloneBaseDir: env.WorkPath("repos"),
+		Ref:          "HEAD",
+		Limit:        cfg.MaxCommitsPerRepo,
+		FirstParent:  cfg.FirstParent,
 	}
 	return source.Walk(ctx, func(commit replay.CommitMutation) error {
 		commit.Repo = repo.RepoID

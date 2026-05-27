@@ -17,12 +17,12 @@ import (
 
 // Source streams Git object commit snapshots as replay.CommitMutation values.
 type Source struct {
-	RepoURL     string
-	RepoPath    string
-	CacheDir    string
-	Ref         string
-	Limit       int
-	FirstParent bool
+	RepoURL      string
+	RepoPath     string
+	CloneBaseDir string
+	Ref          string
+	Limit        int
+	FirstParent  bool
 }
 
 // Walk visits commits in chronological replay order.
@@ -78,28 +78,26 @@ func (s Source) repositoryPath(ctx context.Context) (string, error) {
 	if strings.TrimSpace(s.RepoPath) != "" {
 		return filepath.Abs(s.RepoPath)
 	}
-	return EnsureClone(ctx, s.RepoURL, s.CacheDir)
+	return CloneForReplay(ctx, s.RepoURL, s.CloneBaseDir)
 }
 
-// EnsureClone returns a local clone for repoURL under cacheDir.
-func EnsureClone(ctx context.Context, repoURL, cacheDir string) (string, error) {
-	if cacheDir == "" {
-		cacheDir = filepath.Join(".eval-cache", "repos")
+// CloneForReplay creates a fresh managed clone for repoURL under baseDir.
+func CloneForReplay(ctx context.Context, repoURL, baseDir string) (string, error) {
+	if baseDir == "" {
+		baseDir = filepath.Join(".eval-cache", "repos")
 	}
-	path, err := CachePathForURL(cacheDir, repoURL)
+	path, err := ClonePathForURL(baseDir, repoURL)
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-		if err := verifyCachedOrigin(ctx, path, repoURL); err != nil {
-			return "", err
-		}
-		return path, nil
+	if err := os.RemoveAll(path); err != nil {
+		return "", fmt.Errorf("remove stale managed clone %s: %w", path, err)
 	}
 	if err := runGit(ctx, "", "clone", repoURL, path); err != nil {
+		_ = os.RemoveAll(path)
 		return "", err
 	}
 	return path, nil
@@ -303,9 +301,9 @@ func CanonicalRepoIDFromURL(repoURL string) (string, error) {
 	return "github.com/" + repo.owner + "/" + repo.name, nil
 }
 
-// CachePathForURL returns the local clone path for a GitHub HTTPS repository
+// ClonePathForURL returns the local clone path for a GitHub HTTPS repository
 // under baseDir.
-func CachePathForURL(baseDir, repoURL string) (string, error) {
+func ClonePathForURL(baseDir, repoURL string) (string, error) {
 	repo, err := parseGitHubHTTPSRepoURL(repoURL)
 	if err != nil {
 		return "", err
@@ -342,29 +340,36 @@ func parseGitHubHTTPSRepoURL(repoURL string) (githubRepo, error) {
 	if strings.HasSuffix(name, ".git") {
 		name = name[:len(name)-len(".git")]
 	}
-	if owner == "" || name == "" || owner == "." || owner == ".." || name == "." || name == ".." {
-		return githubRepo{}, fmt.Errorf("repo URL %q must include non-empty owner and repo", repoURL)
+	if !isGitHubOwnerComponent(owner) || !isGitHubRepoComponent(name) {
+		return githubRepo{}, fmt.Errorf("repo URL %q must use safe GitHub owner and repo components", repoURL)
 	}
 	return githubRepo{owner: owner, name: name}, nil
 }
 
-func verifyCachedOrigin(ctx context.Context, path, repoURL string) error {
-	out, err := gitOutput(ctx, path, "remote", "get-url", "origin")
-	if err != nil {
-		return fmt.Errorf("verify cached origin for %s: %w", path, err)
+func isGitHubOwnerComponent(value string) bool {
+	if value == "" || len(value) > 39 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
 	}
-	got, err := CanonicalRepoIDFromURL(strings.TrimSpace(out))
-	if err != nil {
-		return fmt.Errorf("cached repo %s origin is not a GitHub HTTPS repo URL: %w", path, err)
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			continue
+		}
+		return false
 	}
-	want, err := CanonicalRepoIDFromURL(repoURL)
-	if err != nil {
-		return err
+	return true
+}
+
+func isGitHubRepoComponent(value string) bool {
+	if value == "" || value == "." || value == ".." {
+		return false
 	}
-	if got != want {
-		return fmt.Errorf("cached repo %s origin mismatch: got %q want %q", path, got, want)
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
 	}
-	return nil
+	return true
 }
 
 type objectSnapshot struct {

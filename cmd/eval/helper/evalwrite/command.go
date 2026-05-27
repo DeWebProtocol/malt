@@ -60,7 +60,7 @@ func newCommand(use, short string) *cobra.Command {
 	cmd.Flags().StringVar(&opts.repoPath, "repo-path", opts.repoPath, "Existing local Git repository path to replay")
 	cmd.Flags().StringVar(&opts.repoRef, "repo-ref", opts.repoRef, "Git ref to replay")
 	cmd.Flags().IntVar(&opts.commitLimit, "limit", opts.commitLimit, "Maximum commits to replay; 0 means all")
-	cmd.Flags().StringVar(&opts.cacheDir, "cache-dir", opts.cacheDir, "Repository clone cache directory")
+	cmd.Flags().StringVar(&opts.cacheDir, "cache-dir", opts.cacheDir, "Managed repository clone base directory")
 	cmd.Flags().StringVar(&opts.storeDir, "store-dir", opts.storeDir, "Evaluation store directory for fs/badger backends")
 	cmd.Flags().StringVar(&opts.storeMode, "store-mode", opts.storeMode, "Store mode: isolated or shared")
 	cmd.Flags().StringVar(&opts.storeBackend, "store-backend", opts.storeBackend, "Store backend: memory, fs, or badger")
@@ -96,12 +96,12 @@ func run(cmd *cobra.Command, opts *options) error {
 
 	enc := json.NewEncoder(writer)
 	source := gittrace.Source{
-		RepoURL:     opts.repoURL,
-		RepoPath:    opts.repoPath,
-		CacheDir:    opts.cacheDir,
-		Ref:         opts.repoRef,
-		Limit:       opts.commitLimit,
-		FirstParent: opts.firstParent,
+		RepoURL:      opts.repoURL,
+		RepoPath:     opts.repoPath,
+		CloneBaseDir: opts.cacheDir,
+		Ref:          opts.repoRef,
+		Limit:        opts.commitLimit,
+		FirstParent:  opts.firstParent,
 	}
 	return source.Walk(cmd.Context(), func(commit replay.CommitMutation) error {
 		return replay.RunCommit(cmd.Context(), commit, systems, enc)

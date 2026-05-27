@@ -24,15 +24,16 @@ func TestCommandRunsPlanWithOverrides(t *testing.T) {
 	if err := reg.Register(fakeSuite{}); err != nil {
 		t.Fatalf("register fake suite: %v", err)
 	}
-	outDir := filepath.Join(tmp, "out")
+	resultDir := filepath.Join(tmp, "result-out")
+	outputDir := filepath.Join(tmp, "output-work")
 	cmd := NewCommand(reg)
-	cmd.SetArgs([]string{"--plan", planPath, "--out", outDir, "--run-id", "from-flags"})
+	cmd.SetArgs([]string{"--plan", planPath, "--out", resultDir, "--output-dir", outputDir, "--run-id", "from-flags"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	manifestBytes, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	manifestBytes, err := os.ReadFile(filepath.Join(resultDir, "manifest.json"))
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
@@ -43,12 +44,15 @@ func TestCommandRunsPlanWithOverrides(t *testing.T) {
 	if manifest.RunID != "from-flags" {
 		t.Fatalf("manifest run id = %q, want from-flags", manifest.RunID)
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "raw", "fake_suite.jsonl")); err != nil {
+	if _, err := os.Stat(filepath.Join(resultDir, "raw", "fake_suite.jsonl")); err != nil {
 		t.Fatalf("raw suite output missing: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(outputDir, "logs")); err != nil || !info.IsDir() {
+		t.Fatalf("output workspace logs dir missing, info=%v err=%v", info, err)
 	}
 }
 
-func TestCommandRunIDOverrideUpdatesDefaultOutputDir(t *testing.T) {
+func TestCommandRunIDOverrideUpdatesDefaultOutputAndResultDirs(t *testing.T) {
 	tmp := t.TempDir()
 	t.Chdir(tmp)
 	planPath := filepath.Join(tmp, "plan.json")
@@ -70,12 +74,19 @@ func TestCommandRunIDOverrideUpdatesDefaultOutputDir(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	expected := filepath.Join(tmp, "results", "from-flags", "manifest.json")
+	expected := filepath.Join(tmp, "result", "from-flags", "manifest.json")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("expected manifest at %s: %v", expected, err)
 	}
-	old := filepath.Join(tmp, "results", "from-plan", "manifest.json")
+	if _, err := os.Stat(filepath.Join(tmp, "output", "from-flags", "logs")); err != nil {
+		t.Fatalf("expected output workspace for run-id override: %v", err)
+	}
+	old := filepath.Join(tmp, "result", "from-plan", "manifest.json")
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("old result path should not exist, stat err=%v", err)
+	}
+	oldOutput := filepath.Join(tmp, "output", "from-plan")
+	if _, err := os.Stat(oldOutput); !os.IsNotExist(err) {
 		t.Fatalf("old output path should not exist, stat err=%v", err)
 	}
 }

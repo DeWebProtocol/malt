@@ -12,12 +12,33 @@ import (
 type Env struct {
 	RunID     string
 	OutputDir string
+	ResultDir string
 	clock     func() time.Time
 }
 
 // RawPath returns the JSONL path for a suite's raw result stream.
 func (e Env) RawPath(suite string) string {
-	return filepath.Join(e.OutputDir, "raw", suite+".jsonl")
+	return filepath.Join(e.resultDir(), "raw", suite+".jsonl")
+}
+
+// WorkPath returns a path under the disposable run workspace.
+func (e Env) WorkPath(parts ...string) string {
+	all := append([]string{e.workDir()}, parts...)
+	return filepath.Join(all...)
+}
+
+func (e Env) resultDir() string {
+	if e.ResultDir != "" {
+		return e.ResultDir
+	}
+	return e.OutputDir
+}
+
+func (e Env) workDir() string {
+	if e.OutputDir != "" {
+		return e.OutputDir
+	}
+	return e.ResultDir
 }
 
 // WriteRecord appends one raw result record using the common envelope.
