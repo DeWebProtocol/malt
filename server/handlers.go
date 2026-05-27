@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -13,23 +12,16 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt/api/http"
-	"github.com/dewebprotocol/malt/auth/arcset"
-	"github.com/dewebprotocol/malt/auth/proof/evidence"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
-	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/graph/writer"
 	"github.com/dewebprotocol/malt/layout/unixfs"
-	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
-	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
 	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
-
-const fixedListChunkSize = 262144
 
 type pathResolution struct {
 	queryPath string
@@ -38,82 +30,20 @@ type pathResolution struct {
 	proofList *prooflist.ProofList
 }
 
-type proofListVerifiedPath struct {
-	parts             []string
-	hasPayloadBinding bool
-}
-
-func (p *proofListVerifiedPath) addStep(step prooflist.Step) error {
-	path := arcset.CanonicalizePath(step.Path).String()
-	if path == "" || step.EvidenceKind == "structure" && (step.EvidenceBackend == "list" || step.EvidenceBackend == "measured_list") {
-		return nil
-	}
-	if p.hasPayloadBinding {
-		return fmt.Errorf("prooflist traversal step %q appears after terminal @payload binding", path)
-	}
-	if path == "@payload" {
-		p.hasPayloadBinding = true
-		return nil
-	}
-	p.parts = append(p.parts, path)
-	return nil
-}
-
-func (p proofListVerifiedPath) logicalQueryPath() string {
-	return strings.Join(p.parts, "/")
-}
-
 var (
 	errPathNotFound = errors.New("path not found")
 )
 
 func (s *Server) statForResolvedKey(ctx context.Context, g graph.Runtime, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
-	if unixfswire.IsManifestCID(key) {
-		stat, err := s.statFromFlatTarget(ctx, g, key)
-		return stat, key, err
+	stat, err := s.pathStatForTarget(ctx, g, key, false)
+	if err != nil {
+		return nil, cid.Undef, err
 	}
-	switch maltcid.SemanticKindOf(key) {
-	case maltcid.SemanticKindMap:
-		if stat, err := s.unixFSPathStat(ctx, g, key, ""); err == nil {
-			target, err := statReadTarget(stat)
-			if err != nil {
-				return nil, cid.Undef, err
-			}
-			return stat, target, nil
-		}
-		payload, err := mandatoryMapPayload(ctx, g, key)
-		if err != nil {
-			return nil, cid.Undef, err
-		}
-		return &httpapi.PathStatResponse{
-			Kind:        "dir",
-			StorageKind: "map",
-			Key:         key.String(),
-			Payload:     payload.String(),
-		}, payload, nil
-	case maltcid.SemanticKindList:
-		size, _, err := s.listFileSize(ctx, g, key)
-		if err != nil {
-			return nil, cid.Undef, err
-		}
-		return &httpapi.PathStatResponse{
-			Kind:        "file",
-			StorageKind: "list",
-			Key:         key.String(),
-			Size:        &size,
-		}, key, nil
-	default:
-		resp := &httpapi.PathStatResponse{
-			Kind:        "file",
-			StorageKind: "raw",
-			Key:         key.String(),
-		}
-		if data, err := s.node.CAS().Get(ctx, key); err == nil {
-			size := int64(len(data))
-			resp.Size = &size
-		}
-		return resp, key, nil
+	target, err := statReadTarget(stat)
+	if err != nil {
+		return nil, cid.Undef, err
 	}
+	return stat, target, nil
 }
 
 func statReadTarget(stat *httpapi.PathStatResponse) (cid.Cid, error) {
@@ -130,42 +60,8 @@ func statReadTarget(stat *httpapi.PathStatResponse) (cid.Cid, error) {
 	return decodeCID(target)
 }
 
-func (s *Server) readProofList(ctx context.Context, g graph.Runtime, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
-	if resolved == nil || resolved.proofList == nil {
-		return nil, fmt.Errorf("resolution prooflist is missing")
-	}
-	pl := *resolved.proofList
-	pl.Steps = append([]prooflist.Step(nil), resolved.proofList.Steps...)
-	if resolved.stat.StorageKind == "list" && endExclusive > start {
-		listRoot, err := decodeCID(resolved.stat.Key)
-		if err != nil {
-			return nil, err
-		}
-		if measured, ok := g.ListSemantic().(list.MeasuredSemantics); ok {
-			rangeStart := uint64(start)
-			rangeEnd := uint64(endExclusive)
-			result, proof, err := measured.ProveRange(ctx, g.Namespace(), listRoot, rangeStart, &rangeEnd)
-			if err == nil {
-				if err := unixfs.AppendListRangeStep(&pl, resolved.queryPath, listRoot, rangeStart, rangeEnd, result, proof); err != nil {
-					return nil, err
-				}
-				return &pl, nil
-			}
-		}
-		steps, err := s.listIndexStepsForRange(ctx, g, listRoot, start, endExclusive)
-		if err != nil {
-			return nil, err
-		}
-		if err := unixfs.AppendListIndexSteps(&pl, resolved.queryPath, steps); err != nil {
-			return nil, err
-		}
-	}
-	return &pl, nil
-}
-
-func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target cid.Cid) (*httpapi.PathStatResponse, error) {
-	if unixfswire.IsManifestCID(target) {
-		entries, err := s.readDirectoryManifest(ctx, target)
+func (s *Server) pathStatForTarget(ctx context.Context, g graph.Runtime, target cid.Cid, rawMustExist bool) (*httpapi.PathStatResponse, error) {
+	if entries, ok, err := unixfs.ManifestDirectoryEntries(ctx, s.node.CAS(), target); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -204,18 +100,51 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target
 			Size:        &size,
 		}, nil
 	default:
-		data, err := s.node.CAS().Get(ctx, target)
-		if err != nil {
-			return nil, errPathNotFound
-		}
-		size := int64(len(data))
-		return &httpapi.PathStatResponse{
+		resp := &httpapi.PathStatResponse{
 			Kind:        "file",
 			StorageKind: "raw",
 			Key:         target.String(),
-			Size:        &size,
-		}, nil
+		}
+		data, err := s.node.CAS().Get(ctx, target)
+		if err != nil {
+			if rawMustExist {
+				return nil, errPathNotFound
+			}
+			return resp, nil
+		}
+		size := int64(len(data))
+		resp.Size = &size
+		return resp, nil
 	}
+}
+
+func (s *Server) readProofList(ctx context.Context, g graph.Runtime, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
+	if resolved == nil || resolved.proofList == nil {
+		return nil, fmt.Errorf("resolution prooflist is missing")
+	}
+	pl := *resolved.proofList
+	pl.Steps = append([]prooflist.Step(nil), resolved.proofList.Steps...)
+	if resolved.stat.StorageKind == "list" && endExclusive > start {
+		listRoot, err := decodeCID(resolved.stat.Key)
+		if err != nil {
+			return nil, err
+		}
+		if start < 0 {
+			return nil, fmt.Errorf("range start is negative")
+		}
+		layout, err := s.unixFSLayout(g)
+		if err != nil {
+			return nil, err
+		}
+		if err := layout.AppendListPayloadRangeProof(ctx, &pl, resolved.queryPath, listRoot, uint64(start), uint64(endExclusive-start)); err != nil {
+			return nil, err
+		}
+	}
+	return &pl, nil
+}
+
+func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target cid.Cid) (*httpapi.PathStatResponse, error) {
+	return s.pathStatForTarget(ctx, g, target, true)
 }
 
 func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
@@ -233,50 +162,7 @@ func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.C
 		return nil, errPathNotFound
 	}
 
-	if unixfswire.IsManifestCID(key) {
-		return s.statFromFlatTarget(ctx, g, key)
-	}
-	switch maltcid.SemanticKindOf(key) {
-	case maltcid.SemanticKindMap:
-		if stat, err := s.unixFSPathStat(ctx, g, key, ""); err == nil {
-			return stat, nil
-		}
-		payload, err := mandatoryMapPayload(ctx, g, key)
-		if err != nil {
-			return nil, err
-		}
-		resp := &httpapi.PathStatResponse{
-			Kind:        "dir",
-			StorageKind: "map",
-			Key:         key.String(),
-			Payload:     payload.String(),
-		}
-		return resp, nil
-	case maltcid.SemanticKindList:
-		size, _, err := s.listFileSize(ctx, g, key)
-		if err != nil {
-			return nil, err
-		}
-		return &httpapi.PathStatResponse{
-			Kind:        "file",
-			StorageKind: "list",
-			Key:         key.String(),
-			Size:        &size,
-		}, nil
-	default:
-		// Non-MALT key is treated as a raw file. If the content is available in
-		// CAS we include the size; otherwise we still return the resolved key.
-		resp := &httpapi.PathStatResponse{
-			Kind:        "file",
-			StorageKind: "raw",
-			Key:         key.String(),
-		}
-		if data, err := s.node.CAS().Get(ctx, key); err == nil {
-			s := int64(len(data))
-			resp.Size = &s
-		}
-		return resp, nil
-	}
+	return s.pathStatForTarget(ctx, g, key, false)
 }
 
 func (s *Server) unixFSLayout(g graph.Runtime) (*unixfs.Layout, error) {
@@ -286,23 +172,10 @@ func (s *Server) unixFSLayout(g graph.Runtime) (*unixfs.Layout, error) {
 	}
 	return unixfs.New(unixfs.Options{
 		Namespace: g.Namespace(),
-		ChunkSize: fixedListChunkSize,
 		Map:       g.Semantic(),
 		List:      g.ListSemantic(),
 		Blocks:    blocks,
 	})
-}
-
-func (s *Server) readDirectoryManifest(ctx context.Context, manifestCID cid.Cid) ([]string, error) {
-	data, err := s.node.CAS().Get(ctx, manifestCID)
-	if err != nil {
-		return nil, err
-	}
-	m, err := manifest.ParseDirectoryJSON(data)
-	if err != nil {
-		return nil, err
-	}
-	return m.Entries, nil
 }
 
 func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, root cid.Cid) (cid.Cid, error) {
@@ -412,15 +285,7 @@ func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.Pat
 	if err != nil {
 		return nil, err
 	}
-	data, err := s.node.CAS().Get(ctx, payloadCID)
-	if err != nil {
-		return nil, err
-	}
-	m, err := manifest.ParseDirectoryJSON(data)
-	if err != nil {
-		return nil, err
-	}
-	return m.Entries, nil
+	return unixfs.DirectoryManifestPayloadEntries(ctx, s.node.CAS(), payloadCID)
 }
 
 func (s *Server) readStatFile(ctx context.Context, g graph.Runtime, stat *httpapi.PathStatResponse) ([]byte, error) {
@@ -484,93 +349,26 @@ func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.C
 }
 
 func (s *Server) listFileSize(ctx context.Context, g graph.Runtime, listRoot cid.Cid) (int64, uint64, error) {
-	q, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, ^uint64(0))
+	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		return 0, 0, err
 	}
-	count := q.Length
-	if count == 0 {
-		return 0, 0, nil
-	}
-	last, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, count-1)
-	if err != nil {
-		return 0, 0, err
-	}
-	lastChunk, err := s.node.CAS().Get(ctx, last.Key)
-	if err != nil {
-		return 0, 0, err
-	}
-	size := int64((count-1)*uint64(fixedListChunkSize) + uint64(len(lastChunk)))
-	return size, count, nil
+	size, count, err := layout.ListPayloadSize(ctx, listRoot)
+	return int64(size), count, err
 }
 
 func (s *Server) readListRange(ctx context.Context, g graph.Runtime, listRoot cid.Cid, start, endExclusive int64) ([]byte, error) {
 	if endExclusive <= start {
 		return []byte{}, nil
 	}
-	first := uint64(start / fixedListChunkSize)
-	last := uint64((endExclusive - 1) / fixedListChunkSize)
-	var out bytes.Buffer
-	for i := first; i <= last; i++ {
-		q, _, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, i)
-		if err != nil {
-			return nil, err
-		}
-		chunk, err := s.node.CAS().Get(ctx, q.Key)
-		if err != nil {
-			return nil, err
-		}
-		chunkStart := int64(i) * fixedListChunkSize
-		localStart := int64(0)
-		if start > chunkStart {
-			localStart = start - chunkStart
-		}
-		localEnd := int64(len(chunk))
-		if endExclusive < chunkStart+localEnd {
-			localEnd = endExclusive - chunkStart
-		}
-		if localStart < 0 {
-			localStart = 0
-		}
-		if localEnd < localStart {
-			localEnd = localStart
-		}
-		out.Write(chunk[localStart:localEnd])
+	if start < 0 {
+		return nil, fmt.Errorf("range start is negative")
 	}
-	return out.Bytes(), nil
-}
-
-func (s *Server) listIndexStepsForRange(ctx context.Context, g graph.Runtime, listRoot cid.Cid, start, endExclusive int64) ([]unixfs.ListIndexStep, error) {
-	if endExclusive <= start {
-		return nil, nil
+	layout, err := s.unixFSLayout(g)
+	if err != nil {
+		return nil, err
 	}
-	first := uint64(start / fixedListChunkSize)
-	last := uint64((endExclusive - 1) / fixedListChunkSize)
-	steps := make([]unixfs.ListIndexStep, 0, last-first+1)
-	for index := first; index <= last; index++ {
-		query, proof, err := g.ListSemantic().Prove(ctx, g.Namespace(), listRoot, index)
-		if err != nil {
-			return nil, err
-		}
-		ok, err := g.ListSemantic().Verify(listRoot, index, query, proof)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("list proof failed at index %d", index)
-		}
-		if !query.Key.Defined() {
-			return nil, fmt.Errorf("missing chunk %d", index)
-		}
-		steps = append(steps, unixfs.ListIndexStep{
-			Root:   listRoot,
-			Index:  index,
-			Length: query.Length,
-			Target: query.Key,
-			Proof:  proof,
-		})
-	}
-	return steps, nil
+	return layout.ReadListPayloadRange(ctx, listRoot, uint64(start), uint64(endExclusive-start))
 }
 
 func parseRangeHeader(raw string, size int64) (start int64, endExclusive int64, partial bool, err error) {
@@ -627,184 +425,6 @@ func parseRangeHeader(raw string, size int64) (start int64, endExclusive int64, 
 	}
 }
 
-func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
-	out := make(map[string]cid.Cid, len(raw))
-	for path, target := range raw {
-		parsed, err := parseOptionalCID(target)
-		if err != nil {
-			return nil, fmt.Errorf("invalid target for %q: %w", path, err)
-		}
-		out[path] = parsed
-	}
-	return out, nil
-}
-
-func semanticMutationFromRequest(baseRoot cid.Cid, deltaRequests []httpapi.SemanticMutationDelta) (writer.SemanticMutation, error) {
-	deltas := make([]writer.ArcSetDelta, 0, len(deltaRequests))
-	for i, deltaReq := range deltaRequests {
-		delta, err := semanticDeltaFromRequest(deltaReq)
-		if err != nil {
-			return writer.SemanticMutation{}, fmt.Errorf("delta %d: %w", i, err)
-		}
-		deltas = append(deltas, delta)
-	}
-
-	return writer.SemanticMutation{
-		BaseRoot: baseRoot,
-		Deltas:   deltas,
-	}, nil
-}
-
-func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (writer.ArcSetDelta, error) {
-	object := cid.Undef
-	if req.Object != "" {
-		parsed, err := decodeCID(req.Object)
-		if err != nil {
-			return writer.ArcSetDelta{}, fmt.Errorf("invalid object: %w", err)
-		}
-		object = parsed
-	}
-	expectedRoot := cid.Undef
-	if req.ExpectedRoot != "" {
-		parsed, err := decodeCID(req.ExpectedRoot)
-		if err != nil {
-			return writer.ArcSetDelta{}, fmt.Errorf("invalid expected root: %w", err)
-		}
-		expectedRoot = parsed
-	}
-
-	kind := arcset.Kind(req.Kind)
-	changes := make([]arcset.ArcChange, 0, len(req.Changes))
-	for i, changeReq := range req.Changes {
-		change, err := semanticChangeFromRequest(kind, changeReq)
-		if err != nil {
-			return writer.ArcSetDelta{}, fmt.Errorf("change %d: %w", i, err)
-		}
-		changes = append(changes, change)
-	}
-
-	delta, err := arcset.NewCanonicalArcDelta(kind, changes)
-	if err != nil {
-		return writer.ArcSetDelta{}, err
-	}
-	out := writer.ArcSetDelta{
-		Object:       object,
-		ExpectedRoot: expectedRoot,
-		Kind:         kind,
-		Changes:      delta,
-	}
-	if req.Commit != nil && req.Commit.FixedList != nil {
-		out.Commit.FixedList = &writer.FixedListCommit{
-			TotalSize: req.Commit.FixedList.TotalSize,
-			ChunkSize: req.Commit.FixedList.ChunkSize,
-		}
-	}
-	return out, nil
-}
-
-func semanticChangeFromRequest(kind arcset.Kind, req httpapi.SemanticMutationChange) (arcset.ArcChange, error) {
-	var coord arcset.CanonicalCoordinate
-	var err error
-	switch kind {
-	case arcset.KindMap:
-		if req.Path == "" {
-			return arcset.ArcChange{}, fmt.Errorf("path is required for map changes")
-		}
-		coord, err = arcset.NewMapCoordinate(req.Path)
-	case arcset.KindList:
-		if req.Index == nil {
-			return arcset.ArcChange{}, fmt.Errorf("index is required for list changes")
-		}
-		if *req.Index > uint64(1<<63-1) {
-			return arcset.ArcChange{}, fmt.Errorf("index is too large")
-		}
-		coord, err = arcset.NewListCoordinate(int64(*req.Index))
-	default:
-		return arcset.ArcChange{}, fmt.Errorf("%w: %q", arcset.ErrInvalidKind, kind)
-	}
-	if err != nil {
-		return arcset.ArcChange{}, err
-	}
-
-	change := arcset.ArcChange{Coordinate: coord}
-	if req.Before != nil {
-		before, err := semanticTargetFromRequest(*req.Before)
-		if err != nil {
-			return arcset.ArcChange{}, fmt.Errorf("before: %w", err)
-		}
-		change.Before = &before
-	}
-	if req.After != nil {
-		after, err := semanticTargetFromRequest(*req.After)
-		if err != nil {
-			return arcset.ArcChange{}, fmt.Errorf("after: %w", err)
-		}
-		change.After = &after
-	}
-	return change, nil
-}
-
-func semanticTargetFromRequest(req httpapi.SemanticMutationTarget) (arcset.TargetRef, error) {
-	target, err := decodeCID(req.Target)
-	if err != nil {
-		return arcset.TargetRef{}, fmt.Errorf("invalid target: %w", err)
-	}
-	return semanticTargetRef(req.TargetKind, target)
-}
-
-func countSemanticDeltas(deltas []writer.ArcSetDelta, kind arcset.Kind) int {
-	count := 0
-	for _, delta := range deltas {
-		if delta.Kind == kind {
-			count++
-		}
-	}
-	return count
-}
-
-func semanticTargetRef(kind string, target cid.Cid) (arcset.TargetRef, error) {
-	switch arcset.TargetKind(kind) {
-	case "":
-		return arcset.NewCIDTarget(target), nil
-	case arcset.TargetKindUnknown:
-		return arcset.NewUnknownTarget(target), nil
-	case arcset.TargetKindCAS:
-		return arcset.NewCASTarget(target), nil
-	case arcset.TargetKindMap:
-		return arcset.NewMapTarget(target), nil
-	case arcset.TargetKindList:
-		return arcset.NewListTarget(target), nil
-	default:
-		return arcset.TargetRef{}, fmt.Errorf("%w: %q", arcset.ErrInvalidTargetKind, kind)
-	}
-}
-
-func buildCreateSnapshot(arcs map[string]cid.Cid) (arcset.ArcSet, int, error) {
-	snapshot, err := arcset.NewArcSet(arcs)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	payload, ok := snapshot.Get(explicit.PayloadArc)
-	if !ok || !payload.Defined() {
-		return nil, 0, fmt.Errorf("@payload binding is required")
-	}
-
-	canonical, err := arcset.ToPathMap(snapshot)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	arcCount := 0
-	for _, target := range canonical {
-		if target.Defined() {
-			arcCount++
-		}
-	}
-
-	return snapshot, arcCount, nil
-}
-
 func resolveMiss(_ cid.Cid, _ string, result *resolver.ResolveResult) bool {
 	if result == nil {
 		return false
@@ -821,22 +441,6 @@ func mandatoryMapPayload(ctx context.Context, g graph.Runtime, root cid.Cid) (ci
 		return cid.Undef, fmt.Errorf("map root %s is missing mandatory @payload binding", root.String())
 	}
 	return payload, nil
-}
-
-func parseOptionalCID(raw string) (cid.Cid, error) {
-	if raw == "" {
-		return cid.Undef, nil
-	}
-	return cid.Decode(raw)
-}
-
-func decodeEvidence(kind string, payload []byte) (evidence.Evidence, error) {
-	switch kind {
-	case "explicit":
-		return evidence.NewExplicitEvidence(payload), nil
-	default:
-		return nil, fmt.Errorf("unknown evidence kind %q", kind)
-	}
 }
 
 func nonEmpty(primary string, fallback string) string {

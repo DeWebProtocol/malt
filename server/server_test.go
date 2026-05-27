@@ -20,7 +20,7 @@ import (
 	mappingsemantic "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/graph"
-	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	"github.com/dewebprotocol/malt/runtime/node"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
@@ -101,6 +101,50 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	}
 	if rootResp.Root == "" {
 		t.Fatalf("root = %q, want non-empty root", rootResp.Root)
+	}
+}
+
+func TestFreshUnixFSWriteCreatesRoot(t *testing.T) {
+	node := newTestNode(t)
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/_unixfs?path=hello.txt", "application/octet-stream", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("POST /_unixfs: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /_unixfs status = %d, want %d: %s", resp.StatusCode, http.StatusCreated, string(body))
+	}
+
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	if writeResp.OldRoot != "" {
+		t.Fatalf("old root = %q, want empty", writeResp.OldRoot)
+	}
+	if writeResp.NewRoot == "" {
+		t.Fatal("new root is empty")
+	}
+
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot + "/hello.txt")
+	if err != nil {
+		t.Fatalf("GET written file: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET written file status = %d, want %d: %s", resp.StatusCode, http.StatusOK, string(body))
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("written file = %q, want %q", string(data), "hello")
 	}
 }
 
@@ -1783,9 +1827,9 @@ func TestServerManifestRootUsesManifestDirectoryPath(t *testing.T) {
 	}
 
 	manifestData := []byte(`{"entries":["large.bin","raw.txt"]}`)
-	manifestCID, err := unixfswire.NewManifestCID(manifestData)
+	manifestCID, err := unixfs.NewDirectoryManifestCID(manifestData)
 	if err != nil {
-		t.Fatalf("NewManifestCID: %v", err)
+		t.Fatalf("NewDirectoryManifestCID: %v", err)
 	}
 	mockCAS.AddBlock(manifestCID, manifestData)
 
@@ -2076,7 +2120,7 @@ func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {
 	resp.Body.Close()
 	root := createResp.Root
 
-	fileBody := append(bytes.Repeat([]byte{'a'}, fixedListChunkSize), []byte("bcdef")...)
+	fileBody := append(bytes.Repeat([]byte{'a'}, unixfs.DefaultChunkSize), []byte("bcdef")...)
 	resp, err = http.Post(ts.URL+"/"+root+"/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs large file: %v", err)
@@ -2136,8 +2180,8 @@ func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {
 	if rangeStep.TotalSize == nil || *rangeStep.TotalSize != uint64(len(fileBody)) {
 		t.Fatalf("list-range total size = %v, want %d", rangeStep.TotalSize, len(fileBody))
 	}
-	if rangeStep.ChunkSize == nil || *rangeStep.ChunkSize != fixedListChunkSize {
-		t.Fatalf("list-range chunk size = %v, want %d", rangeStep.ChunkSize, fixedListChunkSize)
+	if rangeStep.ChunkSize == nil || *rangeStep.ChunkSize != unixfs.DefaultChunkSize {
+		t.Fatalf("list-range chunk size = %v, want %d", rangeStep.ChunkSize, unixfs.DefaultChunkSize)
 	}
 	if len(rangeStep.Segments) != 2 {
 		t.Fatalf("list-range segments = %d, want 2", len(rangeStep.Segments))
@@ -2536,7 +2580,7 @@ func TestServerDefaultGETRangeProofHeader(t *testing.T) {
 	root := createResp.Root
 
 	// Create a large file that spans multiple chunks
-	fileBody := append(bytes.Repeat([]byte{'a'}, fixedListChunkSize), []byte("bcdef")...)
+	fileBody := append(bytes.Repeat([]byte{'a'}, unixfs.DefaultChunkSize), []byte("bcdef")...)
 	resp, err = http.Post(ts.URL+"/"+root+"/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs large file: %v", err)

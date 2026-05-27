@@ -1,34 +1,34 @@
-package wire_test
+package format_test
 
 import (
 	"testing"
 
-	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
+	unixfsformat "github.com/dewebprotocol/malt/layout/unixfs/internal/format"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
 func TestNewManifestCID(t *testing.T) {
 	payload := []byte(`{"entries":["docs","readme.md"]}`)
-	c, err := unixfswire.NewManifestCID(payload)
+	c, err := unixfsformat.NewManifestCID(payload)
 	if err != nil {
 		t.Fatalf("NewManifestCID: %v", err)
 	}
-	if c.Prefix().Codec != unixfswire.CodecMaltManifest {
-		t.Fatalf("codec %x, want %x", c.Prefix().Codec, unixfswire.CodecMaltManifest)
+	if c.Prefix().Codec != unixfsformat.CodecMaltManifest {
+		t.Fatalf("codec %x, want %x", c.Prefix().Codec, unixfsformat.CodecMaltManifest)
 	}
-	if !unixfswire.IsManifestCID(c) {
+	if !unixfsformat.IsManifestCID(c) {
 		t.Fatal("manifest CID should be recognized")
 	}
 }
 
 func TestCodecName(t *testing.T) {
-	if got := unixfswire.CodecName(unixfswire.CodecMaltManifest); got != "malt-manifest" {
+	if got := unixfsformat.CodecName(unixfsformat.CodecMaltManifest); got != "malt-manifest" {
 		t.Fatalf("CodecName = %q, want malt-manifest", got)
 	}
 }
 
 func TestManifestCIDDoesNotOverlapMaltStructureCID(t *testing.T) {
-	manifestCID, err := unixfswire.NewManifestCID([]byte(`{"entries":["a.txt"]}`))
+	manifestCID, err := unixfsformat.NewManifestCID([]byte(`{"entries":["a.txt"]}`))
 	if err != nil {
 		t.Fatalf("NewManifestCID: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestManifestCIDDoesNotOverlapMaltStructureCID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMapKZGCid: %v", err)
 	}
-	if unixfswire.IsManifestCID(mapCID) {
+	if unixfsformat.IsManifestCID(mapCID) {
 		t.Fatal("MALT map root should not be recognized as a UnixFS manifest")
 	}
 
@@ -54,7 +54,7 @@ func TestManifestCIDDoesNotOverlapMaltStructureCID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewListKZGCid: %v", err)
 	}
-	if unixfswire.IsManifestCID(listCID) {
+	if unixfsformat.IsManifestCID(listCID) {
 		t.Fatal("MALT list root should not be recognized as a UnixFS manifest")
 	}
 }

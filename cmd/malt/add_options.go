@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/dewebprotocol/malt/layout/unixfs"
 )
 
-const addFixedChunkSize = 262144
+const addFixedChunkSize = unixfs.DefaultChunkSize
 
 const (
 	addTargetMALT      = "malt"

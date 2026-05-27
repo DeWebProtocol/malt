@@ -2,18 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
-	"github.com/dewebprotocol/malt/auth/arcset"
-	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	cid "github.com/ipfs/go-cid"
 )
@@ -32,7 +28,7 @@ type addMountedInput struct {
 }
 
 type addBuildResult struct {
-	Root             *addNode
+	Root             *unixfs.StagedNode
 	Files            int
 	Bytes            int64
 	ImmutableObjects int
@@ -42,37 +38,6 @@ type addBuildResult struct {
 	ArcSets          int
 	Arcs             int
 	SymlinkRoots     int
-}
-
-func uploadFlatChunks(ctx context.Context, casClient addCASClient, localPath string) ([]cid.Cid, error) {
-	f, err := os.Open(localPath)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", localPath, err)
-	}
-	defer f.Close()
-
-	chunks := make([]cid.Cid, 0)
-	buf := make([]byte, addFixedChunkSize)
-	for {
-		n, readErr := io.ReadFull(f, buf)
-		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-			return nil, fmt.Errorf("read %s: %w", localPath, readErr)
-		}
-		if n > 0 {
-			chunkCID, err := casClient.Put(ctx, slices.Clone(buf[:n]))
-			if err != nil {
-				return nil, fmt.Errorf("upload chunk for %s: %w", localPath, err)
-			}
-			chunks = append(chunks, chunkCID)
-		}
-		if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
-			break
-		}
-	}
-	if len(chunks) == 0 {
-		return nil, fmt.Errorf("empty chunk sequence for %s", localPath)
-	}
-	return chunks, nil
 }
 
 func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, localPath string, seen map[string]struct{}) (cid.Cid, int, int64, *addMaterializeResult, int, error) {
@@ -86,7 +51,7 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclie
 	if seen == nil {
 		seen = make(map[string]struct{})
 	}
-	staged := newDirNode()
+	staged := unixfs.NewStagedDirectory()
 	files, bytesUploaded, listObjects, nestedMat, nestedSymlinks, err := stageHierarchicalDirectoryChildren(ctx, staged, casClient, daemon, localPath, "", seen)
 	if err != nil {
 		return cid.Undef, 0, 0, nil, 0, err
@@ -103,7 +68,7 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, daemon *daemonclie
 	return mat.Key, files, bytesUploaded, mat, nestedSymlinks, nil
 }
 
-func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localDir string, mountBase string, seen map[string]struct{}) (int, int64, int, *addMaterializeResult, int, error) {
+func stageHierarchicalDirectoryChildren(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, daemon *daemonclient.Client, localDir string, mountBase string, seen map[string]struct{}) (int, int64, int, *addMaterializeResult, int, error) {
 	cycleKey, err := filepath.EvalSymlinks(localDir)
 	if err != nil {
 		cycleKey, err = filepath.Abs(localDir)
@@ -128,7 +93,7 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 	var symlinkRoots int
 	for _, entry := range entries {
 		childLocal := filepath.Join(localDir, entry.Name())
-		childPath := canonicalAddPath(path.Join(mountBase, entry.Name()))
+		childPath := unixfs.CanonicalStagedPath(path.Join(mountBase, entry.Name()))
 		if entry.Type()&fs.ModeSymlink != 0 {
 			info, err := os.Stat(childLocal)
 			if err != nil {
@@ -139,7 +104,7 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 				if err != nil {
 					return 0, 0, 0, nil, 0, err
 				}
-				if err := setMapDirNode(root, childPath, key); err != nil {
+				if err := unixfs.SetStagedMapDirectory(root, childPath, key); err != nil {
 					return 0, 0, 0, nil, 0, err
 				}
 				files += dirFiles
@@ -165,7 +130,7 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *addNode, casC
 			return 0, 0, 0, nil, 0, fmt.Errorf("stat %s: %w", childLocal, err)
 		}
 		if info.IsDir() {
-			ensureDirNode(root, childPath)
+			unixfs.EnsureStagedDirectory(root, childPath)
 			childFiles, childBytes, childLists, childMat, childSymlinks, err := stageHierarchicalDirectoryChildren(ctx, root, casClient, daemon, childLocal, childPath, seen)
 			if err != nil {
 				return 0, 0, 0, nil, 0, err
@@ -202,7 +167,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 	}
 
 	batcher := asAddCASBatcher(casClient)
-	root := newDirNode()
+	root := unixfs.NewStagedDirectory()
 	var files int
 	var bytesUploaded int64
 	var maltObjects int
@@ -220,7 +185,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, daemon *da
 				if err != nil {
 					return nil, err
 				}
-				if err := setMapDirNode(root, item.MountBase, key); err != nil {
+				if err := unixfs.SetStagedMapDirectory(root, item.MountBase, key); err != nil {
 					return nil, err
 				}
 				files += dirFiles
@@ -320,7 +285,7 @@ func collectAddInputs(rawInputs []string) ([]addInput, error) {
 }
 
 func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput, error) {
-	prefix := canonicalAddPath(opts.Prefix)
+	prefix := unixfs.CanonicalStagedPath(opts.Prefix)
 	if opts.Wrap && len(inputs) > 1 && strings.TrimSpace(opts.WrapName) == "" {
 		return nil, fmt.Errorf("--wrap-name is required when --wrap is used with multiple inputs")
 	}
@@ -337,12 +302,12 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 			if wrapName == "" {
 				wrapName = in.BaseName
 			}
-			mount = path.Join(canonicalAddPath(wrapName), in.BaseName)
+			mount = path.Join(unixfs.CanonicalStagedPath(wrapName), in.BaseName)
 		}
 		if prefix != "" {
 			mount = path.Join(prefix, mount)
 		}
-		mount = canonicalAddPath(mount)
+		mount = unixfs.CanonicalStagedPath(mount)
 		if mount == "" {
 			return nil, fmt.Errorf("invalid mount path for input %q", in.Original)
 		}
@@ -358,9 +323,9 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 	return out, nil
 }
 
-func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, int, *addMaterializeResult, int, error) {
+func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, daemon *daemonclient.Client, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, int, *addMaterializeResult, int, error) {
 	mountBase := item.MountBase
-	ensureDirNode(root, mountBase)
+	unixfs.EnsureStagedDirectory(root, mountBase)
 	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
 	if err != nil {
 		return 0, 0, 0, nil, 0, err
@@ -398,7 +363,7 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 				if err != nil {
 					return fmt.Errorf("compute relative path %q: %w", current, err)
 				}
-				targetPath := canonicalAddPath(path.Join(mountBase, filepath.ToSlash(rel)))
+				targetPath := unixfs.CanonicalStagedPath(path.Join(mountBase, filepath.ToSlash(rel)))
 				info, err := os.Stat(current)
 				if err != nil {
 					return fmt.Errorf("stat symlink target %s: %w", current, err)
@@ -408,7 +373,7 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 					if err != nil {
 						return err
 					}
-					if err := setMapDirNode(root, targetPath, key); err != nil {
+					if err := unixfs.SetStagedMapDirectory(root, targetPath, key); err != nil {
 						return err
 					}
 					files += dirFiles
@@ -438,13 +403,13 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 		if rel == "." {
 			return nil
 		}
-		targetPath := canonicalAddPath(path.Join(mountBase, filepath.ToSlash(rel)))
+		targetPath := unixfs.CanonicalStagedPath(path.Join(mountBase, filepath.ToSlash(rel)))
 		if targetPath == "" {
 			return nil
 		}
 
 		if d.IsDir() {
-			ensureDirNode(root, targetPath)
+			unixfs.EnsureStagedDirectory(root, targetPath)
 			return nil
 		}
 
@@ -471,8 +436,8 @@ func stageDirectoryInput(ctx context.Context, root *addNode, casClient addCASCli
 	return files, bytesUploaded, listObjects, symlinkMat, symlinkRoots, nil
 }
 
-func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient, daemon *daemonclient.Client, localPath string, targetPath string) (int64, int, error) {
-	targetPath = canonicalAddPath(targetPath)
+func stageSingleFile(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, daemon *daemonclient.Client, localPath string, targetPath string) (int64, int, error) {
+	targetPath = unixfs.CanonicalStagedPath(targetPath)
 	if targetPath == "" {
 		return 0, 0, fmt.Errorf("target path must not be empty")
 	}
@@ -485,86 +450,23 @@ func stageSingleFile(ctx context.Context, root *addNode, casClient addCASClient,
 		return 0, 0, fmt.Errorf("not a regular file: %s", localPath)
 	}
 
-	var key cid.Cid
+	f, err := os.Open(localPath)
+	if err != nil {
+		return 0, 0, fmt.Errorf("open %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	key, listBacked, err := unixfs.MaterializeStagedFilePayload(ctx, casClient, daemon, f, info.Size(), addFixedChunkSize)
+	if err != nil {
+		return 0, 0, fmt.Errorf("materialize file payload for %s: %w", localPath, err)
+	}
 	listObjects := 0
-	if info.Size() <= addFixedChunkSize {
-		data, err := os.ReadFile(localPath)
-		if err != nil {
-			return 0, 0, fmt.Errorf("read %s: %w", localPath, err)
-		}
-		blockCID, err := casClient.Put(ctx, data)
-		if err != nil {
-			return 0, 0, fmt.Errorf("upload %s to CAS: %w", localPath, err)
-		}
-		key = blockCID
-	} else {
-		listRoot, err := uploadAsList(ctx, casClient, daemon, localPath, uint64(info.Size()))
-		if err != nil {
-			return 0, 0, err
-		}
-		key = listRoot
+	if listBacked {
 		listObjects = 1
 	}
 
-	if err := setFileNode(root, targetPath, key); err != nil {
+	if err := unixfs.SetStagedFile(root, targetPath, key); err != nil {
 		return 0, 0, err
 	}
 	return info.Size(), listObjects, nil
-}
-
-func uploadAsList(ctx context.Context, casClient addCASClient, daemon *daemonclient.Client, localPath string, totalSize uint64) (cid.Cid, error) {
-	chunks, err := uploadFlatChunks(ctx, casClient, localPath)
-	if err != nil {
-		return cid.Undef, err
-	}
-	if batcher, ok := casClient.(*addCASBatcher); ok {
-		if err := batcher.Flush(ctx); err != nil {
-			return cid.Undef, fmt.Errorf("flush chunks for %s: %w", localPath, err)
-		}
-	}
-	tempRootResp, err := daemon.CreatePayloadRoot(ctx, nil)
-	if err != nil {
-		return cid.Undef, err
-	}
-	baseRoot, err := cid.Decode(tempRootResp.Root)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode temporary root CID: %w", err)
-	}
-	changes := make([]arcset.ArcChange, len(chunks))
-	for i, chunk := range chunks {
-		coord, err := arcset.NewListCoordinate(int64(i))
-		if err != nil {
-			return cid.Undef, err
-		}
-		after := arcset.NewCASTarget(chunk)
-		changes[i] = arcset.ArcChange{
-			Coordinate: coord,
-			After:      &after,
-		}
-	}
-	delta, err := arcset.NewCanonicalArcDelta(arcset.KindList, changes)
-	if err != nil {
-		return cid.Undef, err
-	}
-	resp, err := daemon.ApplySemanticMutation(ctx, writer.SemanticMutation{
-		BaseRoot: baseRoot,
-		Deltas: []writer.ArcSetDelta{{
-			Kind:    arcset.KindList,
-			Changes: delta,
-			Commit: writer.CommitDescriptor{
-				FixedList: &writer.FixedListCommit{
-					TotalSize: totalSize,
-					ChunkSize: addFixedChunkSize,
-				},
-			},
-		}},
-	})
-	if err != nil {
-		return cid.Undef, err
-	}
-	listRoot, err := cid.Decode(resp.NewRoot)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode list root CID: %w", err)
-	}
-	return listRoot, nil
 }

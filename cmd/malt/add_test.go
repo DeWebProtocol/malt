@@ -12,7 +12,7 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
-	unixfswire "github.com/dewebprotocol/malt/layout/unixfs/wire"
+	"github.com/dewebprotocol/malt/layout/unixfs"
 	"github.com/dewebprotocol/malt/runtime/node"
 	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 	"github.com/dewebprotocol/malt/server"
@@ -485,12 +485,12 @@ func TestAddInputsWithUnixFSMerkleDAGTarget(t *testing.T) {
 
 func TestMergeAddNodesConflictPolicy(t *testing.T) {
 	t.Run("file-file replace", func(t *testing.T) {
-		existing := newDirNode()
-		staged := newDirNode()
-		setFileNode(existing, "docs/readme.md", fakeAddCID("v1"))
-		setFileNode(staged, "docs/readme.md", fakeAddCID("v2"))
+		existing := unixfs.NewStagedDirectory()
+		staged := unixfs.NewStagedDirectory()
+		unixfs.SetStagedFile(existing, "docs/readme.md", fakeAddCID("v1"))
+		unixfs.SetStagedFile(staged, "docs/readme.md", fakeAddCID("v2"))
 
-		merged := mergeAddNodes(existing, staged)
+		merged := unixfs.MergeStagedNodes(existing, staged)
 		got := mustAddNodeAtPath(t, merged, "docs/readme.md")
 		if got.Kind != "file" || !got.Key.Equals(fakeAddCID("v2")) {
 			t.Fatalf("merged node = %+v", got)
@@ -498,12 +498,12 @@ func TestMergeAddNodesConflictPolicy(t *testing.T) {
 	})
 
 	t.Run("dir-dir merge", func(t *testing.T) {
-		existing := newDirNode()
-		staged := newDirNode()
-		setFileNode(existing, "docs/guide.txt", fakeAddCID("guide"))
-		setFileNode(staged, "docs/new.txt", fakeAddCID("new"))
+		existing := unixfs.NewStagedDirectory()
+		staged := unixfs.NewStagedDirectory()
+		unixfs.SetStagedFile(existing, "docs/guide.txt", fakeAddCID("guide"))
+		unixfs.SetStagedFile(staged, "docs/new.txt", fakeAddCID("new"))
 
-		merged := mergeAddNodes(existing, staged)
+		merged := unixfs.MergeStagedNodes(existing, staged)
 		if mustAddNodeAtPath(t, merged, "docs/guide.txt").Kind != "file" {
 			t.Fatal("expected existing child to remain after dir merge")
 		}
@@ -513,13 +513,13 @@ func TestMergeAddNodesConflictPolicy(t *testing.T) {
 	})
 
 	t.Run("file-dir replace subtree", func(t *testing.T) {
-		existing := newDirNode()
-		staged := newDirNode()
-		setFileNode(existing, "docs", fakeAddCID("leaf"))
-		ensureDirNode(staged, "docs/subdir")
-		setFileNode(staged, "docs/subdir/readme.md", fakeAddCID("nested"))
+		existing := unixfs.NewStagedDirectory()
+		staged := unixfs.NewStagedDirectory()
+		unixfs.SetStagedFile(existing, "docs", fakeAddCID("leaf"))
+		unixfs.EnsureStagedDirectory(staged, "docs/subdir")
+		unixfs.SetStagedFile(staged, "docs/subdir/readme.md", fakeAddCID("nested"))
 
-		merged := mergeAddNodes(existing, staged)
+		merged := unixfs.MergeStagedNodes(existing, staged)
 		docs := mustAddNodeAtPath(t, merged, "docs")
 		if docs.Kind != "dir" {
 			t.Fatalf("docs.Kind = %q, want dir", docs.Kind)
@@ -530,12 +530,12 @@ func TestMergeAddNodesConflictPolicy(t *testing.T) {
 	})
 
 	t.Run("dir-file replace subtree", func(t *testing.T) {
-		existing := newDirNode()
-		staged := newDirNode()
-		setFileNode(existing, "docs/guide.txt", fakeAddCID("guide"))
-		setFileNode(staged, "docs", fakeAddCID("flat"))
+		existing := unixfs.NewStagedDirectory()
+		staged := unixfs.NewStagedDirectory()
+		unixfs.SetStagedFile(existing, "docs/guide.txt", fakeAddCID("guide"))
+		unixfs.SetStagedFile(staged, "docs", fakeAddCID("flat"))
 
-		merged := mergeAddNodes(existing, staged)
+		merged := unixfs.MergeStagedNodes(existing, staged)
 		docs := mustAddNodeAtPath(t, merged, "docs")
 		if docs.Kind != "file" {
 			t.Fatalf("docs.Kind = %q, want file", docs.Kind)
@@ -576,7 +576,7 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 		t.Fatalf("staged files = %d, want 2", staged.Files)
 	}
 
-	merged := mergeAddNodes(newDirNode(), staged.Root)
+	merged := unixfs.MergeStagedNodes(unixfs.NewStagedDirectory(), staged.Root)
 	mat, err := materializeDirectory(ctx, daemon, casClient, merged)
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
@@ -627,12 +627,12 @@ func TestAddCASBatcherDeduplicatesBlocks(t *testing.T) {
 	if !first.Equals(second) {
 		t.Fatalf("duplicate CID = %s, want %s", second, first)
 	}
-	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), unixfswire.CodecMaltManifest)
+	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), unixfs.DirectoryManifestCodec)
 	if err != nil {
 		t.Fatalf("PutWithCodec: %v", err)
 	}
-	if typed.Prefix().Codec != unixfswire.CodecMaltManifest {
-		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, unixfswire.CodecMaltManifest)
+	if typed.Prefix().Codec != unixfs.DirectoryManifestCodec {
+		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, unixfs.DirectoryManifestCodec)
 	}
 	if err := batcher.Flush(ctx); err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -1072,7 +1072,7 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build first staging: %v", err)
 	}
-	firstMerged := mergeAddNodes(newDirNode(), firstStaged.Root)
+	firstMerged := unixfs.MergeStagedNodes(unixfs.NewStagedDirectory(), firstStaged.Root)
 	firstMat, err := materializeDirectory(ctx, daemon, casClient, firstMerged)
 	if err != nil {
 		t.Fatalf("materialize first: %v", err)
@@ -1098,7 +1098,7 @@ func TestAddWorkflowMergesExistingTree(t *testing.T) {
 		t.Fatalf("build second staging: %v", err)
 	}
 
-	secondMerged := mergeAddNodes(existing, secondStaged.Root)
+	secondMerged := unixfs.MergeStagedNodes(existing, secondStaged.Root)
 	secondMat, err := materializeDirectory(ctx, daemon, casClient, secondMerged)
 	if err != nil {
 		t.Fatalf("materialize second: %v", err)
@@ -1248,10 +1248,10 @@ func (r *recordingAddCAS) PutBatch(ctx context.Context, blocks []cas.Block) ([]c
 	return cas.PutBlocks(ctx, r.inner, blocks)
 }
 
-func mustAddNodeAtPath(t *testing.T, root *addNode, p string) *addNode {
+func mustAddNodeAtPath(t *testing.T, root *unixfs.StagedNode, p string) *unixfs.StagedNode {
 	t.Helper()
 	cur := root
-	for _, part := range splitAddPath(p) {
+	for _, part := range unixfs.SplitStagedPath(p) {
 		if cur == nil || cur.Children == nil {
 			t.Fatalf("missing node at %q", p)
 		}

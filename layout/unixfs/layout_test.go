@@ -126,6 +126,23 @@ func TestAddAndReadSmallFile(t *testing.T) {
 	}
 }
 
+func TestAddFileStream(t *testing.T) {
+	ctx := context.Background()
+	layout := newLayout(t, 8)
+
+	root, err := layout.AddFileStream(ctx, cid.Undef, "docs/stream.txt", strings.NewReader("hello stream"))
+	if err != nil {
+		t.Fatalf("AddFileStream failed: %v", err)
+	}
+	got, err := layout.ReadFile(ctx, root, "docs/stream.txt")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(got) != "hello stream" {
+		t.Fatalf("ReadFile = %q, want hello stream", got)
+	}
+}
+
 func TestAddAndReadLargeFileRange(t *testing.T) {
 	ctx := context.Background()
 	layout := newLayout(t, 4)

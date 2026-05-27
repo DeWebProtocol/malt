@@ -79,10 +79,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /lineage/{root}", s.handleRemovedPublicRoute)
 	mux.HandleFunc("GET /lineage/{root}/ancestors", s.handleRemovedPublicRoute)
 	mux.HandleFunc("GET /lineage/{root}/descendants", s.handleRemovedPublicRoute)
-	mux.HandleFunc("POST /{root}/_batch-update", s.handleRemovedPublicRoute)
 
 	// Semantic mutation is the writer route boundary.
 	mux.HandleFunc("POST /{root}/_mutate", s.handleSemanticMutation)
+
+	// UnixFS writes that start from an empty root. The path is supplied as a
+	// query parameter so this fixed endpoint does not overlap with root-scoped
+	// writer routes such as /{root}/_mutate.
+	mux.HandleFunc("POST /_unixfs", s.handleWriteNewUnixFSRoot)
 
 	// Resolve - explicit proof-producing path resolution.
 	mux.HandleFunc("GET /resolve/{root}", s.handleResolve)

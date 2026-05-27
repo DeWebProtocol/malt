@@ -70,6 +70,54 @@ func (p *MutationPlan) WriterMutation(fallbackRoot cid.Cid) writer.SemanticMutat
 	return mut
 }
 
+// FixedListPayloadMutation builds the writer mutation for a fixed-width list
+// payload from already-uploaded chunk CIDs. It is used by command/client
+// adapters that need to create a list payload without taking ownership of the
+// list semantic mutation schema.
+func FixedListPayloadMutation(baseRoot cid.Cid, chunks []cid.Cid, totalSize, chunkSize uint64) (writer.SemanticMutation, error) {
+	if len(chunks) == 0 {
+		return writer.SemanticMutation{}, fmt.Errorf("chunks must not be empty")
+	}
+	if chunkSize == 0 {
+		return writer.SemanticMutation{}, fmt.Errorf("chunk size must be positive")
+	}
+	changes := make([]arcset.ArcChange, len(chunks))
+	for i, chunk := range chunks {
+		if !chunk.Defined() {
+			return writer.SemanticMutation{}, fmt.Errorf("chunk %d is undefined", i)
+		}
+		if uint64(i) > math.MaxInt64 {
+			return writer.SemanticMutation{}, fmt.Errorf("chunk index %d exceeds canonical coordinate range", i)
+		}
+		coord, err := arcset.NewListCoordinate(int64(i))
+		if err != nil {
+			return writer.SemanticMutation{}, err
+		}
+		after := arcset.NewCASTarget(chunk)
+		changes[i] = arcset.ArcChange{
+			Coordinate: coord,
+			After:      &after,
+		}
+	}
+	delta, err := arcset.NewCanonicalArcDelta(arcset.KindList, changes)
+	if err != nil {
+		return writer.SemanticMutation{}, err
+	}
+	return writer.SemanticMutation{
+		BaseRoot: baseRoot,
+		Deltas: []writer.ArcSetDelta{{
+			Kind:    arcset.KindList,
+			Changes: delta,
+			Commit: writer.CommitDescriptor{
+				FixedList: &writer.FixedListCommit{
+					TotalSize: totalSize,
+					ChunkSize: chunkSize,
+				},
+			},
+		}},
+	}, nil
+}
+
 // MutationPlanForPath exposes creation deltas for the UnixFS node already
 // reachable at path. For directories it includes only the terminal directory
 // map, not descendant subtrees. For large files it emits the terminal payload

@@ -42,6 +42,34 @@ func (c *Client) ApplySemanticMutation(ctx context.Context, mut writer.SemanticM
 	return c.ApplyRootSemanticMutation(ctx, mut.BaseRoot.String(), req)
 }
 
+// CreateFixedListBaseRoot creates the temporary map root needed for fixed-list
+// payload materialization.
+func (c *Client) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
+	resp, err := c.CreatePayloadRoot(ctx, nil)
+	if err != nil {
+		return cid.Undef, err
+	}
+	root, err := cid.Decode(resp.Root)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("decode temporary root CID: %w", err)
+	}
+	return root, nil
+}
+
+// ApplyFixedListPayloadMutation applies a fixed-list payload writer mutation
+// and returns the resulting list root.
+func (c *Client) ApplyFixedListPayloadMutation(ctx context.Context, mut writer.SemanticMutation) (cid.Cid, error) {
+	resp, err := c.ApplySemanticMutation(ctx, mut)
+	if err != nil {
+		return cid.Undef, err
+	}
+	listRoot, err := cid.Decode(resp.NewRoot)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("decode list root CID: %w", err)
+	}
+	return listRoot, nil
+}
+
 func semanticMutationRequestFromWriter(mut writer.SemanticMutation) (*httpapi.SemanticMutationRequest, error) {
 	req := &httpapi.SemanticMutationRequest{
 		Deltas: make([]httpapi.SemanticMutationDelta, 0, len(mut.Deltas)),

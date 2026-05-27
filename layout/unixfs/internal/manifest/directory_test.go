@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dewebprotocol/malt/layout/unixfs/manifest"
+	"github.com/dewebprotocol/malt/layout/unixfs/internal/manifest"
 )
 
 func TestParseDirectoryJSON_valid(t *testing.T) {
