@@ -572,7 +572,8 @@ Current config shape:
 ```json
 {
   "rpc": {
-    "listen": "127.0.0.1:4317"
+    "listen": "127.0.0.1:4317",
+    "cors_allowed_origins": []
   },
   "state": {
     "root_dir": "D:/malt-state",
@@ -603,6 +604,8 @@ Allowed runtime values:
 
 - `state.kvstore.type`: `badger`, `memory`, or `fs`
 - `structure.default_backend`: `kzg` or `ipa`
+- `rpc.cors_allowed_origins`: exact browser origins allowed to call local
+  read/proof routes and `POST /verify`
 
 This config is a packaging and runtime decision. It does not define the core
 MALT semantic abstraction.

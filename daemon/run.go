@@ -82,7 +82,12 @@ func Run(cfg *config.Config, opts RunOptions) error {
 	}
 	defer node.Close()
 
-	srv := server.New(node, effective.RPC.Listen, server.WithLifecycleToken(opts.LifecycleToken))
+	srv := server.New(
+		node,
+		effective.RPC.Listen,
+		server.WithLifecycleToken(opts.LifecycleToken),
+		server.WithBrowserOrigins(effective.RPC.CORSAllowedOrigins),
+	)
 	srvErr := make(chan error, 1)
 	go func() {
 		if err := srv.Start(); err != nil && err != http.ErrServerClosed {

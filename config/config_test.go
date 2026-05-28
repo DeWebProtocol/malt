@@ -14,6 +14,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.RPC.Listen != "127.0.0.1:4317" {
 		t.Fatalf("RPC.Listen = %q", cfg.RPC.Listen)
 	}
+	if len(cfg.RPC.CORSAllowedOrigins) != 0 {
+		t.Fatalf("RPC.CORSAllowedOrigins = %v, want empty by default", cfg.RPC.CORSAllowedOrigins)
+	}
 	if cfg.State.KVStore.Type != "badger" {
 		t.Fatalf("State.KVStore.Type = %q", cfg.State.KVStore.Type)
 	}
@@ -55,7 +58,8 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
 	path := filepath.Join(tmpDir, "malt.json")
 	content := `{
   "rpc": {
-    "listen": "127.0.0.1:9999"
+    "listen": "127.0.0.1:9999",
+    "cors_allowed_origins": ["http://localhost:5173", "https://docs.example"]
   },
   "state": {
     "root_dir": "~/custom-state",
@@ -99,6 +103,9 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
 
 	if cfg.RPC.Listen != "127.0.0.1:9999" {
 		t.Fatalf("RPC.Listen = %q", cfg.RPC.Listen)
+	}
+	if got := cfg.RPC.CORSAllowedOrigins; len(got) != 2 || got[0] != "http://localhost:5173" || got[1] != "https://docs.example" {
+		t.Fatalf("RPC.CORSAllowedOrigins = %#v", got)
 	}
 	if cfg.CAS.Mode != "external" {
 		t.Fatalf("CAS.Mode = %q", cfg.CAS.Mode)

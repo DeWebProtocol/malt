@@ -378,6 +378,7 @@ Current operator flow:
 Current schema:
 
 - `rpc.listen`
+- `rpc.cors_allowed_origins`
 - `state.root_dir`
 - `state.kvstore`
 - `state.kvstore.type` accepts `badger`, `memory`, or `fs`
@@ -397,6 +398,7 @@ Current defaults:
 - structure backend: `kzg`
 - ArcTable type: `versioned`
 - CAS mode: `embedded-mock`
+- browser CORS origins: empty unless explicitly configured
 
 ## Repo Layout
 

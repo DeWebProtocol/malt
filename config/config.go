@@ -34,7 +34,8 @@ type Config struct {
 
 // RPCConfig configures the local daemon HTTP endpoint.
 type RPCConfig struct {
-	Listen string `json:"listen"`
+	Listen             string   `json:"listen"`
+	CORSAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 }
 
 // StateConfig configures local durable runtime state.
@@ -232,6 +233,7 @@ func (c *Config) applyDefaults() {
 	if c.RPC.Listen == "" {
 		c.RPC.Listen = defaults.RPC.Listen
 	}
+	c.RPC.CORSAllowedOrigins = cleanStringList(c.RPC.CORSAllowedOrigins)
 	if c.State.RootDir == "" {
 		c.State.RootDir = defaults.State.RootDir
 	}
@@ -326,6 +328,21 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func cleanStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := values[:0]
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 // ConfigDir returns the parent directory of the config file.
