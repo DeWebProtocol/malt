@@ -281,12 +281,16 @@ Current boundary:
   UnixFS-style layout and translates source-domain file/directory data into
   `writer.SemanticMutation` values.
 - `POST /{root}/_mutate` is the writer mutation route. The root-centric daemon
-  also exposes `POST /{root}/{path}` as a UnixFS layout convenience: it stages a
-  file or directory operation, converts the resulting layout state into a
-  semantic mutation, and then uses the same writer route semantics as `_mutate`.
+  also exposes `POST /_unixfs?path=...` for creating a fresh UnixFS root and
+  `POST /{root}/{path}` as UnixFS layout conveniences: they stage file or
+  directory operations, convert the resulting layout state into semantic
+  mutations, and then use the same writer route semantics as `_mutate`.
 - The public CLI currently exposes write ingestion through `malt add`; reads
   are available through the daemon API and proof-bearing resolve/content
   endpoints.
+- Browser CORS is limited to configured origins and covers read/proof routes,
+  `POST /verify`, and the UnixFS upload conveniences. It does not expose
+  admin routes or raw semantic mutation routes to browser origins.
 - The layout still depends directly on `mapping.Semantics`, `list.Semantics`,
   and CAS access; it does not make `graph`, `graph/writer`, or
   `graph/resolver` the semantic owners.
@@ -398,7 +402,8 @@ Current defaults:
 - structure backend: `kzg`
 - ArcTable type: `versioned`
 - CAS mode: `embedded-mock`
-- browser CORS origins: empty unless explicitly configured
+- browser CORS origins: local VitePress dev/preview origins and the current
+  public documentation origins
 
 ## Repo Layout
 

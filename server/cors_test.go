@@ -60,7 +60,34 @@ func TestBrowserCORSAllowsConfiguredResolveAndVerifyRoutes(t *testing.T) {
 	})
 }
 
-func TestBrowserCORSDeniesUnconfiguredOriginsAndWriteRoutes(t *testing.T) {
+func TestBrowserCORSAllowsConfiguredUnixFSWriteRoutes(t *testing.T) {
+	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{"https://docs.example"}))
+	handler := s.Handler()
+
+	for _, path := range []string{"/_unixfs", "/bafkqaaa/file.txt", "/bafkqaaa/docs/readme.txt"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, path, nil)
+			req.Header.Set("Origin", "https://docs.example")
+			req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+			req.Header.Set("Access-Control-Request-Headers", "content-type")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("write preflight status = %d, want %d", rec.Code, http.StatusNoContent)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://docs.example" {
+				t.Fatalf("Access-Control-Allow-Origin = %q, want configured origin", got)
+			}
+			if methods := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(methods, http.MethodPost) {
+				t.Fatalf("Access-Control-Allow-Methods = %q, want POST", methods)
+			}
+		})
+	}
+}
+
+func TestBrowserCORSDeniesUnconfiguredOriginsAndAdminWrites(t *testing.T) {
 	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{"https://docs.example"}))
 	handler := s.Handler()
 
@@ -76,8 +103,8 @@ func TestBrowserCORSDeniesUnconfiguredOriginsAndWriteRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("write route preflight", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodOptions, "/bafkqaaa/file.txt", nil)
+	t.Run("admin write route preflight", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/metrics:reset", nil)
 		req.Header.Set("Origin", "https://docs.example")
 		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 		req.Header.Set("Access-Control-Request-Headers", "content-type")
@@ -86,7 +113,24 @@ func TestBrowserCORSDeniesUnconfiguredOriginsAndWriteRoutes(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusForbidden {
-			t.Fatalf("write preflight status = %d, want %d", rec.Code, http.StatusForbidden)
+			t.Fatalf("admin write preflight status = %d, want %d", rec.Code, http.StatusForbidden)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+		}
+	})
+
+	t.Run("semantic mutation preflight", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/bafkqaaa/_mutate", nil)
+		req.Header.Set("Origin", "https://docs.example")
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", "content-type")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("semantic mutation preflight status = %d, want %d", rec.Code, http.StatusForbidden)
 		}
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 			t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
