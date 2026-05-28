@@ -29,27 +29,35 @@ var daemonCmd = &cobra.Command{
 }
 
 var daemonStartCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start the local MALT daemon in the background",
-	RunE:  runDaemonStart,
+	Use:           "start",
+	Short:         "Start the local MALT daemon in the background",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runDaemonStart,
 }
 
 var daemonStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show the local MALT daemon status",
-	RunE:  runDaemonStatus,
+	Use:           "status",
+	Short:         "Show the local MALT daemon status",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runDaemonStatus,
 }
 
 var daemonStopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Stop the managed local MALT daemon",
-	RunE:  runDaemonStop,
+	Use:           "stop",
+	Short:         "Stop the managed local MALT daemon",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runDaemonStop,
 }
 
 var daemonRestartCmd = &cobra.Command{
-	Use:   "restart",
-	Short: "Restart the managed local MALT daemon",
-	RunE:  runDaemonRestart,
+	Use:           "restart",
+	Short:         "Restart the managed local MALT daemon",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runDaemonRestart,
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
