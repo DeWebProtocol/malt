@@ -23,6 +23,7 @@ type Server struct {
 	node           *node.Node
 	addr           string
 	lifecycleToken string
+	browserOrigins map[string]struct{}
 	server         *http.Server
 	defaultGraph   graph.Runtime
 	graphMu        sync.Mutex
@@ -36,6 +37,14 @@ type Option func(*Server)
 func WithLifecycleToken(token string) Option {
 	return func(s *Server) {
 		s.lifecycleToken = token
+	}
+}
+
+// WithBrowserOrigins allows browser-based read and proof verification tools to
+// call the local daemon from the configured origins.
+func WithBrowserOrigins(origins []string) Option {
+	return func(s *Server) {
+		s.browserOrigins = browserOriginSet(origins)
 	}
 }
 
@@ -55,13 +64,17 @@ func New(node *node.Node, addr string, opts ...Option) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isRemovedPublicRoute(r.Method, r.URL.Path) {
 			s.handleRemovedPublicRoute(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
+	if len(s.browserOrigins) == 0 {
+		return handler
+	}
+	return s.browserCORS(handler)
 }
 
 // Start starts the HTTP server.
