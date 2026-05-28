@@ -3,6 +3,7 @@ package git_test
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,22 +164,11 @@ func TestSourceWalkDoesNotMutateRepoPathCheckoutOnFailure(t *testing.T) {
 	}
 }
 
-func TestCacheNameForURLIncludesFullRepositoryIdentity(t *testing.T) {
-	first := gittrace.CacheNameForURL("https://github.com/orgA/project.git")
-	second := gittrace.CacheNameForURL("https://github.com/orgB/project.git")
-	if first == second {
-		t.Fatalf("cache names collide: %q", first)
-	}
-}
-
-func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
+func TestCanonicalRepoIDFromURLUsesGitHubHTTPSOwnerAndRepo(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/ipfs/kubo.git":                                                          "github.com/ipfs/kubo",
-		"git@github.com:ethereum/go-ethereum.git":                                                   "github.com/ethereum/go-ethereum",
-		"file:///tmp/eval/repos/github.com/fork/kubo.git":                                           "github.com/fork/kubo",
-		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo.git": "github.com/ipfs/kubo",
-		"file:C:%5cUsers%5cAdmini~1%5cAppData%5cLocal%5cTemp%5c001%5cgithub.com%5cipfs%5ckubo.git":  "github.com/ipfs/kubo",
-		"https://gitlab.com/group/subgroup/project.git":                                             "gitlab.com/group/subgroup/project",
+		"https://github.com/ipfs/kubo.git":        "github.com/ipfs/kubo",
+		"https://github.com/IPFS/Kubo":            "github.com/ipfs/kubo",
+		"https://github.com/ethereum/go-ethereum": "github.com/ethereum/go-ethereum",
 	}
 	for raw, want := range cases {
 		got, err := gittrace.CanonicalRepoIDFromURL(raw)
@@ -191,35 +181,116 @@ func TestCanonicalRepoIDFromURLUsesOwnerAndRepo(t *testing.T) {
 	}
 }
 
-func TestCacheNameForURLIsBoundedForLongLocalPaths(t *testing.T) {
-	name := gittrace.CacheNameForURL("C:\\" + strings.Repeat("long-path-segment\\", 20) + "project.git")
-	if len(name) > 80 {
-		t.Fatalf("cache name length = %d, want <= 80: %q", len(name), name)
+func TestCanonicalRepoIDFromURLRejectsNonGitHubHTTPSFormats(t *testing.T) {
+	for _, raw := range []string{
+		"git@github.com:ethereum/go-ethereum.git",
+		"file:///tmp/eval/repos/github.com/fork/kubo.git",
+		"file:/c:%5cusers%5cadmini~1%5cappdata%5clocal%5ctemp%5c001%5cgithub.com%5cipfs%5ckubo",
+		"http://github.com/ipfs/kubo.git",
+		"https://gitlab.com/group/project.git",
+		"https://github.com/ipfs",
+		"https://github.com/ipfs/kubo/extra",
+		"https://github.com/org/..\\..\\outside.git",
+		"https://github.com/org/repo:name.git",
+		"https://github.com/-org/repo.git",
+	} {
+		if _, err := gittrace.CanonicalRepoIDFromURL(raw); err == nil {
+			t.Fatalf("CanonicalRepoIDFromURL(%q) should reject non-GitHub HTTPS repo URL", raw)
+		}
 	}
 }
 
-func TestEnsureCloneRejectsMismatchedExistingOrigin(t *testing.T) {
+func TestClonePathForURLUsesOwnerRepoUnderBasePath(t *testing.T) {
+	base := filepath.Join("tmp", "eval-cache")
+	got, err := gittrace.ClonePathForURL(base, "https://github.com/ipfs/kubo.git")
+	if err != nil {
+		t.Fatalf("ClonePathForURL: %v", err)
+	}
+	want := filepath.Join(base, "ipfs", "kubo")
+	if got != want {
+		t.Fatalf("clone path = %q, want %q", got, want)
+	}
+}
+
+func TestSourceWalkClonesGitHubURLForReplayInWorkDir(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
 	ctx := context.Background()
-	cacheDir := t.TempDir()
-	url := "https://github.com/orgA/project.git"
-	cachePath := filepath.Join(cacheDir, gittrace.CacheNameForURL(url))
-	if err := os.MkdirAll(cachePath, 0755); err != nil {
-		t.Fatalf("mkdir cache path: %v", err)
-	}
-	runGit(t, cachePath, "init")
-	runGit(t, cachePath, "remote", "add", "origin", "https://github.com/orgB/project.git")
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
 
-	if _, err := gittrace.EnsureClone(ctx, url, cacheDir); err == nil {
-		t.Fatal("expected mismatched origin error")
+	cacheDir := t.TempDir()
+	repoURL := "https://github.com/ipfs/kubo.git"
+	clonePath := filepath.Join(cacheDir, "ipfs", "kubo")
+	staleMarker := filepath.Join(clonePath, "stale.txt")
+	writeFile(t, clonePath, "stale.txt", "stale clone must be replaced")
+
+	source := gittrace.Source{
+		RepoURL:      repoURL,
+		CloneBaseDir: cacheDir,
+		Ref:          "HEAD",
+		Limit:        1,
+	}
+	var sawCommit bool
+	err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		sawCommit = true
+		if commit.Repo != "github.com/ipfs/kubo" {
+			t.Fatalf("commit repo = %q, want canonical github.com/ipfs/kubo", commit.Repo)
+		}
+		if _, err := os.Stat(filepath.Join(clonePath, ".git")); err != nil {
+			t.Fatalf("clone path was not populated during replay: %v", err)
+		}
+		if _, err := os.Stat(staleMarker); !os.IsNotExist(err) {
+			t.Fatalf("stale clone marker still exists: %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if !sawCommit {
+		t.Fatal("Walk did not emit a commit")
+	}
+	if _, err := os.Stat(filepath.Join(clonePath, ".git")); err != nil {
+		t.Fatalf("clone path should remain in work dir after replay: %v", err)
+	}
+}
+
+func installGitHubInsteadOf(t *testing.T, githubRoot string) {
+	t.Helper()
+	configPath := filepath.Join(t.TempDir(), "gitconfig")
+	baseURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(githubRoot) + "/"}).String()
+	data := []byte("[url \"" + baseURL + "\"]\n\tinsteadOf = https://github.com/\n")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write git config: %v", err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", configPath)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+func TestCloneForReplayRejectsUnsafeClonePathComponents(t *testing.T) {
+	for _, raw := range []string{
+		"https://github.com/org/..\\..\\outside.git",
+		"https://github.com/org/repo:name.git",
+	} {
+		if _, err := gittrace.ClonePathForURL(t.TempDir(), raw); err == nil {
+			t.Fatalf("ClonePathForURL(%q) should reject unsafe path components", raw)
+		}
 	}
 }
 
 func initTraceRepo(t *testing.T) string {
 	t.Helper()
-	repo := t.TempDir()
+	return initTraceRepoAt(t, t.TempDir())
+}
+
+func initTraceRepoAt(t *testing.T, repo string) string {
+	t.Helper()
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
 	runGit(t, repo, "init", "-b", "main")
 	runGit(t, repo, "config", "user.email", "bench@example.test")
 	runGit(t, repo, "config", "user.name", "Bench Test")

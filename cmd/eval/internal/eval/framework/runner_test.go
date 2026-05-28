@@ -20,7 +20,8 @@ func TestRunnerCreatesEvaluationOutputLayout(t *testing.T) {
 	}
 	plan := Plan{
 		RunID:     "run-001",
-		OutputDir: filepath.Join(tmp, "run-001"),
+		OutputDir: filepath.Join(tmp, "output", "run-001"),
+		ResultDir: filepath.Join(tmp, "result", "run-001"),
 		Suites: []SuitePlan{
 			{Name: "write_trace", Config: json.RawMessage(`{"limit": 2}`)},
 			{Name: "proof_overhead", Enabled: boolPtr(false)},
@@ -32,13 +33,22 @@ func TestRunnerCreatesEvaluationOutputLayout(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, dir := range []string{"raw", "summary", "logs"} {
-		if info, err := os.Stat(filepath.Join(plan.OutputDir, dir)); err != nil || !info.IsDir() {
-			t.Fatalf("expected %s directory, info=%v err=%v", dir, info, err)
+	for _, dir := range []string{"raw", "summary"} {
+		if info, err := os.Stat(filepath.Join(plan.ResultDir, dir)); err != nil || !info.IsDir() {
+			t.Fatalf("expected result %s directory, info=%v err=%v", dir, info, err)
 		}
 	}
+	if info, err := os.Stat(filepath.Join(plan.OutputDir, "logs")); err != nil || !info.IsDir() {
+		t.Fatalf("expected output logs directory, info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(plan.OutputDir, "raw")); !os.IsNotExist(err) {
+		t.Fatalf("raw should live under result_dir, output raw stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(plan.OutputDir, "summary")); !os.IsNotExist(err) {
+		t.Fatalf("summary should live under result_dir, output summary stat err=%v", err)
+	}
 
-	rawPath := filepath.Join(plan.OutputDir, "raw", "write_trace.jsonl")
+	rawPath := filepath.Join(plan.ResultDir, "raw", "write_trace.jsonl")
 	f, err := os.Open(rawPath)
 	if err != nil {
 		t.Fatalf("open raw output: %v", err)
@@ -56,7 +66,7 @@ func TestRunnerCreatesEvaluationOutputLayout(t *testing.T) {
 		t.Fatalf("record envelope = %#v", record)
 	}
 
-	manifestBytes, err := os.ReadFile(filepath.Join(plan.OutputDir, "manifest.json"))
+	manifestBytes, err := os.ReadFile(filepath.Join(plan.ResultDir, "manifest.json"))
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
@@ -71,7 +81,7 @@ func TestRunnerCreatesEvaluationOutputLayout(t *testing.T) {
 		t.Fatalf("manifest times = %s/%s", manifest.StartedAt, manifest.FinishedAt)
 	}
 
-	summaryBytes, err := os.ReadFile(filepath.Join(plan.OutputDir, "summary", "figure_write_trace.csv"))
+	summaryBytes, err := os.ReadFile(filepath.Join(plan.ResultDir, "summary", "figure_write_trace.csv"))
 	if err != nil {
 		t.Fatalf("read summary csv: %v", err)
 	}
@@ -88,7 +98,8 @@ func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
 	}
 	plan := Plan{
 		RunID:     "rerun",
-		OutputDir: filepath.Join(tmp, "rerun"),
+		OutputDir: filepath.Join(tmp, "output", "rerun"),
+		ResultDir: filepath.Join(tmp, "result", "rerun"),
 		Suites: []SuitePlan{{
 			Name:   "write_trace",
 			Config: json.RawMessage(`{"limit": 1}`),
@@ -98,11 +109,14 @@ func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
 	if err := Run(context.Background(), plan, reg, RunOptions{}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(plan.OutputDir, "summary", "stale.csv"), []byte("stale\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(plan.ResultDir, "summary", "stale.csv"), []byte("stale\n"), 0o644); err != nil {
 		t.Fatalf("write stale summary: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(plan.OutputDir, "logs", "stale.log"), []byte("stale\n"), 0o644); err != nil {
 		t.Fatalf("write stale log: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(plan.OutputDir, "stale-work.txt"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale work file: %v", err)
 	}
 
 	plan.Suites[0].Config = json.RawMessage(`{"limit": 2}`)
@@ -110,7 +124,7 @@ func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
 		t.Fatalf("second Run: %v", err)
 	}
 
-	rawBytes, err := os.ReadFile(filepath.Join(plan.OutputDir, "raw", "write_trace.jsonl"))
+	rawBytes, err := os.ReadFile(filepath.Join(plan.ResultDir, "raw", "write_trace.jsonl"))
 	if err != nil {
 		t.Fatalf("read raw output: %v", err)
 	}
@@ -125,11 +139,14 @@ func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
 	if strings.Contains(string(envelope.Record), `"limit":1`) || !strings.Contains(string(envelope.Record), `"limit":2`) {
 		t.Fatalf("rerun record = %s, want only latest limit", envelope.Record)
 	}
-	if _, err := os.Stat(filepath.Join(plan.OutputDir, "summary", "stale.csv")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(plan.ResultDir, "summary", "stale.csv")); !os.IsNotExist(err) {
 		t.Fatalf("stale summary file still present or stat failed unexpectedly: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(plan.OutputDir, "logs", "stale.log")); !os.IsNotExist(err) {
 		t.Fatalf("stale log file still present or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(plan.OutputDir, "stale-work.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale work file still present or stat failed unexpectedly: %v", err)
 	}
 }
 
@@ -141,7 +158,8 @@ func TestRunnerRemovesStaleManifestBeforeFailedRerun(t *testing.T) {
 	}
 	plan := Plan{
 		RunID:     "failed-rerun",
-		OutputDir: filepath.Join(tmp, "failed-rerun"),
+		OutputDir: filepath.Join(tmp, "output", "failed-rerun"),
+		ResultDir: filepath.Join(tmp, "result", "failed-rerun"),
 		Suites: []SuitePlan{{
 			Name:   "write_trace",
 			Config: json.RawMessage(`{"limit": 1}`),
@@ -151,7 +169,7 @@ func TestRunnerRemovesStaleManifestBeforeFailedRerun(t *testing.T) {
 	if err := Run(context.Background(), plan, successRegistry, RunOptions{}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	manifestPath := filepath.Join(plan.OutputDir, "manifest.json")
+	manifestPath := filepath.Join(plan.ResultDir, "manifest.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("initial manifest missing: %v", err)
 	}
@@ -170,16 +188,20 @@ func TestRunnerRemovesStaleManifestBeforeFailedRerun(t *testing.T) {
 
 func TestRunnerPreflightsSuitesBeforeRefreshingOutput(t *testing.T) {
 	tmp := t.TempDir()
-	outputDir := filepath.Join(tmp, "preflight")
-	for _, dir := range []string{"raw", "summary", "logs"} {
-		if err := os.MkdirAll(filepath.Join(outputDir, dir), 0o755); err != nil {
+	outputDir := filepath.Join(tmp, "output", "preflight")
+	resultDir := filepath.Join(tmp, "result", "preflight")
+	for _, dir := range []string{"raw", "summary"} {
+		if err := os.MkdirAll(filepath.Join(resultDir, dir), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+	if err := os.MkdirAll(filepath.Join(outputDir, "logs"), 0o755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
+	}
 	sentinels := map[string]string{
-		filepath.Join(outputDir, "manifest.json"):            "previous manifest\n",
-		filepath.Join(outputDir, "raw", "write_trace.jsonl"): "previous raw\n",
-		filepath.Join(outputDir, "summary", "stale.csv"):     "previous summary\n",
+		filepath.Join(resultDir, "manifest.json"):            "previous manifest\n",
+		filepath.Join(resultDir, "raw", "write_trace.jsonl"): "previous raw\n",
+		filepath.Join(resultDir, "summary", "stale.csv"):     "previous summary\n",
 		filepath.Join(outputDir, "logs", "previous-run.log"): "previous logs\n",
 	}
 	for path, content := range sentinels {
@@ -190,6 +212,7 @@ func TestRunnerPreflightsSuitesBeforeRefreshingOutput(t *testing.T) {
 	plan := Plan{
 		RunID:     "preflight",
 		OutputDir: outputDir,
+		ResultDir: resultDir,
 		Suites:    []SuitePlan{{Name: "missing"}},
 	}
 
@@ -210,7 +233,8 @@ func TestRunnerPreflightsSuitesBeforeRefreshingOutput(t *testing.T) {
 func TestRunnerFailsForUnknownEnabledSuite(t *testing.T) {
 	plan := Plan{
 		RunID:     "run-unknown",
-		OutputDir: filepath.Join(t.TempDir(), "run-unknown"),
+		OutputDir: filepath.Join(t.TempDir(), "output", "run-unknown"),
+		ResultDir: filepath.Join(t.TempDir(), "result", "run-unknown"),
 		Suites:    []SuitePlan{{Name: "missing"}},
 	}
 	if err := Run(context.Background(), plan, NewRegistry(), RunOptions{}); err == nil {

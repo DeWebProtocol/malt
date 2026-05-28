@@ -14,6 +14,7 @@ const PlanSchemaPath = "cmd/eval/schemas/run-plan.schema.json"
 type options struct {
 	planPath  string
 	outputDir string
+	resultDir string
 	runID     string
 }
 
@@ -22,7 +23,7 @@ func NewCommand(registry framework.Registry) *cobra.Command {
 	opts := &options{}
 	cmd := &cobra.Command{
 		Use:         "run",
-		Short:       "Run an evaluation plan and write a structured result directory",
+		Short:       "Run an evaluation plan and write structured result/work directories",
 		Args:        cobra.NoArgs,
 		Annotations: map[string]string{"malt.plan_schema": PlanSchemaPath},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,7 +31,9 @@ func NewCommand(registry framework.Registry) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.planPath, "plan", opts.planPath, "Evaluation plan JSON file")
-	cmd.Flags().StringVar(&opts.outputDir, "out", opts.outputDir, "Override output directory")
+	cmd.Flags().StringVar(&opts.resultDir, "out", opts.resultDir, "Override result directory")
+	cmd.Flags().StringVar(&opts.resultDir, "result-dir", opts.resultDir, "Override result directory")
+	cmd.Flags().StringVar(&opts.outputDir, "output-dir", opts.outputDir, "Override disposable output workspace directory")
 	cmd.Flags().StringVar(&opts.runID, "run-id", opts.runID, "Override run identifier")
 	return cmd
 }
@@ -48,6 +51,9 @@ func run(cmd *cobra.Command, registry framework.Registry, opts *options) error {
 	}
 	if strings.TrimSpace(opts.outputDir) != "" {
 		plan.OverrideOutputDir(opts.outputDir)
+	}
+	if strings.TrimSpace(opts.resultDir) != "" {
+		plan.OverrideResultDir(opts.resultDir)
 	}
 	if strings.TrimSpace(opts.runID) != "" {
 		plan.OverrideRunID(opts.runID)

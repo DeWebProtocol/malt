@@ -17,8 +17,10 @@ const SchemaVersion = "malt-eval/v1"
 type Plan struct {
 	RunID             string      `json:"run_id"`
 	OutputDir         string      `json:"output_dir,omitempty"`
+	ResultDir         string      `json:"result_dir,omitempty"`
 	Suites            []SuitePlan `json:"suites"`
 	outputDirExplicit bool
+	resultDirExplicit bool
 }
 
 // SuitePlan configures one registered evaluation suite.
@@ -56,6 +58,7 @@ func LoadPlan(path string) (Plan, error) {
 		return Plan{}, fmt.Errorf("parse plan: %w", err)
 	}
 	plan.outputDirExplicit = jsonHasKey(data, "output_dir")
+	plan.resultDirExplicit = jsonHasKey(data, "result_dir")
 	if err := plan.Normalize(); err != nil {
 		return Plan{}, err
 	}
@@ -76,9 +79,17 @@ func (p *Plan) Normalize() error {
 		}
 	}
 	if strings.TrimSpace(p.OutputDir) == "" {
-		p.OutputDir = filepath.Join("results", p.RunID)
+		p.OutputDir = filepath.Join("output", p.RunID)
 	} else {
 		p.OutputDir = filepath.Clean(p.OutputDir)
+	}
+	if strings.TrimSpace(p.ResultDir) == "" {
+		p.ResultDir = filepath.Join("result", p.RunID)
+	} else {
+		p.ResultDir = filepath.Clean(p.ResultDir)
+	}
+	if pathsOverlap(p.OutputDir, p.ResultDir) {
+		return fmt.Errorf("output_dir and result_dir must not overlap")
 	}
 	if len(p.Suites) == 0 {
 		return fmt.Errorf("at least one suite is required")
@@ -104,8 +115,8 @@ func validateRunID(runID string) error {
 }
 
 // OverrideRunID applies a CLI run-id override. If the plan did not explicitly
-// configure output_dir, the output directory is recomputed from the final run id
-// during the next Normalize call.
+// configure output_dir or result_dir, those directories are recomputed from the
+// final run id during the next Normalize call.
 func (p *Plan) OverrideRunID(runID string) {
 	if p == nil {
 		return
@@ -116,6 +127,9 @@ func (p *Plan) OverrideRunID(runID string) {
 	p.RunID = strings.TrimSpace(runID)
 	if !p.outputDirExplicit {
 		p.OutputDir = ""
+	}
+	if !p.resultDirExplicit {
+		p.ResultDir = ""
 	}
 }
 
@@ -130,6 +144,45 @@ func (p *Plan) OverrideOutputDir(outputDir string) {
 	}
 	p.OutputDir = strings.TrimSpace(outputDir)
 	p.outputDirExplicit = true
+}
+
+// OverrideResultDir applies a CLI result-dir override and marks the directory
+// as explicit so later run-id overrides do not rewrite it.
+func (p *Plan) OverrideResultDir(resultDir string) {
+	if p == nil {
+		return
+	}
+	if strings.TrimSpace(resultDir) == "" {
+		return
+	}
+	p.ResultDir = strings.TrimSpace(resultDir)
+	p.resultDirExplicit = true
+}
+
+func pathsOverlap(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	cleanA := cleanAbsPath(a)
+	cleanB := cleanAbsPath(b)
+	return pathContains(cleanA, cleanB) || pathContains(cleanB, cleanA)
+}
+
+func cleanAbsPath(path string) string {
+	clean := filepath.Clean(path)
+	abs, err := filepath.Abs(clean)
+	if err != nil {
+		return clean
+	}
+	return filepath.Clean(abs)
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return parent == child
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func jsonHasKey(data []byte, key string) bool {

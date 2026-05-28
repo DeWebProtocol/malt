@@ -164,7 +164,8 @@ func TestFrameworkRunWritesEnvelopedReadQueryRecords(t *testing.T) {
 	}
 	plan := framework.Plan{
 		RunID:     "run-read-query",
-		OutputDir: filepath.Join(tmp, "out"),
+		OutputDir: filepath.Join(tmp, "output"),
+		ResultDir: filepath.Join(tmp, "result"),
 		Suites: []framework.SuitePlan{{
 			Name: Name,
 			Config: json.RawMessage(`{
@@ -179,7 +180,7 @@ func TestFrameworkRunWritesEnvelopedReadQueryRecords(t *testing.T) {
 		t.Fatalf("framework.Run() error = %v", err)
 	}
 
-	envelopes := readRawEnvelopes(t, filepath.Join(plan.OutputDir, "raw", "read_query.jsonl"))
+	envelopes := readRawEnvelopes(t, filepath.Join(plan.ResultDir, "raw", "read_query.jsonl"))
 	if len(envelopes) != 2 {
 		t.Fatalf("envelope count = %d, want 2", len(envelopes))
 	}

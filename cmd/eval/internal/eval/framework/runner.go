@@ -28,6 +28,9 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	if clock == nil {
 		clock = time.Now
 	}
+	if err := prepareResultLayout(plan.ResultDir); err != nil {
+		return err
+	}
 	if err := prepareOutputLayout(plan.OutputDir); err != nil {
 		return err
 	}
@@ -36,6 +39,7 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	env := Env{
 		RunID:     plan.RunID,
 		OutputDir: plan.OutputDir,
+		ResultDir: plan.ResultDir,
 		clock:     clock,
 	}
 	manifest := Manifest{
@@ -58,11 +62,11 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 		}
 		manifest.Suites = append(manifest.Suites, SuiteManifest{Name: suitePlan.Name})
 	}
-	if err := summary.Summarize(plan.OutputDir, filepath.Join(plan.OutputDir, "summary")); err != nil {
+	if err := summary.Summarize(plan.ResultDir, filepath.Join(plan.ResultDir, "summary")); err != nil {
 		return fmt.Errorf("summarize run: %w", err)
 	}
 	manifest.FinishedAt = clock().UTC().Format(time.RFC3339Nano)
-	return writeManifest(plan.OutputDir, manifest)
+	return writeManifest(plan.ResultDir, manifest)
 }
 
 func preflightSuites(plan Plan, registry Registry) error {
@@ -77,13 +81,13 @@ func preflightSuites(plan Plan, registry Registry) error {
 	return nil
 }
 
-func prepareOutputLayout(outputDir string) error {
-	manifestPath := filepath.Join(outputDir, "manifest.json")
+func prepareResultLayout(resultDir string) error {
+	manifestPath := filepath.Join(resultDir, "manifest.json")
 	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	for _, dir := range []string{"raw", "summary", "logs"} {
-		path := filepath.Join(outputDir, dir)
+	for _, dir := range []string{"raw", "summary"} {
+		path := filepath.Join(resultDir, dir)
 		if err := os.RemoveAll(path); err != nil {
 			return err
 		}
@@ -94,11 +98,23 @@ func prepareOutputLayout(outputDir string) error {
 	return nil
 }
 
-func writeManifest(outputDir string, manifest Manifest) error {
+func prepareOutputLayout(outputDir string) error {
+	if err := os.RemoveAll(outputDir); err != nil {
+		return err
+	}
+	for _, dir := range []string{"", "logs"} {
+		if err := os.MkdirAll(filepath.Join(outputDir, dir), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeManifest(resultDir string, manifest Manifest) error {
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(filepath.Join(outputDir, "manifest.json"), data, 0o644)
+	return os.WriteFile(filepath.Join(resultDir, "manifest.json"), data, 0o644)
 }
