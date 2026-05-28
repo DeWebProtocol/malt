@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/storage/cas"
+	kvstore "github.com/dewebprotocol/malt/storage/kv"
 	"github.com/dewebprotocol/malt/storage/kv/memory"
 	cid "github.com/ipfs/go-cid"
 )
@@ -32,7 +33,7 @@ const (
 
 // CAS is a mock CAS for testing, backed by KVStore with simulated latency.
 type CAS struct {
-	kv         *memory.KV
+	kv         kvstore.KVStore
 	getLatency time.Duration
 	putLatency time.Duration
 	hasLatency time.Duration
@@ -51,6 +52,7 @@ type options struct {
 	putLatency time.Duration
 	hasLatency time.Duration
 	jitter     time.Duration
+	kv         kvstore.KVStore
 }
 
 func defaultOptions() *options {
@@ -100,6 +102,13 @@ func WithoutLatency() Option {
 	}
 }
 
+// WithKVStore stores mock CAS blocks in the supplied KVStore.
+func WithKVStore(kv kvstore.KVStore) Option {
+	return func(o *options) {
+		o.kv = kv
+	}
+}
+
 // NewCAS creates a mock CAS backed by an in-memory KVStore.
 // By default, operations simulate ProbeLab Kubo v0.39.0 e2e latency.
 // Use WithoutLatency for fast unit tests, or individual WithXLatency to tune.
@@ -108,9 +117,13 @@ func NewCAS(opts ...Option) *CAS {
 	for _, opt := range opts {
 		opt(options)
 	}
+	kv := options.kv
+	if kv == nil {
+		kv = memory.New()
+	}
 
 	return &CAS{
-		kv:         memory.New(),
+		kv:         kv,
 		getLatency: options.getLatency,
 		putLatency: options.putLatency,
 		hasLatency: options.hasLatency,

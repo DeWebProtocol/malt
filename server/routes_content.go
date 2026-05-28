@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/resolver"
+	"github.com/dewebprotocol/malt/storage/cas"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -62,7 +63,6 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if stat.Kind == "dir" {
-		// Return JSON directory listing
 		if resolved.proofList != nil {
 			if err := writeProofListHeader(w, *resolved.proofList); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
@@ -70,8 +70,15 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 			}
 			s.node.RecordProofList(*resolved.proofList)
 		}
+		payload, err := readDirectoryContentPayload(r.Context(), s.node.CAS(), stat)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		addVaryHeader(w, "X-Malt-Proof")
-		writeJSON(w, http.StatusOK, stat)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
 		return
 	}
 
@@ -135,4 +142,18 @@ func (s *Server) readContentPayload(ctx context.Context, g graph.Runtime, stat *
 	default:
 		return nil, fmt.Errorf("unsupported storage kind for content")
 	}
+}
+
+func readDirectoryContentPayload(ctx context.Context, blocks cas.Reader, stat *httpapi.PathStatResponse) ([]byte, error) {
+	if stat == nil || stat.Kind != "dir" {
+		return nil, fmt.Errorf("directory stat is required")
+	}
+	if stat.Payload == "" {
+		return nil, fmt.Errorf("directory payload is missing")
+	}
+	payloadCID, err := decodeCID(stat.Payload)
+	if err != nil {
+		return nil, err
+	}
+	return blocks.Get(ctx, payloadCID)
 }

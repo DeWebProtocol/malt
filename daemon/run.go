@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/dewebprotocol/malt/runtime/node"
 	"github.com/dewebprotocol/malt/server"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
+	kvfs "github.com/dewebprotocol/malt/storage/kv/fs"
 )
 
 // RunOptions configures daemon process startup.
@@ -57,14 +59,16 @@ func Run(cfg *config.Config, opts RunOptions) error {
 		mockSrv     *casmock.HTTPServer
 		mockSrvErr  chan error
 		mockCASInst *casmock.CAS
+		closeCAS    func() error
 	)
 
 	if effective.CAS.Mode == "embedded-mock" {
-		mockOpts, err := embeddedMockCASOptions(&effective)
+		var err error
+		mockCASInst, closeCAS, err = newEmbeddedMockCAS(&effective)
 		if err != nil {
 			return err
 		}
-		mockCASInst = casmock.NewCAS(mockOpts...)
+		defer func() { _ = closeCAS() }()
 		nodeOpts = append(nodeOpts, node.WithCAS(mockCASInst))
 		mockSrv = casmock.NewHTTPServer(effective.CAS.EmbeddedMock.Listen, mockCASInst)
 		mockSrvErr = make(chan error, 1)
@@ -122,6 +126,22 @@ func Run(cfg *config.Config, opts RunOptions) error {
 		return err
 	}
 	return nil
+}
+
+func newEmbeddedMockCAS(cfg *config.Config) (*casmock.CAS, func() error, error) {
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("config is nil")
+	}
+	mockOpts, err := embeddedMockCASOptions(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	kv, err := kvfs.New(filepath.Join(cfg.State.RootDir, "cas"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize embedded mock CAS store: %w", err)
+	}
+	mockOpts = append(mockOpts, casmock.WithKVStore(kv))
+	return casmock.NewCAS(mockOpts...), kv.Close, nil
 }
 
 func mockServerError(ch chan error) <-chan error {
