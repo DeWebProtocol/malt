@@ -20,7 +20,7 @@ var rootCmd = &cobra.Command{
 
 Primary commands:
   init        Create ~/.malt/malt.json and choose local state paths
-  daemon      Run the local MALT daemon
+  daemon      Run or manage the local MALT daemon
   add         Upload local files/directories to CAS and merge into the current root
   resolve     Resolve a path via the daemon
   verify      Verify a ProofList`,
