@@ -18,8 +18,12 @@ func TestDefaultConfig(t *testing.T) {
 	wantCORS := []string{
 		"http://127.0.0.1:5173",
 		"http://localhost:5173",
+		"http://127.0.0.1:5174",
+		"http://localhost:5174",
 		"http://127.0.0.1:4173",
 		"http://localhost:4173",
+		"http://127.0.0.1:4174",
+		"http://localhost:4174",
 		"https://dewebprotocol.dev",
 		"https://dewebprotocol.github.io",
 	}
@@ -88,6 +92,9 @@ func TestLoadFromFile_EmptyCORSUsesDefaultBrowserOrigins(t *testing.T) {
 	}
 	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5173") {
 		t.Fatalf("RPC.CORSAllowedOrigins = %v, want local dev origin", cfg.RPC.CORSAllowedOrigins)
+	}
+	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5174") {
+		t.Fatalf("RPC.CORSAllowedOrigins = %v, want local fallback dev origin", cfg.RPC.CORSAllowedOrigins)
 	}
 }
 
