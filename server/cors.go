@@ -71,10 +71,30 @@ func browserCORSRouteAllowed(method, rawPath string) bool {
 	case http.MethodGet, http.MethodHead:
 		return browserCORSReadPathAllowed(rawPath)
 	case http.MethodPost:
-		return rawPath == "/verify"
+		return rawPath == "/verify" || browserCORSUnixFSWritePathAllowed(rawPath)
 	default:
 		return false
 	}
+}
+
+func browserCORSUnixFSWritePathAllowed(rawPath string) bool {
+	if rawPath == "/_unixfs" {
+		return true
+	}
+
+	trimmed := strings.Trim(rawPath, "/")
+	if trimmed == "" {
+		return false
+	}
+	root, rest, ok := strings.Cut(trimmed, "/")
+	if !ok || rest == "" {
+		return false
+	}
+	switch root {
+	case "health", "metrics", "metrics:reset", "resolve", "verify", "lineage", "_", "_unixfs":
+		return false
+	}
+	return rest != "_mutate"
 }
 
 func browserCORSReadPathAllowed(rawPath string) bool {

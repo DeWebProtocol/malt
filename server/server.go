@@ -40,8 +40,8 @@ func WithLifecycleToken(token string) Option {
 	}
 }
 
-// WithBrowserOrigins allows browser-based read and proof verification tools to
-// call the local daemon from the configured origins.
+// WithBrowserOrigins allows browser-based tools to call the local daemon from
+// the configured origins.
 func WithBrowserOrigins(origins []string) Option {
 	return func(s *Server) {
 		s.browserOrigins = browserOriginSet(origins)

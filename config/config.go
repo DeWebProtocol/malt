@@ -22,6 +22,43 @@ const (
 	defaultCASTimeout         = "30s"
 )
 
+var defaultBrowserCORSAllowedOrigins = []string{
+	"http://127.0.0.1:5173",
+	"http://localhost:5173",
+	"http://127.0.0.1:5174",
+	"http://localhost:5174",
+	"http://127.0.0.1:5175",
+	"http://localhost:5175",
+	"http://127.0.0.1:5176",
+	"http://localhost:5176",
+	"http://127.0.0.1:5177",
+	"http://localhost:5177",
+	"http://127.0.0.1:5178",
+	"http://localhost:5178",
+	"http://127.0.0.1:5179",
+	"http://localhost:5179",
+	"http://127.0.0.1:5180",
+	"http://localhost:5180",
+	"http://127.0.0.1:4173",
+	"http://localhost:4173",
+	"http://127.0.0.1:4174",
+	"http://localhost:4174",
+	"http://127.0.0.1:4175",
+	"http://localhost:4175",
+	"http://127.0.0.1:4176",
+	"http://localhost:4176",
+	"http://127.0.0.1:4177",
+	"http://localhost:4177",
+	"http://127.0.0.1:4178",
+	"http://localhost:4178",
+	"http://127.0.0.1:4179",
+	"http://localhost:4179",
+	"http://127.0.0.1:4180",
+	"http://localhost:4180",
+	"https://dewebprotocol.dev",
+	"https://dewebprotocol.github.io",
+}
+
 // Config is the root configuration for the MALT runtime.
 type Config struct {
 	RPC       RPCConfig       `json:"rpc"`
@@ -93,7 +130,8 @@ func DefaultConfig() *Config {
 
 	return &Config{
 		RPC: RPCConfig{
-			Listen: defaultRPCListen,
+			Listen:             defaultRPCListen,
+			CORSAllowedOrigins: defaultBrowserCORSOrigins(),
 		},
 		State: StateConfig{
 			RootDir: stateRoot,
@@ -234,6 +272,9 @@ func (c *Config) applyDefaults() {
 		c.RPC.Listen = defaults.RPC.Listen
 	}
 	c.RPC.CORSAllowedOrigins = cleanStringList(c.RPC.CORSAllowedOrigins)
+	if len(c.RPC.CORSAllowedOrigins) == 0 {
+		c.RPC.CORSAllowedOrigins = defaultBrowserCORSOrigins()
+	}
 	if c.State.RootDir == "" {
 		c.State.RootDir = defaults.State.RootDir
 	}
@@ -328,6 +369,10 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func defaultBrowserCORSOrigins() []string {
+	return append([]string(nil), defaultBrowserCORSAllowedOrigins...)
 }
 
 func cleanStringList(values []string) []string {
