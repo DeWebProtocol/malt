@@ -8,7 +8,10 @@ import (
 )
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, &httpapi.HealthResponse{Status: "ok"})
+	writeJSON(w, http.StatusOK, &httpapi.HealthResponse{
+		Status:         "ok",
+		LifecycleToken: s.lifecycleToken,
+	})
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {

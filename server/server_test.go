@@ -70,6 +70,9 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	if health.Status != "ok" {
 		t.Fatalf("health status payload = %q, want %q", health.Status, "ok")
 	}
+	if health.LifecycleToken != "" {
+		t.Fatalf("health lifecycle token = %q, want empty", health.LifecycleToken)
+	}
 
 	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
 		Arcs: withPayloadBinding(map[string]string{"test": fakeCIDString("test")}),
@@ -101,6 +104,30 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	}
 	if rootResp.Root == "" {
 		t.Fatalf("root = %q, want non-empty root", rootResp.Root)
+	}
+}
+
+func TestServerHealthIncludesLifecycleTokenWhenConfigured(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0", WithLifecycleToken("managed-token")).Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var health httpapi.HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if health.Status != "ok" {
+		t.Fatalf("health status payload = %q, want %q", health.Status, "ok")
+	}
+	if health.LifecycleToken != "managed-token" {
+		t.Fatalf("health lifecycle token = %q, want managed-token", health.LifecycleToken)
 	}
 }
 

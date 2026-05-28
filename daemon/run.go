@@ -21,6 +21,7 @@ import (
 type RunOptions struct {
 	ListenOverride string
 	APILabel       string
+	LifecycleToken string
 	Stdout         io.Writer
 	Stderr         io.Writer
 }
@@ -81,7 +82,7 @@ func Run(cfg *config.Config, opts RunOptions) error {
 	}
 	defer node.Close()
 
-	srv := server.New(node, effective.RPC.Listen)
+	srv := server.New(node, effective.RPC.Listen, server.WithLifecycleToken(opts.LifecycleToken))
 	srvErr := make(chan error, 1)
 	go func() {
 		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
