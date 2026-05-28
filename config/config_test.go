@@ -20,10 +20,34 @@ func TestDefaultConfig(t *testing.T) {
 		"http://localhost:5173",
 		"http://127.0.0.1:5174",
 		"http://localhost:5174",
+		"http://127.0.0.1:5175",
+		"http://localhost:5175",
+		"http://127.0.0.1:5176",
+		"http://localhost:5176",
+		"http://127.0.0.1:5177",
+		"http://localhost:5177",
+		"http://127.0.0.1:5178",
+		"http://localhost:5178",
+		"http://127.0.0.1:5179",
+		"http://localhost:5179",
+		"http://127.0.0.1:5180",
+		"http://localhost:5180",
 		"http://127.0.0.1:4173",
 		"http://localhost:4173",
 		"http://127.0.0.1:4174",
 		"http://localhost:4174",
+		"http://127.0.0.1:4175",
+		"http://localhost:4175",
+		"http://127.0.0.1:4176",
+		"http://localhost:4176",
+		"http://127.0.0.1:4177",
+		"http://localhost:4177",
+		"http://127.0.0.1:4178",
+		"http://localhost:4178",
+		"http://127.0.0.1:4179",
+		"http://localhost:4179",
+		"http://127.0.0.1:4180",
+		"http://localhost:4180",
 		"https://dewebprotocol.dev",
 		"https://dewebprotocol.github.io",
 	}
@@ -93,7 +117,7 @@ func TestLoadFromFile_EmptyCORSUsesDefaultBrowserOrigins(t *testing.T) {
 	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5173") {
 		t.Fatalf("RPC.CORSAllowedOrigins = %v, want local dev origin", cfg.RPC.CORSAllowedOrigins)
 	}
-	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5174") {
+	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5180") {
 		t.Fatalf("RPC.CORSAllowedOrigins = %v, want local fallback dev origin", cfg.RPC.CORSAllowedOrigins)
 	}
 }
