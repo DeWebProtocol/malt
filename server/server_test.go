@@ -1891,11 +1891,13 @@ func TestServerManifestRootUsesManifestDirectoryPath(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET manifest status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	var got httpapi.PathStatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode manifest stat: %v", err)
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read manifest body: %v", err)
 	}
-	requireManifestStat(t, &got, manifestCID, []string{"large.bin", "raw.txt"})
+	if !bytes.Equal(got, manifestData) {
+		t.Fatalf("GET manifest body = %q, want %q", got, manifestData)
+	}
 }
 
 func requireManifestStat(t *testing.T, stat *httpapi.PathStatResponse, manifestCID cid.Cid, entries []string) {
@@ -2531,8 +2533,18 @@ func TestServerDefaultGETDirectoryProofHeader(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Default GET on directory should include proof header
-	resp, err = http.Get(ts.URL + "/" + dirResp.NewRoot + "/docs")
+	resp, err = http.Post(ts.URL+"/"+dirResp.NewRoot+"/docs/readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatalf("create nested file: %v", err)
+	}
+	var fileResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&fileResp); err != nil {
+		t.Fatalf("decode file response: %v", err)
+	}
+	resp.Body.Close()
+
+	// Default GET on directory should serve the directory manifest payload with a proof header.
+	resp, err = http.Get(ts.URL + "/" + fileResp.NewRoot + "/docs")
 	if err != nil {
 		t.Fatalf("GET directory: %v", err)
 	}
@@ -2542,12 +2554,12 @@ func TestServerDefaultGETDirectoryProofHeader(t *testing.T) {
 		t.Fatalf("GET directory status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var dirStat httpapi.PathStatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&dirStat); err != nil {
-		t.Fatalf("decode directory response: %v", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read directory body: %v", err)
 	}
-	if dirStat.Kind != "dir" {
-		t.Fatalf("dir stat kind = %q, want %q", dirStat.Kind, "dir")
+	if got, want := string(body), `{"entries":["readme.txt"]}`; got != want {
+		t.Fatalf("directory body = %q, want manifest %q", got, want)
 	}
 
 	proofListHeader := resp.Header.Get("X-Malt-ProofList")
