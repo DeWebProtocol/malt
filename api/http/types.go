@@ -12,7 +12,8 @@ type ErrorResponse struct {
 
 // HealthResponse is returned by the daemon health endpoint.
 type HealthResponse struct {
-	Status string `json:"status"`
+	Status         string `json:"status"`
+	LifecycleToken string `json:"lifecycle_token,omitempty"`
 }
 
 // MetricsResponse wraps a node-local metrics snapshot.

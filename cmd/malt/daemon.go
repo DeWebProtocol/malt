@@ -69,6 +69,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	return daemonapp.Run(cfg, daemonapp.RunOptions{
 		ListenOverride: daemonListenOverride,
 		APILabel:       "malt daemon",
+		LifecycleToken: os.Getenv(daemonapp.LifecycleTokenEnv),
 		Stdout:         os.Stdout,
 		Stderr:         os.Stderr,
 	})

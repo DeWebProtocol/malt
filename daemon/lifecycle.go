@@ -2,15 +2,19 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/config"
 )
 
@@ -18,6 +22,7 @@ const (
 	defaultLifecycleStartTimeout = 15 * time.Second
 	defaultLifecycleStopTimeout  = 10 * time.Second
 	defaultLifecyclePollInterval = 100 * time.Millisecond
+	LifecycleTokenEnv            = "MALT_DAEMON_LIFECYCLE_TOKEN"
 )
 
 // ErrDaemonStateNotFound is returned when no managed daemon state file exists.
@@ -25,11 +30,12 @@ var ErrDaemonStateNotFound = errors.New("daemon state not found")
 
 // DaemonState is the local state recorded for a managed background daemon.
 type DaemonState struct {
-	PID        int       `json:"pid"`
-	Listen     string    `json:"listen"`
-	BaseURL    string    `json:"base_url"`
-	ConfigPath string    `json:"config_path"`
-	StartedAt  time.Time `json:"started_at"`
+	PID            int       `json:"pid"`
+	Listen         string    `json:"listen"`
+	BaseURL        string    `json:"base_url"`
+	ConfigPath     string    `json:"config_path"`
+	LifecycleToken string    `json:"lifecycle_token,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
 }
 
 // DaemonStatus describes the observed daemon lifecycle state.
@@ -71,6 +77,8 @@ type LifecycleOptions struct {
 	StartProcess   func(BackgroundProcessSpec) (int, error)
 	SignalProcess  func(int) error
 	HealthCheck    func(context.Context, string) error
+	IdentityCheck  func(context.Context, string, string) error
+	GenerateToken  func() (string, error)
 }
 
 // LifecycleManager manages a daemon process started by `malt daemon start`.
@@ -89,6 +97,8 @@ type LifecycleManager struct {
 	startProcess   func(BackgroundProcessSpec) (int, error)
 	signalProcess  func(int) error
 	healthCheck    func(context.Context, string) error
+	identityCheck  func(context.Context, string, string) error
+	generateToken  func() (string, error)
 }
 
 // NewLifecycleManager creates a lifecycle manager with production defaults for
@@ -109,6 +119,8 @@ func NewLifecycleManager(opts LifecycleOptions) *LifecycleManager {
 		startProcess:   opts.StartProcess,
 		signalProcess:  opts.SignalProcess,
 		healthCheck:    opts.HealthCheck,
+		identityCheck:  opts.IdentityCheck,
+		generateToken:  opts.GenerateToken,
 	}
 	if m.now == nil {
 		m.now = time.Now
@@ -133,6 +145,12 @@ func NewLifecycleManager(opts LifecycleOptions) *LifecycleManager {
 	}
 	if m.healthCheck == nil {
 		m.healthCheck = defaultHealthCheck
+	}
+	if m.identityCheck == nil {
+		m.identityCheck = defaultIdentityCheck
+	}
+	if m.generateToken == nil {
+		m.generateToken = generateLifecycleToken
 	}
 	return m
 }
@@ -208,6 +226,9 @@ func (m *LifecycleManager) Status(ctx context.Context, cfg *config.Config) (*Dae
 		baseURL = state.BaseURL
 	}
 	healthErr := m.healthCheck(ctx, baseURL)
+	if state != nil {
+		healthErr = m.daemonIdentityError(ctx, state)
+	}
 	status := &DaemonStatus{
 		Running:     healthErr == nil,
 		Managed:     state != nil,
@@ -245,11 +266,18 @@ func (m *LifecycleManager) Start(ctx context.Context, cfg *config.Config) (*Daem
 	if current.Managed {
 		_ = os.Remove(m.statePath)
 	}
+	token, err := m.generateToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate daemon lifecycle token: %w", err)
+	}
+	if token == "" {
+		return nil, fmt.Errorf("generate daemon lifecycle token: empty token")
+	}
 
 	spec := BackgroundProcessSpec{
 		Executable: m.executable,
 		Args:       append([]string(nil), m.foregroundArgs...),
-		Env:        append([]string(nil), m.env...),
+		Env:        withLifecycleTokenEnv(m.env, token),
 		LogPath:    m.logPath,
 	}
 	pid, err := m.startProcess(spec)
@@ -258,17 +286,18 @@ func (m *LifecycleManager) Start(ctx context.Context, cfg *config.Config) (*Daem
 	}
 
 	state := &DaemonState{
-		PID:        pid,
-		Listen:     effective.RPC.Listen,
-		BaseURL:    effective.APIBaseURL(),
-		ConfigPath: m.configPath,
-		StartedAt:  m.now().UTC(),
+		PID:            pid,
+		Listen:         effective.RPC.Listen,
+		BaseURL:        effective.APIBaseURL(),
+		ConfigPath:     m.configPath,
+		LifecycleToken: token,
+		StartedAt:      m.now().UTC(),
 	}
 	if err := WriteDaemonState(m.statePath, state); err != nil {
 		_ = m.signalProcess(pid)
 		return nil, err
 	}
-	if err := m.waitForHealth(ctx, state.BaseURL, m.startTimeout); err != nil {
+	if err := m.waitForIdentity(ctx, state.BaseURL, state.LifecycleToken, m.startTimeout); err != nil {
 		_ = m.signalProcess(pid)
 		_ = os.Remove(m.statePath)
 		return nil, err
@@ -285,26 +314,15 @@ func (m *LifecycleManager) Stop(ctx context.Context, cfg *config.Config) (*Daemo
 	if err != nil {
 		return nil, err
 	}
-	if healthErr := m.healthCheck(ctx, state.BaseURL); healthErr != nil {
+	if identityErr := m.daemonIdentityError(ctx, state); identityErr != nil {
 		if err := os.Remove(m.statePath); err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("remove stale daemon state: %w", err)
 		}
-		return &DaemonStatus{
-			Running:     false,
-			Managed:     true,
-			PID:         state.PID,
-			Listen:      state.Listen,
-			BaseURL:     state.BaseURL,
-			ConfigPath:  state.ConfigPath,
-			StatePath:   m.statePath,
-			LogPath:     m.logPath,
-			StartedAt:   state.StartedAt,
-			HealthError: healthErr,
-		}, nil
+		return m.stoppedStatus(state, identityErr), nil
 	}
 	if state.PID <= 0 {
 		_ = os.Remove(m.statePath)
-		return nil, fmt.Errorf("daemon state has invalid pid %d", state.PID)
+		return m.stoppedStatus(state, fmt.Errorf("daemon state has invalid pid %d", state.PID)), nil
 	}
 	if err := m.signalProcess(state.PID); err != nil {
 		return nil, fmt.Errorf("stop daemon process %d: %w", state.PID, err)
@@ -315,17 +333,7 @@ func (m *LifecycleManager) Stop(ctx context.Context, cfg *config.Config) (*Daemo
 	if err := os.Remove(m.statePath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove daemon state: %w", err)
 	}
-	return &DaemonStatus{
-		Running:    false,
-		Managed:    true,
-		PID:        state.PID,
-		Listen:     state.Listen,
-		BaseURL:    state.BaseURL,
-		ConfigPath: state.ConfigPath,
-		StatePath:  m.statePath,
-		LogPath:    m.logPath,
-		StartedAt:  state.StartedAt,
-	}, nil
+	return m.stoppedStatus(state, nil), nil
 }
 
 // Restart stops a managed daemon when present, then starts a new managed daemon.
@@ -359,11 +367,11 @@ func effectiveLifecycleConfig(cfg *config.Config) (config.Config, error) {
 	return effective, nil
 }
 
-func (m *LifecycleManager) waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) error {
+func (m *LifecycleManager) waitForIdentity(ctx context.Context, baseURL string, token string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
-		if err := m.healthCheck(ctx, baseURL); err == nil {
+		if err := m.identityCheck(ctx, baseURL, token); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -374,6 +382,34 @@ func (m *LifecycleManager) waitForHealth(ctx context.Context, baseURL string, ti
 		if err := sleepWithContext(ctx, m.sleep, m.pollInterval); err != nil {
 			return err
 		}
+	}
+}
+
+func (m *LifecycleManager) daemonIdentityError(ctx context.Context, state *DaemonState) error {
+	if state == nil {
+		return errors.New("daemon state is nil")
+	}
+	if state.PID <= 0 {
+		return fmt.Errorf("daemon state has invalid pid %d", state.PID)
+	}
+	if state.LifecycleToken == "" {
+		return errors.New("daemon state is missing lifecycle token")
+	}
+	return m.identityCheck(ctx, state.BaseURL, state.LifecycleToken)
+}
+
+func (m *LifecycleManager) stoppedStatus(state *DaemonState, healthErr error) *DaemonStatus {
+	return &DaemonStatus{
+		Running:     false,
+		Managed:     true,
+		PID:         state.PID,
+		Listen:      state.Listen,
+		BaseURL:     state.BaseURL,
+		ConfigPath:  state.ConfigPath,
+		StatePath:   m.statePath,
+		LogPath:     m.logPath,
+		StartedAt:   state.StartedAt,
+		HealthError: healthErr,
 	}
 }
 
@@ -401,19 +437,62 @@ func sleepWithContext(ctx context.Context, sleep func(time.Duration), d time.Dur
 }
 
 func defaultHealthCheck(ctx context.Context, baseURL string) error {
+	_, err := fetchHealth(ctx, baseURL)
+	return err
+}
+
+func defaultIdentityCheck(ctx context.Context, baseURL string, token string) error {
+	if token == "" {
+		return errors.New("missing expected lifecycle token")
+	}
+	health, err := fetchHealth(ctx, baseURL)
+	if err != nil {
+		return err
+	}
+	if health.LifecycleToken != token {
+		return fmt.Errorf("daemon lifecycle token mismatch")
+	}
+	return nil
+}
+
+func fetchHealth(ctx context.Context, baseURL string) (*httpapi.HealthResponse, error) {
 	u := strings.TrimRight(baseURL, "/") + "/health"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client := &http.Client{Timeout: time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health status %d", resp.StatusCode)
+		return nil, fmt.Errorf("health status %d", resp.StatusCode)
 	}
-	return nil
+	var health httpapi.HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil && err != io.EOF {
+		return nil, fmt.Errorf("decode health response: %w", err)
+	}
+	return &health, nil
+}
+
+func generateLifecycleToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
+func withLifecycleTokenEnv(env []string, token string) []string {
+	prefix := LifecycleTokenEnv + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, prefix+token)
 }

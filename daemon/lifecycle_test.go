@@ -26,13 +26,24 @@ func TestLifecycleStartWritesManagedState(t *testing.T) {
 		LogPath:        logPath,
 		Executable:     "/usr/local/bin/malt",
 		ForegroundArgs: []string{"--config", configPath, "daemon", "--listen", cfg.RPC.Listen},
+		Env:            []string{LifecycleTokenEnv + "=old-token", "PATH=/bin"},
 		Now:            func() time.Time { return startedAt },
+		GenerateToken:  func() (string, error) { return "managed-token", nil },
 		StartProcess: func(spec BackgroundProcessSpec) (int, error) {
 			started = spec
 			processStarted = true
 			return 4242, nil
 		},
 		HealthCheck: func(context.Context, string) error {
+			if processStarted {
+				return nil
+			}
+			return errors.New("daemon not running")
+		},
+		IdentityCheck: func(_ context.Context, _ string, token string) error {
+			if token != "managed-token" {
+				t.Fatalf("identity token = %q, want managed-token", token)
+			}
 			if processStarted {
 				return nil
 			}
@@ -56,6 +67,12 @@ func TestLifecycleStartWritesManagedState(t *testing.T) {
 	if started.LogPath != logPath {
 		t.Fatalf("started log path = %q, want %q", started.LogPath, logPath)
 	}
+	if !slices.Contains(started.Env, LifecycleTokenEnv+"=managed-token") {
+		t.Fatalf("started env missing lifecycle token: %v", started.Env)
+	}
+	if slices.Contains(started.Env, LifecycleTokenEnv+"=old-token") {
+		t.Fatalf("started env retained stale lifecycle token: %v", started.Env)
+	}
 
 	state, err := LoadDaemonState(statePath)
 	if err != nil {
@@ -67,6 +84,9 @@ func TestLifecycleStartWritesManagedState(t *testing.T) {
 	if state.ConfigPath != configPath || state.StartedAt != startedAt {
 		t.Fatalf("state metadata = %+v", state)
 	}
+	if state.LifecycleToken != "managed-token" {
+		t.Fatalf("state lifecycle token = %q, want managed-token", state.LifecycleToken)
+	}
 }
 
 func TestLifecycleStartDoesNotLaunchWhenDaemonIsHealthy(t *testing.T) {
@@ -74,11 +94,12 @@ func TestLifecycleStartDoesNotLaunchWhenDaemonIsHealthy(t *testing.T) {
 	cfg.RPC.Listen = "127.0.0.1:54322"
 	statePath := t.TempDir() + "/daemon.json"
 	if err := WriteDaemonState(statePath, &DaemonState{
-		PID:        1111,
-		Listen:     cfg.RPC.Listen,
-		BaseURL:    cfg.APIBaseURL(),
-		ConfigPath: "config.json",
-		StartedAt:  time.Now(),
+		PID:            1111,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
 	}); err != nil {
 		t.Fatalf("WriteDaemonState: %v", err)
 	}
@@ -89,7 +110,8 @@ func TestLifecycleStartDoesNotLaunchWhenDaemonIsHealthy(t *testing.T) {
 			t.Fatal("StartProcess should not be called for a healthy daemon")
 			return 0, nil
 		},
-		HealthCheck: func(context.Context, string) error { return nil },
+		HealthCheck:   func(context.Context, string) error { return nil },
+		IdentityCheck: func(context.Context, string, string) error { return nil },
 	})
 
 	status, err := manager.Start(context.Background(), cfg)
@@ -106,11 +128,12 @@ func TestLifecycleStopSignalsManagedDaemonAndRemovesState(t *testing.T) {
 	cfg.RPC.Listen = "127.0.0.1:54323"
 	statePath := t.TempDir() + "/daemon.json"
 	if err := WriteDaemonState(statePath, &DaemonState{
-		PID:        1234,
-		Listen:     cfg.RPC.Listen,
-		BaseURL:    cfg.APIBaseURL(),
-		ConfigPath: "config.json",
-		StartedAt:  time.Now(),
+		PID:            1234,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
 	}); err != nil {
 		t.Fatalf("WriteDaemonState: %v", err)
 	}
@@ -133,6 +156,7 @@ func TestLifecycleStopSignalsManagedDaemonAndRemovesState(t *testing.T) {
 			}
 			return nil
 		},
+		IdentityCheck: func(context.Context, string, string) error { return nil },
 	})
 
 	status, err := manager.Stop(context.Background(), cfg)
@@ -147,6 +171,45 @@ func TestLifecycleStopSignalsManagedDaemonAndRemovesState(t *testing.T) {
 	}
 	if _, err := LoadDaemonState(statePath); !errors.Is(err, ErrDaemonStateNotFound) {
 		t.Fatalf("LoadDaemonState after stop = %v, want ErrDaemonStateNotFound", err)
+	}
+}
+
+func TestLifecycleStopRemovesStateWithoutSignalingWhenIdentityMismatches(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RPC.Listen = "127.0.0.1:54326"
+	statePath := t.TempDir() + "/daemon.json"
+	if err := WriteDaemonState(statePath, &DaemonState{
+		PID:            9999,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteDaemonState: %v", err)
+	}
+
+	manager := NewLifecycleManager(LifecycleOptions{
+		StatePath: statePath,
+		SignalProcess: func(int) error {
+			t.Fatal("mismatched daemon identity should not signal a process")
+			return nil
+		},
+		HealthCheck: func(context.Context, string) error { return nil },
+		IdentityCheck: func(context.Context, string, string) error {
+			return errors.New("lifecycle token mismatch")
+		},
+	})
+
+	status, err := manager.Stop(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if status.Running {
+		t.Fatalf("status = %+v, want stopped", status)
+	}
+	if _, err := LoadDaemonState(statePath); !errors.Is(err, ErrDaemonStateNotFound) {
+		t.Fatalf("LoadDaemonState after identity mismatch = %v, want ErrDaemonStateNotFound", err)
 	}
 }
 
@@ -192,11 +255,12 @@ func TestLifecycleRestartStopsThenStarts(t *testing.T) {
 	cfg.RPC.Listen = "127.0.0.1:54324"
 	statePath := t.TempDir() + "/daemon.json"
 	if err := WriteDaemonState(statePath, &DaemonState{
-		PID:        1234,
-		Listen:     cfg.RPC.Listen,
-		BaseURL:    cfg.APIBaseURL(),
-		ConfigPath: "config.json",
-		StartedAt:  time.Now(),
+		PID:            1234,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
 	}); err != nil {
 		t.Fatalf("WriteDaemonState: %v", err)
 	}
@@ -220,6 +284,12 @@ func TestLifecycleRestartStopsThenStarts(t *testing.T) {
 			return 5678, nil
 		},
 		HealthCheck: func(context.Context, string) error {
+			if running {
+				return nil
+			}
+			return errors.New("daemon stopped")
+		},
+		IdentityCheck: func(context.Context, string, string) error {
 			if running {
 				return nil
 			}

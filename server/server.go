@@ -20,19 +20,35 @@ const defaultRootGraphID = "default"
 
 // Server serves the daemon HTTP API.
 type Server struct {
-	node         *node.Node
-	addr         string
-	server       *http.Server
-	defaultGraph graph.Runtime
-	graphMu      sync.Mutex
+	node           *node.Node
+	addr           string
+	lifecycleToken string
+	server         *http.Server
+	defaultGraph   graph.Runtime
+	graphMu        sync.Mutex
+}
+
+// Option configures the daemon server.
+type Option func(*Server)
+
+// WithLifecycleToken exposes the managed-process identity token through
+// /health for local lifecycle commands.
+func WithLifecycleToken(token string) Option {
+	return func(s *Server) {
+		s.lifecycleToken = token
+	}
 }
 
 // New creates a new daemon server.
-func New(node *node.Node, addr string) *Server {
-	return &Server{
+func New(node *node.Node, addr string, opts ...Option) *Server {
+	s := &Server{
 		node: node,
 		addr: addr,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Handler returns the configured HTTP handler.
