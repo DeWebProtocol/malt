@@ -222,9 +222,8 @@ Current command model:
 
 - `malt init`
   - creates the local configuration file and state-root directory
-- `malt daemon`
-  - foreground long-running local process
-  - `malt daemon start/status/stop/restart` manage a background local daemon
+- `malt start/status/stop/restart`
+  - manage the local daemon as a background process
   - owns hot structure state
   - serves local HTTP/JSON API requests
 - `malt add ...`
@@ -564,8 +563,7 @@ The target operator flow is:
 1. run `malt init`
 2. create `~/.malt/malt.json`
 3. choose a local state root
-4. run `malt daemon` in the foreground, or `malt daemon start` for a managed
-   background daemon
+4. run `malt start` for a managed background daemon
 
 Current config shape:
 

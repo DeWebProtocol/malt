@@ -52,8 +52,8 @@ type DaemonStatus struct {
 	HealthError error
 }
 
-// BackgroundProcessSpec describes the foreground daemon process to launch in
-// the background.
+// BackgroundProcessSpec describes the daemon process to launch in the
+// background.
 type BackgroundProcessSpec struct {
 	Executable string
 	Args       []string
@@ -63,64 +63,64 @@ type BackgroundProcessSpec struct {
 
 // LifecycleOptions configures local managed daemon process operations.
 type LifecycleOptions struct {
-	ConfigPath     string
-	StatePath      string
-	LogPath        string
-	Executable     string
-	ForegroundArgs []string
-	Env            []string
-	Now            func() time.Time
-	StartTimeout   time.Duration
-	StopTimeout    time.Duration
-	PollInterval   time.Duration
-	Sleep          func(time.Duration)
-	StartProcess   func(BackgroundProcessSpec) (int, error)
-	SignalProcess  func(int) error
-	HealthCheck    func(context.Context, string) error
-	IdentityCheck  func(context.Context, string, string) error
-	GenerateToken  func() (string, error)
+	ConfigPath    string
+	StatePath     string
+	LogPath       string
+	Executable    string
+	ProcessArgs   []string
+	Env           []string
+	Now           func() time.Time
+	StartTimeout  time.Duration
+	StopTimeout   time.Duration
+	PollInterval  time.Duration
+	Sleep         func(time.Duration)
+	StartProcess  func(BackgroundProcessSpec) (int, error)
+	SignalProcess func(int) error
+	HealthCheck   func(context.Context, string) error
+	IdentityCheck func(context.Context, string, string) error
+	GenerateToken func() (string, error)
 }
 
-// LifecycleManager manages a daemon process started by `malt daemon start`.
+// LifecycleManager manages a daemon process started by `malt start`.
 type LifecycleManager struct {
-	configPath     string
-	statePath      string
-	logPath        string
-	executable     string
-	foregroundArgs []string
-	env            []string
-	now            func() time.Time
-	startTimeout   time.Duration
-	stopTimeout    time.Duration
-	pollInterval   time.Duration
-	sleep          func(time.Duration)
-	startProcess   func(BackgroundProcessSpec) (int, error)
-	signalProcess  func(int) error
-	healthCheck    func(context.Context, string) error
-	identityCheck  func(context.Context, string, string) error
-	generateToken  func() (string, error)
+	configPath    string
+	statePath     string
+	logPath       string
+	executable    string
+	processArgs   []string
+	env           []string
+	now           func() time.Time
+	startTimeout  time.Duration
+	stopTimeout   time.Duration
+	pollInterval  time.Duration
+	sleep         func(time.Duration)
+	startProcess  func(BackgroundProcessSpec) (int, error)
+	signalProcess func(int) error
+	healthCheck   func(context.Context, string) error
+	identityCheck func(context.Context, string, string) error
+	generateToken func() (string, error)
 }
 
 // NewLifecycleManager creates a lifecycle manager with production defaults for
 // any operation not supplied in opts.
 func NewLifecycleManager(opts LifecycleOptions) *LifecycleManager {
 	m := &LifecycleManager{
-		configPath:     opts.ConfigPath,
-		statePath:      opts.StatePath,
-		logPath:        opts.LogPath,
-		executable:     opts.Executable,
-		foregroundArgs: append([]string(nil), opts.ForegroundArgs...),
-		env:            append([]string(nil), opts.Env...),
-		now:            opts.Now,
-		startTimeout:   opts.StartTimeout,
-		stopTimeout:    opts.StopTimeout,
-		pollInterval:   opts.PollInterval,
-		sleep:          opts.Sleep,
-		startProcess:   opts.StartProcess,
-		signalProcess:  opts.SignalProcess,
-		healthCheck:    opts.HealthCheck,
-		identityCheck:  opts.IdentityCheck,
-		generateToken:  opts.GenerateToken,
+		configPath:    opts.ConfigPath,
+		statePath:     opts.StatePath,
+		logPath:       opts.LogPath,
+		executable:    opts.Executable,
+		processArgs:   append([]string(nil), opts.ProcessArgs...),
+		env:           append([]string(nil), opts.Env...),
+		now:           opts.Now,
+		startTimeout:  opts.StartTimeout,
+		stopTimeout:   opts.StopTimeout,
+		pollInterval:  opts.PollInterval,
+		sleep:         opts.Sleep,
+		startProcess:  opts.StartProcess,
+		signalProcess: opts.SignalProcess,
+		healthCheck:   opts.HealthCheck,
+		identityCheck: opts.IdentityCheck,
+		generateToken: opts.GenerateToken,
 	}
 	if m.now == nil {
 		m.now = time.Now
@@ -276,7 +276,7 @@ func (m *LifecycleManager) Start(ctx context.Context, cfg *config.Config) (*Daem
 
 	spec := BackgroundProcessSpec{
 		Executable: m.executable,
-		Args:       append([]string(nil), m.foregroundArgs...),
+		Args:       append([]string(nil), m.processArgs...),
 		Env:        withLifecycleTokenEnv(m.env, token),
 		LogPath:    m.logPath,
 	}

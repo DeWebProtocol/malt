@@ -21,14 +21,14 @@ func TestLifecycleStartWritesManagedState(t *testing.T) {
 	processStarted := false
 
 	manager := NewLifecycleManager(LifecycleOptions{
-		ConfigPath:     configPath,
-		StatePath:      statePath,
-		LogPath:        logPath,
-		Executable:     "/usr/local/bin/malt",
-		ForegroundArgs: []string{"--config", configPath, "daemon", "--listen", cfg.RPC.Listen},
-		Env:            []string{LifecycleTokenEnv + "=old-token", "PATH=/bin"},
-		Now:            func() time.Time { return startedAt },
-		GenerateToken:  func() (string, error) { return "managed-token", nil },
+		ConfigPath:    configPath,
+		StatePath:     statePath,
+		LogPath:       logPath,
+		Executable:    "/usr/local/bin/malt",
+		ProcessArgs:   []string{"--internal-daemon-test"},
+		Env:           []string{LifecycleTokenEnv + "=old-token", "PATH=/bin"},
+		Now:           func() time.Time { return startedAt },
+		GenerateToken: func() (string, error) { return "managed-token", nil },
 		StartProcess: func(spec BackgroundProcessSpec) (int, error) {
 			started = spec
 			processStarted = true
@@ -61,7 +61,7 @@ func TestLifecycleStartWritesManagedState(t *testing.T) {
 	if started.Executable != "/usr/local/bin/malt" {
 		t.Fatalf("started executable = %q", started.Executable)
 	}
-	if !slices.Equal(started.Args, []string{"--config", configPath, "daemon", "--listen", cfg.RPC.Listen}) {
+	if !slices.Equal(started.Args, []string{"--internal-daemon-test"}) {
 		t.Fatalf("started args = %v", started.Args)
 	}
 	if started.LogPath != logPath {
