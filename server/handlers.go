@@ -31,7 +31,8 @@ type pathResolution struct {
 }
 
 var (
-	errPathNotFound = errors.New("path not found")
+	errPathNotFound                     = errors.New("path not found")
+	errLegacyRootRequiresMigrationOptIn = errors.New("root is not a UnixFS root; pass migrate=1 to opt into legacy tree migration")
 )
 
 func (s *Server) statForResolvedKey(ctx context.Context, g graph.Runtime, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
@@ -178,14 +179,18 @@ func (s *Server) unixFSLayout(g graph.Runtime) (*unixfs.Layout, error) {
 	})
 }
 
-func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, root cid.Cid) (cid.Cid, error) {
+func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, nil
 	}
 	if stat, err := layout.Stat(ctx, root, ""); err == nil && stat.Kind == "directory" {
 		return root, nil
 	}
-	// Try legacy migration; if that fails, treat as fresh root.
+	if !allowLegacyMigration {
+		return cid.Undef, errLegacyRootRequiresMigrationOptIn
+	}
+	// Preserve the explicit legacy-compatibility behavior: when a caller opts
+	// in but the source cannot be migrated, the write starts a fresh UnixFS root.
 	if migrated, err := s.migrateLegacyTreeToUnixFS(ctx, g, layout, root); err == nil {
 		return migrated, nil
 	}

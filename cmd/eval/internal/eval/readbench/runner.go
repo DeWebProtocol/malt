@@ -122,7 +122,7 @@ func (r *Runner) PrepareFixture(ctx context.Context, cfg FixtureConfig) (*Fixtur
 	}
 	r.root = rootResp.Root
 
-	if writeResp, err := r.client.AddUnixFSFile(ctx, r.root, data.smallPath, data.smallData); err != nil {
+	if writeResp, err := r.client.AddUnixFSFileWithLegacyMigration(ctx, r.root, data.smallPath, data.smallData); err != nil {
 		return nil, fmt.Errorf("write small fixture: %w", err)
 	} else {
 		r.root = writeResp.NewRoot

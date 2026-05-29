@@ -122,8 +122,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /resolve/{root}/{path...}", s.handleResolve)
 
 	// Core read/write (/{root}/{path...} format). POST is a UnixFS layout
-	// convenience that converts file operations into semantic mutations before
-	// writer application.
+	// convenience for UnixFS roots; legacy root migration requires explicit
+	// opt-in before file operations are converted into semantic mutations.
 	mux.HandleFunc("GET /{root}", s.handleContent)
 	mux.HandleFunc("GET /{root}/{path...}", s.handleContent)
 	mux.HandleFunc("POST /{root}/{path...}", s.handleWrite)

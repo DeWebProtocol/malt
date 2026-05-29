@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/dewebprotocol/malt/api/http"
 	cid "github.com/ipfs/go-cid"
@@ -38,7 +39,7 @@ func (s *Server) handleUnixFSWrite(w http.ResponseWriter, r *http.Request, root 
 		return
 	}
 
-	baseRoot, err := s.prepareUnixFSRoot(r.Context(), g, layout, root)
+	baseRoot, err := s.prepareUnixFSRoot(r.Context(), g, layout, root, unixFSMigrationRequested(r))
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -88,4 +89,9 @@ func (s *Server) handleUnixFSWrite(w http.ResponseWriter, r *http.Request, root 
 		resp.OldRoot = root.String()
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func unixFSMigrationRequested(r *http.Request) bool {
+	value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("migrate")))
+	return value == "1" || value == "true"
 }
