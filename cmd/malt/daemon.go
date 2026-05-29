@@ -12,25 +12,27 @@ import (
 )
 
 func init() {
-	rootCmd.AddCommand(daemonCmd)
-	daemonCmd.PersistentFlags().StringVar(&daemonListenOverride, "listen", "", "override daemon listen address")
-	daemonCmd.AddCommand(daemonStartCmd)
-	daemonCmd.AddCommand(daemonStatusCmd)
-	daemonCmd.AddCommand(daemonStopCmd)
-	daemonCmd.AddCommand(daemonRestartCmd)
+	rootCmd.AddCommand(daemonStartCmd)
+	rootCmd.AddCommand(daemonStatusCmd)
+	rootCmd.AddCommand(daemonStopCmd)
+	rootCmd.AddCommand(daemonRestartCmd)
+	for _, cmd := range []*cobra.Command{daemonStartCmd, daemonStatusCmd, daemonStopCmd, daemonRestartCmd} {
+		cmd.Flags().StringVar(&daemonListenOverride, "listen", "", "override daemon listen address")
+	}
 }
+
+const (
+	managedDaemonProcessEnv = "MALT_DAEMON_PROCESS"
+	managedDaemonConfigEnv  = "MALT_DAEMON_CONFIG"
+	managedDaemonListenEnv  = "MALT_DAEMON_LISTEN"
+)
 
 var daemonListenOverride string
-
-var daemonCmd = &cobra.Command{
-	Use:   "daemon",
-	Short: "Run or manage the local MALT daemon",
-	RunE:  runDaemon,
-}
 
 var daemonStartCmd = &cobra.Command{
 	Use:           "start",
 	Short:         "Start the local MALT daemon in the background",
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runDaemonStart,
@@ -39,6 +41,7 @@ var daemonStartCmd = &cobra.Command{
 var daemonStatusCmd = &cobra.Command{
 	Use:           "status",
 	Short:         "Show the local MALT daemon status",
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runDaemonStatus,
@@ -47,6 +50,7 @@ var daemonStatusCmd = &cobra.Command{
 var daemonStopCmd = &cobra.Command{
 	Use:           "stop",
 	Short:         "Stop the managed local MALT daemon",
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runDaemonStop,
@@ -55,19 +59,30 @@ var daemonStopCmd = &cobra.Command{
 var daemonRestartCmd = &cobra.Command{
 	Use:           "restart",
 	Short:         "Restart the managed local MALT daemon",
+	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runDaemonRestart,
 }
 
-func runDaemon(cmd *cobra.Command, args []string) error {
-	cfg, err := loadRuntimeConfig()
+func runManagedDaemonProcess() error {
+	cfg, err := loadManagedDaemonConfig()
 	if err != nil {
 		return err
 	}
+	return runDaemonComponent(cfg, os.Getenv(managedDaemonListenEnv))
+}
 
+func loadManagedDaemonConfig() (*config.Config, error) {
+	if configFile := os.Getenv(managedDaemonConfigEnv); configFile != "" {
+		return config.LoadFromFile(configFile)
+	}
+	return config.Load()
+}
+
+func runDaemonComponent(cfg *config.Config, listenOverride string) error {
 	return daemonapp.Run(cfg, daemonapp.RunOptions{
-		ListenOverride: daemonListenOverride,
+		ListenOverride: listenOverride,
 		APILabel:       "malt daemon",
 		LifecycleToken: os.Getenv(daemonapp.LifecycleTokenEnv),
 		Stdout:         os.Stdout,
@@ -184,25 +199,53 @@ func newDaemonLifecycleManager() (*daemonapp.LifecycleManager, error) {
 		return nil, fmt.Errorf("determine executable: %w", err)
 	}
 	return daemonapp.NewLifecycleManager(daemonapp.LifecycleOptions{
-		ConfigPath:     configPath,
-		StatePath:      statePath,
-		LogPath:        logPath,
-		Executable:     exe,
-		ForegroundArgs: daemonForegroundArgs(),
-		Env:            os.Environ(),
+		ConfigPath:  configPath,
+		StatePath:   statePath,
+		LogPath:     logPath,
+		Executable:  exe,
+		ProcessArgs: daemonProcessArgs(),
+		Env:         daemonProcessEnv(os.Environ(), cfgFile, daemonListenOverride),
 	}), nil
 }
 
-func daemonForegroundArgs() []string {
-	var args []string
-	if cfgFile != "" {
-		args = append(args, "--config", cfgFile)
+func daemonProcessArgs() []string {
+	return nil
+}
+
+func daemonProcessEnv(env []string, configFile string, listenOverride string) []string {
+	out := withoutEnvKeys(env, managedDaemonProcessEnv, managedDaemonConfigEnv, managedDaemonListenEnv)
+	out = append(out, managedDaemonProcessEnv+"=1")
+	if configFile != "" {
+		out = append(out, managedDaemonConfigEnv+"="+configFile)
 	}
-	args = append(args, "daemon")
-	if daemonListenOverride != "" {
-		args = append(args, "--listen", daemonListenOverride)
+	if listenOverride != "" {
+		out = append(out, managedDaemonListenEnv+"="+listenOverride)
 	}
-	return args
+	return out
+}
+
+func withoutEnvKeys(env []string, keys ...string) []string {
+	prefixes := make([]string, 0, len(keys))
+	for _, key := range keys {
+		prefixes = append(prefixes, key+"=")
+	}
+	out := make([]string, 0, len(env)+len(keys))
+	for _, entry := range env {
+		if hasAnyPrefix(entry, prefixes) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }
 
 func printDaemonRunningStatus(w io.Writer, status *daemonapp.DaemonStatus) {
