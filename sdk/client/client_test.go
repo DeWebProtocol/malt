@@ -622,11 +622,7 @@ func TestClientContentRangeReadReturnsProofListHeader(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	createResp, err := client.CreatePayloadRoot(ctx, nil)
-	if err != nil {
-		t.Fatalf("create root structure: %v", err)
-	}
-	writeResp, err := client.AddUnixFSFile(ctx, createResp.Root, "f.txt", []byte("abcdef"))
+	writeResp, err := client.AddUnixFSFile(ctx, "", "f.txt", []byte("abcdef"))
 	if err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}
@@ -671,11 +667,7 @@ func TestClientAddUnixFSFileStream(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	createResp, err := client.CreatePayloadRoot(ctx, nil)
-	if err != nil {
-		t.Fatalf("create root structure: %v", err)
-	}
-	writeResp, err := client.AddUnixFSFileStream(ctx, createResp.Root, "stream.txt", strings.NewReader("streamed body"))
+	writeResp, err := client.AddUnixFSFileStream(ctx, "", "stream.txt", strings.NewReader("streamed body"))
 	if err != nil {
 		t.Fatalf("add unixfs file stream: %v", err)
 	}
@@ -708,12 +700,8 @@ func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
 	client := New(cfg)
 	ctx := context.Background()
 
-	createResp, err := client.CreatePayloadRoot(ctx, nil)
-	if err != nil {
-		t.Fatalf("create root structure: %v", err)
-	}
 	fileBody := append(bytes.Repeat([]byte{'a'}, unixfs.DefaultChunkSize), []byte("tail")...)
-	writeResp, err := client.AddUnixFSFile(ctx, createResp.Root, "large.bin", fileBody)
+	writeResp, err := client.AddUnixFSFile(ctx, "", "large.bin", fileBody)
 	if err != nil {
 		t.Fatalf("add unixfs file: %v", err)
 	}

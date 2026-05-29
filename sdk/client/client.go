@@ -264,8 +264,19 @@ func (c *Client) AddUnixFSFile(ctx context.Context, root, rawPath string, data [
 
 // AddUnixFSFileStream streams a file into a root's UnixFS tree.
 func (c *Client) AddUnixFSFileStream(ctx context.Context, root, rawPath string, r io.Reader) (*httpapi.UnixFSWriteResponse, error) {
+	return c.addUnixFSFileStream(ctx, root, rawPath, r, unixFSWriteOptions{})
+}
+
+// AddUnixFSFileWithLegacyMigration uploads a file while opting into legacy root
+// migration when root is not already a UnixFS root.
+func (c *Client) AddUnixFSFileWithLegacyMigration(ctx context.Context, root, rawPath string, data []byte) (*httpapi.UnixFSWriteResponse, error) {
+	return c.addUnixFSFileStream(ctx, root, rawPath, bytes.NewReader(data), unixFSWriteOptions{migrateLegacy: true})
+}
+
+func (c *Client) addUnixFSFileStream(ctx context.Context, root, rawPath string, r io.Reader, opts unixFSWriteOptions) (*httpapi.UnixFSWriteResponse, error) {
 	var resp httpapi.UnixFSWriteResponse
 	route, query := unixFSWriteRoute(root, rawPath)
+	applyUnixFSWriteOptions(root, query, opts)
 	if err := c.doRaw(ctx, http.MethodPost, route, query, "application/octet-stream", r, &resp); err != nil {
 		return nil, err
 	}
@@ -288,6 +299,16 @@ func unixFSWriteRoute(root, rawPath string) (string, map[string]string) {
 		return "/_unixfs", map[string]string{"path": rawPath}
 	}
 	return "/" + url.PathEscape(root) + "/" + rawPath, map[string]string{}
+}
+
+type unixFSWriteOptions struct {
+	migrateLegacy bool
+}
+
+func applyUnixFSWriteOptions(root string, query map[string]string, opts unixFSWriteOptions) {
+	if opts.migrateLegacy && strings.TrimSpace(root) != "" {
+		query["migrate"] = "1"
+	}
 }
 
 // CreateRootStructure creates a root-scoped structure.

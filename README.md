@@ -282,9 +282,13 @@ Current boundary:
   `writer.SemanticMutation` values.
 - `POST /{root}/_mutate` is the writer mutation route. The root-centric daemon
   also exposes `POST /_unixfs?path=...` for creating a fresh UnixFS root and
-  `POST /{root}/{path}` as UnixFS layout conveniences: they stage file or
-  directory operations, convert the resulting layout state into semantic
-  mutations, and then use the same writer route semantics as `_mutate`.
+  `POST /{root}/{path}` as a UnixFS layout convenience for roots that are
+  already in the UnixFS layout. Legacy map roots can be migrated only when the
+  caller explicitly adds `migrate=1`; default browser uploads fail fast instead
+  of silently traversing and migrating the whole legacy tree. These convenience
+  routes stage file or directory operations, convert the resulting layout state
+  into semantic mutations, and then use the same writer route semantics as
+  `_mutate`.
 - The public CLI currently exposes write ingestion through `malt add`; reads
   are available through the daemon API and proof-bearing resolve/content
   endpoints.

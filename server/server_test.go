@@ -175,6 +175,63 @@ func TestFreshUnixFSWriteCreatesRoot(t *testing.T) {
 	}
 }
 
+func TestServerUnixFSWriteRejectsLegacyRootWithoutMigrationOptIn(t *testing.T) {
+	node := newTestNode(t)
+	mockCAS, ok := node.CAS().(*casmock.CAS)
+	if !ok {
+		t.Fatal("expected mock CAS")
+	}
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	manifestCID, err := mockCAS.Put(t.Context(), []byte(`{"entries":["existing.txt"]}`))
+	if err != nil {
+		t.Fatalf("put legacy manifest: %v", err)
+	}
+	existingCID, err := mockCAS.Put(t.Context(), []byte("existing content"))
+	if err != nil {
+		t.Fatalf("put legacy file: %v", err)
+	}
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: map[string]string{
+			"@payload":     manifestCID.String(),
+			"existing.txt": existingCID.String(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create legacy root: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create legacy root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/upload.txt", "application/octet-stream", strings.NewReader("new content"))
+	if err != nil {
+		t.Fatalf("write legacy root: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("legacy root write status = %d, want %d: %s", resp.StatusCode, http.StatusConflict, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read error body: %v", err)
+	}
+	if !strings.Contains(string(body), "migrate=1") {
+		t.Fatalf("legacy root write error = %q, want migrate opt-in hint", string(body))
+	}
+}
+
 func TestServerCreateRootOnlyAcceptsUnderscoreRoute(t *testing.T) {
 	node := newTestNode(t)
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
@@ -1432,7 +1489,7 @@ func TestServerUnixFSWritesPublishWriterReadableRoot(t *testing.T) {
 	resp.Body.Close()
 	root := createResp.Root
 
-	resp, err = http.Post(ts.URL+"/"+root+"/docs?type=dir", "application/json", nil)
+	resp, err = http.Post(ts.URL+"/"+root+"/docs?type=dir&migrate=1", "application/json", nil)
 	if err != nil {
 		t.Fatalf("create unixfs directory request failed: %v", err)
 	}
@@ -1449,7 +1506,7 @@ func TestServerUnixFSWritesPublishWriterReadableRoot(t *testing.T) {
 	}
 
 	fileBody := []byte("hello from writer unixfs")
-	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
@@ -1548,7 +1605,7 @@ func TestServerUnixFSIdempotentFileWriteReturnsSameRoot(t *testing.T) {
 	resp.Body.Close()
 
 	body := []byte("stable contents")
-	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(body))
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/readme.txt?migrate=1", "application/octet-stream", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("initial unixfs write failed: %v", err)
 	}
@@ -1604,7 +1661,7 @@ func TestServerResolveHeadAndReadShareUnixFSDirectoryTarget(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs?type=dir", "application/json", nil)
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs?type=dir&migrate=1", "application/json", nil)
 	if err != nil {
 		t.Fatalf("create unixfs directory request failed: %v", err)
 	}
@@ -1693,7 +1750,7 @@ func TestServerHeadGetAndResolveSharePathResolution(t *testing.T) {
 	resp.Body.Close()
 
 	fileBody := []byte("shared path target")
-	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/nested/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/nested/readme.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
@@ -1815,7 +1872,7 @@ func TestServerUnixFSWriteRootDoesNotSelfParent(t *testing.T) {
 	resp.Body.Close()
 	root := createResp.Root
 
-	resp, err = http.Post(ts.URL+"/"+root+"/readme.txt", "application/octet-stream", bytes.NewReader([]byte("hello")))
+	resp, err = http.Post(ts.URL+"/"+root+"/readme.txt?migrate=1", "application/octet-stream", bytes.NewReader([]byte("hello")))
 	if err != nil {
 		t.Fatalf("create unixfs file request failed: %v", err)
 	}
@@ -2047,7 +2104,7 @@ func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 	root := createResp.Root
 
 	fileBody := []byte("hello content proof")
-	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/docs/readme.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
@@ -2150,7 +2207,7 @@ func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {
 	root := createResp.Root
 
 	fileBody := append(bytes.Repeat([]byte{'a'}, unixfs.DefaultChunkSize), []byte("bcdef")...)
-	resp, err = http.Post(ts.URL+"/"+root+"/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/large.bin?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs large file: %v", err)
 	}
@@ -2326,7 +2383,7 @@ func TestServerDefaultGETReturnsProofHeader(t *testing.T) {
 
 	// Write a small file via UnixFS
 	fileBody := []byte("hello proof header")
-	resp, err = http.Post(ts.URL+"/"+root+"/readme.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/readme.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
@@ -2405,7 +2462,7 @@ func TestServerDefaultGETProofHeaderWithProofFalse(t *testing.T) {
 	root := createResp.Root
 
 	fileBody := []byte("opt-out proof")
-	resp, err = http.Post(ts.URL+"/"+root+"/file.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/file.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
@@ -2463,7 +2520,7 @@ func TestServerDefaultGETProofHeaderWithXMaltProofOmit(t *testing.T) {
 	root := createResp.Root
 
 	fileBody := []byte("header opt-out proof")
-	resp, err = http.Post(ts.URL+"/"+root+"/file2.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/file2.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
@@ -2523,7 +2580,7 @@ func TestServerDefaultGETDirectoryProofHeader(t *testing.T) {
 	root := createResp.Root
 
 	// Create a directory
-	resp, err = http.Post(ts.URL+"/"+root+"/docs?type=dir", "application/json", nil)
+	resp, err = http.Post(ts.URL+"/"+root+"/docs?type=dir&migrate=1", "application/json", nil)
 	if err != nil {
 		t.Fatalf("create directory: %v", err)
 	}
@@ -2620,7 +2677,7 @@ func TestServerDefaultGETRangeProofHeader(t *testing.T) {
 
 	// Create a large file that spans multiple chunks
 	fileBody := append(bytes.Repeat([]byte{'a'}, unixfs.DefaultChunkSize), []byte("bcdef")...)
-	resp, err = http.Post(ts.URL+"/"+root+"/large.bin", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/large.bin?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs large file: %v", err)
 	}
@@ -2720,7 +2777,7 @@ func TestServerHEADDoesNotReturnProofHeaders(t *testing.T) {
 	root := createResp.Root
 
 	fileBody := []byte("head test file")
-	resp, err = http.Post(ts.URL+"/"+root+"/head.txt", "application/octet-stream", bytes.NewReader(fileBody))
+	resp, err = http.Post(ts.URL+"/"+root+"/head.txt?migrate=1", "application/octet-stream", bytes.NewReader(fileBody))
 	if err != nil {
 		t.Fatalf("create unixfs file: %v", err)
 	}
