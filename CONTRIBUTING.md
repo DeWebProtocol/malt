@@ -19,7 +19,7 @@ policy, evaluator schema changes, and new application layouts.
 
 ## Development Setup
 
-Use Go 1.24.6 or newer.
+Use Go 1.25.7 or newer.
 
 ```bash
 go test ./...

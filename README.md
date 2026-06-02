@@ -58,7 +58,7 @@ Known non-goals for the current prototype:
 
 Prerequisites:
 
-- Go 1.24.6 or newer
+- Go 1.25.7 or newer
 - Git
 
 Build the two local binaries:
