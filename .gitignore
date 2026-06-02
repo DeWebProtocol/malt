@@ -39,9 +39,12 @@ go.work.sum
 /bin/
 /malt
 /cmd/malt/malt
-/cmd/gateway/gateway
 
 # Local evaluation outputs
 /.eval-cache/
 /output/
 /result/
+
+# Logs and local state
+*.log
+*.db
