@@ -11,8 +11,7 @@ Before opening a pull request:
 
 1. Read [README.md](./README.md) for the project shape.
 2. Read [ARCHITECTURE.md](./ARCHITECTURE.md) for current package boundaries.
-3. Read [CODING_STANDARDS.md](./CODING_STANDARDS.md) for Go conventions.
-4. Check [ROADMAP.md](./ROADMAP.md) before starting larger work.
+3. Check [ROADMAP.md](./ROADMAP.md) before starting larger work.
 
 For design-level changes, open an issue first. Examples include new semantic
 operations, ProofList schema changes, new ArcTable modes, root publication
@@ -62,6 +61,10 @@ command when the documentation claims a command, schema, or workflow.
 
 ## Coding Expectations
 
+- Run `gofmt` on Go code before committing.
+- Name tests around behavior, and prefer table-driven tests when covering
+  several cases of the same behavior.
+- Keep benchmark files named `*_benchmark_test.go`.
 - Prefer semantic names over storage-mechanism names.
 - Keep `list` and `map` as semantic abstractions.
 - Keep resolver and writer as graph ports over those semantics.
