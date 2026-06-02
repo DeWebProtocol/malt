@@ -3,7 +3,7 @@ module github.com/dewebprotocol/malt
 go 1.24.6
 
 require (
-	github.com/bits-and-blooms/bitset v1.7.0
+	github.com/bits-and-blooms/bitset v1.24.4
 	github.com/consensys/gnark-crypto v0.13.0
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c
