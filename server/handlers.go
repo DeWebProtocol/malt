@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"path"
 	"strconv"
@@ -340,6 +341,9 @@ func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.C
 			Entries:     stat.Entries,
 		}, nil
 	case "file":
+		if stat.Size > math.MaxInt64 {
+			return nil, fmt.Errorf("unixfs file size %d exceeds max int64", stat.Size)
+		}
 		size := int64(stat.Size)
 		return &httpapi.PathStatResponse{
 			Kind:        "file",
