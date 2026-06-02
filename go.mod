@@ -18,7 +18,7 @@ require (
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/spf13/cobra v1.10.2
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	golang.org/x/sync v0.19.0
 )
 
