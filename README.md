@@ -1,6 +1,7 @@
 # MALT
 
 [![Go CI](https://github.com/dewebprotocol/malt/actions/workflows/go.yml/badge.svg)](https://github.com/dewebprotocol/malt/actions/workflows/go.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 MALT is an authenticated mutable structure layer over immutable
 content-addressed storage.
