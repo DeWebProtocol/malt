@@ -35,6 +35,12 @@ go.work.sum
 .gocache/
 
 # Built binaries
+/bin/
 /malt
 /cmd/malt/malt
 /cmd/gateway/gateway
+
+# Local evaluation outputs
+/.eval-cache/
+/output/
+/result/
