@@ -8,10 +8,15 @@ import (
 	"syscall"
 )
 
-const createNewProcessGroup = 0x00000200
+const (
+	createNewProcessGroup = 0x00000200
+	detachProcess         = 0x00000008
+)
 
 func configureBackgroundCommand(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: createNewProcessGroup | detachProcess,
+	}
 }
 
 func defaultSignalProcess(pid int) error {
