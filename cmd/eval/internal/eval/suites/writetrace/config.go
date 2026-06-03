@@ -2,6 +2,7 @@
 package writetrace
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/configjson"
 )
+
+//go:embed default_repos.json
+var defaultReposJSON []byte
 
 const SuiteName = "write_trace"
 
@@ -33,26 +37,21 @@ type RepositoryTarget struct {
 // SystemList accepts either a JSON array or a comma-separated JSON string.
 type SystemList []string
 
-// DefaultBenchmarkRepos is the default set of Git repositories used for
-// write-trace replay when the plan does not specify repo_urls. The selection
-// covers a range of languages, repository sizes, and directory structures.
-var DefaultBenchmarkRepos = []string{
-	"https://github.com/facebook/react.git",
-	"https://github.com/vuejs/vue.git",
-	"https://github.com/torvalds/linux.git",
-	"https://github.com/sveltejs/svelte.git",
-	"https://github.com/golang/go.git",
-	"https://github.com/rust-lang/rust.git",
-	"https://github.com/ipfs/kubo.git",
-	"https://github.com/python/cpython.git",
-	"https://github.com/microsoft/vscode.git",
-	"https://github.com/nodejs/node.git",
+// defaultBenchmarkRepos is the default set of Git repositories used for
+// write-trace replay when the plan does not specify repo_urls. Loaded from
+// default_repos.json; edit that file to change the default selection.
+var defaultBenchmarkRepos []string
+
+func init() {
+	if err := json.Unmarshal(defaultReposJSON, &defaultBenchmarkRepos); err != nil {
+		panic("writetrace: parse default_repos.json: " + err.Error())
+	}
 }
 
 // DefaultConfig returns framework-managed write-trace replay defaults.
 func DefaultConfig() Config {
 	return Config{
-		RepoURLs:     DefaultBenchmarkRepos,
+		RepoURLs:     defaultBenchmarkRepos,
 		StoreMode:    string(evalstore.StoreModeIsolated),
 		StoreBackend: string(evalstore.StoreBackendMemory),
 		Systems:      SystemList{"maltflat", "merkledag", "hamt"},
@@ -84,14 +83,14 @@ func (c Config) validate() error {
 }
 
 // RepositoryTargets returns normalized repository targets from repo_urls.
-// If repo_urls is empty, DefaultBenchmarkRepos is used.
+// If repo_urls is empty, defaultBenchmarkRepos is used.
 func (c Config) RepositoryTargets() ([]RepositoryTarget, error) {
 	if c.MaxCommitsPerRepo < 0 {
 		return nil, fmt.Errorf("max_commits_per_repo must be non-negative")
 	}
 	urls := c.RepoURLs
 	if len(urls) == 0 {
-		urls = DefaultBenchmarkRepos
+		urls = defaultBenchmarkRepos
 	}
 	repos := make([]RepositoryTarget, 0, len(urls))
 	seen := make(map[string]int, len(urls))
