@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	gittrace "github.com/dewebprotocol/malt/cmd/eval/helper/git"
@@ -20,6 +21,7 @@ const SuiteName = "write_trace"
 // Config controls the write_trace evaluation suite.
 type Config struct {
 	RepoURLs          []string   `json:"repo_urls,omitempty"`
+	RepoURLsFile      string     `json:"repo_urls_file,omitempty"`
 	MaxCommitsPerRepo int        `json:"max_commits_per_repo,omitempty"`
 	StoreMode         string     `json:"store_mode,omitempty"`
 	StoreBackend      string     `json:"store_backend,omitempty"`
@@ -82,13 +84,24 @@ func (c Config) validate() error {
 	return err
 }
 
-// RepositoryTargets returns normalized repository targets from repo_urls.
-// If repo_urls is empty, defaultBenchmarkRepos is used.
+// RepositoryTargets returns normalized repository targets. Resolution order:
+//  1. repo_urls (inline list in plan config)
+//  2. repo_urls_file (external JSON file path)
+//  3. embedded default_repos.json
 func (c Config) RepositoryTargets() ([]RepositoryTarget, error) {
 	if c.MaxCommitsPerRepo < 0 {
 		return nil, fmt.Errorf("max_commits_per_repo must be non-negative")
 	}
 	urls := c.RepoURLs
+	if len(urls) == 0 && strings.TrimSpace(c.RepoURLsFile) != "" {
+		data, err := os.ReadFile(c.RepoURLsFile)
+		if err != nil {
+			return nil, fmt.Errorf("read repo_urls_file %q: %w", c.RepoURLsFile, err)
+		}
+		if err := json.Unmarshal(data, &urls); err != nil {
+			return nil, fmt.Errorf("parse repo_urls_file %q: %w", c.RepoURLsFile, err)
+		}
+	}
 	if len(urls) == 0 {
 		urls = defaultBenchmarkRepos
 	}
