@@ -13,7 +13,6 @@ package mock
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/dewebprotocol/malt/storage/cas"
@@ -131,20 +130,22 @@ func NewCAS(opts ...Option) *CAS {
 	}
 }
 
-// simulateLatency sleeps for base ± jitter.
-func simulateLatency(base, jitter time.Duration) {
-	if base == 0 {
+// startLatencyEnvelope records the entry time for a fixed-latency envelope.
+// Call endLatencyEnvelope after the actual operation to guarantee that the
+// total time from start to end equals exactly base.
+func startLatencyEnvelope() time.Time {
+	return time.Now()
+}
+
+// endLatencyEnvelope sleeps until base has elapsed since start, ensuring a
+// fixed total latency regardless of underlying operation duration.
+func endLatencyEnvelope(start time.Time, base time.Duration) {
+	if base <= 0 {
 		return
 	}
-	if jitter == 0 {
-		time.Sleep(base)
-		return
+	if remaining := base - time.Since(start); remaining > 0 {
+		time.Sleep(remaining)
 	}
-	jittered := base + time.Duration(rand.Int63n(int64(jitter)*2)-int64(jitter))
-	if jittered < 0 {
-		jittered = 0
-	}
-	time.Sleep(jittered)
 }
 
 func blockKey(c cid.Cid) []byte {
@@ -154,9 +155,11 @@ func blockKey(c cid.Cid) []byte {
 // Get retrieves a block from mock storage.
 func (m *CAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
 	m.stats.RecordGetCall()
-	simulateLatency(m.getLatency, m.jitter)
+	start := startLatencyEnvelope()
 
 	data, err := m.kv.Get(ctx, blockKey(c))
+
+	endLatencyEnvelope(start, m.getLatency)
 	if err != nil {
 		return nil, fmt.Errorf("block not found: %s", c.String())
 	}
@@ -172,16 +175,20 @@ func (m *CAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 // PutWithCodec stores a block under the requested CID codec.
 func (m *CAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
 	m.stats.RecordPutCall()
-	simulateLatency(m.putLatency, m.jitter)
+	start := startLatencyEnvelope()
 
 	c, err := cas.CIDForBlock(cas.Block{Data: data, Codec: codec})
 	if err != nil {
+		endLatencyEnvelope(start, m.putLatency)
 		return cid.Cid{}, err
 	}
 
 	if err := m.kv.Put(ctx, blockKey(c), data); err != nil {
+		endLatencyEnvelope(start, m.putLatency)
 		return cid.Cid{}, fmt.Errorf("failed to store block: %w", err)
 	}
+
+	endLatencyEnvelope(start, m.putLatency)
 	m.stats.RecordPutBytes(len(data))
 	return c, nil
 }
@@ -194,16 +201,18 @@ func (m *CAS) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutResult
 	for range blocks {
 		m.stats.RecordPutCall()
 	}
-	simulateLatency(m.putLatency, m.jitter)
+	start := startLatencyEnvelope()
 
 	results := make([]cas.PutResult, len(blocks))
 	for i, block := range blocks {
 		blockCID, err := cas.CIDForBlock(block)
 		if err != nil {
+			endLatencyEnvelope(start, m.putLatency)
 			return nil, err
 		}
 		exists, err := m.kv.Has(ctx, blockKey(blockCID))
 		if err != nil {
+			endLatencyEnvelope(start, m.putLatency)
 			return nil, fmt.Errorf("failed to check block: %w", err)
 		}
 		status := cas.PutStatusStored
@@ -212,21 +221,26 @@ func (m *CAS) PutBatch(ctx context.Context, blocks []cas.Block) ([]cas.PutResult
 		}
 		if !exists {
 			if err := m.kv.Put(ctx, blockKey(blockCID), block.Data); err != nil {
+				endLatencyEnvelope(start, m.putLatency)
 				return nil, fmt.Errorf("failed to store block: %w", err)
 			}
 		}
 		m.stats.RecordPutBytes(len(block.Data))
 		results[i] = cas.PutResult{CID: blockCID, Status: status}
 	}
+
+	endLatencyEnvelope(start, m.putLatency)
 	return results, nil
 }
 
 // Has checks if a block exists in mock storage.
 func (m *CAS) Has(ctx context.Context, c cid.Cid) (bool, error) {
 	m.stats.RecordHasCall()
-	simulateLatency(m.hasLatency, m.jitter)
+	start := startLatencyEnvelope()
 
 	exists, err := m.kv.Has(ctx, blockKey(c))
+
+	endLatencyEnvelope(start, m.hasLatency)
 	if err != nil {
 		return false, fmt.Errorf("failed to check block: %w", err)
 	}
@@ -241,16 +255,19 @@ func (m *CAS) HasBatch(ctx context.Context, cids []cid.Cid) ([]bool, error) {
 	for range cids {
 		m.stats.RecordHasCall()
 	}
-	simulateLatency(m.hasLatency, m.jitter)
+	start := startLatencyEnvelope()
 
 	results := make([]bool, len(cids))
 	for i, c := range cids {
 		exists, err := m.kv.Has(ctx, blockKey(c))
 		if err != nil {
+			endLatencyEnvelope(start, m.hasLatency)
 			return nil, fmt.Errorf("failed to check block: %w", err)
 		}
 		results[i] = exists
 	}
+
+	endLatencyEnvelope(start, m.hasLatency)
 	return results, nil
 }
 
