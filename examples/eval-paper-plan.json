@@ -1,0 +1,44 @@
+{
+  "run_id": "paper",
+  "suites": [
+    {
+      "name": "cas_model",
+      "config": {
+        "get_latency_ms": 10,
+        "put_latency_ms": 50,
+        "has_latency_ms": 5,
+        "jitter_ms": 2,
+        "chain_lengths": [1, 4, 16, 64, 256],
+        "batch_sizes": [1, 4, 16, 64, 256],
+        "iterations": 5
+      }
+    },
+    {
+      "name": "proof_overhead",
+      "config": {
+        "structures": ["map", "list"],
+        "sizes": [1, 8, 64, 256, 1024],
+        "iterations": 5,
+        "commitment": ["ipa", "kzg"]
+      }
+    },
+    {
+      "name": "storage_overhead",
+      "config": {
+        "structures": ["map", "list"],
+        "sizes": [1, 8, 64, 256, 1024],
+        "payload_bytes": 4096
+      }
+    },
+    {
+      "name": "write_trace",
+      "config": {
+        "max_commits_per_repo": 500,
+        "systems": ["maltflat", "merkledag", "hamt"],
+        "store_mode": "isolated",
+        "store_backend": "memory",
+        "first_parent": true
+      }
+    }
+  ]
+}
