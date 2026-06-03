@@ -1,0 +1,11 @@
+{
+  "run_id": "write-trace-default-repos",
+  "suites": [
+    {
+      "name": "write_trace",
+      "config": {
+        "max_commits_per_repo": 200
+      }
+    }
+  ]
+}
