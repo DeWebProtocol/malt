@@ -41,19 +41,24 @@
       }
     },
     {
-      "name": "read_query",
+      "name": "read_depth_sweep",
       "config": {
         "systems": ["maltflat", "merkledag", "hamt"],
-        "depth": 5,
+        "depths": [3, 4, 5, 6],
         "small_bytes": 256,
         "large_bytes": 1048576,
-        "range": "bytes=0-4095",
-        "iterations": 10,
-        "api_base_url": "http://127.0.0.1:4317",
-        "arcs": {
-          "resolve_path": "@payload",
-          "content_range": "@payload"
-        }
+        "iterations": 10
+      }
+    },
+    {
+      "name": "read_latency_sweep",
+      "config": {
+        "systems": ["maltflat", "merkledag", "hamt"],
+        "depth": 6,
+        "cas_latency_ms": [0, 5, 10, 20, 50, 100],
+        "small_bytes": 256,
+        "large_bytes": 1048576,
+        "iterations": 10
       }
     }
   ]

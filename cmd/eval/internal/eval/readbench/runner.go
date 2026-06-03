@@ -161,7 +161,7 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 		SmallPath:   data.smallPath,
 		LargePath:   data.largePath,
 	}
-	baselines := make(map[SystemName]*baselineSystem)
+	baselines := make(map[SystemName]*BaselineSystem)
 	for _, system := range normalized.Systems {
 		switch system {
 		case SystemMALTFlat:

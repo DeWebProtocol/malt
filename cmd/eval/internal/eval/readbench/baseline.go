@@ -25,7 +25,8 @@ type fixtureData struct {
 	largeData   []byte
 }
 
-type baselineSystem struct {
+// BaselineSystem wraps a mock CAS + IPLD DAG for MerkleDAG/HAMT resolve.
+type BaselineSystem struct {
 	system SystemName
 	store  *casmock.CAS
 	dag    ipld.DAGService
@@ -42,12 +43,47 @@ func newFixtureData(cfg FixtureConfig) fixtureData {
 	}
 }
 
-func newBaselineSystem(ctx context.Context, system SystemName, fixture fixtureData) (*baselineSystem, error) {
+func newBaselineSystem(ctx context.Context, system SystemName, fixture fixtureData) (*BaselineSystem, error) {
+	store := casmock.NewCAS(casmock.WithoutLatency())
+	return newBaselineSystemWithStore(ctx, system, fixture, store)
+}
+
+// NewBaselineSystemWithCAS creates a baseline system using the given mock CAS.
+// This allows injecting a CAS with specific latency for benchmarking.
+func NewBaselineSystemWithCAS(ctx context.Context, system SystemName, multiFix MultiDepthFixture, store *casmock.CAS) (*BaselineSystem, error) {
 	dirLayout, err := baselineDirLayout(system)
 	if err != nil {
 		return nil, err
 	}
-	store := casmock.NewCAS(casmock.WithoutLatency())
+	var files []merkledagimport.File
+	for _, fix := range multiFix.Fixtures {
+		files = append(files,
+			merkledagimport.File{Path: fix.SmallPath, Data: fix.SmallData, Mode: 0o644},
+			merkledagimport.File{Path: fix.LargePath, Data: fix.LargeData, Mode: 0o644},
+		)
+	}
+	dag := merkledagimport.NewDAGService(store)
+	result, err := merkledagimport.ImportFiles(ctx, store, files, merkledagimport.Options{
+		Model:      merkledagimport.ModelUnixFS,
+		FileLayout: merkledagimport.FileLayoutBalanced,
+		DirLayout:  dirLayout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s prepare fixture: %w", system, err)
+	}
+	return &BaselineSystem{
+		system: system,
+		store:  store,
+		dag:    dag,
+		root:   result.Root,
+	}, nil
+}
+
+func newBaselineSystemWithStore(ctx context.Context, system SystemName, fixture fixtureData, store *casmock.CAS) (*BaselineSystem, error) {
+	dirLayout, err := baselineDirLayout(system)
+	if err != nil {
+		return nil, err
+	}
 	dag := merkledagimport.NewDAGService(store)
 	result, err := merkledagimport.ImportFiles(ctx, store, []merkledagimport.File{
 		{Path: fixture.smallPath, Data: fixture.smallData, Mode: 0o644},
@@ -60,7 +96,7 @@ func newBaselineSystem(ctx context.Context, system SystemName, fixture fixtureDa
 	if err != nil {
 		return nil, fmt.Errorf("%s prepare fixture: %w", system, err)
 	}
-	return &baselineSystem{
+	return &BaselineSystem{
 		system: system,
 		store:  store,
 		dag:    dag,
@@ -79,7 +115,13 @@ func baselineDirLayout(system SystemName) (string, error) {
 	}
 }
 
-func (b *baselineSystem) measureOperation(ctx context.Context, iteration int, fixture string, op operation) (*Result, error) {
+// MeasureResolve measures a single resolve_path operation at the given path.
+func (b *BaselineSystem) MeasureResolve(ctx context.Context, iteration int, fixture string, filePath string) (*Result, error) {
+	op := operation{kind: OperationResolvePath, path: filePath}
+	return b.measureOperation(ctx, iteration, fixture, op)
+}
+
+func (b *BaselineSystem) measureOperation(ctx context.Context, iteration int, fixture string, op operation) (*Result, error) {
 	if b == nil || b.store == nil || b.dag == nil {
 		return nil, fmt.Errorf("baseline system is nil")
 	}
@@ -130,7 +172,7 @@ func (b *baselineSystem) measureOperation(ctx context.Context, iteration int, fi
 	}, nil
 }
 
-func (b *baselineSystem) resolvePath(ctx context.Context, queryPath string) (ipld.Node, error) {
+func (b *BaselineSystem) resolvePath(ctx context.Context, queryPath string) (ipld.Node, error) {
 	root, err := cid.Parse(b.root)
 	if err != nil {
 		return nil, fmt.Errorf("parse baseline root %q: %w", b.root, err)

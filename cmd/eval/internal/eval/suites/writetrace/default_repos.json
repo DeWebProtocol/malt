@@ -1,7 +1,6 @@
 [
   "https://github.com/facebook/react.git",
   "https://github.com/vuejs/vue.git",
-  "https://github.com/torvalds/linux.git",
   "https://github.com/sveltejs/svelte.git",
   "https://github.com/golang/go.git",
   "https://github.com/rust-lang/rust.git",
