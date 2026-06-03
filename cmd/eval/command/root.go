@@ -18,8 +18,10 @@ func NewRootCommand() *cobra.Command {
 		Use:   "malt-eval",
 		Short: "Run MALT evaluation workloads",
 	}
+	registry := evalsuites.NewRegistry()
 	cmd.AddCommand(
-		evalrun.NewCommand(evalsuites.NewRegistry()),
+		evalrun.NewCommand(registry),
+		evalrun.NewIsolatedCommand(registry),
 		evalschema.NewCommand(),
 		evalsummary.NewCommand(),
 		evalread.NewCommand(),

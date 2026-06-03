@@ -28,6 +28,93 @@ type RunOptions struct {
 	Stderr         io.Writer
 }
 
+// DaemonHandle is a running daemon instance that can be shut down.
+type DaemonHandle struct {
+	srv      *server.Server
+	mockSrv  *casmock.HTTPServer
+	node     *node.Node
+	closeCAS func() error
+	Listen   string
+}
+
+// Shutdown gracefully stops the daemon.
+func (h *DaemonHandle) Shutdown(ctx context.Context) error {
+	if h.mockSrv != nil {
+		_ = h.mockSrv.Shutdown(ctx)
+	}
+	if h.srv != nil {
+		if err := h.srv.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
+	h.node.Close()
+	if h.closeCAS != nil {
+		_ = h.closeCAS()
+	}
+	return nil
+}
+
+// Start launches the daemon in the background and returns a handle.
+// Unlike Run, Start does not block — the caller is responsible for calling
+// Shutdown when done.
+func Start(cfg *config.Config, opts RunOptions) (*DaemonHandle, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	effective := *cfg
+	if opts.ListenOverride != "" {
+		effective.RPC.Listen = opts.ListenOverride
+	}
+
+	var (
+		nodeOpts    []node.Option
+		mockSrv     *casmock.HTTPServer
+		mockCASInst *casmock.CAS
+		closeCAS    func() error
+	)
+
+	if effective.CAS.Mode == "embedded-mock" {
+		var err error
+		mockCASInst, closeCAS, err = newEmbeddedMockCAS(&effective)
+		if err != nil {
+			return nil, err
+		}
+		nodeOpts = append(nodeOpts, node.WithCAS(mockCASInst))
+		mockSrv = casmock.NewHTTPServer(effective.CAS.EmbeddedMock.Listen, mockCASInst)
+		go func() {
+			_ = mockSrv.Start()
+		}()
+	}
+
+	nodeOpts = append(nodeOpts, node.WithConfig(&effective))
+	n, err := node.NewNode(nodeOpts...)
+	if err != nil {
+		if closeCAS != nil {
+			_ = closeCAS()
+		}
+		return nil, err
+	}
+
+	srv := server.New(
+		n,
+		effective.RPC.Listen,
+		server.WithLifecycleToken(opts.LifecycleToken),
+		server.WithBrowserOrigins(effective.RPC.CORSAllowedOrigins),
+	)
+	go func() {
+		_ = srv.Start()
+	}()
+
+	return &DaemonHandle{
+		srv:      srv,
+		mockSrv:  mockSrv,
+		node:     n,
+		closeCAS: closeCAS,
+		Listen:   effective.RPC.Listen,
+	}, nil
+}
+
 // Run starts the daemon HTTP API and optional embedded mock CAS, then blocks
 // until shutdown or a fatal server error occurs.
 func Run(cfg *config.Config, opts RunOptions) error {
