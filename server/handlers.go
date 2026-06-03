@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"path"
 	"strconv"
@@ -22,6 +23,10 @@ import (
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
+
+// errNotUnixFSFile signals that a CID does not resolve to a UnixFS file node.
+// Callers may use this to fall back to alternative resolution paths.
+var errNotUnixFSFile = errors.New("not a unixfs file")
 
 type pathResolution struct {
 	queryPath string
@@ -78,6 +83,8 @@ func (s *Server) pathStatForTarget(ctx context.Context, g graph.Runtime, target 
 	case maltcid.SemanticKindMap:
 		if stat, err := s.unixFSPathStat(ctx, g, target, ""); err == nil {
 			return stat, nil
+		} else if !errors.Is(err, errNotUnixFSFile) {
+			return nil, err
 		}
 		payload, err := mandatoryMapPayload(ctx, g, target)
 		if err != nil {
@@ -327,7 +334,7 @@ func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.C
 	}
 	stat, err := layout.Stat(ctx, root, p)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stat unixfs node: %w: %w", err, errNotUnixFSFile)
 	}
 
 	switch stat.Kind {
@@ -340,6 +347,9 @@ func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.C
 			Entries:     stat.Entries,
 		}, nil
 	case "file":
+		if stat.Size > math.MaxInt64 {
+			return nil, fmt.Errorf("unixfs file size %d exceeds max int64: %w", stat.Size, errNotUnixFSFile)
+		}
 		size := int64(stat.Size)
 		return &httpapi.PathStatResponse{
 			Kind:        "file",
