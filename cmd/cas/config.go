@@ -16,8 +16,9 @@ const (
 
 // Config is the CAS server configuration.
 type Config struct {
-	Listen  string        `json:"listen"`
-	KVStore KVStoreConfig `json:"kvstore"`
+	Listen       string        `json:"listen"`
+	KVStore      KVStoreConfig `json:"kvstore"`
+	settingsPath string
 }
 
 // KVStoreConfig configures the CAS block store backend.
@@ -74,12 +75,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg := DefaultConfig()
+			cfg.settingsPath = resolved
 			return cfg, cfg.Validate()
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
 	cfg := DefaultConfig()
+	cfg.settingsPath = resolved
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
@@ -165,6 +168,9 @@ func (c *Config) KVStorePath() string {
 
 // SettingsPath returns the default settings file path.
 func (c *Config) SettingsPath() string {
+	if c != nil && c.settingsPath != "" {
+		return c.settingsPath
+	}
 	path, _ := DefaultConfigPath()
 	return path
 }

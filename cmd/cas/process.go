@@ -17,7 +17,7 @@ type BackgroundProcessSpec struct {
 }
 
 // startBackgroundProcess forks the given executable as a detached background process.
-func startBackgroundProcess(executable string, args []string, env []string, logPath string) (int, error) {
+func startBackgroundProcess(executable string, args []string, env []string, logPath string) (pid int, err error) {
 	if executable == "" {
 		return 0, fmt.Errorf("executable is empty")
 	}
@@ -33,7 +33,11 @@ func startBackgroundProcess(executable string, args []string, env []string, logP
 		if err != nil {
 			return 0, fmt.Errorf("open log: %w", err)
 		}
-		defer log.Close()
+		defer func() {
+			if closeErr := log.Close(); err == nil && closeErr != nil {
+				err = fmt.Errorf("close log: %w", closeErr)
+			}
+		}()
 		cmd.Stdout = log
 		cmd.Stderr = log
 	}
@@ -41,7 +45,7 @@ func startBackgroundProcess(executable string, args []string, env []string, logP
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
-	pid := cmd.Process.Pid
+	pid = cmd.Process.Pid
 	if err := cmd.Process.Release(); err != nil {
 		return 0, err
 	}
