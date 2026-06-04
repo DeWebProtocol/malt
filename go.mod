@@ -4,7 +4,7 @@ go 1.25.7
 
 require (
 	github.com/bits-and-blooms/bitset v1.24.4
-	github.com/consensys/gnark-crypto v0.18.1
+	github.com/consensys/gnark-crypto v0.20.1
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c
 	github.com/crate-crypto/go-kzg-4844 v1.1.0
