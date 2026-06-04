@@ -33,12 +33,20 @@ func NewHTTPServer(addr string, c cas.Client) *HTTPServer {
 // Handler returns the configured HTTP handler.
 func (s *HTTPServer) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v0/block/get", s.handleBlockGet)
 	mux.HandleFunc("POST /api/v0/block/put", s.handleBlockPut)
 	mux.HandleFunc("POST /api/v0/block/stat", s.handleBlockStat)
 	mux.HandleFunc("POST /api/v0/malt/block/has-batch", s.handleHasBatch)
 	mux.HandleFunc("POST /api/v0/malt/block/put-batch", s.handlePutBatch)
 	return mux
+}
+
+func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Status string `json:"status"`
+	}{Status: "ok"})
 }
 
 // Start starts serving the Kubo-compatible API.
