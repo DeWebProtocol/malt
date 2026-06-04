@@ -206,7 +206,7 @@ func (n *Node) initCAS() (cas.Reader, error) {
 		), nil
 	case "mock":
 		// Keep this mode only for tests or direct in-process injection paths.
-		return casmock.NewCAS(casmock.WithoutLatency()), nil
+		return casmock.NewCAS(casmock.WithoutLatency(), casmock.WithKVStore(n.kv)), nil
 	default:
 		return nil, fmt.Errorf("unknown cas mode: %s", n.cfg.CAS.Mode)
 	}
