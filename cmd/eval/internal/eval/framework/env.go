@@ -10,10 +10,21 @@ import (
 
 // Env gives suites access to their run metadata and output directories.
 type Env struct {
-	RunID     string
-	OutputDir string
-	ResultDir string
-	clock     func() time.Time
+	RunID       string
+	APIBaseURL  string
+	CASEndpoint string
+	OutputDir   string
+	ResultDir   string
+	clock       func() time.Time
+	Logf        func(string, ...any) // Progress logger; nil-safe.
+}
+
+// Log returns a nil-safe logger. If Logf is nil, logs are discarded.
+func (e Env) Log() func(string, ...any) {
+	if e.Logf != nil {
+		return e.Logf
+	}
+	return func(string, ...any) {}
 }
 
 // RawPath returns the JSONL path for a suite's raw result stream.

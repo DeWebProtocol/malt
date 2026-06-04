@@ -35,6 +35,7 @@ type Config struct {
 }
 
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	cfg := Config{
 		Systems:      []string{"maltflat", "merkledag", "hamt"},
 		Depth:        6,
@@ -55,6 +56,8 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 		return fmt.Errorf("depth must be >= 1")
 	}
 
+	log("  systems=%v depth=%d cas_latency_ms=%v iterations=%d", cfg.Systems, cfg.Depth, cfg.CASLatencyMS, cfg.Iterations)
+
 	multiFix := readbench.NewMultiDepthFixture(cfg.Depth, cfg.SmallBytes, cfg.LargeBytes)
 
 	systemSet := make(map[string]bool)
@@ -63,8 +66,10 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 	}
 
 	// For each CAS latency, create fresh systems and measure.
-	for _, latencyMS := range cfg.CASLatencyMS {
+	totalPerLatency := cfg.Iterations * len(cfg.Systems)
+	for li, latencyMS := range cfg.CASLatencyMS {
 		latency := time.Duration(latencyMS) * time.Millisecond
+		log("  [%d/%d] cas_latency=%dms: creating systems", li+1, len(cfg.CASLatencyMS), latencyMS)
 
 		// Create MALT system with this latency.
 		var maltSys *readbench.LocalMALTSystem
@@ -93,9 +98,11 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 
 		// Measure at the configured depth.
 		fix := multiFix.Fixtures[cfg.Depth-1]
+		count := 0
 		for iter := 0; iter < cfg.Iterations; iter++ {
 			for _, sysName := range cfg.Systems {
 				sysName = strings.TrimSpace(sysName)
+				count++
 				var result *readbench.Result
 				var err error
 				switch sysName {
@@ -111,6 +118,12 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 				}
 				if err := env.WriteRecord(suiteName, result); err != nil {
 					return err
+				}
+
+				if count%5 == 0 || count == totalPerLatency {
+					log("    [%d/%d] iter=%d system=%s elapsed=%s",
+						count, totalPerLatency, iter, sysName,
+						time.Duration(result.ElapsedNS).Round(time.Microsecond))
 				}
 			}
 		}

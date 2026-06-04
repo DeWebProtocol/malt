@@ -66,11 +66,16 @@ func (Suite) Name() string {
 
 // Run executes the configured storage overhead matrix.
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	cfg, err := parseConfig(raw)
 	if err != nil {
 		return err
 	}
 
+	total := len(cfg.Structures) * len(cfg.Sizes)
+	log("  structures=%v sizes=%v payload_bytes=%d", cfg.Structures, cfg.Sizes, cfg.PayloadBytes)
+
+	count := 0
 	for _, structureName := range cfg.Structures {
 		for _, size := range cfg.Sizes {
 			record, err := measure(ctx, structureName, size, cfg.PayloadBytes)
@@ -79,6 +84,10 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 			}
 			if err := env.WriteRecord(suiteName, record); err != nil {
 				return err
+			}
+			count++
+			if count%5 == 0 || count == total {
+				log("  [%d/%d] structure=%s size=%d", count, total, structureName, size)
 			}
 		}
 	}

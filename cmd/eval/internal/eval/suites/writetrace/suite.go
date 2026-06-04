@@ -20,6 +20,7 @@ func (Suite) Name() string {
 }
 
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (err error) {
+	log := env.Log()
 	cfg, err := ParseConfig(raw)
 	if err != nil {
 		return err
@@ -32,7 +33,9 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 		return err
 	}
 
+	log("  repositories=%d systems=%s", len(repositories), cfg.SystemsCSV())
 	for i, repo := range repositories {
+		log("  [%d/%d] repository=%s", i+1, len(repositories), repo.RepoID)
 		if err := runRepository(ctx, env, cfg, repo, i, len(repositories)); err != nil {
 			return err
 		}

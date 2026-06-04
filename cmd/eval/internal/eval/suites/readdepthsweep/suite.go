@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/evalcas"
 	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
@@ -33,6 +34,7 @@ type Config struct {
 }
 
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	cfg := Config{
 		Systems:    []string{"maltflat", "merkledag", "hamt"},
 		Depths:     []int{3, 4, 5, 6},
@@ -55,6 +57,8 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 		}
 	}
 
+	log("  systems=%v depths=%v iterations=%d", cfg.Systems, cfg.Depths, cfg.Iterations)
+
 	multiFix := readbench.NewMultiDepthFixture(maxDepth, cfg.SmallBytes, cfg.LargeBytes)
 
 	// Determine systems.
@@ -72,6 +76,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 			return fmt.Errorf("create local malt system: %w", err)
 		}
 		maltSys = sys
+		log("  maltflat system ready")
 	}
 
 	// Build baseline systems (merkledag, hamt) with the same no-latency CAS.
@@ -86,9 +91,12 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 			return fmt.Errorf("create baseline %s: %w", name, err)
 		}
 		baselines[name] = bs
+		log("  %s system ready", name)
 	}
 
 	// Measure: for each iteration × system × depth, emit one record.
+	total := cfg.Iterations * len(cfg.Systems) * len(cfg.Depths)
+	count := 0
 	for iter := 0; iter < cfg.Iterations; iter++ {
 		for _, sysName := range cfg.Systems {
 			sysName = strings.TrimSpace(sysName)
@@ -97,6 +105,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 					continue
 				}
 				fix := multiFix.Fixtures[depth-1]
+				count++
 
 				var result *readbench.Result
 				var err error
@@ -113,6 +122,12 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 				}
 				if err := env.WriteRecord(suiteName, result); err != nil {
 					return err
+				}
+
+				if count%10 == 0 || count == total {
+					log("  [%d/%d] iter=%d system=%s depth=%d elapsed=%s",
+						count, total, iter, sysName, depth,
+						time.Duration(result.ElapsedNS).Round(time.Microsecond))
 				}
 			}
 		}

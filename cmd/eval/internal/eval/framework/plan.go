@@ -13,9 +13,11 @@ import (
 
 const SchemaVersion = "malt-eval/v1"
 
-// Plan is the top-level evaluation run plan consumed by `malt-eval run`.
+// Plan is the top-level evaluation run plan consumed by `malt-eval`.
 type Plan struct {
 	RunID             string      `json:"run_id"`
+	APIBaseURL        string      `json:"api_base_url,omitempty"`
+	CASEndpoint       string      `json:"cas_endpoint,omitempty"`
 	OutputDir         string      `json:"output_dir,omitempty"`
 	ResultDir         string      `json:"result_dir,omitempty"`
 	Suites            []SuitePlan `json:"suites"`

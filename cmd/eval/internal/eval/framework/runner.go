@@ -13,7 +13,8 @@ import (
 
 // RunOptions controls framework execution behavior.
 type RunOptions struct {
-	Clock func() time.Time
+	Clock  func() time.Time
+	Stderr *os.File // If nil, progress logs are discarded.
 }
 
 // Run executes all enabled suites in plan order.
@@ -35,12 +36,17 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 		return err
 	}
 
+	log := newLogger(opts.Stderr)
+
 	startedAt := clock().UTC().Format(time.RFC3339Nano)
 	env := Env{
-		RunID:     plan.RunID,
-		OutputDir: plan.OutputDir,
-		ResultDir: plan.ResultDir,
-		clock:     clock,
+		RunID:       plan.RunID,
+		APIBaseURL:  plan.APIBaseURL,
+		CASEndpoint: plan.CASEndpoint,
+		OutputDir:   plan.OutputDir,
+		ResultDir:   plan.ResultDir,
+		clock:       clock,
+		Logf:        log,
 	}
 	manifest := Manifest{
 		SchemaVersion: SchemaVersion,
@@ -49,7 +55,9 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 		Machine:       collectMachineMetadata(),
 	}
 
-	for _, suitePlan := range plan.Suites {
+	total := countEnabled(plan.Suites)
+	log("running %d suite(s)", total)
+	for i, suitePlan := range plan.Suites {
 		if !suitePlan.EnabledOrDefault() {
 			continue
 		}
@@ -57,9 +65,12 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 		if !ok {
 			return fmt.Errorf("suite %q is not registered; available suites: %v", suitePlan.Name, registry.Names())
 		}
+		log("[%d/%d] suite %s started", i+1, total, suitePlan.Name)
+		suiteStart := clock()
 		if err := suite.Run(ctx, env, suitePlan.Config); err != nil {
 			return fmt.Errorf("run suite %s: %w", suitePlan.Name, err)
 		}
+		log("[%d/%d] suite %s finished (%s)", i+1, total, suitePlan.Name, clock().Sub(suiteStart).Round(time.Millisecond))
 		manifest.Suites = append(manifest.Suites, SuiteManifest{Name: suitePlan.Name})
 	}
 	if err := summary.Summarize(plan.ResultDir, filepath.Join(plan.ResultDir, "summary")); err != nil {
@@ -67,6 +78,25 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	}
 	manifest.FinishedAt = clock().UTC().Format(time.RFC3339Nano)
 	return writeManifest(plan.ResultDir, manifest)
+}
+
+func countEnabled(suites []SuitePlan) int {
+	n := 0
+	for _, s := range suites {
+		if s.EnabledOrDefault() {
+			n++
+		}
+	}
+	return n
+}
+
+func newLogger(stderr *os.File) func(string, ...any) {
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	return func(format string, args ...any) {
+		fmt.Fprintf(stderr, format+"\n", args...)
+	}
 }
 
 func preflightSuites(plan Plan, registry Registry) error {

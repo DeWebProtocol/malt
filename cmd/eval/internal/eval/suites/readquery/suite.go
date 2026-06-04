@@ -51,6 +51,7 @@ func (Suite) Name() string {
 
 // Run executes the read query suite and writes framework-enveloped records.
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -65,6 +66,8 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 	if err != nil {
 		return err
 	}
+
+	log("  systems=%v iterations=%d api=%s", cfg.Systems, cfg.Iterations, apiBaseURL)
 
 	var out bytes.Buffer
 	runner := readbench.NewRunner(apiBaseURL)

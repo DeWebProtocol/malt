@@ -11,7 +11,12 @@ func TestRootCommandExposesEvaluationSubcommands(t *testing.T) {
 		t.Fatalf("root command Use = %q, want malt-eval", cmd.Use)
 	}
 
-	for _, name := range []string{"run", "schema", "summarize", "read", "write", "metrics"} {
+	// Root command accepts --plan flag directly.
+	if planFlag := cmd.Flags().Lookup("plan"); planFlag == nil {
+		t.Fatal("root command should expose --plan flag")
+	}
+
+	for _, name := range []string{"schema", "summarize", "read", "write", "metrics"} {
 		if found, _, err := cmd.Find([]string{name}); err != nil || found == nil || found.Name() != name {
 			t.Fatalf("subcommand %q not found: found=%v err=%v", name, found, err)
 		}
