@@ -10,6 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/graph"
 	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
+	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -140,6 +141,44 @@ func TestNewNodeWithFsKVStore(t *testing.T) {
 
 	if node.KVStore() == nil {
 		t.Fatal("expected fs kvstore to be initialized")
+	}
+}
+
+func TestMockCASPersistsBlocksAcrossNodeRestart(t *testing.T) {
+	cfg := testConfig(t)
+	ctx := context.Background()
+
+	first, err := NewNode(WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("NewNode first failed: %v", err)
+	}
+	firstCAS, ok := first.CAS().(cas.Client)
+	if !ok {
+		t.Fatalf("first CAS = %T, want cas.Client", first.CAS())
+	}
+	block, err := firstCAS.Put(ctx, []byte("persistent mock block"))
+	if err != nil {
+		t.Fatalf("first Put: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first node: %v", err)
+	}
+
+	second, err := NewNode(WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("NewNode second failed: %v", err)
+	}
+	defer second.Close()
+	secondCAS, ok := second.CAS().(cas.Client)
+	if !ok {
+		t.Fatalf("second CAS = %T, want cas.Client", second.CAS())
+	}
+	got, err := secondCAS.Get(ctx, block)
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if string(got) != "persistent mock block" {
+		t.Fatalf("block payload = %q, want persistent mock block", got)
 	}
 }
 
