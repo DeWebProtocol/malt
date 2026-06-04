@@ -16,6 +16,7 @@ import (
 const (
 	defaultAPIBaseURL  = "http://127.0.0.1:4317"
 	defaultCASEndpoint = "http://127.0.0.1:4318"
+	defaultHealthWait  = 15 * time.Second
 )
 
 // RunIsolated returns a cobra RunE that runs an evaluation plan against an
@@ -41,12 +42,16 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 		if casEndpoint == "" {
 			casEndpoint = defaultCASEndpoint
 		}
+		plan.APIBaseURL = apiBase
+		plan.CASEndpoint = casEndpoint
 
 		// Wait for the daemon to be reachable.
-		if err := waitForHealth(cmd.Context(), apiBase); err != nil {
-			return fmt.Errorf("daemon not reachable at %s: %w", apiBase, err)
+		if planRequiresDaemon(plan) {
+			if err := waitForHealth(cmd.Context(), apiBase, defaultHealthWait); err != nil {
+				return fmt.Errorf("daemon not reachable at %s: %w", apiBase, err)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "daemon ready at %s (CAS: %s)\n", apiBase, casEndpoint)
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "daemon ready at %s (CAS: %s)\n", apiBase, casEndpoint)
 
 		// Create timestamped eval output directory.
 		evalDir := filepath.Join("eval", time.Now().UTC().Format("20060102150405"))
@@ -56,7 +61,11 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 		plan.OverrideResultDir(filepath.Join(evalDir, "result", plan.RunID))
 		plan.OverrideOutputDir(filepath.Join(evalDir, "output", plan.RunID))
 
-		err = framework.Run(cmd.Context(), plan, registry, framework.RunOptions{})
+		runOpts := framework.RunOptions{}
+		if stderr, ok := cmd.ErrOrStderr().(*os.File); ok {
+			runOpts.Stderr = stderr
+		}
+		err = framework.Run(cmd.Context(), plan, registry, runOpts)
 
 		resultDir := filepath.Join(evalDir, "result", plan.RunID)
 		fmt.Fprintf(cmd.ErrOrStderr(), "\nresults: %s\n", resultDir)
@@ -68,9 +77,22 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 	}
 }
 
+func planRequiresDaemon(plan framework.Plan) bool {
+	for _, suite := range plan.Suites {
+		if !suite.EnabledOrDefault() {
+			continue
+		}
+		if suite.Name == "read_query" {
+			return true
+		}
+	}
+	return false
+}
+
 // waitForHealth polls the daemon's /health endpoint until it responds 200.
-func waitForHealth(ctx context.Context, baseURL string) error {
+func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) error {
 	url := strings.TrimRight(baseURL, "/") + "/health"
+	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 2 * time.Second}
 	for {
 		select {
@@ -84,6 +106,9 @@ func waitForHealth(ctx context.Context, baseURL string) error {
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daemon at %s did not become healthy within %s", baseURL, timeout)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

@@ -57,20 +57,22 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 
 	total := countEnabled(plan.Suites)
 	log("running %d suite(s)", total)
-	for i, suitePlan := range plan.Suites {
+	enabledIndex := 0
+	for _, suitePlan := range plan.Suites {
 		if !suitePlan.EnabledOrDefault() {
 			continue
 		}
+		enabledIndex++
 		suite, ok := registry.Lookup(suitePlan.Name)
 		if !ok {
 			return fmt.Errorf("suite %q is not registered; available suites: %v", suitePlan.Name, registry.Names())
 		}
-		log("[%d/%d] suite %s started", i+1, total, suitePlan.Name)
+		log("[%d/%d] suite %s started", enabledIndex, total, suitePlan.Name)
 		suiteStart := clock()
 		if err := suite.Run(ctx, env, suitePlan.Config); err != nil {
 			return fmt.Errorf("run suite %s: %w", suitePlan.Name, err)
 		}
-		log("[%d/%d] suite %s finished (%s)", i+1, total, suitePlan.Name, clock().Sub(suiteStart).Round(time.Millisecond))
+		log("[%d/%d] suite %s finished (%s)", enabledIndex, total, suitePlan.Name, clock().Sub(suiteStart).Round(time.Millisecond))
 		manifest.Suites = append(manifest.Suites, SuiteManifest{Name: suitePlan.Name})
 	}
 	if err := summary.Summarize(plan.ResultDir, filepath.Join(plan.ResultDir, "summary")); err != nil {
@@ -92,7 +94,7 @@ func countEnabled(suites []SuitePlan) int {
 
 func newLogger(stderr *os.File) func(string, ...any) {
 	if stderr == nil {
-		stderr = os.Stderr
+		return func(string, ...any) {}
 	}
 	return func(format string, args ...any) {
 		fmt.Fprintf(stderr, format+"\n", args...)

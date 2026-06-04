@@ -23,6 +23,16 @@ func TestRootCommandExposesEvaluationSubcommands(t *testing.T) {
 	}
 }
 
+func TestRootCommandRejectsPositionalArgs(t *testing.T) {
+	cmd := NewRootCommand()
+	if cmd.Args == nil {
+		t.Fatal("root command should reject positional arguments")
+	}
+	if err := cmd.Args(cmd, []string{"unexpected"}); err == nil {
+		t.Fatal("root command should reject positional arguments")
+	}
+}
+
 func TestReadCommandExposesArcFlagAndResultSchema(t *testing.T) {
 	cmd := NewRootCommand()
 	readCmd, _, err := cmd.Find([]string{"read"})

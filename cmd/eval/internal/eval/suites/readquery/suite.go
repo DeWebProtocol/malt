@@ -62,7 +62,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 	if err := validateMALTFlatArcs(cfg); err != nil {
 		return err
 	}
-	apiBaseURL, err := resolveAPIBaseURL(cfg)
+	apiBaseURL, err := resolveAPIBaseURL(cfg, env.APIBaseURL)
 	if err != nil {
 		return err
 	}
@@ -169,12 +169,15 @@ func validateMALTFlatArcs(cfg Config) error {
 	return nil
 }
 
-func resolveAPIBaseURL(cfg Config) (string, error) {
+func resolveAPIBaseURL(cfg Config, envBaseURL string) (string, error) {
 	if !systemsInclude(cfg.Systems, readbench.SystemMALTFlat) {
 		return cfg.APIBaseURL, nil
 	}
 	if strings.TrimSpace(cfg.APIBaseURL) != "" {
 		return cfg.APIBaseURL, nil
+	}
+	if strings.TrimSpace(envBaseURL) != "" {
+		return envBaseURL, nil
 	}
 	cfgFile, err := config.Load()
 	if err != nil {

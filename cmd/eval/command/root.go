@@ -18,6 +18,7 @@ func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "malt-eval",
 		Short: "Run MALT evaluation workloads",
+		Args:  cobra.NoArgs,
 		RunE:  evalrun.RunIsolated(registry),
 	}
 	cmd.Flags().String("plan", "", "Evaluation plan JSON file")

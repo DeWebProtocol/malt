@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,6 +240,86 @@ func TestRunnerFailsForUnknownEnabledSuite(t *testing.T) {
 	}
 	if err := Run(context.Background(), plan, NewRegistry(), RunOptions{}); err == nil {
 		t.Fatal("Run should fail for unknown enabled suite")
+	}
+}
+
+func TestRunnerLogsEnabledSuiteProgressIndexes(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "progress.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatalf("create log: %v", err)
+	}
+
+	reg := NewRegistry()
+	if err := reg.Register(fakeSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plan := Plan{
+		RunID:     "progress",
+		OutputDir: filepath.Join(tmp, "output", "progress"),
+		ResultDir: filepath.Join(tmp, "result", "progress"),
+		Suites: []SuitePlan{
+			{Name: "disabled", Enabled: boolPtr(false)},
+			{Name: "write_trace", Config: json.RawMessage(`{"limit": 1}`)},
+		},
+	}
+	if err := Run(context.Background(), plan, reg, RunOptions{Stderr: logFile}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := logFile.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	logText := string(logBytes)
+	if !strings.Contains(logText, "[1/1] suite write_trace started") {
+		t.Fatalf("progress log = %q, want enabled index [1/1]", logText)
+	}
+	if strings.Contains(logText, "[2/1]") {
+		t.Fatalf("progress log used original suite index: %q", logText)
+	}
+}
+
+func TestRunnerDiscardsProgressLogsWhenStderrNil(t *testing.T) {
+	tmp := t.TempDir()
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		r.Close()
+		w.Close()
+	})
+
+	reg := NewRegistry()
+	if err := reg.Register(fakeSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plan := Plan{
+		RunID:     "quiet",
+		OutputDir: filepath.Join(tmp, "output", "quiet"),
+		ResultDir: filepath.Join(tmp, "result", "quiet"),
+		Suites:    []SuitePlan{{Name: "write_trace", Config: json.RawMessage(`{"limit": 1}`)}},
+	}
+	if err := Run(context.Background(), plan, reg, RunOptions{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	captured, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
+	}
+	if len(captured) != 0 {
+		t.Fatalf("stderr = %q, want no progress logs", captured)
 	}
 }
 
