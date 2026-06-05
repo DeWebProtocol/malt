@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -60,4 +62,42 @@ func TestAcquireDaemonLockExcludesConcurrentStart(t *testing.T) {
 		t.Fatalf("acquire after release: %v", err)
 	}
 	release()
+}
+
+func TestAcquireDaemonLockReplacesStalePID(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "daemon.json.lock")
+	if err := os.WriteFile(lockPath, []byte("-1\n"), 0o600); err != nil {
+		t.Fatalf("write stale lock: %v", err)
+	}
+
+	release, err := acquireDaemonLock(lockPath)
+	if err != nil {
+		t.Fatalf("acquire stale lock: %v", err)
+	}
+	release()
+}
+
+func TestAcquireDaemonLockKeepsLivePID(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "daemon.json.lock")
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatalf("write live lock: %v", err)
+	}
+
+	if _, err := acquireDaemonLock(lockPath); err == nil {
+		t.Fatal("acquire live lock should fail")
+	}
+}
+
+func TestWaitForStoppedHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := waitForStopped(ctx, "http://127.0.0.1:1", time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitForStopped error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("waitForStopped took %s after cancellation", elapsed)
+	}
 }

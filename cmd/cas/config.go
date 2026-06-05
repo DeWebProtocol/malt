@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,9 @@ func (c *Config) Validate() error {
 	if c.Listen == "" {
 		return fmt.Errorf("listen address is required")
 	}
+	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
+		return fmt.Errorf("listen address must be host:port: %w", err)
+	}
 
 	switch c.KVStore.Type {
 	case "badger", "memory", "fs":
@@ -157,21 +161,35 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// ResolveKVStorePath returns the resolved absolute path for the KV store data directory.
+func (c *Config) ResolveKVStorePath() (string, error) {
+	if filepath.IsAbs(c.KVStore.DataDir) {
+		return c.KVStore.DataDir, nil
+	}
+	dir, err := DefaultConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, c.KVStore.DataDir), nil
+}
+
 // KVStorePath returns the resolved absolute path for the KV store data directory.
 func (c *Config) KVStorePath() string {
-	if filepath.IsAbs(c.KVStore.DataDir) {
-		return c.KVStore.DataDir
+	path, _ := c.ResolveKVStorePath()
+	return path
+}
+
+// ResolveSettingsPath returns the resolved settings file path.
+func (c *Config) ResolveSettingsPath() (string, error) {
+	if c != nil && c.settingsPath != "" {
+		return c.settingsPath, nil
 	}
-	dir, _ := DefaultConfigDir()
-	return filepath.Join(dir, c.KVStore.DataDir)
+	return DefaultConfigPath()
 }
 
 // SettingsPath returns the default settings file path.
 func (c *Config) SettingsPath() string {
-	if c != nil && c.settingsPath != "" {
-		return c.settingsPath
-	}
-	path, _ := DefaultConfigPath()
+	path, _ := c.ResolveSettingsPath()
 	return path
 }
 

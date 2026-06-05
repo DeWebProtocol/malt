@@ -195,7 +195,11 @@ func runServer(cfg *Config) error {
 	fmt.Fprintf(os.Stderr, "mock-cas listening on %s\n", cfg.Listen)
 	fmt.Fprintf(os.Stderr, "kvstore: type=%s\n", cfg.KVStore.Type)
 	if cfg.KVStore.Type != "memory" {
-		fmt.Fprintf(os.Stderr, "data dir: %s\n", cfg.KVStorePath())
+		kvPath, err := cfg.ResolveKVStorePath()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "data dir: %s\n", kvPath)
 	}
 	if noLatency {
 		fmt.Fprintf(os.Stderr, "latency: disabled\n")
@@ -267,8 +271,12 @@ func newKVStore(cfg *Config) (kvstore.KVStore, func() error, error) {
 	case "memory":
 		return nil, nil, nil
 	case "badger":
+		kvPath, err := cfg.ResolveKVStorePath()
+		if err != nil {
+			return nil, nil, err
+		}
 		kv, err := badger.New(
-			badger.WithPath(cfg.KVStorePath()),
+			badger.WithPath(kvPath),
 			badger.WithInMemory(false),
 		)
 		if err != nil {
@@ -276,7 +284,11 @@ func newKVStore(cfg *Config) (kvstore.KVStore, func() error, error) {
 		}
 		return kv, kv.Close, nil
 	case "fs":
-		kv, err := kvfs.New(cfg.KVStorePath())
+		kvPath, err := cfg.ResolveKVStorePath()
+		if err != nil {
+			return nil, nil, err
+		}
+		kv, err := kvfs.New(kvPath)
 		if err != nil {
 			return nil, nil, err
 		}

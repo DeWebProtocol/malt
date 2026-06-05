@@ -50,7 +50,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		cfg.KVStore.DataDir = promptString(reader, "Data directory", initDataDir, cfg.KVStore.DataDir, initNonInteractive)
 	}
 
-	dir, _ := DefaultConfigDir()
+	dir, err := DefaultConfigDir()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
@@ -60,7 +63,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stdout, "wrote settings to %s\n", configPath)
 	fmt.Fprintf(os.Stdout, "listen: %s\n", cfg.Listen)
-	fmt.Fprintf(os.Stdout, "kvstore: type=%s data_dir=%s\n", cfg.KVStore.Type, cfg.KVStorePath())
+	kvPath, err := cfg.ResolveKVStorePath()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "kvstore: type=%s data_dir=%s\n", cfg.KVStore.Type, kvPath)
 	return nil
 }
 

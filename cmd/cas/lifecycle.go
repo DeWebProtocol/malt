@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -129,12 +131,22 @@ func daemonStatus(statePath string, cfg *Config) *DaemonStatus {
 		baseURL = "http://" + state.Listen
 	}
 
-	healthErr := healthCheck(baseURL)
+	settingsPath, pathErr := cfg.ResolveSettingsPath()
+	if pathErr != nil {
+		return &DaemonStatus{
+			Managed:     state != nil,
+			Listen:      cfg.Listen,
+			StatePath:   statePath,
+			HealthError: pathErr,
+		}
+	}
+
+	healthErr := healthCheck(context.Background(), baseURL)
 	status := &DaemonStatus{
 		Running:     healthErr == nil,
 		Managed:     state != nil,
 		Listen:      cfg.Listen,
-		ConfigPath:  cfg.SettingsPath(),
+		ConfigPath:  settingsPath,
 		StatePath:   statePath,
 		HealthError: healthErr,
 	}
@@ -167,13 +179,17 @@ func daemonStart(ctx context.Context, statePath, logPath string, cfg *Config, ov
 	if err != nil {
 		return nil, fmt.Errorf("determine executable: %w", err)
 	}
+	settingsPath, err := cfg.ResolveSettingsPath()
+	if err != nil {
+		return nil, err
+	}
 
 	token, err := newShutdownToken()
 	if err != nil {
 		return nil, err
 	}
 	overrides.ShutdownToken = token
-	env := daemonProcessEnv(os.Environ(), cfg.SettingsPath(), overrides)
+	env := daemonProcessEnv(os.Environ(), settingsPath, overrides)
 	pid, err := startBackgroundProcess(exe, nil, env, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("start daemon process: %w", err)
@@ -182,7 +198,7 @@ func daemonStart(ctx context.Context, statePath, logPath string, cfg *Config, ov
 	state := &DaemonState{
 		PID:           pid,
 		Listen:        cfg.Listen,
-		ConfigPath:    cfg.SettingsPath(),
+		ConfigPath:    settingsPath,
 		ShutdownToken: token,
 		StartedAt:     time.Now().UTC(),
 	}
@@ -208,7 +224,7 @@ func daemonStop(ctx context.Context, statePath string) (*DaemonStatus, error) {
 	}
 
 	baseURL := "http://" + state.Listen
-	if err := healthCheck(baseURL); err != nil {
+	if err := healthCheck(ctx, baseURL); err != nil {
 		// Daemon is already dead — clean up stale state.
 		_ = os.Remove(statePath)
 		return stoppedStatus(state, statePath), nil
@@ -255,12 +271,12 @@ func stoppedStatus(state *DaemonState, statePath string) *DaemonStatus {
 	}
 }
 
-func healthCheck(baseURL string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func healthCheck(ctx context.Context, baseURL string) error {
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
 	u := baseURL + "/health"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
@@ -287,12 +303,14 @@ func healthCheck(baseURL string) error {
 func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	ticker := time.NewTicker(defaultPollInterval)
+	defer ticker.Stop()
 	var lastErr error
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := healthCheck(baseURL); err == nil {
+		if err := healthCheck(ctx, baseURL); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -302,7 +320,7 @@ func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) e
 			return ctx.Err()
 		case <-timer.C:
 			return fmt.Errorf("CAS daemon at %s did not become healthy within %s: %w", baseURL, timeout, lastErr)
-		case <-time.After(defaultPollInterval):
+		case <-ticker.C:
 		}
 	}
 }
@@ -310,11 +328,13 @@ func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) e
 func waitForStopped(ctx context.Context, baseURL string, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	ticker := time.NewTicker(defaultPollInterval)
+	defer ticker.Stop()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := healthCheck(baseURL); err != nil {
+		if err := healthCheck(ctx, baseURL); err != nil {
 			return nil
 		}
 		select {
@@ -322,7 +342,7 @@ func waitForStopped(ctx context.Context, baseURL string, timeout time.Duration) 
 			return ctx.Err()
 		case <-timer.C:
 			return fmt.Errorf("CAS daemon at %s did not stop within %s", baseURL, timeout)
-		case <-time.After(defaultPollInterval):
+		case <-ticker.C:
 		}
 	}
 }
@@ -331,12 +351,9 @@ func acquireDaemonLock(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create daemon lock dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := createDaemonLockFile(path)
 	if err != nil {
-		if os.IsExist(err) {
-			return nil, fmt.Errorf("CAS daemon start already in progress: %s", path)
-		}
-		return nil, fmt.Errorf("create daemon lock: %w", err)
+		return nil, err
 	}
 	fmt.Fprintf(f, "%d\n", os.Getpid())
 	if err := f.Close(); err != nil {
@@ -344,6 +361,39 @@ func acquireDaemonLock(path string) (func(), error) {
 		return nil, fmt.Errorf("close daemon lock: %w", err)
 	}
 	return func() { _ = os.Remove(path) }, nil
+}
+
+func createDaemonLockFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err == nil {
+		return f, nil
+	}
+	if !os.IsExist(err) {
+		return nil, fmt.Errorf("create daemon lock: %w", err)
+	}
+	if !removeStaleDaemonLock(path) {
+		return nil, fmt.Errorf("CAS daemon start already in progress: %s", path)
+	}
+	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+		return nil, fmt.Errorf("remove stale daemon lock: %w", removeErr)
+	}
+	f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create daemon lock: %w", err)
+	}
+	return f, nil
+}
+
+func removeStaleDaemonLock(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false
+	}
+	return !processExists(pid)
 }
 
 func newShutdownToken() (string, error) {
