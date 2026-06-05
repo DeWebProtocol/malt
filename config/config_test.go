@@ -190,6 +190,38 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
 	}
 }
 
+func TestLoadFromFileMigratesLegacyEmbeddedMockCAS(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "malt.json")
+	content := `{
+  "rpc": {
+    "listen": "127.0.0.1:9999"
+  },
+  "cas": {
+    "mode": "embedded-mock",
+    "timeout": "30s",
+    "embedded_mock": {
+      "enabled": true,
+      "listen": "127.0.0.1:4321"
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if cfg.CAS.Mode != "external" {
+		t.Fatalf("CAS.Mode = %q, want external", cfg.CAS.Mode)
+	}
+	if got := cfg.CASBaseURL(); got != "http://127.0.0.1:4321" {
+		t.Fatalf("CASBaseURL() = %q, want http://127.0.0.1:4321", got)
+	}
+}
+
 func TestValidateAllowsFsAndIpa(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.State.KVStore.Type = "fs"

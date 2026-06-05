@@ -270,6 +270,7 @@ func WriteToFile(path string, cfg *Config) error {
 func (c *Config) applyDefaults() {
 	defaults := DefaultConfig()
 	casModeWasEmpty := c.CAS.Mode == ""
+	legacyEmbeddedMock := c.CAS.Mode == "embedded-mock"
 	if c.RPC.Listen == "" {
 		c.RPC.Listen = defaults.RPC.Listen
 	}
@@ -295,7 +296,13 @@ func (c *Config) applyDefaults() {
 	if c.CAS.Mode == "" {
 		c.CAS.Mode = defaults.CAS.Mode
 	}
-	if c.CAS.BaseURL == "" && casModeWasEmpty {
+	if legacyEmbeddedMock {
+		c.CAS.Mode = "external"
+		if c.CAS.EmbeddedMock.Listen != "" {
+			c.CAS.BaseURL = urlFromListen(c.CAS.EmbeddedMock.Listen)
+		}
+	}
+	if c.CAS.BaseURL == "" && (casModeWasEmpty || legacyEmbeddedMock) {
 		c.CAS.BaseURL = defaults.CAS.BaseURL
 	}
 	if c.CAS.Timeout == "" {
@@ -374,6 +381,13 @@ func cleanStringList(values []string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+
+func urlFromListen(listen string) string {
+	if strings.HasPrefix(listen, "http://") || strings.HasPrefix(listen, "https://") {
+		return strings.TrimRight(listen, "/")
+	}
+	return "http://" + strings.TrimRight(listen, "/")
 }
 
 // ConfigDir returns the parent directory of the config file.
