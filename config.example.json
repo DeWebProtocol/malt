@@ -52,12 +52,9 @@
     "default_backend": "kzg"
   },
   "cas": {
-    "mode": "embedded-mock",
-    "timeout": "30s",
-    "embedded_mock": {
-      "enabled": true,
-      "listen": "127.0.0.1:4318"
-    }
+    "mode": "external",
+    "base_url": "http://127.0.0.1:4318",
+    "timeout": "30s"
   },
   "logging": {
     "level": "info",

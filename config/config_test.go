@@ -63,11 +63,11 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Structure.DefaultBackend != "kzg" {
 		t.Fatalf("Structure.DefaultBackend = %q", cfg.Structure.DefaultBackend)
 	}
-	if cfg.CAS.Mode != "embedded-mock" {
+	if cfg.CAS.Mode != "external" {
 		t.Fatalf("CAS.Mode = %q", cfg.CAS.Mode)
 	}
-	if !cfg.CAS.EmbeddedMock.Enabled {
-		t.Fatal("embedded mock should be enabled by default")
+	if cfg.CAS.BaseURL != "http://127.0.0.1:4318" {
+		t.Fatalf("CAS.BaseURL = %q", cfg.CAS.BaseURL)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestLoad_NoConfigFileReturnsDefaults(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.CAS.Mode != "embedded-mock" {
+	if cfg.CAS.Mode != "external" {
 		t.Fatalf("CAS.Mode = %q", cfg.CAS.Mode)
 	}
 	expectedRoot := filepath.Join(home, ".malt", "state")
@@ -190,6 +190,38 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
 	}
 }
 
+func TestLoadFromFileMigratesLegacyEmbeddedMockCAS(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "malt.json")
+	content := `{
+  "rpc": {
+    "listen": "127.0.0.1:9999"
+  },
+  "cas": {
+    "mode": "embedded-mock",
+    "timeout": "30s",
+    "embedded_mock": {
+      "enabled": true,
+      "listen": "127.0.0.1:4321"
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if cfg.CAS.Mode != "external" {
+		t.Fatalf("CAS.Mode = %q, want external", cfg.CAS.Mode)
+	}
+	if got := cfg.CASBaseURL(); got != "http://127.0.0.1:4321" {
+		t.Fatalf("CASBaseURL() = %q, want http://127.0.0.1:4321", got)
+	}
+}
+
 func TestValidateAllowsFsAndIpa(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.State.KVStore.Type = "fs"
@@ -197,6 +229,27 @@ func TestValidateAllowsFsAndIpa(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAllowsMockCASMode(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CAS.Mode = "mock"
+	cfg.CAS.BaseURL = ""
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAppliesDefaultCASBaseURLForZeroConfig(t *testing.T) {
+	cfg := &Config{}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.CAS.BaseURL != "http://127.0.0.1:4318" {
+		t.Fatalf("CAS.BaseURL = %q", cfg.CAS.BaseURL)
 	}
 }
 
@@ -214,7 +267,6 @@ func TestWriteToFileRoundTrip(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CAS.Mode = "external"
 	cfg.CAS.BaseURL = "http://127.0.0.1:5001"
-	cfg.CAS.EmbeddedMock.Enabled = false
 
 	if err := WriteToFile(path, cfg); err != nil {
 		t.Fatalf("WriteToFile() error = %v", err)
@@ -237,7 +289,6 @@ func TestValidateRequiresExternalBaseURL(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CAS.Mode = "external"
 	cfg.CAS.BaseURL = ""
-	cfg.CAS.EmbeddedMock.Enabled = false
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error")
@@ -254,19 +305,6 @@ func TestCASTimeout(t *testing.T) {
 	}
 	if got != 45*time.Second {
 		t.Fatalf("CASTimeout() = %v", got)
-	}
-}
-
-func TestEmbeddedMockLatency(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.CAS.EmbeddedMock.Latency = "250ms"
-
-	got, err := cfg.EmbeddedMockLatency()
-	if err != nil {
-		t.Fatalf("EmbeddedMockLatency() error = %v", err)
-	}
-	if got != 250*time.Millisecond {
-		t.Fatalf("EmbeddedMockLatency() = %v", got)
 	}
 }
 

@@ -588,12 +588,8 @@ Current config shape:
   },
   "cas": {
     "mode": "external",
-    "base_url": "http://127.0.0.1:5001",
-    "timeout": "30s",
-    "embedded_mock": {
-      "enabled": false,
-      "listen": "127.0.0.1:4318"
-    }
+    "base_url": "http://127.0.0.1:4318",
+    "timeout": "30s"
   }
 }
 ```

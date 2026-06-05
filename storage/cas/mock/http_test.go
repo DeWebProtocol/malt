@@ -48,6 +48,21 @@ func TestHTTPServerKuboCompatibleBlockAPI(t *testing.T) {
 	}
 }
 
+func TestHTTPServerHealthEndpoint(t *testing.T) {
+	mockCAS := NewCAS(WithoutLatency())
+	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("GET /health: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /health status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
 func TestHTTPServerSupportsTypedBlockPut(t *testing.T) {
 	mockCAS := NewCAS(WithoutLatency())
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())

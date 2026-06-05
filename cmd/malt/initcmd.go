@@ -11,15 +11,12 @@ import (
 )
 
 var (
-	initForce              bool
-	initNonInteractive     bool
-	initStateRoot          string
-	initRPCListen          string
-	initCASMode            string
-	initCASBaseURL         string
-	initEmbeddedMockListen string
-	initEmbeddedMock       bool
-	initKVStoreType        string
+	initForce          bool
+	initNonInteractive bool
+	initStateRoot      string
+	initRPCListen      string
+	initCASBaseURL     string
+	initKVStoreType    string
 )
 
 func init() {
@@ -28,10 +25,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "do not prompt; use defaults and explicit flags")
 	initCmd.Flags().StringVar(&initStateRoot, "state-root", "", "override the local state root")
 	initCmd.Flags().StringVar(&initRPCListen, "listen", "", "daemon listen address")
-	initCmd.Flags().StringVar(&initCASMode, "cas-mode", "", "CAS mode: external or embedded-mock")
-	initCmd.Flags().StringVar(&initCASBaseURL, "cas-base-url", "", "external CAS base URL")
-	initCmd.Flags().BoolVar(&initEmbeddedMock, "embedded-mock", true, "enable the embedded mock CAS when cas-mode is embedded-mock")
-	initCmd.Flags().StringVar(&initEmbeddedMockListen, "embedded-mock-listen", "", "embedded mock CAS listen address")
+	initCmd.Flags().StringVar(&initCASBaseURL, "cas-base-url", "", "CAS base URL (e.g. http://127.0.0.1:4318)")
 	initCmd.Flags().StringVar(&initKVStoreType, "kvstore-type", "", "state KV store type: badger, memory, or fs")
 }
 
@@ -56,17 +50,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	cfg.State.RootDir = promptString(reader, "State root", initStateRoot, cfg.State.RootDir, initNonInteractive)
 	cfg.State.KVStore.Type = promptString(reader, "KVStore type (badger|memory|fs)", initKVStoreType, cfg.State.KVStore.Type, initNonInteractive)
 	cfg.RPC.Listen = promptString(reader, "Daemon listen", initRPCListen, cfg.RPC.Listen, initNonInteractive)
-	cfg.CAS.Mode = promptString(reader, "CAS mode (external|embedded-mock)", initCASMode, cfg.CAS.Mode, initNonInteractive)
-
-	if cfg.CAS.Mode == "external" {
-		cfg.CAS.EmbeddedMock.Enabled = false
-		cfg.CAS.BaseURL = promptString(reader, "External CAS base URL", initCASBaseURL, "http://127.0.0.1:5001", initNonInteractive)
-	} else {
-		cfg.CAS.Mode = "embedded-mock"
-		cfg.CAS.EmbeddedMock.Enabled = initEmbeddedMock
-		cfg.CAS.EmbeddedMock.Listen = promptString(reader, "Embedded mock CAS listen", initEmbeddedMockListen, cfg.CAS.EmbeddedMock.Listen, initNonInteractive)
-		cfg.CAS.BaseURL = ""
-	}
+	cfg.CAS.BaseURL = promptString(reader, "CAS base URL", initCASBaseURL, cfg.CAS.BaseURL, initNonInteractive)
 
 	if err := os.MkdirAll(cfg.State.RootDir, 0o755); err != nil {
 		return fmt.Errorf("create state root: %w", err)
@@ -78,11 +62,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "wrote config to %s\n", configPath)
 	fmt.Fprintf(os.Stdout, "state root: %s\n", cfg.State.RootDir)
 	fmt.Fprintf(os.Stdout, "daemon API: %s\n", cfg.APIBaseURL())
-	if cfg.CAS.Mode == "embedded-mock" {
-		fmt.Fprintf(os.Stdout, "embedded mock CAS: http://%s/api/v0\n", cfg.CAS.EmbeddedMock.Listen)
-	} else {
-		fmt.Fprintf(os.Stdout, "external CAS: %s\n", cfg.CAS.BaseURL)
-	}
+	fmt.Fprintf(os.Stdout, "CAS: %s\n", cfg.CASBaseURL())
 	return nil
 }
 
