@@ -87,6 +87,66 @@ func TestBrowserCORSAllowsConfiguredUnixFSWriteRoutes(t *testing.T) {
 	}
 }
 
+func TestBrowserCORSAllowsConfiguredLoopbackPortWildcards(t *testing.T) {
+	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{
+		"http://localhost:*",
+		"http://127.0.0.1:*",
+		"http://[::1]:*",
+	}))
+	handler := s.Handler()
+
+	for _, origin := range []string{
+		"http://localhost:5173",
+		"http://127.0.0.1:4173",
+		"http://[::1]:5180",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "/resolve/bafkqaaa/docs/readme", nil)
+			req.Header.Set("Origin", origin)
+			req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("preflight status = %d, want %d", rec.Code, http.StatusNoContent)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+				t.Fatalf("Access-Control-Allow-Origin = %q, want actual origin %q", got, origin)
+			}
+		})
+	}
+}
+
+func TestBrowserCORSDeniesNonLoopbackPortWildcardPatterns(t *testing.T) {
+	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{
+		"https://docs.example:*",
+		"http://192.168.1.10:*",
+	}))
+	handler := s.Handler()
+
+	for _, origin := range []string{
+		"https://docs.example:443",
+		"http://192.168.1.10:5173",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "/resolve/bafkqaaa/docs/readme", nil)
+			req.Header.Set("Origin", origin)
+			req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("preflight status = %d, want %d", rec.Code, http.StatusForbidden)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+				t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+			}
+		})
+	}
+}
+
 func TestBrowserCORSDeniesUnconfiguredOriginsAndAdminWrites(t *testing.T) {
 	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{"https://docs.example"}))
 	handler := s.Handler()

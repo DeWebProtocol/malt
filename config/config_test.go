@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,44 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.RPC.Listen != "127.0.0.1:4317" {
 		t.Fatalf("RPC.Listen = %q", cfg.RPC.Listen)
 	}
-	wantCORS := []string{
-		"http://127.0.0.1:5173",
-		"http://localhost:5173",
-		"http://127.0.0.1:5174",
-		"http://localhost:5174",
-		"http://127.0.0.1:5175",
-		"http://localhost:5175",
-		"http://127.0.0.1:5176",
-		"http://localhost:5176",
-		"http://127.0.0.1:5177",
-		"http://localhost:5177",
-		"http://127.0.0.1:5178",
-		"http://localhost:5178",
-		"http://127.0.0.1:5179",
-		"http://localhost:5179",
-		"http://127.0.0.1:5180",
-		"http://localhost:5180",
-		"http://127.0.0.1:4173",
-		"http://localhost:4173",
-		"http://127.0.0.1:4174",
-		"http://localhost:4174",
-		"http://127.0.0.1:4175",
-		"http://localhost:4175",
-		"http://127.0.0.1:4176",
-		"http://localhost:4176",
-		"http://127.0.0.1:4177",
-		"http://localhost:4177",
-		"http://127.0.0.1:4178",
-		"http://localhost:4178",
-		"http://127.0.0.1:4179",
-		"http://localhost:4179",
-		"http://127.0.0.1:4180",
-		"http://localhost:4180",
-		"https://dewebprotocol.dev",
-		"https://dewebprotocol.github.io",
-	}
-	if !slices.Equal(cfg.RPC.CORSAllowedOrigins, wantCORS) {
-		t.Fatalf("RPC.CORSAllowedOrigins = %v, want %v", cfg.RPC.CORSAllowedOrigins, wantCORS)
+	if len(cfg.RPC.CORSAllowedOrigins) != 0 {
+		t.Fatalf("RPC.CORSAllowedOrigins = %v, want disabled by default", cfg.RPC.CORSAllowedOrigins)
 	}
 	if cfg.State.KVStore.Type != "badger" {
 		t.Fatalf("State.KVStore.Type = %q", cfg.State.KVStore.Type)
@@ -90,7 +53,7 @@ func TestLoad_NoConfigFileReturnsDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadFromFile_EmptyCORSUsesDefaultBrowserOrigins(t *testing.T) {
+func TestLoadFromFile_EmptyCORSPreservesDisabledBrowserAccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "malt.json")
 	content := `{
@@ -108,17 +71,8 @@ func TestLoadFromFile_EmptyCORSUsesDefaultBrowserOrigins(t *testing.T) {
 		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	if len(cfg.RPC.CORSAllowedOrigins) == 0 {
-		t.Fatal("RPC.CORSAllowedOrigins should include browser app defaults")
-	}
-	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "https://dewebprotocol.dev") {
-		t.Fatalf("RPC.CORSAllowedOrigins = %v, want official web origin", cfg.RPC.CORSAllowedOrigins)
-	}
-	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5173") {
-		t.Fatalf("RPC.CORSAllowedOrigins = %v, want local dev origin", cfg.RPC.CORSAllowedOrigins)
-	}
-	if !slices.Contains(cfg.RPC.CORSAllowedOrigins, "http://127.0.0.1:5180") {
-		t.Fatalf("RPC.CORSAllowedOrigins = %v, want local fallback dev origin", cfg.RPC.CORSAllowedOrigins)
+	if len(cfg.RPC.CORSAllowedOrigins) != 0 {
+		t.Fatalf("RPC.CORSAllowedOrigins = %v, want empty list to disable browser CORS", cfg.RPC.CORSAllowedOrigins)
 	}
 }
 
