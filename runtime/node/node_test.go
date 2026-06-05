@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/graph"
 	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	"github.com/dewebprotocol/malt/storage/cas"
+	kvstore "github.com/dewebprotocol/malt/storage/kv"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -179,6 +181,36 @@ func TestMockCASPersistsBlocksAcrossNodeRestart(t *testing.T) {
 	}
 	if string(got) != "persistent mock block" {
 		t.Fatalf("block payload = %q, want persistent mock block", got)
+	}
+}
+
+func TestMockCASUsesSeparateKVNamespace(t *testing.T) {
+	cfg := testConfig(t)
+	ctx := context.Background()
+
+	node, err := NewNode(WithConfig(cfg))
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+	mockCAS, ok := node.CAS().(cas.Client)
+	if !ok {
+		t.Fatalf("CAS = %T, want cas.Client", node.CAS())
+	}
+	block, err := mockCAS.Put(ctx, []byte("namespaced mock block"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if _, err := node.KVStore().Get(ctx, []byte("block/"+block.String())); !errors.Is(err, kvstore.ErrNotFound) {
+		t.Fatalf("unprefixed block key error = %v, want ErrNotFound", err)
+	}
+	got, err := node.KVStore().Get(ctx, []byte("cas/block/"+block.String()))
+	if err != nil {
+		t.Fatalf("prefixed block key Get: %v", err)
+	}
+	if string(got) != "namespaced mock block" {
+		t.Fatalf("prefixed block payload = %q, want namespaced mock block", got)
 	}
 }
 
