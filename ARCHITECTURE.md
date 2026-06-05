@@ -572,11 +572,11 @@ Current config shape:
   "rpc": {
     "listen": "127.0.0.1:4317",
     "cors_allowed_origins": [
-      "http://127.0.0.1:*",
-      "http://localhost:*",
-      "http://[::1]:*",
       "https://dewebprotocol.dev",
-      "https://dewebprotocol.github.io"
+      "https://dewebprotocol.github.io",
+      "http://localhost:*",
+      "http://127.0.0.1:*",
+      "http://[::1]:*"
     ]
   },
   "state": {
