@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
+	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/suites/readquery"
 	"github.com/spf13/cobra"
 )
 
@@ -103,6 +104,43 @@ func TestRunIsolatedWaitsForSuitesThatRequireDaemon(t *testing.T) {
 	err := RunIsolated(reg)(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "daemon not reachable") {
 		t.Fatalf("RunIsolated error = %v, want daemon reachability error", err)
+	}
+}
+
+func TestPlanRequiresDaemonHonorsReadQuerySystems(t *testing.T) {
+	reg := framework.NewRegistry()
+	if err := reg.Register(readquery.Suite{}); err != nil {
+		t.Fatalf("register read_query suite: %v", err)
+	}
+
+	baselineOnly := framework.Plan{
+		RunID: "baseline-only",
+		Suites: []framework.SuitePlan{{
+			Name:   readquery.Name,
+			Config: json.RawMessage(`{"systems":["merkledag","hamt"]}`),
+		}},
+	}
+	requiresDaemon, err := planRequiresDaemon(baselineOnly, reg)
+	if err != nil {
+		t.Fatalf("planRequiresDaemon baseline-only: %v", err)
+	}
+	if requiresDaemon {
+		t.Fatal("baseline-only read_query plan should not require daemon")
+	}
+
+	withMALTFlat := framework.Plan{
+		RunID: "maltflat",
+		Suites: []framework.SuitePlan{{
+			Name:   readquery.Name,
+			Config: json.RawMessage(`{"systems":["maltflat","merkledag"]}`),
+		}},
+	}
+	requiresDaemon, err = planRequiresDaemon(withMALTFlat, reg)
+	if err != nil {
+		t.Fatalf("planRequiresDaemon maltflat: %v", err)
+	}
+	if !requiresDaemon {
+		t.Fatal("read_query plan with maltflat should require daemon")
 	}
 }
 

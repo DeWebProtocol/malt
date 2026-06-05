@@ -49,9 +49,18 @@ func (Suite) Name() string {
 	return Name
 }
 
-// RequiresDaemon reports that read_query needs the MALT daemon API.
+// RequiresDaemon reports that the default read_query config needs the MALT daemon API.
 func (Suite) RequiresDaemon() bool {
 	return true
+}
+
+// RequiresDaemonForConfig reports whether the selected read_query systems need the MALT daemon API.
+func (Suite) RequiresDaemonForConfig(raw json.RawMessage) (bool, error) {
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		return false, err
+	}
+	return systemsInclude(cfg.Systems, readbench.SystemMALTFlat), nil
 }
 
 // Run executes the read query suite and writes framework-enveloped records.

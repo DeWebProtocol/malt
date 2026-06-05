@@ -46,7 +46,11 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 		plan.CASEndpoint = casEndpoint
 
 		// Wait for the daemon to be reachable.
-		if planRequiresDaemon(plan, registry) {
+		requiresDaemon, err := planRequiresDaemon(plan, registry)
+		if err != nil {
+			return err
+		}
+		if requiresDaemon {
 			if err := waitForHealth(cmd.Context(), apiBase, defaultHealthWait); err != nil {
 				return fmt.Errorf("daemon not reachable at %s: %w", apiBase, err)
 			}
@@ -78,7 +82,7 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 	}
 }
 
-func planRequiresDaemon(plan framework.Plan, registry framework.Registry) bool {
+func planRequiresDaemon(plan framework.Plan, registry framework.Registry) (bool, error) {
 	for _, suitePlan := range plan.Suites {
 		if !suitePlan.EnabledOrDefault() {
 			continue
@@ -87,11 +91,21 @@ func planRequiresDaemon(plan framework.Plan, registry framework.Registry) bool {
 		if !ok {
 			continue
 		}
+		if requiring, ok := suite.(framework.ConfigDaemonRequiringSuite); ok {
+			requiresDaemon, err := requiring.RequiresDaemonForConfig(suitePlan.Config)
+			if err != nil {
+				return false, fmt.Errorf("check suite %s daemon requirement: %w", suitePlan.Name, err)
+			}
+			if requiresDaemon {
+				return true, nil
+			}
+			continue
+		}
 		if requiring, ok := suite.(framework.DaemonRequiringSuite); ok && requiring.RequiresDaemon() {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // waitForHealth polls the daemon's /health endpoint until it responds 200.
