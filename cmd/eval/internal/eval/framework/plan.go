@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +14,11 @@ import (
 
 const SchemaVersion = "malt-eval/v1"
 
-// Plan is the top-level evaluation run plan consumed by `malt-eval run`.
+// Plan is the top-level evaluation run plan consumed by `malt-eval`.
 type Plan struct {
 	RunID             string      `json:"run_id"`
+	APIBaseURL        string      `json:"api_base_url,omitempty"`
+	CASEndpoint       string      `json:"cas_endpoint,omitempty"`
 	OutputDir         string      `json:"output_dir,omitempty"`
 	ResultDir         string      `json:"result_dir,omitempty"`
 	Suites            []SuitePlan `json:"suites"`
@@ -91,6 +94,13 @@ func (p *Plan) Normalize() error {
 	if pathsOverlap(p.OutputDir, p.ResultDir) {
 		return fmt.Errorf("output_dir and result_dir must not overlap")
 	}
+	var err error
+	if p.APIBaseURL, err = normalizeHTTPURL("api_base_url", p.APIBaseURL); err != nil {
+		return err
+	}
+	if p.CASEndpoint, err = normalizeHTTPURL("cas_endpoint", p.CASEndpoint); err != nil {
+		return err
+	}
 	if len(p.Suites) == 0 {
 		return fmt.Errorf("at least one suite is required")
 	}
@@ -102,6 +112,24 @@ func (p *Plan) Normalize() error {
 		p.Suites[i].Name = name
 	}
 	return nil
+}
+
+func normalizeHTTPURL(field, raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("%s is invalid: %w", field, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("%s must use http or https URL scheme", field)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("%s must include a host", field)
+	}
+	return parsed.String(), nil
 }
 
 func validateRunID(runID string) error {
@@ -157,6 +185,16 @@ func (p *Plan) OverrideResultDir(resultDir string) {
 	}
 	p.ResultDir = strings.TrimSpace(resultDir)
 	p.resultDirExplicit = true
+}
+
+// OutputDirExplicit reports whether output_dir was set by the loaded plan or a CLI override.
+func (p Plan) OutputDirExplicit() bool {
+	return p.outputDirExplicit
+}
+
+// ResultDirExplicit reports whether result_dir was set by the loaded plan or a CLI override.
+func (p Plan) ResultDirExplicit() bool {
+	return p.resultDirExplicit
 }
 
 func pathsOverlap(a, b string) bool {

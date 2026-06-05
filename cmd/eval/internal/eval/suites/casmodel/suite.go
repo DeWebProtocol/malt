@@ -50,11 +50,16 @@ func (Suite) Name() string {
 
 // Run executes the configured CAS model matrix and writes raw records.
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	cfg, err := parseConfig(raw)
 	if err != nil {
 		return err
 	}
 
+	total := cfg.Iterations * (len(cfg.ChainLengths) + len(cfg.BatchSizes)) * 3
+	log("  chain_lengths=%v batch_sizes=%v iterations=%d", cfg.ChainLengths, cfg.BatchSizes, cfg.Iterations)
+
+	count := 0
 	for iteration := 0; iteration < cfg.Iterations; iteration++ {
 		for _, size := range cfg.ChainLengths {
 			for _, op := range []string{"put", "get", "has"} {
@@ -65,6 +70,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 				if err := env.WriteRecord(suiteName, record); err != nil {
 					return err
 				}
+				count++
 			}
 		}
 		for _, size := range cfg.BatchSizes {
@@ -76,8 +82,10 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 				if err := env.WriteRecord(suiteName, record); err != nil {
 					return err
 				}
+				count++
 			}
 		}
+		log("  [%d/%d] iteration %d done", count, total, iteration+1)
 	}
 	return nil
 }

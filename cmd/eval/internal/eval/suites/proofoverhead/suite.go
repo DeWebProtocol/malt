@@ -71,11 +71,16 @@ func (Suite) Name() string {
 
 // Run executes the configured proof overhead matrix.
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	cfg, err := parseConfig(raw)
 	if err != nil {
 		return err
 	}
 
+	total := cfg.Iterations * len(cfg.Structures) * len(cfg.Sizes) * len(cfg.Commitments)
+	log("  structures=%v sizes=%v commitments=%v iterations=%d", cfg.Structures, cfg.Sizes, cfg.Commitments, cfg.Iterations)
+
+	count := 0
 	for iteration := 0; iteration < cfg.Iterations; iteration++ {
 		for _, structureName := range cfg.Structures {
 			for _, size := range cfg.Sizes {
@@ -87,9 +92,11 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 					if err := env.WriteRecord(suiteName, record); err != nil {
 						return err
 					}
+					count++
 				}
 			}
 		}
+		log("  [%d/%d] iteration %d done", count, total, iteration+1)
 	}
 	return nil
 }

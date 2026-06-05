@@ -12,6 +12,16 @@
       "pattern": "^(?!\\.\\.?$)[^/\\\\]+$",
       "description": "Run identifier used for result metadata and the default output/<run_id> workspace plus result/<run_id> result path. It must not be a dot segment or contain path separators."
     },
+    "api_base_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "MALT daemon API endpoint. Defaults to http://127.0.0.1:4317."
+    },
+    "cas_endpoint": {
+      "type": "string",
+      "format": "uri",
+      "description": "MALT CAS HTTP endpoint. Defaults to http://127.0.0.1:4318."
+    },
     "output_dir": {
       "type": "string",
       "minLength": 1,

@@ -1,7 +1,9 @@
 package command
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -11,10 +13,58 @@ func TestRootCommandExposesEvaluationSubcommands(t *testing.T) {
 		t.Fatalf("root command Use = %q, want malt-eval", cmd.Use)
 	}
 
+	// Root command accepts --plan flag directly.
+	if planFlag := cmd.Flags().Lookup("plan"); planFlag == nil {
+		t.Fatal("root command should expose --plan flag")
+	}
+
 	for _, name := range []string{"run", "schema", "summarize", "read", "write", "metrics"} {
 		if found, _, err := cmd.Find([]string{name}); err != nil || found == nil || found.Name() != name {
 			t.Fatalf("subcommand %q not found: found=%v err=%v", name, found, err)
 		}
+	}
+}
+
+func TestRunCommandExposesLegacyFlags(t *testing.T) {
+	cmd := NewRootCommand()
+	runCmd, _, err := cmd.Find([]string{"run"})
+	if err != nil {
+		t.Fatalf("find run command: %v", err)
+	}
+	if runCmd == nil || runCmd.Name() != "run" {
+		t.Fatalf("run command not found: %v", runCmd)
+	}
+
+	for _, name := range []string{"plan", "run-id", "out", "result-dir", "output-dir"} {
+		if flag := runCmd.Flags().Lookup(name); flag == nil {
+			t.Fatalf("run command should expose --%s flag", name)
+		}
+	}
+}
+
+func TestRootCommandRejectsPositionalArgs(t *testing.T) {
+	cmd := NewRootCommand()
+	if cmd.Args == nil {
+		t.Fatal("root command should reject positional arguments")
+	}
+	if err := cmd.Args(cmd, []string{"unexpected"}); err == nil {
+		t.Fatal("root command should reject positional arguments")
+	}
+}
+
+func TestRootCommandRequiresPlanFlag(t *testing.T) {
+	cmd := NewRootCommand()
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs(nil)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute should fail without --plan")
+	}
+	if !strings.Contains(err.Error(), "required flag") && !strings.Contains(stderr.String(), "required flag") {
+		t.Fatalf("Execute error = %v, stderr = %q; want required flag error", err, stderr.String())
 	}
 }
 

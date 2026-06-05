@@ -10,10 +10,22 @@ import (
 
 // Env gives suites access to their run metadata and output directories.
 type Env struct {
-	RunID     string
-	OutputDir string
-	ResultDir string
-	clock     func() time.Time
+	RunID      string
+	APIBaseURL string
+	// CASEndpoint is propagated from the plan for suites that need direct CAS access.
+	CASEndpoint string
+	OutputDir   string
+	ResultDir   string
+	clock       func() time.Time
+	logf        func(string, ...any)
+}
+
+// Log returns a nil-safe logger. If the runner did not configure logging, logs are discarded.
+func (e Env) Log() func(string, ...any) {
+	if e.logf != nil {
+		return e.logf
+	}
+	return func(string, ...any) {}
 }
 
 // RawPath returns the JSONL path for a suite's raw result stream.

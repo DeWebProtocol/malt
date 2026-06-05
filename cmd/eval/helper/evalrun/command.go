@@ -1,4 +1,4 @@
-// Package evalrun provides the unified evaluation plan runner command.
+// Package evalrun provides evaluation plan runner commands.
 package evalrun
 
 import (
@@ -58,5 +58,5 @@ func run(cmd *cobra.Command, registry framework.Registry, opts *options) error {
 	if strings.TrimSpace(opts.runID) != "" {
 		plan.OverrideRunID(opts.runID)
 	}
-	return framework.Run(cmd.Context(), plan, registry, framework.RunOptions{})
+	return framework.Run(cmd.Context(), plan, registry, framework.RunOptions{Stderr: cmd.ErrOrStderr()})
 }

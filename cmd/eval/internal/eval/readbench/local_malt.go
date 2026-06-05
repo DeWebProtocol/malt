@@ -57,6 +57,13 @@ func NewLocalMALTSystem(ctx context.Context, store *casmock.CAS, multiFix MultiD
 		arcs[fix.LargePath] = largeCID
 	}
 
+	// Every MALT-native map object requires a @payload binding.
+	payloadCID, err := store.Put(ctx, []byte("eval-payload"))
+	if err != nil {
+		return nil, fmt.Errorf("put payload: %w", err)
+	}
+	arcs["@payload"] = payloadCID
+
 	// Create root structure.
 	snapshot, err := arcset.NewArcSet(arcs)
 	if err != nil {

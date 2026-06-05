@@ -49,8 +49,23 @@ func (Suite) Name() string {
 	return Name
 }
 
+// RequiresDaemon reports that the default read_query config needs the MALT daemon API.
+func (Suite) RequiresDaemon() bool {
+	return true
+}
+
+// RequiresDaemonForConfig reports whether the selected read_query systems need the MALT daemon API.
+func (Suite) RequiresDaemonForConfig(raw json.RawMessage) (bool, error) {
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		return false, err
+	}
+	return systemsInclude(cfg.Systems, readbench.SystemMALTFlat), nil
+}
+
 // Run executes the read query suite and writes framework-enveloped records.
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
+	log := env.Log()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -61,10 +76,12 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 	if err := validateMALTFlatArcs(cfg); err != nil {
 		return err
 	}
-	apiBaseURL, err := resolveAPIBaseURL(cfg)
+	apiBaseURL, err := resolveAPIBaseURL(cfg, env.APIBaseURL)
 	if err != nil {
 		return err
 	}
+
+	log("  systems=%v iterations=%d api=%s", cfg.Systems, cfg.Iterations, apiBaseURL)
 
 	var out bytes.Buffer
 	runner := readbench.NewRunner(apiBaseURL)
@@ -166,12 +183,15 @@ func validateMALTFlatArcs(cfg Config) error {
 	return nil
 }
 
-func resolveAPIBaseURL(cfg Config) (string, error) {
+func resolveAPIBaseURL(cfg Config, envBaseURL string) (string, error) {
 	if !systemsInclude(cfg.Systems, readbench.SystemMALTFlat) {
 		return cfg.APIBaseURL, nil
 	}
 	if strings.TrimSpace(cfg.APIBaseURL) != "" {
 		return cfg.APIBaseURL, nil
+	}
+	if strings.TrimSpace(envBaseURL) != "" {
+		return envBaseURL, nil
 	}
 	cfgFile, err := config.Load()
 	if err != nil {

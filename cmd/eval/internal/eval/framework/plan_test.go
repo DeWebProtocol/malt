@@ -126,6 +126,44 @@ func TestPlanRejectsOverlappingOutputAndResultDirs(t *testing.T) {
 	}
 }
 
+func TestPlanValidatesEndpointURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		apiBaseURL  string
+		casEndpoint string
+	}{
+		{name: "api missing scheme", apiBaseURL: "127.0.0.1:4317"},
+		{name: "api unsupported scheme", apiBaseURL: "ftp://127.0.0.1:4317"},
+		{name: "api missing host", apiBaseURL: "http:///health"},
+		{name: "cas missing scheme", casEndpoint: "127.0.0.1:4318"},
+		{name: "cas unsupported scheme", casEndpoint: "ws://127.0.0.1:4318"},
+		{name: "cas missing host", casEndpoint: "https:///api/v0"},
+	} {
+		plan := Plan{
+			RunID:       "endpoints",
+			APIBaseURL:  tc.apiBaseURL,
+			CASEndpoint: tc.casEndpoint,
+			Suites:      []SuitePlan{{Name: "write_trace"}},
+		}
+		if err := plan.Normalize(); err == nil {
+			t.Fatalf("%s: Normalize should reject invalid endpoint", tc.name)
+		}
+	}
+
+	plan := Plan{
+		RunID:       "endpoints",
+		APIBaseURL:  " http://127.0.0.1:4317 ",
+		CASEndpoint: "https://cas.example.test/api/v0",
+		Suites:      []SuitePlan{{Name: "write_trace"}},
+	}
+	if err := plan.Normalize(); err != nil {
+		t.Fatalf("Normalize valid endpoints: %v", err)
+	}
+	if plan.APIBaseURL != "http://127.0.0.1:4317" {
+		t.Fatalf("APIBaseURL = %q", plan.APIBaseURL)
+	}
+}
+
 func TestLoadPlanRejectsUnknownTopLevelFields(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "plan.json")

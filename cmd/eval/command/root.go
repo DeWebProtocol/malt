@@ -14,14 +14,18 @@ import (
 
 // NewRootCommand creates the top-level malt-eval command.
 func NewRootCommand() *cobra.Command {
+	registry := evalsuites.NewRegistry()
 	cmd := &cobra.Command{
 		Use:   "malt-eval",
 		Short: "Run MALT evaluation workloads",
+		Args:  cobra.NoArgs,
+		RunE:  evalrun.RunIsolated(registry),
 	}
-	registry := evalsuites.NewRegistry()
+	cmd.Flags().String("plan", "", "Evaluation plan JSON file")
+	_ = cmd.MarkFlagRequired("plan")
+
 	cmd.AddCommand(
 		evalrun.NewCommand(registry),
-		evalrun.NewIsolatedCommand(registry),
 		evalschema.NewCommand(),
 		evalsummary.NewCommand(),
 		evalread.NewCommand(),
