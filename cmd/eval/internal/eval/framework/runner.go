@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -14,7 +15,7 @@ import (
 // RunOptions controls framework execution behavior.
 type RunOptions struct {
 	Clock  func() time.Time
-	Stderr *os.File // If nil, progress logs are discarded.
+	Stderr io.Writer // If nil, progress logs are discarded.
 }
 
 // Run executes all enabled suites in plan order.
@@ -46,7 +47,7 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 		OutputDir:   plan.OutputDir,
 		ResultDir:   plan.ResultDir,
 		clock:       clock,
-		Logf:        log,
+		logf:        log,
 	}
 	manifest := Manifest{
 		SchemaVersion: SchemaVersion,
@@ -92,7 +93,7 @@ func countEnabled(suites []SuitePlan) int {
 	return n
 }
 
-func newLogger(stderr *os.File) func(string, ...any) {
+func newLogger(stderr io.Writer) func(string, ...any) {
 	if stderr == nil {
 		return func(string, ...any) {}
 	}

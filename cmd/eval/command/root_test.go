@@ -1,7 +1,9 @@
 package command
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +32,22 @@ func TestRootCommandRejectsPositionalArgs(t *testing.T) {
 	}
 	if err := cmd.Args(cmd, []string{"unexpected"}); err == nil {
 		t.Fatal("root command should reject positional arguments")
+	}
+}
+
+func TestRootCommandRequiresPlanFlag(t *testing.T) {
+	cmd := NewRootCommand()
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs(nil)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute should fail without --plan")
+	}
+	if !strings.Contains(err.Error(), "required flag") && !strings.Contains(stderr.String(), "required flag") {
+		t.Fatalf("Execute error = %v, stderr = %q; want required flag error", err, stderr.String())
 	}
 }
 

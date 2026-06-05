@@ -2,6 +2,7 @@ package framework
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -320,6 +321,28 @@ func TestRunnerDiscardsProgressLogsWhenStderrNil(t *testing.T) {
 	}
 	if len(captured) != 0 {
 		t.Fatalf("stderr = %q, want no progress logs", captured)
+	}
+}
+
+func TestRunnerLogsProgressToAnyWriter(t *testing.T) {
+	tmp := t.TempDir()
+	var log bytes.Buffer
+
+	reg := NewRegistry()
+	if err := reg.Register(fakeSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plan := Plan{
+		RunID:     "writer",
+		OutputDir: filepath.Join(tmp, "output", "writer"),
+		ResultDir: filepath.Join(tmp, "result", "writer"),
+		Suites:    []SuitePlan{{Name: "write_trace", Config: json.RawMessage(`{"limit": 1}`)}},
+	}
+	if err := Run(context.Background(), plan, reg, RunOptions{Stderr: &log}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(log.String(), "running 1 suite(s)") {
+		t.Fatalf("progress log = %q, want suite progress", log.String())
 	}
 }
 

@@ -129,7 +129,7 @@ func normalizeHTTPURL(field, raw string) (string, error) {
 	if parsed.Host == "" {
 		return "", fmt.Errorf("%s must include a host", field)
 	}
-	return value, nil
+	return parsed.String(), nil
 }
 
 func validateRunID(runID string) error {

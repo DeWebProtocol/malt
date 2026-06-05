@@ -46,7 +46,7 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 		plan.CASEndpoint = casEndpoint
 
 		// Wait for the daemon to be reachable.
-		if planRequiresDaemon(plan) {
+		if planRequiresDaemon(plan, registry) {
 			if err := waitForHealth(cmd.Context(), apiBase, defaultHealthWait); err != nil {
 				return fmt.Errorf("daemon not reachable at %s: %w", apiBase, err)
 			}
@@ -61,10 +61,7 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 		plan.OverrideResultDir(filepath.Join(evalDir, "result", plan.RunID))
 		plan.OverrideOutputDir(filepath.Join(evalDir, "output", plan.RunID))
 
-		runOpts := framework.RunOptions{}
-		if stderr, ok := cmd.ErrOrStderr().(*os.File); ok {
-			runOpts.Stderr = stderr
-		}
+		runOpts := framework.RunOptions{Stderr: cmd.ErrOrStderr()}
 		err = framework.Run(cmd.Context(), plan, registry, runOpts)
 
 		resultDir := filepath.Join(evalDir, "result", plan.RunID)
@@ -77,12 +74,16 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 	}
 }
 
-func planRequiresDaemon(plan framework.Plan) bool {
-	for _, suite := range plan.Suites {
-		if !suite.EnabledOrDefault() {
+func planRequiresDaemon(plan framework.Plan, registry framework.Registry) bool {
+	for _, suitePlan := range plan.Suites {
+		if !suitePlan.EnabledOrDefault() {
 			continue
 		}
-		if suite.Name == "read_query" {
+		suite, ok := registry.Lookup(suitePlan.Name)
+		if !ok {
+			continue
+		}
+		if requiring, ok := suite.(framework.DaemonRequiringSuite); ok && requiring.RequiresDaemon() {
 			return true
 		}
 	}

@@ -13,6 +13,11 @@ type Suite interface {
 	Run(context.Context, Env, json.RawMessage) error
 }
 
+// DaemonRequiringSuite is implemented by suites that require a live MALT daemon.
+type DaemonRequiringSuite interface {
+	RequiresDaemon() bool
+}
+
 // Registry maps suite names to implementations.
 type Registry struct {
 	suites map[string]Suite

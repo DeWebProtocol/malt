@@ -49,6 +49,11 @@ func (Suite) Name() string {
 	return Name
 }
 
+// RequiresDaemon reports that read_query needs the MALT daemon API.
+func (Suite) RequiresDaemon() bool {
+	return true
+}
+
 // Run executes the read query suite and writes framework-enveloped records.
 func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) error {
 	log := env.Log()

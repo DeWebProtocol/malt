@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,34 @@ func TestRunIsolatedRunsLocalOnlyPlanWithoutDaemon(t *testing.T) {
 
 	if err := RunIsolated(reg)(cmd, nil); err != nil {
 		t.Fatalf("RunIsolated: %v", err)
+	}
+}
+
+func TestRunIsolatedWaitsForSuitesThatRequireDaemon(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	planPath := filepath.Join(tmp, "plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+  "run_id": "daemon-required",
+  "api_base_url": "http://127.0.0.1:1",
+  "suites": [{"name": "daemon_suite"}]
+}`), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	reg := framework.NewRegistry()
+	if err := reg.Register(daemonRequiredSuite{}); err != nil {
+		t.Fatalf("register suite: %v", err)
+	}
+	cmd := &cobra.Command{}
+	cmd.Flags().String("plan", planPath, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	cmd.SetContext(ctx)
+
+	err := RunIsolated(reg)(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "daemon not reachable") {
+		t.Fatalf("RunIsolated error = %v, want daemon reachability error", err)
 	}
 }
 
@@ -77,4 +106,14 @@ func (localOnlySuite) Run(ctx context.Context, env framework.Env, cfg json.RawMe
 		return fmt.Errorf("CASEndpoint = %q", env.CASEndpoint)
 	}
 	return env.WriteRecord("local_suite", map[string]any{"ok": true})
+}
+
+type daemonRequiredSuite struct{}
+
+func (daemonRequiredSuite) Name() string { return "daemon_suite" }
+
+func (daemonRequiredSuite) RequiresDaemon() bool { return true }
+
+func (daemonRequiredSuite) Run(context.Context, framework.Env, json.RawMessage) error {
+	return nil
 }
