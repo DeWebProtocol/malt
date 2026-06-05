@@ -201,7 +201,7 @@ func (n *Node) initArcTable() error {
 // initCAS creates a read-side CAS client from config.
 func (n *Node) initCAS() (cas.Reader, error) {
 	switch n.cfg.CAS.Mode {
-	case "external", "embedded-mock":
+	case "external":
 		timeout, _ := n.cfg.CASTimeout()
 		return ipfs.NewClient(
 			n.cfg.CASBaseURL(),

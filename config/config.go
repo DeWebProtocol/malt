@@ -11,15 +11,15 @@ import (
 )
 
 const (
-	defaultRPCListen          = "127.0.0.1:4317"
-	defaultEmbeddedMockListen = "127.0.0.1:4318"
-	defaultCASMode            = "embedded-mock"
-	defaultStructureBackend   = "kzg"
-	defaultArcTableType       = "versioned"
-	defaultKVStoreType        = "badger"
-	defaultLoggingLevel       = "info"
-	defaultLoggingFormat      = "json"
-	defaultCASTimeout         = "30s"
+	defaultRPCListen        = "127.0.0.1:4317"
+	defaultCASBaseURL       = "http://127.0.0.1:4318"
+	defaultCASMode          = "external"
+	defaultStructureBackend = "kzg"
+	defaultArcTableType     = "versioned"
+	defaultKVStoreType      = "badger"
+	defaultLoggingLevel     = "info"
+	defaultLoggingFormat    = "json"
+	defaultCASTimeout       = "30s"
 )
 
 var defaultBrowserCORSAllowedOrigins = []string{
@@ -103,13 +103,14 @@ type CASConfig struct {
 	Mode         string             `json:"mode"`
 	BaseURL      string             `json:"base_url,omitempty"`
 	Timeout      string             `json:"timeout"`
-	EmbeddedMock EmbeddedMockConfig `json:"embedded_mock"`
+	EmbeddedMock EmbeddedMockConfig `json:"embedded_mock,omitempty"`
 }
 
-// EmbeddedMockConfig configures the embedded mock CAS service.
+// EmbeddedMockConfig is deprecated and ignored. Kept for backward-compatible
+// JSON deserialization of old config files.
 type EmbeddedMockConfig struct {
-	Enabled bool   `json:"enabled"`
-	Listen  string `json:"listen"`
+	Enabled bool   `json:"enabled,omitempty"`
+	Listen  string `json:"listen,omitempty"`
 	Latency string `json:"latency,omitempty"`
 }
 
@@ -148,11 +149,8 @@ func DefaultConfig() *Config {
 		},
 		CAS: CASConfig{
 			Mode:    defaultCASMode,
+			BaseURL: defaultCASBaseURL,
 			Timeout: defaultCASTimeout,
-			EmbeddedMock: EmbeddedMockConfig{
-				Enabled: true,
-				Listen:  defaultEmbeddedMockListen,
-			},
 		},
 		Logging: LoggingConfig{
 			Level:  defaultLoggingLevel,
@@ -296,18 +294,11 @@ func (c *Config) applyDefaults() {
 	if c.CAS.Timeout == "" {
 		c.CAS.Timeout = defaults.CAS.Timeout
 	}
-	if c.CAS.EmbeddedMock.Listen == "" {
-		c.CAS.EmbeddedMock.Listen = defaults.CAS.EmbeddedMock.Listen
-	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = defaults.Logging.Level
 	}
 	if c.Logging.Format == "" {
 		c.Logging.Format = defaults.Logging.Format
-	}
-
-	if c.CAS.Mode == "embedded-mock" {
-		c.CAS.EmbeddedMock.Enabled = true
 	}
 }
 
@@ -343,29 +334,17 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.CAS.Mode {
-	case "external", "embedded-mock":
+	case "external":
 	default:
-		return fmt.Errorf("unsupported cas.mode %q", c.CAS.Mode)
+		return fmt.Errorf("unsupported cas.mode %q (only \"external\" is supported)", c.CAS.Mode)
 	}
 
 	if _, err := c.CASTimeout(); err != nil {
 		return fmt.Errorf("invalid cas.timeout: %w", err)
 	}
 
-	if c.CAS.Mode == "external" {
-		if c.CAS.BaseURL == "" {
-			return fmt.Errorf("cas.base_url is required for external mode")
-		}
-	}
-
-	if c.CAS.Mode == "embedded-mock" && c.CAS.EmbeddedMock.Listen == "" {
-		return fmt.Errorf("cas.embedded_mock.listen is required for embedded-mock mode")
-	}
-
-	if c.CAS.EmbeddedMock.Latency != "" {
-		if _, err := time.ParseDuration(c.CAS.EmbeddedMock.Latency); err != nil {
-			return fmt.Errorf("invalid cas.embedded_mock.latency: %w", err)
-		}
+	if c.CAS.BaseURL == "" {
+		return fmt.Errorf("cas.base_url is required")
 	}
 
 	return nil
@@ -415,9 +394,6 @@ func (c *Config) APIBaseURL() string {
 
 // CASBaseURL returns the active CAS HTTP endpoint.
 func (c *Config) CASBaseURL() string {
-	if c.CAS.Mode == "embedded-mock" {
-		return "http://" + c.CAS.EmbeddedMock.Listen
-	}
 	return strings.TrimRight(c.CAS.BaseURL, "/")
 }
 
@@ -432,14 +408,6 @@ func (c *Config) KVStorePath() string {
 // CASTimeout parses and returns the CAS timeout.
 func (c *Config) CASTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.CAS.Timeout)
-}
-
-// EmbeddedMockLatency parses the embedded mock latency if configured.
-func (c *Config) EmbeddedMockLatency() (time.Duration, error) {
-	if c.CAS.EmbeddedMock.Latency == "" {
-		return 0, nil
-	}
-	return time.ParseDuration(c.CAS.EmbeddedMock.Latency)
 }
 
 // String returns a compact string representation of the config.
