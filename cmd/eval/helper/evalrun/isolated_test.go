@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,6 +40,25 @@ func TestRunIsolatedRunsLocalOnlyPlanWithoutDaemon(t *testing.T) {
 
 	if err := RunIsolated(reg)(cmd, nil); err != nil {
 		t.Fatalf("RunIsolated: %v", err)
+	}
+}
+
+func TestWaitForHealthHonorsContextDuringPollSleep(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+
+	start := time.Now()
+	err := waitForHealth(ctx, ts.URL, time.Second)
+	if err != context.Canceled {
+		t.Fatalf("waitForHealth error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
+		t.Fatalf("waitForHealth took %s after cancellation", elapsed)
 	}
 }
 

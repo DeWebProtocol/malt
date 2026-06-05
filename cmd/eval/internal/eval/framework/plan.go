@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,13 @@ func (p *Plan) Normalize() error {
 	if pathsOverlap(p.OutputDir, p.ResultDir) {
 		return fmt.Errorf("output_dir and result_dir must not overlap")
 	}
+	var err error
+	if p.APIBaseURL, err = normalizeHTTPURL("api_base_url", p.APIBaseURL); err != nil {
+		return err
+	}
+	if p.CASEndpoint, err = normalizeHTTPURL("cas_endpoint", p.CASEndpoint); err != nil {
+		return err
+	}
 	if len(p.Suites) == 0 {
 		return fmt.Errorf("at least one suite is required")
 	}
@@ -104,6 +112,24 @@ func (p *Plan) Normalize() error {
 		p.Suites[i].Name = name
 	}
 	return nil
+}
+
+func normalizeHTTPURL(field, raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("%s is invalid: %w", field, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("%s must use http or https URL scheme", field)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("%s must include a host", field)
+	}
+	return value, nil
 }
 
 func validateRunID(runID string) error {

@@ -95,12 +95,14 @@ func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) e
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 2 * time.Second}
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		resp, err := client.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -110,6 +112,10 @@ func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) e
 		if time.Now().After(deadline) {
 			return fmt.Errorf("daemon at %s did not become healthy within %s", baseURL, timeout)
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 }
