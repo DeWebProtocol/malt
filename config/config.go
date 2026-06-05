@@ -266,6 +266,7 @@ func WriteToFile(path string, cfg *Config) error {
 
 func (c *Config) applyDefaults() {
 	defaults := DefaultConfig()
+	casModeWasEmpty := c.CAS.Mode == ""
 	if c.RPC.Listen == "" {
 		c.RPC.Listen = defaults.RPC.Listen
 	}
@@ -290,6 +291,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.CAS.Mode == "" {
 		c.CAS.Mode = defaults.CAS.Mode
+	}
+	if c.CAS.BaseURL == "" && casModeWasEmpty {
+		c.CAS.BaseURL = defaults.CAS.BaseURL
 	}
 	if c.CAS.Timeout == "" {
 		c.CAS.Timeout = defaults.CAS.Timeout

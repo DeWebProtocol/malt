@@ -200,6 +200,17 @@ func TestValidateAllowsFsAndIpa(t *testing.T) {
 	}
 }
 
+func TestValidateAppliesDefaultCASBaseURLForZeroConfig(t *testing.T) {
+	cfg := &Config{}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.CAS.BaseURL != "http://127.0.0.1:4318" {
+		t.Fatalf("CAS.BaseURL = %q", cfg.CAS.BaseURL)
+	}
+}
+
 func TestLoadFromFile_InvalidPath(t *testing.T) {
 	_, err := LoadFromFile("/nonexistent/path/malt.json")
 	if err == nil {
