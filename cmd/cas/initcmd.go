@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -35,7 +36,7 @@ var initCmd = &cobra.Command{
 func runInit(cmd *cobra.Command, args []string) error {
 	cfg := DefaultConfig()
 
-	configPath, err := DefaultConfigPath()
+	configPath, err := ResolveConfigPath(configFile)
 	if err != nil {
 		return err
 	}
@@ -50,11 +51,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		cfg.KVStore.DataDir = promptString(reader, "Data directory", initDataDir, cfg.KVStore.DataDir, initNonInteractive)
 	}
 
-	dir, err := DefaultConfigDir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	if err := WriteToFile(configPath, cfg); err != nil {
