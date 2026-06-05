@@ -187,6 +187,16 @@ func (p *Plan) OverrideResultDir(resultDir string) {
 	p.resultDirExplicit = true
 }
 
+// OutputDirExplicit reports whether output_dir was set by the loaded plan or a CLI override.
+func (p Plan) OutputDirExplicit() bool {
+	return p.outputDirExplicit
+}
+
+// ResultDirExplicit reports whether result_dir was set by the loaded plan or a CLI override.
+func (p Plan) ResultDirExplicit() bool {
+	return p.resultDirExplicit
+}
+
 func pathsOverlap(a, b string) bool {
 	if a == "" || b == "" {
 		return false

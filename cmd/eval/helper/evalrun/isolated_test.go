@@ -44,6 +44,40 @@ func TestRunIsolatedRunsLocalOnlyPlanWithoutDaemon(t *testing.T) {
 	}
 }
 
+func TestRunIsolatedPreservesExplicitPlanDirectories(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	planPath := filepath.Join(tmp, "plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+  "run_id": "explicit-dirs",
+  "api_base_url": "http://127.0.0.1:1",
+  "cas_endpoint": "http://127.0.0.1:2",
+  "output_dir": "explicit-output",
+  "result_dir": "explicit-result",
+  "suites": [{"name": "local_suite"}]
+}`), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	reg := framework.NewRegistry()
+	if err := reg.Register(localOnlySuite{}); err != nil {
+		t.Fatalf("register suite: %v", err)
+	}
+	cmd := &cobra.Command{}
+	cmd.Flags().String("plan", planPath, "")
+	cmd.SetContext(context.Background())
+
+	if err := RunIsolated(reg)(cmd, nil); err != nil {
+		t.Fatalf("RunIsolated: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "explicit-result", "manifest.json")); err != nil {
+		t.Fatalf("explicit result manifest missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "explicit-output", "logs")); err != nil {
+		t.Fatalf("explicit output logs missing: %v", err)
+	}
+}
+
 func TestRunIsolatedWaitsForSuitesThatRequireDaemon(t *testing.T) {
 	tmp := t.TempDir()
 	t.Chdir(tmp)

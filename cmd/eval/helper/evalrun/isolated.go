@@ -58,13 +58,17 @@ func RunIsolated(registry framework.Registry) func(cmd *cobra.Command, args []st
 		if err := os.MkdirAll(evalDir, 0o755); err != nil {
 			return fmt.Errorf("create eval dir: %w", err)
 		}
-		plan.OverrideResultDir(filepath.Join(evalDir, "result", plan.RunID))
-		plan.OverrideOutputDir(filepath.Join(evalDir, "output", plan.RunID))
+		if !plan.ResultDirExplicit() {
+			plan.OverrideResultDir(filepath.Join(evalDir, "result", plan.RunID))
+		}
+		if !plan.OutputDirExplicit() {
+			plan.OverrideOutputDir(filepath.Join(evalDir, "output", plan.RunID))
+		}
 
 		runOpts := framework.RunOptions{Stderr: cmd.ErrOrStderr()}
 		err = framework.Run(cmd.Context(), plan, registry, runOpts)
 
-		resultDir := filepath.Join(evalDir, "result", plan.RunID)
+		resultDir := plan.ResultDir
 		fmt.Fprintf(cmd.ErrOrStderr(), "\nresults: %s\n", resultDir)
 		if _, statErr := os.Stat(filepath.Join(resultDir, "manifest.json")); statErr == nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "manifest: %s\n", filepath.Join(resultDir, "manifest.json"))

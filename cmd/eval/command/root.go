@@ -25,6 +25,7 @@ func NewRootCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("plan")
 
 	cmd.AddCommand(
+		evalrun.NewCommand(registry),
 		evalschema.NewCommand(),
 		evalsummary.NewCommand(),
 		evalread.NewCommand(),
