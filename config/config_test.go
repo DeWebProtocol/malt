@@ -200,6 +200,16 @@ func TestValidateAllowsFsAndIpa(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsMockCASMode(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CAS.Mode = "mock"
+	cfg.CAS.BaseURL = ""
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateAppliesDefaultCASBaseURLForZeroConfig(t *testing.T) {
 	cfg := &Config{}
 

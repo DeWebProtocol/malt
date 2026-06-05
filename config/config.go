@@ -109,8 +109,11 @@ type CASConfig struct {
 // EmbeddedMockConfig is deprecated and ignored. Kept for backward-compatible
 // JSON deserialization of old config files.
 type EmbeddedMockConfig struct {
-	Enabled bool   `json:"enabled,omitempty"`
-	Listen  string `json:"listen,omitempty"`
+	// Deprecated: embedded mock CAS was removed; this field is ignored.
+	Enabled bool `json:"enabled,omitempty"`
+	// Deprecated: embedded mock CAS was removed; this field is ignored.
+	Listen string `json:"listen,omitempty"`
+	// Deprecated: embedded mock CAS was removed; this field is ignored.
 	Latency string `json:"latency,omitempty"`
 }
 
@@ -338,16 +341,16 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.CAS.Mode {
-	case "external":
+	case "external", "mock":
 	default:
-		return fmt.Errorf("unsupported cas.mode %q (only \"external\" is supported)", c.CAS.Mode)
+		return fmt.Errorf("unsupported cas.mode %q (use external or mock)", c.CAS.Mode)
 	}
 
 	if _, err := c.CASTimeout(); err != nil {
 		return fmt.Errorf("invalid cas.timeout: %w", err)
 	}
 
-	if c.CAS.BaseURL == "" {
+	if c.CAS.Mode == "external" && c.CAS.BaseURL == "" {
 		return fmt.Errorf("cas.base_url is required")
 	}
 
