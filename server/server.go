@@ -23,7 +23,7 @@ type Server struct {
 	node           *node.Node
 	addr           string
 	lifecycleToken string
-	browserOrigins map[string]struct{}
+	browserOrigins *browserOriginPolicy
 	server         *http.Server
 	defaultGraph   graph.Runtime
 	graphMu        sync.Mutex
@@ -71,7 +71,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
-	if len(s.browserOrigins) == 0 {
+	if s.browserOrigins == nil {
 		return handler
 	}
 	return s.browserCORS(handler)

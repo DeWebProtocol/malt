@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -9,22 +10,105 @@ const browserCORSAllowHeaders = "Content-Type, Range, X-Malt-Proof"
 const browserCORSExposeHeaders = "X-Malt-ProofList, X-Malt-ProofList-Encoding, Content-Range, X-Malt-Kind, X-Malt-Storage-Kind, X-Malt-Key, X-Malt-Payload"
 const browserCORSAllowMethods = "GET, HEAD, POST, OPTIONS"
 
-func browserOriginSet(origins []string) map[string]struct{} {
+type browserOriginPolicy struct {
+	exact            map[string]struct{}
+	loopbackWildcard []browserLoopbackWildcard
+}
+
+type browserLoopbackWildcard struct {
+	scheme string
+	host   string
+}
+
+func browserOriginSet(origins []string) *browserOriginPolicy {
 	if len(origins) == 0 {
 		return nil
 	}
-	set := make(map[string]struct{}, len(origins))
+	policy := &browserOriginPolicy{
+		exact: make(map[string]struct{}, len(origins)),
+	}
 	for _, origin := range origins {
 		origin = strings.TrimSpace(origin)
 		if origin == "" {
 			continue
 		}
-		set[origin] = struct{}{}
+		if wildcard, ok := parseLoopbackPortWildcardOrigin(origin); ok {
+			policy.loopbackWildcard = append(policy.loopbackWildcard, wildcard)
+			continue
+		}
+		policy.exact[origin] = struct{}{}
 	}
-	if len(set) == 0 {
+	if len(policy.exact) == 0 && len(policy.loopbackWildcard) == 0 {
 		return nil
 	}
-	return set
+	return policy
+}
+
+func (p *browserOriginPolicy) Allows(origin string) bool {
+	if p == nil {
+		return false
+	}
+	if _, ok := p.exact[origin]; ok {
+		return true
+	}
+	if len(p.loopbackWildcard) == 0 {
+		return false
+	}
+	scheme, host, ok := parseBrowserOrigin(origin)
+	if !ok {
+		return false
+	}
+	for _, wildcard := range p.loopbackWildcard {
+		if wildcard.scheme == scheme && wildcard.host == host {
+			return true
+		}
+	}
+	return false
+}
+
+func parseLoopbackPortWildcardOrigin(origin string) (browserLoopbackWildcard, bool) {
+	base, ok := strings.CutSuffix(origin, ":*")
+	if !ok {
+		return browserLoopbackWildcard{}, false
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return browserLoopbackWildcard{}, false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return browserLoopbackWildcard{}, false
+	}
+	host, ok := normalizeLoopbackCORSHost(u.Hostname())
+	if !ok {
+		return browserLoopbackWildcard{}, false
+	}
+	return browserLoopbackWildcard{scheme: u.Scheme, host: host}, true
+}
+
+func parseBrowserOrigin(origin string) (string, string, bool) {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", "", false
+	}
+	host, ok := normalizeLoopbackCORSHost(u.Hostname())
+	if !ok {
+		return "", "", false
+	}
+	return u.Scheme, host, true
+}
+
+func normalizeLoopbackCORSHost(host string) (string, bool) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return host, true
+	default:
+		return "", false
+	}
 }
 
 func (s *Server) browserCORS(next http.Handler) http.Handler {
@@ -34,7 +118,7 @@ func (s *Server) browserCORS(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if _, ok := s.browserOrigins[origin]; !ok {
+		if !s.browserOrigins.Allows(origin) {
 			http.Error(w, "origin is not allowed", http.StatusForbidden)
 			return
 		}

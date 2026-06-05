@@ -571,7 +571,13 @@ Current config shape:
 {
   "rpc": {
     "listen": "127.0.0.1:4317",
-    "cors_allowed_origins": []
+    "cors_allowed_origins": [
+      "http://127.0.0.1:*",
+      "http://localhost:*",
+      "http://[::1]:*",
+      "https://dewebprotocol.dev",
+      "https://dewebprotocol.github.io"
+    ]
   },
   "state": {
     "root_dir": "D:/malt-state",
@@ -598,8 +604,13 @@ Allowed runtime values:
 
 - `state.kvstore.type`: `badger`, `memory`, or `fs`
 - `structure.default_backend`: `kzg` or `ipa`
-- `rpc.cors_allowed_origins`: exact browser origins allowed to call local
-  read/proof routes and `POST /verify`
+- `rpc.cors_allowed_origins`: browser origins allowed to call local read/proof
+  routes and `POST /verify`. Empty or omitted disables browser CORS. Exact
+  origins are matched literally. Port wildcards are only supported for loopback
+  origins such as `http://localhost:*`, `http://127.0.0.1:*`, and
+  `http://[::1]:*`; the daemon still replies with the concrete request origin.
+  The daemon reads this policy at startup. Change the file and restart the
+  managed daemon to apply browser-access changes.
 
 This config is a packaging and runtime decision. It does not define the core
 MALT semantic abstraction.
