@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	kvstore "github.com/dewebprotocol/malt/storage/kv"
+	"github.com/dewebprotocol/malt/storage/kv/badger"
 	"github.com/dewebprotocol/malt/storage/kv/memory"
 )
 
@@ -69,6 +70,39 @@ func TestKVStripsIteratorAndBatchGetKeys(t *testing.T) {
 	}
 	if !reflect.DeepEqual(keys, []string{"a", "b"}) {
 		t.Fatalf("iterator keys = %#v, want [a b]", keys)
+	}
+}
+
+func TestKVIteratorBoundsNestedPrefixScan(t *testing.T) {
+	ctx := context.Background()
+	base, err := badger.New(badger.WithInMemory(true))
+	if err != nil {
+		t.Fatalf("badger.New: %v", err)
+	}
+	defer base.Close()
+	view := New(base, []byte("cas/"))
+
+	for key, value := range map[string]string{
+		"block/a": "one",
+		"block/b": "two",
+		"foo":     "skip",
+	} {
+		if err := view.Put(ctx, []byte(key), []byte(value)); err != nil {
+			t.Fatalf("Put %s: %v", key, err)
+		}
+	}
+
+	var keys []string
+	it := view.NewIterator(ctx, []byte("block/"), nil)
+	defer it.Close()
+	for it.Next() {
+		keys = append(keys, string(it.Key()))
+	}
+	if err := it.Err(); err != nil {
+		t.Fatalf("iterator error: %v", err)
+	}
+	if !reflect.DeepEqual(keys, []string{"block/a", "block/b"}) {
+		t.Fatalf("iterator keys = %#v, want [block/a block/b]", keys)
 	}
 }
 

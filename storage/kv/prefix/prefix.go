@@ -82,9 +82,17 @@ func (k *KV) NewIterator(ctx context.Context, start, end []byte) kvstore.Iterato
 		prefixedEnd = k.prefixed(end)
 	}
 	return &iterator{
-		inner:  k.inner.NewIterator(ctx, prefixedStart, prefixedEnd),
-		prefix: append([]byte(nil), k.prefix...),
+		inner:      k.inner.NewIterator(ctx, prefixedStart, prefixedEnd),
+		prefix:     append([]byte(nil), k.prefix...),
+		scanPrefix: iteratorScanPrefix(start, end),
 	}
+}
+
+func iteratorScanPrefix(start, end []byte) []byte {
+	if start == nil || end != nil {
+		return nil
+	}
+	return append([]byte(nil), start...)
 }
 
 func (k *KV) Batch() kvstore.Batch {
@@ -97,9 +105,10 @@ func (k *KV) Close() error {
 }
 
 type iterator struct {
-	inner  kvstore.Iterator
-	prefix []byte
-	key    []byte
+	inner      kvstore.Iterator
+	prefix     []byte
+	scanPrefix []byte
+	key        []byte
 }
 
 func (it *iterator) Next() bool {
@@ -108,7 +117,11 @@ func (it *iterator) Next() bool {
 		if !bytes.HasPrefix(key, it.prefix) {
 			return false
 		}
-		it.key = append(it.key[:0], key[len(it.prefix):]...)
+		stripped := key[len(it.prefix):]
+		if it.scanPrefix != nil && !bytes.HasPrefix(stripped, it.scanPrefix) {
+			return false
+		}
+		it.key = append(it.key[:0], stripped...)
 		return true
 	}
 	return false
