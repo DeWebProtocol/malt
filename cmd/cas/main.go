@@ -30,6 +30,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -60,13 +61,13 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.Flags().StringVar(&configFile, "config", "", "settings file path (default ~/.malt/cas/settings.json)")
-	rootCmd.Flags().StringVar(&listen, "listen", "", "listen address (overrides settings)")
-	rootCmd.Flags().DurationVar(&getLatency, "get-latency", 0, "simulated Get latency (0 = default IPFS latency)")
-	rootCmd.Flags().DurationVar(&putLatency, "put-latency", 0, "simulated Put latency (0 = default IPFS latency)")
-	rootCmd.Flags().DurationVar(&hasLatency, "has-latency", 0, "simulated Has latency (0 = default IPFS latency)")
-	rootCmd.Flags().DurationVar(&jitter, "jitter", 0, "latency jitter (±)")
-	rootCmd.Flags().BoolVar(&noLatency, "no-latency", false, "disable all latency simulation")
+	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "settings file path (default ~/.malt/cas/settings.json)")
+	rootCmd.PersistentFlags().StringVar(&listen, "listen", "", "listen address (overrides settings)")
+	rootCmd.PersistentFlags().DurationVar(&getLatency, "get-latency", 0, "simulated Get latency (0 = default IPFS latency)")
+	rootCmd.PersistentFlags().DurationVar(&putLatency, "put-latency", 0, "simulated Put latency (0 = default IPFS latency)")
+	rootCmd.PersistentFlags().DurationVar(&hasLatency, "has-latency", 0, "simulated Has latency (0 = default IPFS latency)")
+	rootCmd.PersistentFlags().DurationVar(&jitter, "jitter", 0, "latency jitter (±)")
+	rootCmd.PersistentFlags().BoolVar(&noLatency, "no-latency", false, "disable all latency simulation")
 }
 
 func main() {
@@ -93,6 +94,9 @@ func runDaemonChild() error {
 	if listenOverride := os.Getenv(daemonListenKey); listenOverride != "" {
 		cfg.Listen = listenOverride
 	}
+	if err := applyDaemonEnvOverrides(); err != nil {
+		return err
+	}
 	return runServer(cfg)
 }
 
@@ -105,6 +109,49 @@ func run(cmd *cobra.Command, args []string) error {
 		cfg.Listen = listen
 	}
 	return runServer(cfg)
+}
+
+func daemonOverridesFromGlobals() DaemonOverrides {
+	return DaemonOverrides{
+		Listen:     listen,
+		NoLatency:  noLatency,
+		GetLatency: getLatency,
+		PutLatency: putLatency,
+		HasLatency: hasLatency,
+		Jitter:     jitter,
+	}
+}
+
+func applyDaemonEnvOverrides() error {
+	if os.Getenv(daemonNoLatencyKey) == "1" {
+		noLatency = true
+	}
+	var err error
+	if getLatency, err = durationFromEnv(daemonGetLatencyKey, getLatency); err != nil {
+		return err
+	}
+	if putLatency, err = durationFromEnv(daemonPutLatencyKey, putLatency); err != nil {
+		return err
+	}
+	if hasLatency, err = durationFromEnv(daemonHasLatencyKey, hasLatency); err != nil {
+		return err
+	}
+	if jitter, err = durationFromEnv(daemonJitterKey, jitter); err != nil {
+		return err
+	}
+	return nil
+}
+
+func durationFromEnv(key string, current time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return current, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return d, nil
 }
 
 // runServer creates the KV store, starts the CAS HTTP server, and blocks
@@ -142,6 +189,8 @@ func runServer(cfg *Config) error {
 
 	store := casmock.NewCAS(opts...)
 	srv := casmock.NewHTTPServer(cfg.Listen, store)
+	shutdownCh := make(chan struct{}, 1)
+	handler := daemonShutdownHandler(srv.Handler(), os.Getenv(daemonShutdownTokenKey), shutdownCh)
 
 	fmt.Fprintf(os.Stderr, "mock-cas listening on %s\n", cfg.Listen)
 	fmt.Fprintf(os.Stderr, "kvstore: type=%s\n", cfg.KVStore.Type)
@@ -163,8 +212,9 @@ func runServer(cfg *Config) error {
 	defer cancel()
 
 	errCh := make(chan error, 1)
+	httpSrv := &http.Server{Addr: cfg.Listen, Handler: handler}
 	go func() {
-		if err := srv.Start(); err != nil {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -174,10 +224,40 @@ func runServer(cfg *Config) error {
 		fmt.Fprintf(os.Stderr, "\nshutting down...\n")
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutCancel()
-		return srv.Shutdown(shutCtx)
+		return httpSrv.Shutdown(shutCtx)
+	case <-shutdownCh:
+		fmt.Fprintf(os.Stderr, "\nshutdown requested...\n")
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutCancel()
+		return httpSrv.Shutdown(shutCtx)
 	case err := <-errCh:
 		return fmt.Errorf("server error: %w", err)
 	}
+}
+
+func daemonShutdownHandler(next http.Handler, token string, shutdownCh chan<- struct{}) http.Handler {
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/shutdown" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("X-MALT-CAS-Shutdown-Token") != token {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		select {
+		case shutdownCh <- struct{}{}:
+		default:
+		}
+	})
 }
 
 // newKVStore creates a KV store from config. Returns (store, closeFn, error).

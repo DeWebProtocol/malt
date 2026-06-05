@@ -65,7 +65,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	status, err := daemonStart(cmd.Context(), statePath, logPath, cfg)
+	if listen != "" {
+		cfg.Listen = listen
+	}
+	status, err := daemonStart(cmd.Context(), statePath, logPath, cfg, daemonOverridesFromGlobals())
 	if err != nil {
 		return err
 	}
@@ -84,9 +87,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	status := daemonStatus(statePath, cfg)
 	printStatus(os.Stdout, status)
-	if !status.Running {
-		return fmt.Errorf("CAS daemon is not running")
-	}
 	return nil
 }
 
@@ -122,7 +122,10 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	status, err := daemonRestart(cmd.Context(), statePath, logPath, cfg)
+	if listen != "" {
+		cfg.Listen = listen
+	}
+	status, err := daemonRestart(cmd.Context(), statePath, logPath, cfg, daemonOverridesFromGlobals())
 	if err != nil {
 		return err
 	}

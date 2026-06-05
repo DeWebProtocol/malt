@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,10 +25,11 @@ var ErrDaemonStateNotFound = errors.New("daemon state not found")
 
 // DaemonState is the local state recorded for a managed CAS daemon.
 type DaemonState struct {
-	PID        int       `json:"pid"`
-	Listen     string    `json:"listen"`
-	ConfigPath string    `json:"config_path"`
-	StartedAt  time.Time `json:"started_at"`
+	PID           int       `json:"pid"`
+	Listen        string    `json:"listen"`
+	ConfigPath    string    `json:"config_path"`
+	ShutdownToken string    `json:"shutdown_token,omitempty"`
+	StartedAt     time.Time `json:"started_at"`
 }
 
 // DaemonStatus describes the observed CAS daemon lifecycle state.
@@ -81,7 +84,8 @@ func WriteState(path string, state *DaemonState) error {
 	if state == nil {
 		return fmt.Errorf("daemon state is nil")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create daemon state dir: %w", err)
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -89,8 +93,26 @@ func WriteState(path string, state *DaemonState) error {
 		return fmt.Errorf("encode daemon state: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write daemon state: %w", err)
+	tmp, err := os.CreateTemp(dir, ".daemon-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create daemon state temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write daemon state temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close daemon state temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("replace daemon state: remove old state: %w", removeErr)
+		}
+		if renameErr := os.Rename(tmpPath, path); renameErr != nil {
+			return fmt.Errorf("replace daemon state: %w", renameErr)
+		}
 	}
 	return nil
 }
@@ -109,11 +131,11 @@ func daemonStatus(statePath string, cfg *Config) *DaemonStatus {
 
 	healthErr := healthCheck(baseURL)
 	status := &DaemonStatus{
-		Running:    healthErr == nil,
-		Managed:    state != nil,
-		Listen:     cfg.Listen,
-		ConfigPath: cfg.SettingsPath(),
-		StatePath:  statePath,
+		Running:     healthErr == nil,
+		Managed:     state != nil,
+		Listen:      cfg.Listen,
+		ConfigPath:  cfg.SettingsPath(),
+		StatePath:   statePath,
 		HealthError: healthErr,
 	}
 	if state != nil {
@@ -126,7 +148,13 @@ func daemonStatus(statePath string, cfg *Config) *DaemonStatus {
 }
 
 // daemonStart launches the CAS daemon in the background.
-func daemonStart(ctx context.Context, statePath, logPath string, cfg *Config) (*DaemonStatus, error) {
+func daemonStart(ctx context.Context, statePath, logPath string, cfg *Config, overrides DaemonOverrides) (*DaemonStatus, error) {
+	release, err := acquireDaemonLock(statePath + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	status := daemonStatus(statePath, cfg)
 	if status.Running {
 		return status, nil
@@ -140,17 +168,23 @@ func daemonStart(ctx context.Context, statePath, logPath string, cfg *Config) (*
 		return nil, fmt.Errorf("determine executable: %w", err)
 	}
 
-	env := daemonProcessEnv(os.Environ(), cfg.SettingsPath(), "")
+	token, err := newShutdownToken()
+	if err != nil {
+		return nil, err
+	}
+	overrides.ShutdownToken = token
+	env := daemonProcessEnv(os.Environ(), cfg.SettingsPath(), overrides)
 	pid, err := startBackgroundProcess(exe, nil, env, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("start daemon process: %w", err)
 	}
 
 	state := &DaemonState{
-		PID:        pid,
-		Listen:     cfg.Listen,
-		ConfigPath: cfg.SettingsPath(),
-		StartedAt:  time.Now().UTC(),
+		PID:           pid,
+		Listen:        cfg.Listen,
+		ConfigPath:    cfg.SettingsPath(),
+		ShutdownToken: token,
+		StartedAt:     time.Now().UTC(),
 	}
 	if err := WriteState(statePath, state); err != nil {
 		_ = signalProcess(pid)
@@ -180,8 +214,10 @@ func daemonStop(ctx context.Context, statePath string) (*DaemonStatus, error) {
 		return stoppedStatus(state, statePath), nil
 	}
 
-	if err := signalProcess(state.PID); err != nil {
-		return nil, fmt.Errorf("stop daemon process %d: %w", state.PID, err)
+	if err := requestShutdown(ctx, baseURL, state.ShutdownToken); err != nil {
+		if signalErr := signalProcess(state.PID); signalErr != nil {
+			return nil, fmt.Errorf("stop daemon process %d: shutdown request failed: %v; signal failed: %w", state.PID, err, signalErr)
+		}
 	}
 	if err := waitForStopped(ctx, baseURL, defaultStopTimeout); err != nil {
 		return nil, err
@@ -191,7 +227,7 @@ func daemonStop(ctx context.Context, statePath string) (*DaemonStatus, error) {
 }
 
 // daemonRestart stops a managed daemon if present, then starts a new one.
-func daemonRestart(ctx context.Context, statePath, logPath string, cfg *Config) (*DaemonStatus, error) {
+func daemonRestart(ctx context.Context, statePath, logPath string, cfg *Config, overrides DaemonOverrides) (*DaemonStatus, error) {
 	if _, err := LoadState(statePath); err == nil {
 		if _, err := daemonStop(ctx, statePath); err != nil {
 			return nil, err
@@ -204,7 +240,7 @@ func daemonRestart(ctx context.Context, statePath, logPath string, cfg *Config) 
 			return nil, fmt.Errorf("CAS daemon is running at %s but no managed state file exists", status.Listen)
 		}
 	}
-	return daemonStart(ctx, statePath, logPath, cfg)
+	return daemonStart(ctx, statePath, logPath, cfg, overrides)
 }
 
 func stoppedStatus(state *DaemonState, statePath string) *DaemonStatus {
@@ -249,30 +285,93 @@ func healthCheck(baseURL string) error {
 }
 
 func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	var lastErr error
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := healthCheck(baseURL); err == nil {
 			return nil
 		} else {
 			lastErr = err
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
 			return fmt.Errorf("CAS daemon at %s did not become healthy within %s: %w", baseURL, timeout, lastErr)
+		case <-time.After(defaultPollInterval):
 		}
-		time.Sleep(defaultPollInterval)
 	}
 }
 
 func waitForStopped(ctx context.Context, baseURL string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := healthCheck(baseURL); err != nil {
 			return nil
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
 			return fmt.Errorf("CAS daemon at %s did not stop within %s", baseURL, timeout)
+		case <-time.After(defaultPollInterval):
 		}
-		time.Sleep(defaultPollInterval)
 	}
+}
+
+func acquireDaemonLock(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create daemon lock dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil, fmt.Errorf("CAS daemon start already in progress: %s", path)
+		}
+		return nil, fmt.Errorf("create daemon lock: %w", err)
+	}
+	fmt.Fprintf(f, "%d\n", os.Getpid())
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("close daemon lock: %w", err)
+	}
+	return func() { _ = os.Remove(path) }, nil
+}
+
+func newShutdownToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate shutdown token: %w", err)
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
+func requestShutdown(ctx context.Context, baseURL, token string) error {
+	if token == "" {
+		return fmt.Errorf("daemon state has no shutdown token")
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/shutdown", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-MALT-CAS-Shutdown-Token", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("shutdown status %d", resp.StatusCode)
+	}
+	return nil
 }

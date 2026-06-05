@@ -24,5 +24,5 @@ func signalProcess(pid int) error {
 	if err != nil {
 		return err
 	}
-	return process.Kill()
+	return process.Signal(os.Interrupt)
 }
