@@ -25,7 +25,10 @@ import (
 	"github.com/dewebprotocol/malt/storage/kv/badger"
 	"github.com/dewebprotocol/malt/storage/kv/fs"
 	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
+	kvprefix "github.com/dewebprotocol/malt/storage/kv/prefix"
 )
+
+const mockCASKeyPrefix = "cas/"
 
 func canonicalArcTableType(t string) string {
 	switch t {
@@ -206,7 +209,7 @@ func (n *Node) initCAS() (cas.Reader, error) {
 		), nil
 	case "mock":
 		// Keep this mode only for tests or direct in-process injection paths.
-		return casmock.NewCAS(casmock.WithoutLatency()), nil
+		return casmock.NewCAS(casmock.WithoutLatency(), casmock.WithKVStore(kvprefix.New(n.kv, []byte(mockCASKeyPrefix)))), nil
 	default:
 		return nil, fmt.Errorf("unknown cas mode: %s", n.cfg.CAS.Mode)
 	}
