@@ -71,3 +71,53 @@ func TestKVStripsIteratorAndBatchGetKeys(t *testing.T) {
 		t.Fatalf("iterator keys = %#v, want [a b]", keys)
 	}
 }
+
+func TestKVPrefixesHasDeleteAndBatch(t *testing.T) {
+	ctx := context.Background()
+	base := memory.New()
+	view := New(base, []byte("cas/"))
+
+	batch := view.Batch()
+	if err := batch.Put([]byte("a"), []byte("one")); err != nil {
+		t.Fatalf("batch Put a: %v", err)
+	}
+	if err := batch.Put([]byte("b"), []byte("two")); err != nil {
+		t.Fatalf("batch Put b: %v", err)
+	}
+	if err := batch.Commit(ctx); err != nil {
+		t.Fatalf("batch Commit: %v", err)
+	}
+
+	exists, err := view.Has(ctx, []byte("a"))
+	if err != nil {
+		t.Fatalf("Has a: %v", err)
+	}
+	if !exists {
+		t.Fatal("Has a = false, want true")
+	}
+	if exists, err := base.Has(ctx, []byte("a")); err != nil || exists {
+		t.Fatalf("base Has unprefixed a = %v, %v; want false, nil", exists, err)
+	}
+
+	batch = view.Batch()
+	if err := batch.Delete([]byte("a")); err != nil {
+		t.Fatalf("batch Delete a: %v", err)
+	}
+	if err := batch.Commit(ctx); err != nil {
+		t.Fatalf("delete batch Commit: %v", err)
+	}
+	if exists, err := view.Has(ctx, []byte("a")); err != nil || exists {
+		t.Fatalf("Has deleted a = %v, %v; want false, nil", exists, err)
+	}
+	if exists, err := view.Has(ctx, []byte("b")); err != nil || !exists {
+		t.Fatalf("Has b after deleting a = %v, %v; want true, nil", exists, err)
+	}
+}
+
+func TestKVStripRejectsUnprefixedKey(t *testing.T) {
+	view := New(memory.New(), []byte("cas/"))
+
+	if got := view.strip([]byte("block/a")); got != nil {
+		t.Fatalf("strip unprefixed key = %q, want nil", got)
+	}
+}

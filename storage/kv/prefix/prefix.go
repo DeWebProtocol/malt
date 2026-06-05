@@ -28,6 +28,9 @@ func (k *KV) prefixed(key []byte) []byte {
 }
 
 func (k *KV) strip(key []byte) []byte {
+	if !bytes.HasPrefix(key, k.prefix) {
+		return nil
+	}
 	return append([]byte(nil), key[len(k.prefix):]...)
 }
 
