@@ -605,12 +605,15 @@ Allowed runtime values:
 - `state.kvstore.type`: `badger`, `memory`, or `fs`
 - `structure.default_backend`: `kzg` or `ipa`
 - `rpc.cors_allowed_origins`: browser origins allowed to call local read/proof
-  routes and `POST /verify`. Empty or omitted disables browser CORS. Exact
-  origins are matched literally. Port wildcards are only supported for loopback
-  origins such as `http://localhost:*`, `http://127.0.0.1:*`, and
-  `http://[::1]:*`; the daemon still replies with the concrete request origin.
-  The daemon reads this policy at startup. Change the file and restart the
-  managed daemon to apply browser-access changes.
+  routes, `POST /verify`, and UnixFS browser write routes such as
+  `POST /_unixfs?path=...` and `POST /{root}/{path...}`. Empty or omitted
+  disables browser CORS. Exact origins are matched literally. Port wildcards
+  are only supported for loopback origins such as `http://localhost:*`,
+  `http://127.0.0.1:*`, and `http://[::1]:*`; the daemon still replies with the
+  concrete request origin. Admin and semantic-mutation routes are not exposed
+  through the browser CORS surface. The daemon reads this policy at startup.
+  Change the file and restart the managed daemon to apply browser-access
+  changes.
 
 This config is a packaging and runtime decision. It does not define the core
 MALT semantic abstraction.
