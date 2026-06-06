@@ -26,8 +26,8 @@ const (
 // Map materializes a keyed runtime view into a canonical-path ordered binding
 // vector and delegates authentication to a primitive index commitment backend.
 type Map struct {
-	scheme   commitment.IndexCommitment
-	arctable arctable.ArcTable
+	commitment *mapping.Commitment
+	arctable   arctable.ArcTable
 }
 
 type entry struct {
@@ -45,7 +45,18 @@ func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error
 	if e == nil {
 		return nil, fmt.Errorf("arctable is nil")
 	}
-	return &Map{scheme: scheme, arctable: e}, nil
+
+	commitmentHandler, err := mapping.NewCommitment(scheme)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create map commitment: %w", err)
+	}
+
+	return &Map{commitment: commitmentHandler, arctable: e}, nil
+}
+
+// Commitment returns the underlying commitment primitives.
+func (m *Map) Commitment() *mapping.Commitment {
+	return m.commitment
 }
 
 // Commit commits the supplied keyed view and materializes the runtime state in ArcTable.
@@ -54,7 +65,7 @@ func (s *Map) Commit(ctx context.Context, namespace string, view mapping.View) (
 	if err != nil {
 		return cid.Undef, err
 	}
-	root, err := s.scheme.Commit(cells)
+	root, err := s.commitment.Scheme().Commit(cells)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -76,7 +87,7 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
 	}
 
-	recomputedRoot, err := s.scheme.Commit(cells)
+	recomputedRoot, err := s.commitment.Scheme().Commit(cells)
 	if err != nil {
 		return mapping.Binding{}, nil, err
 	}
@@ -84,7 +95,7 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		return mapping.Binding{}, nil, fmt.Errorf("recomputed root does not match requested root")
 	}
 
-	provedRoot, proved, proof, err := s.scheme.Prove(cells, uint64(index))
+	provedRoot, proved, proof, err := s.commitment.Scheme().Prove(cells, uint64(index))
 	if err != nil {
 		return mapping.Binding{}, nil, err
 	}
@@ -108,7 +119,7 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 	if err != nil {
 		return false, err
 	}
-	return s.scheme.VerifyProof(root, cell, proof)
+	return s.commitment.Scheme().VerifyProof(root, cell, proof)
 }
 
 // Update applies insert, replace, or delete semantics over the committed runtime state.
@@ -118,7 +129,7 @@ func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key ar
 		return cid.Undef, err
 	}
 
-	recomputedRoot, err := s.scheme.Commit(cells)
+	recomputedRoot, err := s.commitment.Scheme().Commit(cells)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -155,7 +166,7 @@ func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key ar
 		if err != nil {
 			return cid.Undef, err
 		}
-		newRoot, err := s.scheme.Replace(cells, uint64(index), oldCell, newCell)
+		newRoot, err := s.commitment.Scheme().Replace(cells, uint64(index), oldCell, newCell)
 		if err != nil {
 			return cid.Undef, err
 		}
@@ -185,7 +196,7 @@ func (s *Map) commitEntries(ctx context.Context, namespace string, entries []ent
 	if err != nil {
 		return cid.Undef, err
 	}
-	root, err := s.scheme.Commit(cells)
+	root, err := s.commitment.Scheme().Commit(cells)
 	if err != nil {
 		return cid.Undef, err
 	}

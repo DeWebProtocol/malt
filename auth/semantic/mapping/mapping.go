@@ -1,11 +1,22 @@
 // Package mapping defines the public keyed-map semantic for MALT.
+//
+// This package provides two layers of abstraction:
+//   - Commitment: stateless single-step primitives (Commit, ProveSlot, VerifySlot)
+//   - Semantics: stateful multi-step operations that combine primitives
+//
+// The Commitment layer is designed for use by any runtime (gateway, decentralized
+// node, light client) without storage dependencies. The Semantics layer combines
+// these primitives with storage access for complete operations.
 package mapping
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -33,8 +44,104 @@ type Binding struct {
 	Present bool
 }
 
+// Commitment provides stateless single-step commitment primitives for map semantics.
+//
+// This component handles the cryptographic commitment operations without any
+// storage dependencies. It can be used by gateway runtimes, decentralized nodes,
+// and light clients alike.
+type Commitment struct {
+	scheme commitment.IndexCommitment
+}
+
+// NewCommitment creates a new map commitment handler.
+func NewCommitment(scheme commitment.IndexCommitment) (*Commitment, error) {
+	if scheme == nil {
+		return nil, fmt.Errorf("index commitment scheme is nil")
+	}
+	return &Commitment{scheme: scheme}, nil
+}
+
+// Scheme returns the underlying commitment scheme.
+func (c *Commitment) Scheme() commitment.IndexCommitment {
+	return c.scheme
+}
+
+// Commit commits a map view to a root using the commitment scheme.
+func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
+	if view == nil {
+		return cid.Undef, fmt.Errorf("view is nil")
+	}
+
+	cells := make([]commitment.Cell, view.Len())
+	iter := view.Iterate()
+	i := 0
+	for {
+		_, value, ok := iter.Next()
+		if !ok {
+			break
+		}
+		cells[i] = commitment.CellFromCID(value)
+		i++
+	}
+	if err := iter.Err(); err != nil {
+		return cid.Undef, err
+	}
+
+	return c.scheme.Commit(cells)
+}
+
+// ProveSlot proves one slot in a committed node.
+//
+// Given the slots of a committed node, this function generates a proof for the
+// specified slot index. The caller must ensure that slots correspond to the root.
+func (c *Commitment) ProveSlot(root cid.Cid, slots []cid.Cid, slot uint64) (commitment.Cell, []byte, error) {
+	if !root.Defined() {
+		return nil, nil, fmt.Errorf("root is undefined")
+	}
+
+	cells := cellsFromCIDs(slots)
+	provedRoot, value, proof, err := c.scheme.Prove(cells, slot)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ok, err := maltcid.EqualCommitment(provedRoot, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, nil, fmt.Errorf("proved root does not match requested root")
+	}
+
+	return value, proof, nil
+}
+
+// VerifySlot verifies a single slot proof against a committed root.
+//
+// This function does not require access to the actual slot values - it only
+// needs the root commitment, slot index, expected value, and proof bytes.
+func (c *Commitment) VerifySlot(root cid.Cid, slot uint64, value commitment.Cell, proof []byte) (bool, error) {
+	return c.scheme.VerifyIndex(root, slot, value, proof)
+}
+
+// CellsFromCIDs converts a CID slice to commitment cells.
+func cellsFromCIDs(values []cid.Cid) []commitment.Cell {
+	cells := make([]commitment.Cell, len(values))
+	for i, value := range values {
+		cells[i] = commitment.CellFromCID(value)
+	}
+	return cells
+}
+
 // Semantics defines the public keyed-map semantics.
+//
+// This interface combines the single-step commitment primitives with storage
+// access to provide complete map operations. Implementations use the
+// Commitment primitives internally and add multi-step tree traversal logic.
 type Semantics interface {
+	// Commitment returns the underlying commitment primitives.
+	Commitment() *Commitment
+
 	// Commit commits the supplied map view and returns a structure root.
 	Commit(ctx context.Context, namespace string, view View) (cid.Cid, error)
 
