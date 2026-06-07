@@ -1,6 +1,10 @@
 // Package tree implements the stable-indexed list semantic using a tree-shaped
 // fixed-slot layout. Runtime operations execute against node materialization
 // stored in ArcTable, so proofs and updates do not require a caller-supplied view.
+//
+// This implementation uses the single-step commitment primitives from
+// auth/semantic/list and combines them with storage access for multi-step
+// tree traversal operations.
 package tree
 
 import (
@@ -18,8 +22,8 @@ import (
 )
 
 type TreeList struct {
-	scheme   commitment.IndexCommitment
-	arctable arctable.ArcTable
+	commitment *list.Commitment
+	arctable   arctable.ArcTable
 }
 
 type proofEnvelope struct {
@@ -51,10 +55,21 @@ func NewList(scheme commitment.IndexCommitment, arctable arctable.ArcTable) (*Tr
 	if arctable == nil {
 		return nil, fmt.Errorf("arctable is nil")
 	}
+
+	commitmentHandler, err := list.NewCommitment(scheme)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create list commitment: %w", err)
+	}
+
 	return &TreeList{
-		scheme:   scheme,
-		arctable: arctable,
+		commitment: commitmentHandler,
+		arctable:   arctable,
 	}, nil
+}
+
+// Commitment returns the underlying commitment primitives.
+func (s *TreeList) Commitment() *list.Commitment {
+	return s.commitment
 }
 
 func (s *TreeList) Commit(ctx context.Context, namespace string, view list.View) (cid.Cid, error) {
@@ -91,7 +106,7 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 	}
 
 	query := list.Query{Length: length}
-	lengthTarget, lengthProof, err := layout.ProveSlot(s.scheme, root, rootSlots, 0)
+	lengthTarget, lengthProof, err := s.commitment.ProveSlot(root, rootSlots, 0)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
@@ -121,7 +136,7 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 			return list.Query{}, nil, err
 		}
 
-		target, proof, err := layout.ProveSlot(s.scheme, currentRoot, currentSlots, slot)
+		target, proof, err := s.commitment.ProveSlot(currentRoot, currentSlots, slot)
 		if err != nil {
 			return list.Query{}, nil, err
 		}
@@ -164,7 +179,7 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	if err != nil {
 		return false, err
 	}
-	ok, err := layout.VerifySlot(s.scheme, root, 0, lengthTarget, envelope.LengthProof)
+	ok, err := s.commitment.VerifySlot(root, 0, lengthTarget, envelope.LengthProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -231,7 +246,7 @@ func (s *TreeList) ProveRange(ctx context.Context, namespace string, root cid.Ci
 		return list.RangeResult{}, nil, err
 	}
 
-	_, metadataProof, err := layout.ProveSlot(s.scheme, root, rootSlots, 0)
+	_, metadataProof, err := s.commitment.ProveSlot(root, rootSlots, 0)
 	if err != nil {
 		return list.RangeResult{}, nil, err
 	}
@@ -964,7 +979,7 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 	if err != nil {
 		return nil, err
 	}
-	validateErr := layout.ValidateSlots(s.scheme, root, slots)
+	validateErr := s.validateSlots(root, slots)
 	if validateErr == nil {
 		return slots, nil
 	}
@@ -973,7 +988,7 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 		if err != nil {
 			return nil, validateErr
 		}
-		if err := layout.ValidateSlots(s.scheme, root, legacySlots); err == nil {
+		if err := s.validateSlots(root, legacySlots); err == nil {
 			return legacySlots, nil
 		}
 		return nil, validateErr
@@ -981,8 +996,24 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 	return nil, validateErr
 }
 
+// validateSlots checks that the materialized slot vector recomputes to root.
+func (s *TreeList) validateSlots(root cid.Cid, slots []cid.Cid) error {
+	recomputed, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	if err != nil {
+		return err
+	}
+	ok, err := maltcid.EqualCommitment(recomputed, root)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("materialized node state does not match root %s", root.String())
+	}
+	return nil
+}
+
 func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
-	root, err := layout.CommitSlots(s.scheme, slots)
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -1013,7 +1044,7 @@ func (s *TreeList) verifyFixedMetadataSlot(root cid.Cid, meta layout.FixedMetada
 	if err != nil {
 		return false, err
 	}
-	ok, err := layout.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(nodeMarker), proof)
+	ok, err := s.commitment.VerifySlot(root, 0, commitment.CellFromCID(nodeMarker), proof)
 	if err != nil || ok {
 		return ok, err
 	}
@@ -1022,7 +1053,7 @@ func (s *TreeList) verifyFixedMetadataSlot(root cid.Cid, meta layout.FixedMetada
 	if err != nil {
 		return false, err
 	}
-	return layout.VerifySlot(s.scheme, root, 0, commitment.CellFromCID(legacyMarker), proof)
+	return s.commitment.VerifySlot(root, 0, commitment.CellFromCID(legacyMarker), proof)
 }
 
 func encodeProof(query list.Query, envelope proofEnvelope) (list.Query, structure.Proof, error) {
@@ -1084,7 +1115,7 @@ func (s *TreeList) verifyAnyContentSlot(root cid.Cid, slots []uint64, target com
 	for _, slot := range slots {
 		// Backends may mutate proof buffers while decoding; keep retries isolated.
 		proofCopy := append([]byte(nil), proof...)
-		ok, err := layout.VerifySlot(s.scheme, root, slot, target, proofCopy)
+		ok, err := s.commitment.VerifySlot(root, slot, target, proofCopy)
 		if err != nil {
 			verifyErr = err
 			continue
@@ -1266,3 +1297,12 @@ func cloneSlotsForMetadataMutation(slots []cid.Cid) []cid.Cid {
 
 var _ list.Semantics = (*TreeList)(nil)
 var _ list.MeasuredSemantics = (*TreeList)(nil)
+
+// cellsFromCIDs converts a CID slice to commitment cells.
+func cellsFromCIDs(values []cid.Cid) []commitment.Cell {
+	cells := make([]commitment.Cell, len(values))
+	for i, value := range values {
+		cells[i] = commitment.CellFromCID(value)
+	}
+	return cells
+}

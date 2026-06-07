@@ -1,5 +1,9 @@
 // Package radix implements a digest-keyed radix-map semantic above the
 // primitive index commitment backends.
+//
+// This implementation uses the single-step commitment primitives from
+// auth/semantic/mapping and combines them with storage access for multi-step
+// radix tree traversal operations.
 package radix
 
 import (
@@ -28,8 +32,8 @@ const (
 )
 
 type Map struct {
-	scheme   commitment.IndexCommitment
-	arctable arctable.ArcTable
+	commitment *mapping.Commitment
+	arctable   arctable.ArcTable
 }
 
 type leafBinding struct {
@@ -62,7 +66,18 @@ func NewMap(scheme commitment.IndexCommitment, e arctable.ArcTable) (*Map, error
 	if scheme.MaxValues() < fanout {
 		return nil, fmt.Errorf("index commitment capacity %d is smaller than radix fanout %d", scheme.MaxValues(), fanout)
 	}
-	return &Map{scheme: scheme, arctable: e}, nil
+
+	commitmentHandler, err := mapping.NewCommitment(scheme)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create map commitment: %w", err)
+	}
+
+	return &Map{commitment: commitmentHandler, arctable: e}, nil
+}
+
+// Commitment returns the underlying commitment primitives.
+func (s *Map) Commitment() *mapping.Commitment {
+	return s.commitment
 }
 
 func (s *Map) Commit(ctx context.Context, namespace string, view mapping.View) (cid.Cid, error) {
@@ -92,12 +107,9 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		}
 
 		slotIndex := digest[depth]
-		provedRoot, value, proof, err := s.scheme.Prove(cellsFromCIDs(slots), uint64(slotIndex))
+		value, proof, err := s.commitment.ProveSlot(currentRoot, slots, uint64(slotIndex))
 		if err != nil {
 			return mapping.Binding{}, nil, err
-		}
-		if !provedRoot.Equals(currentRoot) {
-			return mapping.Binding{}, nil, fmt.Errorf("proved root does not match requested node root")
 		}
 
 		slotCID, err := value.AsCID()
@@ -148,12 +160,9 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 				return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
 			}
 
-			provedRoot, value, proof, err := s.scheme.Prove(cellsFromCIDs(markers), uint64(index))
+			value, proof, err := s.commitment.ProveSlot(bucketRoot, markers, uint64(index))
 			if err != nil {
 				return mapping.Binding{}, nil, err
-			}
-			if !provedRoot.Equals(bucketRoot) {
-				return mapping.Binding{}, nil, fmt.Errorf("bucket proof root mismatch")
 			}
 			_, leafValue, err := decodeLeafMarkerCID(value)
 			if err != nil {
@@ -211,7 +220,7 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 			}
 		}
 
-		ok, err := s.scheme.VerifyIndex(currentRoot, uint64(digest[depth]), commitment.CellFromCID(slotCID), step.Proof)
+		ok, err := s.commitment.VerifySlot(currentRoot, uint64(digest[depth]), commitment.CellFromCID(slotCID), step.Proof)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -234,7 +243,7 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 			if depth != len(envelope.Steps)-1 || envelope.Bucket == nil {
 				return false, nil
 			}
-			return s.scheme.VerifyProof(bucketRoot, commitment.CellFromCID(expectedLeaf), envelope.Bucket.Proof)
+			return s.commitment.Scheme().VerifyProof(bucketRoot, commitment.CellFromCID(expectedLeaf), envelope.Bucket.Proof)
 		}
 
 		if depth == len(envelope.Steps)-1 {
@@ -391,7 +400,7 @@ func (s *Map) updateBucket(ctx context.Context, namespace string, bucketRoot cid
 		if len(markers) == 1 {
 			return nextMarker, nil
 		}
-		root, err := s.scheme.Replace(cellsFromCIDs(markers), uint64(index), commitment.CellFromCID(markers[index]), commitment.CellFromCID(nextMarker))
+		root, err := s.commitment.Scheme().Replace(cellsFromCIDs(markers), uint64(index), commitment.CellFromCID(markers[index]), commitment.CellFromCID(nextMarker))
 		if err != nil {
 			return cid.Undef, err
 		}
@@ -481,7 +490,7 @@ func (s *Map) buildSubtree(ctx context.Context, namespace string, bindings []lea
 }
 
 func (s *Map) commitNode(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
-	root, err := s.scheme.Commit(cellsFromCIDs(slots))
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -529,11 +538,11 @@ func (s *Map) commitBucketMarkers(ctx context.Context, namespace string, markers
 	case 1:
 		return markers[0], nil
 	}
-	if len(markers) > s.scheme.MaxValues() {
-		return cid.Undef, fmt.Errorf("bucket size %d exceeds commitment capacity %d", len(markers), s.scheme.MaxValues())
+	if len(markers) > s.commitment.Scheme().MaxValues() {
+		return cid.Undef, fmt.Errorf("bucket size %d exceeds commitment capacity %d", len(markers), s.commitment.Scheme().MaxValues())
 	}
 
-	root, err := s.scheme.Commit(cellsFromCIDs(markers))
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(markers))
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -609,7 +618,7 @@ func (s *Map) loadValidatedNode(ctx context.Context, namespace string, root cid.
 	if err != nil {
 		return nil, err
 	}
-	recomputed, err := s.scheme.Commit(cellsFromCIDs(slots))
+	recomputed, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
 	if err != nil {
 		return nil, err
 	}
