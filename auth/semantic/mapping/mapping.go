@@ -19,7 +19,10 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
+
+const bindingPrefix = "malt:map:binding:v1:"
 
 // Iterator iterates over a map view in canonical key order.
 type Iterator interface {
@@ -67,7 +70,7 @@ func (c *Commitment) Scheme() commitment.IndexCommitment {
 	return c.scheme
 }
 
-// Commit commits a map view to a root using keyed binding cells.
+// Commit commits a map view to a root using keyed binding CID slots.
 func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
 	if view == nil {
 		return cid.Undef, fmt.Errorf("view is nil")
@@ -112,6 +115,8 @@ func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
 //
 // Given the slots of a committed node, this function generates a proof for the
 // specified slot index. The caller must ensure that slots correspond to the root.
+// For roots produced by Commit, slots are canonical BindingCID values in view
+// iteration order rather than bare map target CIDs.
 func (c *Commitment) ProveSlot(root cid.Cid, slots []cid.Cid, slot uint64) (commitment.Cell, []byte, error) {
 	if !root.Defined() {
 		return nil, nil, fmt.Errorf("root is undefined")
@@ -151,26 +156,39 @@ func cellsFromCIDs(values []cid.Cid) []commitment.Cell {
 	return cells
 }
 
-func bindingCell(key arcset.Path, value cid.Cid) (commitment.Cell, error) {
+// BindingCID encodes one keyed map binding as the CID slot committed by Commit.
+func BindingCID(key arcset.Path, value cid.Cid) (cid.Cid, error) {
 	if key.IsEmpty() {
-		return nil, fmt.Errorf("key is empty")
+		return cid.Undef, fmt.Errorf("key is empty")
 	}
 	if !value.Defined() {
-		return nil, fmt.Errorf("value is undefined")
+		return cid.Undef, fmt.Errorf("value is undefined")
 	}
 
 	keyBytes := []byte(key.String())
 	valueBytes := value.Bytes()
 	if len(keyBytes) > 0xffff {
-		return nil, fmt.Errorf("key %q is too long", key.String())
+		return cid.Undef, fmt.Errorf("key %q is too long", key.String())
 	}
 
-	out := make([]byte, 0, 1+2+len(keyBytes)+len(valueBytes))
-	out = append(out, 1)
+	out := make([]byte, 0, len(bindingPrefix)+2+len(keyBytes)+len(valueBytes))
+	out = append(out, []byte(bindingPrefix)...)
 	out = binary.BigEndian.AppendUint16(out, uint16(len(keyBytes)))
 	out = append(out, keyBytes...)
 	out = append(out, valueBytes...)
-	return commitment.NewCell(out), nil
+	sum, err := mh.Sum(out, mh.IDENTITY, len(out))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, sum), nil
+}
+
+func bindingCell(key arcset.Path, value cid.Cid) (commitment.Cell, error) {
+	binding, err := BindingCID(key, value)
+	if err != nil {
+		return nil, err
+	}
+	return commitment.CellFromCID(binding), nil
 }
 
 // Semantics defines the public keyed-map semantics.

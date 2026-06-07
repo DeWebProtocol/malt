@@ -98,7 +98,11 @@ func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
 		cells[i] = commitment.CellFromCID(value)
 	}
 
-	return c.scheme.Commit(cells)
+	root, err := c.scheme.Commit(cells)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return listTypedRoot(root)
 }
 
 // ProveSlot proves one slot in a committed node.
@@ -142,6 +146,14 @@ func cellsFromCIDs(values []cid.Cid) []commitment.Cell {
 		cells[i] = commitment.CellFromCID(value)
 	}
 	return cells
+}
+
+func listTypedRoot(root cid.Cid) (cid.Cid, error) {
+	commBytes, err := maltcid.ExtractCommitment(root)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return maltcid.NewTypedCID(maltcid.SemanticKindList, maltcid.BackendKindOf(root), commBytes)
 }
 
 // Semantics defines the public stable-indexed list semantics.

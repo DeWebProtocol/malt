@@ -2,13 +2,14 @@ package mapping
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -37,6 +38,48 @@ func TestCommitmentCommitAuthenticatesKeys(t *testing.T) {
 	}
 	if first.Equals(second) {
 		t.Fatal("different keys with the same ordered values produced the same root")
+	}
+}
+
+func TestCommitmentCommitProveSlotRoundTrip(t *testing.T) {
+	handler, err := NewCommitment(testScheme{})
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
+
+	keyA := arcset.CanonicalizePath("a")
+	keyB := arcset.CanonicalizePath("b")
+	valueA := testCID(t, "value-a")
+	valueB := testCID(t, "value-b")
+	root, err := handler.Commit(context.Background(), NewViewFromPaths(map[arcset.Path]cid.Cid{
+		keyA: valueA,
+		keyB: valueB,
+	}))
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	slotA, err := BindingCID(keyA, valueA)
+	if err != nil {
+		t.Fatalf("BindingCID(a) failed: %v", err)
+	}
+	slotB, err := BindingCID(keyB, valueB)
+	if err != nil {
+		t.Fatalf("BindingCID(b) failed: %v", err)
+	}
+	proved, proof, err := handler.ProveSlot(root, []cid.Cid{slotA, slotB}, 1)
+	if err != nil {
+		t.Fatalf("ProveSlot failed: %v", err)
+	}
+	if !proved.Equal(commitment.CellFromCID(slotB)) {
+		t.Fatal("ProveSlot returned the wrong binding slot")
+	}
+	ok, err := handler.VerifySlot(root, 1, proved, proof)
+	if err != nil {
+		t.Fatalf("VerifySlot failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("VerifySlot returned false")
 	}
 }
 
@@ -119,30 +162,39 @@ type testScheme struct{}
 func (testScheme) MaxValues() int { return 1024 }
 
 func (testScheme) Commit(values []commitment.Cell) (cid.Cid, error) {
-	h := sha256.New()
+	h := sha512.New()
 	var lenBuf [8]byte
 	for _, value := range values {
 		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(value)))
 		_, _ = h.Write(lenBuf[:])
 		_, _ = h.Write(value)
 	}
-	sum, err := mh.Sum(h.Sum(nil), mh.SHA2_256, -1)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return cid.NewCidV1(cid.Raw, sum), nil
+	sum := h.Sum(nil)
+	return maltcid.NewMapKZGCid(sum[:maltcid.KZGCommitmentSize])
 }
 
-func (testScheme) Prove([]commitment.Cell, uint64) (cid.Cid, commitment.Cell, []byte, error) {
-	return cid.Undef, nil, nil, fmt.Errorf("not implemented")
+func (s testScheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitment.Cell, []byte, error) {
+	root, err := s.Commit(values)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	if index >= uint64(len(values)) {
+		return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
+	}
+	proof := make([]byte, 8)
+	binary.BigEndian.PutUint64(proof, index)
+	return root, commitment.NewCell(values[index]), proof, nil
 }
 
 func (testScheme) BatchProve([]commitment.Cell, []uint64) (cid.Cid, []commitment.Cell, []byte, error) {
 	return cid.Undef, nil, nil, fmt.Errorf("not implemented")
 }
 
-func (testScheme) VerifyIndex(cid.Cid, uint64, commitment.Cell, []byte) (bool, error) {
-	return false, fmt.Errorf("not implemented")
+func (testScheme) VerifyIndex(_ cid.Cid, index uint64, _ commitment.Cell, proof []byte) (bool, error) {
+	if len(proof) != 8 {
+		return false, fmt.Errorf("proof length = %d, want 8", len(proof))
+	}
+	return binary.BigEndian.Uint64(proof) == index, nil
 }
 
 func (testScheme) BatchVerify(cid.Cid, []uint64, []commitment.Cell, []byte) (bool, error) {
