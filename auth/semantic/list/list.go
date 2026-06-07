@@ -92,6 +92,9 @@ func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
 		if !ok {
 			return cid.Undef, fmt.Errorf("missing value at index %d", i)
 		}
+		if !value.Defined() {
+			return cid.Undef, fmt.Errorf("value at index %d is undefined", i)
+		}
 		cells[i] = commitment.CellFromCID(value)
 	}
 

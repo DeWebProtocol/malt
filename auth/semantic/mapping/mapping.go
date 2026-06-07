@@ -11,6 +11,7 @@ package mapping
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -66,7 +67,7 @@ func (c *Commitment) Scheme() commitment.IndexCommitment {
 	return c.scheme
 }
 
-// Commit commits a map view to a root using the commitment scheme.
+// Commit commits a map view to a root using keyed binding cells.
 func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
 	if view == nil {
 		return cid.Undef, fmt.Errorf("view is nil")
@@ -75,16 +76,33 @@ func (c *Commitment) Commit(ctx context.Context, view View) (cid.Cid, error) {
 	cells := make([]commitment.Cell, view.Len())
 	iter := view.Iterate()
 	i := 0
+	var previous arcset.Path
+	hasPrevious := false
 	for {
-		_, value, ok := iter.Next()
+		key, value, ok := iter.Next()
 		if !ok {
 			break
 		}
-		cells[i] = commitment.CellFromCID(value)
+		if i >= len(cells) {
+			return cid.Undef, fmt.Errorf("view iterator yielded more bindings than Len")
+		}
+		cell, err := bindingCell(key, value)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if hasPrevious && key <= previous {
+			return cid.Undef, fmt.Errorf("view iteration is not in canonical key order")
+		}
+		cells[i] = cell
+		previous = key
+		hasPrevious = true
 		i++
 	}
 	if err := iter.Err(); err != nil {
 		return cid.Undef, err
+	}
+	if i != len(cells) {
+		return cid.Undef, fmt.Errorf("view iterator yielded %d bindings, expected %d", i, len(cells))
 	}
 
 	return c.scheme.Commit(cells)
@@ -131,6 +149,28 @@ func cellsFromCIDs(values []cid.Cid) []commitment.Cell {
 		cells[i] = commitment.CellFromCID(value)
 	}
 	return cells
+}
+
+func bindingCell(key arcset.Path, value cid.Cid) (commitment.Cell, error) {
+	if key.IsEmpty() {
+		return nil, fmt.Errorf("key is empty")
+	}
+	if !value.Defined() {
+		return nil, fmt.Errorf("value is undefined")
+	}
+
+	keyBytes := []byte(key.String())
+	valueBytes := value.Bytes()
+	if len(keyBytes) > 0xffff {
+		return nil, fmt.Errorf("key %q is too long", key.String())
+	}
+
+	out := make([]byte, 0, 1+2+len(keyBytes)+len(valueBytes))
+	out = append(out, 1)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(keyBytes)))
+	out = append(out, keyBytes...)
+	out = append(out, valueBytes...)
+	return commitment.NewCell(out), nil
 }
 
 // Semantics defines the public keyed-map semantics.

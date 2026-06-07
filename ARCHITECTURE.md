@@ -307,6 +307,7 @@ malt/
 
 The current interface exposes:
 
+- `Commitment`
 - `Commit`
 - `Prove`
 - `Verify`
@@ -318,6 +319,8 @@ This already approximates the target map semantic shape:
 - `Verify` validates read proof
 - `Update` is the map write path
 - `Commit` bootstraps a root from a materialized view
+- `Commitment` exposes stateless single-step commitment primitives for
+  storage-free proof and verification
 
 The primary implementation, `mapping/radix`, uses a digest-keyed radix layout.
 It owns:
@@ -343,6 +346,7 @@ operations.
 
 The current interface exposes:
 
+- `Commitment`
 - `Commit`
 - `Prove`
 - `Verify`
@@ -357,6 +361,8 @@ This already approximates the target list semantic shape:
   byte-addressable fixed-chunk lists
 - `Verify` validates read proof
 - `Append`, `Replace`, and `Truncate` are list write operations
+- `Commitment` exposes stateless single-step commitment primitives for
+  storage-free proof and verification
 
 The primary implementation, `list/tree`, uses a tree-shaped fixed-slot layout.
 It owns:
