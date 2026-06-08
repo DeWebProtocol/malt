@@ -63,21 +63,9 @@ type StructureConfig struct {
 
 // CASConfig configures the immutable content backend.
 type CASConfig struct {
-	Mode         string             `json:"mode"`
-	BaseURL      string             `json:"base_url,omitempty"`
-	Timeout      string             `json:"timeout"`
-	EmbeddedMock EmbeddedMockConfig `json:"embedded_mock,omitempty"`
-}
-
-// EmbeddedMockConfig is deprecated and ignored. Kept for backward-compatible
-// JSON deserialization of old config files.
-type EmbeddedMockConfig struct {
-	// Deprecated: embedded mock CAS was removed; this field is ignored.
-	Enabled bool `json:"enabled,omitempty"`
-	// Deprecated: embedded mock CAS was removed; this field is ignored.
-	Listen string `json:"listen,omitempty"`
-	// Deprecated: embedded mock CAS was removed; this field is ignored.
-	Latency string `json:"latency,omitempty"`
+	Mode    string `json:"mode"`
+	BaseURL string `json:"base_url,omitempty"`
+	Timeout string `json:"timeout"`
 }
 
 // LoggingConfig configures runtime logging.
@@ -232,7 +220,6 @@ func WriteToFile(path string, cfg *Config) error {
 func (c *Config) applyDefaults() {
 	defaults := DefaultConfig()
 	casModeWasEmpty := c.CAS.Mode == ""
-	legacyEmbeddedMock := c.CAS.Mode == "embedded-mock"
 	if c.RPC.Listen == "" {
 		c.RPC.Listen = defaults.RPC.Listen
 	}
@@ -255,13 +242,7 @@ func (c *Config) applyDefaults() {
 	if c.CAS.Mode == "" {
 		c.CAS.Mode = defaults.CAS.Mode
 	}
-	if legacyEmbeddedMock {
-		c.CAS.Mode = "external"
-		if c.CAS.EmbeddedMock.Listen != "" {
-			c.CAS.BaseURL = urlFromListen(c.CAS.EmbeddedMock.Listen)
-		}
-	}
-	if c.CAS.BaseURL == "" && (casModeWasEmpty || legacyEmbeddedMock) {
+	if c.CAS.BaseURL == "" && casModeWasEmpty {
 		c.CAS.BaseURL = defaults.CAS.BaseURL
 	}
 	if c.CAS.Timeout == "" {
@@ -307,16 +288,16 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.CAS.Mode {
-	case "external", "mock":
+	case "external":
 	default:
-		return fmt.Errorf("unsupported cas.mode %q (use external or mock)", c.CAS.Mode)
+		return fmt.Errorf("unsupported cas.mode %q (use external)", c.CAS.Mode)
 	}
 
 	if _, err := c.CASTimeout(); err != nil {
 		return fmt.Errorf("invalid cas.timeout: %w", err)
 	}
 
-	if c.CAS.Mode == "external" && c.CAS.BaseURL == "" {
+	if c.CAS.BaseURL == "" {
 		return fmt.Errorf("cas.base_url is required")
 	}
 
@@ -336,13 +317,6 @@ func cleanStringList(values []string) []string {
 		out = append(out, trimmed)
 	}
 	return out
-}
-
-func urlFromListen(listen string) string {
-	if strings.HasPrefix(listen, "http://") || strings.HasPrefix(listen, "https://") {
-		return strings.TrimRight(listen, "/")
-	}
-	return "http://" + strings.TrimRight(listen, "/")
 }
 
 // ConfigDir returns the parent directory of the config file.

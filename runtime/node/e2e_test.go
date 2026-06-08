@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/graph"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -23,7 +24,10 @@ func fakeCID(seed string) cid.Cid {
 
 func newTestGraph(t *testing.T) (*Node, graph.Runtime) {
 	t.Helper()
-	node, err := NewNode(WithConfig(testRuntimeConfig(t)))
+	node, err := NewNode(
+		WithConfig(testRuntimeConfig(t)),
+		WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+	)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -286,6 +290,7 @@ func testRuntimeConfig(t *testing.T) *config.Config {
 	cfg.State.RootDir = t.TempDir()
 	cfg.State.KVStore.Type = "badger"
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
-	cfg.CAS.Mode = "mock"
+	cfg.CAS.Mode = "external"
+	cfg.CAS.BaseURL = "http://127.0.0.1:4318"
 	return cfg
 }
