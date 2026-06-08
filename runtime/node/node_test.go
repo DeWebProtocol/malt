@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,8 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/graph"
 	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
-	"github.com/dewebprotocol/malt/storage/cas"
-	kvstore "github.com/dewebprotocol/malt/storage/kv"
+	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -27,7 +25,7 @@ func newTestCID(seed string) cid.Cid {
 }
 
 func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
-	node, err := NewNode(WithConfig(testConfig(t)))
+	node, err := NewNode(testNodeOptions(t)...)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -47,7 +45,7 @@ func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
 }
 
 func TestOpenGraphUsesStoredBackend(t *testing.T) {
-	node, err := NewNode(WithConfig(testConfig(t)))
+	node, err := NewNode(testNodeOptions(t)...)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -79,7 +77,7 @@ func TestOpenGraphUsesStoredIPABackend(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Structure.DefaultBackend = "ipa"
 
-	node, err := NewNode(WithConfig(cfg))
+	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS(casmock.WithoutLatency())))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -108,7 +106,7 @@ func TestOpenGraphUsesStoredIPABackend(t *testing.T) {
 }
 
 func TestNewGraphReturnsRuntimeContractWithNamespaceOption(t *testing.T) {
-	node, err := NewNode(WithConfig(testConfig(t)))
+	node, err := NewNode(testNodeOptions(t)...)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -135,7 +133,7 @@ func TestNewNodeWithFsKVStore(t *testing.T) {
 	cfg.State.KVStore.Type = "fs"
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kvfs")
 
-	node, err := NewNode(WithConfig(cfg))
+	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS(casmock.WithoutLatency())))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -146,77 +144,8 @@ func TestNewNodeWithFsKVStore(t *testing.T) {
 	}
 }
 
-func TestMockCASPersistsBlocksAcrossNodeRestart(t *testing.T) {
-	cfg := testConfig(t)
-	ctx := context.Background()
-
-	first, err := NewNode(WithConfig(cfg))
-	if err != nil {
-		t.Fatalf("NewNode first failed: %v", err)
-	}
-	firstCAS, ok := first.CAS().(cas.Client)
-	if !ok {
-		t.Fatalf("first CAS = %T, want cas.Client", first.CAS())
-	}
-	block, err := firstCAS.Put(ctx, []byte("persistent mock block"))
-	if err != nil {
-		t.Fatalf("first Put: %v", err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("close first node: %v", err)
-	}
-
-	second, err := NewNode(WithConfig(cfg))
-	if err != nil {
-		t.Fatalf("NewNode second failed: %v", err)
-	}
-	defer second.Close()
-	secondCAS, ok := second.CAS().(cas.Client)
-	if !ok {
-		t.Fatalf("second CAS = %T, want cas.Client", second.CAS())
-	}
-	got, err := secondCAS.Get(ctx, block)
-	if err != nil {
-		t.Fatalf("second Get: %v", err)
-	}
-	if string(got) != "persistent mock block" {
-		t.Fatalf("block payload = %q, want persistent mock block", got)
-	}
-}
-
-func TestMockCASUsesSeparateKVNamespace(t *testing.T) {
-	cfg := testConfig(t)
-	ctx := context.Background()
-
-	node, err := NewNode(WithConfig(cfg))
-	if err != nil {
-		t.Fatalf("NewNode failed: %v", err)
-	}
-	defer node.Close()
-	mockCAS, ok := node.CAS().(cas.Client)
-	if !ok {
-		t.Fatalf("CAS = %T, want cas.Client", node.CAS())
-	}
-	block, err := mockCAS.Put(ctx, []byte("namespaced mock block"))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-
-	if _, err := node.KVStore().Get(ctx, []byte("block/"+block.String())); !errors.Is(err, kvstore.ErrNotFound) {
-		t.Fatalf("unprefixed block key error = %v, want ErrNotFound", err)
-	}
-	got, err := node.KVStore().Get(ctx, []byte("cas/block/"+block.String()))
-	if err != nil {
-		t.Fatalf("prefixed block key Get: %v", err)
-	}
-	if string(got) != "namespaced mock block" {
-		t.Fatalf("prefixed block payload = %q, want namespaced mock block", got)
-	}
-}
-
 func TestOpenGraphRejectsArcTableMismatch(t *testing.T) {
-	cfg := testConfig(t)
-	node, err := NewNode(WithConfig(cfg))
+	node, err := NewNode(testNodeOptions(t)...)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -242,6 +171,15 @@ func testConfig(t *testing.T) *config.Config {
 	cfg.State.RootDir = t.TempDir()
 	cfg.State.KVStore.Type = "badger"
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
-	cfg.CAS.Mode = "mock"
+	cfg.CAS.Mode = "external"
+	cfg.CAS.BaseURL = "http://127.0.0.1:4318"
 	return cfg
+}
+
+func testNodeOptions(t *testing.T) []Option {
+	t.Helper()
+	return []Option{
+		WithConfig(testConfig(t)),
+		WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+	}
 }

@@ -2814,16 +2814,20 @@ func newTestNode(t *testing.T) *node.Node {
 	cfg.State.RootDir = t.TempDir()
 	cfg.State.KVStore.Type = "badger"
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kv")
-	cfg.CAS.Mode = "mock"
+	cfg.CAS.Mode = "external"
+	cfg.CAS.BaseURL = "http://127.0.0.1:4318"
 
-	node, err := node.NewNode(node.WithConfig(cfg))
+	n, err := node.NewNode(
+		node.WithConfig(cfg),
+		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = node.Close()
+		_ = n.Close()
 	})
-	return node
+	return n
 }
 
 func fakeCIDString(seed string) string {

@@ -12,7 +12,7 @@ import (
 )
 
 func TestNodeMetricsSnapshotAndReset(t *testing.T) {
-	node, err := NewNode(WithConfig(testConfig(t)))
+	node, err := NewNode(testNodeOptions(t)...)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

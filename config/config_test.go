@@ -100,11 +100,7 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
   "cas": {
     "mode": "external",
     "base_url": "http://127.0.0.1:5001",
-    "timeout": "45s",
-    "embedded_mock": {
-      "enabled": false,
-      "listen": "127.0.0.1:4318"
-    }
+    "timeout": "45s"
   },
   "logging": {
     "level": "debug",
@@ -144,52 +140,10 @@ func TestLoadFromFile_NewSchema(t *testing.T) {
 	}
 }
 
-func TestLoadFromFileMigratesLegacyEmbeddedMockCAS(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "malt.json")
-	content := `{
-  "rpc": {
-    "listen": "127.0.0.1:9999"
-  },
-  "cas": {
-    "mode": "embedded-mock",
-    "timeout": "30s",
-    "embedded_mock": {
-      "enabled": true,
-      "listen": "127.0.0.1:4321"
-    }
-  }
-}`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := LoadFromFile(path)
-	if err != nil {
-		t.Fatalf("LoadFromFile() error = %v", err)
-	}
-	if cfg.CAS.Mode != "external" {
-		t.Fatalf("CAS.Mode = %q, want external", cfg.CAS.Mode)
-	}
-	if got := cfg.CASBaseURL(); got != "http://127.0.0.1:4321" {
-		t.Fatalf("CASBaseURL() = %q, want http://127.0.0.1:4321", got)
-	}
-}
-
 func TestValidateAllowsFsAndIpa(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.State.KVStore.Type = "fs"
 	cfg.Structure.DefaultBackend = "ipa"
-
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-}
-
-func TestValidateAllowsMockCASMode(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.CAS.Mode = "mock"
-	cfg.CAS.BaseURL = ""
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
