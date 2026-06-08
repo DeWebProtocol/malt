@@ -62,11 +62,12 @@ Prerequisites:
 - Go 1.25.7 or newer
 - Git
 
-Build the two local binaries:
+Build the three local binaries:
 
 ```bash
 mkdir -p bin
 go build -buildvcs=false -o bin/malt ./cmd/malt
+go build -buildvcs=false -o bin/cas ./cmd/cas
 go build -buildvcs=false -o bin/malt-eval ./cmd/eval/malt-eval
 ```
 
@@ -75,7 +76,7 @@ at `127.0.0.1:4318` and a daemon API at `127.0.0.1:4317`. For local development
 without a real IPFS node, start the standalone mock CAS server first:
 
 ```bash
-bin/malt cas &
+bin/cas start
 ```
 
 Then initialize and start the daemon:
