@@ -52,7 +52,6 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "settings file path (default ~/.malt/cas/settings.json)")
 	rootCmd.PersistentFlags().StringVar(&listen, "listen", "", "listen address (overrides settings)")
-	
 }
 
 func main() {
@@ -97,8 +96,6 @@ func daemonOverridesFromGlobals() DaemonOverrides {
 	return DaemonOverrides{Listen: listen}
 }
 
-
-
 // runServer creates the KV store, starts the CAS HTTP server, and blocks
 // until interrupted. Used by both foreground mode and daemon child.
 func runServer(cfg *Config) error {
@@ -115,8 +112,6 @@ func runServer(cfg *Config) error {
 		opts = append(opts, casmock.WithKVStore(kvStore))
 	}
 
-
-
 	store := casmock.NewCAS(opts...)
 	srv := casmock.NewHTTPServer(cfg.Listen, store)
 	shutdownCh := make(chan struct{}, 1)
@@ -131,7 +126,6 @@ func runServer(cfg *Config) error {
 		}
 		fmt.Fprintf(os.Stderr, "data dir: %s\n", kvPath)
 	}
-
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
