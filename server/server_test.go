@@ -2819,7 +2819,7 @@ func newTestNode(t *testing.T) *node.Node {
 
 	n, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)

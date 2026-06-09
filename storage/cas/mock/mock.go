@@ -1,13 +1,7 @@
 // Package mock provides a mock CAS implementation for testing.
 // It uses a KVStore-backed block service with configurable latency
-// to simulate IPFS Kubo behavior.
-//
-// Default latencies are based on ProbeLab Kubo v0.39.0 e2e measurements
-// (Europe Frankfurt, DHT):
-//
-//	Get: ~2.1s total (TTFB + provider discovery + broadcast)
-//	Put: ~1.4s Add Duration (merkle-izing + block storage)
-//	Has: ~100ms (index lookup, no data transfer)
+// for controlled evaluation scenarios. Use WithGetLatency, WithPutLatency,
+// and WithHasLatency to set latency values explicitly.
 package mock
 
 import (
@@ -55,12 +49,7 @@ type options struct {
 }
 
 func defaultOptions() *options {
-	return &options{
-		getLatency: DefaultGetLatency,
-		putLatency: DefaultPutLatency,
-		hasLatency: DefaultHasLatency,
-		jitter:     DefaultJitter,
-	}
+	return &options{}
 }
 
 // WithGetLatency sets the simulated Get operation latency.
@@ -91,16 +80,6 @@ func WithJitter(d time.Duration) Option {
 	}
 }
 
-// WithoutLatency disables latency simulation entirely.
-func WithoutLatency() Option {
-	return func(o *options) {
-		o.getLatency = 0
-		o.putLatency = 0
-		o.hasLatency = 0
-		o.jitter = 0
-	}
-}
-
 // WithKVStore stores mock CAS blocks in the supplied KVStore.
 func WithKVStore(kv kvstore.KVStore) Option {
 	return func(o *options) {
@@ -109,8 +88,8 @@ func WithKVStore(kv kvstore.KVStore) Option {
 }
 
 // NewCAS creates a mock CAS backed by an in-memory KVStore.
-// By default, operations simulate ProbeLab Kubo v0.39.0 e2e latency.
-// Use WithoutLatency for fast unit tests, or individual WithXLatency to tune.
+// Latency defaults to zero. Use WithGetLatency, WithPutLatency, WithHasLatency
+// and WithJitter to simulate network conditions for evaluation scenarios.
 func NewCAS(opts ...Option) *CAS {
 	options := defaultOptions()
 	for _, opt := range opts {

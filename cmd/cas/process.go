@@ -6,17 +6,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // DaemonOverrides are command-line overrides passed to the daemon child.
 type DaemonOverrides struct {
 	Listen        string
-	NoLatency     bool
-	GetLatency    time.Duration
-	PutLatency    time.Duration
-	HasLatency    time.Duration
-	Jitter        time.Duration
 	ShutdownToken string
 }
 
@@ -60,11 +54,6 @@ const (
 	daemonProcessKey       = "CAS_DAEMON_PROCESS"
 	daemonConfigKey        = "CAS_DAEMON_CONFIG"
 	daemonListenKey        = "CAS_DAEMON_LISTEN"
-	daemonNoLatencyKey     = "CAS_DAEMON_NO_LATENCY"
-	daemonGetLatencyKey    = "CAS_DAEMON_GET_LATENCY"
-	daemonPutLatencyKey    = "CAS_DAEMON_PUT_LATENCY"
-	daemonHasLatencyKey    = "CAS_DAEMON_HAS_LATENCY"
-	daemonJitterKey        = "CAS_DAEMON_JITTER"
 	daemonShutdownTokenKey = "CAS_DAEMON_SHUTDOWN_TOKEN"
 )
 
@@ -75,11 +64,6 @@ func daemonProcessEnv(env []string, configPath string, overrides DaemonOverrides
 		daemonProcessKey,
 		daemonConfigKey,
 		daemonListenKey,
-		daemonNoLatencyKey,
-		daemonGetLatencyKey,
-		daemonPutLatencyKey,
-		daemonHasLatencyKey,
-		daemonJitterKey,
 		daemonShutdownTokenKey,
 	)
 	out = append(out, daemonProcessKey+"=1")
@@ -88,21 +72,6 @@ func daemonProcessEnv(env []string, configPath string, overrides DaemonOverrides
 	}
 	if overrides.Listen != "" {
 		out = append(out, daemonListenKey+"="+overrides.Listen)
-	}
-	if overrides.NoLatency {
-		out = append(out, daemonNoLatencyKey+"=1")
-	}
-	if overrides.GetLatency > 0 {
-		out = append(out, daemonGetLatencyKey+"="+overrides.GetLatency.String())
-	}
-	if overrides.PutLatency > 0 {
-		out = append(out, daemonPutLatencyKey+"="+overrides.PutLatency.String())
-	}
-	if overrides.HasLatency > 0 {
-		out = append(out, daemonHasLatencyKey+"="+overrides.HasLatency.String())
-	}
-	if overrides.Jitter > 0 {
-		out = append(out, daemonJitterKey+"="+overrides.Jitter.String())
 	}
 	if overrides.ShutdownToken != "" {
 		out = append(out, daemonShutdownTokenKey+"="+overrides.ShutdownToken)

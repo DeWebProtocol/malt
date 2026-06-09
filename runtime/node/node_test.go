@@ -77,7 +77,7 @@ func TestOpenGraphUsesStoredIPABackend(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Structure.DefaultBackend = "ipa"
 
-	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS(casmock.WithoutLatency())))
+	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS()))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestNewNodeWithFsKVStore(t *testing.T) {
 	cfg.State.KVStore.Type = "fs"
 	cfg.State.KVStore.Path = filepath.Join(cfg.State.RootDir, "kvfs")
 
-	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS(casmock.WithoutLatency())))
+	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS()))
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -180,6 +180,6 @@ func testNodeOptions(t *testing.T) []Option {
 	t.Helper()
 	return []Option{
 		WithConfig(testConfig(t)),
-		WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		WithCAS(casmock.NewCAS()),
 	}
 }

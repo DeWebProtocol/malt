@@ -21,7 +21,7 @@ import (
 
 func newLayout(t *testing.T, chunkSize int) *unixfs.Layout {
 	t.Helper()
-	return newLayoutWithBlocks(t, chunkSize, casmock.NewCAS(casmock.WithoutLatency()))
+	return newLayoutWithBlocks(t, chunkSize, casmock.NewCAS())
 }
 
 func newLayoutWithBlocks(t *testing.T, chunkSize int, blocks cas.Client) *unixfs.Layout {
@@ -73,7 +73,7 @@ type spyBatchCAS struct {
 }
 
 func newSpyBatchCAS() *spyBatchCAS {
-	return &spyBatchCAS{inner: casmock.NewCAS(casmock.WithoutLatency())}
+	return &spyBatchCAS{inner: casmock.NewCAS()}
 }
 
 func (s *spyBatchCAS) Get(ctx context.Context, c cid.Cid) ([]byte, error) {

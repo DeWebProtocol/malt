@@ -16,7 +16,7 @@ import (
 )
 
 func TestStartUsesExternalCASConfig(t *testing.T) {
-	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
+	mockCAS := casmock.NewCAS()
 	casServer := httptest.NewServer(casmock.NewHTTPServer("", mockCAS).Handler())
 	defer casServer.Close()
 

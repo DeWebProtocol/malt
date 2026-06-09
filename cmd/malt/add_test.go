@@ -453,7 +453,7 @@ func TestFormatAddSummaryUsesHumanReadableObjectCounts(t *testing.T) {
 
 func TestAddInputsWithUnixFSMerkleDAGTarget(t *testing.T) {
 	ctx := context.Background()
-	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	casClient := casmock.NewCAS()
 	file := filepath.Join(t.TempDir(), "hello.txt")
 	if err := os.WriteFile(file, []byte("hello merkle target"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -613,7 +613,7 @@ func TestAddWorkflowMaterializesSmallLargeAndEmptyDir(t *testing.T) {
 
 func TestAddCASBatcherDeduplicatesBlocks(t *testing.T) {
 	ctx := context.Background()
-	recorder := newRecordingAddCAS(casmock.NewCAS(casmock.WithoutLatency()))
+	recorder := newRecordingAddCAS(casmock.NewCAS())
 	batcher := newAddCASBatcher(recorder)
 
 	first, err := batcher.Put(ctx, []byte("same"))
@@ -1191,7 +1191,7 @@ func TestAddInputsWithUnixFSRootReplacesExistingDirWithSymlinkDirBoundary(t *tes
 func newAddTestClients(t *testing.T) (*daemonclient.Client, *ipfs.Client) {
 	t.Helper()
 
-	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
+	mockCAS := casmock.NewCAS()
 	mockHTTP := casmock.NewHTTPServer("127.0.0.1:0", mockCAS)
 	casTS := httptest.NewServer(mockHTTP.Handler())
 	t.Cleanup(casTS.Close)

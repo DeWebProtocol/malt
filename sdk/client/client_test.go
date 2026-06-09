@@ -27,7 +27,7 @@ func TestClientRootFlow(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -80,7 +80,7 @@ func TestClientProofListReads(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -164,7 +164,7 @@ func TestClientProofListPreservesRootPath(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -215,7 +215,7 @@ func TestClientResolveRootReturnsProofList(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -266,7 +266,7 @@ func TestClientResolveRootProofListDoesNotRequireTargetContent(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -385,7 +385,7 @@ func TestClientReturnsStructuredAPIError(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -418,7 +418,7 @@ func TestClientRootSemanticMutation(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -546,7 +546,7 @@ func TestClientStatAndContent(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -596,7 +596,7 @@ func TestClientResolveRootReturnsProofListSteps(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -636,7 +636,7 @@ func TestClientContentRangeReadReturnsProofListHeader(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -684,7 +684,7 @@ func TestClientAddUnixFSFileStream(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -720,7 +720,7 @@ func TestClientListBackedContentReadReturnsListIndexProof(t *testing.T) {
 	cfg := testConfig(t)
 	node, err := node.NewNode(
 		node.WithConfig(cfg),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
@@ -898,7 +898,7 @@ func newTestNode(t *testing.T) *node.Node {
 
 	n, err := node.NewNode(
 		node.WithConfig(testConfig(t)),
-		node.WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		node.WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)

@@ -44,7 +44,7 @@ func newFixtureData(cfg FixtureConfig) fixtureData {
 }
 
 func newBaselineSystem(ctx context.Context, system SystemName, fixture fixtureData) (*BaselineSystem, error) {
-	store := casmock.NewCAS(casmock.WithoutLatency())
+	store := casmock.NewCAS()
 	return newBaselineSystemWithStore(ctx, system, fixture, store)
 }
 
