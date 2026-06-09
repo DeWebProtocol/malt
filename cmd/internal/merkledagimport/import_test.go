@@ -12,7 +12,7 @@ import (
 
 func TestImportFileStoresUnixFSDAG(t *testing.T) {
 	ctx := context.Background()
-	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	casClient := casmock.NewCAS()
 	file := filepath.Join(t.TempDir(), "hello.txt")
 	if err := os.WriteFile(file, []byte("hello merkle dag"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -47,7 +47,7 @@ func TestImportFileStoresUnixFSDAG(t *testing.T) {
 
 func TestImportDirectoryStoresHAMTUnixFSDAG(t *testing.T) {
 	ctx := context.Background()
-	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	casClient := casmock.NewCAS()
 	root := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
@@ -88,7 +88,7 @@ func TestImportDirectoryStoresHAMTUnixFSDAG(t *testing.T) {
 
 func TestImportFilesStoresVirtualHAMTUnixFSDAG(t *testing.T) {
 	ctx := context.Background()
-	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	casClient := casmock.NewCAS()
 
 	result, err := ImportFiles(ctx, casClient, []File{
 		{Path: "README.md", Data: []byte("readme"), Mode: 0o644},
@@ -122,7 +122,7 @@ func TestImportFilesStoresVirtualHAMTUnixFSDAG(t *testing.T) {
 
 func TestImportRejectsTopLevelLayout(t *testing.T) {
 	ctx := context.Background()
-	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	casClient := casmock.NewCAS()
 	file := filepath.Join(t.TempDir(), "hello.txt")
 	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)

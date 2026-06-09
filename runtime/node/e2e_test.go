@@ -26,7 +26,7 @@ func newTestGraph(t *testing.T) (*Node, graph.Runtime) {
 	t.Helper()
 	node, err := NewNode(
 		WithConfig(testRuntimeConfig(t)),
-		WithCAS(casmock.NewCAS(casmock.WithoutLatency())),
+		WithCAS(casmock.NewCAS()),
 	)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)

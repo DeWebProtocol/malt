@@ -23,5 +23,5 @@ func NewWithLatency(d time.Duration) *casmock.CAS {
 
 // NewNoLatency creates a mock CAS with zero latency.
 func NewNoLatency() *casmock.CAS {
-	return casmock.NewCAS(casmock.WithoutLatency())
+	return casmock.NewCAS()
 }

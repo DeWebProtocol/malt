@@ -157,7 +157,7 @@ func TestStageFlatUnixFSDirectoryAppliesMaltignore(t *testing.T) {
 
 func TestAddInputsMerkleDAGAppliesIgnoreFilter(t *testing.T) {
 	ctx := context.Background()
-	casClient := casmock.NewCAS(casmock.WithoutLatency())
+	casClient := casmock.NewCAS()
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	writeAddIgnoreTestFile(t, repo, ".gitignore", "ignored/\n")

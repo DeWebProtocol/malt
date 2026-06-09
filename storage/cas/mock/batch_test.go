@@ -10,7 +10,7 @@ import (
 
 func TestCASPutBatchStoresBlocks(t *testing.T) {
 	ctx := context.Background()
-	store := NewCAS(WithoutLatency())
+	store := NewCAS()
 	blocks := []cas.Block{
 		{Data: []byte("first")},
 		{Data: []byte("second")},
@@ -40,7 +40,7 @@ func TestCASPutBatchStoresBlocks(t *testing.T) {
 
 func TestCASPutBatchReportsAlreadyPresent(t *testing.T) {
 	ctx := context.Background()
-	store := NewCAS(WithoutLatency())
+	store := NewCAS()
 	block := cas.Block{Data: []byte("same")}
 	if _, err := store.PutBatch(ctx, []cas.Block{block}); err != nil {
 		t.Fatalf("initial PutBatch: %v", err)
@@ -57,7 +57,7 @@ func TestCASPutBatchReportsAlreadyPresent(t *testing.T) {
 
 func TestCASHasBatchPreservesOrder(t *testing.T) {
 	ctx := context.Background()
-	store := NewCAS(WithoutLatency())
+	store := NewCAS()
 	present, err := cas.CIDForBlock(cas.Block{Data: []byte("present")})
 	if err != nil {
 		t.Fatalf("CIDForBlock present: %v", err)
@@ -88,7 +88,7 @@ func TestCASHasBatchPreservesOrder(t *testing.T) {
 
 func TestCASPutBatchSupportsTypedCodecs(t *testing.T) {
 	ctx := context.Background()
-	store := NewCAS(WithoutLatency())
+	store := NewCAS()
 	payload := []byte(`{"entries":["a.txt"]}`)
 
 	results, err := store.PutBatch(ctx, []cas.Block{{Data: payload, Codec: testTypedCodec}})

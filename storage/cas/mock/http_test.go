@@ -19,7 +19,7 @@ import (
 const testTypedCodec = 0x300005
 
 func TestHTTPServerKuboCompatibleBlockAPI(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 
@@ -49,7 +49,7 @@ func TestHTTPServerKuboCompatibleBlockAPI(t *testing.T) {
 }
 
 func TestHTTPServerHealthEndpoint(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 
@@ -64,7 +64,7 @@ func TestHTTPServerHealthEndpoint(t *testing.T) {
 }
 
 func TestHTTPServerSupportsTypedBlockPut(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 
@@ -89,7 +89,7 @@ func TestHTTPServerSupportsTypedBlockPut(t *testing.T) {
 }
 
 func TestHTTPServerSupportsHasBatch(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 
@@ -115,7 +115,7 @@ func TestHTTPServerSupportsHasBatch(t *testing.T) {
 }
 
 func TestHTTPServerSupportsPutBatch(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 
@@ -141,7 +141,7 @@ func TestHTTPServerSupportsPutBatch(t *testing.T) {
 }
 
 func TestHTTPServerPutBatchRejectsInvalidBase64(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 
@@ -150,7 +150,7 @@ func TestHTTPServerPutBatchRejectsInvalidBase64(t *testing.T) {
 }
 
 func TestHTTPServerPutBatchPreservesResultOrder(t *testing.T) {
-	mockCAS := NewCAS(WithoutLatency())
+	mockCAS := NewCAS()
 	ts := httptest.NewServer(NewHTTPServer("", mockCAS).Handler())
 	defer ts.Close()
 

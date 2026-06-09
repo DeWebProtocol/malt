@@ -7,7 +7,7 @@ import (
 
 func TestCASStatsCountOperationsAndBytes(t *testing.T) {
 	ctx := context.Background()
-	cas := NewCAS(WithoutLatency())
+	cas := NewCAS()
 
 	payload := []byte("instrumented block")
 	blockCID, err := cas.Put(ctx, payload)
@@ -43,7 +43,7 @@ func TestCASStatsCountOperationsAndBytes(t *testing.T) {
 
 func TestCASStatsResetClearsCounters(t *testing.T) {
 	ctx := context.Background()
-	cas := NewCAS(WithoutLatency())
+	cas := NewCAS()
 
 	blockCID, err := cas.Put(ctx, []byte("reset me"))
 	if err != nil {

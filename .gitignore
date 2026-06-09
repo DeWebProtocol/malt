@@ -48,3 +48,4 @@ go.work.sum
 # Logs and local state
 *.log
 *.db
+/cas

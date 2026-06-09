@@ -521,7 +521,7 @@ func newTestDaemon(t *testing.T) string {
 func newTestDaemonWithCAS(t *testing.T) (string, *casmock.CAS) {
 	t.Helper()
 
-	mockCAS := casmock.NewCAS(casmock.WithoutLatency())
+	mockCAS := casmock.NewCAS()
 
 	cfg := config.DefaultConfig()
 	cfg.State.RootDir = t.TempDir()
