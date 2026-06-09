@@ -1,7 +1,6 @@
 // Package evalcas provides eval-specific CAS instances with precise, jitter-free
-// latency. The main mock CAS (storage/cas/mock) uses realistic IPFS latency
-// defaults with random jitter; this package provides deterministic latency for
-// benchmark measurements.
+// latency. The main mock CAS (storage/cas/mock) now defaults to zero latency;
+// this package provides explicit helpers for deterministic benchmark latency.
 package evalcas
 
 import (
