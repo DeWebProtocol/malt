@@ -283,6 +283,35 @@ func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key ar
 	return s.commitNode(ctx, namespace, nextSlots)
 }
 
+// BatchUpdate applies multiple updates atomically by applying them sequentially
+// and returning the final root only if all updates succeed. If any update fails,
+// the entire batch is rejected.
+func (s *Map) BatchUpdate(ctx context.Context, namespace string, root cid.Cid, updates []mapping.BatchUpdate) (cid.Cid, error) {
+	if !root.Defined() {
+		return cid.Undef, fmt.Errorf("root is undefined")
+	}
+	if len(updates) == 0 {
+		return root, nil
+	}
+
+	// Apply updates sequentially. If any fails, the entire operation fails
+	// and no state is persisted to ArcTable (caller is responsible for that).
+	currentRoot := root
+	for i, update := range updates {
+		if update.Key.IsEmpty() {
+			return cid.Undef, fmt.Errorf("update %d: key is empty", i)
+		}
+
+		newRoot, err := s.Update(ctx, namespace, currentRoot, update.Key, update.OldValue, update.NewValue)
+		if err != nil {
+			return cid.Undef, fmt.Errorf("update %d (key=%s): %w", i, update.Key.String(), err)
+		}
+		currentRoot = newRoot
+	}
+
+	return currentRoot, nil
+}
+
 func (s *Map) updateSubtree(
 	ctx context.Context,
 	namespace string,

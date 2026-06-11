@@ -191,6 +191,13 @@ func bindingCell(key arcset.Path, value cid.Cid) (commitment.Cell, error) {
 	return commitment.CellFromCID(binding), nil
 }
 
+// BatchUpdate describes one keyed update operation.
+type BatchUpdate struct {
+	Key      arcset.Path
+	OldValue cid.Cid
+	NewValue cid.Cid
+}
+
 // Semantics defines the public keyed-map semantics.
 //
 // This interface combines the single-step commitment primitives with storage
@@ -214,4 +221,10 @@ type Semantics interface {
 	// runtime state. oldValue=cid.Undef means insert; newValue=cid.Undef means
 	// delete.
 	Update(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error)
+
+	// BatchUpdate applies multiple updates atomically. If any update fails,
+	// the entire batch is rejected and no state is modified.
+	// Updates are applied in an order determined by the implementation to
+	// maintain structural consistency.
+	BatchUpdate(ctx context.Context, namespace string, root cid.Cid, updates []BatchUpdate) (cid.Cid, error)
 }
