@@ -36,6 +36,18 @@ type Map struct {
 	arctable   arctable.ArcTable
 }
 
+// pendingNode represents a node that needs to be persisted.
+type pendingNode struct {
+	root  cid.Cid
+	slots []cid.Cid
+}
+
+// pendingBucket represents a bucket that needs to be persisted.
+type pendingBucket struct {
+	root    cid.Cid
+	markers []cid.Cid
+}
+
 type leafBinding struct {
 	path   arcset.Path
 	value  cid.Cid
@@ -263,29 +275,182 @@ func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key ar
 		return cid.Undef, fmt.Errorf("key is empty")
 	}
 
-	rootSlots, err := s.loadValidatedNode(ctx, namespace, root)
+	newRoot, nodes, buckets, err := s.updateWithoutPersist(ctx, namespace, root, key, oldValue, newValue)
 	if err != nil {
 		return cid.Undef, err
+	}
+
+	// Persist all nodes
+	for _, node := range nodes {
+		if err := s.storeNodeSlots(ctx, namespace, node.root, node.slots); err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	// Persist all buckets
+	for _, bucket := range buckets {
+		if err := s.storeBucketEntries(ctx, namespace, bucket.root, bucket.markers); err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	return newRoot, nil
+}
+
+// updateWithoutPersist performs tree modification without persisting to ArcTable.
+// Returns the new root and lists of nodes/buckets that need to be persisted.
+func (s *Map) updateWithoutPersist(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	rootSlots, err := s.loadNodeSlots(ctx, namespace, root)
+	if err != nil {
+		return cid.Undef, nil, nil, err
 	}
 
 	digest := hashPath(key)
 	slotIndex := digest[0]
-	nextSlot, err := s.updateSubtree(ctx, namespace, rootSlots[slotIndex], digest, 1, key, oldValue, newValue)
+	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersist(ctx, namespace, rootSlots[slotIndex], digest, 1, key, oldValue, newValue)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, nil, err
 	}
 	if cidEqual(nextSlot, rootSlots[slotIndex]) {
-		return root, nil
+		return root, nil, nil, nil
 	}
 
 	nextSlots := cloneCIDs(rootSlots)
 	nextSlots[slotIndex] = nextSlot
-	return s.commitNode(ctx, namespace, nextSlots)
+	newRoot, err := s.commitment.Scheme().Commit(cellsFromCIDs(nextSlots))
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+
+	// Add this node to pending list
+	nodes = append(nodes, pendingNode{root: newRoot, slots: nextSlots})
+	return newRoot, nodes, buckets, nil
+}
+
+// updateWithoutPersistCached is like updateWithoutPersist but uses a node cache.
+func (s *Map) updateWithoutPersistCached(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid, nodeCache map[string][]cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	var rootSlots []cid.Cid
+	if cached, ok := nodeCache[root.String()]; ok {
+		rootSlots = cached
+	} else {
+		var err error
+		rootSlots, err = s.loadNodeSlots(ctx, namespace, root)
+		if err != nil {
+			return cid.Undef, nil, nil, err
+		}
+	}
+
+	digest := hashPath(key)
+	slotIndex := digest[0]
+	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersistCached(ctx, namespace, rootSlots[slotIndex], digest, 1, key, oldValue, newValue, nodeCache)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	if cidEqual(nextSlot, rootSlots[slotIndex]) {
+		return root, nil, nil, nil
+	}
+
+	nextSlots := cloneCIDs(rootSlots)
+	nextSlots[slotIndex] = nextSlot
+	newRoot, err := s.commitment.Scheme().Commit(cellsFromCIDs(nextSlots))
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+
+	// Add this node to pending list
+	nodes = append(nodes, pendingNode{root: newRoot, slots: nextSlots})
+	return newRoot, nodes, buckets, nil
+}
+
+// updateSubtreeWithoutPersistCached updates a subtree using cached nodes.
+func (s *Map) updateSubtreeWithoutPersistCached(
+	ctx context.Context,
+	namespace string,
+	current cid.Cid,
+	digest [sha256.Size]byte,
+	depth int,
+	key arcset.Path,
+	oldValue, newValue cid.Cid,
+	nodeCache map[string][]cid.Cid,
+) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	if !current.Defined() {
+		if oldValue.Defined() {
+			return cid.Undef, nil, nil, fmt.Errorf("path %s is absent", key.String())
+		}
+		if !newValue.Defined() {
+			return cid.Undef, nil, nil, nil
+		}
+		leafCID, err := encodeLeafMarker(key, newValue)
+		return leafCID, nil, nil, err
+	}
+
+	if leafPath, leafValue, ok, err := tryDecodeLeafMarker(current); err != nil {
+		return cid.Undef, nil, nil, err
+	} else if ok {
+		switch {
+		case leafPath == key:
+			if !oldValue.Defined() {
+				return cid.Undef, nil, nil, fmt.Errorf("path %s already exists", key.String())
+			}
+			if !leafValue.Equals(oldValue) {
+				return cid.Undef, nil, nil, fmt.Errorf("old value mismatch at path %s", key.String())
+			}
+			if !newValue.Defined() {
+				return cid.Undef, nil, nil, nil
+			}
+			leafCID, err := encodeLeafMarker(key, newValue)
+			return leafCID, nil, nil, err
+		default:
+			if oldValue.Defined() {
+				return cid.Undef, nil, nil, fmt.Errorf("path %s is absent", key.String())
+			}
+			if !newValue.Defined() {
+				return current, nil, nil, nil
+			}
+			existing := newLeafBinding(leafPath, leafValue)
+			inserted := leafBinding{path: key, value: newValue, digest: digest}
+			return s.buildSubtreeWithoutPersist(ctx, namespace, []leafBinding{existing, inserted}, depth)
+		}
+	}
+
+	if bucketRoot, ok, err := tryDecodeBucketRef(current); err != nil {
+		return cid.Undef, nil, nil, err
+	} else if ok {
+		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, key, oldValue, newValue)
+	}
+
+	if depth >= len(digest) {
+		return cid.Undef, nil, nil, fmt.Errorf("unexpected radix depth overflow")
+	}
+
+	var slots []cid.Cid
+	if cached, ok := nodeCache[current.String()]; ok {
+		slots = cached
+	} else {
+		var err error
+		slots, err = s.loadNodeSlots(ctx, namespace, current)
+		if err != nil {
+			return cid.Undef, nil, nil, err
+		}
+	}
+
+	slotIndex := digest[depth]
+	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersistCached(ctx, namespace, slots[slotIndex], digest, depth+1, key, oldValue, newValue, nodeCache)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	if cidEqual(nextSlot, slots[slotIndex]) {
+		return current, nil, nil, nil
+	}
+
+	nextSlots := cloneCIDs(slots)
+	nextSlots[slotIndex] = nextSlot
+	return s.commitOrCollapseNodeWithoutPersist(ctx, namespace, nextSlots, nodes, buckets)
 }
 
 // BatchUpdate applies multiple updates atomically by applying them sequentially
 // and returning the final root only if all updates succeed. If any update fails,
-// the entire batch is rejected.
+// the entire batch is rejected and no state is persisted to ArcTable.
 func (s *Map) BatchUpdate(ctx context.Context, namespace string, root cid.Cid, updates []mapping.BatchUpdate) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, fmt.Errorf("root is undefined")
@@ -294,25 +459,63 @@ func (s *Map) BatchUpdate(ctx context.Context, namespace string, root cid.Cid, u
 		return root, nil
 	}
 
-	// Apply updates sequentially. If any fails, the entire operation fails
-	// and no state is persisted to ArcTable (caller is responsible for that).
+	// Load initial root slots to seed the cache
+	initialSlots, err := s.loadNodeSlots(ctx, namespace, root)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	// Build a cache of all materialized nodes/buckets as we traverse
+	// This allows subsequent updates in the batch to read from newly created nodes
+	nodeCache := make(map[string][]cid.Cid)
+	nodeCache[root.String()] = initialSlots
+
+	// Accumulate all nodes and buckets that need to be persisted
+	var pendingNodes []pendingNode
+	var pendingBuckets []pendingBucket
+
+	// Apply updates sequentially without persisting
 	currentRoot := root
 	for i, update := range updates {
 		if update.Key.IsEmpty() {
 			return cid.Undef, fmt.Errorf("update %d: key is empty", i)
 		}
 
-		newRoot, err := s.Update(ctx, namespace, currentRoot, update.Key, update.OldValue, update.NewValue)
+		newRoot, nodes, buckets, err := s.updateWithoutPersistCached(ctx, namespace, currentRoot, update.Key, update.OldValue, update.NewValue, nodeCache)
 		if err != nil {
 			return cid.Undef, fmt.Errorf("update %d (key=%s): %w", i, update.Key.String(), err)
 		}
 		currentRoot = newRoot
+
+		// Add new nodes to cache
+		for _, node := range nodes {
+			nodeCache[node.root.String()] = node.slots
+		}
+
+		pendingNodes = append(pendingNodes, nodes...)
+		pendingBuckets = append(pendingBuckets, buckets...)
+	}
+
+	// All updates succeeded - now persist atomically
+	// First persist all nodes
+	for _, node := range pendingNodes {
+		if err := s.storeNodeSlots(ctx, namespace, node.root, node.slots); err != nil {
+			return cid.Undef, fmt.Errorf("failed to persist node: %w", err)
+		}
+	}
+
+	// Then persist all buckets
+	for _, bucket := range pendingBuckets {
+		if err := s.storeBucketEntries(ctx, namespace, bucket.root, bucket.markers); err != nil {
+			return cid.Undef, fmt.Errorf("failed to persist bucket: %w", err)
+		}
 	}
 
 	return currentRoot, nil
 }
 
-func (s *Map) updateSubtree(
+// updateSubtreeWithoutPersist updates a subtree without persisting to ArcTable.
+func (s *Map) updateSubtreeWithoutPersist(
 	ctx context.Context,
 	namespace string,
 	current cid.Cid,
@@ -320,72 +523,143 @@ func (s *Map) updateSubtree(
 	depth int,
 	key arcset.Path,
 	oldValue, newValue cid.Cid,
-) (cid.Cid, error) {
+) (cid.Cid, []pendingNode, []pendingBucket, error) {
 	if !current.Defined() {
 		if oldValue.Defined() {
-			return cid.Undef, fmt.Errorf("path %s is absent", key.String())
+			return cid.Undef, nil, nil, fmt.Errorf("path %s is absent", key.String())
 		}
 		if !newValue.Defined() {
-			return cid.Undef, nil
+			return cid.Undef, nil, nil, nil
 		}
-		return encodeLeafMarker(key, newValue)
+		leafCID, err := encodeLeafMarker(key, newValue)
+		return leafCID, nil, nil, err
 	}
 
 	if leafPath, leafValue, ok, err := tryDecodeLeafMarker(current); err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, nil, err
 	} else if ok {
 		switch {
 		case leafPath == key:
 			if !oldValue.Defined() {
-				return cid.Undef, fmt.Errorf("path %s already exists", key.String())
+				return cid.Undef, nil, nil, fmt.Errorf("path %s already exists", key.String())
 			}
 			if !leafValue.Equals(oldValue) {
-				return cid.Undef, fmt.Errorf("old value mismatch at path %s", key.String())
+				return cid.Undef, nil, nil, fmt.Errorf("old value mismatch at path %s", key.String())
 			}
 			if !newValue.Defined() {
-				return cid.Undef, nil
+				return cid.Undef, nil, nil, nil
 			}
-			return encodeLeafMarker(key, newValue)
+			leafCID, err := encodeLeafMarker(key, newValue)
+			return leafCID, nil, nil, err
 		default:
 			if oldValue.Defined() {
-				return cid.Undef, fmt.Errorf("path %s is absent", key.String())
+				return cid.Undef, nil, nil, fmt.Errorf("path %s is absent", key.String())
 			}
 			if !newValue.Defined() {
-				return current, nil
+				return current, nil, nil, nil
 			}
 			existing := newLeafBinding(leafPath, leafValue)
 			inserted := leafBinding{path: key, value: newValue, digest: digest}
-			return s.buildSubtree(ctx, namespace, []leafBinding{existing, inserted}, depth)
+			return s.buildSubtreeWithoutPersist(ctx, namespace, []leafBinding{existing, inserted}, depth)
 		}
 	}
 
 	if bucketRoot, ok, err := tryDecodeBucketRef(current); err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, nil, err
 	} else if ok {
-		return s.updateBucket(ctx, namespace, bucketRoot, key, oldValue, newValue)
+		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, key, oldValue, newValue)
 	}
 
 	if depth >= len(digest) {
-		return cid.Undef, fmt.Errorf("unexpected radix depth overflow")
+		return cid.Undef, nil, nil, fmt.Errorf("unexpected radix depth overflow")
 	}
 
-	slots, err := s.loadValidatedNode(ctx, namespace, current)
+	slots, err := s.loadNodeSlots(ctx, namespace, current)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, nil, err
 	}
 
 	slotIndex := digest[depth]
-	nextSlot, err := s.updateSubtree(ctx, namespace, slots[slotIndex], digest, depth+1, key, oldValue, newValue)
+	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersist(ctx, namespace, slots[slotIndex], digest, depth+1, key, oldValue, newValue)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, nil, err
 	}
 	if cidEqual(nextSlot, slots[slotIndex]) {
-		return current, nil
+		return current, nil, nil, nil
 	}
 
 	nextSlots := cloneCIDs(slots)
 	nextSlots[slotIndex] = nextSlot
-	return s.commitOrCollapseNode(ctx, namespace, nextSlots)
+	return s.commitOrCollapseNodeWithoutPersist(ctx, namespace, nextSlots, nodes, buckets)
+}
+
+// updateBucketWithoutPersist updates a bucket without persisting to ArcTable.
+func (s *Map) updateBucketWithoutPersist(ctx context.Context, namespace string, bucketRoot cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+
+	index := -1
+	var currentValue cid.Cid
+	for i, marker := range markers {
+		markerPath, markerValue, ok, err := tryDecodeLeafMarker(marker)
+		if err != nil {
+			return cid.Undef, nil, nil, err
+		}
+		if !ok {
+			return cid.Undef, nil, nil, fmt.Errorf("invalid bucket marker")
+		}
+		if markerPath == key {
+			index = i
+			currentValue = markerValue
+			break
+		}
+	}
+
+	exists := index >= 0
+	switch {
+	case !oldValue.Defined() && !newValue.Defined():
+		if exists {
+			return cid.Undef, nil, nil, fmt.Errorf("path %s exists; absent-to-absent update is invalid", key.String())
+		}
+		refCID, err := encodeBucketRef(bucketRoot)
+		return refCID, nil, nil, err
+	case exists:
+		if !oldValue.Defined() {
+			return cid.Undef, nil, nil, fmt.Errorf("path %s already exists", key.String())
+		}
+		if !currentValue.Equals(oldValue) {
+			return cid.Undef, nil, nil, fmt.Errorf("old value mismatch at path %s", key.String())
+		}
+		if !newValue.Defined() {
+			nextMarkers := append([]cid.Cid(nil), markers[:index]...)
+			nextMarkers = append(nextMarkers, markers[index+1:]...)
+			return s.commitBucketMarkersWithoutPersist(ctx, namespace, nextMarkers)
+		}
+		nextMarker, err := encodeLeafMarker(key, newValue)
+		if err != nil {
+			return cid.Undef, nil, nil, err
+		}
+		nextMarkers := append([]cid.Cid(nil), markers...)
+		nextMarkers[index] = nextMarker
+		return s.commitBucketMarkersWithoutPersist(ctx, namespace, nextMarkers)
+	default:
+		if oldValue.Defined() {
+			return cid.Undef, nil, nil, fmt.Errorf("path %s is absent", key.String())
+		}
+		if !newValue.Defined() {
+			refCID, err := encodeBucketRef(bucketRoot)
+			return refCID, nil, nil, err
+		}
+		newMarker, err := encodeLeafMarker(key, newValue)
+		if err != nil {
+			return cid.Undef, nil, nil, err
+		}
+		nextMarkers := append([]cid.Cid(nil), markers...)
+		nextMarkers = append(nextMarkers, newMarker)
+		return s.commitBucketMarkersWithoutPersist(ctx, namespace, nextMarkers)
+	}
 }
 
 func (s *Map) updateBucket(ctx context.Context, namespace string, bucketRoot cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
@@ -487,6 +761,51 @@ func (s *Map) commitRoot(ctx context.Context, namespace string, bindings []leafB
 	return s.commitNode(ctx, namespace, slots)
 }
 
+// buildSubtreeWithoutPersist builds a subtree without persisting to ArcTable.
+func (s *Map) buildSubtreeWithoutPersist(ctx context.Context, namespace string, bindings []leafBinding, depth int) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	if len(bindings) == 0 {
+		return cid.Undef, nil, nil, nil
+	}
+	if len(bindings) == 1 {
+		leafCID, err := encodeLeafMarker(bindings[0].path, bindings[0].value)
+		return leafCID, nil, nil, err
+	}
+
+	if depth >= sha256.Size || allSameDigest(bindings) {
+		markers := make([]cid.Cid, len(bindings))
+		for i, binding := range bindings {
+			marker, err := encodeLeafMarker(binding.path, binding.value)
+			if err != nil {
+				return cid.Undef, nil, nil, err
+			}
+			markers[i] = marker
+		}
+		return s.commitBucketMarkersWithoutPersist(ctx, namespace, markers)
+	}
+
+	slots := make([]cid.Cid, fanout)
+	var allNodes []pendingNode
+	var allBuckets []pendingBucket
+
+	for slotIndex, group := range groupBindings(bindings, depth) {
+		child, nodes, buckets, err := s.buildSubtreeWithoutPersist(ctx, namespace, group, depth+1)
+		if err != nil {
+			return cid.Undef, nil, nil, err
+		}
+		slots[slotIndex] = child
+		allNodes = append(allNodes, nodes...)
+		allBuckets = append(allBuckets, buckets...)
+	}
+
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+
+	allNodes = append(allNodes, pendingNode{root: root, slots: slots})
+	return root, allNodes, allBuckets, nil
+}
+
 func (s *Map) buildSubtree(ctx context.Context, namespace string, bindings []leafBinding, depth int) (cid.Cid, error) {
 	switch len(bindings) {
 	case 0:
@@ -529,6 +848,45 @@ func (s *Map) commitNode(ctx context.Context, namespace string, slots []cid.Cid)
 	return root, nil
 }
 
+// commitOrCollapseNodeWithoutPersist creates node commitment without persisting.
+func (s *Map) commitOrCollapseNodeWithoutPersist(ctx context.Context, namespace string, slots []cid.Cid, nodes []pendingNode, buckets []pendingBucket) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	var only cid.Cid
+	count := 0
+	for _, slot := range slots {
+		if !slot.Defined() {
+			continue
+		}
+		count++
+		only = slot
+		if count > 1 {
+			break
+		}
+	}
+	if count == 0 {
+		return cid.Undef, nodes, buckets, nil
+	}
+	if count == 1 {
+		if _, _, ok, err := tryDecodeLeafMarker(only); err != nil {
+			return cid.Undef, nil, nil, err
+		} else if ok {
+			return only, nodes, buckets, nil
+		}
+		if _, ok, err := tryDecodeBucketRef(only); err != nil {
+			return cid.Undef, nil, nil, err
+		} else if ok {
+			return only, nodes, buckets, nil
+		}
+	}
+
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+
+	nodes = append(nodes, pendingNode{root: root, slots: slots})
+	return root, nodes, buckets, nil
+}
+
 func (s *Map) commitOrCollapseNode(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
 	var only cid.Cid
 	count := 0
@@ -558,6 +916,31 @@ func (s *Map) commitOrCollapseNode(ctx context.Context, namespace string, slots 
 		}
 	}
 	return s.commitNode(ctx, namespace, slots)
+}
+
+// commitBucketMarkersWithoutPersist creates bucket commitment without persisting.
+func (s *Map) commitBucketMarkersWithoutPersist(ctx context.Context, namespace string, markers []cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
+	switch len(markers) {
+	case 0:
+		return cid.Undef, nil, nil, nil
+	case 1:
+		return markers[0], nil, nil, nil
+	}
+	if len(markers) > s.commitment.Scheme().MaxValues() {
+		return cid.Undef, nil, nil, fmt.Errorf("bucket size %d exceeds commitment capacity %d", len(markers), s.commitment.Scheme().MaxValues())
+	}
+
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(markers))
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+
+	buckets := []pendingBucket{{root: root, markers: markers}}
+	refCID, err := encodeBucketRef(root)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	return refCID, nil, buckets, nil
 }
 
 func (s *Map) commitBucketMarkers(ctx context.Context, namespace string, markers []cid.Cid) (cid.Cid, error) {
