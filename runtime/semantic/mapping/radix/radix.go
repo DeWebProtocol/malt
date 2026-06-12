@@ -300,7 +300,8 @@ func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key ar
 // updateWithoutPersist performs tree modification without persisting to ArcTable.
 // Returns the new root and lists of nodes/buckets that need to be persisted.
 func (s *Map) updateWithoutPersist(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
-	rootSlots, err := s.loadNodeSlots(ctx, namespace, root)
+	// Use loadValidatedNode to ensure persisted node integrity
+	rootSlots, err := s.loadValidatedNode(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
@@ -331,10 +332,12 @@ func (s *Map) updateWithoutPersist(ctx context.Context, namespace string, root c
 func (s *Map) updateWithoutPersistCached(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid, nodeCache map[string][]cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
 	var rootSlots []cid.Cid
 	if cached, ok := nodeCache[root.String()]; ok {
+		// Node is from this batch - no validation needed
 		rootSlots = cached
 	} else {
+		// Node is persisted - must validate commitment
 		var err error
-		rootSlots, err = s.loadNodeSlots(ctx, namespace, root)
+		rootSlots, err = s.loadValidatedNode(ctx, namespace, root)
 		if err != nil {
 			return cid.Undef, nil, nil, err
 		}
@@ -425,10 +428,12 @@ func (s *Map) updateSubtreeWithoutPersistCached(
 
 	var slots []cid.Cid
 	if cached, ok := nodeCache[current.String()]; ok {
+		// Batch-generated node: CID is computed locally, no round-trip through ArcTable
 		slots = cached
 	} else {
+		// Persisted node: must validate commitment before trusting slot data
 		var err error
-		slots, err = s.loadNodeSlots(ctx, namespace, current)
+		slots, err = s.loadValidatedNode(ctx, namespace, current)
 		if err != nil {
 			return cid.Undef, nil, nil, err
 		}
@@ -459,8 +464,8 @@ func (s *Map) BatchUpdate(ctx context.Context, namespace string, root cid.Cid, u
 		return root, nil
 	}
 
-	// Load initial root slots to seed the cache
-	initialSlots, err := s.loadNodeSlots(ctx, namespace, root)
+	// Load initial root slots to seed the cache; validate commitment on the persisted root
+	initialSlots, err := s.loadValidatedNode(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -574,7 +579,7 @@ func (s *Map) updateSubtreeWithoutPersist(
 		return cid.Undef, nil, nil, fmt.Errorf("unexpected radix depth overflow")
 	}
 
-	slots, err := s.loadNodeSlots(ctx, namespace, current)
+	slots, err := s.loadValidatedNode(ctx, namespace, current)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}

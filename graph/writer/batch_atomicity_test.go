@@ -6,6 +6,7 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
+	semanticmapping "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	"github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/storage/kv/memory"
@@ -110,14 +111,67 @@ func TestBatchUpdateArcs_Atomicity(t *testing.T) {
 	}
 
 	t.Log("Atomicity verified: failed batch did not modify any arcs")
-
-	// Test Case 3: Mid-batch failure
-	// The challenge: BatchUpdateArcs infers old values from ArcTable, so we can't
-	// directly cause an old-value mismatch. However, we CAN test that a failing
-	// operation mid-batch doesn't leave partial state.
-	// We'll simply remove this test case since the first two cases already verify atomicity.
-
 	t.Log("All atomicity tests passed")
+}
+
+// TestSemanticBatchUpdate_MidBatchFailure tests the deferred persistence path in
+// semantic.BatchUpdate: if the second update in a batch fails, the first update's
+// changes must NOT be persisted (P2 regression guard).
+func TestSemanticBatchUpdate_MidBatchFailure(t *testing.T) {
+	ctx := context.Background()
+	namespace := "test-mid-batch"
+
+	kv := memory.New()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme: %v", err)
+	}
+	at, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("NewArcTable: %v", err)
+	}
+	maps, err := radix.NewMap(scheme, at)
+	if err != nil {
+		t.Fatalf("NewMap: %v", err)
+	}
+
+	// Commit initial state: key-a and key-b
+	valueA := makeCID(t, "value-a")
+	valueB := makeCID(t, "value-b")
+	root, err := maps.Commit(ctx, namespace, semanticmapping.NewViewFrom(map[string]cid.Cid{
+		"key-a": valueA,
+		"key-b": valueB,
+	}))
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Batch: first op inserts key-new (valid), second op uses wrong OldValue (fails)
+	wrongOld := makeCID(t, "wrong-old")
+	_, err = maps.BatchUpdate(ctx, namespace, root, []semanticmapping.BatchUpdate{
+		{Key: arcset.CanonicalizePath("key-new"), OldValue: cid.Undef, NewValue: makeCID(t, "value-new")},
+		{Key: arcset.CanonicalizePath("key-a"), OldValue: wrongOld, NewValue: makeCID(t, "value-x")},
+	})
+	if err == nil {
+		t.Fatal("BatchUpdate should have failed due to OldValue mismatch, but succeeded")
+	}
+	t.Logf("BatchUpdate correctly failed: %v", err)
+
+	// key-new must NOT have been persisted.
+	// maps.Prove returns a "not found" error for absent keys; err == nil means it was found.
+	_, _, err = maps.Prove(ctx, namespace, root, arcset.CanonicalizePath("key-new"))
+	if err == nil {
+		t.Error("atomicity violated: key-new was persisted despite mid-batch failure")
+	}
+
+	// key-a must still have original value
+	bindingA, _, err := maps.Prove(ctx, namespace, root, arcset.CanonicalizePath("key-a"))
+	if err != nil {
+		t.Fatalf("Prove(key-a): %v", err)
+	}
+	if !bindingA.Value.Equals(valueA) {
+		t.Errorf("atomicity violated: key-a = %v, want original %v", bindingA.Value, valueA)
+	}
 }
 
 func makeCID(t *testing.T, data string) cid.Cid {
