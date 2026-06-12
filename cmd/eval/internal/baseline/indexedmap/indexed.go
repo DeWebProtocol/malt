@@ -191,6 +191,81 @@ func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key ar
 	}
 }
 
+// applyUpdateToEntries applies one update to entries in-memory without persisting.
+func applyUpdateToEntries(entries []entry, key arcset.Path, oldValue, newValue cid.Cid) ([]entry, error) {
+	index, exists := findPathIndex(entries, key)
+	switch {
+	case !oldValue.Defined() && !newValue.Defined():
+		if exists {
+			return nil, fmt.Errorf("path %s exists; absent-to-absent update is invalid", key.String())
+		}
+		return entries, nil
+	case exists:
+		current := entries[index].value
+		if !oldValue.Defined() {
+			return nil, fmt.Errorf("path %s already exists", key.String())
+		}
+		if !current.Equals(oldValue) {
+			return nil, fmt.Errorf("old value mismatch at path %s", key.String())
+		}
+		if !newValue.Defined() {
+			next := append([]entry(nil), entries[:index]...)
+			return append(next, entries[index+1:]...), nil
+		}
+		next := append([]entry(nil), entries...)
+		next[index].value = newValue
+		return next, nil
+	default:
+		if oldValue.Defined() {
+			return nil, fmt.Errorf("path %s is absent", key.String())
+		}
+		if !newValue.Defined() {
+			return entries, nil
+		}
+		next := append([]entry(nil), entries...)
+		next = append(next, entry{})
+		copy(next[index+1:], next[index:])
+		next[index] = entry{path: key, value: newValue}
+		return next, nil
+	}
+}
+
+// BatchUpdate applies multiple updates atomically.
+func (s *Map) BatchUpdate(ctx context.Context, namespace string, root cid.Cid, updates []mapping.BatchUpdate) (cid.Cid, error) {
+	if !root.Defined() {
+		return cid.Undef, fmt.Errorf("root is undefined")
+	}
+	if len(updates) == 0 {
+		return root, nil
+	}
+
+	entries, cells, err := s.loadEntries(ctx, namespace, root)
+	if err != nil {
+		return cid.Undef, err
+	}
+	recomputedRoot, err := s.commitment.Scheme().Commit(cells)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if !recomputedRoot.Equals(root) {
+		return cid.Undef, fmt.Errorf("recomputed root does not match requested root")
+	}
+
+	current := entries
+	for i, update := range updates {
+		if update.Key.IsEmpty() {
+			return cid.Undef, fmt.Errorf("update %d: key is empty", i)
+		}
+		next, err := applyUpdateToEntries(current, update.Key, update.OldValue, update.NewValue)
+		if err != nil {
+			return cid.Undef, fmt.Errorf("update %d (key=%s): %w", i, update.Key.String(), err)
+		}
+		current = next
+	}
+
+	return s.commitEntries(ctx, namespace, current)
+}
+
 func (s *Map) commitEntries(ctx context.Context, namespace string, entries []entry) (cid.Cid, error) {
 	cells, err := entriesToCells(entries)
 	if err != nil {

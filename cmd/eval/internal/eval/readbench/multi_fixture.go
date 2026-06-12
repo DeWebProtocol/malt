@@ -15,10 +15,10 @@ type DepthFixture struct {
 // This enables measuring resolve latency at different path depths using the
 // same underlying directory structure.
 type MultiDepthFixture struct {
-	MaxDepth    int
-	SmallBytes  int
-	LargeBytes  int
-	Fixtures    []DepthFixture
+	MaxDepth   int
+	SmallBytes int
+	LargeBytes int
+	Fixtures   []DepthFixture
 }
 
 // NewMultiDepthFixture creates fixtures at depths 1 through maxDepth.

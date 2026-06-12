@@ -331,8 +331,11 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 //
 // Given a structure root and a map of path → newTarget, this method:
 //  1. Looks up all current bindings
-//  2. Applies semantic.Update sequentially over the current keyed view
+//  2. Applies semantic.BatchUpdate atomically over the current keyed view
 //  3. Applies all updates to ArcTable
+//
+// If any update in the batch fails, the entire operation is rejected and
+// no state is modified.
 func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid.Cid, updates map[string]cid.Cid) (*BatchUpdateResult, error) {
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
@@ -362,6 +365,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 
 	// Step 2: Look up all current bindings and classify operations
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
+	batchUpdates := make([]mapping.BatchUpdate, 0, len(normalizedUpdates))
 
 	for path, newTarget := range normalizedUpdates {
 		oldTarget, err := w.arctable.Get(ctx, namespace, root, path)
@@ -388,17 +392,20 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 			Op:        op,
 			Path:      path,
 		}
+
+		// Add to batch update list
+		batchUpdates = append(batchUpdates, mapping.BatchUpdate{
+			Key:      path,
+			OldValue: oldTarget,
+			NewValue: newTarget,
+		})
 	}
 
-	// Step 3: Update commitment
-	currentRoot := root
-	for path, result := range perArc {
-		currentRoot, err = w.semantic.Update(ctx, namespace, currentRoot, path, result.OldTarget, result.NewTarget)
-		if err != nil {
-			return nil, fmt.Errorf("semantic.Update failed for %s: %w", path.String(), err)
-		}
+	// Step 3: Apply batch update atomically
+	newRoot, err := w.semantic.BatchUpdate(ctx, namespace, root, batchUpdates)
+	if err != nil {
+		return nil, fmt.Errorf("semantic.BatchUpdate failed: %w", err)
 	}
-	newRoot := currentRoot
 
 	oldArcs, err := arcset.ToPathMap(snapshot)
 	if err != nil {
