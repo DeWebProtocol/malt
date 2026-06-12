@@ -146,10 +146,23 @@ func TestSemanticBatchUpdate_MidBatchFailure(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
+	// Determine the intermediate root CID (state after inserting key-new alongside key-a/key-b).
+	// Commit to a probe namespace: CID is content-addressed so it equals what loop-Update
+	// would produce in the main namespace, but data goes to the probe namespace only.
+	valueNew := makeCID(t, "value-new")
+	intermediateRoot, err := maps.Commit(ctx, namespace+"_probe", semanticmapping.NewViewFrom(map[string]cid.Cid{
+		"key-a":   valueA,
+		"key-b":   valueB,
+		"key-new": valueNew,
+	}))
+	if err != nil {
+		t.Fatalf("probe Commit: %v", err)
+	}
+
 	// Batch: first op inserts key-new (valid), second op uses wrong OldValue (fails)
 	wrongOld := makeCID(t, "wrong-old")
 	_, err = maps.BatchUpdate(ctx, namespace, root, []semanticmapping.BatchUpdate{
-		{Key: arcset.CanonicalizePath("key-new"), OldValue: cid.Undef, NewValue: makeCID(t, "value-new")},
+		{Key: arcset.CanonicalizePath("key-new"), OldValue: cid.Undef, NewValue: valueNew},
 		{Key: arcset.CanonicalizePath("key-a"), OldValue: wrongOld, NewValue: makeCID(t, "value-x")},
 	})
 	if err == nil {
@@ -157,8 +170,15 @@ func TestSemanticBatchUpdate_MidBatchFailure(t *testing.T) {
 	}
 	t.Logf("BatchUpdate correctly failed: %v", err)
 
-	// key-new must NOT have been persisted.
-	// maps.Prove returns a "not found" error for absent keys; err == nil means it was found.
+	// Regression guard: if BatchUpdate regresses to loop-calling Update, the intermediate
+	// root's node data gets written to the main namespace before the second update fails.
+	// Verify the intermediate root is NOT readable in the main namespace.
+	_, _, err = maps.Prove(ctx, namespace, intermediateRoot, arcset.CanonicalizePath("key-new"))
+	if err == nil {
+		t.Error("atomicity violated: intermediate root was persisted in main namespace during failed batch")
+	}
+
+	// key-new must NOT be findable under the original root either.
 	_, _, err = maps.Prove(ctx, namespace, root, arcset.CanonicalizePath("key-new"))
 	if err == nil {
 		t.Error("atomicity violated: key-new was persisted despite mid-batch failure")
