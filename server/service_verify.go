@@ -9,14 +9,13 @@ import (
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/layout/unixfs"
 )
 
 type proofVerifier struct {
-	runtime graph.Runtime
+	runtime runtimeGraph
 }
 
 type proofListVerifiedPath struct {

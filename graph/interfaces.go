@@ -4,27 +4,10 @@ import (
 	"context"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
-	"github.com/dewebprotocol/malt/auth/semantic/list"
-	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/writer"
 	cid "github.com/ipfs/go-cid"
 )
-
-// Graph is the authenticated graph contract exposed to runtime callers.
-type Graph interface {
-	ID() string
-	Namespace() string
-	Resolver() Resolver
-	Writer() Writer
-}
-
-// Runtime is the current server-side graph runtime contract.
-type Runtime interface {
-	Graph
-	Semantic() mapping.Semantics
-	ListSemantic() list.Semantics
-}
 
 // Resolver is the graph read/proof port.
 type Resolver interface {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/graph"
 	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	"github.com/dewebprotocol/malt/wire/maltcid"
@@ -105,7 +104,7 @@ func TestOpenGraphUsesStoredIPABackend(t *testing.T) {
 	}
 }
 
-func TestNewGraphReturnsRuntimeContractWithNamespaceOption(t *testing.T) {
+func TestNewGraphReturnsRuntimeCompositionWithNamespaceOption(t *testing.T) {
 	node, err := NewNode(testNodeOptions(t)...)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
@@ -116,7 +115,6 @@ func TestNewGraphReturnsRuntimeContractWithNamespaceOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGraph failed: %v", err)
 	}
-	var _ graph.Runtime = g
 	if g.ID() != "default-id" {
 		t.Fatalf("graph ID = %q, want default-id", g.ID())
 	}
@@ -125,6 +123,9 @@ func TestNewGraphReturnsRuntimeContractWithNamespaceOption(t *testing.T) {
 	}
 	if g.Resolver() == nil || g.Writer() == nil {
 		t.Fatalf("runtime graph must provide resolver and writer ports")
+	}
+	if g.Semantic() == nil || g.ListSemantic() == nil {
+		t.Fatalf("runtime graph semantic implementations must be initialized")
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/graph"
+	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	"github.com/dewebprotocol/malt/runtime/node"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
@@ -18,7 +18,7 @@ import (
 type LocalMALTSystem struct {
 	store *casmock.CAS
 	node  *node.Node
-	g     graph.Runtime
+	g     *runtimegraph.RuntimeGraph
 	root  cid.Cid
 }
 

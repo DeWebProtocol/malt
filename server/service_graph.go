@@ -5,6 +5,8 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	listsemantic "github.com/dewebprotocol/malt/auth/semantic/list"
+	mappingsemantic "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
@@ -13,8 +15,17 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+type runtimeGraph interface {
+	ID() string
+	Namespace() string
+	Resolver() graph.Resolver
+	Writer() graph.Writer
+	Semantic() mappingsemantic.Semantics
+	ListSemantic() listsemantic.Semantics
+}
+
 type graphService struct {
-	runtime graph.Runtime
+	runtime runtimeGraph
 }
 
 func (s *Server) graphService(ctx context.Context) (graphService, error) {

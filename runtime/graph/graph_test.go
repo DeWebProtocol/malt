@@ -5,11 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dewebprotocol/malt/graph"
+	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	"github.com/dewebprotocol/malt/storage/kv/memory"
 )
-
-var _ graph.Runtime = (*RuntimeGraph)(nil)
 
 func newTestStore() *Store {
 	return NewStore(memory.New())
@@ -17,6 +15,32 @@ func newTestStore() *Store {
 
 func newTestManager() *Manager {
 	return NewManager(newTestStore())
+}
+
+func TestNewGraphInitializesRuntimeComposition(t *testing.T) {
+	kv := memory.New()
+	table, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("NewArcTable failed: %v", err)
+	}
+
+	g, err := NewGraph("composition", table, nil, WithNamespace("ns"))
+	if err != nil {
+		t.Fatalf("NewGraph failed: %v", err)
+	}
+
+	if g.ID() != "composition" {
+		t.Fatalf("ID = %q, want composition", g.ID())
+	}
+	if g.Namespace() != "ns" {
+		t.Fatalf("Namespace = %q, want ns", g.Namespace())
+	}
+	if g.Resolver() == nil || g.Writer() == nil {
+		t.Fatal("resolver and writer must be initialized")
+	}
+	if g.Semantic() == nil || g.ListSemantic() == nil {
+		t.Fatal("semantic implementations must be initialized")
+	}
 }
 
 func TestStoreCreateAndGet(t *testing.T) {

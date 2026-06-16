@@ -11,7 +11,7 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/graph"
+	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -22,7 +22,7 @@ func fakeCID(seed string) cid.Cid {
 	return cid.NewCidV1(cid.Raw, mhash)
 }
 
-func newTestGraph(t *testing.T) (*Node, graph.Runtime) {
+func newTestGraph(t *testing.T) (*Node, *runtimegraph.RuntimeGraph) {
 	t.Helper()
 	node, err := NewNode(
 		WithConfig(testRuntimeConfig(t)),
