@@ -138,7 +138,7 @@ MALT's current implementation is easiest to read through these layers:
 | Semantic layer | Abstract list/map read and write semantics |
 | ArcTable | Namespace-scoped arcset persistence and materialization |
 | Commitment backend | Stateless proof primitives over semantic representations |
-| Graph ports | Resolver read path and writer mutation path |
+| Resolver / writer ports | Read/proof path and semantic mutation path |
 | Server API | Runtime surface for daemon HTTP routes |
 | Application layout | Product data model above list/map/CAS blobs |
 
@@ -156,6 +156,11 @@ key-to-target relations and reserves `@payload` as the terminal materialization
 binding for map semantic objects. Layouts translate source-domain data into
 semantic mutations; they do not define the core semantics.
 
+`graph` is not a separate semantic owner or node-interface hierarchy. In the
+current runtime it is a small composition boundary that wires resolver and
+writer ports over the list/map semantic APIs. Resolver traversal belongs to
+`graph/resolver`; mutation application belongs to `graph/writer`.
+
 For a deeper implementation walkthrough, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Repository Layout
@@ -164,10 +169,10 @@ For a deeper implementation walkthrough, see [ARCHITECTURE.md](./ARCHITECTURE.md
 cmd/malt/                      primary runtime CLI
 cmd/eval/                      malt-eval workloads, schemas, and helpers
 api/http/                      daemon request/response DTOs
-auth/                          arcset, commitment, proof, list/map interfaces
-graph/                         resolver and writer graph ports
+auth/                          arcset, commitment, proof, list/map semantics
+graph/                         resolver and writer port definitions/adapters
 layout/unixfs/                 UnixFS-style layout over map/list/CAS blobs
-runtime/                       node, graph, ArcTable, metrics, implementations
+runtime/                       node, runtime graph composition, ArcTable, metrics
 sdk/client/                    Go daemon client facade
 server/                        daemon HTTP server
 storage/                       CAS and KV storage libraries

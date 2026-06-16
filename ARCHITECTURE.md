@@ -27,10 +27,12 @@ List and map are semantic abstractions:
 ArcTable is namespace-scoped arcset persistence/materialization and does
 not provide correctness by itself. Commitment backends are stateless
 vector-commitment primitives used to authenticate semantic-layer
-representations. `graph` is the abstraction boundary around resolver and
-writer ports: resolver is the read/proof path, writer is the mutation path.
-Layouts translate source-domain data into writer semantic mutations. Server
-routes execute graph ports; client-side layout code composes layout mutations.
+representations. `graph` is a runtime composition boundary around resolver and
+writer ports, not a separate semantic owner or a graph-node interface
+hierarchy. Resolver traversal lives under `graph/resolver`; mutation
+application lives under `graph/writer`. Layouts translate source-domain data
+into writer semantic mutations. Server routes execute resolver/writer ports;
+client-side layout code composes layout mutations.
 
 This document is implementation-oriented. For the shorter system overview, see
 [`README.md`](./README.md).
@@ -44,8 +46,8 @@ The target model has four distinct layers:
 | Semantic layer | Abstract list/map semantics |
 | ArcTable | Namespace-scoped arcset persistence/materialization |
 | Commitment backend | Stateless proof and verification over semantic-layer representations |
-| Graph ports | Resolver and writer boundaries over graph state |
-| Server API | Runtime surface exposing graph ports |
+| Resolver / writer ports | Read/proof and mutation boundaries over semantic state |
+| Server API | Runtime surface exposing resolver/writer ports |
 | Application layout | Product data model built above list/map/CAS blobs |
 
 The public structure layer should expose list/map semantics, not storage
@@ -286,7 +288,7 @@ malt/
 |   |-- commitment/   # primitive commitment backends
 |   |-- proof/        # evidence and ProofList artifacts
 |   `-- semantic/     # list/map semantic interfaces
-|-- graph/            # resolver/writer graph contracts
+|-- graph/            # thin resolver/writer port surface
 |   |-- querypath/    # root-relative query path canonicalization
 |   |-- resolver/     # resolver read port and explicit proof path
 |   `-- writer/       # writer mutation model and executor
@@ -375,11 +377,13 @@ It owns:
 
 List should not be forced through path-based resolution.
 
-## Graph Ports, Layout, and Adapters
+## Runtime Graph, Resolver, Writer, and Layouts
 
-The old architecture treated resolver and writer as central runtime layers. The
-current interpretation is narrower and makes `graph` the boundary around
-read and write ports:
+The old architecture treated `graph` as a broad contract layer. The current
+interpretation is narrower: list/map semantics own authenticated operations,
+`graph/resolver` owns read traversal and `ProofList` assembly, `graph/writer`
+owns semantic mutation application, and `runtime/graph` only composes those
+ports with concrete semantic implementations.
 
 - layouts translate source-domain data into MALT semantic mutations
 - the writer port applies converted semantic mutations through list/map
@@ -388,6 +392,8 @@ read and write ports:
 - resolver adapters translate application or compatibility reads into semantic
   reads and proof chains
 - neither adapter owns the semantic definition of map or list
+- the root `graph` package should remain a small port/composition surface, not
+  a second list/map node abstraction
 
 The explicit resolver is a map compatibility adapter:
 
@@ -459,11 +465,12 @@ Current boundary:
   through the daemon API and proof-bearing resolve/content endpoints.
 - The package still directly injects `mapping.Semantics`, `list.Semantics`,
   and `cas.Client`; current `graph`, `graph/writer`, and `graph/resolver`
-  remain runtime and compatibility adapters rather than semantic owners.
+  remain runtime composition and compatibility adapters rather than semantic
+  owners.
 - The current writer semantic-mutation and `ProofList` schemas are
   implemented. Paper-facing formalization, write metadata semantics,
-  graph-node terminology, and benchmark-facing proof reporting remain tracked
-  as proposal-stage MIPs in the sibling documents repository.
+  graph-runtime boundary terminology, and benchmark-facing proof reporting
+  remain tracked as proposal-stage MIPs in the sibling documents repository.
 - Graph manager metadata is limited to lifecycle and runtime profile
   compatibility. It does not store an authoritative current root or publish
   freshness. The current daemon path creates an ad hoc default `Graph` through
@@ -488,8 +495,11 @@ Metrics:
 
 Open proposal-stage MIPs for the next discussion:
 
-- define graph node and arc terminology precisely enough to map onto current
-  map/list semantics
+- define graph terminology as list/map-induced authenticated structure rather
+  than a standalone Go node-interface hierarchy
+- simplify the root `graph` package toward resolver/writer port interfaces and
+  a concrete runtime composition struct, removing empty `Graph` interface
+  layers when callers can inject resolver and writer directly
 - formalize the current writer semantic-mutation schema
 - formalize how `layout/unixfs` exposes semantic mutations for writer
   application and how much of the current UnixFS convenience route
