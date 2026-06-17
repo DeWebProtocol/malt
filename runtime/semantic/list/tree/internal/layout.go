@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	// DefaultFanout is the v1 default commitment width for list nodes.
-	// The current KZG backend supports 256 slots per commitment, so v1 fixes
-	// this value to 256.
+	// DefaultFanout is the default commitment width for list nodes.
+	// The current KZG backend supports 256 slots per commitment, so this
+	// value is fixed to 256.
 	DefaultFanout = 256
 
 	// BranchingFactor is the number of content slots per committed list node.
@@ -25,8 +25,7 @@ const (
 	// Slot 0 in every list node is reserved for authenticated node metadata, so
 	// all nodes expose (DefaultFanout-1) content slots.
 	//
-	// For simplicity, v2 uses the same branching factor for root and non-root
-	// nodes.
+	// Root and non-root nodes share the same branching factor.
 	BranchingFactor = DefaultFanout - 1
 
 	// RootWidth is the fixed slot width for the committed root node.
@@ -36,24 +35,10 @@ const (
 	// NodeWidth is the fixed slot width for all committed non-root nodes.
 	NodeWidth = DefaultFanout
 
-	// LegacyNodeWidth is the v1 non-root width. Legacy children do not reserve
-	// slot 0 for metadata; all slots are content slots.
-	LegacyNodeWidth = BranchingFactor
-
-	lengthMarkerPrefix = "malt:list:length:v1:"
-	fixedMetaPrefix    = "malt:list:fixed-meta:v1:"
-	nodeMetaPrefix     = "malt:list:node-meta:v2:"
+	nodeMetaPrefix = "malt:list:node-meta:"
 )
 
-// FixedMetadata is the authenticated root metadata for fixed-width measured
-// lists.
-type FixedMetadata struct {
-	ChildCount uint64
-	TotalSize  uint64
-	ChunkSize  uint64
-}
-
-// NodeMetadata is the authenticated metadata stored in slot 0 of every v2 list
+// NodeMetadata is the authenticated metadata stored in slot 0 of every list
 // tree node. ChunkSize == 0 identifies a plain list node; ChunkSize > 0
 // identifies a fixed-width measured node whose TotalSize is the byte span
 // covered by that subtree.
@@ -65,7 +50,7 @@ type NodeMetadata struct {
 }
 
 // ValidateCommitment checks whether the supplied index commitment can support
-// the v2 list layout.
+// the list layout.
 func ValidateCommitment(scheme commitment.IndexCommitment) error {
 	if scheme == nil {
 		return fmt.Errorf("index commitment is nil")
@@ -91,9 +76,6 @@ func ContentSlots(slots []cid.Cid, isRoot bool) []cid.Cid {
 	if len(slots) == 0 {
 		return nil
 	}
-	if !isRoot && len(slots) == LegacyNodeWidth {
-		return slots
-	}
 	return slots[1:]
 }
 
@@ -105,9 +87,6 @@ func ContentSlotIndex(slots []cid.Cid, isRoot bool, digit int) (uint64, error) {
 	content := ContentSlots(slots, isRoot)
 	if digit >= len(content) {
 		return 0, fmt.Errorf("content digit %d exceeds content width %d", digit, len(content))
-	}
-	if !isRoot && len(slots) == LegacyNodeWidth {
-		return uint64(digit), nil
 	}
 	return uint64(digit) + 1, nil
 }
@@ -226,102 +205,7 @@ func VerifySlot(scheme commitment.IndexCommitment, root cid.Cid, slot uint64, va
 	return scheme.VerifyIndex(root, slot, value, proof)
 }
 
-// EncodeLengthMarker encodes list length as a self-describing identity CID so
-// it can be parsed after restart without any external side state.
-func EncodeLengthMarker(length uint64) (cid.Cid, error) {
-	payload := make([]byte, len(lengthMarkerPrefix)+8)
-	copy(payload, []byte(lengthMarkerPrefix))
-	binary.BigEndian.PutUint64(payload[len(lengthMarkerPrefix):], length)
-
-	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
-	if err != nil {
-		return cid.Undef, err
-	}
-	return cid.NewCidV1(cid.Raw, sum), nil
-}
-
-// DecodeLengthMarker parses the authenticated list length from an identity CID.
-func DecodeLengthMarker(marker cid.Cid) (uint64, error) {
-	if !marker.Defined() {
-		return 0, fmt.Errorf("length marker is undefined")
-	}
-
-	decoded, err := mh.Decode(marker.Hash())
-	if err != nil {
-		return 0, err
-	}
-	if decoded.Code != mh.IDENTITY {
-		return 0, fmt.Errorf("length marker is not identity-encoded")
-	}
-	if len(decoded.Digest) != len(lengthMarkerPrefix)+8 {
-		return 0, fmt.Errorf("length marker payload has unexpected size %d", len(decoded.Digest))
-	}
-	if string(decoded.Digest[:len(lengthMarkerPrefix)]) != lengthMarkerPrefix {
-		return 0, fmt.Errorf("length marker prefix mismatch")
-	}
-	return binary.BigEndian.Uint64(decoded.Digest[len(lengthMarkerPrefix):]), nil
-}
-
-// EncodeFixedMetadata encodes fixed-width measured list metadata as a
-// self-describing identity CID.
-func EncodeFixedMetadata(meta FixedMetadata) (cid.Cid, error) {
-	payload := make([]byte, len(fixedMetaPrefix)+24)
-	copy(payload, []byte(fixedMetaPrefix))
-	binary.BigEndian.PutUint64(payload[len(fixedMetaPrefix):], meta.ChildCount)
-	binary.BigEndian.PutUint64(payload[len(fixedMetaPrefix)+8:], meta.TotalSize)
-	binary.BigEndian.PutUint64(payload[len(fixedMetaPrefix)+16:], meta.ChunkSize)
-
-	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
-	if err != nil {
-		return cid.Undef, err
-	}
-	return cid.NewCidV1(cid.Raw, sum), nil
-}
-
-// DecodeFixedMetadata parses fixed-width measured list metadata from an
-// identity CID.
-func DecodeFixedMetadata(marker cid.Cid) (FixedMetadata, error) {
-	if !marker.Defined() {
-		return FixedMetadata{}, fmt.Errorf("fixed metadata marker is undefined")
-	}
-
-	decoded, err := mh.Decode(marker.Hash())
-	if err != nil {
-		return FixedMetadata{}, err
-	}
-	if decoded.Code != mh.IDENTITY {
-		return FixedMetadata{}, fmt.Errorf("fixed metadata marker is not identity-encoded")
-	}
-	if len(decoded.Digest) != len(fixedMetaPrefix)+24 {
-		nodeMeta, nodeErr := DecodeNodeMetadata(marker)
-		if nodeErr == nil && nodeMeta.ChunkSize > 0 {
-			return FixedMetadata{
-				ChildCount: nodeMeta.ChildCount,
-				TotalSize:  nodeMeta.TotalSize,
-				ChunkSize:  nodeMeta.ChunkSize,
-			}, nil
-		}
-		return FixedMetadata{}, fmt.Errorf("fixed metadata marker payload has unexpected size %d", len(decoded.Digest))
-	}
-	if string(decoded.Digest[:len(fixedMetaPrefix)]) != fixedMetaPrefix {
-		nodeMeta, nodeErr := DecodeNodeMetadata(marker)
-		if nodeErr == nil && nodeMeta.ChunkSize > 0 {
-			return FixedMetadata{
-				ChildCount: nodeMeta.ChildCount,
-				TotalSize:  nodeMeta.TotalSize,
-				ChunkSize:  nodeMeta.ChunkSize,
-			}, nil
-		}
-		return FixedMetadata{}, fmt.Errorf("fixed metadata marker prefix mismatch")
-	}
-	return FixedMetadata{
-		ChildCount: binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix):]),
-		TotalSize:  binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix)+8:]),
-		ChunkSize:  binary.BigEndian.Uint64(decoded.Digest[len(fixedMetaPrefix)+16:]),
-	}, nil
-}
-
-// EncodeNodeMetadata encodes authenticated v2 list node metadata as a
+// EncodeNodeMetadata encodes authenticated list node metadata as a
 // self-describing identity CID.
 func EncodeNodeMetadata(meta NodeMetadata) (cid.Cid, error) {
 	if meta.ChunkSize == 0 && meta.TotalSize != 0 {
@@ -344,7 +228,7 @@ func EncodeNodeMetadata(meta NodeMetadata) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, sum), nil
 }
 
-// DecodeNodeMetadata parses authenticated v2 list node metadata.
+// DecodeNodeMetadata parses authenticated list node metadata.
 func DecodeNodeMetadata(marker cid.Cid) (NodeMetadata, error) {
 	if !marker.Defined() {
 		return NodeMetadata{}, fmt.Errorf("node metadata marker is undefined")
@@ -376,25 +260,6 @@ func DecodeNodeMetadata(marker cid.Cid) (NodeMetadata, error) {
 		return NodeMetadata{}, fmt.Errorf("measured empty node carries total size %d", meta.TotalSize)
 	}
 	return meta, nil
-}
-
-// DecodeRootLength parses the child count authenticated in a root metadata
-// marker. Plain lists encode only length; fixed measured lists encode length as
-// ChildCount inside their metadata marker.
-func DecodeRootLength(marker cid.Cid) (uint64, error) {
-	length, err := DecodeLengthMarker(marker)
-	if err == nil {
-		return length, nil
-	}
-	meta, metaErr := DecodeFixedMetadata(marker)
-	if metaErr == nil {
-		return meta.ChildCount, nil
-	}
-	nodeMeta, nodeMetaErr := DecodeNodeMetadata(marker)
-	if nodeMetaErr == nil {
-		return nodeMeta.ChildCount, nil
-	}
-	return 0, err
 }
 
 // RequiredHeight returns the minimal non-root height required for length values.

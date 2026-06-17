@@ -107,9 +107,9 @@ func stripProofStepSlots(t *testing.T, proof []byte) []byte {
 	t.Helper()
 
 	var envelope struct {
-		LengthProof  []byte                       `json:"length_proof"`
-		LengthTarget []byte                       `json:"length_target,omitempty"`
-		Steps        []map[string]json.RawMessage `json:"steps,omitempty"`
+		MetadataProof  []byte                       `json:"metadata_proof"`
+		MetadataTarget []byte                       `json:"metadata_target,omitempty"`
+		Steps          []map[string]json.RawMessage `json:"steps,omitempty"`
 	}
 	if err := json.Unmarshal(proof, &envelope); err != nil {
 		t.Fatalf("decode proof envelope: %v", err)
@@ -124,67 +124,34 @@ func stripProofStepSlots(t *testing.T, proof []byte) []byte {
 	return stripped
 }
 
-func commitLegacyPlainListRoot(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, values []cid.Cid) cid.Cid {
-	t.Helper()
-	return commitLegacyPlainListNode(t, ctx, scheme, e, namespace, values, layout.RequiredHeight(uint64(len(values))), true)
-}
-
-func commitLegacyPlainListNode(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, values []cid.Cid, height int, isRoot bool) cid.Cid {
+func commitLegacyWidthNode(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, values []cid.Cid) cid.Cid {
 	t.Helper()
 
-	var slots []cid.Cid
-	if isRoot {
-		slots = layout.EmptyRootSlots()
-		marker, err := layout.EncodeLengthMarker(uint64(len(values)))
-		if err != nil {
-			t.Fatalf("encode legacy length marker: %v", err)
-		}
-		slots[0] = marker
-	} else {
-		slots = make([]cid.Cid, layout.BranchingFactor)
+	if len(values) > layout.BranchingFactor {
+		t.Fatalf("legacy width helper supports at most %d values", layout.BranchingFactor)
 	}
-	content := slots
-	if isRoot {
-		content = slots[1:]
-	}
-
-	if height == 0 {
-		copy(content, values)
-		return commitLegacySlots(t, ctx, scheme, e, namespace, slots)
-	}
-
-	childSpan, err := layout.SubtreeCapacity(height - 1)
-	if err != nil {
-		t.Fatalf("legacy child span: %v", err)
-	}
-	for childIdx, start := 0, 0; start < len(values); childIdx++ {
-		end := start + int(childSpan)
-		if end > len(values) {
-			end = len(values)
-		}
-		content[childIdx] = commitLegacyPlainListNode(t, ctx, scheme, e, namespace, values[start:end], height-1, false)
-		start = end
-	}
-	return commitLegacySlots(t, ctx, scheme, e, namespace, slots)
+	slots := make([]cid.Cid, layout.BranchingFactor)
+	copy(slots, values)
+	return commitTestSlots(t, ctx, scheme, e, namespace, slots)
 }
 
-func commitLegacySlots(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, slots []cid.Cid) cid.Cid {
+func commitTestSlots(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e *overwrite.ArcTable, namespace string, slots []cid.Cid) cid.Cid {
 	t.Helper()
 
 	root, err := layout.CommitSlots(scheme, slots)
 	if err != nil {
-		t.Fatalf("commit legacy slots: %v", err)
+		t.Fatalf("commit slots: %v", err)
 	}
 	commBytes, err := maltcid.ExtractCommitment(root)
 	if err != nil {
-		t.Fatalf("extract legacy commitment: %v", err)
+		t.Fatalf("extract commitment: %v", err)
 	}
 	listRoot, err := maltcid.NewTypedCID(maltcid.SemanticKindList, maltcid.BackendKindOf(root), commBytes)
 	if err != nil {
-		t.Fatalf("wrap legacy list root: %v", err)
+		t.Fatalf("wrap list root: %v", err)
 	}
 	if err := layout.StoreSlots(ctx, e, namespace, listRoot, slots); err != nil {
-		t.Fatalf("store legacy slots: %v", err)
+		t.Fatalf("store slots: %v", err)
 	}
 	return listRoot
 }
@@ -234,34 +201,33 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 	}
 }
 
-func TestTreeListProvesLegacyMultiLevelRootsAfterRestart(t *testing.T) {
+func TestTreeListRejectsLegacyWidthMaterialization(t *testing.T) {
 	ctx := context.Background()
-	values := makeValues(300)
+	values := makeValues(layout.BranchingFactor)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			namespace := "tree-legacy-multilevel-" + name
+			namespace := "tree-legacy-width-" + name
 			scheme := factory(t)
 			_, e, err := newListWithArcTable(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithArcTable failed: %v", err)
 			}
-			root := commitLegacyPlainListRoot(t, ctx, scheme, e, namespace, values)
+			root := commitLegacyWidthNode(t, ctx, scheme, e, namespace, values)
 
 			restarted, err := tree.NewList(scheme, e)
 			if err != nil {
 				t.Fatalf("NewList after restart failed: %v", err)
 			}
-			assertVerifiedQuery(t, restarted, namespace, root, 256, list.Query{
-				Key:    values[256],
-				Length: uint64(len(values)),
-			})
+			if _, _, err := restarted.Prove(ctx, namespace, root, 0); err == nil {
+				t.Fatal("Prove should reject legacy-width materialization")
+			}
 		})
 	}
 }
 
-func TestTreeListVerifiesLegacyMultiLevelProofWithoutStepSlots(t *testing.T) {
+func TestTreeListVerifiesProofWithoutStepSlots(t *testing.T) {
 	ctx := context.Background()
 	values := makeValues(300)
 	index := uint64(layout.BranchingFactor)
@@ -269,51 +235,7 @@ func TestTreeListVerifiesLegacyMultiLevelProofWithoutStepSlots(t *testing.T) {
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			namespace := "tree-legacy-proof-without-slots-" + name
-			scheme := factory(t)
-			_, e, err := newListWithArcTable(scheme, kv)
-			if err != nil {
-				t.Fatalf("newListWithArcTable failed: %v", err)
-			}
-			root := commitLegacyPlainListRoot(t, ctx, scheme, e, namespace, values)
-
-			restarted, err := tree.NewList(scheme, e)
-			if err != nil {
-				t.Fatalf("NewList after restart failed: %v", err)
-			}
-			query, proof, err := restarted.Prove(ctx, namespace, root, index)
-			if err != nil {
-				t.Fatalf("Prove(%d) failed: %v", index, err)
-			}
-			ok, err := restarted.Verify(root, index, query, proof)
-			if err != nil {
-				t.Fatalf("Verify(%d) with explicit slots failed: %v", index, err)
-			}
-			if !ok {
-				t.Fatalf("Verify(%d) with explicit slots returned false", index)
-			}
-			legacyProof := stripProofStepSlots(t, proof)
-
-			ok, err = restarted.Verify(root, index, query, legacyProof)
-			if err != nil {
-				t.Fatalf("Verify(%d) failed: %v", index, err)
-			}
-			if !ok {
-				t.Fatalf("Verify(%d) returned false", index)
-			}
-		})
-	}
-}
-
-func TestTreeListVerifiesModernMultiLevelProofWithoutStepSlots(t *testing.T) {
-	ctx := context.Background()
-	values := makeValues(300)
-	index := uint64(layout.BranchingFactor)
-
-	for name, factory := range listSchemes() {
-		t.Run(name, func(t *testing.T) {
-			kv := kvmemory.New()
-			namespace := "tree-modern-proof-without-slots-" + name
+			namespace := "tree-proof-without-slots-" + name
 
 			semantic := newList(t, factory, kv)
 			root, err := semantic.Commit(ctx, namespace, list.NewViewFromSlice(values))
@@ -324,9 +246,9 @@ func TestTreeListVerifiesModernMultiLevelProofWithoutStepSlots(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Prove(%d) failed: %v", index, err)
 			}
-			legacyProof := stripProofStepSlots(t, proof)
+			strippedProof := stripProofStepSlots(t, proof)
 
-			ok, err := semantic.Verify(root, index, query, legacyProof)
+			ok, err := semantic.Verify(root, index, query, strippedProof)
 			if err != nil {
 				t.Fatalf("Verify(%d) failed: %v", index, err)
 			}
@@ -337,29 +259,27 @@ func TestTreeListVerifiesModernMultiLevelProofWithoutStepSlots(t *testing.T) {
 	}
 }
 
-func TestTreeListAppendIntoLegacyChildPreservesSlotZero(t *testing.T) {
+func TestTreeListAppendIntoChildUpdatesSlotZeroMetadata(t *testing.T) {
 	ctx := context.Background()
 	values := makeValues(300)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := kvmemory.New()
-			namespace := "tree-legacy-append-" + name
+			namespace := "tree-child-append-" + name
 			scheme := factory(t)
-			_, e, err := newListWithArcTable(scheme, kv)
+			restarted, e, err := newListWithArcTable(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithArcTable failed: %v", err)
 			}
-			root := commitLegacyPlainListRoot(t, ctx, scheme, e, namespace, values)
-
-			restarted, err := tree.NewList(scheme, e)
+			root, err := restarted.Commit(ctx, namespace, list.NewViewFromSlice(values))
 			if err != nil {
-				t.Fatalf("NewList after restart failed: %v", err)
+				t.Fatalf("Commit failed: %v", err)
 			}
-			appended := newPayloadCID([]byte("appended to legacy child"))
+			appended := newPayloadCID([]byte("appended to child"))
 			appendedRoot, appendedIndex, err := restarted.Append(ctx, namespace, root, appended)
 			if err != nil {
-				t.Fatalf("Append into legacy child failed: %v", err)
+				t.Fatalf("Append into child failed: %v", err)
 			}
 			if appendedIndex != uint64(len(values)) {
 				t.Fatalf("append index = %d, want %d", appendedIndex, len(values))
@@ -377,6 +297,22 @@ func TestTreeListAppendIntoLegacyChildPreservesSlotZero(t *testing.T) {
 				Key:    appended,
 				Length: uint64(len(values) + 1),
 			})
+
+			secondChildRoot, err := e.Get(ctx, namespace, cid.Undef, layout.NodeSlotPath(appendedRoot, 2))
+			if err != nil {
+				t.Fatalf("fetch second child root: %v", err)
+			}
+			secondChildSlots, err := layout.LoadSlots(ctx, e, namespace, secondChildRoot, layout.NodeWidth)
+			if err != nil {
+				t.Fatalf("load second child slots: %v", err)
+			}
+			meta, err := layout.DecodeNodeMetadata(secondChildSlots[0])
+			if err != nil {
+				t.Fatalf("decode second child metadata: %v", err)
+			}
+			if meta.ChildCount != uint64(len(values)+1-layout.BranchingFactor) {
+				t.Fatalf("second child count = %d, want %d", meta.ChildCount, len(values)+1-layout.BranchingFactor)
+			}
 		})
 	}
 }
@@ -408,12 +344,12 @@ func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load child slots: %v", err)
 			}
-			childLen, err := layout.DecodeRootLength(childSlots[0])
+			childMeta, err := layout.DecodeNodeMetadata(childSlots[0])
 			if err != nil {
 				t.Fatalf("decode child metadata: %v", err)
 			}
-			if childLen != uint64(layout.BranchingFactor) {
-				t.Fatalf("child length = %d, want %d", childLen, layout.BranchingFactor)
+			if childMeta.ChildCount != uint64(layout.BranchingFactor) {
+				t.Fatalf("child length = %d, want %d", childMeta.ChildCount, layout.BranchingFactor)
 			}
 			if !childSlots[1].Equals(values[0]) {
 				t.Fatalf("child logical index 0 stored at slot 1 = %s, want %s", childSlots[1], values[0])
@@ -451,7 +387,7 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load first child slots: %v", err)
 			}
-			firstMeta, err := layout.DecodeFixedMetadata(firstChildSlots[0])
+			firstMeta, err := layout.DecodeNodeMetadata(firstChildSlots[0])
 			if err != nil {
 				t.Fatalf("decode first child fixed metadata: %v", err)
 			}
@@ -467,7 +403,7 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load second child slots: %v", err)
 			}
-			secondMeta, err := layout.DecodeFixedMetadata(secondChildSlots[0])
+			secondMeta, err := layout.DecodeNodeMetadata(secondChildSlots[0])
 			if err != nil {
 				t.Fatalf("decode second child fixed metadata: %v", err)
 			}
