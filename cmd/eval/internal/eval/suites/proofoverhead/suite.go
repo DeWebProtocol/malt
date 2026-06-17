@@ -357,8 +357,8 @@ func evidenceCount(structureName string, proof []byte) int {
 		return 1
 	}
 	var envelope struct {
-		LengthProof []byte `json:"length_proof"`
-		Steps       []struct {
+		MetadataProof []byte `json:"metadata_proof"`
+		Steps         []struct {
 			Proof []byte `json:"proof"`
 		} `json:"steps"`
 	}
@@ -366,7 +366,7 @@ func evidenceCount(structureName string, proof []byte) int {
 		return 1
 	}
 	count := 0
-	if len(envelope.LengthProof) > 0 {
+	if len(envelope.MetadataProof) > 0 {
 		count++
 	}
 	for _, step := range envelope.Steps {

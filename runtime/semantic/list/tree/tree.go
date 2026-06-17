@@ -27,9 +27,9 @@ type TreeList struct {
 }
 
 type proofEnvelope struct {
-	LengthProof  []byte      `json:"length_proof"`
-	LengthTarget []byte      `json:"length_target,omitempty"`
-	Steps        []proofStep `json:"steps,omitempty"`
+	MetadataProof  []byte      `json:"metadata_proof"`
+	MetadataTarget []byte      `json:"metadata_target,omitempty"`
+	Steps          []proofStep `json:"steps,omitempty"`
 }
 
 type proofStep struct {
@@ -106,15 +106,15 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 	}
 
 	query := list.Query{Length: length}
-	lengthTarget, lengthProof, err := s.commitment.ProveSlot(root, rootSlots, 0)
+	metadataTarget, metadataProof, err := s.commitment.ProveSlot(root, rootSlots, 0)
 	if err != nil {
 		return list.Query{}, nil, err
 	}
-	envelope := proofEnvelope{LengthProof: lengthProof}
-	if target, err := lengthTarget.AsCID(); err != nil {
+	envelope := proofEnvelope{MetadataProof: metadataProof}
+	if target, err := metadataTarget.AsCID(); err != nil {
 		return list.Query{}, nil, err
-	} else if needsExplicitLengthTarget(target, length) {
-		envelope.LengthTarget = lengthTarget.Bytes()
+	} else if needsExplicitMetadataTarget(target, length) {
+		envelope.MetadataTarget = metadataTarget.Bytes()
 	}
 
 	if index >= length {
@@ -171,15 +171,15 @@ func (s *TreeList) Verify(root cid.Cid, index uint64, expected list.Query, proof
 	if err := json.Unmarshal(proof, &envelope); err != nil {
 		return false, err
 	}
-	if len(envelope.LengthProof) == 0 {
-		return false, fmt.Errorf("missing length proof")
+	if len(envelope.MetadataProof) == 0 {
+		return false, fmt.Errorf("missing metadata proof")
 	}
 
-	lengthTarget, err := lengthTargetForVerify(expected.Length, envelope.LengthTarget)
+	metadataTarget, err := metadataTargetForVerify(expected.Length, envelope.MetadataTarget)
 	if err != nil {
 		return false, err
 	}
-	ok, err := s.commitment.VerifySlot(root, 0, lengthTarget, envelope.LengthProof)
+	ok, err := s.commitment.VerifySlot(root, 0, metadataTarget, envelope.MetadataProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -296,7 +296,7 @@ func (s *TreeList) VerifyRange(root cid.Cid, start uint64, end *uint64, expected
 	if len(envelope.MetadataProof) == 0 {
 		return false, fmt.Errorf("missing metadata proof")
 	}
-	meta := layout.FixedMetadata{
+	meta := layout.NodeMetadata{
 		ChildCount: expected.Metadata.ChildCount,
 		TotalSize:  expected.Metadata.TotalSize,
 		ChunkSize:  expected.Metadata.ChunkSize,
@@ -304,7 +304,7 @@ func (s *TreeList) VerifyRange(root cid.Cid, start uint64, end *uint64, expected
 	if err := validateFixedMetadata(meta); err != nil {
 		return false, err
 	}
-	ok, err := s.verifyFixedMetadataSlot(root, meta, envelope.MetadataProof)
+	ok, err := s.verifyMetadataSlot(root, meta, envelope.MetadataProof)
 	if err != nil || !ok {
 		return ok, err
 	}
@@ -963,11 +963,11 @@ func (s *TreeList) loadRoot(ctx context.Context, namespace string, root cid.Cid)
 	if err != nil {
 		return nil, 0, err
 	}
-	length, err := layout.DecodeRootLength(slots[0])
+	meta, err := layout.DecodeNodeMetadata(slots[0])
 	if err != nil {
 		return nil, 0, err
 	}
-	return slots, length, nil
+	return slots, meta.ChildCount, nil
 }
 
 func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid, isRoot bool) ([]cid.Cid, error) {
@@ -982,16 +982,6 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 	validateErr := s.validateSlots(root, slots)
 	if validateErr == nil {
 		return slots, nil
-	}
-	if !isRoot && width != layout.LegacyNodeWidth {
-		legacySlots, err := layout.LoadSlots(ctx, s.arctable, namespace, root, layout.LegacyNodeWidth)
-		if err != nil {
-			return nil, validateErr
-		}
-		if err := s.validateSlots(root, legacySlots); err == nil {
-			return legacySlots, nil
-		}
-		return nil, validateErr
 	}
 	return nil, validateErr
 }
@@ -1034,8 +1024,8 @@ func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []ci
 	return listRoot, nil
 }
 
-func (s *TreeList) verifyFixedMetadataSlot(root cid.Cid, meta layout.FixedMetadata, proof []byte) (bool, error) {
-	nodeMarker, err := layout.EncodeNodeMetadata(layout.NodeMetadata{
+func (s *TreeList) verifyMetadataSlot(root cid.Cid, meta layout.NodeMetadata, proof []byte) (bool, error) {
+	target, err := nodeMetadataCell(layout.NodeMetadata{
 		Height:     uint64(layout.RequiredHeight(meta.ChildCount)),
 		ChildCount: meta.ChildCount,
 		TotalSize:  meta.TotalSize,
@@ -1044,16 +1034,7 @@ func (s *TreeList) verifyFixedMetadataSlot(root cid.Cid, meta layout.FixedMetada
 	if err != nil {
 		return false, err
 	}
-	ok, err := s.commitment.VerifySlot(root, 0, commitment.CellFromCID(nodeMarker), proof)
-	if err != nil || ok {
-		return ok, err
-	}
-
-	legacyMarker, err := layout.EncodeFixedMetadata(meta)
-	if err != nil {
-		return false, err
-	}
-	return s.commitment.VerifySlot(root, 0, commitment.CellFromCID(legacyMarker), proof)
+	return s.commitment.VerifySlot(root, 0, target, proof)
 }
 
 func encodeProof(query list.Query, envelope proofEnvelope) (list.Query, structure.Proof, error) {
@@ -1131,66 +1112,62 @@ func (s *TreeList) verifyAnyContentSlot(root cid.Cid, slots []uint64, target com
 }
 
 func contentSlotsForVerify(step proofStep, isRoot bool, digit int) ([]uint64, error) {
-	v2Slot := uint64(digit) + 1
+	slot := uint64(digit) + 1
 	if step.Slot == nil {
-		if isRoot {
-			return []uint64{v2Slot}, nil
-		}
-		return []uint64{v2Slot, uint64(digit)}, nil
-	}
-	slot := *step.Slot
-	if isRoot {
-		if slot != v2Slot {
-			return nil, fmt.Errorf("root content digit %d proved slot %d, want %d", digit, slot, v2Slot)
-		}
 		return []uint64{slot}, nil
 	}
-	if slot != uint64(digit) && slot != v2Slot {
-		return nil, fmt.Errorf("content digit %d proved unsupported slot %d", digit, slot)
+	provedSlot := *step.Slot
+	if provedSlot != slot {
+		return nil, fmt.Errorf("content digit %d proved slot %d, want %d", digit, provedSlot, slot)
 	}
-	return []uint64{slot}, nil
+	return []uint64{provedSlot}, nil
 }
 
-func needsExplicitLengthTarget(marker cid.Cid, length uint64) bool {
-	legacy, err := layout.EncodeLengthMarker(length)
+func needsExplicitMetadataTarget(marker cid.Cid, length uint64) bool {
+	plainMarker, err := layout.EncodeNodeMetadata(layout.NodeMetadata{
+		Height:     uint64(layout.RequiredHeight(length)),
+		ChildCount: length,
+	})
 	if err != nil {
 		return true
 	}
-	return !marker.Equals(legacy)
+	return !marker.Equals(plainMarker)
 }
 
-func lengthTargetForVerify(expectedLength uint64, explicit []byte) (commitment.Cell, error) {
+func metadataTargetForVerify(expectedLength uint64, explicit []byte) (commitment.Cell, error) {
 	if len(explicit) == 0 {
-		lengthMarker, err := layout.EncodeLengthMarker(expectedLength)
-		if err != nil {
-			return nil, err
-		}
-		return commitment.CellFromCID(lengthMarker), nil
+		return nodeMetadataCell(layout.NodeMetadata{
+			Height:     uint64(layout.RequiredHeight(expectedLength)),
+			ChildCount: expectedLength,
+		})
 	}
 	cell := commitment.NewCell(explicit)
 	marker, err := cell.AsCID()
 	if err != nil {
 		return nil, err
 	}
-	length, err := layout.DecodeRootLength(marker)
+	meta, err := layout.DecodeNodeMetadata(marker)
 	if err != nil {
 		return nil, err
 	}
-	if length != expectedLength {
-		return nil, fmt.Errorf("length target commits child count %d, expected %d", length, expectedLength)
+	if meta.ChildCount != expectedLength {
+		return nil, fmt.Errorf("metadata target commits child count %d, expected %d", meta.ChildCount, expectedLength)
 	}
 	return cell, nil
 }
 
-func fixedRangeMetadata(marker cid.Cid) (layout.FixedMetadata, error) {
-	meta, err := layout.DecodeFixedMetadata(marker)
+func fixedRangeMetadata(marker cid.Cid) (layout.NodeMetadata, error) {
+	meta, err := layout.DecodeNodeMetadata(marker)
 	if err != nil {
-		return layout.FixedMetadata{}, fmt.Errorf("root does not carry fixed range metadata: %w", err)
+		return layout.NodeMetadata{}, fmt.Errorf("root does not carry node metadata: %w", err)
+	}
+	if meta.ChunkSize == 0 {
+		return layout.NodeMetadata{}, fmt.Errorf("root does not carry fixed range metadata")
 	}
 	return meta, nil
 }
 
-func validateFixedMetadata(meta layout.FixedMetadata) error {
+func validateFixedMetadata(meta layout.NodeMetadata) error {
 	if meta.ChunkSize == 0 {
 		return fmt.Errorf("chunk size is zero")
 	}
@@ -1198,6 +1175,14 @@ func validateFixedMetadata(meta layout.FixedMetadata) error {
 		return fmt.Errorf("child count %d does not match total size %d and chunk size %d", meta.ChildCount, meta.TotalSize, meta.ChunkSize)
 	}
 	return nil
+}
+
+func nodeMetadataCell(meta layout.NodeMetadata) (commitment.Cell, error) {
+	marker, err := layout.EncodeNodeMetadata(meta)
+	if err != nil {
+		return nil, err
+	}
+	return commitment.CellFromCID(marker), nil
 }
 
 func plainNodeMetadata(height int, childCount uint64) (cid.Cid, error) {
@@ -1287,12 +1272,7 @@ func cloneSlots(slots []cid.Cid) []cid.Cid {
 }
 
 func cloneSlotsForMetadataMutation(slots []cid.Cid) []cid.Cid {
-	if len(slots) != layout.LegacyNodeWidth {
-		return cloneSlots(slots)
-	}
-	nextSlots := layout.EmptyNodeSlots()
-	copy(layout.ContentSlots(nextSlots, false), slots)
-	return nextSlots
+	return cloneSlots(slots)
 }
 
 var _ list.Semantics = (*TreeList)(nil)
