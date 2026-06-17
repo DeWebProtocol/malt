@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	// DefaultFanout is the v1 default commitment width for list nodes.
-	// The current KZG backend supports 256 slots per commitment, so v1 fixes
-	// this value to 256.
+	// DefaultFanout is the default commitment width for list nodes.
+	// The current KZG backend supports 256 slots per commitment, so this
+	// value is fixed to 256.
 	DefaultFanout = 256
 
 	// BranchingFactor is the number of content slots per committed list node.
@@ -25,8 +25,7 @@ const (
 	// Slot 0 in every list node is reserved for authenticated node metadata, so
 	// all nodes expose (DefaultFanout-1) content slots.
 	//
-	// For simplicity, v2 uses the same branching factor for root and non-root
-	// nodes.
+	// Root and non-root nodes share the same branching factor.
 	BranchingFactor = DefaultFanout - 1
 
 	// RootWidth is the fixed slot width for the committed root node.
@@ -36,10 +35,10 @@ const (
 	// NodeWidth is the fixed slot width for all committed non-root nodes.
 	NodeWidth = DefaultFanout
 
-	nodeMetaPrefix = "malt:list:node-meta:v2:"
+	nodeMetaPrefix = "malt:list:node-meta:"
 )
 
-// NodeMetadata is the authenticated metadata stored in slot 0 of every v2 list
+// NodeMetadata is the authenticated metadata stored in slot 0 of every list
 // tree node. ChunkSize == 0 identifies a plain list node; ChunkSize > 0
 // identifies a fixed-width measured node whose TotalSize is the byte span
 // covered by that subtree.
@@ -51,7 +50,7 @@ type NodeMetadata struct {
 }
 
 // ValidateCommitment checks whether the supplied index commitment can support
-// the v2 list layout.
+// the list layout.
 func ValidateCommitment(scheme commitment.IndexCommitment) error {
 	if scheme == nil {
 		return fmt.Errorf("index commitment is nil")
@@ -206,7 +205,7 @@ func VerifySlot(scheme commitment.IndexCommitment, root cid.Cid, slot uint64, va
 	return scheme.VerifyIndex(root, slot, value, proof)
 }
 
-// EncodeNodeMetadata encodes authenticated v2 list node metadata as a
+// EncodeNodeMetadata encodes authenticated list node metadata as a
 // self-describing identity CID.
 func EncodeNodeMetadata(meta NodeMetadata) (cid.Cid, error) {
 	if meta.ChunkSize == 0 && meta.TotalSize != 0 {
@@ -229,7 +228,7 @@ func EncodeNodeMetadata(meta NodeMetadata) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, sum), nil
 }
 
-// DecodeNodeMetadata parses authenticated v2 list node metadata.
+// DecodeNodeMetadata parses authenticated list node metadata.
 func DecodeNodeMetadata(marker cid.Cid) (NodeMetadata, error) {
 	if !marker.Defined() {
 		return NodeMetadata{}, fmt.Errorf("node metadata marker is undefined")
