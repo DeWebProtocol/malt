@@ -14,7 +14,6 @@ import (
 
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
-	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/graph/writer"
@@ -40,7 +39,7 @@ var (
 	errLegacyRootRequiresMigrationOptIn = errors.New("root is not a UnixFS root; pass migrate=1 to opt into legacy tree migration")
 )
 
-func (s *Server) statForResolvedKey(ctx context.Context, g graph.Runtime, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
+func (s *Server) statForResolvedKey(ctx context.Context, g runtimeGraph, key cid.Cid) (*httpapi.PathStatResponse, cid.Cid, error) {
 	stat, err := s.pathStatForTarget(ctx, g, key, false)
 	if err != nil {
 		return nil, cid.Undef, err
@@ -66,7 +65,7 @@ func statReadTarget(stat *httpapi.PathStatResponse) (cid.Cid, error) {
 	return decodeCID(target)
 }
 
-func (s *Server) pathStatForTarget(ctx context.Context, g graph.Runtime, target cid.Cid, rawMustExist bool) (*httpapi.PathStatResponse, error) {
+func (s *Server) pathStatForTarget(ctx context.Context, g runtimeGraph, target cid.Cid, rawMustExist bool) (*httpapi.PathStatResponse, error) {
 	if entries, ok, err := unixfs.ManifestDirectoryEntries(ctx, s.node.CAS(), target); ok || err != nil {
 		if err != nil {
 			return nil, err
@@ -126,7 +125,7 @@ func (s *Server) pathStatForTarget(ctx context.Context, g graph.Runtime, target 
 	}
 }
 
-func (s *Server) readProofList(ctx context.Context, g graph.Runtime, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
+func (s *Server) readProofList(ctx context.Context, g runtimeGraph, resolved *pathResolution, start, endExclusive int64) (*prooflist.ProofList, error) {
 	if resolved == nil || resolved.proofList == nil {
 		return nil, fmt.Errorf("resolution prooflist is missing")
 	}
@@ -151,11 +150,11 @@ func (s *Server) readProofList(ctx context.Context, g graph.Runtime, resolved *p
 	return &pl, nil
 }
 
-func (s *Server) statFromFlatTarget(ctx context.Context, g graph.Runtime, target cid.Cid) (*httpapi.PathStatResponse, error) {
+func (s *Server) statFromFlatTarget(ctx context.Context, g runtimeGraph, target cid.Cid) (*httpapi.PathStatResponse, error) {
 	return s.pathStatForTarget(ctx, g, target, true)
 }
 
-func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
+func (s *Server) legacyPathStat(ctx context.Context, g runtimeGraph, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
 	keyResult, err := g.Resolver().ResolveKey(root, path)
 	if err != nil {
 		return nil, err
@@ -173,7 +172,7 @@ func (s *Server) legacyPathStat(ctx context.Context, g graph.Runtime, root cid.C
 	return s.pathStatForTarget(ctx, g, key, false)
 }
 
-func (s *Server) unixFSLayout(g graph.Runtime) (*unixfs.Layout, error) {
+func (s *Server) unixFSLayout(g runtimeGraph) (*unixfs.Layout, error) {
 	blocks, ok := s.node.CAS().(cas.Client)
 	if !ok {
 		return nil, fmt.Errorf("configured CAS does not support writes")
@@ -186,7 +185,7 @@ func (s *Server) unixFSLayout(g graph.Runtime) (*unixfs.Layout, error) {
 	})
 }
 
-func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
+func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, nil
 	}
@@ -204,7 +203,7 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g graph.Runtime, layout 
 	return cid.Undef, nil
 }
 
-func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
+func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
 	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
 		if maltcid.SemanticKindOf(newRoot) != maltcid.SemanticKindMap {
 			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
@@ -230,15 +229,15 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g graph.Runtime,
 	return receipt, nil
 }
 
-func (s *Server) applyWriterMutation(ctx context.Context, g graph.Runtime, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
+func (s *Server) applyWriterMutation(ctx context.Context, g runtimeGraph, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
 	return graphService{runtime: g}.ApplyMutation(ctx, mut)
 }
 
-func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
+func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
 	return s.copyLegacyPathToUnixFS(ctx, g, layout, legacyRoot, "", cid.Undef, "")
 }
 
-func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g graph.Runtime, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
+func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
 	stat, err := s.legacyPathStat(ctx, g, legacyRoot, legacyPath)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("migrate legacy path %q: %w", legacyPath, err)
@@ -300,7 +299,7 @@ func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.Pat
 	return unixfs.DirectoryManifestPayloadEntries(ctx, s.node.CAS(), payloadCID)
 }
 
-func (s *Server) readStatFile(ctx context.Context, g graph.Runtime, stat *httpapi.PathStatResponse) ([]byte, error) {
+func (s *Server) readStatFile(ctx context.Context, g runtimeGraph, stat *httpapi.PathStatResponse) ([]byte, error) {
 	if stat == nil || stat.Kind != "file" {
 		return nil, fmt.Errorf("file stat is required")
 	}
@@ -327,7 +326,7 @@ func (s *Server) readStatFile(ctx context.Context, g graph.Runtime, stat *httpap
 	}
 }
 
-func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
+func (s *Server) unixFSPathStat(ctx context.Context, g runtimeGraph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		return nil, err
@@ -363,7 +362,7 @@ func (s *Server) unixFSPathStat(ctx context.Context, g graph.Runtime, root cid.C
 	}
 }
 
-func (s *Server) listFileSize(ctx context.Context, g graph.Runtime, listRoot cid.Cid) (int64, uint64, error) {
+func (s *Server) listFileSize(ctx context.Context, g runtimeGraph, listRoot cid.Cid) (int64, uint64, error) {
 	layout, err := s.unixFSLayout(g)
 	if err != nil {
 		return 0, 0, err
@@ -372,7 +371,7 @@ func (s *Server) listFileSize(ctx context.Context, g graph.Runtime, listRoot cid
 	return int64(size), count, err
 }
 
-func (s *Server) readListRange(ctx context.Context, g graph.Runtime, listRoot cid.Cid, start, endExclusive int64) ([]byte, error) {
+func (s *Server) readListRange(ctx context.Context, g runtimeGraph, listRoot cid.Cid, start, endExclusive int64) ([]byte, error) {
 	if endExclusive <= start {
 		return []byte{}, nil
 	}
@@ -447,7 +446,7 @@ func resolveMiss(_ cid.Cid, _ string, result *resolver.ResolveResult) bool {
 	return !result.RemainingPath.IsEmpty()
 }
 
-func mandatoryMapPayload(ctx context.Context, g graph.Runtime, root cid.Cid) (cid.Cid, error) {
+func mandatoryMapPayload(ctx context.Context, g runtimeGraph, root cid.Cid) (cid.Cid, error) {
 	payload, err := g.Writer().GetArc(ctx, g.Namespace(), root, explicit.PayloadArc.String())
 	if err != nil {
 		return cid.Undef, err

@@ -11,7 +11,6 @@ import (
 
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/arcset"
-	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/runtime/node"
 	cid "github.com/ipfs/go-cid"
 )
@@ -25,7 +24,7 @@ type Server struct {
 	lifecycleToken string
 	browserOrigins *browserOriginPolicy
 	server         *http.Server
-	defaultGraph   graph.Runtime
+	defaultGraph   runtimeGraph
 	graphMu        sync.Mutex
 }
 
@@ -158,7 +157,7 @@ func (s *Server) handleRemovedPublicRoute(w http.ResponseWriter, r *http.Request
 	writeError(w, http.StatusNotFound, "not found")
 }
 
-func (s *Server) getOrCreateGraph(ctx context.Context) (graph.Runtime, error) {
+func (s *Server) getOrCreateGraph(ctx context.Context) (runtimeGraph, error) {
 	s.graphMu.Lock()
 	defer s.graphMu.Unlock()
 	if s.defaultGraph != nil {

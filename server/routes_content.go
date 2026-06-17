@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/dewebprotocol/malt/api/http"
-	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/storage/cas"
 	cid "github.com/ipfs/go-cid"
@@ -129,7 +128,7 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, bytes.NewReader(payload))
 }
 
-func (s *Server) readContentPayload(ctx context.Context, g graph.Runtime, stat *httpapi.PathStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
+func (s *Server) readContentPayload(ctx context.Context, g runtimeGraph, stat *httpapi.PathStatResponse, key cid.Cid, start, endExclusive int64) ([]byte, error) {
 	switch stat.StorageKind {
 	case "raw":
 		raw, err := s.node.CAS().Get(ctx, key)

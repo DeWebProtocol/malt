@@ -280,7 +280,7 @@ func TestServerGraphServiceUsesInjectedRuntime(t *testing.T) {
 	}
 }
 
-var _ graph.Runtime = (*stubGraphRuntime)(nil)
+var _ runtimeGraph = (*stubGraphRuntime)(nil)
 
 type stubGraphRuntime struct {
 	id        string

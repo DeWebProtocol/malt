@@ -18,8 +18,9 @@ import (
 	"github.com/dewebprotocol/malt/storage/cas"
 )
 
-// RuntimeGraph is a per-graph unit combining resolver (read) and writer (write).
-// It is stateless: the root CID is always passed as a parameter, never held internally.
+// RuntimeGraph is a per-graph runtime composition of semantic implementations,
+// resolver, and writer. It does not own authoritative heads or freshness policy.
+// The root CID is always supplied by callers.
 type RuntimeGraph struct {
 	id           string
 	namespace    string

@@ -12,7 +12,6 @@ import (
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	"github.com/dewebprotocol/malt/runtime/arctable/versioned"
@@ -225,7 +224,7 @@ func (n *Node) CreateManagedGraph(ctx context.Context, id string, backend string
 // OpenGraph opens a managed graph using the runtime profile stored in GraphMeta.
 // The persisted backend selects the commitment scheme; the persisted ArcTable type
 // must match the node's shared ArcTable implementation.
-func (n *Node) OpenGraph(ctx context.Context, id string) (graph.Runtime, error) {
+func (n *Node) OpenGraph(ctx context.Context, id string) (*runtimegraph.RuntimeGraph, error) {
 	meta, err := n.graphManager.GetGraph(ctx, id)
 	if err != nil {
 		return nil, err
@@ -258,7 +257,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (graph.Runtime, error) 
 //   - opts: functional options (runtimegraph.WithCommitmentScheme, runtimegraph.WithNamespace, etc.)
 //
 // The Node auto-injects shared infrastructure (ArcTable, CAS).
-func (n *Node) NewGraph(id string, opts ...runtimegraph.Option) (graph.Runtime, error) {
+func (n *Node) NewGraph(id string, opts ...runtimegraph.Option) (*runtimegraph.RuntimeGraph, error) {
 	o := &runtimegraph.Options{}
 	for _, opt := range opts {
 		opt(o)
