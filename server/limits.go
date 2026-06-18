@@ -102,10 +102,16 @@ func writeBodyDecodeError(w http.ResponseWriter, err error) {
 //
 // MaxBytesReader on its own only counts bytes a handler actually reads, so
 // json.Decoder.Decode can return after the first value while a megabyte-sized
-// suffix sits unread. We close that gap two ways:
+// suffix sits unread. We close that gap three ways:
 //
 //   - Content-Length fast reject: when the client advertises a size larger
 //     than the limit we refuse to read anything at all.
+//   - Reject trailing content: json.Decoder keeps an internal buffer that
+//     io.Copy(io.Discard, r.Body) cannot see. After the first Decode we ask
+//     the same decoder for a second value so anything left in the buffer or
+//     in the body (a second JSON value, garbage, or just oversized
+//     whitespace) is surfaced. A body with more than one value is rejected
+//     as malformed, never silently processed as the first.
 //   - Drain after Decode: io.Copy(io.Discard, r.Body) keeps reading through
 //     the same MaxBytesReader so an oversized suffix (chunked or otherwise)
 //     surfaces as a MaxBytesError and the handler returns 413.
@@ -120,7 +126,25 @@ func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any)
 	if r == nil || r.Body == nil {
 		return errors.New("request has no body")
 	}
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	// Confirm exactly one JSON value. Reusing the same decoder is essential:
+	// it has already pre-read bytes from r.Body into an internal buffer that
+	// a fresh io.Copy would not see, so we can only detect a second value or
+	// trailing garbage by asking this decoder for the next token.
+	var trailing json.RawMessage
+	switch err := dec.Decode(&trailing); {
+	case err == nil:
+		// A second value parsed cleanly — reject rather than silently use
+		// the first.
+		return errTrailingJSON
+	case errors.Is(err, io.EOF):
+		// Only whitespace/EOF after the first value. Fall through and drain
+		// the underlying body so oversized suffixes still trip the limit.
+	default:
+		// Anything else is trailing garbage or a malformed second value.
 		return err
 	}
 	// Drain whatever the decoder left behind. If it pushes the cumulative
@@ -131,3 +155,8 @@ func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any)
 	}
 	return nil
 }
+
+// errTrailingJSON signals that a request body contained more than a single
+// JSON value. It is a 400-class error (not a 413): the body was accepted
+// under the size limit, just structured wrong.
+var errTrailingJSON = errors.New("request body must contain a single JSON value")

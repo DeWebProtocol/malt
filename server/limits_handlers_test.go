@@ -157,6 +157,69 @@ func TestDecodeJSONBody_ToleratesNoBody(t *testing.T) {
 	}
 }
 
+// TestHandleCreateStructure_400WhenTrailingSecondValue locks in the decoder
+// buffer fix: a body with two valid JSON values must not be silently
+// processed as the first. io.Copy(io.Discard, r.Body) cannot see bytes the
+// decoder pre-buffered, so the trailing check must reuse the same decoder.
+func TestHandleCreateStructure_400WhenTrailingSecondValue(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 4096}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Two small valid JSON objects. Total size well under the limit so the
+	// only thing that can catch this is the decoder-reuse check.
+	body := []byte(`{"arcs":{"@payload":"a"}} {"arcs":{"@payload":"b"}}`)
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /_: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (trailing JSON value must be rejected)", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// TestHandleCreateStructure_400WhenTrailingGarbage covers the garbage case
+// (no valid second JSON value, but bytes remain after the first).
+func TestHandleCreateStructure_400WhenTrailingGarbage(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 4096}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := []byte(`{"arcs":{"@payload":"a"}} --not json--`)
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /_: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (trailing garbage must be rejected)", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// TestHandleCreateStructure_400WhenTrailingValueEvenWithMaxBytesReader
+// confirms the decoder-reuse path is what catches the trailing value, not
+// the size guard. This is the exact pattern the reviewer flagged: small
+// valid JSON prefix, oversized suffix that fits in the decoder buffer.
+func TestHandleCreateStructure_400WhenTrailingValueEvenWithMaxBytesReader(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 4096}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := []byte(`{"arcs":{"@payload":"a"}} {"arcs":{"@payload":"` + strings.Repeat("b", 64) + `"}}`)
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /_: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
 // TestHandleSemanticMutation_413WhenJSONBodyExceedsLimit covers /{root}/_mutate.
 func TestHandleSemanticMutation_413WhenJSONBodyExceedsLimit(t *testing.T) {
 	n := newTestNode(t)
