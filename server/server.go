@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -17,12 +18,75 @@ import (
 
 const defaultRootGraphID = "default"
 
+// Conservative HTTP server hardening defaults. These are intentionally generous
+// for normal MALT workloads (large UnixFS uploads, slow CAS materialization)
+// but tight enough to keep a single misbehaving client from holding sockets
+// open indefinitely (slowloris) or burying the daemon under one giant header
+// stream.
+//
+// Callers that need different limits can override them via the
+// WithServerLimits option; tests in particular use much shorter timeouts.
+const (
+	// DefaultReadHeaderTimeout caps how long a client has to send the request
+	// line and headers. Bodies are read separately and may be longer-lived.
+	DefaultReadHeaderTimeout = 10 * time.Second
+
+	// DefaultIdleTimeout caps how long an idle keep-alive connection stays
+	// open between requests.
+	DefaultIdleTimeout = 60 * time.Second
+
+	// DefaultReadTimeout caps the total time for reading the request,
+	// including the body. Long uploads and JSON payloads may need this raised
+	// at the operator level.
+	DefaultReadTimeout = 5 * time.Minute
+
+	// DefaultWriteTimeout caps the total time spent writing a response back
+	// to a client. Range reads of very large list payloads may need this
+	// raised.
+	DefaultWriteTimeout = 5 * time.Minute
+
+	// DefaultMaxHeaderBytes caps total header size to prevent header-flood
+	// abuse and keep ProofList headers from silently exploding.
+	DefaultMaxHeaderBytes = 64 * 1024
+)
+
+// ServerLimits configures HTTP-level resource bounds for the daemon server.
+// Zero values fall back to the defaults above.
+type ServerLimits struct {
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+}
+
+func (l ServerLimits) withDefaults() ServerLimits {
+	if l.ReadHeaderTimeout <= 0 {
+		l.ReadHeaderTimeout = DefaultReadHeaderTimeout
+	}
+	if l.IdleTimeout <= 0 {
+		l.IdleTimeout = DefaultIdleTimeout
+	}
+	if l.ReadTimeout <= 0 {
+		l.ReadTimeout = DefaultReadTimeout
+	}
+	if l.WriteTimeout <= 0 {
+		l.WriteTimeout = DefaultWriteTimeout
+	}
+	if l.MaxHeaderBytes <= 0 {
+		l.MaxHeaderBytes = DefaultMaxHeaderBytes
+	}
+	return l
+}
+
 // Server serves the daemon HTTP API.
 type Server struct {
 	node           *node.Node
 	addr           string
 	lifecycleToken string
 	browserOrigins *browserOriginPolicy
+	limits         ServerLimits
+	bodyLimits     BodyLimits
 	server         *http.Server
 	defaultGraph   runtimeGraph
 	graphMu        sync.Mutex
@@ -47,6 +111,15 @@ func WithBrowserOrigins(origins []string) Option {
 	}
 }
 
+// WithServerLimits overrides the default HTTP-level resource bounds. Any zero
+// field falls back to the package defaults; this lets callers tune one knob
+// without restating the rest.
+func WithServerLimits(limits ServerLimits) Option {
+	return func(s *Server) {
+		s.limits = limits
+	}
+}
+
 // New creates a new daemon server.
 func New(node *node.Node, addr string, opts ...Option) *Server {
 	s := &Server{
@@ -56,6 +129,8 @@ func New(node *node.Node, addr string, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.limits = s.limits.withDefaults()
+	s.bodyLimits = s.bodyLimits.withDefaults()
 	return s
 }
 
@@ -79,8 +154,13 @@ func (s *Server) Handler() http.Handler {
 // Start starts the HTTP server.
 func (s *Server) Start() error {
 	s.server = &http.Server{
-		Addr:    s.addr,
-		Handler: s.Handler(),
+		Addr:              s.addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: s.limits.ReadHeaderTimeout,
+		ReadTimeout:       s.limits.ReadTimeout,
+		WriteTimeout:      s.limits.WriteTimeout,
+		IdleTimeout:       s.limits.IdleTimeout,
+		MaxHeaderBytes:    s.limits.MaxHeaderBytes,
 	}
 	return s.server.ListenAndServe()
 }

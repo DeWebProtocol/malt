@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/dewebprotocol/malt/api/http"
@@ -21,9 +20,10 @@ func (s *Server) handleSemanticMutation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.limitJSONBody(w, r)
 	var req httpapi.SemanticMutationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		writeBodyDecodeError(w, err)
 		return
 	}
 
@@ -58,9 +58,10 @@ func (s *Server) handleCreateStructure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.limitJSONBody(w, r)
 	var req httpapi.CreateStructureRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		writeBodyDecodeError(w, err)
 		return
 	}
 	if len(req.Arcs) == 0 {
