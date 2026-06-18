@@ -118,15 +118,42 @@ func NewNode(opts ...Option) (*Node, error) {
 
 	// CAS
 	if options.cas != nil {
+		// An explicit CAS reader is the caller's responsibility: tests use
+		// this to inject mocks they can later type-assert back, and
+		// integrators may wrap their own verification or caching logic.
+		// We only wrap when explicitly asked via WithCASVerification.
 		node.cas = options.cas
+		if options.forceCASVerification && !options.disableCASVerification {
+			node.cas = wrapCASWithVerification(node.cas)
+		}
 	} else {
 		node.cas, err = node.initCAS()
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize CAS: %w", err)
 		}
+		// The default config path goes through an external IPFS daemon, which
+		// the MALT trust model treats as untrusted execution state. Wrap it
+		// so a compromised CAS cannot smuggle tampered bytes through to
+		// clients via the daemon.
+		if !options.disableCASVerification {
+			node.cas = wrapCASWithVerification(node.cas)
+		}
 	}
 
 	return node, nil
+}
+
+// wrapCASWithVerification wraps a CAS reader so that returned bytes are
+// validated against the requested CID. The wrapper is idempotent: re-wrapping
+// is a no-op so callers can apply it without tracking state.
+func wrapCASWithVerification(reader cas.Reader) cas.Reader {
+	if reader == nil {
+		return nil
+	}
+	if _, ok := reader.(*cas.VerifyingReader); ok {
+		return reader
+	}
+	return cas.NewVerifyingReader(reader)
 }
 
 func (n *Node) installMetricsArcTable() {
