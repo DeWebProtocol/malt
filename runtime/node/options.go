@@ -22,16 +22,12 @@ type options struct {
 	cas      cas.Reader
 
 	// disableCASVerification disables the default CID-verifying wrapper around
-	// the read-side CAS client. The wrapper is on by default for the
-	// config-driven CAS path because the MALT trust model treats CAS as
-	// untrusted execution state; only call sites that have already verified
-	// content integrity (mocks, in-memory test harnesses) should turn it off.
+	// the read-side CAS client. The wrapper is on by default for both the
+	// config-driven CAS path and explicit WithCAS readers because the MALT
+	// trust model treats CAS as untrusted execution state. Tests that need
+	// to type-assert their mock back can set this so the assertion still
+	// finds the original reader.
 	disableCASVerification bool
-
-	// forceCASVerification forces the verifying wrapper even when an explicit
-	// CAS reader is supplied via WithCAS. Tests that want to exercise the
-	// verification path with a mock reader can opt in this way.
-	forceCASVerification bool
 }
 
 func defaultOptions() *options {
@@ -81,14 +77,5 @@ func WithCAS(c cas.Reader) Option {
 func WithoutCASVerification() Option {
 	return func(o *options) {
 		o.disableCASVerification = true
-	}
-}
-
-// WithCASVerification forces the CID-verifying wrapper even when an explicit
-// CAS reader is supplied via WithCAS. Useful for integration tests that want
-// to exercise the verification path against a mock CAS.
-func WithCASVerification() Option {
-	return func(o *options) {
-		o.forceCASVerification = true
 	}
 }

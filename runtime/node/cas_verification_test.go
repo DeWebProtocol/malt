@@ -33,28 +33,15 @@ func TestNewNode_WrapsAutoInitCAS(t *testing.T) {
 	}
 }
 
-// TestNewNode_ExplicitCASPassesThrough confirms tests that inject a mock CAS
-// can still type-assert it back; the wrapper is opt-in for explicit readers.
-func TestNewNode_ExplicitCASPassesThrough(t *testing.T) {
-	mock := casmock.NewCAS()
-	n, err := NewNode(append(testNodeOptions(t), WithCAS(mock))...)
-	if err != nil {
-		t.Fatalf("NewNode: %v", err)
-	}
-	defer n.Close()
-	if got := n.CAS(); got != cas.Reader(mock) {
-		t.Fatalf("CAS = %T (%p), want supplied mock %p", got, got, mock)
-	}
-}
-
-// TestNewNode_WithCASVerification_ForcesWrappingExplicitReader confirms
-// callers can opt the explicit-CAS path back into verification.
-func TestNewNode_WithCASVerification_ForcesWrappingExplicitReader(t *testing.T) {
+// TestNewNode_ExplicitCASIsAlsoWrapped pins the post-review default: even
+// callers that supply their own CAS via WithCAS get the verifying wrapper.
+// Production callers that pass ipfs.NewClient(...) cannot accidentally bypass
+// the V3 protection.
+func TestNewNode_ExplicitCASIsAlsoWrapped(t *testing.T) {
 	mock := casmock.NewCAS()
 	n, err := NewNode(
 		WithConfig(testConfig(t)),
 		WithCAS(mock),
-		WithCASVerification(),
 	)
 	if err != nil {
 		t.Fatalf("NewNode: %v", err)
@@ -71,7 +58,8 @@ func TestNewNode_WithCASVerification_ForcesWrappingExplicitReader(t *testing.T) 
 }
 
 // TestNewNode_WithoutCASVerification_DisablesAutoWrap exercises the escape
-// hatch for environments that already verify content elsewhere.
+// hatch for environments that already verify content elsewhere or for tests
+// that need to type-assert the inner reader back.
 func TestNewNode_WithoutCASVerification_DisablesAutoWrap(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.State.RootDir = t.TempDir()
@@ -90,9 +78,28 @@ func TestNewNode_WithoutCASVerification_DisablesAutoWrap(t *testing.T) {
 	}
 }
 
+// TestNewNode_WithoutCASVerification_DisablesExplicitCASWrap covers the same
+// opt-out for an explicit CAS reader (the path used by the test harness).
+func TestNewNode_WithoutCASVerification_DisablesExplicitCASWrap(t *testing.T) {
+	mock := casmock.NewCAS()
+	n, err := NewNode(
+		WithConfig(testConfig(t)),
+		WithCAS(mock),
+		WithoutCASVerification(),
+	)
+	if err != nil {
+		t.Fatalf("NewNode: %v", err)
+	}
+	defer n.Close()
+	if got := n.CAS(); got != cas.Reader(mock) {
+		t.Fatalf("CAS = %T (%p), want supplied mock %p", got, got, mock)
+	}
+}
+
 // TestNewNode_VerificationCatchesTamperedCAS plugs an explicit CAS that
-// returns mismatched bytes, opts into verification, and confirms Get rejects
-// the corrupted block. This is the end-to-end guarantee that V3 closes.
+// returns mismatched bytes and confirms Get rejects the corrupted block.
+// This is the end-to-end guarantee that V3 closes; under the post-review
+// default the wrapper is on without any opt-in option.
 func TestNewNode_VerificationCatchesTamperedCAS(t *testing.T) {
 	mock := casmock.NewCAS()
 	hash, err := mh.Sum([]byte("real"), mh.SHA2_256, -1)
@@ -105,7 +112,6 @@ func TestNewNode_VerificationCatchesTamperedCAS(t *testing.T) {
 	n, err := NewNode(
 		WithConfig(testConfig(t)),
 		WithCAS(mock),
-		WithCASVerification(),
 	)
 	if err != nil {
 		t.Fatalf("NewNode: %v", err)

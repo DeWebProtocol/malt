@@ -97,22 +97,32 @@ func (v *VerifyingReader) HasBatch(ctx context.Context, cids []cid.Cid) ([]bool,
 // error so callers can distinguish "not configured" from "rejected".
 var errReadOnlyCAS = errors.New("cas: underlying reader does not support writes")
 
-// Put forwards to the inner reader if it implements Writer. The verifying
-// wrapper does not gate writes because content addressing already guarantees
-// integrity: the writer derives the CID from the bytes it just stored.
+// Put forwards to the inner reader if it implements Writer and verifies the
+// returned CID actually matches the bytes that were written. A malicious
+// remote CAS that swaps in a fabricated CID at upload time would otherwise
+// let a MALT root reference content the writer never produced.
 func (v *VerifyingReader) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	w, ok := v.inner.(Writer)
 	if !ok {
 		return cid.Undef, errReadOnlyCAS
 	}
-	return w.Put(ctx, data)
+	got, err := w.Put(ctx, data)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return verifyPutResult(got, data)
 }
 
-// PutWithCodec forwards to the inner reader if it implements TypedWriter.
-// Falls back to Put for cid.Raw when typed writes are unavailable.
+// PutWithCodec forwards to the inner reader if it implements TypedWriter and
+// verifies the returned CID actually matches the bytes plus codec that were
+// written. Falls back to Put for cid.Raw when typed writes are unavailable.
 func (v *VerifyingReader) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
 	if tw, ok := v.inner.(TypedWriter); ok {
-		return tw.PutWithCodec(ctx, data, codec)
+		got, err := tw.PutWithCodec(ctx, data, codec)
+		if err != nil {
+			return cid.Undef, err
+		}
+		return verifyPutResult(got, data)
 	}
 	if NormalizeCodec(codec) == cid.Raw {
 		return v.Put(ctx, data)
@@ -120,22 +130,78 @@ func (v *VerifyingReader) PutWithCodec(ctx context.Context, data []byte, codec u
 	return cid.Undef, errReadOnlyCAS
 }
 
-// PutBatch forwards to the inner reader if it implements BatchWriter.
-// Otherwise falls back to per-block PutWithCodec via the cas package's
-// PutBlocks helper, exactly as cas.PutBlocks does for non-batch writers.
-//
-// The fallback dispatches against the inner Writer (not the wrapper itself)
-// because PutBlocks routes BatchWriter implementations through their own
-// PutBatch; passing v back into PutBlocks would recurse forever.
+// PutBatch forwards to the inner reader if it implements BatchWriter, then
+// verifies every successfully-stored CID against its source bytes. The
+// non-batch fallback dispatches per-block through the wrapper's verifying
+// PutWithCodec so corrupt CIDs are rejected at the same boundary as the
+// batch path.
 func (v *VerifyingReader) PutBatch(ctx context.Context, blocks []Block) ([]PutResult, error) {
-	if bw, ok := v.inner.(BatchWriter); ok {
-		return bw.PutBatch(ctx, blocks)
+	if len(blocks) == 0 {
+		return []PutResult{}, nil
 	}
-	w, ok := v.inner.(Writer)
-	if !ok {
+	if bw, ok := v.inner.(BatchWriter); ok {
+		results, err := bw.PutBatch(ctx, blocks)
+		if err != nil {
+			return nil, err
+		}
+		if err := verifyBatchResults(blocks, results); err != nil {
+			return nil, err
+		}
+		return results, nil
+	}
+	if _, ok := v.inner.(Writer); !ok {
 		return nil, errReadOnlyCAS
 	}
-	return PutBlocks(ctx, w, blocks)
+	results := make([]PutResult, len(blocks))
+	for i, b := range blocks {
+		codec := NormalizeCodec(b.Codec)
+		got, err := v.PutWithCodec(ctx, b.Data, codec)
+		if err != nil {
+			return nil, err
+		}
+		results[i] = PutResult{CID: got, Status: PutStatusStored}
+	}
+	return results, nil
+}
+
+// verifyPutResult recomputes the CID a writer claims to have stored and
+// rejects with ErrCorruptedBlock if the claim does not match the bytes.
+// undefined CIDs always fail; the writer must commit to a content address.
+func verifyPutResult(got cid.Cid, data []byte) (cid.Cid, error) {
+	if !got.Defined() {
+		return cid.Undef, fmt.Errorf("%w: writer returned undefined CID", ErrCorruptedBlock)
+	}
+	want, err := cidForData(got, data)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("%w: %v", ErrCorruptedBlock, err)
+	}
+	if !want.Equals(got) {
+		return cid.Undef, fmt.Errorf("%w: writer claimed %s for bytes whose CID is %s", ErrCorruptedBlock, got, want)
+	}
+	return got, nil
+}
+
+// verifyBatchResults walks parallel slices of input blocks and writer
+// results, recomputing the CID for every result entry. PutResult has no
+// per-entry error channel: any failure is reported as the top-level error
+// from PutBatch, so all returned entries are claims of "stored" that the
+// wrapper must validate.
+func verifyBatchResults(blocks []Block, results []PutResult) error {
+	if len(results) != len(blocks) {
+		return fmt.Errorf("%w: writer returned %d results for %d blocks", ErrCorruptedBlock, len(results), len(blocks))
+	}
+	for i, r := range results {
+		if !r.CID.Defined() {
+			// A skipped or sentinel result with no CID has nothing to
+			// verify; let it pass through unchanged so existing dedup
+			// behavior in batch writers stays observable.
+			continue
+		}
+		if _, err := verifyPutResult(r.CID, blocks[i].Data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SnapshotStats forwards to the inner reader if it provides a metrics

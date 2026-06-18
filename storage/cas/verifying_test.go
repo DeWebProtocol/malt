@@ -400,3 +400,201 @@ func TestVerifyingReader_PutBatchFallsBackToPerBlockPut(t *testing.T) {
 		t.Fatalf("expected 2 per-block writes, got results=%d puts=%d", len(results), len(inner.puts))
 	}
 }
+
+// lyingWriter is a writer that returns CIDs unrelated to the bytes it was
+// asked to store. The verifying wrapper must reject those CIDs so a
+// downstream root commitment cannot point at content the writer never
+// produced.
+type lyingWriter struct {
+	*fixedReader
+	cidOverride cid.Cid
+	codec       uint64
+	codecHit    uint64
+	calls       int
+}
+
+func (w *lyingWriter) Put(_ context.Context, _ []byte) (cid.Cid, error) {
+	w.calls++
+	w.codecHit = cid.Raw
+	return w.cidOverride, nil
+}
+
+func (w *lyingWriter) PutWithCodec(_ context.Context, _ []byte, codec uint64) (cid.Cid, error) {
+	w.calls++
+	w.codecHit = codec
+	return w.cidOverride, nil
+}
+
+func TestVerifyingReader_Put_RejectsLyingWriter(t *testing.T) {
+	// Writer returns a CID for completely different bytes — what a
+	// compromised remote CAS could do during upload.
+	bogusCID := cidForRawData([]byte("not the bytes we wrote"))
+	inner := &lyingWriter{fixedReader: &fixedReader{}, cidOverride: bogusCID}
+	v := cas.NewVerifyingReader(inner)
+
+	_, err := v.Put(context.Background(), []byte("real content"))
+	if err == nil {
+		t.Fatal("expected ErrCorruptedBlock for lying writer")
+	}
+	if !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("error %v is not ErrCorruptedBlock", err)
+	}
+	if inner.calls != 1 {
+		t.Fatalf("inner Put calls = %d, want 1", inner.calls)
+	}
+}
+
+func TestVerifyingReader_PutWithCodec_RejectsLyingWriter(t *testing.T) {
+	const codec uint64 = 0x71 // dag-cbor
+	// Build a CID with the correct codec but for unrelated bytes.
+	hash, _ := mh.Sum([]byte("forged"), mh.SHA2_256, -1)
+	bogusCID := cid.NewCidV1(codec, hash)
+	inner := &lyingWriter{fixedReader: &fixedReader{}, cidOverride: bogusCID, codec: codec}
+	v := cas.NewVerifyingReader(inner)
+
+	_, err := v.PutWithCodec(context.Background(), []byte("genuine"), codec)
+	if err == nil {
+		t.Fatal("expected ErrCorruptedBlock for lying typed writer")
+	}
+	if !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("error %v is not ErrCorruptedBlock", err)
+	}
+}
+
+func TestVerifyingReader_Put_RejectsUndefinedReturnedCID(t *testing.T) {
+	inner := &lyingWriter{fixedReader: &fixedReader{}, cidOverride: cid.Undef}
+	v := cas.NewVerifyingReader(inner)
+	_, err := v.Put(context.Background(), []byte("anything"))
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock for undefined CID, got %v", err)
+	}
+}
+
+// honestBatchWriter computes correct CIDs for every block it is asked to
+// store; pairs with the lying counterpart to exercise PutBatch verification.
+type honestBatchWriter struct {
+	*fixedReader
+}
+
+func (h *honestBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	results := make([]cas.PutResult, len(blocks))
+	for i, b := range blocks {
+		results[i] = cas.PutResult{CID: cidForRawData(b.Data), Status: cas.PutStatusStored}
+	}
+	return results, nil
+}
+
+func TestVerifyingReader_PutBatch_AcceptsHonestBatchWriter(t *testing.T) {
+	inner := &honestBatchWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	blocks := []cas.Block{
+		{Data: []byte("a"), Codec: cid.Raw},
+		{Data: []byte("b"), Codec: cid.Raw},
+	}
+	results, err := v.PutBatch(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("PutBatch error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+}
+
+// lyingBatchWriter produces CIDs for one block that do not match the bytes,
+// simulating a partially-compromised upload pipeline.
+type lyingBatchWriter struct {
+	*fixedReader
+}
+
+func (l *lyingBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	results := make([]cas.PutResult, len(blocks))
+	for i, b := range blocks {
+		if i == 1 {
+			results[i] = cas.PutResult{CID: cidForRawData([]byte("forged")), Status: cas.PutStatusStored}
+			continue
+		}
+		results[i] = cas.PutResult{CID: cidForRawData(b.Data), Status: cas.PutStatusStored}
+	}
+	return results, nil
+}
+
+func TestVerifyingReader_PutBatch_RejectsLyingBatchWriter(t *testing.T) {
+	inner := &lyingBatchWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	blocks := []cas.Block{
+		{Data: []byte("a"), Codec: cid.Raw},
+		{Data: []byte("b"), Codec: cid.Raw},
+	}
+	_, err := v.PutBatch(context.Background(), blocks)
+	if err == nil {
+		t.Fatal("expected ErrCorruptedBlock for lying batch writer")
+	}
+	if !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("error %v is not ErrCorruptedBlock", err)
+	}
+}
+
+// shortBatchWriter returns fewer results than blocks, mimicking a writer
+// that drops entries silently.
+type shortBatchWriter struct {
+	*fixedReader
+}
+
+func (s *shortBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	results := make([]cas.PutResult, len(blocks)-1)
+	for i := range results {
+		results[i] = cas.PutResult{CID: cidForRawData(blocks[i].Data), Status: cas.PutStatusStored}
+	}
+	return results, nil
+}
+
+func TestVerifyingReader_PutBatch_RejectsShortResultSlice(t *testing.T) {
+	inner := &shortBatchWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	blocks := []cas.Block{
+		{Data: []byte("a"), Codec: cid.Raw},
+		{Data: []byte("b"), Codec: cid.Raw},
+	}
+	_, err := v.PutBatch(context.Background(), blocks)
+	if err == nil {
+		t.Fatal("expected error for short result slice")
+	}
+	if !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("error %v is not ErrCorruptedBlock", err)
+	}
+}
+
+// undefinedBatchWriter mimics a dedup-style writer that returns an undefined
+// CID for blocks it elected not to store. The verifier should let those
+// entries pass through unchanged.
+type undefinedBatchWriter struct {
+	*fixedReader
+}
+
+func (u *undefinedBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	results := make([]cas.PutResult, len(blocks))
+	for i, b := range blocks {
+		if i == 1 {
+			results[i] = cas.PutResult{} // undefined CID, no claim
+			continue
+		}
+		results[i] = cas.PutResult{CID: cidForRawData(b.Data), Status: cas.PutStatusStored}
+	}
+	return results, nil
+}
+
+func TestVerifyingReader_PutBatch_PassesThroughUndefinedResults(t *testing.T) {
+	inner := &undefinedBatchWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	blocks := []cas.Block{
+		{Data: []byte("a"), Codec: cid.Raw},
+		{Data: []byte("b"), Codec: cid.Raw},
+	}
+	results, err := v.PutBatch(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("PutBatch error: %v", err)
+	}
+	if results[0].CID.String() == "" || results[1].CID.Defined() {
+		t.Fatalf("results = %+v, expected first defined and second undefined", results)
+	}
+}

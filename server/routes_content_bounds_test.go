@@ -40,7 +40,11 @@ func newServerWithShortCAS(t *testing.T, reader *shortReader) *Server {
 	cfg.CAS.Mode = "external"
 	cfg.CAS.BaseURL = "http://127.0.0.1:4318"
 
-	n, err := node.NewNode(node.WithConfig(cfg), node.WithCAS(reader))
+	// The bounds-check guard is defense-in-depth for callers that have
+	// opted out of CID verification (the verifying wrapper would otherwise
+	// reject mismatched bytes before the slice runs). Disable verification
+	// here so the test exercises the bounds path it is meant to cover.
+	n, err := node.NewNode(node.WithConfig(cfg), node.WithCAS(reader), node.WithoutCASVerification())
 	if err != nil {
 		t.Fatalf("create test node: %v", err)
 	}
