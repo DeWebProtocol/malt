@@ -2820,6 +2820,9 @@ func newTestNode(t *testing.T) *node.Node {
 	n, err := node.NewNode(
 		node.WithConfig(cfg),
 		node.WithCAS(casmock.NewCAS()),
+		// Tests below type-assert node.CAS() back to *casmock.CAS, so disable
+		// the daemon's default CID-verifying wrapper for the mock reader.
+		node.WithoutCASVerification(),
 	)
 	if err != nil {
 		t.Fatalf("create test node: %v", err)

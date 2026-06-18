@@ -69,8 +69,16 @@ func (s *Server) handleUnixFSWrite(w http.ResponseWriter, r *http.Request, root 
 		return
 	}
 
+	// File uploads are buffered before chunking, so cap them with the
+	// configured upload limit. Anything beyond the limit returns 413 instead
+	// of OOM-ing the daemon.
+	s.limitUnixFSUpload(w, r)
 	newRoot, err := layout.AddFileStream(r.Context(), baseRoot, p, r.Body)
 	if err != nil {
+		if isMaxBytesError(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

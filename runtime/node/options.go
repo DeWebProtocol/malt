@@ -20,6 +20,14 @@ type options struct {
 	kvStore  kvstore.KVStore
 	arctable arctable.ArcTable
 	cas      cas.Reader
+
+	// disableCASVerification disables the default CID-verifying wrapper around
+	// the read-side CAS client. The wrapper is on by default for both the
+	// config-driven CAS path and explicit WithCAS readers because the MALT
+	// trust model treats CAS as untrusted execution state. Tests that need
+	// to type-assert their mock back can set this so the assertion still
+	// finds the original reader.
+	disableCASVerification bool
 }
 
 func defaultOptions() *options {
@@ -58,5 +66,16 @@ func WithArcTable(e arctable.ArcTable) Option {
 func WithCAS(c cas.Reader) Option {
 	return func(o *options) {
 		o.cas = c
+	}
+}
+
+// WithoutCASVerification disables the default CID-verifying CAS wrapper.
+// Use only when the supplied CAS reader is already trusted (for example an
+// in-memory test mock) or when verification is being performed elsewhere in
+// the pipeline. Production deployments must keep verification on so the
+// daemon does not propagate tampered bytes to clients.
+func WithoutCASVerification() Option {
+	return func(o *options) {
+		o.disableCASVerification = true
 	}
 }

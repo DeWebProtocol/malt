@@ -118,6 +118,11 @@ func NewNode(opts ...Option) (*Node, error) {
 
 	// CAS
 	if options.cas != nil {
+		// Even though the caller supplied an explicit reader, we still wrap
+		// it so production deployments using WithCAS(ipfs.NewClient(...))
+		// are not exposed to a tampered remote CAS. Tests that need to
+		// type-assert their mock back can opt out with
+		// WithoutCASVerification().
 		node.cas = options.cas
 	} else {
 		node.cas, err = node.initCAS()
@@ -125,8 +130,24 @@ func NewNode(opts ...Option) (*Node, error) {
 			return nil, fmt.Errorf("failed to initialize CAS: %w", err)
 		}
 	}
+	if !options.disableCASVerification {
+		node.cas = wrapCASWithVerification(node.cas)
+	}
 
 	return node, nil
+}
+
+// wrapCASWithVerification wraps a CAS reader so that returned bytes are
+// validated against the requested CID. The wrapper is idempotent: re-wrapping
+// is a no-op so callers can apply it without tracking state.
+func wrapCASWithVerification(reader cas.Reader) cas.Reader {
+	if reader == nil {
+		return nil
+	}
+	if _, ok := reader.(*cas.VerifyingReader); ok {
+		return reader
+	}
+	return cas.NewVerifyingReader(reader)
 }
 
 func (n *Node) installMetricsArcTable() {

@@ -135,6 +135,13 @@ func (s *Server) readContentPayload(ctx context.Context, g runtimeGraph, stat *h
 		if err != nil {
 			return nil, err
 		}
+		// Guard against a CAS that returned fewer bytes than the stat
+		// reported. With the verifying wrapper this cannot normally happen,
+		// but the bounds check costs nothing and avoids a server panic if a
+		// future reader skips verification.
+		if start < 0 || endExclusive < start || int64(len(raw)) < endExclusive {
+			return nil, fmt.Errorf("range %d-%d outside raw payload of size %d", start, endExclusive, len(raw))
+		}
 		return raw[start:endExclusive], nil
 	case "list":
 		return s.readListRange(ctx, g, key, start, endExclusive)
