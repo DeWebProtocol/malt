@@ -171,32 +171,32 @@ func (v *VerifyingReader) PutBatch(ctx context.Context, blocks []Block) ([]PutRe
 	return results, nil
 }
 
-// verifyPutResult recomputes the CID a writer claims to have stored against
-// the bytes it was asked to store and the codec the caller requested. It
-// rejects with ErrCorruptedBlock if the writer:
-//   - returns an undefined CID (no claim at all),
-//   - returns a CID with a codec that differs from what the caller asked
-//     for (lets a hostile CAS accept typed bytes under a cid.Raw CID, which
-//     would silently change downstream decoding),
-//   - returns a CID whose multihash does not match the stored bytes.
+// verifyPutResult validates that a writer's claimed CID matches the
+// canonical CID for the requested bytes and codec. The expected CID is
+// derived locally via CIDForBlock — that is the repo-wide write contract
+// (see storage/cas/cas.go: CIDv1 + SHA2-256 + NormalizeCodec). Anchoring
+// to that contract — instead of recomputing using the *returned* CID's
+// prefix — closes three classes of attack:
 //
-// requestedCodec is normalized via NormalizeCodec so callers can pass either
-// 0 or cid.Raw to mean "raw" without ambiguity.
+//   - returning a different codec for the same bytes (downstream consumers
+//     would decode with the wrong codec);
+//   - returning a CID with a weaker multihash (e.g. SHA-1) that happens to
+//     match the bytes, downgrading the integrity guarantee;
+//   - returning CIDv0 for a payload the writer was asked to store as
+//     CIDv1 (or vice versa), confusing later resolution.
+//
+// requestedCodec is normalized via NormalizeCodec so callers can pass
+// either 0 or cid.Raw to mean "raw" without ambiguity.
 func verifyPutResult(got cid.Cid, data []byte, requestedCodec uint64) (cid.Cid, error) {
 	if !got.Defined() {
 		return cid.Undef, fmt.Errorf("%w: writer returned undefined CID", ErrCorruptedBlock)
 	}
-	wantCodec := NormalizeCodec(requestedCodec)
-	if got.Type() != wantCodec {
-		return cid.Undef, fmt.Errorf("%w: writer returned codec %d, requested %d", ErrCorruptedBlock, got.Type(), wantCodec)
-	}
-	prefix := got.Prefix()
-	want, err := prefix.Sum(data)
+	want, err := CIDForBlock(Block{Data: data, Codec: requestedCodec})
 	if err != nil {
 		return cid.Undef, fmt.Errorf("%w: %v", ErrCorruptedBlock, err)
 	}
 	if !want.Equals(got) {
-		return cid.Undef, fmt.Errorf("%w: writer claimed %s for bytes whose CID is %s", ErrCorruptedBlock, got, want)
+		return cid.Undef, fmt.Errorf("%w: writer returned %s, canonical CID for the bytes is %s", ErrCorruptedBlock, got, want)
 	}
 	return got, nil
 }

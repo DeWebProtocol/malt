@@ -661,3 +661,71 @@ func TestVerifyingReader_PutWithCodec_RejectsCodecMismatch(t *testing.T) {
 		t.Fatalf("expected ErrCorruptedBlock for codec mismatch, got %v", err)
 	}
 }
+
+// weakHashTypedWriter returns a CID with the requested codec but a
+// SHA-1 multihash. The bytes really do hash to that CID under SHA-1, so
+// hash-prefix-based verification would accept it. The repo-wide write
+// contract (CIDForBlock) pins SHA-256, so the wrapper must reject this.
+type weakHashTypedWriter struct {
+	*fixedReader
+}
+
+func (w *weakHashTypedWriter) Put(_ context.Context, data []byte) (cid.Cid, error) {
+	hash, err := mh.Sum(data, mh.SHA1, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, hash), nil
+}
+
+func (w *weakHashTypedWriter) PutWithCodec(_ context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	hash, err := mh.Sum(data, mh.SHA1, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(codec, hash), nil
+}
+
+func TestVerifyingReader_Put_RejectsWeakMultihash(t *testing.T) {
+	inner := &weakHashTypedWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	_, err := v.Put(context.Background(), []byte("payload"))
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock for SHA-1 downgrade, got %v", err)
+	}
+}
+
+func TestVerifyingReader_PutWithCodec_RejectsWeakMultihash(t *testing.T) {
+	inner := &weakHashTypedWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	_, err := v.PutWithCodec(context.Background(), []byte("payload"), 0x71)
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock for SHA-1 downgrade, got %v", err)
+	}
+}
+
+// v0CIDWriter returns a CIDv0 (dag-pb + SHA-256 + base58btc) for raw
+// uploads. CIDForBlock canonicalizes on CIDv1, so the wrapper must reject
+// any CIDv0 even if hash and bytes line up — otherwise resolution code
+// that branches on the version would see a different shape than the
+// caller asked for.
+type v0CIDWriter struct {
+	*fixedReader
+}
+
+func (vw *v0CIDWriter) Put(_ context.Context, data []byte) (cid.Cid, error) {
+	hash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV0(hash), nil
+}
+
+func TestVerifyingReader_Put_RejectsCIDv0Downgrade(t *testing.T) {
+	inner := &v0CIDWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	_, err := v.Put(context.Background(), []byte("payload"))
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock for CIDv0 downgrade, got %v", err)
+	}
+}
