@@ -288,14 +288,26 @@ func (w *writingReader) PutWithCodec(_ context.Context, data []byte, codec uint6
 	}
 	w.put = append([]byte(nil), data...)
 	w.putCodec = codec
-	return cidForRawData(data), nil
+	hash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(codec, hash), nil
 }
 
 func (w *writingReader) PutBatch(_ context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
 	w.batchHits++
 	results := make([]cas.PutResult, len(blocks))
 	for i, b := range blocks {
-		results[i] = cas.PutResult{CID: cidForRawData(b.Data), Status: cas.PutStatusStored}
+		codec := b.Codec
+		if codec == 0 {
+			codec = cid.Raw
+		}
+		hash, err := mh.Sum(b.Data, mh.SHA2_256, -1)
+		if err != nil {
+			return nil, err
+		}
+		results[i] = cas.PutResult{CID: cid.NewCidV1(codec, hash), Status: cas.PutStatusStored}
 	}
 	return results, nil
 }
@@ -564,9 +576,10 @@ func TestVerifyingReader_PutBatch_RejectsShortResultSlice(t *testing.T) {
 	}
 }
 
-// undefinedBatchWriter mimics a dedup-style writer that returns an undefined
-// CID for blocks it elected not to store. The verifier should let those
-// entries pass through unchanged.
+// undefinedBatchWriter mimics a writer that returns an undefined CID for one
+// of the blocks it was asked to store. Layout code copies PutResult.CID
+// straight into chunk lists, so an undefined CID at this layer would mean a
+// root referencing unresolvable content. The verifier must reject it.
 type undefinedBatchWriter struct {
 	*fixedReader
 }
@@ -575,7 +588,7 @@ func (u *undefinedBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) (
 	results := make([]cas.PutResult, len(blocks))
 	for i, b := range blocks {
 		if i == 1 {
-			results[i] = cas.PutResult{} // undefined CID, no claim
+			results[i] = cas.PutResult{} // undefined CID — must be rejected
 			continue
 		}
 		results[i] = cas.PutResult{CID: cidForRawData(b.Data), Status: cas.PutStatusStored}
@@ -583,18 +596,68 @@ func (u *undefinedBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) (
 	return results, nil
 }
 
-func TestVerifyingReader_PutBatch_PassesThroughUndefinedResults(t *testing.T) {
+func TestVerifyingReader_PutBatch_RejectsUndefinedResults(t *testing.T) {
 	inner := &undefinedBatchWriter{fixedReader: &fixedReader{}}
 	v := cas.NewVerifyingReader(inner)
 	blocks := []cas.Block{
 		{Data: []byte("a"), Codec: cid.Raw},
 		{Data: []byte("b"), Codec: cid.Raw},
 	}
-	results, err := v.PutBatch(context.Background(), blocks)
-	if err != nil {
-		t.Fatalf("PutBatch error: %v", err)
+	_, err := v.PutBatch(context.Background(), blocks)
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock, got %v", err)
 	}
-	if results[0].CID.String() == "" || results[1].CID.Defined() {
-		t.Fatalf("results = %+v, expected first defined and second undefined", results)
+}
+
+// rawCIDBatchWriter returns a cid.Raw CID for every block regardless of the
+// codec the caller asked for. Hash-only verification would happily accept
+// this because the bytes really do hash to that raw CID; the wrapper must
+// instead reject because the codec does not match the request.
+type rawCIDBatchWriter struct {
+	*fixedReader
+}
+
+func (r *rawCIDBatchWriter) PutBatch(_ context.Context, blocks []cas.Block) ([]cas.PutResult, error) {
+	results := make([]cas.PutResult, len(blocks))
+	for i, b := range blocks {
+		results[i] = cas.PutResult{CID: cidForRawData(b.Data), Status: cas.PutStatusStored}
+	}
+	return results, nil
+}
+
+func TestVerifyingReader_PutBatch_RejectsCodecMismatch(t *testing.T) {
+	inner := &rawCIDBatchWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	blocks := []cas.Block{
+		{Data: []byte("payload"), Codec: 0x71}, // dag-cbor request
+	}
+	_, err := v.PutBatch(context.Background(), blocks)
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock for codec mismatch, got %v", err)
+	}
+}
+
+// codecSwappingTypedWriter accepts typed-block bytes but always returns a
+// cid.Raw CID for them. This is the single-block analog of P2-a: hash-only
+// verification would let it slip through, codec-aware verification must
+// reject it.
+type codecSwappingTypedWriter struct {
+	*fixedReader
+}
+
+func (c *codecSwappingTypedWriter) Put(_ context.Context, data []byte) (cid.Cid, error) {
+	return cidForRawData(data), nil
+}
+
+func (c *codecSwappingTypedWriter) PutWithCodec(_ context.Context, data []byte, _ uint64) (cid.Cid, error) {
+	return cidForRawData(data), nil
+}
+
+func TestVerifyingReader_PutWithCodec_RejectsCodecMismatch(t *testing.T) {
+	inner := &codecSwappingTypedWriter{fixedReader: &fixedReader{}}
+	v := cas.NewVerifyingReader(inner)
+	_, err := v.PutWithCodec(context.Background(), []byte("payload"), 0x71)
+	if err == nil || !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("expected ErrCorruptedBlock for codec mismatch, got %v", err)
 	}
 }

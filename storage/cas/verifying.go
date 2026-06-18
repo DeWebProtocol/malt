@@ -100,7 +100,8 @@ var errReadOnlyCAS = errors.New("cas: underlying reader does not support writes"
 // Put forwards to the inner reader if it implements Writer and verifies the
 // returned CID actually matches the bytes that were written. A malicious
 // remote CAS that swaps in a fabricated CID at upload time would otherwise
-// let a MALT root reference content the writer never produced.
+// let a MALT root reference content the writer never produced. cas.Writer
+// is the codec-less surface, so the requested codec is implicitly cid.Raw.
 func (v *VerifyingReader) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	w, ok := v.inner.(Writer)
 	if !ok {
@@ -110,19 +111,25 @@ func (v *VerifyingReader) Put(ctx context.Context, data []byte) (cid.Cid, error)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return verifyPutResult(got, data)
+	return verifyPutResult(got, data, cid.Raw)
 }
 
 // PutWithCodec forwards to the inner reader if it implements TypedWriter and
-// verifies the returned CID actually matches the bytes plus codec that were
-// written. Falls back to Put for cid.Raw when typed writes are unavailable.
+// verifies the returned CID matches the bytes plus the codec that were
+// requested. Validating against the requested codec (rather than the codec
+// the writer chose to embed in the returned CID) prevents a hostile CAS
+// from accepting typed-block bytes and committing them under a cid.Raw CID
+// — that would still hash-match the bytes but mean a downstream consumer
+// reads them with the wrong codec.
+//
+// Falls back to Put for cid.Raw when typed writes are unavailable.
 func (v *VerifyingReader) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
 	if tw, ok := v.inner.(TypedWriter); ok {
 		got, err := tw.PutWithCodec(ctx, data, codec)
 		if err != nil {
 			return cid.Undef, err
 		}
-		return verifyPutResult(got, data)
+		return verifyPutResult(got, data, codec)
 	}
 	if NormalizeCodec(codec) == cid.Raw {
 		return v.Put(ctx, data)
@@ -131,10 +138,10 @@ func (v *VerifyingReader) PutWithCodec(ctx context.Context, data []byte, codec u
 }
 
 // PutBatch forwards to the inner reader if it implements BatchWriter, then
-// verifies every successfully-stored CID against its source bytes. The
-// non-batch fallback dispatches per-block through the wrapper's verifying
-// PutWithCodec so corrupt CIDs are rejected at the same boundary as the
-// batch path.
+// verifies every returned CID against its source bytes and the codec the
+// caller asked for. The non-batch fallback dispatches per-block through the
+// wrapper's verifying PutWithCodec so corrupt CIDs are rejected at the same
+// boundary as the batch path.
 func (v *VerifyingReader) PutBatch(ctx context.Context, blocks []Block) ([]PutResult, error) {
 	if len(blocks) == 0 {
 		return []PutResult{}, nil
@@ -164,14 +171,27 @@ func (v *VerifyingReader) PutBatch(ctx context.Context, blocks []Block) ([]PutRe
 	return results, nil
 }
 
-// verifyPutResult recomputes the CID a writer claims to have stored and
-// rejects with ErrCorruptedBlock if the claim does not match the bytes.
-// undefined CIDs always fail; the writer must commit to a content address.
-func verifyPutResult(got cid.Cid, data []byte) (cid.Cid, error) {
+// verifyPutResult recomputes the CID a writer claims to have stored against
+// the bytes it was asked to store and the codec the caller requested. It
+// rejects with ErrCorruptedBlock if the writer:
+//   - returns an undefined CID (no claim at all),
+//   - returns a CID with a codec that differs from what the caller asked
+//     for (lets a hostile CAS accept typed bytes under a cid.Raw CID, which
+//     would silently change downstream decoding),
+//   - returns a CID whose multihash does not match the stored bytes.
+//
+// requestedCodec is normalized via NormalizeCodec so callers can pass either
+// 0 or cid.Raw to mean "raw" without ambiguity.
+func verifyPutResult(got cid.Cid, data []byte, requestedCodec uint64) (cid.Cid, error) {
 	if !got.Defined() {
 		return cid.Undef, fmt.Errorf("%w: writer returned undefined CID", ErrCorruptedBlock)
 	}
-	want, err := cidForData(got, data)
+	wantCodec := NormalizeCodec(requestedCodec)
+	if got.Type() != wantCodec {
+		return cid.Undef, fmt.Errorf("%w: writer returned codec %d, requested %d", ErrCorruptedBlock, got.Type(), wantCodec)
+	}
+	prefix := got.Prefix()
+	want, err := prefix.Sum(data)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("%w: %v", ErrCorruptedBlock, err)
 	}
@@ -182,22 +202,18 @@ func verifyPutResult(got cid.Cid, data []byte) (cid.Cid, error) {
 }
 
 // verifyBatchResults walks parallel slices of input blocks and writer
-// results, recomputing the CID for every result entry. PutResult has no
-// per-entry error channel: any failure is reported as the top-level error
-// from PutBatch, so all returned entries are claims of "stored" that the
-// wrapper must validate.
+// results, recomputing the CID for every entry. The wrapper requires every
+// returned PutResult to commit to a defined CID with the codec that was
+// asked for: layout/unixfs writes the chunk list straight from the
+// PutResult slice (see layout/unixfs/layout.go), and propagating an
+// undefined or codec-mismatched CID would let a hostile or buggy CAS
+// produce a root with invalid chunk references.
 func verifyBatchResults(blocks []Block, results []PutResult) error {
 	if len(results) != len(blocks) {
 		return fmt.Errorf("%w: writer returned %d results for %d blocks", ErrCorruptedBlock, len(results), len(blocks))
 	}
 	for i, r := range results {
-		if !r.CID.Defined() {
-			// A skipped or sentinel result with no CID has nothing to
-			// verify; let it pass through unchanged so existing dedup
-			// behavior in batch writers stays observable.
-			continue
-		}
-		if _, err := verifyPutResult(r.CID, blocks[i].Data); err != nil {
+		if _, err := verifyPutResult(r.CID, blocks[i].Data, blocks[i].Codec); err != nil {
 			return err
 		}
 	}
