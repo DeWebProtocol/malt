@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -92,4 +94,40 @@ func writeBodyDecodeError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+}
+
+// decodeJSONBody reads exactly one JSON value from r.Body subject to the
+// configured JSONBytes limit. It is the single entry point write handlers
+// should use when they want a "small structured request body" semantics.
+//
+// MaxBytesReader on its own only counts bytes a handler actually reads, so
+// json.Decoder.Decode can return after the first value while a megabyte-sized
+// suffix sits unread. We close that gap two ways:
+//
+//   - Content-Length fast reject: when the client advertises a size larger
+//     than the limit we refuse to read anything at all.
+//   - Drain after Decode: io.Copy(io.Discard, r.Body) keeps reading through
+//     the same MaxBytesReader so an oversized suffix (chunked or otherwise)
+//     surfaces as a MaxBytesError and the handler returns 413.
+//
+// dst must be a pointer suitable for json.Decoder.Decode.
+func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
+	limit := s.bodyLimits.JSONBytes
+	if r != nil && r.ContentLength > limit {
+		return &http.MaxBytesError{Limit: limit}
+	}
+	s.limitJSONBody(w, r)
+	if r == nil || r.Body == nil {
+		return errors.New("request has no body")
+	}
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		return err
+	}
+	// Drain whatever the decoder left behind. If it pushes the cumulative
+	// read past the configured limit, MaxBytesReader trips here and the
+	// handler routes the request to 413 via writeBodyDecodeError.
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		return err
+	}
+	return nil
 }

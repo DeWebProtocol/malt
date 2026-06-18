@@ -48,6 +48,115 @@ func TestHandleCreateStructure_413WhenJSONBodyExceedsLimit(t *testing.T) {
 	}
 }
 
+// TestHandleCreateStructure_413WhenValidJSONHasOversizedSuffix is the
+// regression for the second-round review finding: MaxBytesReader on its own
+// only counts bytes a handler actually reads, so a small valid JSON value
+// followed by a large suffix could decode successfully and return 201 while
+// the unread megabytes still counted against no limit. The shared
+// decodeJSONBody helper now fast-rejects on Content-Length and drains the
+// remainder through the same limited reader, so this request must 413.
+func TestHandleCreateStructure_413WhenValidJSONHasOversizedSuffix(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 64}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Tiny valid JSON the decoder can parse in one shot, followed by far
+	// more bytes than the limit. Without the drain this would have been
+	// accepted.
+	tiny := []byte(`{}`)
+	padding := strings.Repeat(" ", 4096)
+	body := append(tiny, []byte(padding)...)
+
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /_: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (valid JSON + oversized suffix must trip the limit)", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestHandleCreateStructure_413WhenContentLengthExceedsLimit covers the
+// fast-reject path: when the client advertises a Content-Length beyond the
+// limit, the helper refuses to read the body at all.
+func TestHandleCreateStructure_413WhenContentLengthExceedsLimit(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 16}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := bytes.NewReader([]byte(`{"arcs":{"@payload":"` + strings.Repeat("x", 256) + `"}}`))
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/_", body)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = int64(body.Len())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (Content-Length fast reject)", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestHandleVerify_413WhenValidJSONHasOversizedSuffix applies the same
+// regression to /verify so the drain fix is locked in for both JSON
+// handlers.
+func TestHandleVerify_413WhenValidJSONHasOversizedSuffix(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 32}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := append([]byte(`{"prooflist":null}`), []byte(strings.Repeat(" ", 4096))...)
+	resp, err := http.Post(ts.URL+"/verify", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /verify: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestHandleSemanticMutation_413WhenValidJSONHasOversizedSuffix applies the
+// same regression to /{root}/_mutate.
+func TestHandleSemanticMutation_413WhenValidJSONHasOversizedSuffix(t *testing.T) {
+	n := newTestNode(t)
+	srv := New(n, "127.0.0.1:0", WithBodyLimits(BodyLimits{JSONBytes: 32}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	root := fakeCIDString("seed-mutation-suffix")
+	body := append([]byte(`{"deltas":[]}`), []byte(strings.Repeat(" ", 4096))...)
+	resp, err := http.Post(ts.URL+"/"+root+"/_mutate", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST mutate: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestDecodeJSONBody_ToleratesNoBody pins the nil-body path: a request with
+// no body is reported as a 400 invalid JSON, never a 413.
+func TestDecodeJSONBody_ToleratesNoBody(t *testing.T) {
+	srv := New(nil, "127.0.0.1:0")
+	err := srv.decodeJSONBody(httptest.NewRecorder(), &http.Request{}, &struct{}{})
+	if err == nil {
+		t.Fatal("expected error for request with no body")
+	}
+	if isMaxBytesError(err) {
+		t.Fatalf("missing-body error classified as MaxBytes: %v", err)
+	}
+}
+
 // TestHandleSemanticMutation_413WhenJSONBodyExceedsLimit covers /{root}/_mutate.
 func TestHandleSemanticMutation_413WhenJSONBodyExceedsLimit(t *testing.T) {
 	n := newTestNode(t)

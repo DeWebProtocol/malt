@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/dewebprotocol/malt/api/http"
@@ -14,9 +13,8 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.limitJSONBody(w, r)
 	var req httpapi.VerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := s.decodeJSONBody(w, r, &req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
 	}
