@@ -153,7 +153,15 @@ func (s *Server) Handler() http.Handler {
 
 // Start starts the HTTP server.
 func (s *Server) Start() error {
-	s.server = &http.Server{
+	s.server = s.buildHTTPServer()
+	return s.server.ListenAndServe()
+}
+
+// buildHTTPServer constructs the *http.Server with the configured limits
+// applied. It is split out so tests can verify timeout propagation without
+// racing against a goroutine that calls ListenAndServe.
+func (s *Server) buildHTTPServer() *http.Server {
+	return &http.Server{
 		Addr:              s.addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: s.limits.ReadHeaderTimeout,
@@ -162,7 +170,6 @@ func (s *Server) Start() error {
 		IdleTimeout:       s.limits.IdleTimeout,
 		MaxHeaderBytes:    s.limits.MaxHeaderBytes,
 	}
-	return s.server.ListenAndServe()
 }
 
 // Shutdown gracefully stops the HTTP server.

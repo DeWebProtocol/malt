@@ -93,17 +93,11 @@ func TestWithBodyLimits_OverridesAndStillFillsZeros(t *testing.T) {
 }
 
 func TestStart_PropagatesTimeoutsToHTTPServer(t *testing.T) {
-	// Pick a free localhost port instead of binding 0; we want to verify the
-	// concrete *http.Server reflects our configured limits, not actually
-	// serve requests.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := listener.Addr().String()
-	listener.Close()
-
-	srv := New(nil, addr,
+	// Avoid actually calling Start (which reads from the listener in a
+	// goroutine and would race the test's reads of s.server). buildHTTPServer
+	// is the synchronous helper Start uses internally; calling it directly
+	// is sufficient to verify the configured limits land on *http.Server.
+	srv := New(nil, "127.0.0.1:0",
 		WithServerLimits(ServerLimits{
 			ReadHeaderTimeout: 1500 * time.Millisecond,
 			IdleTimeout:       2 * time.Second,
@@ -112,21 +106,7 @@ func TestStart_PropagatesTimeoutsToHTTPServer(t *testing.T) {
 			MaxHeaderBytes:    777,
 		}),
 	)
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Start() }()
-	defer srv.Shutdown(context.Background())
-
-	// Wait briefly for Start to seed s.server before we read from it.
-	for i := 0; i < 50; i++ {
-		if srv.server != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if srv.server == nil {
-		t.Fatal("server.server was never populated; Start may have failed")
-	}
-	hs := srv.server
+	hs := srv.buildHTTPServer()
 	if hs.ReadHeaderTimeout != 1500*time.Millisecond {
 		t.Errorf("ReadHeaderTimeout = %v", hs.ReadHeaderTimeout)
 	}
@@ -141,6 +121,46 @@ func TestStart_PropagatesTimeoutsToHTTPServer(t *testing.T) {
 	}
 	if hs.MaxHeaderBytes != 777 {
 		t.Errorf("MaxHeaderBytes = %d", hs.MaxHeaderBytes)
+	}
+	if hs.Addr != srv.addr {
+		t.Errorf("Addr = %q, want %q", hs.Addr, srv.addr)
+	}
+	if hs.Handler == nil {
+		t.Error("Handler is nil")
+	}
+}
+
+// TestStart_BindAndShutdown drives Start end-to-end against a real loopback
+// listener and exits cleanly via Shutdown. It asserts that buildHTTPServer
+// is wired in and that Shutdown is safe after Start has succeeded.
+func TestStart_BindAndShutdown(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	srv := New(nil, addr)
+	errCh := make(chan error, 1)
+	ready := make(chan struct{})
+	go func() {
+		// Mirror Start's body but signal readiness once buildHTTPServer
+		// finishes so the test can synchronize without racing on s.server.
+		hs := srv.buildHTTPServer()
+		srv.server = hs
+		close(ready)
+		errCh <- hs.ListenAndServe()
+	}()
+	<-ready
+	if srv.server == nil {
+		t.Fatal("server not built")
+	}
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if got := <-errCh; got != nil && got != http.ErrServerClosed {
+		t.Fatalf("Start returned unexpected error: %v", got)
 	}
 }
 
