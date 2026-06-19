@@ -163,6 +163,69 @@ func TestLifecycleStartDoesNotLaunchWhenDaemonIsHealthy(t *testing.T) {
 	}
 }
 
+func TestLifecycleStatusTightensLoadedStateFileMode(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RPC.Listen = "127.0.0.1:54327"
+	statePath := t.TempDir() + "/daemon.json"
+	seedInsecureDaemonState(t, statePath, &DaemonState{
+		PID:            1111,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	})
+
+	manager := NewLifecycleManager(LifecycleOptions{
+		StatePath:     statePath,
+		HealthCheck:   func(context.Context, string) error { return nil },
+		IdentityCheck: func(context.Context, string, string) error { return nil },
+		SignalProcess: func(int) error { return nil },
+	})
+
+	status, err := manager.Status(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !status.Running || !status.Managed {
+		t.Fatalf("status = %+v, want running managed daemon", status)
+	}
+	assertDaemonStateMode(t, statePath)
+}
+
+func TestLifecycleStartTightensHealthyLoadedStateFileMode(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RPC.Listen = "127.0.0.1:54328"
+	statePath := t.TempDir() + "/daemon.json"
+	seedInsecureDaemonState(t, statePath, &DaemonState{
+		PID:            1111,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	})
+
+	manager := NewLifecycleManager(LifecycleOptions{
+		StatePath: statePath,
+		StartProcess: func(BackgroundProcessSpec) (int, error) {
+			t.Fatal("StartProcess should not be called for a healthy daemon")
+			return 0, nil
+		},
+		HealthCheck:   func(context.Context, string) error { return nil },
+		IdentityCheck: func(context.Context, string, string) error { return nil },
+	})
+
+	status, err := manager.Start(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !status.Running || !status.Managed || status.PID != 1111 {
+		t.Fatalf("status = %+v, want existing managed daemon", status)
+	}
+	assertDaemonStateMode(t, statePath)
+}
+
 func TestLifecycleStopSignalsManagedDaemonAndRemovesState(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.RPC.Listen = "127.0.0.1:54323"
@@ -398,5 +461,15 @@ func assertDaemonStateMode(t *testing.T, path string) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("daemon state mode = %v, want 0600", got)
+	}
+}
+
+func seedInsecureDaemonState(t *testing.T, path string, state *DaemonState) {
+	t.Helper()
+	if err := WriteDaemonState(path, state); err != nil {
+		t.Fatalf("WriteDaemonState: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod insecure daemon state: %v", err)
 	}
 }

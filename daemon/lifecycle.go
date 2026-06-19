@@ -209,9 +209,9 @@ func WriteDaemonState(path string, state *DaemonState) error {
 	if err != nil {
 		return fmt.Errorf("write daemon state: %w", err)
 	}
-	if err := f.Chmod(0o600); err != nil {
+	if err := secureDaemonStatePermissions(path); err != nil {
 		_ = f.Close()
-		return fmt.Errorf("secure daemon state permissions: %w", err)
+		return err
 	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
@@ -219,6 +219,13 @@ func WriteDaemonState(path string, state *DaemonState) error {
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("write daemon state: %w", err)
+	}
+	return nil
+}
+
+func secureDaemonStatePermissions(path string) error {
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("secure daemon state permissions: %w", err)
 	}
 	return nil
 }
@@ -241,6 +248,11 @@ func (m *LifecycleManager) Status(ctx context.Context, cfg *config.Config) (*Dae
 	healthErr := m.healthCheck(ctx, baseURL)
 	if state != nil {
 		healthErr = m.daemonIdentityError(ctx, state)
+		if healthErr == nil {
+			if err := secureDaemonStatePermissions(m.statePath); err != nil {
+				return nil, err
+			}
+		}
 	}
 	status := &DaemonStatus{
 		Running:     healthErr == nil,
