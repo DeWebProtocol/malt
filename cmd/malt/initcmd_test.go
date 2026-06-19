@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/dewebprotocol/malt/config"
 )
 
-func TestInitWritesRecommendedBrowserCORSOrigins(t *testing.T) {
+func TestInitDisablesBrowserCORSByDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOME", home)
@@ -48,14 +47,7 @@ func TestInitWritesRecommendedBrowserCORSOrigins(t *testing.T) {
 		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	want := []string{
-		"https://dewebprotocol.dev",
-		"https://dewebprotocol.github.io",
-		"http://localhost:*",
-		"http://127.0.0.1:*",
-		"http://[::1]:*",
-	}
-	if !slices.Equal(cfg.RPC.CORSAllowedOrigins, want) {
-		t.Fatalf("RPC.CORSAllowedOrigins = %#v, want %#v", cfg.RPC.CORSAllowedOrigins, want)
+	if len(cfg.RPC.CORSAllowedOrigins) != 0 {
+		t.Fatalf("RPC.CORSAllowedOrigins = %#v, want disabled by default", cfg.RPC.CORSAllowedOrigins)
 	}
 }

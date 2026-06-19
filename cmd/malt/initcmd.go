@@ -19,14 +19,6 @@ var (
 	initKVStoreType    string
 )
 
-var initBrowserCORSAllowedOrigins = []string{
-	"https://dewebprotocol.dev",
-	"https://dewebprotocol.github.io",
-	"http://localhost:*",
-	"http://127.0.0.1:*",
-	"http://[::1]:*",
-}
-
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().BoolVar(&initForce, "force", false, "overwrite an existing config file")
@@ -45,7 +37,6 @@ var initCmd = &cobra.Command{
 
 func runInit(cmd *cobra.Command, args []string) error {
 	cfg := config.DefaultConfig()
-	cfg.RPC.CORSAllowedOrigins = defaultInitBrowserCORSAllowedOrigins()
 
 	configPath, err := config.ResolveConfigPath(cfgFile)
 	if err != nil {
@@ -73,10 +64,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "daemon API: %s\n", cfg.APIBaseURL())
 	fmt.Fprintf(os.Stdout, "CAS: %s\n", cfg.CASBaseURL())
 	return nil
-}
-
-func defaultInitBrowserCORSAllowedOrigins() []string {
-	return append([]string(nil), initBrowserCORSAllowedOrigins...)
 }
 
 func promptString(reader *bufio.Reader, label string, explicit string, fallback string, nonInteractive bool) string {

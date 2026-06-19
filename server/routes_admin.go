@@ -7,10 +7,25 @@ import (
 	"github.com/dewebprotocol/malt/runtime/metrics"
 )
 
+const lifecycleIdentityTokenHeader = "X-Malt-Lifecycle-Token"
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &httpapi.HealthResponse{
-		Status:         "ok",
-		LifecycleToken: s.lifecycleToken,
+		Status: "ok",
+	})
+}
+
+func (s *Server) handleLifecycleIdentity(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "browser origin is not allowed", http.StatusForbidden)
+		return
+	}
+	if s.lifecycleToken == "" || r.Header.Get(lifecycleIdentityTokenHeader) != s.lifecycleToken {
+		http.Error(w, "lifecycle identity token mismatch", http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, &httpapi.LifecycleIdentityResponse{
+		Status: "ok",
 	})
 }
 

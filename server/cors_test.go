@@ -196,6 +196,22 @@ func TestBrowserCORSDeniesUnconfiguredOriginsAndAdminWrites(t *testing.T) {
 			t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
 		}
 	})
+
+	t.Run("lifecycle identity preflight", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/_lifecycle/identity", nil)
+		req.Header.Set("Origin", "https://docs.example")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("lifecycle identity preflight status = %d, want %d", rec.Code, http.StatusForbidden)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+		}
+	})
 }
 
 func containsHeaderValue(values []string, want string) bool {

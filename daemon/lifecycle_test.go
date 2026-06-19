@@ -3,6 +3,10 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -87,6 +91,42 @@ func TestLifecycleStartWritesManagedState(t *testing.T) {
 	if state.LifecycleToken != "managed-token" {
 		t.Fatalf("state lifecycle token = %q, want managed-token", state.LifecycleToken)
 	}
+	assertDaemonStateMode(t, statePath)
+}
+
+func TestWriteDaemonStateSecuresTokenFileMode(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "daemon.json")
+
+	if err := WriteDaemonState(statePath, &DaemonState{
+		PID:            4242,
+		Listen:         "127.0.0.1:54321",
+		BaseURL:        "http://127.0.0.1:54321",
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteDaemonState: %v", err)
+	}
+	assertDaemonStateMode(t, statePath)
+}
+
+func TestWriteDaemonStateTightensExistingFileMode(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "daemon.json")
+	if err := os.WriteFile(statePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("seed daemon state: %v", err)
+	}
+
+	if err := WriteDaemonState(statePath, &DaemonState{
+		PID:            4242,
+		Listen:         "127.0.0.1:54321",
+		BaseURL:        "http://127.0.0.1:54321",
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteDaemonState: %v", err)
+	}
+	assertDaemonStateMode(t, statePath)
 }
 
 func TestLifecycleStartDoesNotLaunchWhenDaemonIsHealthy(t *testing.T) {
@@ -121,6 +161,69 @@ func TestLifecycleStartDoesNotLaunchWhenDaemonIsHealthy(t *testing.T) {
 	if !status.Running || !status.Managed || status.PID != 1111 {
 		t.Fatalf("status = %+v, want existing managed daemon", status)
 	}
+}
+
+func TestLifecycleStatusTightensLoadedStateFileMode(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RPC.Listen = "127.0.0.1:54327"
+	statePath := t.TempDir() + "/daemon.json"
+	seedInsecureDaemonState(t, statePath, &DaemonState{
+		PID:            1111,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	})
+
+	manager := NewLifecycleManager(LifecycleOptions{
+		StatePath:     statePath,
+		HealthCheck:   func(context.Context, string) error { return nil },
+		IdentityCheck: func(context.Context, string, string) error { return nil },
+		SignalProcess: func(int) error { return nil },
+	})
+
+	status, err := manager.Status(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !status.Running || !status.Managed {
+		t.Fatalf("status = %+v, want running managed daemon", status)
+	}
+	assertDaemonStateMode(t, statePath)
+}
+
+func TestLifecycleStartTightensHealthyLoadedStateFileMode(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RPC.Listen = "127.0.0.1:54328"
+	statePath := t.TempDir() + "/daemon.json"
+	seedInsecureDaemonState(t, statePath, &DaemonState{
+		PID:            1111,
+		Listen:         cfg.RPC.Listen,
+		BaseURL:        cfg.APIBaseURL(),
+		ConfigPath:     "config.json",
+		LifecycleToken: "managed-token",
+		StartedAt:      time.Now(),
+	})
+
+	manager := NewLifecycleManager(LifecycleOptions{
+		StatePath: statePath,
+		StartProcess: func(BackgroundProcessSpec) (int, error) {
+			t.Fatal("StartProcess should not be called for a healthy daemon")
+			return 0, nil
+		},
+		HealthCheck:   func(context.Context, string) error { return nil },
+		IdentityCheck: func(context.Context, string, string) error { return nil },
+	})
+
+	status, err := manager.Start(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !status.Running || !status.Managed || status.PID != 1111 {
+		t.Fatalf("status = %+v, want existing managed daemon", status)
+	}
+	assertDaemonStateMode(t, statePath)
 }
 
 func TestLifecycleStopSignalsManagedDaemonAndRemovesState(t *testing.T) {
@@ -309,5 +412,64 @@ func TestLifecycleRestartStopsThenStarts(t *testing.T) {
 	}
 	if !status.Running || status.PID != 5678 {
 		t.Fatalf("status = %+v, want restarted pid 5678", status)
+	}
+}
+
+func TestDefaultIdentityCheckFallsBackToLegacyHealthToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_lifecycle/identity":
+			http.NotFound(w, r)
+		case "/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","lifecycle_token":"managed-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	if err := defaultIdentityCheck(context.Background(), ts.URL, "managed-token"); err != nil {
+		t.Fatalf("defaultIdentityCheck legacy fallback: %v", err)
+	}
+}
+
+func TestDefaultIdentityCheckRejectsMismatchedLegacyHealthToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_lifecycle/identity":
+			http.NotFound(w, r)
+		case "/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","lifecycle_token":"other-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	if err := defaultIdentityCheck(context.Background(), ts.URL, "managed-token"); err == nil {
+		t.Fatal("defaultIdentityCheck succeeded with mismatched legacy health token")
+	}
+}
+
+func assertDaemonStateMode(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat daemon state: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("daemon state mode = %v, want 0600", got)
+	}
+}
+
+func seedInsecureDaemonState(t *testing.T, path string, state *DaemonState) {
+	t.Helper()
+	if err := WriteDaemonState(path, state); err != nil {
+		t.Fatalf("WriteDaemonState: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod insecure daemon state: %v", err)
 	}
 }
