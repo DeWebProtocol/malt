@@ -3,14 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/dewebprotocol/malt/api/http"
-	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/storage/cas"
 	cid "github.com/ipfs/go-cid"
 )
@@ -37,11 +35,7 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	wantProof := r.Method != http.MethodHead && !shouldOmitDefaultProof(r)
 	resolved, err := s.resolvePath(r.Context(), svc, root, path, wantProof)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
+		writeError(w, resolvePathStatus(err), err.Error())
 		return
 	}
 	stat := resolved.stat

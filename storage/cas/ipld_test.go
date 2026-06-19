@@ -1,6 +1,8 @@
 package cas_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/dewebprotocol/malt/storage/cas"
@@ -144,6 +146,99 @@ func TestIPLDParserCBORArray(t *testing.T) {
 	}
 }
 
+func TestIPLDParserCBORRejectsMaliciousInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "array declared length exceeds remaining data",
+			data: []byte{0x9a, 0x00, 0x10, 0x00, 0x01},
+		},
+		{
+			name: "map declared length exceeds remaining data",
+			data: []byte{0xba, 0x00, 0x10, 0x00, 0x01},
+		},
+		{
+			name: "byte string length exceeds remaining data",
+			data: []byte{0x5a, 0xff, 0xff, 0xff, 0xff},
+		},
+		{
+			name: "text string length exceeds remaining data",
+			data: []byte{0x7a, 0xff, 0xff, 0xff, 0xff},
+		},
+		{
+			name: "negative integer overflow",
+			data: []byte{0x3b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+		},
+		{
+			name: "nesting exceeds maximum depth",
+			data: nestedCBORArrays(65),
+		},
+	}
+
+	store := mock.NewCAS()
+	parser := cas.NewIPLDParser(store)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mhash, _ := mh.Sum(tc.data, mh.SHA2_256, -1)
+			c := cid.NewCidV1(0x71, mhash)
+			if _, err := parser.ParseBlock(c, tc.data); err == nil {
+				t.Fatal("ParseBlock succeeded, want error")
+			}
+		})
+	}
+}
+
+func TestIPLDParserFollowLinkUsesContext(t *testing.T) {
+	targetData := []byte("target data")
+	targetCID, err := newPayloadCID(targetData)
+	if err != nil {
+		t.Fatalf("newPayloadCID target failed: %v", err)
+	}
+
+	rootData := []byte(fmt.Sprintf(`{"link": {"/": %q}}`, targetCID.String()))
+	rootHash, err := mh.Sum(rootData, mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatalf("root hash failed: %v", err)
+	}
+	rootCID := cid.NewCidV1(0x0201, rootHash)
+
+	store := &recordingReader{
+		blocks: map[string][]byte{
+			rootCID.String():   rootData,
+			targetCID.String(): targetData,
+		},
+	}
+	parser := cas.NewIPLDParser(store)
+	ctx := context.WithValue(context.Background(), contextKey("test"), "marker")
+	node, err := parser.FollowLink(ctx, rootCID, "link")
+	if err != nil {
+		t.Fatalf("FollowLink failed: %v", err)
+	}
+	if string(node.Data) != string(targetData) {
+		t.Fatalf("FollowLink data = %q, want %q", node.Data, targetData)
+	}
+	if store.gets != 2 {
+		t.Fatalf("Get calls = %d, want 2", store.gets)
+	}
+	if store.nilContext {
+		t.Fatal("FollowLink passed nil context to CAS")
+	}
+	if !store.sawMarker {
+		t.Fatal("FollowLink did not pass caller context to CAS")
+	}
+}
+
+func TestIPLDParserFollowLinkNilContextUsesBackground(t *testing.T) {
+	store := &recordingReader{blocks: map[string][]byte{}}
+	parser := cas.NewIPLDParser(store)
+	_, _ = parser.FollowLink(nil, mustDecodeCID("bafkqaaa"), "missing")
+	if store.nilContext {
+		t.Fatal("FollowLink passed nil context to CAS")
+	}
+}
+
 func TestIPLDResolveLink(t *testing.T) {
 	store := mock.NewCAS()
 	parser := cas.NewIPLDParser(store)
@@ -217,4 +312,44 @@ func mustDecodeCID(s string) cid.Cid {
 		panic(err)
 	}
 	return c
+}
+
+func nestedCBORArrays(depth int) []byte {
+	data := make([]byte, 0, depth+1)
+	for i := 0; i < depth; i++ {
+		data = append(data, 0x81)
+	}
+	data = append(data, 0x00)
+	return data
+}
+
+type contextKey string
+
+type recordingReader struct {
+	blocks     map[string][]byte
+	gets       int
+	nilContext bool
+	sawMarker  bool
+}
+
+func (r *recordingReader) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
+	r.gets++
+	if ctx == nil {
+		r.nilContext = true
+	} else if ctx.Value(contextKey("test")) == "marker" {
+		r.sawMarker = true
+	}
+	data, ok := r.blocks[c.String()]
+	if !ok {
+		return nil, fmt.Errorf("missing block %s", c)
+	}
+	return data, nil
+}
+
+func (r *recordingReader) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	if ctx == nil {
+		r.nilContext = true
+	}
+	_, ok := r.blocks[c.String()]
+	return ok, nil
 }

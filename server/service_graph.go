@@ -45,7 +45,10 @@ func (svc graphService) CreateStructure(ctx context.Context, snapshot arcset.Arc
 }
 
 func (svc graphService) ResolveKey(root cid.Cid, rawPath string) (string, *resolver.ResolveResult, error) {
-	cleanPath := querypath.CanonicalizeQueryPath(rawPath)
+	cleanPath, err := querypath.CanonicalizeQueryPath(rawPath)
+	if err != nil {
+		return "", nil, err
+	}
 	result, err := svc.runtime.Resolver().ResolveKey(root, cleanPath)
 	if err != nil {
 		return "", nil, err
