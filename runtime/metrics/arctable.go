@@ -80,6 +80,13 @@ func (m *ArcTable) Base() arctable.ArcTable {
 	return m.base
 }
 
+// SupportsConcurrentBranches forwards branching capability to the wrapped
+// ArcTable when it advertises MVCC-style children from the same parent root.
+func (m *ArcTable) SupportsConcurrentBranches() bool {
+	branching, ok := m.base.(arctable.BranchingArcTable)
+	return ok && branching.SupportsConcurrentBranches()
+}
+
 // SnapshotStats returns the current ArcTable counters.
 func (m *ArcTable) SnapshotStats() ArcTableStats {
 	return m.stats.snapshot()
@@ -155,3 +162,4 @@ func (m *ArcTable) GetParent(ctx context.Context, namespace string, version cid.
 
 var _ arctable.ArcTable = (*ArcTable)(nil)
 var _ arctable.NamespaceCreator = (*ArcTable)(nil)
+var _ arctable.BranchingArcTable = (*ArcTable)(nil)
