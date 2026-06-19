@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -154,11 +153,10 @@ func newRootFreshnessGuard() *rootFreshnessGuard {
 }
 
 func sharedRootFreshnessGuard(table arctable.ArcTable) *rootFreshnessGuard {
-	key, ok := arctableFreshnessIdentity(table)
-	if !ok {
+	if table == nil {
 		return newRootFreshnessGuard()
 	}
-	guard, _ := sharedFreshnessGuards.LoadOrStore(key, newRootFreshnessGuard())
+	guard, _ := sharedFreshnessGuards.LoadOrStore(table, newRootFreshnessGuard())
 	return guard.(*rootFreshnessGuard)
 }
 
@@ -167,17 +165,6 @@ func rootFreshnessGuardFor(table arctable.ArcTable) *rootFreshnessGuard {
 		return nil
 	}
 	return sharedRootFreshnessGuard(table)
-}
-
-func arctableFreshnessIdentity(table arctable.ArcTable) (string, bool) {
-	if table == nil {
-		return "", false
-	}
-	value := reflect.ValueOf(table)
-	if value.Kind() != reflect.Pointer || value.IsNil() {
-		return "", false
-	}
-	return fmt.Sprintf("%T:%x", table, value.Pointer()), true
 }
 
 func supportsConcurrentBranches(table arctable.ArcTable) bool {
