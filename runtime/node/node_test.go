@@ -165,6 +165,54 @@ func TestOpenGraphRejectsArcTableMismatch(t *testing.T) {
 	}
 }
 
+func TestNewGraphVersionedBackendAllowsConcurrentBranchesThroughMetricsWrapper(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.State.ArcTable.Type = "versioned"
+
+	node, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS()))
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+
+	g, err := node.NewGraph("branching")
+	if err != nil {
+		t.Fatalf("NewGraph failed: %v", err)
+	}
+
+	root, err := g.Writer().CreateStructure(context.Background(), g.Namespace(), arcset.NewSetFrom(map[string]cid.Cid{
+		"@payload": newTestCID("payload"),
+		"base":     newTestCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	first, err := g.Writer().UpdateArc(context.Background(), g.Namespace(), root, "left", newTestCID("left"))
+	if err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	second, err := g.Writer().BatchUpdateArcs(context.Background(), g.Namespace(), root, map[string]cid.Cid{
+		"right": newTestCID("right"),
+	})
+	if err != nil {
+		t.Fatalf("second BatchUpdateArcs failed: %v", err)
+	}
+
+	if !first.NewRoot.Defined() || !second.NewRoot.Defined() {
+		t.Fatal("expected both branches to produce defined roots")
+	}
+	if first.NewRoot.Equals(second.NewRoot) {
+		t.Fatal("expected distinct roots for sibling branches")
+	}
+	if got, err := g.Writer().GetArc(context.Background(), g.Namespace(), first.NewRoot, "left"); err != nil || !got.Equals(newTestCID("left")) {
+		t.Fatalf("left branch lookup = %v, %v", got, err)
+	}
+	if got, err := g.Writer().GetArc(context.Background(), g.Namespace(), second.NewRoot, "right"); err != nil || !got.Equals(newTestCID("right")) {
+		t.Fatalf("right branch lookup = %v, %v", got, err)
+	}
+}
+
 func testConfig(t *testing.T) *config.Config {
 	t.Helper()
 

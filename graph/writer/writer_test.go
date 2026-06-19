@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
+	versionedtable "github.com/dewebprotocol/malt/runtime/arctable/versioned"
 	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
@@ -75,6 +78,35 @@ func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.
 }
 
 type kvg = kvmemory.KV
+
+type nonComparableArcTable struct {
+	arctable arctable.ArcTable
+	tags     []string
+}
+
+func (t nonComparableArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	return t.arctable.Get(ctx, namespace, root, path)
+}
+
+func (t nonComparableArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	return t.arctable.BatchGet(ctx, namespace, root, paths)
+}
+
+func (t nonComparableArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	return t.arctable.Update(ctx, namespace, newRoot, oldRoot, arcs)
+}
+
+func (t nonComparableArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return t.arctable.Snapshot(ctx, namespace, root)
+}
+
+func (t nonComparableArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return t.arctable.Iterate(ctx, namespace, root)
+}
+
+func (t nonComparableArcTable) Close() error {
+	return t.arctable.Close()
+}
 
 func fakeCID(seed string) cid.Cid {
 	mhash, _ := mh.Sum([]byte(seed), mh.SHA2_256, -1)
@@ -576,6 +608,235 @@ func TestWriter_UpdateArc_InvalidInputs(t *testing.T) {
 	}
 }
 
+func TestWriter_UpdateArc_ConcurrentSameRootReturnsStaleRoot(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-concurrent-update"
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	const workers = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	roots := make(chan cid.Cid, workers)
+
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := w.UpdateArc(ctx, namespace, root, "child-"+strconv.Itoa(i), fakeCID("child-"+strconv.Itoa(i)))
+			if err != nil {
+				errs <- err
+				return
+			}
+			roots <- result.NewRoot
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(roots)
+
+	successes := 0
+	for newRoot := range roots {
+		successes++
+		if !newRoot.Defined() || newRoot.Equals(root) {
+			t.Fatalf("successful update returned invalid new root %s", newRoot)
+		}
+	}
+	stale := 0
+	for err := range errs {
+		if !errors.Is(err, ErrStaleRoot) {
+			t.Fatalf("concurrent update error = %v, want ErrStaleRoot", err)
+		}
+		stale++
+	}
+	if successes != 1 || stale != workers-1 {
+		t.Fatalf("successes/stale = %d/%d, want 1/%d", successes, stale, workers-1)
+	}
+}
+
+func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
+	w, at, semantic, _ := newTestWriter(t)
+	w2 := NewWriter(semantic, at)
+	ctx := context.Background()
+	namespace := "test-shared-writer"
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	if _, err := w.UpdateArc(ctx, namespace, root, "first", fakeCID("first")); err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	_, err = w2.UpdateArc(ctx, namespace, root, "second", fakeCID("second"))
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second writer UpdateArc error = %v, want ErrStaleRoot", err)
+	}
+}
+
+func TestWriter_NonComparableArcTableUsesPerWriterFreshnessGuard(t *testing.T) {
+	_, at, semantic, _ := newTestWriter(t)
+	table := arctable.ArcTable(nonComparableArcTable{
+		arctable: at,
+		tags:     []string{"custom"},
+	})
+
+	w := NewWriter(semantic, table)
+	w2 := NewWriter(semantic, table)
+
+	if w.freshness == nil || w2.freshness == nil {
+		t.Fatal("non-branching ArcTable should install freshness guards")
+	}
+	if w.freshness == w2.freshness {
+		t.Fatal("non-comparable ArcTable value should fall back to per-writer freshness guards")
+	}
+}
+
+func TestWriter_UpdateArc_AllowsReturnedRootAfterCycle(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-root-cycle"
+
+	rootA, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	inserted := fakeCID("inserted")
+	resultB, err := w.UpdateArc(ctx, namespace, rootA, "temp", inserted)
+	if err != nil {
+		t.Fatalf("A -> B UpdateArc failed: %v", err)
+	}
+	rootB := resultB.NewRoot
+	if rootB.Equals(rootA) {
+		t.Fatal("A -> B should produce a distinct root")
+	}
+
+	resultA2, err := w.UpdateArc(ctx, namespace, rootB, "temp", cid.Undef)
+	if err != nil {
+		t.Fatalf("B -> A UpdateArc failed: %v", err)
+	}
+	rootA2 := resultA2.NewRoot
+	if !rootA2.Equals(rootA) {
+		t.Fatalf("B -> A root = %s, want original root %s", rootA2, rootA)
+	}
+
+	resultC, err := w.UpdateArc(ctx, namespace, rootA2, "next", fakeCID("next"))
+	if err != nil {
+		t.Fatalf("A -> C UpdateArc failed after root returned current: %v", err)
+	}
+	if !resultC.NewRoot.Defined() || resultC.NewRoot.Equals(rootA2) {
+		t.Fatalf("A -> C returned invalid root %s", resultC.NewRoot)
+	}
+}
+
+func TestWriter_CreateStructureRevivesRecreatedRoot(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-recreated-root"
+	arcs := makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	})
+
+	rootA, err := w.CreateStructure(ctx, namespace, arcs)
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+	resultB, err := w.UpdateArc(ctx, namespace, rootA, "temp", fakeCID("temp"))
+	if err != nil {
+		t.Fatalf("A -> B UpdateArc failed: %v", err)
+	}
+	if resultB.NewRoot.Equals(rootA) {
+		t.Fatal("A -> B should produce a distinct root")
+	}
+
+	rootA2, err := w.CreateStructure(ctx, namespace, arcs)
+	if err != nil {
+		t.Fatalf("recreate A failed: %v", err)
+	}
+	if !rootA2.Equals(rootA) {
+		t.Fatalf("recreated root = %s, want original root %s", rootA2, rootA)
+	}
+
+	resultC, err := w.UpdateArc(ctx, namespace, rootA2, "next", fakeCID("next"))
+	if err != nil {
+		t.Fatalf("A -> C UpdateArc failed after CreateStructure revived A: %v", err)
+	}
+	if !resultC.NewRoot.Defined() || resultC.NewRoot.Equals(rootA2) {
+		t.Fatalf("A -> C returned invalid root %s", resultC.NewRoot)
+	}
+}
+
+func TestWriter_UpdateArc_VersionedArcTableAllowsBranching(t *testing.T) {
+	ctx := context.Background()
+	namespace := "test-versioned-branch"
+
+	kv := kvmemory.New()
+	at, err := versionedtable.NewArcTable(versionedtable.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("failed to create versioned ArcTable: %v", err)
+	}
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("failed to create KZG scheme: %v", err)
+	}
+	semantic, err := mappingradix.NewMap(scheme, at)
+	if err != nil {
+		t.Fatalf("failed to create mapping semantic: %v", err)
+	}
+	w := NewWriter(semantic, at)
+	w2 := NewWriter(semantic, at)
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	first, err := w.UpdateArc(ctx, namespace, root, "left", fakeCID("left"))
+	if err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	second, err := w2.UpdateArc(ctx, namespace, root, "right", fakeCID("right"))
+	if err != nil {
+		t.Fatalf("second UpdateArc failed: %v", err)
+	}
+
+	if !first.NewRoot.Defined() || !second.NewRoot.Defined() {
+		t.Fatal("expected both branches to produce defined roots")
+	}
+	if first.NewRoot.Equals(second.NewRoot) {
+		t.Fatal("expected versioned branches to produce distinct roots")
+	}
+	if got, err := w.GetArc(ctx, namespace, first.NewRoot, "left"); err != nil || !got.Equals(fakeCID("left")) {
+		t.Fatalf("left branch lookup = %v, %v", got, err)
+	}
+	if got, err := w.GetArc(ctx, namespace, second.NewRoot, "right"); err != nil || !got.Equals(fakeCID("right")) {
+		t.Fatalf("right branch lookup = %v, %v", got, err)
+	}
+	if got, err := w.GetArc(ctx, namespace, first.NewRoot, "base"); err != nil || !got.Equals(fakeCID("base")) {
+		t.Fatalf("left branch base lookup = %v, %v", got, err)
+	}
+	if got, err := w.GetArc(ctx, namespace, second.NewRoot, "base"); err != nil || !got.Equals(fakeCID("base")) {
+		t.Fatalf("right branch base lookup = %v, %v", got, err)
+	}
+}
+
 func TestWriter_BatchUpdateArcs(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
@@ -646,6 +907,41 @@ func TestWriter_BatchUpdateArcs(t *testing.T) {
 				t.Errorf("expected GetArc(%s) to fail, got %s", path, got)
 			}
 		}
+	}
+}
+
+func TestWriter_BatchUpdateArcs_RejectsConsumedBaseRoot(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-batch-stale"
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"a": fakeCID("data-a"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	first, err := w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": fakeCID("data-a-new"),
+	})
+	if err != nil {
+		t.Fatalf("first BatchUpdateArcs failed: %v", err)
+	}
+
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"b": fakeCID("data-b"),
+	})
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second BatchUpdateArcs error = %v, want ErrStaleRoot", err)
+	}
+
+	got, err := w.GetArc(ctx, namespace, first.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(a) from first root failed: %v", err)
+	}
+	if !got.Equals(fakeCID("data-a-new")) {
+		t.Fatalf("a = %s, want updated target", got)
 	}
 }
 

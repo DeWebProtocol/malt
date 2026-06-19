@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"sync"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
@@ -32,6 +34,11 @@ var (
 	// ErrDeletingPayloadBinding is returned when an update attempts to remove the
 	// mandatory @payload binding from a MALT-native object.
 	ErrDeletingPayloadBinding = errors.New("mandatory @payload binding cannot be deleted")
+
+	// ErrStaleRoot is returned when a legacy root-consuming write attempts to
+	// update a base root that this writer has already advanced in the same
+	// namespace.
+	ErrStaleRoot = errors.New("stale root")
 )
 
 var mandatoryPayloadPath = arcset.CanonicalizePath("@payload")
@@ -98,6 +105,11 @@ type BatchUpdateResult struct {
 // It coordinates keyed-map semantics and ArcTable (index) updates to execute
 // the unified arc update procedure from Sec 4.5.
 //
+// The legacy UpdateArc/BatchUpdateArcs paths only enforce single-consumer root
+// freshness for non-branching ArcTable backends. MVCC-style backends such as
+// versioned ArcTable remain branchable and may accept multiple children from
+// the same parent root.
+//
 // Symmetric to Resolver on the read side:
 //   - Resolver: (root, path) -> (target, transcript) via ArcTable lookup + semantic prove
 //   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply
@@ -105,6 +117,7 @@ type Writer struct {
 	semantic     mapping.Semantics
 	listSemantic list.Semantics
 	arctable     arctable.ArcTable
+	freshness    *rootFreshnessGuard
 }
 
 // NewWriter creates a new Writer.
@@ -121,7 +134,98 @@ func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, lists ...
 		semantic:     semantic,
 		listSemantic: listSemantic,
 		arctable:     arctable,
+		freshness:    rootFreshnessGuardFor(arctable),
 	}
+}
+
+var sharedFreshnessGuards sync.Map
+
+type rootFreshnessGuard struct {
+	mu       sync.Mutex
+	consumed map[string]cid.Cid
+}
+
+func newRootFreshnessGuard() *rootFreshnessGuard {
+	return &rootFreshnessGuard{
+		consumed: make(map[string]cid.Cid),
+	}
+}
+
+func sharedRootFreshnessGuard(table arctable.ArcTable) *rootFreshnessGuard {
+	key, ok := arctableFreshnessIdentity(table)
+	if !ok {
+		return newRootFreshnessGuard()
+	}
+	guard, _ := sharedFreshnessGuards.LoadOrStore(key, newRootFreshnessGuard())
+	return guard.(*rootFreshnessGuard)
+}
+
+func arctableFreshnessIdentity(table arctable.ArcTable) (any, bool) {
+	if table == nil {
+		return nil, false
+	}
+	if !reflect.TypeOf(table).Comparable() {
+		return nil, false
+	}
+	return table, true
+}
+
+func rootFreshnessGuardFor(table arctable.ArcTable) *rootFreshnessGuard {
+	if supportsConcurrentBranches(table) {
+		return nil
+	}
+	return sharedRootFreshnessGuard(table)
+}
+
+func supportsConcurrentBranches(table arctable.ArcTable) bool {
+	if table == nil {
+		return false
+	}
+	branching, ok := table.(arctable.BranchingArcTable)
+	return ok && branching.SupportsConcurrentBranches()
+}
+
+func freshnessKey(namespace string, root cid.Cid) string {
+	return namespace + "\x00" + root.String()
+}
+
+func (g *rootFreshnessGuard) beginUpdate(namespace string, root cid.Cid) (func(), error) {
+	key := freshnessKey(namespace, root)
+	g.mu.Lock()
+	advancedTo, ok := g.consumed[key]
+	if !ok {
+		return g.mu.Unlock, nil
+	}
+	g.mu.Unlock()
+	return nil, fmt.Errorf("%w: root %s in namespace %q already advanced to %s", ErrStaleRoot, root, namespace, advancedTo)
+}
+
+func (g *rootFreshnessGuard) markAdvanced(namespace string, oldRoot, newRoot cid.Cid) {
+	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.markAdvancedLocked(namespace, oldRoot, newRoot)
+}
+
+func (g *rootFreshnessGuard) markAdvancedLocked(namespace string, oldRoot, newRoot cid.Cid) {
+	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
+		return
+	}
+	oldKey := freshnessKey(namespace, oldRoot)
+	newKey := freshnessKey(namespace, newRoot)
+	g.consumed[oldKey] = newRoot
+	delete(g.consumed, newKey)
+}
+
+func (g *rootFreshnessGuard) markCurrent(namespace string, root cid.Cid) {
+	if !root.Defined() {
+		return
+	}
+	g.mu.Lock()
+	delete(g.consumed, freshnessKey(namespace, root))
+	g.mu.Unlock()
 }
 
 func canonicalizeUpdateMap(updates map[string]cid.Cid) (map[arcset.Path]cid.Cid, error) {
@@ -233,6 +337,11 @@ func hasDefinedPayloadBinding(arcs arcset.ArcSet) bool {
 //  2. Updates the commitment: newRoot = semantic.Update(root, path, c, newTarget)
 //  3. Applies the update to ArcTable using the full new arc set for newRoot
 //
+// UpdateArc is a legacy root-consuming API. Within one process, writers that
+// share the same ArcTable instance advance (namespace, root) exactly once for
+// successful non-no-op calls; later attempts to update the same base root return
+// ErrStaleRoot instead of silently forking or overwriting ArcTable state.
+//
 // The operation covers three semantic cases:
 //   - Insert (⊥ → c)
 //   - Replace (c -> c')
@@ -247,6 +356,14 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	}
 	if canonicalPath == mandatoryPayloadPath && !newTarget.Defined() {
 		return nil, ErrDeletingPayloadBinding
+	}
+
+	if w.freshness != nil {
+		unlock, err := w.freshness.beginUpdate(namespace, root)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 	}
 
 	// Step 1: Look up current binding
@@ -316,6 +433,9 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
+	if w.freshness != nil {
+		w.freshness.markAdvancedLocked(namespace, root, newRoot)
+	}
 
 	return &UpdateResult{
 		OldRoot:   root,
@@ -334,6 +454,11 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 //  2. Applies semantic.BatchUpdate atomically over the current keyed view
 //  3. Applies all updates to ArcTable
 //
+// BatchUpdateArcs is a legacy root-consuming API. Within one process, writers
+// that share the same ArcTable instance advance (namespace, root) exactly once
+// for successful non-no-op calls; later attempts to update the same base root
+// return ErrStaleRoot instead of silently forking or overwriting ArcTable state.
+//
 // If any update in the batch fails, the entire operation is rejected and
 // no state is modified.
 func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid.Cid, updates map[string]cid.Cid) (*BatchUpdateResult, error) {
@@ -349,6 +474,14 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	}
 	if payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]; ok && !payloadTarget.Defined() {
 		return nil, ErrDeletingPayloadBinding
+	}
+
+	if w.freshness != nil {
+		unlock, err := w.freshness.beginUpdate(namespace, root)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 	}
 
 	// Step 1: Get current arc set snapshot
@@ -432,6 +565,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
+	if w.freshness != nil {
+		w.freshness.markAdvancedLocked(namespace, root, newRoot)
+	}
 
 	// Update NewRoot for all per-arc results
 	for path := range perArc {
@@ -477,6 +613,9 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	// Step 2: Store arcs in ArcTable (first version)
 	if err := w.arctable.Update(ctx, namespace, root, cid.Undef, normalizedSnapshot); err != nil {
 		return cid.Undef, fmt.Errorf("ArcTable.Update failed: %w", err)
+	}
+	if w.freshness != nil {
+		w.freshness.markCurrent(namespace, root)
 	}
 
 	return root, nil
