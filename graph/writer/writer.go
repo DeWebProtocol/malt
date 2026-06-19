@@ -221,9 +221,11 @@ func (g *rootFreshnessGuard) markAdvanced(namespace string, oldRoot, newRoot cid
 	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
 		return
 	}
-	key := freshnessKey(namespace, oldRoot)
+	oldKey := freshnessKey(namespace, oldRoot)
+	newKey := freshnessKey(namespace, newRoot)
 	g.mu.Lock()
-	g.consumed[key] = newRoot
+	g.consumed[oldKey] = newRoot
+	delete(g.consumed, newKey)
 	g.mu.Unlock()
 }
 

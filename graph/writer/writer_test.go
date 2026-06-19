@@ -656,6 +656,46 @@ func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
 	}
 }
 
+func TestWriter_UpdateArc_AllowsReturnedRootAfterCycle(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-root-cycle"
+
+	rootA, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	inserted := fakeCID("inserted")
+	resultB, err := w.UpdateArc(ctx, namespace, rootA, "temp", inserted)
+	if err != nil {
+		t.Fatalf("A -> B UpdateArc failed: %v", err)
+	}
+	rootB := resultB.NewRoot
+	if rootB.Equals(rootA) {
+		t.Fatal("A -> B should produce a distinct root")
+	}
+
+	resultA2, err := w.UpdateArc(ctx, namespace, rootB, "temp", cid.Undef)
+	if err != nil {
+		t.Fatalf("B -> A UpdateArc failed: %v", err)
+	}
+	rootA2 := resultA2.NewRoot
+	if !rootA2.Equals(rootA) {
+		t.Fatalf("B -> A root = %s, want original root %s", rootA2, rootA)
+	}
+
+	resultC, err := w.UpdateArc(ctx, namespace, rootA2, "next", fakeCID("next"))
+	if err != nil {
+		t.Fatalf("A -> C UpdateArc failed after root returned current: %v", err)
+	}
+	if !resultC.NewRoot.Defined() || resultC.NewRoot.Equals(rootA2) {
+		t.Fatalf("A -> C returned invalid root %s", resultC.NewRoot)
+	}
+}
+
 func TestWriter_UpdateArc_VersionedArcTableAllowsBranching(t *testing.T) {
 	ctx := context.Background()
 	namespace := "test-versioned-branch"
