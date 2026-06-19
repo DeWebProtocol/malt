@@ -105,6 +105,11 @@ type BatchUpdateResult struct {
 // It coordinates keyed-map semantics and ArcTable (index) updates to execute
 // the unified arc update procedure from Sec 4.5.
 //
+// The legacy UpdateArc/BatchUpdateArcs paths only enforce single-consumer root
+// freshness for non-branching ArcTable backends. MVCC-style backends such as
+// versioned ArcTable remain branchable and may accept multiple children from
+// the same parent root.
+//
 // Symmetric to Resolver on the read side:
 //   - Resolver: (root, path) -> (target, transcript) via ArcTable lookup + semantic prove
 //   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply
@@ -129,7 +134,7 @@ func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, lists ...
 		semantic:     semantic,
 		listSemantic: listSemantic,
 		arctable:     arctable,
-		freshness:    sharedRootFreshnessGuard(arctable),
+		freshness:    rootFreshnessGuardFor(arctable),
 	}
 }
 
@@ -157,6 +162,13 @@ func sharedRootFreshnessGuard(table arctable.ArcTable) *rootFreshnessGuard {
 	return guard.(*rootFreshnessGuard)
 }
 
+func rootFreshnessGuardFor(table arctable.ArcTable) *rootFreshnessGuard {
+	if supportsConcurrentBranches(table) {
+		return nil
+	}
+	return sharedRootFreshnessGuard(table)
+}
+
 func arctableFreshnessIdentity(table arctable.ArcTable) (string, bool) {
 	if table == nil {
 		return "", false
@@ -166,6 +178,14 @@ func arctableFreshnessIdentity(table arctable.ArcTable) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("%T:%x", table, value.Pointer()), true
+}
+
+func supportsConcurrentBranches(table arctable.ArcTable) bool {
+	if table == nil {
+		return false
+	}
+	branching, ok := table.(arctable.BranchingArcTable)
+	return ok && branching.SupportsConcurrentBranches()
 }
 
 func freshnessKey(namespace string, root cid.Cid) string {
@@ -337,10 +357,12 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 		return nil, ErrDeletingPayloadBinding
 	}
 
-	unlock := w.freshness.lock(namespace, root)
-	defer unlock()
-	if err := w.freshness.check(namespace, root); err != nil {
-		return nil, err
+	if w.freshness != nil {
+		unlock := w.freshness.lock(namespace, root)
+		defer unlock()
+		if err := w.freshness.check(namespace, root); err != nil {
+			return nil, err
+		}
 	}
 
 	// Step 1: Look up current binding
@@ -410,7 +432,9 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
-	w.freshness.markAdvanced(namespace, root, newRoot)
+	if w.freshness != nil {
+		w.freshness.markAdvanced(namespace, root, newRoot)
+	}
 
 	return &UpdateResult{
 		OldRoot:   root,
@@ -451,10 +475,12 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 		return nil, ErrDeletingPayloadBinding
 	}
 
-	unlock := w.freshness.lock(namespace, root)
-	defer unlock()
-	if err := w.freshness.check(namespace, root); err != nil {
-		return nil, err
+	if w.freshness != nil {
+		unlock := w.freshness.lock(namespace, root)
+		defer unlock()
+		if err := w.freshness.check(namespace, root); err != nil {
+			return nil, err
+		}
 	}
 
 	// Step 1: Get current arc set snapshot
@@ -538,7 +564,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
-	w.freshness.markAdvanced(namespace, root, newRoot)
+	if w.freshness != nil {
+		w.freshness.markAdvanced(namespace, root, newRoot)
+	}
 
 	// Update NewRoot for all per-arc results
 	for path := range perArc {

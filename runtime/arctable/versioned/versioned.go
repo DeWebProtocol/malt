@@ -33,6 +33,12 @@ type ArcTable struct {
 	bloomManager *arctable.BloomFilterManager
 }
 
+// SupportsConcurrentBranches reports that versioned ArcTable preserves
+// multiple children from the same parent root.
+func (e *ArcTable) SupportsConcurrentBranches() bool {
+	return true
+}
+
 // NewArcTable creates a new versioned ArcTable with the given KVStore and optional configuration.
 // Bloom filter is disabled by default; use WithBloomCache to enable it.
 //

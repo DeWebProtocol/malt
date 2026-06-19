@@ -60,6 +60,15 @@ type ArcTable interface {
 	Close() error
 }
 
+// BranchingArcTable may be implemented by ArcTable backends that preserve
+// multiple concurrent children from the same parent root.
+//
+// Writers can skip stale-root guards for backends that report support for
+// concurrent branches.
+type BranchingArcTable interface {
+	SupportsConcurrentBranches() bool
+}
+
 // NamespaceCreator is an optional interface for ArcTable implementations
 // that support creating namespaces with custom bloom filter configuration.
 type NamespaceCreator interface {

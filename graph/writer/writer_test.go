@@ -12,6 +12,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
+	versionedtable "github.com/dewebprotocol/malt/runtime/arctable/versioned"
 	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
@@ -652,6 +653,62 @@ func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
 	_, err = w2.UpdateArc(ctx, namespace, root, "second", fakeCID("second"))
 	if !errors.Is(err, ErrStaleRoot) {
 		t.Fatalf("second writer UpdateArc error = %v, want ErrStaleRoot", err)
+	}
+}
+
+func TestWriter_UpdateArc_VersionedArcTableAllowsBranching(t *testing.T) {
+	ctx := context.Background()
+	namespace := "test-versioned-branch"
+
+	kv := kvmemory.New()
+	at, err := versionedtable.NewArcTable(versionedtable.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("failed to create versioned ArcTable: %v", err)
+	}
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("failed to create KZG scheme: %v", err)
+	}
+	semantic, err := mappingradix.NewMap(scheme, at)
+	if err != nil {
+		t.Fatalf("failed to create mapping semantic: %v", err)
+	}
+	w := NewWriter(semantic, at)
+	w2 := NewWriter(semantic, at)
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	first, err := w.UpdateArc(ctx, namespace, root, "left", fakeCID("left"))
+	if err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	second, err := w2.UpdateArc(ctx, namespace, root, "right", fakeCID("right"))
+	if err != nil {
+		t.Fatalf("second UpdateArc failed: %v", err)
+	}
+
+	if !first.NewRoot.Defined() || !second.NewRoot.Defined() {
+		t.Fatal("expected both branches to produce defined roots")
+	}
+	if first.NewRoot.Equals(second.NewRoot) {
+		t.Fatal("expected versioned branches to produce distinct roots")
+	}
+	if got, err := w.GetArc(ctx, namespace, first.NewRoot, "left"); err != nil || !got.Equals(fakeCID("left")) {
+		t.Fatalf("left branch lookup = %v, %v", got, err)
+	}
+	if got, err := w.GetArc(ctx, namespace, second.NewRoot, "right"); err != nil || !got.Equals(fakeCID("right")) {
+		t.Fatalf("right branch lookup = %v, %v", got, err)
+	}
+	if got, err := w.GetArc(ctx, namespace, first.NewRoot, "base"); err != nil || !got.Equals(fakeCID("base")) {
+		t.Fatalf("left branch base lookup = %v, %v", got, err)
+	}
+	if got, err := w.GetArc(ctx, namespace, second.NewRoot, "base"); err != nil || !got.Equals(fakeCID("base")) {
+		t.Fatalf("right branch base lookup = %v, %v", got, err)
 	}
 }
 
