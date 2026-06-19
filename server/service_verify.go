@@ -73,7 +73,11 @@ func decodeEvidence(kind string, payload []byte) (evidence.Evidence, error) {
 }
 
 func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifiedPath) error {
-	want := arcset.CanonicalizePath(querypath.CanonicalizeQueryPath(pl.Query)).String()
+	cleanQuery, err := querypath.CanonicalizeQueryPath(pl.Query)
+	if err != nil {
+		return fmt.Errorf("invalid prooflist query path: %w", err)
+	}
+	want := arcset.CanonicalizePath(cleanQuery).String()
 	if want == "" {
 		return nil
 	}

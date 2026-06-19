@@ -3,12 +3,19 @@ package cas
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
+)
+
+const (
+	maxCBORDepth            = 64
+	maxCBORCollectionLength = 1 << 20
+	maxCBORCopyLength       = 64 << 20
 )
 
 // IPLDCodec identifies the IPLD codec type.
@@ -204,9 +211,13 @@ func (p *IPLDParser) GetAllLinks(node *IPLDNode) []LinkInfo {
 }
 
 // FollowLink fetches a linked block and parses it.
-func (p *IPLDParser) FollowLink(c cid.Cid, linkName string) (*IPLDNode, error) {
+func (p *IPLDParser) FollowLink(ctx context.Context, c cid.Cid, linkName string) (*IPLDNode, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Get the block data
-	data, err := p.cas.Get(nil, c)
+	data, err := p.cas.Get(ctx, c)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch block: %w", err)
 	}
@@ -224,7 +235,7 @@ func (p *IPLDParser) FollowLink(c cid.Cid, linkName string) (*IPLDNode, error) {
 	}
 
 	// Fetch and parse target
-	targetData, err := p.cas.Get(nil, targetCID)
+	targetData, err := p.cas.Get(ctx, targetCID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch linked block: %w", err)
 	}
@@ -243,6 +254,13 @@ func newCBORDecoder(data []byte) *cborDecoder {
 }
 
 func (d *cborDecoder) decode() (interface{}, error) {
+	return d.decodeValue(0)
+}
+
+func (d *cborDecoder) decodeValue(depth int) (interface{}, error) {
+	if depth > maxCBORDepth {
+		return nil, fmt.Errorf("CBOR nesting exceeds maximum depth %d", maxCBORDepth)
+	}
 	if d.pos >= len(d.data) {
 		return nil, fmt.Errorf("unexpected end of data")
 	}
@@ -261,38 +279,36 @@ func (d *cborDecoder) decode() (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		return -(v.(uint64)) - 1, nil
+		n := v.(uint64)
+		if n > uint64(1<<63-1) {
+			return nil, fmt.Errorf("negative integer is too large")
+		}
+		return int64(-1) - int64(n), nil
 	case 2: // byte string
-		length, err := d.decodeLength(additionalInfo)
+		length, err := d.decodeCopyLength(additionalInfo, "byte string")
 		if err != nil {
 			return nil, err
-		}
-		if d.pos+int(length) > len(d.data) {
-			return nil, fmt.Errorf("byte string length exceeds data")
 		}
 		result := make([]byte, length)
-		copy(result, d.data[d.pos:d.pos+int(length)])
-		d.pos += int(length)
+		copy(result, d.data[d.pos:d.pos+length])
+		d.pos += length
 		return result, nil
 	case 3: // text string
-		length, err := d.decodeLength(additionalInfo)
+		length, err := d.decodeCopyLength(additionalInfo, "text string")
 		if err != nil {
 			return nil, err
 		}
-		if d.pos+int(length) > len(d.data) {
-			return nil, fmt.Errorf("text string length exceeds data")
-		}
-		result := string(d.data[d.pos : d.pos+int(length)])
-		d.pos += int(length)
+		result := string(d.data[d.pos : d.pos+length])
+		d.pos += length
 		return result, nil
 	case 4: // array
-		length, err := d.decodeLength(additionalInfo)
+		length, err := d.decodeCollectionLength(additionalInfo, "array", 1)
 		if err != nil {
 			return nil, err
 		}
 		arr := make([]interface{}, length)
-		for i := uint64(0); i < length; i++ {
-			v, err := d.decode()
+		for i := 0; i < length; i++ {
+			v, err := d.decodeValue(depth + 1)
 			if err != nil {
 				return nil, err
 			}
@@ -300,13 +316,13 @@ func (d *cborDecoder) decode() (interface{}, error) {
 		}
 		return arr, nil
 	case 5: // map
-		length, err := d.decodeLength(additionalInfo)
+		length, err := d.decodeCollectionLength(additionalInfo, "map", 2)
 		if err != nil {
 			return nil, err
 		}
 		m := make(map[string]interface{})
-		for i := uint64(0); i < length; i++ {
-			k, err := d.decode()
+		for i := 0; i < length; i++ {
+			k, err := d.decodeValue(depth + 1)
 			if err != nil {
 				return nil, err
 			}
@@ -314,7 +330,7 @@ func (d *cborDecoder) decode() (interface{}, error) {
 			if !ok {
 				return nil, fmt.Errorf("map key is not a string")
 			}
-			v, err := d.decode()
+			v, err := d.decodeValue(depth + 1)
 			if err != nil {
 				return nil, err
 			}
@@ -328,7 +344,7 @@ func (d *cborDecoder) decode() (interface{}, error) {
 		}
 		// For CID tag (42), decode the following byte string as CID
 		if tag == 42 {
-			v, err := d.decode()
+			v, err := d.decodeValue(depth + 1)
 			if err != nil {
 				return nil, err
 			}
@@ -345,12 +361,44 @@ func (d *cborDecoder) decode() (interface{}, error) {
 			return v, nil
 		}
 		// Skip tag value
-		return d.decode()
+		return d.decodeValue(depth + 1)
 	case 7: // simple/float
 		return d.decodeSimple(additionalInfo)
 	default:
 		return nil, fmt.Errorf("unknown major type: %d", majorType)
 	}
+}
+
+func (d *cborDecoder) remaining() int {
+	return len(d.data) - d.pos
+}
+
+func (d *cborDecoder) decodeCopyLength(additionalInfo byte, kind string) (int, error) {
+	length, err := d.decodeLength(additionalInfo)
+	if err != nil {
+		return 0, err
+	}
+	if length > uint64(maxCBORCopyLength) {
+		return 0, fmt.Errorf("%s length %d exceeds maximum %d", kind, length, maxCBORCopyLength)
+	}
+	if length > uint64(d.remaining()) {
+		return 0, fmt.Errorf("%s length %d exceeds remaining data %d", kind, length, d.remaining())
+	}
+	return int(length), nil
+}
+
+func (d *cborDecoder) decodeCollectionLength(additionalInfo byte, kind string, minItemsPerEntry uint64) (int, error) {
+	length, err := d.decodeLength(additionalInfo)
+	if err != nil {
+		return 0, err
+	}
+	if length > uint64(maxCBORCollectionLength) {
+		return 0, fmt.Errorf("%s length %d exceeds maximum %d", kind, length, maxCBORCollectionLength)
+	}
+	if minItemsPerEntry != 0 && length > uint64(d.remaining())/minItemsPerEntry {
+		return 0, fmt.Errorf("%s length %d exceeds remaining data %d", kind, length, d.remaining())
+	}
+	return int(length), nil
 }
 
 func (d *cborDecoder) decodeUint(additionalInfo byte) (interface{}, error) {
