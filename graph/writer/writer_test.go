@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -576,6 +577,84 @@ func TestWriter_UpdateArc_InvalidInputs(t *testing.T) {
 	}
 }
 
+func TestWriter_UpdateArc_ConcurrentSameRootReturnsStaleRoot(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-concurrent-update"
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	const workers = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	roots := make(chan cid.Cid, workers)
+
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := w.UpdateArc(ctx, namespace, root, "child-"+strconv.Itoa(i), fakeCID("child-"+strconv.Itoa(i)))
+			if err != nil {
+				errs <- err
+				return
+			}
+			roots <- result.NewRoot
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(roots)
+
+	successes := 0
+	for newRoot := range roots {
+		successes++
+		if !newRoot.Defined() || newRoot.Equals(root) {
+			t.Fatalf("successful update returned invalid new root %s", newRoot)
+		}
+	}
+	stale := 0
+	for err := range errs {
+		if !errors.Is(err, ErrStaleRoot) {
+			t.Fatalf("concurrent update error = %v, want ErrStaleRoot", err)
+		}
+		stale++
+	}
+	if successes != 1 || stale != workers-1 {
+		t.Fatalf("successes/stale = %d/%d, want 1/%d", successes, stale, workers-1)
+	}
+}
+
+func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
+	w, at, semantic, _ := newTestWriter(t)
+	w2 := NewWriter(semantic, at)
+	ctx := context.Background()
+	namespace := "test-shared-writer"
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"base": fakeCID("base"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	if _, err := w.UpdateArc(ctx, namespace, root, "first", fakeCID("first")); err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	_, err = w2.UpdateArc(ctx, namespace, root, "second", fakeCID("second"))
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second writer UpdateArc error = %v, want ErrStaleRoot", err)
+	}
+}
+
 func TestWriter_BatchUpdateArcs(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
@@ -646,6 +725,41 @@ func TestWriter_BatchUpdateArcs(t *testing.T) {
 				t.Errorf("expected GetArc(%s) to fail, got %s", path, got)
 			}
 		}
+	}
+}
+
+func TestWriter_BatchUpdateArcs_RejectsConsumedBaseRoot(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-batch-stale"
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"a": fakeCID("data-a"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	first, err := w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": fakeCID("data-a-new"),
+	})
+	if err != nil {
+		t.Fatalf("first BatchUpdateArcs failed: %v", err)
+	}
+
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"b": fakeCID("data-b"),
+	})
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second BatchUpdateArcs error = %v, want ErrStaleRoot", err)
+	}
+
+	got, err := w.GetArc(ctx, namespace, first.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(a) from first root failed: %v", err)
+	}
+	if !got.Equals(fakeCID("data-a-new")) {
+		t.Fatalf("a = %s, want updated target", got)
 	}
 }
 
