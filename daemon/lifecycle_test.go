@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -347,6 +349,44 @@ func TestLifecycleRestartStopsThenStarts(t *testing.T) {
 	}
 	if !status.Running || status.PID != 5678 {
 		t.Fatalf("status = %+v, want restarted pid 5678", status)
+	}
+}
+
+func TestDefaultIdentityCheckFallsBackToLegacyHealthToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_lifecycle/identity":
+			http.NotFound(w, r)
+		case "/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","lifecycle_token":"managed-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	if err := defaultIdentityCheck(context.Background(), ts.URL, "managed-token"); err != nil {
+		t.Fatalf("defaultIdentityCheck legacy fallback: %v", err)
+	}
+}
+
+func TestDefaultIdentityCheckRejectsMismatchedLegacyHealthToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_lifecycle/identity":
+			http.NotFound(w, r)
+		case "/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","lifecycle_token":"other-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	if err := defaultIdentityCheck(context.Background(), ts.URL, "managed-token"); err == nil {
+		t.Fatal("defaultIdentityCheck succeeded with mismatched legacy health token")
 	}
 }
 

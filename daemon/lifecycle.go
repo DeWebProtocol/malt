@@ -464,7 +464,13 @@ func defaultIdentityCheck(ctx context.Context, baseURL string, token string) err
 	if token == "" {
 		return errors.New("missing expected lifecycle token")
 	}
-	return fetchLifecycleIdentity(ctx, baseURL, token)
+	if err := fetchLifecycleIdentity(ctx, baseURL, token); err != nil {
+		if legacyErr := fetchLegacyHealthIdentity(ctx, baseURL, token); legacyErr == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func fetchHealth(ctx context.Context, baseURL string) (*httpapi.HealthResponse, error) {
@@ -487,6 +493,40 @@ func fetchHealth(ctx context.Context, baseURL string) (*httpapi.HealthResponse, 
 		return nil, fmt.Errorf("decode health response: %w", err)
 	}
 	return &health, nil
+}
+
+func fetchLegacyHealthIdentity(ctx context.Context, baseURL string, token string) error {
+	u := strings.TrimRight(baseURL, "/") + "/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("legacy health status %d", resp.StatusCode)
+	}
+	var health struct {
+		Status         string `json:"status"`
+		LifecycleToken string `json:"lifecycle_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil && err != io.EOF {
+		return fmt.Errorf("decode legacy health response: %w", err)
+	}
+	if health.Status != "ok" {
+		return fmt.Errorf("legacy health status %q", health.Status)
+	}
+	if health.LifecycleToken == "" {
+		return errors.New("legacy health response missing lifecycle token")
+	}
+	if health.LifecycleToken != token {
+		return errors.New("legacy health lifecycle token mismatch")
+	}
+	return nil
 }
 
 func fetchLifecycleIdentity(ctx context.Context, baseURL string, token string) error {
