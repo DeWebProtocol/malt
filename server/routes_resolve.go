@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -29,11 +30,7 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, svc graphService, root cid.Cid, queryPath string) {
 	resolved, err := s.resolvePath(r.Context(), svc, root, queryPath, !shouldOmitDefaultProof(r))
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err.Error())
+		writeError(w, resolvePathStatus(err), err.Error())
 		return
 	}
 	addVaryHeader(w, "X-Malt-Proof")
@@ -86,4 +83,15 @@ func (s *Server) resolvePath(ctx context.Context, svc graphService, root cid.Cid
 	}
 	resolved.proofList = pl
 	return resolved, nil
+}
+
+func resolvePathStatus(err error) int {
+	switch {
+	case errors.Is(err, querypath.ErrInvalidQueryPath):
+		return http.StatusBadRequest
+	case errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
 }

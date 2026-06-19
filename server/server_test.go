@@ -745,6 +745,64 @@ func TestServerContentRouteRejectsLegacyFormatModes(t *testing.T) {
 	}
 }
 
+func TestServerInvalidQueryPathsReturnBadRequest(t *testing.T) {
+	node := newTestNode(t)
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"name": fakeCIDString("name")}),
+	})
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create root status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create root: %v", err)
+	}
+	resp.Body.Close()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "resolve parent", method: http.MethodGet, path: "/resolve/" + createResp.Root + "/.."},
+		{name: "content duplicate slash", method: http.MethodGet, path: "/" + createResp.Root + "/docs//readme.txt"},
+		{name: "content head current dir", method: http.MethodHead, path: "/" + createResp.Root + "/."},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{
+				CheckRedirect: func(*http.Request, []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+			req, err := http.NewRequest(tc.method, ts.URL+tc.path, nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("%s %s status = %d, want %d", tc.method, tc.path, resp.StatusCode, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
 func TestServerVerifyAcceptsProofList(t *testing.T) {
 	node := newTestNode(t)
 	mockCAS, ok := node.CAS().(*casmock.CAS)

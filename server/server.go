@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/runtime/node"
 	cid "github.com/ipfs/go-cid"
 )
@@ -139,6 +141,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := validateRawReadQueryPath(r); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if isRemovedPublicRoute(r.Method, r.URL.Path) {
 			s.handleRemovedPublicRoute(w, r)
 			return
@@ -238,6 +244,67 @@ func isRemovedPublicRoute(method, rawPath string) bool {
 		return true
 	}
 	return false
+}
+
+func validateRawReadQueryPath(r *http.Request) error {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return nil
+	}
+	rawPath := r.URL.EscapedPath()
+	if rawPath == "" {
+		rawPath = r.URL.Path
+	}
+
+	if strings.HasPrefix(rawPath, "/resolve/") {
+		afterPrefix := strings.TrimPrefix(rawPath, "/resolve/")
+		_, rawQueryPath, ok := strings.Cut(afterPrefix, "/")
+		if !ok {
+			return nil
+		}
+		return validateEscapedQueryPath(rawQueryPath)
+	}
+
+	trimmed := strings.TrimPrefix(rawPath, "/")
+	root, rawQueryPath, ok := strings.Cut(trimmed, "/")
+	if !ok || root == "" || !contentReadRootSegment(root) {
+		return nil
+	}
+	return validateEscapedQueryPath(rawQueryPath)
+}
+
+func contentReadRootSegment(root string) bool {
+	switch root {
+	case "health", "metrics", "metrics:reset", "resolve", "verify", "lineage", "_", "_unixfs":
+		return false
+	default:
+		return true
+	}
+}
+
+func validateEscapedQueryPath(rawPath string) error {
+	if rawPath == "" {
+		return nil
+	}
+	segments := strings.Split(rawPath, "/")
+	for _, segment := range segments {
+		if segment == "" {
+			return fmt.Errorf("%w: contains empty segment", querypath.ErrInvalidQueryPath)
+		}
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			return fmt.Errorf("%w: invalid escape sequence", querypath.ErrInvalidQueryPath)
+		}
+		if strings.ContainsRune(decoded, '\x00') {
+			return fmt.Errorf("%w: contains NUL byte", querypath.ErrInvalidQueryPath)
+		}
+		switch decoded {
+		case ".":
+			return fmt.Errorf("%w: contains current-directory segment", querypath.ErrInvalidQueryPath)
+		case "..":
+			return fmt.Errorf("%w: contains parent-directory segment", querypath.ErrInvalidQueryPath)
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleRemovedPublicRoute(w http.ResponseWriter, r *http.Request) {

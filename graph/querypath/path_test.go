@@ -1,6 +1,7 @@
 package querypath_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/dewebprotocol/malt/graph/querypath"
@@ -40,6 +41,8 @@ func TestCanonicalizeQueryPathRejectsBadInputs(t *testing.T) {
 	for _, input := range tests {
 		if got, err := querypath.CanonicalizeQueryPath(input); err == nil {
 			t.Errorf("CanonicalizeQueryPath(%q) = %q, want error", input, got)
+		} else if !errors.Is(err, querypath.ErrInvalidQueryPath) {
+			t.Errorf("CanonicalizeQueryPath(%q) error = %v, want ErrInvalidQueryPath", input, err)
 		}
 	}
 }
