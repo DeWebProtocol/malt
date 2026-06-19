@@ -175,7 +175,7 @@ func browserCORSUnixFSWritePathAllowed(rawPath string) bool {
 		return false
 	}
 	switch root {
-	case "health", "metrics", "metrics:reset", "resolve", "verify", "lineage", "_", "_unixfs":
+	case "health", "metrics", "metrics:reset", "resolve", "verify", "lineage", "_", "_unixfs", "_lifecycle":
 		return false
 	}
 	return rest != "_mutate"
@@ -194,7 +194,7 @@ func browserCORSReadPathAllowed(rawPath string) bool {
 	}
 	first, _, _ := strings.Cut(trimmed, "/")
 	switch first {
-	case "health", "metrics", "metrics:reset", "resolve", "verify", "lineage", "_", "_unixfs":
+	case "health", "metrics", "metrics:reset", "resolve", "verify", "lineage", "_", "_unixfs", "_lifecycle":
 		return false
 	default:
 		return true

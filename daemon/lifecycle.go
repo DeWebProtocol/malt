@@ -23,6 +23,7 @@ const (
 	defaultLifecycleStopTimeout  = 10 * time.Second
 	defaultLifecyclePollInterval = 100 * time.Millisecond
 	LifecycleTokenEnv            = "MALT_DAEMON_LIFECYCLE_TOKEN"
+	lifecycleTokenHeader         = "X-Malt-Lifecycle-Token"
 )
 
 // ErrDaemonStateNotFound is returned when no managed daemon state file exists.
@@ -204,7 +205,19 @@ func WriteDaemonState(path string, state *DaemonState) error {
 		return fmt.Errorf("encode daemon state: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("write daemon state: %w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("secure daemon state permissions: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write daemon state: %w", err)
+	}
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("write daemon state: %w", err)
 	}
 	return nil
@@ -437,7 +450,13 @@ func sleepWithContext(ctx context.Context, sleep func(time.Duration), d time.Dur
 }
 
 func defaultHealthCheck(ctx context.Context, baseURL string) error {
-	_, err := fetchHealth(ctx, baseURL)
+	health, err := fetchHealth(ctx, baseURL)
+	if err != nil {
+		return err
+	}
+	if health.Status != "ok" {
+		return fmt.Errorf("health status %q", health.Status)
+	}
 	return err
 }
 
@@ -445,14 +464,7 @@ func defaultIdentityCheck(ctx context.Context, baseURL string, token string) err
 	if token == "" {
 		return errors.New("missing expected lifecycle token")
 	}
-	health, err := fetchHealth(ctx, baseURL)
-	if err != nil {
-		return err
-	}
-	if health.LifecycleToken != token {
-		return fmt.Errorf("daemon lifecycle token mismatch")
-	}
-	return nil
+	return fetchLifecycleIdentity(ctx, baseURL, token)
 }
 
 func fetchHealth(ctx context.Context, baseURL string) (*httpapi.HealthResponse, error) {
@@ -475,6 +487,32 @@ func fetchHealth(ctx context.Context, baseURL string) (*httpapi.HealthResponse, 
 		return nil, fmt.Errorf("decode health response: %w", err)
 	}
 	return &health, nil
+}
+
+func fetchLifecycleIdentity(ctx context.Context, baseURL string, token string) error {
+	u := strings.TrimRight(baseURL, "/") + "/_lifecycle/identity"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set(lifecycleTokenHeader, token)
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("lifecycle identity status %d", resp.StatusCode)
+	}
+	var identity httpapi.LifecycleIdentityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&identity); err != nil && err != io.EOF {
+		return fmt.Errorf("decode lifecycle identity response: %w", err)
+	}
+	if identity.Status != "ok" {
+		return fmt.Errorf("lifecycle identity status %q", identity.Status)
+	}
+	return nil
 }
 
 func generateLifecycleToken() (string, error) {

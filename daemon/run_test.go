@@ -46,8 +46,8 @@ func TestStartUsesExternalCASConfig(t *testing.T) {
 	if health.Status != "ok" {
 		t.Fatalf("health status = %q, want ok", health.Status)
 	}
-	if health.LifecycleToken != "managed-token" {
-		t.Fatalf("health lifecycle token = %q, want managed-token", health.LifecycleToken)
+	if err := fetchLifecycleIdentity(context.Background(), baseURL, "managed-token"); err != nil {
+		t.Fatalf("fetchLifecycleIdentity: %v", err)
 	}
 }
 

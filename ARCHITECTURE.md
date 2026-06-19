@@ -587,13 +587,7 @@ Current config shape:
 {
   "rpc": {
     "listen": "127.0.0.1:4317",
-    "cors_allowed_origins": [
-      "https://dewebprotocol.dev",
-      "https://dewebprotocol.github.io",
-      "http://localhost:*",
-      "http://127.0.0.1:*",
-      "http://[::1]:*"
-    ]
+    "cors_allowed_origins": []
   },
   "state": {
     "root_dir": "D:/malt-state",
@@ -623,13 +617,13 @@ Allowed runtime values:
 - `rpc.cors_allowed_origins`: browser origins allowed to call local read/proof
   routes, `POST /verify`, and UnixFS browser write routes such as
   `POST /_unixfs?path=...` and `POST /{root}/{path...}`. Empty or omitted
-  disables browser CORS. Exact origins are matched literally. Port wildcards
-  are only supported for loopback origins such as `http://localhost:*`,
-  `http://127.0.0.1:*`, and `http://[::1]:*`; the daemon still replies with the
-  concrete request origin. Admin and semantic-mutation routes are not exposed
-  through the browser CORS surface. The daemon reads this policy at startup.
-  Change the file and restart the managed daemon to apply browser-access
-  changes.
+  disables browser CORS, which is the default written by `malt init`. Exact
+  origins are matched literally. Port wildcards are only supported for loopback
+  origins such as `http://localhost:*`, `http://127.0.0.1:*`, and
+  `http://[::1]:*`; the daemon still replies with the concrete request origin.
+  Admin and semantic-mutation routes are not exposed through the browser CORS
+  surface. The daemon reads this policy at startup. Change the file and restart
+  the managed daemon to apply browser-access changes.
 
 This config is a packaging and runtime decision. It does not define the core
 MALT semantic abstraction.

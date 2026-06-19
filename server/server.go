@@ -95,8 +95,8 @@ type Server struct {
 // Option configures the daemon server.
 type Option func(*Server)
 
-// WithLifecycleToken exposes the managed-process identity token through
-// /health for local lifecycle commands.
+// WithLifecycleToken configures the local managed-process identity token used
+// by lifecycle commands.
 func WithLifecycleToken(token string) Option {
 	return func(s *Server) {
 		s.lifecycleToken = token
@@ -183,6 +183,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Admin (specific routes, matched first by Go ServeMux)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /_lifecycle/identity", s.handleLifecycleIdentity)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /metrics:reset", s.handleMetricsReset)
 	mux.HandleFunc("POST /verify", s.handleVerify)

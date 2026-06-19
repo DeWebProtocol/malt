@@ -63,15 +63,15 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 		t.Fatalf("health status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var health httpapi.HealthResponse
+	var health map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
 		t.Fatalf("decode health response: %v", err)
 	}
-	if health.Status != "ok" {
-		t.Fatalf("health status payload = %q, want %q", health.Status, "ok")
+	if health["status"] != "ok" {
+		t.Fatalf("health status payload = %v, want ok", health["status"])
 	}
-	if health.LifecycleToken != "" {
-		t.Fatalf("health lifecycle token = %q, want empty", health.LifecycleToken)
+	if _, ok := health["lifecycle_token"]; ok {
+		t.Fatalf("health response exposed lifecycle_token: %#v", health)
 	}
 
 	createBody, err := json.Marshal(&httpapi.CreateStructureRequest{
@@ -107,7 +107,7 @@ func TestServerHealthAndRootLifecycle(t *testing.T) {
 	}
 }
 
-func TestServerHealthIncludesLifecycleTokenWhenConfigured(t *testing.T) {
+func TestServerHealthDoesNotExposeLifecycleTokenWhenConfigured(t *testing.T) {
 	node := newTestNode(t)
 
 	ts := httptest.NewServer(New(node, "127.0.0.1:0", WithLifecycleToken("managed-token")).Handler())
@@ -119,15 +119,116 @@ func TestServerHealthIncludesLifecycleTokenWhenConfigured(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	var health httpapi.HealthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		t.Fatalf("decode health response: %v", err)
 	}
-	if health.Status != "ok" {
-		t.Fatalf("health status payload = %q, want %q", health.Status, "ok")
+	if raw["status"] != "ok" {
+		t.Fatalf("health status payload = %v, want ok", raw["status"])
 	}
-	if health.LifecycleToken != "managed-token" {
-		t.Fatalf("health lifecycle token = %q, want managed-token", health.LifecycleToken)
+	if _, ok := raw["lifecycle_token"]; ok {
+		t.Fatalf("health response exposed lifecycle_token: %#v", raw)
+	}
+}
+
+func TestServerLifecycleIdentityRequiresHeaderAndNoOrigin(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(node, "127.0.0.1:0", WithLifecycleToken("managed-token")).Handler())
+	defer ts.Close()
+
+	t.Run("matching token", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/_lifecycle/identity", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set(lifecycleIdentityTokenHeader, "managed-token")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("lifecycle identity request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("lifecycle identity status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+		var identity httpapi.LifecycleIdentityResponse
+		if err := json.NewDecoder(resp.Body).Decode(&identity); err != nil {
+			t.Fatalf("decode lifecycle identity response: %v", err)
+		}
+		if identity.Status != "ok" {
+			t.Fatalf("lifecycle identity status payload = %q, want ok", identity.Status)
+		}
+	})
+
+	t.Run("browser origin denied", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/_lifecycle/identity", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Origin", "https://docs.example")
+		req.Header.Set(lifecycleIdentityTokenHeader, "managed-token")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("lifecycle identity request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("lifecycle identity with Origin status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+		}
+	})
+
+	t.Run("missing token denied", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/_lifecycle/identity")
+		if err != nil {
+			t.Fatalf("lifecycle identity request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("lifecycle identity without token status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+	})
+}
+
+func TestServerHealthCORSDoesNotExposeLifecycleToken(t *testing.T) {
+	node := newTestNode(t)
+
+	ts := httptest.NewServer(New(
+		node,
+		"127.0.0.1:0",
+		WithLifecycleToken("managed-token"),
+		WithBrowserOrigins([]string{"https://docs.example"}),
+	).Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Origin", "https://docs.example")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://docs.example" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want configured origin", got)
+	}
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if raw["status"] != "ok" {
+		t.Fatalf("health status payload = %v, want ok", raw["status"])
+	}
+	if _, ok := raw["lifecycle_token"]; ok {
+		t.Fatalf("health response exposed lifecycle_token: %#v", raw)
 	}
 }
 
