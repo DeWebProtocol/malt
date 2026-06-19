@@ -11,6 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	versionedtable "github.com/dewebprotocol/malt/runtime/arctable/versioned"
 	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
@@ -77,6 +78,35 @@ func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.
 }
 
 type kvg = kvmemory.KV
+
+type nonComparableArcTable struct {
+	arctable arctable.ArcTable
+	tags     []string
+}
+
+func (t nonComparableArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	return t.arctable.Get(ctx, namespace, root, path)
+}
+
+func (t nonComparableArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	return t.arctable.BatchGet(ctx, namespace, root, paths)
+}
+
+func (t nonComparableArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	return t.arctable.Update(ctx, namespace, newRoot, oldRoot, arcs)
+}
+
+func (t nonComparableArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return t.arctable.Snapshot(ctx, namespace, root)
+}
+
+func (t nonComparableArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return t.arctable.Iterate(ctx, namespace, root)
+}
+
+func (t nonComparableArcTable) Close() error {
+	return t.arctable.Close()
+}
 
 func fakeCID(seed string) cid.Cid {
 	mhash, _ := mh.Sum([]byte(seed), mh.SHA2_256, -1)
@@ -653,6 +683,24 @@ func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
 	_, err = w2.UpdateArc(ctx, namespace, root, "second", fakeCID("second"))
 	if !errors.Is(err, ErrStaleRoot) {
 		t.Fatalf("second writer UpdateArc error = %v, want ErrStaleRoot", err)
+	}
+}
+
+func TestWriter_NonComparableArcTableUsesPerWriterFreshnessGuard(t *testing.T) {
+	_, at, semantic, _ := newTestWriter(t)
+	table := arctable.ArcTable(nonComparableArcTable{
+		arctable: at,
+		tags:     []string{"custom"},
+	})
+
+	w := NewWriter(semantic, table)
+	w2 := NewWriter(semantic, table)
+
+	if w.freshness == nil || w2.freshness == nil {
+		t.Fatal("non-branching ArcTable should install freshness guards")
+	}
+	if w.freshness == w2.freshness {
+		t.Fatal("non-comparable ArcTable value should fall back to per-writer freshness guards")
 	}
 }
 

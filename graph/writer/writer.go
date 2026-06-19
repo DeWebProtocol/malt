@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -151,11 +152,22 @@ func newRootFreshnessGuard() *rootFreshnessGuard {
 }
 
 func sharedRootFreshnessGuard(table arctable.ArcTable) *rootFreshnessGuard {
-	if table == nil {
+	key, ok := arctableFreshnessIdentity(table)
+	if !ok {
 		return newRootFreshnessGuard()
 	}
-	guard, _ := sharedFreshnessGuards.LoadOrStore(table, newRootFreshnessGuard())
+	guard, _ := sharedFreshnessGuards.LoadOrStore(key, newRootFreshnessGuard())
 	return guard.(*rootFreshnessGuard)
+}
+
+func arctableFreshnessIdentity(table arctable.ArcTable) (any, bool) {
+	if table == nil {
+		return nil, false
+	}
+	if !reflect.TypeOf(table).Comparable() {
+		return nil, false
+	}
+	return table, true
 }
 
 func rootFreshnessGuardFor(table arctable.ArcTable) *rootFreshnessGuard {
