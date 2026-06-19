@@ -141,13 +141,11 @@ var sharedFreshnessGuards sync.Map
 
 type rootFreshnessGuard struct {
 	mu       sync.Mutex
-	locks    map[string]*sync.Mutex
 	consumed map[string]cid.Cid
 }
 
 func newRootFreshnessGuard() *rootFreshnessGuard {
 	return &rootFreshnessGuard{
-		locks:    make(map[string]*sync.Mutex),
 		consumed: make(map[string]cid.Cid),
 	}
 }
@@ -179,40 +177,42 @@ func freshnessKey(namespace string, root cid.Cid) string {
 	return namespace + "\x00" + root.String()
 }
 
-func (g *rootFreshnessGuard) lock(namespace string, root cid.Cid) func() {
-	key := freshnessKey(namespace, root)
-	g.mu.Lock()
-	rootLock := g.locks[key]
-	if rootLock == nil {
-		rootLock = &sync.Mutex{}
-		g.locks[key] = rootLock
-	}
-	g.mu.Unlock()
-
-	rootLock.Lock()
-	return rootLock.Unlock
-}
-
-func (g *rootFreshnessGuard) check(namespace string, root cid.Cid) error {
+func (g *rootFreshnessGuard) beginUpdate(namespace string, root cid.Cid) (func(), error) {
 	key := freshnessKey(namespace, root)
 	g.mu.Lock()
 	advancedTo, ok := g.consumed[key]
-	g.mu.Unlock()
 	if !ok {
-		return nil
+		return g.mu.Unlock, nil
 	}
-	return fmt.Errorf("%w: root %s in namespace %q already advanced to %s", ErrStaleRoot, root, namespace, advancedTo)
+	g.mu.Unlock()
+	return nil, fmt.Errorf("%w: root %s in namespace %q already advanced to %s", ErrStaleRoot, root, namespace, advancedTo)
 }
 
 func (g *rootFreshnessGuard) markAdvanced(namespace string, oldRoot, newRoot cid.Cid) {
 	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
 		return
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.markAdvancedLocked(namespace, oldRoot, newRoot)
+}
+
+func (g *rootFreshnessGuard) markAdvancedLocked(namespace string, oldRoot, newRoot cid.Cid) {
+	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
+		return
+	}
 	oldKey := freshnessKey(namespace, oldRoot)
 	newKey := freshnessKey(namespace, newRoot)
-	g.mu.Lock()
 	g.consumed[oldKey] = newRoot
 	delete(g.consumed, newKey)
+}
+
+func (g *rootFreshnessGuard) markCurrent(namespace string, root cid.Cid) {
+	if !root.Defined() {
+		return
+	}
+	g.mu.Lock()
+	delete(g.consumed, freshnessKey(namespace, root))
 	g.mu.Unlock()
 }
 
@@ -347,11 +347,11 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	}
 
 	if w.freshness != nil {
-		unlock := w.freshness.lock(namespace, root)
-		defer unlock()
-		if err := w.freshness.check(namespace, root); err != nil {
+		unlock, err := w.freshness.beginUpdate(namespace, root)
+		if err != nil {
 			return nil, err
 		}
+		defer unlock()
 	}
 
 	// Step 1: Look up current binding
@@ -422,7 +422,7 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 	if w.freshness != nil {
-		w.freshness.markAdvanced(namespace, root, newRoot)
+		w.freshness.markAdvancedLocked(namespace, root, newRoot)
 	}
 
 	return &UpdateResult{
@@ -465,11 +465,11 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	}
 
 	if w.freshness != nil {
-		unlock := w.freshness.lock(namespace, root)
-		defer unlock()
-		if err := w.freshness.check(namespace, root); err != nil {
+		unlock, err := w.freshness.beginUpdate(namespace, root)
+		if err != nil {
 			return nil, err
 		}
+		defer unlock()
 	}
 
 	// Step 1: Get current arc set snapshot
@@ -554,7 +554,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 		return nil, fmt.Errorf("ArcTable.Update failed: %w", err)
 	}
 	if w.freshness != nil {
-		w.freshness.markAdvanced(namespace, root, newRoot)
+		w.freshness.markAdvancedLocked(namespace, root, newRoot)
 	}
 
 	// Update NewRoot for all per-arc results
@@ -601,6 +601,9 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	// Step 2: Store arcs in ArcTable (first version)
 	if err := w.arctable.Update(ctx, namespace, root, cid.Undef, normalizedSnapshot); err != nil {
 		return cid.Undef, fmt.Errorf("ArcTable.Update failed: %w", err)
+	}
+	if w.freshness != nil {
+		w.freshness.markCurrent(namespace, root)
 	}
 
 	return root, nil
