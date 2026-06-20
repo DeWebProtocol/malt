@@ -2,14 +2,15 @@
 
 ## Overview
 
-MALT is an authenticated mutable structure layer over immutable
-content-addressed storage.
+MALT targets authentication for structured data whose relationships can be
+normalized into graph-shaped nodes and relations.
 
 MALT core consists of ArcTable, stateless commitment backends, and the list/map
-semantic layer over immutable CAS payloads. A MALT graph is not a Go runtime
-object that merely holds dependencies. It is the authenticated structure induced
-by list/map semantics, ArcTable arcset persistence, and stateless commitment
-proofs.
+semantic layer. Immutable payload bytes can be stored naturally in CAS, but CAS
+is an engineering substrate for payload objects rather than the first definition
+of the abstraction. A MALT graph is not a Go runtime object that merely holds
+dependencies. It is the authenticated structure induced by list/map semantics,
+ArcTable arcset persistence, and stateless commitment proofs.
 
 ```text
 GraphRead(root, query) -> result + ProofList
@@ -48,7 +49,7 @@ The target model has four distinct layers:
 | Commitment backend | Stateless proof and verification over semantic-layer representations |
 | Resolver / writer ports | Read/proof and mutation boundaries over semantic state |
 | Server API | Runtime surface exposing resolver/writer ports |
-| Application layout | Product data model built above list/map/CAS blobs |
+| Application layout | Product data model built above list/map semantics and immutable payload objects |
 
 The public structure layer should expose list/map semantics, not storage
 machinery.
@@ -201,13 +202,13 @@ Current package roles are:
   - stateless primitive commitment backends
 - `layout/unixfs`
   - current pure MALT UnixFS-style layout prototype built directly over
-    `mapping.Semantics`, `list.Semantics`, and CAS
+    `mapping.Semantics`, `list.Semantics`, and CAS-backed payload storage
 - `graph/resolver`
   - resolver read port and explicit proof path
 - `graph/writer`
   - writer mutation model and executor
 - `graph`
-  - graph abstraction contracts
+  - resolver/writer port contracts around graph-shaped semantic state
 - `runtime/graph`
   - concrete graph runtime composition around resolver and writer executors
 - `graph/querypath`
@@ -453,9 +454,9 @@ evaluate pure root-map `flat` behavior separately from pure per-directory
 
 Current boundary:
 
-- The package remains the direct map/list/CAS library layer for the
-  UnixFS-style layout and translates source-domain file/directory data into
-  MALT semantic mutations.
+- The package remains the direct UnixFS-style layout library over map/list
+  semantics and CAS-backed payload storage, translating source-domain
+  file/directory data into MALT semantic mutations.
 - `POST /{root}/_mutate` is the writer mutation route. Root-centric daemon
   routes also expose `POST /{root}/{path}` as a UnixFS layout convenience: it
   stages a file or directory operation, converts the resulting layout state into

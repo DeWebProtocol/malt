@@ -3,14 +3,14 @@
 [![Go CI](https://github.com/dewebprotocol/malt/actions/workflows/go.yml/badge.svg)](https://github.com/dewebprotocol/malt/actions/workflows/go.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-MALT is an authenticated mutable structure layer over immutable
-content-addressed storage.
+MALT targets authenticated structured data: data whose relationships can be
+normalized into graph-shaped nodes and relations.
 
-Immutable payload bytes still live in ordinary CAS blocks and keep ordinary
-CIDs. MALT adds a verifiable structure layer above those payload CIDs, so a
-client can ask for a path or range, receive `result + ProofList`, and verify
-that answer against a structure root without trusting the daemon, cache, or
-materialized index state.
+MALT authenticates those structural relationships through list/map semantics,
+roots, and verifier-facing ProofLists. Immutable payload bytes can still live
+naturally in ordinary CAS blocks and keep ordinary CIDs; MALT binds structure
+to those payload objects without making the daemon, cache, or materialized index
+state trusted.
 
 ## Why This Exists
 
@@ -20,12 +20,12 @@ rewrites because the relationship and the object identity are coupled.
 
 MALT separates those concerns:
 
-- payload content remains immutable CAS data
-- mutable structure is authenticated by independent structure roots
+- graph-shaped structure is authenticated by independent structure roots
 - list/map semantics define typed read and write operations
 - reads return verifier-facing `ProofList` evidence
+- immutable payload content can remain ordinary CAS data
 - local structure updates advance structure roots without rewriting unrelated
-  payload blocks
+  payload objects
 
 The claim is not that updates are free. The claim is that MALT replaces
 implicit ancestor-rewrite cost with explicit, verifiable structure maintenance.
@@ -40,7 +40,8 @@ Current in-tree capabilities:
 
 - root-centric `malt` CLI for local daemon lifecycle, add, resolve, and verify
 - proof-bearing HTTP reads for file bytes, directory JSON, and byte ranges
-- pure MALT UnixFS-style layout built from map/list semantics and CAS blobs
+- pure MALT UnixFS-style layout built from map/list semantics and CAS-backed
+  immutable payloads
 - stateless commitment backends for semantic proof primitives
 - ArcTable-backed structure materialization with overwrite and versioned modes
 - `malt-eval` workloads for read queries, write traces, CAS models, proof
@@ -140,7 +141,7 @@ MALT's current implementation is easiest to read through these layers:
 | Commitment backend | Stateless proof primitives over semantic representations |
 | Resolver / writer ports | Read/proof path and semantic mutation path |
 | Server API | Runtime surface for daemon HTTP routes |
-| Application layout | Product data model above list/map/CAS blobs |
+| Application layout | Product data model above list/map semantics and immutable payload objects |
 
 The verifier-facing shape is:
 
@@ -171,7 +172,7 @@ cmd/eval/                      malt-eval workloads, schemas, and helpers
 api/http/                      daemon request/response DTOs
 auth/                          arcset, commitment, proof, list/map semantics
 graph/                         resolver and writer port definitions/adapters
-layout/unixfs/                 UnixFS-style layout over map/list/CAS blobs
+layout/unixfs/                 UnixFS-style layout over map/list semantics and CAS-backed payloads
 runtime/                       node, runtime graph composition, ArcTable, metrics
 sdk/client/                    Go daemon client facade
 server/                        daemon HTTP server

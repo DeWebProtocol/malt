@@ -1,9 +1,10 @@
 # Contributing to MALT
 
-MALT is a research prototype for authenticated mutable structure over immutable
-CAS payloads. Contributions should keep that boundary clear: payload storage is
-ordinary CAS, while MALT owns authenticated structure, proof generation, and
-verification.
+MALT is a research prototype for authenticating structured data whose
+relationships can be normalized into graph-shaped nodes and relations.
+Contributions should keep that boundary clear: MALT owns authenticated
+structure, proof generation, and verification, while immutable payload storage
+can remain ordinary CAS.
 
 ## Start Here
 
