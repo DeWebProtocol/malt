@@ -59,9 +59,10 @@ var (
 // errors.Is(err, <underlying cause>) both succeed.
 //
 // The fields are exposed for diagnostics, correlation, and index repair.
-// IndexDelta is the exact ArcTable delta that failed to publish; callers can
-// retry it with RetryIndexWrite even if the original base root is no longer
-// readable after a partially applied backend update.
+// IndexBase and IndexDelta capture the failed publication so callers can retry
+// it with RetryIndexWrite. For non-branching ArcTable backends, RetryIndexWrite
+// first verifies that the namespace has not advanced past this failed
+// transition; stale retries fail closed instead of overwriting later writes.
 type IndexWriteFailedError struct {
 	// NewRoot is the content-addressed root the semantic layer committed. It is
 	// valid in the semantic sense, but its ArcTable index entries may not have
@@ -72,6 +73,11 @@ type IndexWriteFailedError struct {
 	// OldRoot is the base root the write transitioned from (cid.Undef for
 	// CreateStructure).
 	OldRoot cid.Cid
+	// IndexBase is the namespace arc snapshot immediately before the failed
+	// ArcTable publication. It is used to reject stale retries on overwrite-like
+	// backends whose physical arc keys are namespace-scoped rather than
+	// root-scoped.
+	IndexBase arcset.ArcSet
 	// IndexDelta is the exact ArcTable update payload for OldRoot -> NewRoot.
 	// It may be a full snapshot for create-style writes.
 	IndexDelta arcset.ArcSet
@@ -89,7 +95,9 @@ func (e *IndexWriteFailedError) Unwrap() error {
 
 // RetryIndexWrite retries the failed ArcTable publication captured by this
 // error. The operation is intended to be idempotent: it re-applies the same
-// absolute OldRoot -> NewRoot transition and IndexDelta.
+// absolute OldRoot -> NewRoot transition and IndexDelta. For overwrite-like
+// backends, it first rejects stale retries when the namespace arcs no longer
+// match the captured pre-publication or post-publication state.
 func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
 	if e == nil {
 		return fmt.Errorf("index write failure is nil")
@@ -100,16 +108,88 @@ func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arcta
 	if e.IndexDelta == nil {
 		return fmt.Errorf("%w: missing index delta", ErrIndexWriteFailed)
 	}
+	if !supportsConcurrentBranches(table) {
+		if e.IndexBase == nil {
+			return fmt.Errorf("%w: missing index retry base", ErrIndexWriteFailed)
+		}
+		current, err := table.Snapshot(ctx, e.Namespace, cid.Undef)
+		if err != nil {
+			return fmt.Errorf("ArcTable.Snapshot failed during index retry: %w", err)
+		}
+		expectedAfter, err := applyArcSetDelta(e.IndexBase, e.IndexDelta)
+		if err != nil {
+			return err
+		}
+		matchesBase, err := arcSetsEqual(current, e.IndexBase)
+		if err != nil {
+			return err
+		}
+		matchesAfter, err := arcSetsEqual(current, expectedAfter)
+		if err != nil {
+			return err
+		}
+		if !matchesBase && !matchesAfter {
+			return fmt.Errorf("%w: stale index retry for namespace %q oldRoot=%s newRoot=%s", ErrStaleRoot, e.Namespace, e.OldRoot, e.NewRoot)
+		}
+	}
 	if err := table.Update(ctx, e.Namespace, e.NewRoot, e.OldRoot, e.IndexDelta); err != nil {
 		return &IndexWriteFailedError{
 			NewRoot:    e.NewRoot,
 			Namespace:  e.Namespace,
 			OldRoot:    e.OldRoot,
+			IndexBase:  e.IndexBase,
 			IndexDelta: e.IndexDelta,
 			Cause:      err,
 		}
 	}
 	return nil
+}
+
+func indexRetryBase(ctx context.Context, table arctable.ArcTable, namespace string) (arcset.ArcSet, error) {
+	if table == nil || supportsConcurrentBranches(table) {
+		return nil, nil
+	}
+	return table.Snapshot(ctx, namespace, cid.Undef)
+}
+
+func applyArcSetDelta(base, delta arcset.ArcSet) (arcset.ArcSet, error) {
+	baseMap, err := arcset.ToPathMap(base)
+	if err != nil {
+		return nil, err
+	}
+	deltaMap, err := arcset.ToPathMap(delta)
+	if err != nil {
+		return nil, err
+	}
+	for path, target := range deltaMap {
+		if target.Defined() {
+			baseMap[path] = target
+		} else {
+			delete(baseMap, path)
+		}
+	}
+	return arcset.NewArcSetFromPaths(baseMap)
+}
+
+func arcSetsEqual(a, b arcset.ArcSet) (bool, error) {
+	aMap, err := arcset.ToPathMap(a)
+	if err != nil {
+		return false, err
+	}
+	bMap, err := arcset.ToPathMap(b)
+	if err != nil {
+		return false, err
+	}
+	if len(aMap) != len(bMap) {
+		return false, nil
+	}
+	for path, aTarget := range aMap {
+		bTarget, ok := bMap[path]
+		if !ok || !aTarget.Equals(bTarget) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 var mandatoryPayloadPath = arcset.CanonicalizePath("@payload")
@@ -505,6 +585,16 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if err != nil {
 		return nil, err
 	}
+	retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+	if err != nil {
+		return nil, &IndexWriteFailedError{
+			NewRoot:    newRoot,
+			Namespace:  namespace,
+			OldRoot:    root,
+			IndexDelta: delta,
+			Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+		}
+	}
 
 	// Step 3: Apply update to ArcTable as an old->new delta. This keeps versioned ArcTable
 	// compact while still emitting tombstones for deletions. If this fails the
@@ -515,6 +605,7 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 			NewRoot:    newRoot,
 			Namespace:  namespace,
 			OldRoot:    root,
+			IndexBase:  retryBase,
 			IndexDelta: delta,
 			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
 		}
@@ -652,6 +743,16 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err != nil {
 		return nil, err
 	}
+	retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+	if err != nil {
+		return nil, &IndexWriteFailedError{
+			NewRoot:    newRoot,
+			Namespace:  namespace,
+			OldRoot:    root,
+			IndexDelta: delta,
+			Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+		}
+	}
 
 	// Step 4: Apply the update delta to ArcTable. On failure the newRoot is
 	// semantically valid but its index entries are missing; surface it so the
@@ -661,6 +762,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 			NewRoot:    newRoot,
 			Namespace:  namespace,
 			OldRoot:    root,
+			IndexBase:  retryBase,
 			IndexDelta: delta,
 			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
 		}
@@ -709,6 +811,16 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	if err != nil {
 		return cid.Undef, fmt.Errorf("semantic.Commit failed: %w", err)
 	}
+	retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+	if err != nil {
+		return cid.Undef, &IndexWriteFailedError{
+			NewRoot:    root,
+			Namespace:  namespace,
+			OldRoot:    cid.Undef,
+			IndexDelta: normalizedSnapshot,
+			Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+		}
+	}
 
 	// Step 2: Store arcs in ArcTable (first version). On failure root is
 	// semantically committed but has no index entries; surface it for retry.
@@ -717,6 +829,7 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 			NewRoot:    root,
 			Namespace:  namespace,
 			OldRoot:    cid.Undef,
+			IndexBase:  retryBase,
 			IndexDelta: normalizedSnapshot,
 			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
 		}

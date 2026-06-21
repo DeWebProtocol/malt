@@ -198,6 +198,9 @@ func TestUpdateArc_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	if idxErr.IndexDelta == nil {
 		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
 	}
+	if idxErr.IndexBase == nil {
+		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	}
 
 	// The semantic root is valid but unreadable via the index before retry:
 	// GetArc against newRoot must fail because the index write never landed.
@@ -262,6 +265,9 @@ func TestBatchUpdateArcs_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	}
 	if idxErr.IndexDelta == nil {
 		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	}
+	if idxErr.IndexBase == nil {
+		t.Fatal("IndexWriteFailedError.IndexBase is nil")
 	}
 
 	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
@@ -329,6 +335,9 @@ func TestApply_MapDeltaIndexWriteFailure(t *testing.T) {
 	if idxErr.IndexDelta == nil {
 		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
 	}
+	if idxErr.IndexBase == nil {
+		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	}
 }
 
 // TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot covers a non-atomic
@@ -366,6 +375,9 @@ func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 	if idxErr.IndexDelta == nil {
 		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
 	}
+	if idxErr.IndexBase == nil {
+		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	}
 
 	_, retryErr := w.UpdateArc(ctx, namespace, root, "a", newA)
 	if !errors.Is(retryErr, ErrMissingPayloadBinding) {
@@ -381,6 +393,67 @@ func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 	}
 	if !got.Equals(newA) {
 		t.Fatalf("a after RetryIndexWrite = %s, want %s", got, newA)
+	}
+}
+
+// TestUpdateArc_IndexWriteRetryRejectsStaleReplay guards overwrite ArcTable's
+// namespace-scoped physical arc keys. A stale failed delta must not be replayed
+// after a later successful write advances the same namespace, otherwise the
+// later root remains present but resolves to stale arc values.
+func TestUpdateArc_IndexWriteRetryRejectsStaleReplay(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-stale-retry"
+	w, failing := newFailingTestWriter(t)
+
+	payload := makeCIDLocal(t, "payload")
+	valueA := makeCIDLocal(t, "value-a")
+	staleA := makeCIDLocal(t, "stale-a")
+	laterA := makeCIDLocal(t, "later-a")
+
+	root, err := w.CreateStructure(ctx, namespace, arcset.NewSetFrom(map[string]cid.Cid{
+		"@payload": payload,
+		"a":        valueA,
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+
+	failing.fail = true
+	_, err = w.UpdateArc(ctx, namespace, root, "a", staleA)
+	failing.fail = false
+	if err == nil {
+		t.Fatal("first UpdateArc should have failed when ArcTable.Update failed")
+	}
+	var staleErr *IndexWriteFailedError
+	if !errors.As(err, &staleErr) {
+		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+	}
+	if staleErr.IndexBase == nil || staleErr.IndexDelta == nil {
+		t.Fatalf("stale error missing retry material: base=%v delta=%v", staleErr.IndexBase, staleErr.IndexDelta)
+	}
+
+	later, err := w.UpdateArc(ctx, namespace, root, "a", laterA)
+	if err != nil {
+		t.Fatalf("later UpdateArc: %v", err)
+	}
+	got, err := w.GetArc(ctx, namespace, later.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(laterRoot) before stale retry: %v", err)
+	}
+	if !got.Equals(laterA) {
+		t.Fatalf("laterRoot before stale retry = %s, want %s", got, laterA)
+	}
+
+	err = staleErr.RetryIndexWrite(ctx, failing)
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("stale RetryIndexWrite error = %v, want ErrStaleRoot", err)
+	}
+	got, err = w.GetArc(ctx, namespace, later.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(laterRoot) after stale retry: %v", err)
+	}
+	if !got.Equals(laterA) {
+		t.Fatalf("stale RetryIndexWrite changed laterRoot a = %s, want %s", got, laterA)
 	}
 }
 
