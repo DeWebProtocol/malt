@@ -413,10 +413,12 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 		defer unlock()
 	}
 
-	// Step 1: Snapshot the current arc set. oldTarget is derived from the
-	// snapshot instead of a separate Get to avoid a redundant KV round-trip —
-	// the snapshot is already required for delta computation and payload
-	// validation below.
+	// Step 1: Snapshot the current arc set for delta computation and payload
+	// validation, then read the target path through ArcTable.Get for operation
+	// classification. Get must stay in the classification path because some
+	// backends may tolerate corrupt entries while materializing broad snapshots;
+	// a targeted read needs to fail closed instead of turning corruption into a
+	// missing-arc no-op.
 	snapshot, err := w.arctable.Snapshot(ctx, namespace, root)
 	if err != nil {
 		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
@@ -424,9 +426,13 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if !hasDefinedPayloadBinding(snapshot) && !(canonicalPath == mandatoryPayloadPath && newTarget.Defined()) {
 		return nil, ErrMissingPayloadBinding
 	}
-	// arctable.Snapshot returns ErrNotFound-shaped miss as a missing entry, so
-	// oldTarget == cid.Undef is valid here for inserts.
-	oldTarget, _ := snapshot.Get(canonicalPath)
+	oldTarget, err := w.arctable.Get(ctx, namespace, root, canonicalPath)
+	if err != nil {
+		if !arctable.IsNotFound(err) {
+			return nil, fmt.Errorf("ArcTable.Get failed: %w", err)
+		}
+		oldTarget = cid.Undef
+	}
 
 	// Determine operation type
 	var op ArcOp
@@ -551,17 +557,21 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 		}
 	}
 
-	// Step 2: Look up all current bindings in a single batch and classify
-	// operations. The snapshot already loaded the full arc set, so derive
-	// oldTargets from it rather than issuing one Get per update path (which
-	// would be O(N) KV round-trips).
+	// Step 2: Look up current bindings and classify operations. The snapshot is
+	// still used below to build the ArcTable delta, but classification uses
+	// targeted Get calls so corrupt stored entries fail closed instead of being
+	// silently omitted from a broad snapshot and treated as absent paths.
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
 	batchUpdates := make([]mapping.BatchUpdate, 0, len(normalizedUpdates))
 
 	for path, newTarget := range normalizedUpdates {
-		// snapshot.Get returns (cid.Undef, false) for absent paths, which is
-		// exactly the insert case — no IsNotFound translation needed.
-		oldTarget, _ := snapshot.Get(path)
+		oldTarget, err := w.arctable.Get(ctx, namespace, root, path)
+		if err != nil {
+			if !arctable.IsNotFound(err) {
+				return nil, fmt.Errorf("ArcTable.Get failed for %s: %w", path.String(), err)
+			}
+			oldTarget = cid.Undef
+		}
 
 		isInsert := !oldTarget.Defined() && newTarget.Defined()
 		isDelete := oldTarget.Defined() && !newTarget.Defined()

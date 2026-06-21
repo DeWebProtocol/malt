@@ -3,6 +3,7 @@ package writer
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -330,6 +331,62 @@ func TestUpdateArc_ClassificationStillCorrectFromSnapshot(t *testing.T) {
 	}
 }
 
+// TestUpdateArc_CorruptStoredTargetFailsClosed guards the classification path
+// against corrupt overwrite ArcTable entries. overwrite.Snapshot skips values
+// that cannot be cid.Cast; UpdateArc must still use targeted Get for oldTarget
+// classification so deleting a corrupt existing arc does not become a silent
+// "both undefined" no-op.
+func TestUpdateArc_CorruptStoredTargetFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-corrupt-update"
+	w, _, _, kv := newTestWriter(t)
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"a": fakeCID("value-a"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+	corruptStoredArcValue(t, ctx, kv, namespace, "a")
+
+	_, err = w.UpdateArc(ctx, namespace, root, "a", cid.Undef)
+	if err == nil {
+		t.Fatal("UpdateArc deleting corrupt stored target succeeded; want fail-closed error")
+	}
+	if !strings.Contains(err.Error(), "ArcTable.Get failed") {
+		t.Fatalf("UpdateArc error = %v, want targeted ArcTable.Get failure", err)
+	}
+}
+
+// TestBatchUpdateArcs_CorruptStoredTargetFailsClosed mirrors the single-update
+// corruption guard for the batch path, which also needs targeted Get calls for
+// every updated path.
+func TestBatchUpdateArcs_CorruptStoredTargetFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-corrupt-batch"
+	w, _, _, kv := newTestWriter(t)
+
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"a": fakeCID("value-a"),
+		"b": fakeCID("value-b"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+	corruptStoredArcValue(t, ctx, kv, namespace, "b")
+
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": fakeCID("new-a"),
+		"b": cid.Undef,
+	})
+	if err == nil {
+		t.Fatal("BatchUpdateArcs with corrupt stored target succeeded; want fail-closed error")
+	}
+	if !strings.Contains(err.Error(), "ArcTable.Get failed for b") {
+		t.Fatalf("BatchUpdateArcs error = %v, want targeted ArcTable.Get failure for b", err)
+	}
+}
+
 func makeCIDLocal(t *testing.T, data string) cid.Cid {
 	t.Helper()
 	mhash, err := mh.Sum([]byte(data), mh.SHA2_256, -1)
@@ -337,6 +394,14 @@ func makeCIDLocal(t *testing.T, data string) cid.Cid {
 		t.Fatalf("mh.Sum: %v", err)
 	}
 	return cid.NewCidV1(cid.Raw, mhash)
+}
+
+func corruptStoredArcValue(t *testing.T, ctx context.Context, kv *kvg, namespace, path string) {
+	t.Helper()
+	key := arctable.DefaultArcKey(namespace, arcset.CanonicalizePath(path))
+	if err := kv.Put(ctx, key, []byte("not-a-cid")); err != nil {
+		t.Fatalf("corrupt stored arc value: %v", err)
+	}
 }
 
 // Ensure semanticmapping import is exercised even if future edits remove the
