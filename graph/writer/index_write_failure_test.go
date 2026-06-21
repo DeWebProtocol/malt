@@ -102,6 +102,59 @@ func (f *rootDeletingFailingArcTable) Iterate(ctx context.Context, namespace str
 
 func (f *rootDeletingFailingArcTable) Close() error { return f.inner.Close() }
 
+// partialArcFailingArcTable simulates a non-atomic batch failure after one arc
+// from a multi-arc delta has already been applied. That intermediate namespace
+// state is neither IndexBase nor the full expected-after state, but it is still
+// safe for RetryIndexWrite to complete the same captured delta.
+type partialArcFailingArcTable struct {
+	inner arctable.ArcTable
+	kv    *kvg
+	fail  bool
+}
+
+func (f *partialArcFailingArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	return f.inner.Get(ctx, namespace, root, path)
+}
+
+func (f *partialArcFailingArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	return f.inner.BatchGet(ctx, namespace, root, paths)
+}
+
+func (f *partialArcFailingArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	if f.fail && newRoot.Defined() && oldRoot.Defined() {
+		arcMap, err := arcset.ToPathMap(arcs)
+		if err != nil {
+			return err
+		}
+		if err := f.kv.Delete(ctx, arctable.RootKeyFormat(oldRoot)); err != nil {
+			return err
+		}
+		if err := f.kv.Put(ctx, arctable.RootKeyFormat(newRoot), []byte(namespace)); err != nil {
+			return err
+		}
+		path := arcset.CanonicalizePath("a")
+		target, ok := arcMap[path]
+		if !ok || !target.Defined() {
+			return errInjectedIndexFailure
+		}
+		if err := f.kv.Put(ctx, arctable.DefaultArcKey(namespace, path), target.Bytes()); err != nil {
+			return err
+		}
+		return errInjectedIndexFailure
+	}
+	return f.inner.Update(ctx, namespace, newRoot, oldRoot, arcs)
+}
+
+func (f *partialArcFailingArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return f.inner.Snapshot(ctx, namespace, root)
+}
+
+func (f *partialArcFailingArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return f.inner.Iterate(ctx, namespace, root)
+}
+
+func (f *partialArcFailingArcTable) Close() error { return f.inner.Close() }
+
 // newFailingTestWriter builds a writer whose ArcTable Update is controlled by
 // the returned *failingArcTable. The semantic layer is real (radix over
 // overwrite ArcTable), so it commits a cryptographically valid newRoot before
@@ -141,6 +194,25 @@ func newRootDeletingFailureWriter(t *testing.T) (*Writer, *rootDeletingFailingAr
 		t.Fatalf("NewScheme: %v", err)
 	}
 	wrapped := &rootDeletingFailingArcTable{inner: e, kv: kv}
+	maps, err := radix.NewMap(scheme, wrapped)
+	if err != nil {
+		t.Fatalf("NewMap: %v", err)
+	}
+	return NewWriter(maps, wrapped), wrapped
+}
+
+func newPartialArcFailureWriter(t *testing.T) (*Writer, *partialArcFailingArcTable) {
+	t.Helper()
+	kv := memory.New()
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("NewArcTable: %v", err)
+	}
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme: %v", err)
+	}
+	wrapped := &partialArcFailingArcTable{inner: e, kv: kv}
 	maps, err := radix.NewMap(scheme, wrapped)
 	if err != nil {
 		t.Fatalf("NewMap: %v", err)
@@ -454,6 +526,73 @@ func TestUpdateArc_IndexWriteRetryRejectsStaleReplay(t *testing.T) {
 	}
 	if !got.Equals(laterA) {
 		t.Fatalf("stale RetryIndexWrite changed laterRoot a = %s, want %s", got, laterA)
+	}
+}
+
+// TestBatchUpdateArcs_IndexWriteRetryCompletesPartialDelta verifies that retry
+// accepts states produced by partially applying the same failed delta. This
+// models fs-backed overwrite ArcTable batches that can write one arc and then
+// fail before the remaining arc operations land.
+func TestBatchUpdateArcs_IndexWriteRetryCompletesPartialDelta(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-partial-delta"
+	w, failing := newPartialArcFailureWriter(t)
+
+	payload := makeCIDLocal(t, "payload")
+	valueA := makeCIDLocal(t, "value-a")
+	valueB := makeCIDLocal(t, "value-b")
+	newA := makeCIDLocal(t, "new-a")
+	newB := makeCIDLocal(t, "new-b")
+
+	root, err := w.CreateStructure(ctx, namespace, arcset.NewSetFrom(map[string]cid.Cid{
+		"@payload": payload,
+		"a":        valueA,
+		"b":        valueB,
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+
+	failing.fail = true
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": newA,
+		"b": newB,
+	})
+	failing.fail = false
+	if err == nil {
+		t.Fatal("BatchUpdateArcs should have failed after partial arc apply")
+	}
+	var idxErr *IndexWriteFailedError
+	if !errors.As(err, &idxErr) {
+		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+	}
+
+	gotA, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(a) after partial failure: %v", err)
+	}
+	if !gotA.Equals(newA) {
+		t.Fatalf("partial failure a = %s, want %s", gotA, newA)
+	}
+	gotB, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "b")
+	if err != nil {
+		t.Fatalf("GetArc(b) after partial failure: %v", err)
+	}
+	if !gotB.Equals(valueB) {
+		t.Fatalf("partial failure b = %s, want old value %s", gotB, valueB)
+	}
+
+	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryIndexWrite after partial delta: %v", err)
+	}
+	for path, want := range map[string]cid.Cid{"a": newA, "b": newB} {
+		got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, path)
+		if err != nil {
+			t.Fatalf("GetArc(%s) after RetryIndexWrite: %v", path, err)
+		}
+		if !got.Equals(want) {
+			t.Fatalf("GetArc(%s) after RetryIndexWrite = %s, want %s", path, got, want)
+		}
 	}
 }
 
