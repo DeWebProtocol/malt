@@ -64,6 +64,44 @@ func (f *failingArcTable) Close() error { return f.inner.Close() }
 
 var errInjectedIndexFailure = errors.New("injected arctable failure")
 
+// rootDeletingFailingArcTable simulates a non-atomic ArcTable backend that has
+// already invalidated oldRoot before the logical root-publishing write fails.
+// Retrying the original writer operation against oldRoot cannot recover from
+// this state; the captured IndexDelta must be replayed instead.
+type rootDeletingFailingArcTable struct {
+	inner arctable.ArcTable
+	kv    *kvg
+	fail  bool
+}
+
+func (f *rootDeletingFailingArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	return f.inner.Get(ctx, namespace, root, path)
+}
+
+func (f *rootDeletingFailingArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	return f.inner.BatchGet(ctx, namespace, root, paths)
+}
+
+func (f *rootDeletingFailingArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	if f.fail && newRoot.Defined() && oldRoot.Defined() {
+		if err := f.kv.Delete(ctx, arctable.RootKeyFormat(oldRoot)); err != nil {
+			return err
+		}
+		return errInjectedIndexFailure
+	}
+	return f.inner.Update(ctx, namespace, newRoot, oldRoot, arcs)
+}
+
+func (f *rootDeletingFailingArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return f.inner.Snapshot(ctx, namespace, root)
+}
+
+func (f *rootDeletingFailingArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return f.inner.Iterate(ctx, namespace, root)
+}
+
+func (f *rootDeletingFailingArcTable) Close() error { return f.inner.Close() }
+
 // newFailingTestWriter builds a writer whose ArcTable Update is controlled by
 // the returned *failingArcTable. The semantic layer is real (radix over
 // overwrite ArcTable), so it commits a cryptographically valid newRoot before
@@ -84,6 +122,25 @@ func newFailingTestWriter(t *testing.T) (*Writer, *failingArcTable) {
 	// too; we only fail the *logical* index write by toggling fail at the right
 	// moment in each test.
 	wrapped := &failingArcTable{inner: e}
+	maps, err := radix.NewMap(scheme, wrapped)
+	if err != nil {
+		t.Fatalf("NewMap: %v", err)
+	}
+	return NewWriter(maps, wrapped), wrapped
+}
+
+func newRootDeletingFailureWriter(t *testing.T) (*Writer, *rootDeletingFailingArcTable) {
+	t.Helper()
+	kv := memory.New()
+	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("NewArcTable: %v", err)
+	}
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme: %v", err)
+	}
+	wrapped := &rootDeletingFailingArcTable{inner: e, kv: kv}
 	maps, err := radix.NewMap(scheme, wrapped)
 	if err != nil {
 		t.Fatalf("NewMap: %v", err)
@@ -138,6 +195,9 @@ func TestUpdateArc_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	if idxErr.NewRoot.Equals(root) {
 		t.Error("IndexWriteFailedError.NewRoot equals old root; semantic layer did not advance")
 	}
+	if idxErr.IndexDelta == nil {
+		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	}
 
 	// The semantic root is valid but unreadable via the index before retry:
 	// GetArc against newRoot must fail because the index write never landed.
@@ -145,22 +205,13 @@ func TestUpdateArc_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 		t.Error("GetArc(newRoot, a) succeeded before retry; index write should be missing")
 	}
 
-	// Recovery is by re-running the original writer operation (not by replaying
-	// an ArcTable delta from the error — the delta is intentionally not carried
-	// by IndexWriteFailedError). With the ArcTable healthy again, re-running
-	// UpdateArc against the same base root and inputs must converge to the same
-	// content-addressed newRoot and then publish its index entry.
-	retryResult, err := w.UpdateArc(ctx, namespace, root, "a", newValueA)
-	if err != nil {
-		t.Fatalf("retry UpdateArc: %v", err)
+	// Recovery replays the captured ArcTable transition. This is stronger than
+	// re-running the original writer operation because a non-atomic backend may
+	// have partially invalidated oldRoot before returning the failure.
+	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryIndexWrite: %v", err)
 	}
-	if !retryResult.NewRoot.Equals(idxErr.NewRoot) {
-		t.Errorf("retry produced newRoot %s, want deterministic %s (idempotency broken)",
-			retryResult.NewRoot, idxErr.NewRoot)
-	}
-
-	// Now newRoot is readable.
-	got, err := w.GetArc(ctx, namespace, retryResult.NewRoot, "a")
+	got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
 	if err != nil {
 		t.Fatalf("GetArc after retry: %v", err)
 	}
@@ -209,17 +260,21 @@ func TestBatchUpdateArcs_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	if !idxErr.NewRoot.Defined() || idxErr.NewRoot.Equals(root) {
 		t.Fatalf("IndexWriteFailedError.NewRoot not advanced: %s", idxErr.NewRoot)
 	}
-
-	// Retry converges to the same root (content-addressed determinism).
-	retry, err := w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
-		"a": newA,
-		"b": newB,
-	})
-	if err != nil {
-		t.Fatalf("retry BatchUpdateArcs: %v", err)
+	if idxErr.IndexDelta == nil {
+		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
 	}
-	if !retry.NewRoot.Equals(idxErr.NewRoot) {
-		t.Errorf("retry newRoot %s != failed newRoot %s", retry.NewRoot, idxErr.NewRoot)
+
+	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryIndexWrite: %v", err)
+	}
+	for path, want := range map[string]cid.Cid{"a": newA, "b": newB} {
+		got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, path)
+		if err != nil {
+			t.Fatalf("GetArc(%s) after retry: %v", path, err)
+		}
+		if !got.Equals(want) {
+			t.Fatalf("GetArc(%s) = %s, want %s", path, got, want)
+		}
 	}
 }
 
@@ -270,6 +325,62 @@ func TestApply_MapDeltaIndexWriteFailure(t *testing.T) {
 	}
 	if !idxErr.NewRoot.Defined() {
 		t.Fatal("IndexWriteFailedError.NewRoot is undefined")
+	}
+	if idxErr.IndexDelta == nil {
+		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	}
+}
+
+// TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot covers a non-atomic
+// backend window where the old root mapping has already been removed before
+// ArcTable.Update reports failure. In that state, re-running the original
+// writer operation cannot recover because Snapshot(oldRoot) no longer finds the
+// mandatory payload binding; replaying IndexDelta from the error still works.
+func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-partial-index-fail"
+	w, failing := newRootDeletingFailureWriter(t)
+
+	payload := makeCIDLocal(t, "payload")
+	valueA := makeCIDLocal(t, "value-a")
+	newA := makeCIDLocal(t, "new-a")
+
+	root, err := w.CreateStructure(ctx, namespace, arcset.NewSetFrom(map[string]cid.Cid{
+		"@payload": payload,
+		"a":        valueA,
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+
+	failing.fail = true
+	_, err = w.UpdateArc(ctx, namespace, root, "a", newA)
+	failing.fail = false
+	if err == nil {
+		t.Fatal("UpdateArc should have failed when ArcTable.Update partially failed")
+	}
+	var idxErr *IndexWriteFailedError
+	if !errors.As(err, &idxErr) {
+		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+	}
+	if idxErr.IndexDelta == nil {
+		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	}
+
+	_, retryErr := w.UpdateArc(ctx, namespace, root, "a", newA)
+	if !errors.Is(retryErr, ErrMissingPayloadBinding) {
+		t.Fatalf("retrying original UpdateArc error = %v, want ErrMissingPayloadBinding", retryErr)
+	}
+
+	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryIndexWrite: %v", err)
+	}
+	got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc after RetryIndexWrite: %v", err)
+	}
+	if !got.Equals(newA) {
+		t.Fatalf("a after RetryIndexWrite = %s, want %s", got, newA)
 	}
 }
 

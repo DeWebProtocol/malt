@@ -194,10 +194,11 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 			}
 			if err := w.arctable.Update(ctx, namespace, root, cid.Undef, snapshot); err != nil {
 				return cid.Undef, &IndexWriteFailedError{
-					NewRoot:   root,
-					Namespace: namespace,
-					OldRoot:   cid.Undef,
-					Cause:     err,
+					NewRoot:    root,
+					Namespace:  namespace,
+					OldRoot:    cid.Undef,
+					IndexDelta: snapshot,
+					Cause:      err,
 				}
 			}
 		}
@@ -233,10 +234,11 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 		}
 		if err := w.arctable.Update(ctx, namespace, root, delta.Object, deltaSet); err != nil {
 			return cid.Undef, &IndexWriteFailedError{
-				NewRoot:   root,
-				Namespace: namespace,
-				OldRoot:   delta.Object,
-				Cause:     err,
+				NewRoot:    root,
+				Namespace:  namespace,
+				OldRoot:    delta.Object,
+				IndexDelta: deltaSet,
+				Cause:      err,
 			}
 		}
 	}

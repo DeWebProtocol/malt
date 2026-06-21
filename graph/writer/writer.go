@@ -45,15 +45,12 @@ var (
 	// content-addressed and cannot be rolled back, so the returned newRoot is a
 	// cryptographically valid root whose ArcTable entries may be missing.
 	//
-	// To recover, retry the original writer operation (UpdateArc /
-	// BatchUpdateArcs / CreateStructure / Apply) against the same base root and
-	// inputs. Because the semantic commitment is deterministic and
-	// content-addressed, a successful retry converges to the same newRoot and
-	// then re-issues the ArcTable index write; re-writing identical entries is
-	// a no-op for both overwrite and versioned backends. Use errors.As to
-	// recover the newRoot via IndexWriteFailedError (exposed for diagnostics
-	// and correlation, not for direct ArcTable replay — the delta is not
-	// carried by the error).
+	// To recover, use errors.As to recover IndexWriteFailedError and call its
+	// RetryIndexWrite method against the same ArcTable. The error carries the
+	// exact old->new ArcTable transition because retrying the original writer
+	// operation is not guaranteed to work after a non-atomic backend has
+	// partially applied the failed index update (for example, after invalidating
+	// the old root mapping).
 	ErrIndexWriteFailed = errors.New("arctable index write failed after semantic commit")
 )
 
@@ -61,11 +58,10 @@ var (
 // the ArcTable index write failed. errors.Is(err, ErrIndexWriteFailed) and
 // errors.Is(err, <underlying cause>) both succeed.
 //
-// The fields are exposed for diagnostics and correlation (e.g. logging the
-// orphaned newRoot, correlating with a retry). Recovery is by re-running the
-// original writer operation, not by replaying an ArcTable delta from this
-// error: the ArcSet delta is intentionally not carried here to avoid leaking
-// the internal arcset representation through the error contract.
+// The fields are exposed for diagnostics, correlation, and index repair.
+// IndexDelta is the exact ArcTable delta that failed to publish; callers can
+// retry it with RetryIndexWrite even if the original base root is no longer
+// readable after a partially applied backend update.
 type IndexWriteFailedError struct {
 	// NewRoot is the content-addressed root the semantic layer committed. It is
 	// valid in the semantic sense, but its ArcTable index entries may not have
@@ -76,6 +72,9 @@ type IndexWriteFailedError struct {
 	// OldRoot is the base root the write transitioned from (cid.Undef for
 	// CreateStructure).
 	OldRoot cid.Cid
+	// IndexDelta is the exact ArcTable update payload for OldRoot -> NewRoot.
+	// It may be a full snapshot for create-style writes.
+	IndexDelta arcset.ArcSet
 	// Cause is the error returned by ArcTable.Update.
 	Cause error
 }
@@ -86,6 +85,31 @@ func (e *IndexWriteFailedError) Error() string {
 
 func (e *IndexWriteFailedError) Unwrap() error {
 	return errors.Join(ErrIndexWriteFailed, e.Cause)
+}
+
+// RetryIndexWrite retries the failed ArcTable publication captured by this
+// error. The operation is intended to be idempotent: it re-applies the same
+// absolute OldRoot -> NewRoot transition and IndexDelta.
+func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
+	if e == nil {
+		return fmt.Errorf("index write failure is nil")
+	}
+	if table == nil {
+		return fmt.Errorf("arctable is nil")
+	}
+	if e.IndexDelta == nil {
+		return fmt.Errorf("%w: missing index delta", ErrIndexWriteFailed)
+	}
+	if err := table.Update(ctx, e.Namespace, e.NewRoot, e.OldRoot, e.IndexDelta); err != nil {
+		return &IndexWriteFailedError{
+			NewRoot:    e.NewRoot,
+			Namespace:  e.Namespace,
+			OldRoot:    e.OldRoot,
+			IndexDelta: e.IndexDelta,
+			Cause:      err,
+		}
+	}
+	return nil
 }
 
 var mandatoryPayloadPath = arcset.CanonicalizePath("@payload")
@@ -488,10 +512,11 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	// the caller can retry the idempotent ArcTable write.
 	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
 		return nil, &IndexWriteFailedError{
-			NewRoot:   newRoot,
-			Namespace: namespace,
-			OldRoot:   root,
-			Cause:     fmt.Errorf("ArcTable.Update failed: %w", err),
+			NewRoot:    newRoot,
+			Namespace:  namespace,
+			OldRoot:    root,
+			IndexDelta: delta,
+			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
 		}
 	}
 	if w.freshness != nil {
@@ -633,10 +658,11 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	// caller can retry the idempotent write.
 	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
 		return nil, &IndexWriteFailedError{
-			NewRoot:   newRoot,
-			Namespace: namespace,
-			OldRoot:   root,
-			Cause:     fmt.Errorf("ArcTable.Update failed: %w", err),
+			NewRoot:    newRoot,
+			Namespace:  namespace,
+			OldRoot:    root,
+			IndexDelta: delta,
+			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
 		}
 	}
 	if w.freshness != nil {
@@ -688,10 +714,11 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	// semantically committed but has no index entries; surface it for retry.
 	if err := w.arctable.Update(ctx, namespace, root, cid.Undef, normalizedSnapshot); err != nil {
 		return cid.Undef, &IndexWriteFailedError{
-			NewRoot:   root,
-			Namespace: namespace,
-			OldRoot:   cid.Undef,
-			Cause:     fmt.Errorf("ArcTable.Update failed: %w", err),
+			NewRoot:    root,
+			Namespace:  namespace,
+			OldRoot:    cid.Undef,
+			IndexDelta: normalizedSnapshot,
+			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
 		}
 	}
 	if w.freshness != nil {
