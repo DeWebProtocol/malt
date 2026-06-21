@@ -529,11 +529,12 @@ func TestUpdateArc_IndexWriteRetryRejectsStaleReplay(t *testing.T) {
 	}
 }
 
-// TestBatchUpdateArcs_IndexWriteRetryCompletesPartialDelta verifies that retry
-// accepts states produced by partially applying the same failed delta. This
-// models fs-backed overwrite ArcTable batches that can write one arc and then
-// fail before the remaining arc operations land.
-func TestBatchUpdateArcs_IndexWriteRetryCompletesPartialDelta(t *testing.T) {
+// TestBatchUpdateArcs_IndexWriteRetryRejectsPartialDelta verifies that retry
+// rejects partially applied multi-path deltas for overwrite-like backends. A
+// subset of delta paths can be indistinguishable from a later successful subset
+// write, so completing the stale batch would risk corrupting namespace-scoped
+// arc values for that later root.
+func TestBatchUpdateArcs_IndexWriteRetryRejectsPartialDelta(t *testing.T) {
 	ctx := context.Background()
 	namespace := "ns-partial-delta"
 	w, failing := newPartialArcFailureWriter(t)
@@ -582,17 +583,90 @@ func TestBatchUpdateArcs_IndexWriteRetryCompletesPartialDelta(t *testing.T) {
 		t.Fatalf("partial failure b = %s, want old value %s", gotB, valueB)
 	}
 
-	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
-		t.Fatalf("RetryIndexWrite after partial delta: %v", err)
+	if err := idxErr.RetryIndexWrite(ctx, failing); !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("RetryIndexWrite after partial delta error = %v, want ErrStaleRoot", err)
 	}
-	for path, want := range map[string]cid.Cid{"a": newA, "b": newB} {
-		got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, path)
-		if err != nil {
-			t.Fatalf("GetArc(%s) after RetryIndexWrite: %v", path, err)
-		}
-		if !got.Equals(want) {
-			t.Fatalf("GetArc(%s) after RetryIndexWrite = %s, want %s", path, got, want)
-		}
+	gotB, err = w.GetArc(ctx, namespace, idxErr.NewRoot, "b")
+	if err != nil {
+		t.Fatalf("GetArc(b) after rejected RetryIndexWrite: %v", err)
+	}
+	if !gotB.Equals(valueB) {
+		t.Fatalf("rejected RetryIndexWrite changed b = %s, want old value %s", gotB, valueB)
+	}
+}
+
+// TestBatchUpdateArcs_IndexWriteRetryRejectsSubsetWriteStaleReplay covers a
+// stale retry that looks like partial progress if each delta path is checked
+// independently: the failed batch wants to update both a and b, then a later
+// successful write updates only a to the same target. Retrying the failed batch
+// must not publish b's stale target into the namespace-scoped overwrite table.
+func TestBatchUpdateArcs_IndexWriteRetryRejectsSubsetWriteStaleReplay(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-stale-batch-subset"
+	w, failing := newFailingTestWriter(t)
+
+	payload := makeCIDLocal(t, "payload")
+	valueA := makeCIDLocal(t, "value-a")
+	valueB := makeCIDLocal(t, "value-b")
+	batchA := makeCIDLocal(t, "batch-a")
+	batchB := makeCIDLocal(t, "batch-b")
+
+	root, err := w.CreateStructure(ctx, namespace, arcset.NewSetFrom(map[string]cid.Cid{
+		"@payload": payload,
+		"a":        valueA,
+		"b":        valueB,
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+
+	failing.fail = true
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": batchA,
+		"b": batchB,
+	})
+	failing.fail = false
+	if err == nil {
+		t.Fatal("BatchUpdateArcs should have failed when ArcTable.Update failed")
+	}
+	var staleErr *IndexWriteFailedError
+	if !errors.As(err, &staleErr) {
+		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+	}
+	if staleErr.IndexBase == nil || staleErr.IndexDelta == nil {
+		t.Fatalf("stale error missing retry material: base=%v delta=%v", staleErr.IndexBase, staleErr.IndexDelta)
+	}
+
+	later, err := w.UpdateArc(ctx, namespace, root, "a", batchA)
+	if err != nil {
+		t.Fatalf("later UpdateArc: %v", err)
+	}
+	gotA, err := w.GetArc(ctx, namespace, later.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(laterRoot, a) before stale retry: %v", err)
+	}
+	gotB, err := w.GetArc(ctx, namespace, later.NewRoot, "b")
+	if err != nil {
+		t.Fatalf("GetArc(laterRoot, b) before stale retry: %v", err)
+	}
+	if !gotA.Equals(batchA) || !gotB.Equals(valueB) {
+		t.Fatalf("laterRoot before stale retry = {a:%s b:%s}, want {a:%s b:%s}", gotA, gotB, batchA, valueB)
+	}
+
+	err = staleErr.RetryIndexWrite(ctx, failing)
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("stale batch RetryIndexWrite error = %v, want ErrStaleRoot", err)
+	}
+	gotA, err = w.GetArc(ctx, namespace, later.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc(laterRoot, a) after stale retry: %v", err)
+	}
+	gotB, err = w.GetArc(ctx, namespace, later.NewRoot, "b")
+	if err != nil {
+		t.Fatalf("GetArc(laterRoot, b) after stale retry: %v", err)
+	}
+	if !gotA.Equals(batchA) || !gotB.Equals(valueB) {
+		t.Fatalf("stale batch RetryIndexWrite changed laterRoot = {a:%s b:%s}, want {a:%s b:%s}", gotA, gotB, batchA, valueB)
 	}
 }
 

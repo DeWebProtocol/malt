@@ -97,7 +97,7 @@ func (e *IndexWriteFailedError) Unwrap() error {
 // error. The operation is intended to be idempotent: it re-applies the same
 // absolute OldRoot -> NewRoot transition and IndexDelta. For overwrite-like
 // backends, it first rejects stale retries when the namespace arcs no longer
-// match any state reachable by partially applying this captured transition.
+// match the captured pre-publication or full post-publication state.
 func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
 	if e == nil {
 		return fmt.Errorf("index write failure is nil")
@@ -116,11 +116,19 @@ func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arcta
 		if err != nil {
 			return fmt.Errorf("ArcTable.Snapshot failed during index retry: %w", err)
 		}
-		matchesProgress, err := arcSetWithinDeltaProgress(current, e.IndexBase, e.IndexDelta)
+		expectedAfter, err := applyArcSetDelta(e.IndexBase, e.IndexDelta)
 		if err != nil {
 			return err
 		}
-		if !matchesProgress {
+		matchesBase, err := arcSetsEqual(current, e.IndexBase)
+		if err != nil {
+			return err
+		}
+		matchesAfter, err := arcSetsEqual(current, expectedAfter)
+		if err != nil {
+			return err
+		}
+		if !matchesBase && !matchesAfter {
 			return fmt.Errorf("%w: stale index retry for namespace %q oldRoot=%s newRoot=%s", ErrStaleRoot, e.Namespace, e.OldRoot, e.NewRoot)
 		}
 	}
@@ -144,58 +152,42 @@ func indexRetryBase(ctx context.Context, table arctable.ArcTable, namespace stri
 	return table.Snapshot(ctx, namespace, cid.Undef)
 }
 
-func arcSetWithinDeltaProgress(current, base, delta arcset.ArcSet) (bool, error) {
-	currentMap, err := arcset.ToPathMap(current)
-	if err != nil {
-		return false, err
-	}
+func applyArcSetDelta(base, delta arcset.ArcSet) (arcset.ArcSet, error) {
 	baseMap, err := arcset.ToPathMap(base)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	deltaMap, err := arcset.ToPathMap(delta)
 	if err != nil {
+		return nil, err
+	}
+	for path, target := range deltaMap {
+		if target.Defined() {
+			baseMap[path] = target
+		} else {
+			delete(baseMap, path)
+		}
+	}
+	return arcset.NewArcSetFromPaths(baseMap)
+}
+
+func arcSetsEqual(a, b arcset.ArcSet) (bool, error) {
+	aMap, err := arcset.ToPathMap(a)
+	if err != nil {
 		return false, err
 	}
-
-	paths := make(map[arcset.Path]struct{}, len(currentMap)+len(baseMap)+len(deltaMap))
-	for path := range currentMap {
-		paths[path] = struct{}{}
+	bMap, err := arcset.ToPathMap(b)
+	if err != nil {
+		return false, err
 	}
-	for path := range baseMap {
-		paths[path] = struct{}{}
-	}
-	for path := range deltaMap {
-		paths[path] = struct{}{}
-	}
-
-	for path := range paths {
-		currentTarget, currentOK := currentMap[path]
-		baseTarget, baseOK := baseMap[path]
-		deltaTarget, deltaOK := deltaMap[path]
-		if !deltaOK {
-			if currentOK != baseOK {
-				return false, nil
-			}
-			if currentOK && !currentTarget.Equals(baseTarget) {
-				return false, nil
-			}
-			continue
-		}
-
-		if currentOK == baseOK && (!currentOK || currentTarget.Equals(baseTarget)) {
-			continue
-		}
-		if deltaTarget.Defined() {
-			if currentOK && currentTarget.Equals(deltaTarget) {
-				continue
-			}
-		} else {
-			if !currentOK {
-				continue
-			}
-		}
+	if len(aMap) != len(bMap) {
 		return false, nil
+	}
+	for path, aTarget := range aMap {
+		bTarget, ok := bMap[path]
+		if !ok || !aTarget.Equals(bTarget) {
+			return false, nil
+		}
 	}
 	return true, nil
 }
