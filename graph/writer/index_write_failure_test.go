@@ -104,8 +104,9 @@ func (f *rootDeletingFailingArcTable) Close() error { return f.inner.Close() }
 
 // partialArcFailingArcTable simulates a non-atomic batch failure after one arc
 // from a multi-arc delta has already been applied. That intermediate namespace
-// state is neither IndexBase nor the full expected-after state, but it is still
-// safe for RetryIndexWrite to complete the same captured delta.
+// state is neither IndexBase nor the full expected-after state, so
+// RetryIndexWrite must fail closed: it cannot distinguish this partial write
+// from a later successful subset write.
 type partialArcFailingArcTable struct {
 	inner arctable.ArcTable
 	kv    *kvg
