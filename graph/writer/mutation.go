@@ -192,8 +192,25 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 			if err != nil {
 				return cid.Undef, err
 			}
+			retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+			if err != nil {
+				return cid.Undef, &IndexWriteFailedError{
+					NewRoot:    root,
+					Namespace:  namespace,
+					OldRoot:    cid.Undef,
+					IndexDelta: snapshot,
+					Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+				}
+			}
 			if err := w.arctable.Update(ctx, namespace, root, cid.Undef, snapshot); err != nil {
-				return cid.Undef, err
+				return cid.Undef, &IndexWriteFailedError{
+					NewRoot:    root,
+					Namespace:  namespace,
+					OldRoot:    cid.Undef,
+					IndexBase:  retryBase,
+					IndexDelta: snapshot,
+					Cause:      err,
+				}
 			}
 		}
 		return root, nil
@@ -226,8 +243,25 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 		if err != nil {
 			return cid.Undef, err
 		}
+		retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+		if err != nil {
+			return cid.Undef, &IndexWriteFailedError{
+				NewRoot:    root,
+				Namespace:  namespace,
+				OldRoot:    delta.Object,
+				IndexDelta: deltaSet,
+				Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+			}
+		}
 		if err := w.arctable.Update(ctx, namespace, root, delta.Object, deltaSet); err != nil {
-			return cid.Undef, err
+			return cid.Undef, &IndexWriteFailedError{
+				NewRoot:    root,
+				Namespace:  namespace,
+				OldRoot:    delta.Object,
+				IndexBase:  retryBase,
+				IndexDelta: deltaSet,
+				Cause:      err,
+			}
 		}
 	}
 	return root, nil
