@@ -756,9 +756,11 @@ func TestUpdateArc_CorruptStoredTargetFailsClosed(t *testing.T) {
 	}
 }
 
-// TestBatchUpdateArcs_CorruptStoredTargetFailsClosed mirrors the single-update
-// corruption guard for the batch path, which also needs targeted Get calls for
-// every updated path.
+// TestBatchUpdateArcs_CorruptStoredTargetFailsClosed guards the batch path
+// against corrupt overwrite ArcTable entries. BatchUpdateArcs classifies through
+// BatchGet, so a corrupt stored CID may be omitted by the index lookup, but the
+// semantic layer must still reject the mismatched old value instead of silently
+// committing a partial view.
 func TestBatchUpdateArcs_CorruptStoredTargetFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	namespace := "ns-corrupt-batch"
@@ -780,8 +782,8 @@ func TestBatchUpdateArcs_CorruptStoredTargetFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("BatchUpdateArcs with corrupt stored target succeeded; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "ArcTable.Get failed for b") {
-		t.Fatalf("BatchUpdateArcs error = %v, want targeted ArcTable.Get failure for b", err)
+	if !strings.Contains(err.Error(), "semantic.BatchUpdate failed") {
+		t.Fatalf("BatchUpdateArcs error = %v, want semantic old-value mismatch failure", err)
 	}
 }
 

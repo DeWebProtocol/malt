@@ -675,17 +675,23 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 
 	// Step 2: Look up current bindings and classify operations. The snapshot is
 	// still used below to build the ArcTable delta, but classification uses
-	// targeted Get calls so corrupt stored entries fail closed instead of being
-	// silently omitted from a broad snapshot and treated as absent paths.
+	// BatchGet so backend read failures fail closed while missing paths are
+	// represented as cid.Undef.
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
 	batchUpdates := make([]mapping.BatchUpdate, 0, len(normalizedUpdates))
+	paths := make([]arcset.Path, 0, len(normalizedUpdates))
+
+	for path := range normalizedUpdates {
+		paths = append(paths, path)
+	}
+	oldTargets, err := w.arctable.BatchGet(ctx, namespace, root, paths)
+	if err != nil {
+		return nil, fmt.Errorf("ArcTable.BatchGet failed: %w", err)
+	}
 
 	for path, newTarget := range normalizedUpdates {
-		oldTarget, err := w.arctable.Get(ctx, namespace, root, path)
-		if err != nil {
-			if !arctable.IsNotFound(err) {
-				return nil, fmt.Errorf("ArcTable.Get failed for %s: %w", path.String(), err)
-			}
+		oldTarget, ok := oldTargets[path]
+		if !ok {
 			oldTarget = cid.Undef
 		}
 
