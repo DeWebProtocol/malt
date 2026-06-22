@@ -43,7 +43,7 @@ func (s *Server) serveResolve(w http.ResponseWriter, r *http.Request, svc graphS
 }
 
 func (s *Server) resolvePath(ctx context.Context, svc graphService, root cid.Cid, rawPath string, wantProof bool) (*pathResolution, error) {
-	cleanPath, keyResult, err := svc.ResolveKey(root, rawPath)
+	cleanPath, keyResult, err := svc.ResolveKey(ctx, root, rawPath)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Server) resolvePath(ctx context.Context, svc graphService, root cid.Cid
 
 	transcript := keyResult.Transcript
 	if maltcid.SemanticKindOf(key) == maltcid.SemanticKindMap {
-		payloadResult, err := svc.ResolveMapPayload(key)
+		payloadResult, err := svc.ResolveMapPayload(ctx, key)
 		if err != nil {
 			return nil, err
 		}

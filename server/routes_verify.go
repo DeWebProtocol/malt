@@ -18,7 +18,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		writeBodyDecodeError(w, err)
 		return
 	}
-	valid, err := (proofVerifier{runtime: svc.runtime}).VerifyProofList(req.ProofList)
+	valid, err := (proofVerifier{runtime: svc.runtime}).VerifyProofList(r.Context(), req.ProofList)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

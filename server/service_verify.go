@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -43,13 +44,13 @@ func (p proofListVerifiedPath) logicalQueryPath() string {
 	return strings.Join(p.parts, "/")
 }
 
-func (v proofVerifier) VerifyProofList(pl prooflist.ProofList) (bool, error) {
+func (v proofVerifier) VerifyProofList(ctx context.Context, pl prooflist.ProofList) (bool, error) {
 	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
 		return false, err
 	}
 	var verifiedPath proofListVerifiedPath
 	for i, step := range pl.Steps {
-		ok, err := v.verifyStep(i, step)
+		ok, err := v.verifyStep(ctx, i, step)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -97,14 +98,14 @@ func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifi
 	return fmt.Errorf("prooflist query %q does not match ordered traversal path %q", want, got)
 }
 
-func (v proofVerifier) verifyStep(index int, step prooflist.Step) (bool, error) {
+func (v proofVerifier) verifyStep(ctx context.Context, index int, step prooflist.Step) (bool, error) {
 	switch step.EvidenceKind {
 	case "explicit":
 		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)
 		if err != nil {
 			return false, fmt.Errorf("invalid evidence at step %d: %w", index, err)
 		}
-		return v.runtime.Resolver().VerifyTranscript(step.From, &resolver.Transcript{Steps: []resolver.StepEvidence{{
+		return v.runtime.Resolver().VerifyTranscript(ctx, step.From, &resolver.Transcript{Steps: []resolver.StepEvidence{{
 			Path:     arcset.CanonicalizePath(step.Path),
 			Target:   step.Target,
 			Evidence: ev,

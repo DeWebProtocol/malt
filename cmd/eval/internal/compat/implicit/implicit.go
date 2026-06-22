@@ -77,7 +77,7 @@ func NewResolverWithCodecs(c cas.Reader, registry *codec.Registry) *Resolver {
 //
 // This resolver only handles a single hop. The caller is responsible for
 // continuing traversal if needed.
-func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
+func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	if !root.Defined() {
 		return "", cid.Cid{}, nil, fmt.Errorf("root is not defined")
 	}
@@ -87,7 +87,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	}
 
 	// Fetch block from CAS
-	blockContent, err := r.cas.Get(context.Background(), root)
+	blockContent, err := r.cas.Get(ctx, root)
 	if err != nil {
 		return "", cid.Cid{}, nil, fmt.Errorf("failed to fetch block %s: %w", root, err)
 	}
@@ -120,7 +120,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 
 	// For dag-pb blocks, check if it's a HAMT structure
 	if codecName == "dag-pb" {
-		hamtResult := r.tryHAMTResolution(root, blockContent, path)
+		hamtResult := r.tryHAMTResolution(ctx, root, blockContent, path)
 		if hamtResult.isHAMT {
 			return hamtResult.matchedPath, hamtResult.target, hamtResult.evidence, hamtResult.err
 		}
@@ -148,7 +148,8 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 // It performs two checks:
 //  1. Verifies that the block content in evidence hashes to the root CID
 //  2. Verifies that the path resolves to the target CID within the block
-func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
+func (r *Resolver) Verify(ctx context.Context, root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
+	_ = ctx
 	if ev == nil {
 		return false, fmt.Errorf("evidence is nil")
 	}
@@ -267,7 +268,7 @@ type hamtResult struct {
 // tryHAMTResolution attempts to detect and resolve a HAMT structure.
 // HAMT nodes are dag-pb blocks where the Data field contains a dag-cbor
 // encoded map with "0" (bitfield) and "1" (entries) keys.
-func (r *Resolver) tryHAMTResolution(root cid.Cid, blockContent []byte, path arcset.Path) hamtResult {
+func (r *Resolver) tryHAMTResolution(ctx context.Context, root cid.Cid, blockContent []byte, path arcset.Path) hamtResult {
 	// Try to parse as HAMT node
 	_, err := hamt.ParseNode(blockContent)
 	if err != nil {
@@ -292,7 +293,7 @@ func (r *Resolver) tryHAMTResolution(root cid.Cid, blockContent []byte, path arc
 		hamt.WithMaxDepth(r.hamtConfig.MaxDepth),
 	)
 
-	matchedPath, target, ev, err := hamtResolver.Resolve(root, path)
+	matchedPath, target, ev, err := hamtResolver.Resolve(ctx, root, path)
 	if err != nil {
 		return hamtResult{
 			isHAMT: true,

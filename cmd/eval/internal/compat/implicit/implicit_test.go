@@ -43,7 +43,7 @@ func TestResolve_EmptyPath(t *testing.T) {
 	c := helperCID(blockData)
 	mockCAS.AddBlock(c, blockData)
 
-	matchedPath, target, ev, err := resolver.Resolve(c, "")
+	matchedPath, target, ev, err := resolver.Resolve(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("Resolve with empty path should not error: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestResolve_UndefinedRoot(t *testing.T) {
 	mockCAS := mock.NewCAS()
 	resolver := implicit.NewResolver(mockCAS)
 
-	_, _, _, err := resolver.Resolve(cid.Cid{}, "some/path")
+	_, _, _, err := resolver.Resolve(context.Background(), cid.Cid{}, "some/path")
 	if err == nil {
 		t.Fatal("expected error for undefined root, got nil")
 	}
@@ -87,7 +87,7 @@ func TestResolve_NilCAS(t *testing.T) {
 	resolver := implicit.NewResolver(nil)
 
 	c := helperCID([]byte("data"))
-	_, _, _, err := resolver.Resolve(c, "")
+	_, _, _, err := resolver.Resolve(context.Background(), c, "")
 	if err == nil {
 		t.Fatal("expected error for nil CAS, got nil")
 	}
@@ -106,7 +106,7 @@ func TestResolve_BlockNotFound(t *testing.T) {
 
 	c := helperCID([]byte("missing block"))
 
-	_, _, _, err := resolver.Resolve(c, "")
+	_, _, _, err := resolver.Resolve(context.Background(), c, "")
 	if err == nil {
 		t.Fatal("expected error for missing block, got nil")
 	}
@@ -129,7 +129,7 @@ func TestResolve_RawBlock(t *testing.T) {
 	c := helperCID(blockData)
 	mockCAS.AddBlock(c, blockData)
 
-	matchedPath, target, ev, err := resolver.Resolve(c, "")
+	matchedPath, target, ev, err := resolver.Resolve(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("Resolve raw block should not error: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestVerify_NilEvidence(t *testing.T) {
 	c := helperCID([]byte("data"))
 	target := helperCID([]byte("target"))
 
-	ok, err := resolver.Verify(c, "", target, nil)
+	ok, err := resolver.Verify(context.Background(), c, "", target, nil)
 	if err == nil {
 		t.Fatal("expected error for nil evidence, got nil")
 	}
@@ -181,7 +181,7 @@ func TestVerify_WrongEvidenceType(t *testing.T) {
 
 	wrongEv := evidence.NewExplicitEvidence([]byte("proof bytes"))
 
-	ok, err := resolver.Verify(c, "", target, wrongEv)
+	ok, err := resolver.Verify(context.Background(), c, "", target, wrongEv)
 	if err == nil {
 		t.Fatal("expected error for wrong evidence type, got nil")
 	}
@@ -208,7 +208,7 @@ func TestVerify_BlockHashMismatch(t *testing.T) {
 
 	target := cid.Cid{}
 
-	ok, err := resolver.Verify(c, "", target, ev)
+	ok, err := resolver.Verify(context.Background(), c, "", target, ev)
 	if err != nil {
 		t.Fatalf("Verify should not error on hash mismatch, got: %v", err)
 	}
@@ -232,13 +232,13 @@ func TestVerify_ValidImplicitEvidence(t *testing.T) {
 	}
 
 	// Resolve to get evidence
-	_, _, ev, err := resolver.Resolve(c, "")
+	_, _, ev, err := resolver.Resolve(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
 	// Verify the evidence - for empty path, target should equal root
-	ok, err := resolver.Verify(c, "", c, ev)
+	ok, err := resolver.Verify(context.Background(), c, "", c, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestResolve_PathOnRawBlock(t *testing.T) {
 
 	// Raw blocks cannot resolve path segments; they should just return
 	// the block content as evidence with no target.
-	matchedPath, target, ev, err := resolver.Resolve(c, "some/segment")
+	matchedPath, target, ev, err := resolver.Resolve(context.Background(), c, "some/segment")
 	if err != nil {
 		t.Fatalf("Resolve on raw block with path should not error: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestResolve_DagCborBlock(t *testing.T) {
 	c := helperCIDWithCodec(blockData, cid.DagCBOR)
 	mockCAS.AddBlock(c, blockData)
 
-	matchedPath, target, ev, err := resolver.Resolve(c, "")
+	matchedPath, target, ev, err := resolver.Resolve(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("Resolve dag-cbor block should not error: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestResolve_UnknownCodec(t *testing.T) {
 	c := helperCIDWithCodec(blockData, 0x00)
 	mockCAS.AddBlock(c, blockData)
 
-	matchedPath, target, ev, err := resolver.Resolve(c, "")
+	matchedPath, target, ev, err := resolver.Resolve(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("Resolve with unknown codec should not error: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestResolve_NilCASWithHAMTConfig(t *testing.T) {
 	resolver := implicit.NewResolverWithHAMTConfig(nil, cfg)
 
 	c := helperCID([]byte("data"))
-	_, _, _, err := resolver.Resolve(c, "")
+	_, _, _, err := resolver.Resolve(context.Background(), c, "")
 	if err == nil {
 		t.Fatal("expected error for nil CAS, got nil")
 	}
@@ -402,7 +402,7 @@ func TestResolve_NilCASWithCodecs(t *testing.T) {
 	resolver := implicit.NewResolverWithCodecs(nil, registry)
 
 	c := helperCID([]byte("data"))
-	_, _, _, err := resolver.Resolve(c, "")
+	_, _, _, err := resolver.Resolve(context.Background(), c, "")
 	if err == nil {
 		t.Fatal("expected error for nil CAS, got nil")
 	}
