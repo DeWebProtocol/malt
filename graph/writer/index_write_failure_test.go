@@ -530,6 +530,53 @@ func TestUpdateArc_IndexWriteRetryRejectsStaleReplay(t *testing.T) {
 	}
 }
 
+func TestWriterRetryIndexWriteMarksOldRootStale(t *testing.T) {
+	ctx := context.Background()
+	namespace := "ns-writer-retry-freshness"
+	w, failing := newFailingTestWriter(t)
+
+	payload := makeCIDLocal(t, "payload")
+	valueA := makeCIDLocal(t, "value-a")
+	retryA := makeCIDLocal(t, "retry-a")
+	laterA := makeCIDLocal(t, "later-a")
+
+	root, err := w.CreateStructure(ctx, namespace, arcset.NewSetFrom(map[string]cid.Cid{
+		"@payload": payload,
+		"a":        valueA,
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure: %v", err)
+	}
+
+	failing.fail = true
+	_, err = w.UpdateArc(ctx, namespace, root, "a", retryA)
+	failing.fail = false
+	if err == nil {
+		t.Fatal("UpdateArc should have failed when ArcTable.Update failed")
+	}
+	var idxErr *IndexWriteFailedError
+	if !errors.As(err, &idxErr) {
+		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+	}
+
+	if err := w.RetryIndexWrite(ctx, idxErr); err != nil {
+		t.Fatalf("Writer.RetryIndexWrite: %v", err)
+	}
+	got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
+	if err != nil {
+		t.Fatalf("GetArc after Writer.RetryIndexWrite: %v", err)
+	}
+	if !got.Equals(retryA) {
+		t.Fatalf("a after Writer.RetryIndexWrite = %s, want %s", got, retryA)
+	}
+
+	w2 := NewWriter(w.semantic, failing)
+	_, err = w2.UpdateArc(ctx, namespace, root, "a", laterA)
+	if !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second writer UpdateArc after retry error = %v, want ErrStaleRoot", err)
+	}
+}
+
 // TestBatchUpdateArcs_IndexWriteRetryRejectsPartialDelta verifies that retry
 // rejects partially applied multi-path deltas for overwrite-like backends. A
 // subset of delta paths can be indistinguishable from a later successful subset
