@@ -26,12 +26,14 @@ import (
 )
 
 func canonicalArcTableType(t string) string {
-	switch t {
-	case "simple":
-		return "overwrite"
-	default:
-		return t
+	if canonical, ok := arcTableTypeAliases[t]; ok {
+		return canonical
 	}
+	return t
+}
+
+var arcTableTypeAliases = map[string]string{
+	"simple": "overwrite",
 }
 
 // Node is the stateless MALT node that holds shared infrastructure.
@@ -213,8 +215,8 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.IndexCommitment
 
 // initArcTable creates an ArcTable from config.
 func (n *Node) initArcTable() error {
-	switch n.cfg.State.ArcTable.Type {
-	case "simple", "overwrite":
+	switch canonicalArcTableType(n.cfg.State.ArcTable.Type) {
+	case "overwrite":
 		e, err := overwrite.NewArcTable(overwrite.WithKVStore(n.kv))
 		if err != nil {
 			return err

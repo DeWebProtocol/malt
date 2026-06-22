@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -35,6 +36,9 @@ type Map struct {
 	commitment *mapping.Commitment
 	arctable   arctable.ArcTable
 }
+
+// ErrPathNotFound indicates that a requested radix map path is absent.
+var ErrPathNotFound = errors.New("radix map path not found")
 
 // pendingNode represents a node that needs to be persisted.
 type pendingNode struct {
@@ -134,14 +138,14 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		})
 
 		if !slotCID.Defined() {
-			return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
+			return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 		}
 
 		if leafPath, leafValue, ok, err := tryDecodeLeafMarker(slotCID); err != nil {
 			return mapping.Binding{}, nil, err
 		} else if ok {
 			if leafPath != key {
-				return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
+				return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 			}
 			proofBytes, err := json.Marshal(envelope)
 			if err != nil {
@@ -169,7 +173,7 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 				}
 			}
 			if index < 0 {
-				return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
+				return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 			}
 
 			value, proof, err := s.commitment.ProveSlot(bucketRoot, markers, uint64(index))
@@ -191,7 +195,7 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		currentRoot = slotCID
 	}
 
-	return mapping.Binding{}, nil, fmt.Errorf("path %s not found", key.String())
+	return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 }
 
 func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, proof structure.Proof) (bool, error) {

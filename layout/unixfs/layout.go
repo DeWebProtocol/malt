@@ -22,6 +22,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -777,7 +778,7 @@ func isPortableUnixFSSegment(segment string) bool {
 }
 
 func isMapAbsent(err error) bool {
-	return strings.Contains(err.Error(), "not found")
+	return errors.Is(err, mappingradix.ErrPathNotFound)
 }
 
 func typeMarker(kind string) (cid.Cid, error) {

@@ -18,7 +18,7 @@ func defaultOptions() *Options {
 }
 
 // WithCommitmentScheme sets the commitment scheme for this Graph.
-// Default: Verkle tree.
+// Default: KZG.
 func WithCommitmentScheme(scheme commitment.IndexCommitment) Option {
 	return func(o *Options) {
 		o.Scheme = scheme
