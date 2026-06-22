@@ -333,7 +333,7 @@ func (s *Server) unixFSPathStat(ctx context.Context, g runtimeGraph, root cid.Ci
 	}
 	stat, err := layout.Stat(ctx, root, p)
 	if err != nil {
-		return nil, fmt.Errorf("stat unixfs node: %w: %w", err, errNotUnixFSFile)
+		return nil, fmt.Errorf("%w: stat unixfs node: %v", errNotUnixFSFile, err)
 	}
 
 	switch stat.Kind {

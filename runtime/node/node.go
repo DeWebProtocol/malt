@@ -26,12 +26,14 @@ import (
 )
 
 func canonicalArcTableType(t string) string {
-	switch t {
-	case "simple":
-		return "overwrite"
-	default:
-		return t
+	if canonical, ok := arcTableTypeAliases[t]; ok {
+		return canonical
 	}
+	return t
+}
+
+var arcTableTypeAliases = map[string]string{
+	"simple": "overwrite",
 }
 
 // Node is the stateless MALT node that holds shared infrastructure.
@@ -194,8 +196,8 @@ func (n *Node) initCommitmentSchemeType(kind string) (commitment.IndexCommitment
 
 // initArcTable creates an ArcTable from config.
 func (n *Node) initArcTable() error {
-	switch n.cfg.State.ArcTable.Type {
-	case "simple", "overwrite":
+	switch canonicalArcTableType(n.cfg.State.ArcTable.Type) {
+	case "overwrite":
 		e, err := overwrite.NewArcTable(overwrite.WithKVStore(n.kv))
 		if err != nil {
 			return err
@@ -267,7 +269,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*runtimegraph.RuntimeG
 		return nil, fmt.Errorf("failed to create commitment scheme for graph %q: %w", id, err)
 	}
 
-	return runtimegraph.NewGraph(id, n.arctable, n.cas, runtimegraph.WithCommitmentScheme(scheme))
+	return runtimegraph.NewGraph(id, n.arctable, runtimegraph.WithCommitmentScheme(scheme))
 }
 
 // NewGraph creates a new ad hoc per-graph instance with its own per-graph
@@ -277,7 +279,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*runtimegraph.RuntimeG
 //   - id: unique graph identifier
 //   - opts: functional options (runtimegraph.WithCommitmentScheme, runtimegraph.WithNamespace, etc.)
 //
-// The Node auto-injects shared infrastructure (ArcTable, CAS).
+// The Node auto-injects shared ArcTable infrastructure.
 func (n *Node) NewGraph(id string, opts ...runtimegraph.Option) (*runtimegraph.RuntimeGraph, error) {
 	o := &runtimegraph.Options{}
 	for _, opt := range opts {
@@ -301,7 +303,7 @@ func (n *Node) NewGraph(id string, opts ...runtimegraph.Option) (*runtimegraph.R
 	// Apply user options (they can override)
 	graphOpts = append(graphOpts, opts...)
 
-	return runtimegraph.NewGraph(id, n.arctable, n.cas, graphOpts...)
+	return runtimegraph.NewGraph(id, n.arctable, graphOpts...)
 }
 
 // Commitment returns the default commitment scheme type from config.
