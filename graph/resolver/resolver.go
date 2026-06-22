@@ -3,6 +3,7 @@
 package resolver
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -39,7 +40,7 @@ type ResolveResult struct {
 
 // ResolveKey resolves a path to its terminal typed key without terminal payload
 // materialization. For list roots, traversal is terminal (no auto @payload).
-func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error) {
+func (r *Resolver) ResolveKey(ctx context.Context, root cid.Cid, path string) (*ResolveResult, error) {
 	if !root.Defined() {
 		return nil, ErrUndefinedRoot
 	}
@@ -70,7 +71,7 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 				Transcript:    transcript,
 			}, nil
 		}
-		matchedPath, target, ev, err = r.explicitStep.Resolve(currentCID, remainingPath)
+		matchedPath, target, ev, err = r.explicitStep.Resolve(ctx, currentCID, remainingPath)
 
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrResolutionFailed, err)
@@ -113,8 +114,8 @@ func (r *Resolver) ResolveKey(root cid.Cid, path string) (*ResolveResult, error)
 // Resolve resolves a path from a root CID through explicit MALT arcs only.
 // It stops with RemainingPath set when it reaches a non-MALT CID, a terminal
 // list root, or a root with no matching explicit arc.
-func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
-	keyResult, err := r.ResolveKey(root, path)
+func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path string) (*ResolveResult, error) {
+	keyResult, err := r.ResolveKey(ctx, root, path)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 
 	// Terminal materialization is map-only. List roots must remain terminal.
 	if maltcid.SemanticKindOf(keyResult.Target) == maltcid.SemanticKindMap && r.explicitStep != nil {
-		_, target, ev, err := r.explicitStep.Resolve(keyResult.Target, explicit.PayloadArc)
+		_, target, ev, err := r.explicitStep.Resolve(ctx, keyResult.Target, explicit.PayloadArc)
 		if err != nil {
 			return nil, fmt.Errorf("%w: map root %s is missing mandatory @payload binding: %w", ErrResolutionFailed, keyResult.Target.String(), err)
 		}
@@ -144,7 +145,7 @@ func (r *Resolver) Resolve(root cid.Cid, path string) (*ResolveResult, error) {
 }
 
 // VerifyTranscript verifies all steps in a transcript.
-func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool, error) {
+func (r *Resolver) VerifyTranscript(ctx context.Context, root cid.Cid, transcript *Transcript) (bool, error) {
 	if transcript == nil {
 		return false, ErrTranscriptNil
 	}
@@ -164,7 +165,7 @@ func (r *Resolver) VerifyTranscript(root cid.Cid, transcript *Transcript) (bool,
 			return false, fmt.Errorf("%w for evidence kind: %v", ErrStepExecutorNotAvailable, stepEv.Evidence.Kind())
 		}
 
-		valid, err := s.Verify(currentRoot, stepEv.Path, stepEv.Target, stepEv.Evidence)
+		valid, err := s.Verify(ctx, currentRoot, stepEv.Path, stepEv.Target, stepEv.Evidence)
 		if err != nil {
 			return false, fmt.Errorf("verification failed: %w", err)
 		}

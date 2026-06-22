@@ -67,6 +67,7 @@ func setupArcSet(t *testing.T, e *overwrite.ArcTable, semantic mapping.Semantics
 
 func TestResolve_LongestPrefixMatch(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	// Create target CIDs
 	target1 := makeCID(1)
@@ -85,7 +86,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Resolve "a/b/c/d" should match longest prefix "a/b/c" -> target3
-	matchedPath, target, ev, err := r.Resolve(root, "a/b/c/d")
+	matchedPath, target, ev, err := r.Resolve(ctx, root, "a/b/c/d")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 	}
 
 	// Verify the evidence
-	valid, err := r.Verify(root, matchedPath, target, ev)
+	valid, err := r.Verify(ctx, root, matchedPath, target, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 	}
 
 	// Resolve "a/b/x" should match longest prefix "a/b" -> target2
-	matchedPath, target, ev, err = r.Resolve(root, "a/b/x")
+	matchedPath, target, ev, err = r.Resolve(ctx, root, "a/b/x")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 	}
 
 	// Verify this evidence too
-	valid, err = r.Verify(root, matchedPath, target, ev)
+	valid, err = r.Verify(ctx, root, matchedPath, target, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 
 	// Verify that "a/b" is still stored in the snapshot (needed for semantic.Prove)
 	// by resolving "a/x" -> should match "a" -> target1
-	matchedPath, target, ev, err = r.Resolve(root, "a/x")
+	matchedPath, target, ev, err = r.Resolve(ctx, root, "a/x")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 	}
 
 	// Verify
-	valid, err = r.Verify(root, matchedPath, target, ev)
+	valid, err = r.Verify(ctx, root, matchedPath, target, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -158,6 +159,7 @@ func TestResolve_LongestPrefixMatch(t *testing.T) {
 
 func TestResolve_ExactMatch(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	target1 := makeCID(1)
 	target2 := makeCID(2)
@@ -171,7 +173,7 @@ func TestResolve_ExactMatch(t *testing.T) {
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Exact match: resolve "a/b" should return "a/b" -> target2
-	matchedPath, target, ev, err := r.Resolve(root, "a/b")
+	matchedPath, target, ev, err := r.Resolve(ctx, root, "a/b")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -186,7 +188,7 @@ func TestResolve_ExactMatch(t *testing.T) {
 	}
 
 	// Verify the evidence
-	valid, err := r.Verify(root, matchedPath, target, ev)
+	valid, err := r.Verify(ctx, root, matchedPath, target, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -197,6 +199,7 @@ func TestResolve_ExactMatch(t *testing.T) {
 
 func TestResolve_NoMatch(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
@@ -207,7 +210,7 @@ func TestResolve_NoMatch(t *testing.T) {
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Resolve "x/y/z" has no matching prefix
-	_, _, _, err := r.Resolve(root, "x/y/z")
+	_, _, _, err := r.Resolve(ctx, root, "x/y/z")
 	if err == nil {
 		t.Fatal("expected error for non-matching path, got nil")
 	}
@@ -215,6 +218,7 @@ func TestResolve_NoMatch(t *testing.T) {
 
 func TestResolve_EmptyPath(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
@@ -225,7 +229,7 @@ func TestResolve_EmptyPath(t *testing.T) {
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Empty path should error with "path is empty"
-	_, _, _, err := r.Resolve(root, "")
+	_, _, _, err := r.Resolve(ctx, root, "")
 	if err == nil {
 		t.Fatal("expected error for empty path, got nil")
 	}
@@ -236,11 +240,12 @@ func TestResolve_EmptyPath(t *testing.T) {
 
 func TestResolve_UndefinedRoot(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Undefined root should error with "root is not defined"
-	_, _, _, err := r.Resolve(cid.Undef, "a/b")
+	_, _, _, err := r.Resolve(ctx, cid.Undef, "a/b")
 	if err == nil {
 		t.Fatal("expected error for undefined root, got nil")
 	}
@@ -251,6 +256,7 @@ func TestResolve_UndefinedRoot(t *testing.T) {
 
 func TestVerify_ValidProof(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
@@ -261,13 +267,13 @@ func TestVerify_ValidProof(t *testing.T) {
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// First resolve to get valid evidence
-	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "a/b")
+	matchedPath, resolvedTarget, ev, err := r.Resolve(ctx, root, "a/b")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 
 	// Verify the evidence
-	valid, err := r.Verify(root, matchedPath, resolvedTarget, ev)
+	valid, err := r.Verify(ctx, root, matchedPath, resolvedTarget, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -278,6 +284,7 @@ func TestVerify_ValidProof(t *testing.T) {
 
 func TestVerify_WrongProof(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	target := makeCID(1)
 	arcsMap := map[string]cid.Cid{
@@ -288,7 +295,7 @@ func TestVerify_WrongProof(t *testing.T) {
 	r := explicit.NewResolver(e, semantic, testNamespace)
 
 	// Resolve to get a valid evidence
-	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "a/b")
+	matchedPath, resolvedTarget, ev, err := r.Resolve(ctx, root, "a/b")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -304,7 +311,7 @@ func TestVerify_WrongProof(t *testing.T) {
 	wrongEv := evidence.NewExplicitEvidence(wrongProof)
 
 	// Verify should fail with the wrong proof
-	valid, err := r.Verify(root, matchedPath, resolvedTarget, wrongEv)
+	valid, err := r.Verify(ctx, root, matchedPath, resolvedTarget, wrongEv)
 	if err != nil {
 		// An error is acceptable for a corrupted proof
 		t.Logf("Verify returned error (expected for wrong proof): %v", err)
@@ -317,13 +324,14 @@ func TestVerify_WrongProof(t *testing.T) {
 
 func TestVerify_NilEvidence(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	r := explicit.NewResolver(e, semantic, testNamespace)
 	root := makeCID(1)
 	target := makeCID(2)
 
 	// Nil evidence should error
-	_, err := r.Verify(root, "a/b", target, nil)
+	_, err := r.Verify(ctx, root, "a/b", target, nil)
 	if err == nil {
 		t.Fatal("expected error for nil evidence, got nil")
 	}
@@ -334,6 +342,7 @@ func TestVerify_NilEvidence(t *testing.T) {
 
 func TestVerify_WrongEvidenceType(t *testing.T) {
 	e, semantic, _ := newTestComponents()
+	ctx := context.Background()
 
 	r := explicit.NewResolver(e, semantic, testNamespace)
 	root := makeCID(1)
@@ -341,7 +350,7 @@ func TestVerify_WrongEvidenceType(t *testing.T) {
 
 	// Pass ImplicitEvidence instead of ExplicitEvidence
 	implicitEv := evidence.NewImplicitEvidence([]byte("some block content"))
-	_, err := r.Verify(root, "a/b", target, implicitEv)
+	_, err := r.Verify(ctx, root, "a/b", target, implicitEv)
 	if err == nil {
 		t.Fatal("expected error for wrong evidence type, got nil")
 	}
@@ -390,7 +399,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 
 	r := explicit.NewResolver(e, semantic, namespace)
 
-	matchedPath, resolvedTarget, ev, err := r.Resolve(root, "data/file")
+	matchedPath, resolvedTarget, ev, err := r.Resolve(ctx, root, "data/file")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -402,7 +411,7 @@ func TestBloomFilterWithResolver(t *testing.T) {
 	}
 
 	// Verify evidence
-	valid, err := r.Verify(root, matchedPath, resolvedTarget, ev)
+	valid, err := r.Verify(ctx, root, matchedPath, resolvedTarget, ev)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}

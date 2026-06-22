@@ -11,9 +11,9 @@ import (
 
 // Resolver is the graph read/proof port.
 type Resolver interface {
-	ResolveKey(root cid.Cid, path string) (*resolver.ResolveResult, error)
-	Resolve(root cid.Cid, path string) (*resolver.ResolveResult, error)
-	VerifyTranscript(root cid.Cid, transcript *resolver.Transcript) (bool, error)
+	ResolveKey(ctx context.Context, root cid.Cid, path string) (*resolver.ResolveResult, error)
+	Resolve(ctx context.Context, root cid.Cid, path string) (*resolver.ResolveResult, error)
+	VerifyTranscript(ctx context.Context, root cid.Cid, transcript *resolver.Transcript) (bool, error)
 }
 
 // Writer is the graph mutation port.
