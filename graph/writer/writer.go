@@ -45,12 +45,11 @@ var (
 	// content-addressed and cannot be rolled back, so the returned newRoot is a
 	// cryptographically valid root whose ArcTable entries may be missing.
 	//
-	// To recover, use errors.As to recover IndexWriteFailedError and call its
-	// RetryIndexWrite method against the same ArcTable. The error carries the
-	// exact old->new ArcTable transition because retrying the original writer
-	// operation is not guaranteed to work after a non-atomic backend has
-	// partially applied the failed index update (for example, after invalidating
-	// the old root mapping).
+	// To recover, use errors.As to recover IndexWriteFailedError and call
+	// Writer.RetryIndexWrite. The error carries the exact old->new ArcTable
+	// transition because retrying the original writer operation is not
+	// guaranteed to work after a non-atomic backend has partially applied the
+	// failed index update (for example, after invalidating the old root mapping).
 	ErrIndexWriteFailed = errors.New("arctable index write failed after semantic commit")
 )
 
@@ -60,7 +59,7 @@ var (
 //
 // The fields are exposed for diagnostics, correlation, and index repair.
 // IndexBase and IndexDelta capture the failed publication so callers can retry
-// it with RetryIndexWrite. For non-branching ArcTable backends, RetryIndexWrite
+// it with Writer.RetryIndexWrite. For non-branching ArcTable backends, retry
 // first verifies that the namespace has not advanced past this failed
 // transition; stale retries fail closed instead of overwriting later writes.
 type IndexWriteFailedError struct {
@@ -94,11 +93,14 @@ func (e *IndexWriteFailedError) Unwrap() error {
 }
 
 // RetryIndexWrite retries the failed ArcTable publication captured by this
-// error. The operation is intended to be idempotent: it re-applies the same
-// absolute OldRoot -> NewRoot transition and IndexDelta. For overwrite-like
-// backends, it first rejects stale retries when the namespace arcs no longer
-// match the captured pre-publication or full post-publication state.
+// error. Prefer Writer.RetryIndexWrite when a writer is available: the writer
+// method reuses the same freshness guard as normal updates and serializes retry
+// against concurrent root-consuming writes.
 func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
+	return e.retryIndexWrite(ctx, table)
+}
+
+func (e *IndexWriteFailedError) retryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
 	if e == nil {
 		return fmt.Errorf("index write failure is nil")
 	}
@@ -287,6 +289,39 @@ func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, lists ...
 		arctable:     arctable,
 		freshness:    rootFreshnessGuardFor(arctable),
 	}
+}
+
+// RetryIndexWrite retries a failed writer-level ArcTable publication.
+//
+// The retry is serialized through the same freshness guard as UpdateArc and
+// BatchUpdateArcs for non-branching ArcTable backends. This closes the window
+// where a captured failed retry could race with a later root-consuming write for
+// the same (namespace, oldRoot) and overwrite namespace-scoped arc entries.
+func (w *Writer) RetryIndexWrite(ctx context.Context, err *IndexWriteFailedError) error {
+	if w == nil {
+		return fmt.Errorf("writer is nil")
+	}
+	if err == nil {
+		return fmt.Errorf("index write failure is nil")
+	}
+	if w.freshness != nil && err.OldRoot.Defined() {
+		unlock, beginErr := w.freshness.beginUpdate(err.Namespace, err.OldRoot)
+		if beginErr != nil {
+			return beginErr
+		}
+		defer unlock()
+	}
+	if retryErr := err.retryIndexWrite(ctx, w.arctable); retryErr != nil {
+		return retryErr
+	}
+	if w.freshness != nil {
+		if err.OldRoot.Defined() {
+			w.freshness.markAdvancedLocked(err.Namespace, err.OldRoot, err.NewRoot)
+		} else {
+			w.freshness.markCurrent(err.Namespace, err.NewRoot)
+		}
+	}
+	return nil
 }
 
 var sharedFreshnessGuards sync.Map
