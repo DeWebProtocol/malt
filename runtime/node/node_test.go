@@ -10,6 +10,8 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
+	kvstore "github.com/dewebprotocol/malt/storage/kv"
+	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -21,6 +23,16 @@ func newTestCID(seed string) cid.Cid {
 		panic(err)
 	}
 	return cid.NewCidV1(cid.Raw, mhash)
+}
+
+type closeTrackingKV struct {
+	kvstore.KVStore
+	closed bool
+}
+
+func (kv *closeTrackingKV) Close() error {
+	kv.closed = true
+	return kv.KVStore.Close()
 }
 
 func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
@@ -40,6 +52,50 @@ func TestCreateManagedGraphUsesNodeRuntimeProfile(t *testing.T) {
 	}
 	if meta.ArcTableType != "versioned" {
 		t.Fatalf("arctable_type = %q, want %q", meta.ArcTableType, "versioned")
+	}
+}
+
+func TestNewNodeRejectsUnknownDefaultCommitment(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Structure.DefaultBackend = "unknown"
+
+	_, err := NewNode(WithConfig(cfg), WithCAS(casmock.NewCAS()))
+	if err == nil {
+		t.Fatal("NewNode succeeded with unknown default backend")
+	}
+	if !strings.Contains(err.Error(), "failed to initialize commitment scheme") {
+		t.Fatalf("NewNode error = %v, want commitment initialization failure", err)
+	}
+}
+
+func TestNewNodeDoesNotCloseExternalKVOnLaterFailure(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.CAS.Mode = "unsupported"
+	externalKV := &closeTrackingKV{KVStore: kvmemory.New()}
+
+	_, err := NewNode(WithConfig(cfg), WithKVStore(externalKV))
+	if err == nil {
+		t.Fatal("NewNode succeeded with unsupported CAS mode")
+	}
+	if externalKV.closed {
+		t.Fatal("NewNode closed caller-owned KVStore after later initialization failure")
+	}
+}
+
+func TestNodeCommitmentReturnsCachedScheme(t *testing.T) {
+	node, err := NewNode(testNodeOptions(t)...)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer node.Close()
+
+	first := node.Commitment()
+	second := node.Commitment()
+	if first == nil {
+		t.Fatal("Commitment returned nil")
+	}
+	if first != second {
+		t.Fatalf("Commitment returned different scheme instances: %p vs %p", first, second)
 	}
 }
 
