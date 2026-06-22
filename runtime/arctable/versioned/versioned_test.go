@@ -2,15 +2,32 @@ package versioned
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	arctablepkg "github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/bloom"
+	"github.com/dewebprotocol/malt/storage/kv"
 	"github.com/dewebprotocol/malt/storage/kv/memory"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
+
+type getErrorKV struct {
+	kvstore.KVStore
+	failKey string
+	err     error
+}
+
+func (kv *getErrorKV) Get(ctx context.Context, key []byte) ([]byte, error) {
+	if string(key) == kv.failKey {
+		return nil, kv.err
+	}
+	return kv.KVStore.Get(ctx, key)
+}
 
 func newTestCID(data []byte) cid.Cid {
 	mhash, err := mh.Sum(data, mh.SHA2_256, -1)
@@ -577,6 +594,93 @@ func TestVersionedArcTableBatchGetMultipleNamespaces(t *testing.T) {
 	}
 	if !results2["a"].Equals(target2) {
 		t.Error("namespace2 should have target2")
+	}
+}
+
+func TestVersionedArcTableBatchGetParentReadError(t *testing.T) {
+	kv := memory.New()
+	arctable, err := NewArcTable(WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("NewArcTable failed: %v", err)
+	}
+
+	ctx := context.Background()
+	namespace := "batchget-parent-error-graph"
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+
+	if err := arctable.Update(ctx, namespace, root1, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
+		"a": target1,
+	})); err != nil {
+		t.Fatalf("Update root1 failed: %v", err)
+	}
+	if err := arctable.Update(ctx, namespace, root2, root1, arcset.NewSetFrom(map[string]cid.Cid{
+		"b": target2,
+	})); err != nil {
+		t.Fatalf("Update root2 failed: %v", err)
+	}
+
+	parentErr := errors.New("injected parent read failure")
+	prevKey := arctablepkg.VersionedArcKey(namespace, root2, PreviousArc)
+	failingTable, err := NewArcTable(WithKVStore(&getErrorKV{
+		KVStore: kv,
+		failKey: string(prevKey),
+		err:     parentErr,
+	}))
+	if err != nil {
+		t.Fatalf("NewArcTable with failing kv failed: %v", err)
+	}
+
+	results, err := failingTable.BatchGet(ctx, namespace, root2, testPathSlice([]string{"a"}))
+	if !errors.Is(err, parentErr) {
+		t.Fatalf("BatchGet error = %v, want parent read error", err)
+	}
+	if results != nil {
+		t.Fatalf("BatchGet results = %v, want nil on parent read error", results)
+	}
+}
+
+func TestVersionedArcTableBatchGetInvalidParentCID(t *testing.T) {
+	kv := memory.New()
+	arctable, err := NewArcTable(WithKVStore(kv))
+	if err != nil {
+		t.Fatalf("NewArcTable failed: %v", err)
+	}
+
+	ctx := context.Background()
+	namespace := "batchget-invalid-parent-graph"
+	root1 := newTestCID([]byte("root1"))
+	root2 := newTestCID([]byte("root2"))
+	target1 := newTestCID([]byte("target1"))
+	target2 := newTestCID([]byte("target2"))
+
+	if err := arctable.Update(ctx, namespace, root1, cid.Undef, arcset.NewSetFrom(map[string]cid.Cid{
+		"a": target1,
+	})); err != nil {
+		t.Fatalf("Update root1 failed: %v", err)
+	}
+	if err := arctable.Update(ctx, namespace, root2, root1, arcset.NewSetFrom(map[string]cid.Cid{
+		"b": target2,
+	})); err != nil {
+		t.Fatalf("Update root2 failed: %v", err)
+	}
+
+	prevKey := arctablepkg.VersionedArcKey(namespace, root2, PreviousArc)
+	if err := kv.Put(ctx, prevKey, []byte("not-a-cid")); err != nil {
+		t.Fatalf("corrupt @previous failed: %v", err)
+	}
+
+	results, err := arctable.BatchGet(ctx, namespace, root2, testPathSlice([]string{"a"}))
+	if err == nil {
+		t.Fatal("BatchGet succeeded, want invalid parent CID error")
+	}
+	if !strings.Contains(err.Error(), "invalid @previous CID") {
+		t.Fatalf("BatchGet error = %v, want invalid @previous CID", err)
+	}
+	if results != nil {
+		t.Fatalf("BatchGet results = %v, want nil on invalid parent CID", results)
 	}
 }
 
