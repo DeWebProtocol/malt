@@ -66,7 +66,7 @@ func TestAPI_CreateAndResolve(t *testing.T) {
 	}
 
 	for path, expected := range arcs {
-		result, err := g.Resolver().Resolve(root, path)
+		result, err := g.Resolver().Resolve(ctx, root, path)
 		if err != nil {
 			t.Fatalf("Resolve failed for %s: %v", path, err)
 		}
@@ -74,7 +74,7 @@ func TestAPI_CreateAndResolve(t *testing.T) {
 			t.Errorf("target mismatch for %s: got %s, want %s", path, result.Target, expected)
 		}
 
-		valid, err := g.Resolver().VerifyTranscript(root, result.Transcript)
+		valid, err := g.Resolver().VerifyTranscript(ctx, root, result.Transcript)
 		if err != nil {
 			t.Fatalf("Verify failed for %s: %v", path, err)
 		}
@@ -100,14 +100,14 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 
 	// Verify initial state
 	path := "arc5"
-	result, err := g.Resolver().Resolve(root1, path)
+	result, err := g.Resolver().Resolve(ctx, root1, path)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
 	if !result.Target.Equals(arcs[path]) {
 		t.Fatalf("initial target mismatch: got %s, want %s", result.Target, arcs[path])
 	}
-	valid, err := g.Resolver().VerifyTranscript(root1, result.Transcript)
+	valid, err := g.Resolver().VerifyTranscript(ctx, root1, result.Transcript)
 	if err != nil {
 		t.Fatalf("initial transcript verification failed: %v", err)
 	}
@@ -125,20 +125,20 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	}
 
 	// Resolve on new root
-	result2, err := g.Resolver().Resolve(root2, path)
+	result2, err := g.Resolver().Resolve(ctx, root2, path)
 	if err != nil {
 		t.Fatalf("Resolve after update failed: %v", err)
 	}
 	if !result2.Target.Equals(newTarget) {
 		t.Fatalf("updated target mismatch: got %s, want %s", result2.Target, newTarget)
 	}
-	valid, err = g.Resolver().VerifyTranscript(root2, result2.Transcript)
+	valid, err = g.Resolver().VerifyTranscript(ctx, root2, result2.Transcript)
 	if err != nil || !valid {
 		t.Fatalf("proof invalid after update: %v", err)
 	}
 
 	// Old root should still resolve to old target
-	result1, err := g.Resolver().Resolve(root1, path)
+	result1, err := g.Resolver().Resolve(ctx, root1, path)
 	if err != nil {
 		t.Fatalf("Resolve on old root failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestAPI_UpdateResolveCycle(t *testing.T) {
 	if !result1.Target.Equals(oldTarget) {
 		t.Fatalf("old root target mismatch: got %s, want %s", result1.Target, oldTarget)
 	}
-	valid, err = g.Resolver().VerifyTranscript(root1, result1.Transcript)
+	valid, err = g.Resolver().VerifyTranscript(ctx, root1, result1.Transcript)
 	if err != nil {
 		t.Fatalf("old root transcript verification failed: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestAPI_ChainedUpdatesResolveLatestRoot(t *testing.T) {
 
 	current := roots[len(roots)-1]
 	// Verify latest version is resolvable
-	_, err = g.Resolver().Resolve(current, "arc0")
+	_, err = g.Resolver().Resolve(ctx, current, "arc0")
 	if err != nil {
 		t.Fatalf("Resolve for latest version failed: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	}
 
 	// Verify new arc
-	result, err := g.Resolver().Resolve(root2, newPath)
+	result, err := g.Resolver().Resolve(ctx, root2, newPath)
 	if err != nil {
 		t.Fatalf("Resolve new arc failed: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestAPI_InsertDelete(t *testing.T) {
 	}
 
 	// Verify initial arc still exists
-	arc0Result, err := g.Resolver().Resolve(root2, "arc0")
+	arc0Result, err := g.Resolver().Resolve(ctx, root2, "arc0")
 	if err != nil {
 		t.Fatalf("Resolve arc0 failed: %v", err)
 	}
@@ -250,13 +250,13 @@ func TestAPI_InsertDelete(t *testing.T) {
 	root3 := updateResult.NewRoot
 
 	// Verify deleted
-	_, err = g.Resolver().Resolve(root3, "arc0")
+	_, err = g.Resolver().Resolve(ctx, root3, "arc0")
 	if err == nil {
 		t.Error("deleted arc should not be found on new root")
 	}
 
 	// Verify remaining arcs
-	remainingResult, err := g.Resolver().Resolve(root3, "arc1")
+	remainingResult, err := g.Resolver().Resolve(ctx, root3, "arc1")
 	if err != nil {
 		t.Errorf("arc1 should exist on root3: %v", err)
 	}

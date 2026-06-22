@@ -1,6 +1,7 @@
 package hamt_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dewebprotocol/malt/cmd/eval/internal/compat/hamt"
@@ -38,7 +39,7 @@ func TestResolveEmptyPath(t *testing.T) {
 	root := newTestCID("test")
 
 	// Resolve with empty path should return the root
-	matchedPath, target, ev, err := r.Resolve(root, "")
+	matchedPath, target, ev, err := r.Resolve(context.Background(), root, "")
 	if err != nil {
 		t.Errorf("Resolve with empty path should not error: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestResolveUndefinedRoot(t *testing.T) {
 	c := mock.NewCAS()
 	r := hamt.NewResolver(c)
 
-	_, _, _, err := r.Resolve(cid.Cid{}, "key")
+	_, _, _, err := r.Resolve(context.Background(), cid.Cid{}, "key")
 	if err == nil {
 		t.Error("Resolve with undefined root should error")
 	}
@@ -67,7 +68,7 @@ func TestResolveNilCAS(t *testing.T) {
 	r := hamt.NewResolver(nil)
 
 	root := newTestCID("test")
-	_, _, _, err := r.Resolve(root, "key")
+	_, _, _, err := r.Resolve(context.Background(), root, "key")
 	if err == nil {
 		t.Error("Resolve with nil CAS should error")
 	}

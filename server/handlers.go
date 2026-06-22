@@ -155,7 +155,7 @@ func (s *Server) statFromFlatTarget(ctx context.Context, g runtimeGraph, target 
 }
 
 func (s *Server) legacyPathStat(ctx context.Context, g runtimeGraph, root cid.Cid, path string) (*httpapi.PathStatResponse, error) {
-	keyResult, err := g.Resolver().ResolveKey(root, path)
+	keyResult, err := g.Resolver().ResolveKey(ctx, root, path)
 	if err != nil {
 		return nil, err
 	}

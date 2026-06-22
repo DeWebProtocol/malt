@@ -309,12 +309,23 @@ func (e *ArcTable) BatchGet(ctx context.Context, namespace string, version cid.C
 		prevKey := arctable.VersionedArcKey(namespace, currentVersion, PreviousArc)
 		prevVal, err := e.kv.Get(ctx, prevKey)
 		if err != nil {
-			break
+			if err == kvstore.ErrNotFound {
+				break
+			}
+			logger.Error("ArcTable.BatchGet failed to get @previous",
+				logger.String("namespace", namespace),
+				logger.Int("depth", depth),
+				logger.Err(err))
+			return nil, fmt.Errorf("failed to get @previous: %w", err)
 		}
 
 		parentVersion, err := cid.Cast(prevVal)
 		if err != nil {
-			break
+			logger.Error("ArcTable.BatchGet invalid @previous CID",
+				logger.String("namespace", namespace),
+				logger.Int("depth", depth),
+				logger.Err(err))
+			return nil, fmt.Errorf("invalid @previous CID: %w", err)
 		}
 		currentVersion = parentVersion
 	}

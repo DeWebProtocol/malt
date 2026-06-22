@@ -24,7 +24,7 @@ func TestNewGraphInitializesRuntimeComposition(t *testing.T) {
 		t.Fatalf("NewArcTable failed: %v", err)
 	}
 
-	g, err := NewGraph("composition", table, WithNamespace("ns"))
+	g, err := NewGraph("composition", table, nil, WithNamespace("ns"))
 	if err != nil {
 		t.Fatalf("NewGraph failed: %v", err)
 	}

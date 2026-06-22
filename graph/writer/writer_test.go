@@ -3,6 +3,7 @@ package writer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -79,6 +80,55 @@ func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.
 
 type kvg = kvmemory.KV
 
+type errArcSet struct {
+	arcs []struct {
+		path   arcset.Path
+		target cid.Cid
+	}
+	err error
+}
+
+func (s errArcSet) Get(path arcset.Path) (cid.Cid, bool) {
+	for _, arc := range s.arcs {
+		if arc.path == path {
+			return arc.target, true
+		}
+	}
+	return cid.Undef, false
+}
+
+func (s errArcSet) Iterate() arcset.Iterator {
+	return &errArcIterator{arcs: s.arcs, err: s.err}
+}
+
+func (s errArcSet) Len() int {
+	return len(s.arcs)
+}
+
+type errArcIterator struct {
+	arcs []struct {
+		path   arcset.Path
+		target cid.Cid
+	}
+	err   error
+	index int
+}
+
+func (it *errArcIterator) Next() (arcset.Path, cid.Cid, bool) {
+	if it.index >= len(it.arcs) {
+		return "", cid.Undef, false
+	}
+	arc := it.arcs[it.index]
+	it.index++
+	return arc.path, arc.target, true
+}
+
+func (it *errArcIterator) Err() error {
+	return it.err
+}
+
+func (it *errArcIterator) Close() {}
+
 type nonComparableArcTable struct {
 	arctable arctable.ArcTable
 	tags     []string
@@ -105,6 +155,46 @@ func (t nonComparableArcTable) Iterate(ctx context.Context, namespace string, ro
 }
 
 func (t nonComparableArcTable) Close() error {
+	return t.arctable.Close()
+}
+
+type batchGetProbeArcTable struct {
+	arctable      arctable.ArcTable
+	getErr        error
+	batchGetErr   error
+	getCalls      int
+	batchGetCalls int
+}
+
+func (t *batchGetProbeArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	t.getCalls++
+	if t.getErr != nil {
+		return cid.Undef, t.getErr
+	}
+	return t.arctable.Get(ctx, namespace, root, path)
+}
+
+func (t *batchGetProbeArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	t.batchGetCalls++
+	if t.batchGetErr != nil {
+		return nil, t.batchGetErr
+	}
+	return t.arctable.BatchGet(ctx, namespace, root, paths)
+}
+
+func (t *batchGetProbeArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	return t.arctable.Update(ctx, namespace, newRoot, oldRoot, arcs)
+}
+
+func (t *batchGetProbeArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return t.arctable.Snapshot(ctx, namespace, root)
+}
+
+func (t *batchGetProbeArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return t.arctable.Iterate(ctx, namespace, root)
+}
+
+func (t *batchGetProbeArcTable) Close() error {
 	return t.arctable.Close()
 }
 
@@ -910,6 +1000,79 @@ func TestWriter_BatchUpdateArcs(t *testing.T) {
 	}
 }
 
+func TestWriter_BatchUpdateArcs_UsesBatchGetForClassification(t *testing.T) {
+	baseWriter, e, semantic, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-batchget-classification"
+
+	root, err := baseWriter.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"a": fakeCID("data-a"),
+		"c": fakeCID("data-c"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	probe := &batchGetProbeArcTable{
+		arctable: e,
+		getErr:   errors.New("unexpected per-path Get"),
+	}
+	w := NewWriter(semantic, probe)
+	result, err := w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": fakeCID("data-a-new"),
+		"d": fakeCID("data-d"),
+		"c": cid.Undef,
+	})
+	if err != nil {
+		t.Fatalf("BatchUpdateArcs failed: %v", err)
+	}
+	if probe.batchGetCalls != 1 {
+		t.Fatalf("BatchGet calls = %d, want 1", probe.batchGetCalls)
+	}
+	if probe.getCalls != 0 {
+		t.Fatalf("Get calls = %d, want 0", probe.getCalls)
+	}
+	if result.PerArc["a"].Op != ArcReplace {
+		t.Fatalf("a op = %v, want replace", result.PerArc["a"].Op)
+	}
+	if result.PerArc["d"].Op != ArcInsert {
+		t.Fatalf("d op = %v, want insert", result.PerArc["d"].Op)
+	}
+	if result.PerArc["c"].Op != ArcDelete {
+		t.Fatalf("c op = %v, want delete", result.PerArc["c"].Op)
+	}
+}
+
+func TestWriter_BatchUpdateArcs_PropagatesBatchGetError(t *testing.T) {
+	baseWriter, e, semantic, _ := newTestWriter(t)
+	ctx := context.Background()
+	namespace := "test-batchget-error"
+
+	root, err := baseWriter.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+		"a": fakeCID("data-a"),
+	}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+
+	batchGetErr := errors.New("injected batch get failure")
+	probe := &batchGetProbeArcTable{
+		arctable:    e,
+		batchGetErr: batchGetErr,
+	}
+	w := NewWriter(semantic, probe)
+
+	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
+		"a": fakeCID("data-a-new"),
+	})
+	if !errors.Is(err, batchGetErr) {
+		t.Fatalf("BatchUpdateArcs error = %v, want BatchGet error", err)
+	}
+	if probe.batchGetCalls != 1 {
+		t.Fatalf("BatchGet calls = %d, want 1", probe.batchGetCalls)
+	}
+}
+
 func TestWriter_BatchUpdateArcs_RejectsConsumedBaseRoot(t *testing.T) {
 	w, _, _, _ := newTestWriter(t)
 	ctx := context.Background()
@@ -1085,6 +1248,78 @@ func TestWriter_GetSnapshot(t *testing.T) {
 	}
 	if target != fakeCID("data-x") {
 		t.Errorf("snapshot arc 'x' wrong: got %s", target)
+	}
+}
+
+func TestHasDefinedPayloadBindingPropagatesIteratorError(t *testing.T) {
+	iterErr := fmt.Errorf("iterator exploded")
+	found, err := hasDefinedPayloadBinding(errArcSet{
+		arcs: []struct {
+			path   arcset.Path
+			target cid.Cid
+		}{{
+			path:   arcset.CanonicalizePath("a"),
+			target: fakeCID("data-a"),
+		}},
+		err: iterErr,
+	})
+	if err == nil {
+		t.Fatal("hasDefinedPayloadBinding returned nil error for failing iterator")
+	}
+	if !errors.Is(err, iterErr) {
+		t.Fatalf("hasDefinedPayloadBinding error = %v, want %v", err, iterErr)
+	}
+	if found {
+		t.Fatal("hasDefinedPayloadBinding found payload despite iterator error")
+	}
+}
+
+func TestHasDefinedPayloadBindingChecksErrorAfterPayload(t *testing.T) {
+	iterErr := fmt.Errorf("iterator exploded")
+	found, err := hasDefinedPayloadBinding(errArcSet{
+		arcs: []struct {
+			path   arcset.Path
+			target cid.Cid
+		}{{
+			path:   mandatoryPayloadPath,
+			target: fakeCID("payload"),
+		}, {
+			path:   arcset.CanonicalizePath("a"),
+			target: fakeCID("data-a"),
+		}},
+		err: iterErr,
+	})
+	if err == nil {
+		t.Fatal("hasDefinedPayloadBinding returned nil error after seeing payload")
+	}
+	if !errors.Is(err, iterErr) {
+		t.Fatalf("hasDefinedPayloadBinding error = %v, want %v", err, iterErr)
+	}
+	if found {
+		t.Fatal("hasDefinedPayloadBinding returned found=true with iterator error")
+	}
+}
+
+func TestFilterLogicalArcSetPropagatesErrors(t *testing.T) {
+	iterErr := fmt.Errorf("iterator exploded")
+	_, err := filterLogicalArcSet(errArcSet{
+		arcs: []struct {
+			path   arcset.Path
+			target cid.Cid
+		}{{
+			path:   arcset.CanonicalizePath("runtime/internal"),
+			target: fakeCID("runtime"),
+		}, {
+			path:   arcset.CanonicalizePath("a"),
+			target: fakeCID("data-a"),
+		}},
+		err: iterErr,
+	})
+	if err == nil {
+		t.Fatal("filterLogicalArcSet returned nil error for failing iterator")
+	}
+	if !errors.Is(err, iterErr) {
+		t.Fatalf("filterLogicalArcSet error = %v, want %v", err, iterErr)
 	}
 }
 

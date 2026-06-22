@@ -47,7 +47,7 @@ func NewResolver(e arctable.ArcTable, semantic mapping.Semantics, namespace stri
 //
 // Example: if ArcTable contains "a/b/c" → key1 and path is "a/b/c/d/e",
 // it matches "a/b/c" and returns that path with its target and evidence.
-func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
+func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	start := time.Now()
 
 	logger.Debug("Resolver.Resolve started",
@@ -63,8 +63,6 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 		logger.Error("Resolver.Resolve path is empty")
 		return "", cid.Cid{}, nil, fmt.Errorf("path is empty")
 	}
-
-	ctx := context.Background()
 
 	// Try to find the longest matching prefix
 	segments := splitPath(path)
@@ -109,7 +107,8 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 }
 
 // Verify verifies a single step's evidence.
-func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
+func (r *Resolver) Verify(ctx context.Context, root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
+	_ = ctx
 	start := time.Now()
 
 	logger.Debug("Resolver.Verify started",

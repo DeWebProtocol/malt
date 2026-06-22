@@ -44,12 +44,12 @@ func (svc graphService) CreateStructure(ctx context.Context, snapshot arcset.Arc
 	return svc.runtime.Writer().CreateStructure(ctx, svc.runtime.Namespace(), snapshot)
 }
 
-func (svc graphService) ResolveKey(root cid.Cid, rawPath string) (string, *resolver.ResolveResult, error) {
+func (svc graphService) ResolveKey(ctx context.Context, root cid.Cid, rawPath string) (string, *resolver.ResolveResult, error) {
 	cleanPath, err := querypath.CanonicalizeQueryPath(rawPath)
 	if err != nil {
 		return "", nil, err
 	}
-	result, err := svc.runtime.Resolver().ResolveKey(root, cleanPath)
+	result, err := svc.runtime.Resolver().ResolveKey(ctx, root, cleanPath)
 	if err != nil {
 		return "", nil, err
 	}
@@ -59,8 +59,8 @@ func (svc graphService) ResolveKey(root cid.Cid, rawPath string) (string, *resol
 	return cleanPath, result, nil
 }
 
-func (svc graphService) ResolveMapPayload(root cid.Cid) (*resolver.ResolveResult, error) {
-	result, err := svc.runtime.Resolver().ResolveKey(root, explicit.PayloadArc.String())
+func (svc graphService) ResolveMapPayload(ctx context.Context, root cid.Cid) (*resolver.ResolveResult, error) {
+	result, err := svc.runtime.Resolver().ResolveKey(ctx, root, explicit.PayloadArc.String())
 	if err != nil {
 		return nil, err
 	}

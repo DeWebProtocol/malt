@@ -85,7 +85,7 @@ func NewLocalMALTSystem(ctx context.Context, store *casmock.CAS, multiFix MultiD
 // MeasureResolve measures a single resolve_path operation at the given path.
 func (s *LocalMALTSystem) MeasureResolve(ctx context.Context, iteration int, fixtureName string, filePath string) (*Result, error) {
 	start := time.Now()
-	result, err := s.g.Resolver().Resolve(s.root, filePath)
+	result, err := s.g.Resolver().Resolve(ctx, s.root, filePath)
 	elapsed := positiveElapsedNS(start, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", filePath, err)

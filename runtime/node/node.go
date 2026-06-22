@@ -39,14 +39,14 @@ var arcTableTypeAliases = map[string]string{
 // Node is the stateless MALT node that holds shared infrastructure.
 // It is the entry point for the MALT system and a factory for per-graph instances.
 type Node struct {
-	cfg  *config.Config
-	opts *options
+	cfg *config.Config
 
 	// Shared components (namespace by namespace)
 	kv           kvstore.KVStore
 	arctable     arctable.ArcTable
 	cas          cas.Reader
 	graphManager *runtimegraph.Manager
+	commitment   commitment.IndexCommitment
 
 	metricsArcTable *metrics.ArcTable
 	proofStats      metrics.ProofStatsRecorder
@@ -72,7 +72,17 @@ func NewNode(opts ...Option) (*Node, error) {
 		opt(options)
 	}
 
-	node := &Node{opts: options}
+	node := &Node{}
+	ownsKV := false
+	ownsArcTable := false
+	cleanupOnError := func() {
+		if ownsArcTable && node.arctable != nil {
+			_ = node.arctable.Close()
+		}
+		if ownsKV && node.kv != nil {
+			_ = node.kv.Close()
+		}
+	}
 
 	// Load config if explicitly provided or file specified.
 	if options.config != nil {
@@ -91,8 +101,13 @@ func NewNode(opts ...Option) (*Node, error) {
 		node.cfg = cfg
 	}
 
+	scheme, err := node.initCommitmentSchemeType(node.cfg.Structure.DefaultBackend)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize commitment scheme: %w", err)
+	}
+	node.commitment = scheme
+
 	// Initialize components (use provided or create from config)
-	var err error
 
 	// KVStore
 	if options.kvStore != nil {
@@ -102,6 +117,7 @@ func NewNode(opts ...Option) (*Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize KVStore: %w", err)
 		}
+		ownsKV = true
 	}
 
 	// ArcTable
@@ -110,8 +126,10 @@ func NewNode(opts ...Option) (*Node, error) {
 	} else {
 		err = node.initArcTable()
 		if err != nil {
+			cleanupOnError()
 			return nil, fmt.Errorf("failed to initialize ArcTable: %w", err)
 		}
+		ownsArcTable = true
 	}
 	node.installMetricsArcTable()
 
@@ -129,6 +147,7 @@ func NewNode(opts ...Option) (*Node, error) {
 	} else {
 		node.cas, err = node.initCAS()
 		if err != nil {
+			cleanupOnError()
 			return nil, fmt.Errorf("failed to initialize CAS: %w", err)
 		}
 	}
@@ -269,7 +288,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*runtimegraph.RuntimeG
 		return nil, fmt.Errorf("failed to create commitment scheme for graph %q: %w", id, err)
 	}
 
-	return runtimegraph.NewGraph(id, n.arctable, runtimegraph.WithCommitmentScheme(scheme))
+	return runtimegraph.NewGraph(id, n.arctable, n.cas, runtimegraph.WithCommitmentScheme(scheme))
 }
 
 // NewGraph creates a new ad hoc per-graph instance with its own per-graph
@@ -279,40 +298,24 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*runtimegraph.RuntimeG
 //   - id: unique graph identifier
 //   - opts: functional options (runtimegraph.WithCommitmentScheme, runtimegraph.WithNamespace, etc.)
 //
-// The Node auto-injects shared ArcTable infrastructure.
+// The Node auto-injects shared infrastructure (ArcTable, CAS).
 func (n *Node) NewGraph(id string, opts ...runtimegraph.Option) (*runtimegraph.RuntimeGraph, error) {
 	o := &runtimegraph.Options{}
 	for _, opt := range opts {
 		opt(o)
 	}
 
-	// Default commitment scheme from config if not specified
-	scheme := o.Scheme
-	if scheme == nil {
-		var err error
-		scheme, err = n.initCommitmentSchemeType(n.cfg.Structure.DefaultBackend)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create commitment scheme: %w", err)
-		}
+	graphOpts := opts
+	if o.Scheme == nil {
+		graphOpts = append([]runtimegraph.Option{runtimegraph.WithCommitmentScheme(n.commitment)}, opts...)
 	}
 
-	graphOpts := []runtimegraph.Option{
-		runtimegraph.WithCommitmentScheme(scheme),
-	}
-
-	// Apply user options (they can override)
-	graphOpts = append(graphOpts, opts...)
-
-	return runtimegraph.NewGraph(id, n.arctable, graphOpts...)
+	return runtimegraph.NewGraph(id, n.arctable, n.cas, graphOpts...)
 }
 
 // Commitment returns the default commitment scheme type from config.
 func (n *Node) Commitment() commitment.IndexCommitment {
-	scheme, err := n.initCommitmentSchemeType(n.cfg.Structure.DefaultBackend)
-	if err != nil {
-		return nil
-	}
-	return scheme
+	return n.commitment
 }
 
 // ArcTable returns the shared ArcTable.

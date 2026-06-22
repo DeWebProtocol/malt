@@ -15,6 +15,7 @@ import (
 	"github.com/dewebprotocol/malt/runtime/arctable"
 	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt/storage/cas"
 )
 
 // RuntimeGraph is a per-graph runtime composition of semantic implementations,
@@ -35,8 +36,10 @@ type RuntimeGraph struct {
 // Parameters:
 //   - id: unique graph identifier
 //   - arctable: shared ArcTable (namespace by namespace) — from Node
+//   - cas: retained for Node constructor compatibility; explicit graph reads do
+//     not use CAS for implicit traversal.
 //   - opts: functional options (WithCommitmentScheme, WithNamespace, etc.)
-func NewGraph(id string, arctable arctable.ArcTable, opts ...Option) (*RuntimeGraph, error) {
+func NewGraph(id string, arctable arctable.ArcTable, _ cas.Reader, opts ...Option) (*RuntimeGraph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)

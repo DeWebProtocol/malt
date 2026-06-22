@@ -89,7 +89,7 @@ func NewResolver(c cas.Reader, opts ...Option) *Resolver {
 // Resolve resolves a path through the HAMT.
 // The path is treated as a key to look up in the HAMT.
 // Returns the matched path (key), the target CID (value), and evidence.
-func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
+func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	if !root.Defined() {
 		return "", cid.Cid{}, nil, fmt.Errorf("root is not defined")
 	}
@@ -104,7 +104,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 	}
 
 	// Resolve the key in HAMT
-	valueCID, proof, err := r.resolveKey(root, path.String())
+	valueCID, proof, err := r.resolveKey(ctx, root, path.String())
 	if err != nil {
 		return "", cid.Cid{}, nil, err
 	}
@@ -116,7 +116,7 @@ func (r *Resolver) Resolve(root cid.Cid, path arcset.Path) (matchedPath arcset.P
 }
 
 // Verify verifies the HAMT evidence.
-func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
+func (r *Resolver) Verify(ctx context.Context, root cid.Cid, path arcset.Path, target cid.Cid, ev evidence.Evidence) (bool, error) {
 	if ev == nil {
 		return false, fmt.Errorf("evidence is nil")
 	}
@@ -127,7 +127,7 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 	}
 
 	// Re-resolve to verify
-	actualCID, _, err := r.resolveKey(root, path.String())
+	actualCID, _, err := r.resolveKey(ctx, root, path.String())
 	if err != nil {
 		return false, err
 	}
@@ -136,7 +136,7 @@ func (r *Resolver) Verify(root cid.Cid, path arcset.Path, target cid.Cid, ev evi
 }
 
 // resolveKey finds a key in the HAMT and returns its value CID and proof.
-func (r *Resolver) resolveKey(root cid.Cid, key string) (cid.Cid, []byte, error) {
+func (r *Resolver) resolveKey(ctx context.Context, root cid.Cid, key string) (cid.Cid, []byte, error) {
 	// Hash the key for routing
 	keyHash := r.config.HashFunc([]byte(key))
 
@@ -146,7 +146,7 @@ func (r *Resolver) resolveKey(root cid.Cid, key string) (cid.Cid, []byte, error)
 
 	for depth := 0; depth < r.config.MaxDepth; depth++ {
 		// Fetch the node from CAS
-		block, err := r.cas.Get(context.Background(), current)
+		block, err := r.cas.Get(ctx, current)
 		if err != nil {
 			return cid.Cid{}, nil, fmt.Errorf("failed to fetch HAMT node %s: %w", current, err)
 		}
