@@ -3,6 +3,7 @@ package writer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -78,6 +79,55 @@ func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.
 }
 
 type kvg = kvmemory.KV
+
+type errArcSet struct {
+	arcs []struct {
+		path   arcset.Path
+		target cid.Cid
+	}
+	err error
+}
+
+func (s errArcSet) Get(path arcset.Path) (cid.Cid, bool) {
+	for _, arc := range s.arcs {
+		if arc.path == path {
+			return arc.target, true
+		}
+	}
+	return cid.Undef, false
+}
+
+func (s errArcSet) Iterate() arcset.Iterator {
+	return &errArcIterator{arcs: s.arcs, err: s.err}
+}
+
+func (s errArcSet) Len() int {
+	return len(s.arcs)
+}
+
+type errArcIterator struct {
+	arcs []struct {
+		path   arcset.Path
+		target cid.Cid
+	}
+	err   error
+	index int
+}
+
+func (it *errArcIterator) Next() (arcset.Path, cid.Cid, bool) {
+	if it.index >= len(it.arcs) {
+		return "", cid.Undef, false
+	}
+	arc := it.arcs[it.index]
+	it.index++
+	return arc.path, arc.target, true
+}
+
+func (it *errArcIterator) Err() error {
+	return it.err
+}
+
+func (it *errArcIterator) Close() {}
 
 type nonComparableArcTable struct {
 	arctable arctable.ArcTable
@@ -1085,6 +1135,78 @@ func TestWriter_GetSnapshot(t *testing.T) {
 	}
 	if target != fakeCID("data-x") {
 		t.Errorf("snapshot arc 'x' wrong: got %s", target)
+	}
+}
+
+func TestHasDefinedPayloadBindingPropagatesIteratorError(t *testing.T) {
+	iterErr := fmt.Errorf("iterator exploded")
+	found, err := hasDefinedPayloadBinding(errArcSet{
+		arcs: []struct {
+			path   arcset.Path
+			target cid.Cid
+		}{{
+			path:   arcset.CanonicalizePath("a"),
+			target: fakeCID("data-a"),
+		}},
+		err: iterErr,
+	})
+	if err == nil {
+		t.Fatal("hasDefinedPayloadBinding returned nil error for failing iterator")
+	}
+	if !errors.Is(err, iterErr) {
+		t.Fatalf("hasDefinedPayloadBinding error = %v, want %v", err, iterErr)
+	}
+	if found {
+		t.Fatal("hasDefinedPayloadBinding found payload despite iterator error")
+	}
+}
+
+func TestHasDefinedPayloadBindingChecksErrorAfterPayload(t *testing.T) {
+	iterErr := fmt.Errorf("iterator exploded")
+	found, err := hasDefinedPayloadBinding(errArcSet{
+		arcs: []struct {
+			path   arcset.Path
+			target cid.Cid
+		}{{
+			path:   mandatoryPayloadPath,
+			target: fakeCID("payload"),
+		}, {
+			path:   arcset.CanonicalizePath("a"),
+			target: fakeCID("data-a"),
+		}},
+		err: iterErr,
+	})
+	if err == nil {
+		t.Fatal("hasDefinedPayloadBinding returned nil error after seeing payload")
+	}
+	if !errors.Is(err, iterErr) {
+		t.Fatalf("hasDefinedPayloadBinding error = %v, want %v", err, iterErr)
+	}
+	if found {
+		t.Fatal("hasDefinedPayloadBinding returned found=true with iterator error")
+	}
+}
+
+func TestFilterLogicalArcSetPropagatesErrors(t *testing.T) {
+	iterErr := fmt.Errorf("iterator exploded")
+	_, err := filterLogicalArcSet(errArcSet{
+		arcs: []struct {
+			path   arcset.Path
+			target cid.Cid
+		}{{
+			path:   arcset.CanonicalizePath("runtime/internal"),
+			target: fakeCID("runtime"),
+		}, {
+			path:   arcset.CanonicalizePath("a"),
+			target: fakeCID("data-a"),
+		}},
+		err: iterErr,
+	})
+	if err == nil {
+		t.Fatal("filterLogicalArcSet returned nil error for failing iterator")
+	}
+	if !errors.Is(err, iterErr) {
+		t.Fatalf("filterLogicalArcSet error = %v, want %v", err, iterErr)
 	}
 }
 
