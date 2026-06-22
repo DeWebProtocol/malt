@@ -151,6 +151,8 @@ func indexRetryBase(ctx context.Context, table arctable.ArcTable, namespace stri
 	if table == nil || supportsConcurrentBranches(table) {
 		return nil, nil
 	}
+	// Overwrite-like backends need a namespace snapshot so retry can reject
+	// stale replays after a non-atomic index write failure.
 	return table.Snapshot(ctx, namespace, cid.Undef)
 }
 
@@ -475,9 +477,9 @@ func diffArcMaps(oldArcs, newArcs map[arcset.Path]cid.Cid) (arcset.ArcSet, error
 	return arcset.NewArcSetFromPaths(diff)
 }
 
-func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
+func filterLogicalArcSet(arcs arcset.ArcSet) (arcset.ArcSet, error) {
 	if arcs == nil {
-		return nil
+		return nil, nil
 	}
 
 	out := make(map[arcset.Path]cid.Cid)
@@ -492,26 +494,33 @@ func filterLogicalArcSet(arcs arcset.ArcSet) arcset.ArcSet {
 		}
 		out[path] = target
 	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("arc iteration error: %w", err)
+	}
 	filtered, err := arcset.NewArcSetFromPaths(out)
 	if err != nil {
-		return arcset.NewSet()
+		return nil, err
 	}
-	return filtered
+	return filtered, nil
 }
 
-func hasDefinedPayloadBinding(arcs arcset.ArcSet) bool {
+func hasDefinedPayloadBinding(arcs arcset.ArcSet) (bool, error) {
 	if arcs == nil {
-		return false
+		return false, nil
 	}
 
 	iter := arcs.Iterate()
+	found := false
 	for {
 		path, target, ok := iter.Next()
 		if !ok {
-			return false
+			if err := iter.Err(); err != nil {
+				return false, fmt.Errorf("arc iteration error: %w", err)
+			}
+			return found, nil
 		}
 		if path == mandatoryPayloadPath && target.Defined() {
-			return true
+			found = true
 		}
 	}
 }
@@ -562,7 +571,11 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if err != nil {
 		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
-	if !hasDefinedPayloadBinding(snapshot) && !(canonicalPath == mandatoryPayloadPath && newTarget.Defined()) {
+	hasPayload, err := hasDefinedPayloadBinding(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPayload && !(canonicalPath == mandatoryPayloadPath && newTarget.Defined()) {
 		return nil, ErrMissingPayloadBinding
 	}
 	oldTarget, err := w.arctable.Get(ctx, namespace, root, canonicalPath)
@@ -701,7 +714,11 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err != nil {
 		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
-	if !hasDefinedPayloadBinding(snapshot) {
+	hasPayload, err := hasDefinedPayloadBinding(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPayload {
 		payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]
 		if !ok || !payloadTarget.Defined() {
 			return nil, ErrMissingPayloadBinding
@@ -833,7 +850,11 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	if err != nil {
 		return cid.Undef, err
 	}
-	if !hasDefinedPayloadBinding(normalizedSnapshot) {
+	hasPayload, err := hasDefinedPayloadBinding(normalizedSnapshot)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if !hasPayload {
 		return cid.Undef, ErrMissingPayloadBinding
 	}
 
@@ -911,5 +932,5 @@ func (w *Writer) GetSnapshot(ctx context.Context, namespace string, root cid.Cid
 		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
 
-	return filterLogicalArcSet(snapshot), nil
+	return filterLogicalArcSet(snapshot)
 }
