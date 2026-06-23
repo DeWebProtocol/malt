@@ -1,8 +1,11 @@
 # Contributing to MALT
 
-MALT is a research prototype for authenticating structured data whose
-relationships can be normalized into graph-shaped nodes and relations.
-Contributions should keep that boundary clear: MALT owns authenticated
+MALT is an experimental reference implementation for authenticating structured
+data whose relationships can be normalized into graph-shaped nodes and
+relations. It is runnable end to end, but public APIs, ProofList schemas, wire
+formats, and deployment policies may change. MALT is not production-ready.
+
+Contributions should keep the core boundary clear: MALT owns authenticated
 structure, proof generation, and verification, while immutable payload storage
 can remain ordinary CAS.
 
@@ -88,7 +91,7 @@ Evaluator outputs are part of the public research surface. When changing
 
 ## Maintainer Automation
 
-The repository uses GitHub Actions for Go tests and vetting. Once the repository
-is public, maintainers may also use issue triage, PR review, dependency-update,
-and release automation to reduce maintenance load. Automation should make review
-easier, not replace design judgment for semantic or proof changes.
+The repository uses GitHub Actions for Go tests and vetting. Maintainers may
+also use issue triage, PR review, dependency-update, and release automation to
+reduce maintenance load. Automation should make review easier, not replace
+design judgment for semantic or proof changes.

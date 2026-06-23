@@ -1,8 +1,12 @@
 # Security Policy
 
-MALT is a research prototype. It is not yet a production storage service, but
-security reports are still important because the project deals with proof
-verification, authenticated structure, daemon APIs, and local persistence.
+MALT is an experimental reference implementation. It is runnable end to end, but
+its public APIs, ProofList schemas, wire formats, and deployment policies may
+change. It is not production-ready.
+
+Security reports are still important because the project deals with proof
+verification, authenticated structure, daemon APIs, untrusted storage, and local
+persistence.
 
 ## Supported Versions
 
@@ -37,9 +41,9 @@ High-value areas include:
 - unsafe file handling in `malt add`, evaluator replay, or local state paths
 - dependency vulnerabilities with reachable impact
 
-## Current Prototype Limits
+## Current Experimental Limits
 
-The current prototype does not provide a production threat model for:
+The current implementation does not provide production guarantees for:
 
 - head publication and freshness
 - multi-writer merge or arbitration

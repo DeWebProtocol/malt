@@ -12,6 +12,9 @@ naturally in ordinary CAS blocks and keep ordinary CIDs; MALT binds structure
 to those payload objects without making the daemon, cache, or materialized index
 state trusted.
 
+**Status:** Experimental reference implementation. Runnable end to end, not
+production-ready.
+
 ## Why This Exists
 
 Traditional Merkle-DAG traversal authenticates structure by embedding child
@@ -32,9 +35,9 @@ implicit ancestor-rewrite cost with explicit, verifiable structure maintenance.
 
 ## Current Status
 
-MALT is a research prototype and Go implementation. It is suitable for
-experimentation, evaluator work, and design review. It is not yet a production
-storage service, and several schemas and policies are intentionally still open.
+MALT is an experimental reference implementation. It is runnable end to end, but
+its public APIs, ProofList schemas, wire formats, and deployment policies may
+change. It is not production-ready.
 
 Current in-tree capabilities:
 
@@ -47,7 +50,7 @@ Current in-tree capabilities:
 - `malt-eval` workloads for read queries, write traces, CAS models, proof
   overhead, and storage overhead
 
-Known non-goals for the current prototype:
+Current experimental boundaries:
 
 - no managed global head publication service
 - no multi-writer merge or freshness protocol
@@ -206,9 +209,8 @@ readiness. See [ROADMAP.md](./ROADMAP.md).
 
 ## Contributing
 
-Contributions are welcome once the repository is public. Start with
-[CONTRIBUTING.md](./CONTRIBUTING.md), keep changes small, and include focused
-tests for behavior changes.
+Contributions are welcome. Start with [CONTRIBUTING.md](./CONTRIBUTING.md),
+keep changes small, and include focused tests for behavior changes.
 
 Please report security issues through the private process in
 [SECURITY.md](./SECURITY.md), not through public issues.

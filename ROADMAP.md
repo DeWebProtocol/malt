@@ -5,9 +5,13 @@ focused on executable behavior, public schemas, and maintainer workflows.
 
 ## Current Focus
 
-MALT is moving from private prototype to public research implementation. The
-near-term goal is to make the repository understandable, runnable, and reviewable
-by outside contributors while preserving honest prototype boundaries.
+MALT is an experimental reference implementation. It is runnable end to end, but
+its public APIs, ProofList schemas, wire formats, and deployment policies may
+change. It is not production-ready.
+
+The near-term goal is to make the repository easier to understand, validate,
+and integrate experimentally while preserving honest boundaries around unstable
+schemas and deployment policy.
 
 ## Near Term
 
@@ -50,5 +54,5 @@ Before the first public release tag:
 - `malt-eval run --plan examples/eval-smoke-plan.json` writes a manifest and
   summaries.
 - Security reporting path is enabled in GitHub repository settings.
-- Release notes state prototype limits and any known proof-schema TODOs.
+- Release notes state experimental limits and any known proof-schema TODOs.
 - Public docs avoid claims that are not implemented in the current code.
