@@ -3,8 +3,22 @@
 [![Go CI](https://github.com/dewebprotocol/malt/actions/workflows/go.yml/badge.svg)](https://github.com/dewebprotocol/malt/actions/workflows/go.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+**MALT is a verifiable mutable structure layer for content-addressed data.**
+
+It lets applications update and resolve authenticated relationships among
+immutable objects without rewriting unrelated payload blocks.
+
+[Documentation](./docs/) · [Architecture](./ARCHITECTURE.md) ·
+[Threat Model](./docs/threat-model.md) ·
+[Compatibility](./docs/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
+[Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
+[Contributing](./CONTRIBUTING.md)
+
 MALT targets authenticated structured data: data whose relationships can be
-normalized into graph-shaped nodes and relations.
+normalized into graph-shaped nodes and relations. Example workloads include
+verifiable local-first files, persistent agent memory, mutable manifests, and
+tamper-evident audit trails over Filecoin, IPFS, S3, local CAS, or another
+object store.
 
 MALT authenticates those structural relationships through list/map semantics,
 roots, and verifier-facing ProofLists. Immutable payload bytes can still live
@@ -33,6 +47,22 @@ MALT separates those concerns:
 The claim is not that updates are free. The claim is that MALT replaces
 implicit ancestor-rewrite cost with explicit, verifiable structure maintenance.
 
+## Current Architecture
+
+```mermaid
+flowchart TB
+  app["Applications / CLI / Go client"] --> api["MALT daemon and HTTP API"]
+  api --> rw["Resolver / Writer"]
+  rw --> semantics["Authenticated list / map semantics"]
+  semantics --> proofs["ProofList and commitment backends"]
+  semantics --> arctable["ArcTable materialization"]
+  rw --> cas["Immutable payloads in external CAS"]
+```
+
+Applications interact with resolver and writer surfaces. List/map semantics own
+the authenticated structure. ArcTable is materialized runtime state, not a trust
+root. Payloads remain immutable CAS objects, and proofs are verifier-facing.
+
 ## Current Status
 
 MALT is an experimental reference implementation. It is runnable end to end, but
@@ -58,6 +88,28 @@ Current experimental boundaries:
 - no stable public API compatibility guarantee yet
 - response-body binding for large-file byte ranges is still a ProofList-schema
   design item
+
+## Use Cases
+
+### Verifiable Agent Memory
+
+Agents can update named memory, artifacts, checkpoints, and audit records while
+clients verify that resolved objects belong to an accepted structure root.
+
+### Local-First Files And Directories
+
+Applications can model files and directories using authenticated map/list
+semantics while retaining immutable content-addressed payload blocks.
+
+### Mutable Manifests And Audit Trails
+
+MALT can authenticate evolving manifests, registries, and ordered records
+without embedding every mutable relationship into payload object identity.
+
+MALT is storage-backend independent. Filecoin, IPFS, S3, and local CAS systems
+provide payload storage; MALT provides authenticated mutable structure,
+resolution, and verification above those payload objects. MALT is not a
+replacement for Filecoin, IPFS, Kubo, S3, or a general-purpose object store.
 
 ## Quick Start
 
@@ -99,6 +151,10 @@ ROOT=$(bin/malt add /tmp/malt-hello.txt | awk '/Result root:/ {print $3}')
 bin/malt resolve "$ROOT" malt-hello.txt >/tmp/malt-resolve.json
 bin/malt verify --prooflist /tmp/malt-resolve.json
 ```
+
+This example stores file bytes through the configured local CAS, produces a
+MALT structure root, resolves a path relative to that root, and verifies the
+returned target and ProofList against the trusted root.
 
 Stop the managed daemon when finished:
 
@@ -187,6 +243,14 @@ examples/                      small runnable plans and examples
 
 ## Evaluation
 
+MALT's evaluation framework compares authenticated object layouts along four
+primary dimensions:
+
+- traversal depth and end-to-end read latency
+- verifier-facing proof size
+- rewrite amplification under structural updates
+- materialized-index and storage overhead
+
 `malt-eval` supports both direct commands and a framework runner:
 
 - `malt-eval read` emits read-query JSONL records for MALT and IPLD UnixFS
@@ -200,6 +264,9 @@ examples/                      small runnable plans and examples
 
 See [docs/evaluation.md](./docs/evaluation.md) for commands, result layout, and
 schema notes.
+
+Published benchmark tables will be added once the paper evaluation
+configuration and raw artifacts are frozen.
 
 ## Roadmap
 

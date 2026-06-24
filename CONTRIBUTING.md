@@ -21,6 +21,20 @@ For design-level changes, open an issue first. Examples include new semantic
 operations, ProofList schema changes, new ArcTable modes, root publication
 policy, evaluator schema changes, and new application layouts.
 
+Changes that affect public or verifier-facing surfaces should update
+documentation and tests in the same PR. This includes:
+
+- public daemon APIs or CLI behavior
+- ProofList schemas and proof-step semantics
+- root or CID encodings
+- wire formats and serialized request/response shapes
+- compatibility policy
+- evaluator schemas
+- application layout behavior
+
+When serialized or verifier-facing formats change, include focused tests and,
+where practical, migration notes or test vectors.
+
 ## Development Setup
 
 Use Go 1.25.7 or newer.

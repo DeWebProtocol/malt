@@ -51,7 +51,7 @@ Create GitHub release notes with:
 - summary of user-visible changes
 - commit SHA
 - validation commands and results
-- known prototype limits
+- known experimental limits
 - schema or API compatibility notes
 - security fixes, if any
 
