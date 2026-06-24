@@ -471,7 +471,7 @@ Current boundary:
 - The current writer semantic-mutation and `ProofList` schemas are
   implemented. Paper-facing formalization, write metadata semantics,
   graph-runtime boundary terminology, and benchmark-facing proof reporting
-  remain tracked as proposal-stage MIPs in the sibling documents repository.
+  remain tracked as proposal-stage MIPs in `docs/mips/`.
 - Graph manager metadata is limited to lifecycle and runtime profile
   compatibility. It does not store an authoritative current root or publish
   freshness. The current daemon path creates an ad hoc default `Graph` through

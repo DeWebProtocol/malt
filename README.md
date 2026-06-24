@@ -8,9 +8,10 @@
 It lets applications update and resolve authenticated relationships among
 immutable objects without rewriting unrelated payload blocks.
 
-[Documentation](./docs/) · [Architecture](./ARCHITECTURE.md) ·
+[Documentation](./docs/README.md) · [Architecture](./ARCHITECTURE.md) ·
 [Threat Model](./docs/threat-model.md) ·
 [Compatibility](./docs/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
+[MIPs](./docs/mips/README.md) ·
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
 
