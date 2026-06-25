@@ -9,8 +9,8 @@ It lets applications update and resolve authenticated relationships among
 immutable objects without rewriting unrelated payload blocks.
 
 [Documentation](./docs/README.md) · [Architecture](./ARCHITECTURE.md) ·
-[Threat Model](./docs/threat-model.md) ·
-[Compatibility](./docs/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
+[Threat Model](./docs/policy/threat-model.md) ·
+[Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation/README.md) ·
 [MIPs](./docs/mips/README.md) ·
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
@@ -238,7 +238,7 @@ sdk/client/                    Go daemon client facade
 server/                        daemon HTTP server
 storage/                       CAS and KV storage libraries
 wire/maltcid/                  MALT map/list root CID codecs
-docs/                          public contributor and maintainer docs
+docs/                          implementation docs: policy, evaluation, specs, and MIPs
 examples/                      small runnable plans and examples
 ```
 
@@ -263,7 +263,7 @@ primary dimensions:
 - `malt-eval summarize` regenerates summary CSVs from a result directory
 - `malt-eval metrics` inspects daemon evaluation metrics
 
-See [docs/evaluation.md](./docs/evaluation.md) for commands, result layout, and
+See [docs/evaluation/README.md](./docs/evaluation/README.md) for commands, result layout, and
 schema notes.
 
 Published benchmark tables will be added once the paper evaluation

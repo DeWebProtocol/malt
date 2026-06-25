@@ -1,19 +1,26 @@
-# MALT Implementation Documentation
+# MALT Docs
 
-This directory is the implementation-bound technical documentation surface for
+This directory is the implementation-bound documentation surface for
 `DeWebProtocol/malt`.
 
 Use these documents as the source of truth for behavior that must stay aligned
 with code, tests, schemas, wire formats, and evaluator artifacts. Public
 website pages in `DeWebProtocol/malt-web` may summarize this material, but they
-should link back here for protocol and compatibility details.
+should link back here for protocol, policy, and compatibility details.
 
-## Core Docs
+## Policy
 
-- [Threat model](./threat-model.md)
-- [Compatibility policy](./compatibility.md)
-- [Evaluation](./evaluation.md)
-- [Release process](./releasing.md)
+- [Threat model](./policy/threat-model.md)
+- [Compatibility policy](./policy/compatibility.md)
+- [Release process](./policy/releasing.md)
+
+## Evaluation
+
+- [Evaluation guide](./evaluation/README.md)
+
+## Specifications
+
+- [Specification index](./spec/README.md)
 
 ## MALT Improvement Proposals
 
@@ -25,15 +32,9 @@ The previous `documents/MIPs` directory in the research-paper workspace is kept
 as historical research context. New implementation-bound MIP work should happen
 here.
 
-## Future Docs
+## What Goes Where
 
-The following documents should be added when their contents can be grounded in
-current code and tests:
-
-- `specification.md`
-- `prooflist-format.md`
-- `cid-and-wire-format.md`
-- `http-api.md`
-
-Until those files exist, use `ARCHITECTURE.md`, package-level Go documentation,
-and current DTOs/routes as the source of truth for details.
+- `policy/` for stability, safety, and release policy
+- `evaluation/` for benchmark protocol and artifact rules
+- `spec/` for formal protocol and schema documents
+- `mips/` for design proposals and process records

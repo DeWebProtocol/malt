@@ -98,7 +98,7 @@ Evaluator outputs are part of the public research surface. When changing
 `malt-eval` record shapes:
 
 - update the matching schema under `cmd/eval/schemas`
-- update [docs/evaluation.md](./docs/evaluation.md)
+- update [docs/evaluation/README.md](./docs/evaluation/README.md)
 - keep durable results under `result/<run_id>`
 - keep disposable workspace data under `output/<run_id>`
 - add focused tests for schema and normalization behavior
