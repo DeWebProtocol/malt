@@ -41,6 +41,9 @@ This is distinct from the primary runtime map layout. `runtime/semantic/mapping/
 uses digest-keyed radix traversal and bucket materialization, but it composes
 that runtime path from the same single-step slot proof primitive.
 
+The current reference summary lives in
+[`docs/spec/commitment.md`](../spec/commitment.md).
+
 ## Rationale
 
 Current code evidence:

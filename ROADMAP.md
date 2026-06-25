@@ -18,7 +18,7 @@ schemas and deployment policy.
 - Stabilize the public `malt` CLI around root-centric add, resolve, verify, and
   daemon lifecycle workflows.
 - Keep proof-bearing HTTP reads explicit and verifier-facing.
-- Tighten `ProofList` schema documentation for path resolution, terminal
+- Tighten `ProofList` verifier documentation for path resolution, terminal
   `@payload` binding, and list-backed byte-range evidence.
 - Keep `malt-eval` schemas, raw envelopes, manifests, and summary outputs stable
   enough for repeatable research runs.
@@ -54,5 +54,6 @@ Before the first public release tag:
 - `malt-eval run --plan examples/eval-smoke-plan.json` writes a manifest and
   summaries.
 - Security reporting path is enabled in GitHub repository settings.
-- Release notes state experimental limits and any known proof-schema TODOs.
+- Release notes state experimental limits and any known ProofList verifier
+  contract TODOs.
 - Public docs avoid claims that are not implemented in the current code.

@@ -1,6 +1,6 @@
 ---
 mip: 1003
-title: ProofList Verification Schema
+title: ProofList Verification Contract
 description: Formalize ProofList step semantics, body/header binding, proof omission, and range-body verification.
 author: MALT maintainers
 status: Draft
@@ -13,8 +13,9 @@ replaces: none
 
 ## Abstract
 
-This MIP formalizes the paper-facing ProofList schema and verifier contract for
-map traversal, terminal `@payload`, raw blob binding, measured-list `list_range`
+This MIP proposes formalizing the verifier contract described in
+[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md), including map
+traversal, terminal `@payload`, blob binding, measured-list `list_range`
 evidence, proof omission, and returned-body binding.
 
 ## Motivation
@@ -25,7 +26,10 @@ bytes to the requested byte range and proved segment contents.
 
 ## Specification
 
-The MIP should define verifier behavior for:
+The current ProofList reference lives in
+[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md). This MIP should
+decide which parts of that reference are ready to become accepted verifier
+contract:
 
 - ordered path traversal
 - terminal `@payload` binding
@@ -34,6 +38,9 @@ The MIP should define verifier behavior for:
 - optional proof omission via query/header
 - `X-Malt-ProofList` header semantics
 - returned byte range binding to proved segment contents
+
+The last item remains the main open design issue. The reference document states
+the current implementation boundary and the gap.
 
 ## Rationale
 
@@ -62,9 +69,12 @@ and mismatches between returned bytes and proved segment contents.
 ## Implementation Plan
 
 No implementation work is approved while this MIP is Draft. If accepted, a
-phase plan should include schema docs, verifier tests, CLI validation, and
+phase plan should include reference docs, verifier tests, CLI validation, and
 benchmark artifact validation.
 
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Moved current ProofList shape and transport rules to
+  `docs/spec/prooflist-format.md`; this MIP now tracks formal acceptance and
+  remaining body-binding work.

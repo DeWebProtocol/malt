@@ -27,7 +27,9 @@ Explain the problem and why it matters now.
 
 ## Specification
 
-Describe the proposed behavior or decision precisely enough for review.
+Describe the proposed behavior or decision boundary precisely enough for
+review. Link to `docs/spec/`, `docs/evaluation/`, or schema files for durable
+field tables, wire formats, and artifact definitions.
 
 ## Rationale
 

@@ -13,8 +13,10 @@ replaces: none
 
 ## Abstract
 
-This MIP specifies a future measured-list proof model for variable-size child
-segments.
+This MIP proposes a future measured-list proof model for variable-size child
+segments. The current fixed-width measured-list behavior is documented in
+[`docs/spec/semantic.md`](../spec/semantic.md) and
+[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md).
 
 ## Motivation
 
@@ -25,13 +27,17 @@ authenticates child count and total size.
 
 ## Specification
 
-If accepted, the MIP should define:
+The current implementation uses fixed-width measured-list evidence. If this
+proposal is accepted, the future variable-size model should define:
 
 - child descriptor shape
 - root metadata
 - range selection algorithm
 - proof payload contents
 - verifier checks
+
+It should also describe how the new model coexists with or replaces the
+current fixed-width `list_range` proof shape.
 
 ## Rationale
 
@@ -58,8 +64,10 @@ proof that shifts byte boundaries while preserving the same segment CIDs.
 
 No implementation work is approved while this MIP is Draft. If accepted, a
 phase plan should cover list backend changes, ProofList updates, server
-verification, and evaluation schemas.
+verification, reference spec updates, and evaluation schemas.
 
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Clarified that current fixed-width measured-list evidence is a
+  reference-spec topic and this MIP tracks only the future variable-size model.
