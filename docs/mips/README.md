@@ -74,7 +74,7 @@ not become the only copy of a schema or specification.
 | MIP | Status | Type | Category | Summary |
 |---|---|---|---|---|
 | [MIP-1](mip-1.md) | Living | Meta | Process | Define the MALT Improvement Proposal process and document format. |
-| [MIP-1001](mip-1001-semantic-object-and-arc-terminology.md) | Draft | Standards Track | Core | Define graph node, semantic object, payload, outgoing arc, map relation, and list node terminology. |
+| [MIP-1001](mip-1001-semantic-object-and-arc-terminology.md) | Draft | Standards Track | Core | Define graph root, semantic object, payload, outgoing arc, map relation, and list child-reference terminology. |
 | [MIP-1002](mip-1002-writer-receipt-accounting.md) | Draft | Standards Track | Interface | Decide how writer receipts support storage, indexing, accounting, and benchmark reporting. |
 | [MIP-1003](mip-1003-prooflist-verification-schema.md) | Draft | Standards Track | Core | Formalize ProofList verifier contract, body/header binding, omission behavior, and range-body verification. |
 | [MIP-1004](mip-1004-resolve-prooflist-artifact-schema.md) | Draft | Standards Track | Interface | Decide whether `malt resolve` JSON and bare ProofList JSON need stable named schemas. |

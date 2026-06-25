@@ -1,7 +1,7 @@
 ---
 mip: 1001
 title: Semantic Object And Arc Terminology
-description: Define graph node, semantic object, payload, outgoing arc, map relation, and list node terminology.
+description: Define graph root, semantic object, payload, outgoing arc, map relation, and list child-reference terminology.
 author: MALT maintainers
 status: Draft
 type: Standards Track

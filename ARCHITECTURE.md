@@ -3,7 +3,7 @@
 ## Overview
 
 MALT targets authentication for structured data whose relationships can be
-normalized into graph-shaped nodes and relations.
+normalized into semantic objects and authenticated relations.
 
 MALT core consists of ArcTable, stateless commitment backends, and the list/map
 semantic layer. Immutable payload bytes can be stored naturally in CAS, but CAS
@@ -21,9 +21,10 @@ ApplyMutation(baseRoot, semantic mutation) -> newRoot + writeReceipt
 
 List and map are semantic abstractions:
 
-- list semantic: complex graph nodes with stable-indexed or range-addressed
+- list semantic: authenticated structure with stable-indexed or range-addressed
   child references
-- map semantic: authenticated keyed/path-like relations among graph nodes
+- map semantic: authenticated keyed/path-like relations from semantic objects
+  to target CIDs
 
 ArcTable is namespace-scoped arcset persistence/materialization and does
 not provide correctness by itself. Commitment backends are stateless
@@ -78,8 +79,8 @@ root-centric mutation namespace.
 
 ### List Semantic
 
-The list semantic authenticates stable-indexed child references inside complex
-graph nodes.
+The list semantic authenticates stable-indexed child references inside
+authenticated list structure.
 
 Read semantics:
 
