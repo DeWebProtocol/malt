@@ -13,8 +13,10 @@ replaces: none
 
 ## Abstract
 
-This MIP defines benchmark-facing reporting for proof bytes, evidence items,
-writer receipts, CAS counters, ArcTable counters, and summary CSV fields.
+This MIP proposes stabilizing the benchmark-facing reporting rules summarized
+in [`docs/evaluation/README.md`](../evaluation/README.md), including proof
+bytes, evidence items, writer receipts, CAS counters, ArcTable counters, and
+summary CSV fields.
 
 ## Motivation
 
@@ -24,7 +26,9 @@ figures.
 
 ## Specification
 
-The MIP should define reporting rules for:
+The current evaluation reference lives in
+[`docs/evaluation/README.md`](../evaluation/README.md). This MIP should decide
+which reporting rules must become stable for paper-facing figures:
 
 - ProofList bytes and step counts
 - comparable Merkle DAG and HAMT evidence items
@@ -61,3 +65,5 @@ benchmark protocol docs, and fixture/result validation.
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Moved current reporting guidance to `docs/evaluation/README.md`;
+  this MIP now tracks stabilization of paper-facing benchmark reporting.

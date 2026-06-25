@@ -24,13 +24,16 @@ concrete without turning it into the primary benchmark path.
 
 ## Specification
 
-The MIP should choose:
+This MIP should choose a demo shape:
 
 - relation types to demonstrate
 - source dataset
 - verifier story
 - CLI, eval-suite, or documentation-only delivery
 - whether the result is a paper-facing capability case study
+
+It does not define a protocol schema. If accepted, any reusable benchmark or
+artifact rules should be documented under `docs/evaluation/`.
 
 ## Rationale
 
@@ -58,3 +61,5 @@ phase plan should name the command, suite, fixture, and docs paths to change.
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Clarified that this is a demo/case-study proposal, not a
+  reference specification.

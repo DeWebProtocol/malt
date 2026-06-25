@@ -1,7 +1,7 @@
 ---
 mip: 1001
 title: Semantic Object And Arc Terminology
-description: Define graph node, semantic object, payload, outgoing arc, map relation, and list node terminology.
+description: Define graph root, semantic object, payload, outgoing arc, map relation, and list child-reference terminology.
 author: MALT maintainers
 status: Draft
 type: Standards Track
@@ -13,8 +13,10 @@ replaces: none
 
 ## Abstract
 
-This MIP defines the paper-facing terminology for graph nodes, semantic objects,
-payloads, outgoing arcs, map relations, list child references, and CAS blobs.
+This MIP proposes adopting the terminology in
+[`docs/spec/semantic.md`](../spec/semantic.md) for graph roots, semantic
+objects, payloads, outgoing arcs, map relations, list child references, and CAS
+blobs.
 
 ## Motivation
 
@@ -25,16 +27,19 @@ boundary and avoids turning implementation helpers into semantic definitions.
 
 ## Specification
 
-The MIP should define each term and classify it as semantic, implementation, or
-layout-specific:
+Adopt [`docs/spec/semantic.md`](../spec/semantic.md) as the implementation
+reference for semantic terminology. That reference classifies:
 
 - semantic object
-- graph node
+- graph root
 - payload
 - outgoing arc
 - map relation
 - list child reference
 - CAS blob
+
+This MIP remains the proposal record for accepting or revising that vocabulary.
+The reference document owns the current term definitions.
 
 ## Rationale
 
@@ -61,9 +66,11 @@ proofs and published roots.
 ## Implementation Plan
 
 No implementation work is approved while this MIP is Draft. If accepted, update
-`README.md`, `paper.md`, active memory notes, and any code comments that use
-conflicting terminology.
+`README.md`, `ARCHITECTURE.md`, `docs/spec/semantic.md`, and any code comments
+that use conflicting terminology.
 
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Moved term definitions to `docs/spec/semantic.md`; this MIP now
+  tracks terminology adoption rather than duplicating the glossary.

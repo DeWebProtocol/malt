@@ -25,13 +25,17 @@ current-tree reconstruction.
 
 ## Specification
 
-The MIP should decide whether the next mainline implementation needs:
+This MIP should decide whether the next mainline implementation needs a
+path-local update mode for `malt add --root` with:
 
 - path-local current-root loading
 - path-local mutation planning
 - unchanged CAS dedup behavior
 - unchanged layout-side root computation
 - compatible writer receipts and ProofList behavior
+
+It does not define a protocol schema. If accepted, implementation details
+belong in a phase plan and any affected reference docs.
 
 ## Rationale
 
@@ -63,3 +67,5 @@ large-file lists, symlink directory boundaries, and CAS dedup behavior.
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Clarified that this is an optimization proposal, not a schema or
+  reference specification.

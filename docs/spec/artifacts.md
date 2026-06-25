@@ -1,0 +1,70 @@
+# Artifacts and Schemas
+
+This document records the current artifact boundaries for CLI JSON, ProofList
+JSON, content-proof headers, and evaluator schemas.
+
+## Status
+
+Experimental and implementation-bound. Only evaluator schemas currently have
+machine-readable JSON Schema files in the repository.
+
+## Current Artifact Surfaces
+
+| Surface | Current owner | Stability |
+| --- | --- | --- |
+| `malt resolve` JSON | `api/http.ResolveResponse` | Experimental |
+| bare ProofList JSON | `auth/proof/prooflist.ProofList` | Experimental and verifier-facing |
+| content proof headers | `server` and `sdk/client` | Experimental |
+| evaluator records | `cmd/eval/schemas` | Versioned where practical |
+
+## Resolve JSON
+
+`malt resolve` prints the daemon `ResolveResponse` shape:
+
+```json
+{
+  "target": "cid-string",
+  "prooflist": {}
+}
+```
+
+The `prooflist` field is omitted when proof generation is disabled. The target
+CID is not self-authenticating as a path result; callers need the root, query,
+target, and ProofList to verify the binding.
+
+## Bare ProofList JSON
+
+`malt verify --prooflist` accepts a bare ProofList JSON document and also accepts
+resolve JSON containing a `prooflist` field. The structural shape is documented
+in [ProofList format](./prooflist-format.md).
+
+## Content Proof Headers
+
+Default content reads return proof evidence in headers instead of the response
+body:
+
+- `X-Malt-ProofList: <base64url-json>`
+- `X-Malt-ProofList-Encoding: base64url-json`
+
+Clients must decode the header before running ProofList verification.
+
+## Machine-Readable Schemas
+
+Evaluator JSON schemas live under `cmd/eval/schemas` and are embedded in the
+`malt-eval schema` command. Resolve JSON and bare ProofList JSON do not yet have
+stable named schema files.
+
+If resolve or ProofList artifacts are promoted to stable named schemas, the
+same change should:
+
+- add the schema file in an implementation-owned path
+- add schema listing or discovery if needed by CLI users
+- update CLI help and examples
+- add tests that validate representative artifacts
+- keep schema validation separate from proof verification
+
+## Related Proposals
+
+[MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) tracks the
+decision about whether resolve JSON, bare ProofList JSON, and content proof
+metadata need stable named schemas.

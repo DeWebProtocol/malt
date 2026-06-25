@@ -28,9 +28,13 @@ MALT Improvement Proposals live in [docs/mips](./mips/). MIPs are the review
 path for semantic, verifier-facing, API, layout, tooling, and evaluation
 changes before they become implementation work.
 
-The previous `documents/MIPs` directory in the research-paper workspace is kept
-as historical research context. New implementation-bound MIP work should happen
-here.
+MIPs should define the proposal boundary, motivation, decision, alternatives,
+compatibility impact, security impact, and implementation planning state. Long
+field lists, wire formats, JSON schemas, and benchmark record rules belong in
+the reference docs under `spec/` or `evaluation/`, with MIPs linking to them.
+
+The previous `documents/MIPs` mirror in the research-paper workspace was
+removed after migration. New implementation-bound MIP work should happen here.
 
 ## What Goes Where
 

@@ -3,7 +3,7 @@
 ## Overview
 
 MALT targets authentication for structured data whose relationships can be
-normalized into graph-shaped nodes and relations.
+normalized into semantic objects and authenticated relations.
 
 MALT core consists of ArcTable, stateless commitment backends, and the list/map
 semantic layer. Immutable payload bytes can be stored naturally in CAS, but CAS
@@ -21,9 +21,10 @@ ApplyMutation(baseRoot, semantic mutation) -> newRoot + writeReceipt
 
 List and map are semantic abstractions:
 
-- list semantic: complex graph nodes with stable-indexed or range-addressed
+- list semantic: authenticated structure with stable-indexed or range-addressed
   child references
-- map semantic: authenticated keyed/path-like relations among graph nodes
+- map semantic: authenticated keyed/path-like relations from semantic objects
+  to target CIDs
 
 ArcTable is namespace-scoped arcset persistence/materialization and does
 not provide correctness by itself. Commitment backends are stateless
@@ -73,13 +74,13 @@ byte-range reads include path/`@payload` proof plus one measured-list
 `list_range` step. That step carries authenticated fixed chunk metadata, the
 covered segment CIDs, and a proof payload composed from the metadata slot proof
 and the required index proofs. Response-body range binding is still a
-ProofList-schema TODO. File routes are product surfaces around the same
+ProofList verifier-contract TODO. File routes are product surfaces around the same
 root-centric mutation namespace.
 
 ### List Semantic
 
-The list semantic authenticates stable-indexed child references inside complex
-graph nodes.
+The list semantic authenticates stable-indexed child references inside
+authenticated list structure.
 
 Read semantics:
 
@@ -412,7 +413,7 @@ step proofs, terminal `@payload` proofs, list index proofs, measured-list
 `list_range` evidence for range reads, and blob target binding proofs from the
 queried root to the destination. Current `list_range` steps carry fixed chunk
 metadata, covered segment CIDs, and metadata/index proof payload. Response-body
-range binding remains a schema TODO.
+range binding remains a verifier-contract TODO.
 
 The current daemon has two HTTP proof-bearing read surfaces:
 
@@ -468,10 +469,10 @@ Current boundary:
   and `cas.Client`; current `graph`, `graph/writer`, and `graph/resolver`
   remain runtime composition and compatibility adapters rather than semantic
   owners.
-- The current writer semantic-mutation and `ProofList` schemas are
-  implemented. Paper-facing formalization, write metadata semantics,
-  graph-runtime boundary terminology, and benchmark-facing proof reporting
-  remain tracked as proposal-stage MIPs in `docs/mips/`.
+- The current writer receipt, artifact, and `ProofList` reference docs live
+  under `docs/spec/`. Proposal-stage MIPs in `docs/mips/` track acceptance,
+  remaining open decisions, and follow-up implementation planning rather than
+  serving as the only schema copy.
 - Graph manager metadata is limited to lifecycle and runtime profile
   compatibility. It does not store an authoritative current root or publish
   freshness. The current daemon path creates an ad hoc default `Graph` through
@@ -496,25 +497,19 @@ Metrics:
 
 Open proposal-stage MIPs for the next discussion:
 
-- define graph terminology as list/map-induced authenticated structure rather
-  than a standalone Go node-interface hierarchy
-- simplify the root `graph` package toward resolver/writer port interfaces and
-  a concrete runtime composition struct, removing empty `Graph` interface
-  layers when callers can inject resolver and writer directly
-- formalize the current writer semantic-mutation schema
-- formalize how `layout/unixfs` exposes semantic mutations for writer
-  application and how much of the current UnixFS convenience route
-  remains public API versus test/demo scaffolding
-- formalize the current `ProofList` schema and verification semantics for path
-  lookup, terminal `@payload`, blob bindings, measured-list `list_range`
-  evidence for range reads, and response-body range binding
-- decide how UnixFS reads should map onto resolver read queries and `ProofList`
-- define the final UnixFS write receipt and application-level concurrency
-  contract for the already-wired root APIs
-- decide after the first benchmark whether list needs a future compact
-  range-proof API; the current prototype uses path/`@payload` proof plus one
-  measured-list `list_range` step carrying metadata, segment CIDs, and
-  metadata/index proofs
+- accept or revise the semantic terminology now summarized in
+  `docs/spec/semantic.md`
+- decide whether writer receipts in `docs/spec/writer-receipts.md` become a
+  stable API and evaluation accounting contract
+- accept the current ProofList verifier contract in
+  `docs/spec/prooflist-format.md`, especially response-body range binding
+- decide whether resolve JSON and bare ProofList JSON need stable named schemas
+  beyond the artifact reference in `docs/spec/artifacts.md`
+- decide whether list needs a future variable-size or compact range-proof API;
+  the current prototype uses path/`@payload` proof plus one measured-list
+  `list_range` step carrying metadata, segment CIDs, and metadata/index proofs
+- stabilize benchmark-facing proof, receipt, and metrics reporting for paper
+  figures
 
 ## ArcTable and Versioning
 

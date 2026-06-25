@@ -13,8 +13,9 @@ replaces: none
 
 ## Abstract
 
-This MIP decides whether `malt resolve` JSON, bare ProofList JSON, and related
-proof-bearing artifacts should become stable named schemas.
+This MIP decides whether the artifact surfaces described in
+[`docs/spec/artifacts.md`](../spec/artifacts.md) should become stable named
+schemas.
 
 ## Motivation
 
@@ -25,14 +26,16 @@ need a stronger schema contract.
 
 ## Specification
 
-The MIP should decide whether to add named schemas for:
+The current artifact reference lives in
+[`docs/spec/artifacts.md`](../spec/artifacts.md). This MIP should decide
+whether to add stable named schemas for:
 
 - resolve response JSON
 - bare ProofList JSON
 - proof-bearing content response metadata
 
-It should also define schema paths, compatibility expectations, and CLI help
-wording.
+If accepted, it should also choose schema paths, compatibility expectations,
+schema listing behavior, and CLI help wording.
 
 ## Rationale
 
@@ -64,3 +67,5 @@ listing integration.
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Moved current artifact boundaries to `docs/spec/artifacts.md`;
+  this MIP now tracks whether those artifacts need stable named schemas.

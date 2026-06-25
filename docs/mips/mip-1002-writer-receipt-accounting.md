@@ -13,9 +13,9 @@ replaces: none
 
 ## Abstract
 
-This MIP defines the meaning of writer receipt fields and decides which fields
-are API contract, storage accounting, indexing hints, benchmark metrics, or
-operational diagnostics.
+This MIP proposes whether the writer receipt meanings documented in
+[`docs/spec/writer-receipts.md`](../spec/writer-receipts.md) should become a
+stable API and evaluation accounting contract.
 
 ## Motivation
 
@@ -25,15 +25,17 @@ for those counts before treating them as evidence.
 
 ## Specification
 
-The MIP should classify current and possible receipt fields:
+The current receipt reference lives in
+[`docs/spec/writer-receipts.md`](../spec/writer-receipts.md). This MIP should
+decide whether to accept that reference as:
 
-- base root and new root
-- delta count
-- arc count
-- map count
-- list count
-- persisted byte or record counts, if added
-- root publication metadata, if explicitly kept out of core
+- API contract
+- storage and indexing accounting input
+- benchmark reporting input
+- operational diagnostics only
+
+Root publication metadata remains outside MALT core unless a future accepted
+proposal explicitly adds it.
 
 ## Rationale
 
@@ -59,8 +61,11 @@ verification evidence unless tied to a ProofList or commitment proof.
 
 No implementation work is approved while this MIP is Draft. If accepted, a
 phase plan should cover `graph/writer`, `api/http`, server routes, eval schemas,
-summary generation, and tests.
+summary generation, `docs/spec/writer-receipts.md`, and tests.
 
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
+- 2026-06-25: Moved receipt field definitions to
+  `docs/spec/writer-receipts.md`; this MIP now tracks stabilization and
+  accounting policy.

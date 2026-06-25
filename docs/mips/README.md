@@ -36,6 +36,24 @@ for the one-sentence summary and `Abstract` for the short technical summary.
 
 Use [`mip-template.md`](mip-template.md) when drafting a new MIP.
 
+## MIPs Versus Reference Specs
+
+MIPs are proposal and decision records. They should state the change boundary,
+motivation, selected direction, alternatives, compatibility impact, security
+impact, and implementation planning state.
+
+Long-lived protocol definitions, field tables, wire formats, JSON artifact
+shapes, and benchmark record rules belong in:
+
+- [`../spec/`](../spec/) for protocol, API, proof, receipt, artifact, and wire
+  references
+- [`../evaluation/`](../evaluation/) for evaluator artifacts and reporting
+  rules
+- `cmd/eval/schemas` for machine-readable evaluator JSON schemas
+
+A MIP may link to those reference docs and propose changing them, but it should
+not become the only copy of a schema or specification.
+
 ## Status Lifecycle
 
 | Status | Meaning | Planning rule |
@@ -56,9 +74,9 @@ Use [`mip-template.md`](mip-template.md) when drafting a new MIP.
 | MIP | Status | Type | Category | Summary |
 |---|---|---|---|---|
 | [MIP-1](mip-1.md) | Living | Meta | Process | Define the MALT Improvement Proposal process and document format. |
-| [MIP-1001](mip-1001-semantic-object-and-arc-terminology.md) | Draft | Standards Track | Core | Define graph node, semantic object, payload, outgoing arc, map relation, and list node terminology. |
+| [MIP-1001](mip-1001-semantic-object-and-arc-terminology.md) | Draft | Standards Track | Core | Define graph root, semantic object, payload, outgoing arc, map relation, and list child-reference terminology. |
 | [MIP-1002](mip-1002-writer-receipt-accounting.md) | Draft | Standards Track | Interface | Decide how writer receipts support storage, indexing, accounting, and benchmark reporting. |
-| [MIP-1003](mip-1003-prooflist-verification-schema.md) | Draft | Standards Track | Core | Formalize ProofList step semantics, body/header binding, omission behavior, and range-body verification. |
+| [MIP-1003](mip-1003-prooflist-verification-schema.md) | Draft | Standards Track | Core | Formalize ProofList verifier contract, body/header binding, omission behavior, and range-body verification. |
 | [MIP-1004](mip-1004-resolve-prooflist-artifact-schema.md) | Draft | Standards Track | Interface | Decide whether `malt resolve` JSON and bare ProofList JSON need stable named schemas. |
 | [MIP-1005](mip-1005-kzg-map-label-domain.md) | Final | Standards Track | Core | Record the canonical binding-CID slot model for storage-free map commitment primitives. |
 | [MIP-1006](mip-1006-variable-size-measured-list-evidence.md) | Draft | Standards Track | Core | Specify a future range-addressable list model for variable-size children. |
@@ -71,8 +89,9 @@ Use [`mip-template.md`](mip-template.md) when drafting a new MIP.
 
 1. Keep the proposal process itself in MIP-1.
 2. Keep open design questions in Draft MIPs.
-3. Move a MIP to Review only when its specification and rationale are concrete
-   enough for maintainer judgment.
+3. Move a MIP to Review only when its proposal boundary and rationale are
+   concrete enough for maintainer judgment. Reference-spec details may live in
+   `../spec/`, `../evaluation/`, or schema files and be linked from the MIP.
 4. Move a MIP to Accepted only after maintainer approval.
 5. For Accepted MIPs, create a GitHub issue, PR plan, or repository planning
    note that names the implementation owner and review boundary.
