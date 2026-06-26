@@ -42,7 +42,7 @@ func parseCID(s string) (cid.Cid, error) {
 }
 
 // printJSON marshals and prints a value as JSON.
-func printJSON(v interface{}) {
+func printJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)

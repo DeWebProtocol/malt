@@ -245,7 +245,7 @@ func TestIPLDResolveLink(t *testing.T) {
 
 	// Create node with links
 	node := &cas.IPLDNode{
-		Fields: make(map[string]interface{}),
+		Fields: make(map[string]any),
 		Links: []cas.LinkInfo{
 			{Name: "data", CID: mustDecodeCID("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")},
 			{Name: "meta", CID: mustDecodeCID("bafybeihdwdcefgh4dqkjv67ozcmhfqp46vd4swimutfj3lkq2qhwbg64vc")},
@@ -270,7 +270,7 @@ func TestIPLDResolveLink(t *testing.T) {
 
 func TestCreateDAGJSON(t *testing.T) {
 	// Create DAG-JSON block
-	fields := map[string]interface{}{
+	fields := map[string]any{
 		"name":  "test",
 		"value": 42,
 	}

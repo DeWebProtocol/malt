@@ -440,13 +440,13 @@ func (e *ArcTable) Close() error {
 }
 
 // Stats returns bloom filter cache statistics.
-func (e *ArcTable) Stats() map[string]interface{} {
+func (e *ArcTable) Stats() map[string]any {
 	if !e.bloomManager.Enabled() {
-		return map[string]interface{}{
+		return map[string]any{
 			"bloom_enabled": false,
 		}
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"bloom_enabled": true,
 		"cache_size":    e.bloomManager.GetBloomCache().Size(),
 	}

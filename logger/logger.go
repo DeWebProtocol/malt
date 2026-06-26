@@ -254,8 +254,8 @@ func closeOpenFiles() {
 }
 
 // toAnySlice converts Field slice to Any slice for SugaredLogger.
-func toAnySlice(fields []Field) []interface{} {
-	result := make([]interface{}, len(fields))
+func toAnySlice(fields []Field) []any {
+	result := make([]any, len(fields))
 	for i, f := range fields {
 		result[i] = f
 	}

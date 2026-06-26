@@ -39,7 +39,7 @@ type IPLDNode struct {
 	Data []byte
 
 	// Fields are named fields (for map nodes)
-	Fields map[string]interface{}
+	Fields map[string]any
 }
 
 // LinkInfo represents a link found in an IPLD node.
@@ -96,7 +96,7 @@ func (p *IPLDParser) parseRaw(data []byte) (*IPLDNode, error) {
 // Implements a simple CBOR parser that extracts CID links.
 func (p *IPLDParser) parseCBOR(data []byte) (*IPLDNode, error) {
 	node := &IPLDNode{
-		Fields: make(map[string]interface{}),
+		Fields: make(map[string]any),
 	}
 
 	// Simple CBOR parsing
@@ -118,10 +118,10 @@ func (p *IPLDParser) parseCBOR(data []byte) (*IPLDNode, error) {
 
 	// Process result
 	switch v := result.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		node.Fields = v
 		p.extractLinksFromMap(v, node)
-	case []interface{}:
+	case []any:
 		for i, item := range v {
 			node.Fields[fmt.Sprintf("%d", i)] = item
 		}
@@ -136,19 +136,19 @@ func (p *IPLDParser) parseCBOR(data []byte) (*IPLDNode, error) {
 // parseJSON parses JSON/DAG-JSON encoded data.
 func (p *IPLDParser) parseJSON(data []byte) (*IPLDNode, error) {
 	node := &IPLDNode{
-		Fields: make(map[string]interface{}),
+		Fields: make(map[string]any),
 	}
 
-	var parsed interface{}
+	var parsed any
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return nil, fmt.Errorf("failed to decode JSON: %w", err)
 	}
 
 	switch v := parsed.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		node.Fields = v
 		p.extractLinksFromMap(v, node)
-	case []interface{}:
+	case []any:
 		for i, item := range v {
 			node.Fields[fmt.Sprintf("%d", i)] = item
 		}
@@ -159,10 +159,10 @@ func (p *IPLDParser) parseJSON(data []byte) (*IPLDNode, error) {
 }
 
 // extractLinksFromMap extracts CID links from a map.
-func (p *IPLDParser) extractLinksFromMap(m map[string]interface{}, node *IPLDNode) {
+func (p *IPLDParser) extractLinksFromMap(m map[string]any, node *IPLDNode) {
 	for k, v := range m {
 		// Check for DAG-JSON/DAG-CBOR link format: {"/": "cid"}
-		if subMap, ok := v.(map[string]interface{}); ok {
+		if subMap, ok := v.(map[string]any); ok {
 			if linkStr, ok := subMap["/"].(string); ok {
 				if c, err := cid.Decode(linkStr); err == nil {
 					node.Links = append(node.Links, LinkInfo{
@@ -173,16 +173,16 @@ func (p *IPLDParser) extractLinksFromMap(m map[string]interface{}, node *IPLDNod
 			}
 		}
 		// Check for nested arrays
-		if arr, ok := v.([]interface{}); ok {
+		if arr, ok := v.([]any); ok {
 			p.extractLinksFromArray(arr, node)
 		}
 	}
 }
 
 // extractLinksFromArray extracts CID links from an array.
-func (p *IPLDParser) extractLinksFromArray(arr []interface{}, node *IPLDNode) {
+func (p *IPLDParser) extractLinksFromArray(arr []any, node *IPLDNode) {
 	for i, v := range arr {
-		if subMap, ok := v.(map[string]interface{}); ok {
+		if subMap, ok := v.(map[string]any); ok {
 			if linkStr, ok := subMap["/"].(string); ok {
 				if c, err := cid.Decode(linkStr); err == nil {
 					node.Links = append(node.Links, LinkInfo{
@@ -253,11 +253,11 @@ func newCBORDecoder(data []byte) *cborDecoder {
 	return &cborDecoder{data: data}
 }
 
-func (d *cborDecoder) decode() (interface{}, error) {
+func (d *cborDecoder) decode() (any, error) {
 	return d.decodeValue(0)
 }
 
-func (d *cborDecoder) decodeValue(depth int) (interface{}, error) {
+func (d *cborDecoder) decodeValue(depth int) (any, error) {
 	if depth > maxCBORDepth {
 		return nil, fmt.Errorf("CBOR nesting exceeds maximum depth %d", maxCBORDepth)
 	}
@@ -306,7 +306,7 @@ func (d *cborDecoder) decodeValue(depth int) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		arr := make([]interface{}, length)
+		arr := make([]any, length)
 		for i := 0; i < length; i++ {
 			v, err := d.decodeValue(depth + 1)
 			if err != nil {
@@ -320,7 +320,7 @@ func (d *cborDecoder) decodeValue(depth int) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		m := make(map[string]interface{})
+		m := make(map[string]any)
 		for i := 0; i < length; i++ {
 			k, err := d.decodeValue(depth + 1)
 			if err != nil {
@@ -355,7 +355,7 @@ func (d *cborDecoder) decodeValue(depth int) (interface{}, error) {
 					if err != nil {
 						return nil, err
 					}
-					return map[string]interface{}{"/": c.String()}, nil
+					return map[string]any{"/": c.String()}, nil
 				}
 			}
 			return v, nil
@@ -401,7 +401,7 @@ func (d *cborDecoder) decodeCollectionLength(additionalInfo byte, kind string, m
 	return int(length), nil
 }
 
-func (d *cborDecoder) decodeUint(additionalInfo byte) (interface{}, error) {
+func (d *cborDecoder) decodeUint(additionalInfo byte) (any, error) {
 	switch additionalInfo {
 	case 24:
 		if d.pos >= len(d.data) {
@@ -447,7 +447,7 @@ func (d *cborDecoder) decodeLength(additionalInfo byte) (uint64, error) {
 	return v.(uint64), nil
 }
 
-func (d *cborDecoder) decodeSimple(additionalInfo byte) (interface{}, error) {
+func (d *cborDecoder) decodeSimple(additionalInfo byte) (any, error) {
 	switch additionalInfo {
 	case 20:
 		return false, nil
@@ -461,7 +461,7 @@ func (d *cborDecoder) decodeSimple(additionalInfo byte) (interface{}, error) {
 }
 
 // CreateDAGJSON creates a DAG-JSON block from a map.
-func CreateDAGJSON(fields map[string]interface{}) ([]byte, cid.Cid, error) {
+func CreateDAGJSON(fields map[string]any) ([]byte, cid.Cid, error) {
 	// Convert CIDs to link format
 	for k, v := range fields {
 		if c, ok := v.(cid.Cid); ok {
