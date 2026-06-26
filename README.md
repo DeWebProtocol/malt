@@ -8,6 +8,11 @@
 It lets applications update and resolve authenticated relationships among
 immutable objects without rewriting unrelated payload blocks.
 
+This repository is the MALT core specification implementation. It owns the
+verifier-facing semantics, ProofList behavior, root/query/result contracts,
+wire formats, reference runtime, and core benchmark/evaluation framework. The
+managed product gateway lives outside this repository.
+
 [Documentation](./docs/README.md) · [Architecture](./ARCHITECTURE.md) ·
 [Threat Model](./docs/policy/threat-model.md) ·
 [Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation/README.md) ·
@@ -48,11 +53,31 @@ MALT separates those concerns:
 The claim is not that updates are free. The claim is that MALT replaces
 implicit ancestor-rewrite cost with explicit, verifiable structure maintenance.
 
+## Repository Boundary
+
+This repository owns:
+
+- MALT core semantics and verifier-facing contracts
+- root CID, ProofList, and wire-format documentation
+- reference CLI, daemon, HTTP server, and local/mock CAS surfaces
+- component benchmarks, conformance tests, and end-to-end evaluation harnesses
+- implementation-bound MIPs and evaluator schemas
+
+This repository does not own production managed-gateway behavior:
+
+- tenant isolation, identity providers, API keys, or authorization policy
+- root publication, latest-head, freshness, or multi-writer product policy
+- S3/Filecoin/IPFS production backend orchestration
+- quota, billing, pinning, garbage collection, abuse control, or operations
+
+Those deployment and product concerns belong in the separate
+`DeWebProtocol/gateway` repository or private deployment overlays.
+
 ## Current Architecture
 
 ```mermaid
 flowchart TB
-  app["Applications / CLI / Go client"] --> api["MALT daemon and HTTP API"]
+  app["Applications / CLI / Go client"] --> api["Reference daemon / eval gateway HTTP API"]
   api --> rw["Resolver / Writer"]
   rw --> semantics["Authenticated list / map semantics"]
   semantics --> proofs["ProofList and commitment backends"]
@@ -73,6 +98,7 @@ change. It is not production-ready.
 Current in-tree capabilities:
 
 - root-centric `malt` CLI for local daemon lifecycle, add, resolve, and verify
+- reference/evaluation gateway surface for explicit-root HTTP reads and writes
 - proof-bearing HTTP reads for file bytes, directory JSON, and byte ranges
 - pure MALT UnixFS-style layout built from map/list semantics and CAS-backed
   immutable payloads
@@ -86,6 +112,7 @@ Current experimental boundaries:
 - no managed global head publication service
 - no multi-writer merge or freshness protocol
 - no tenant, quota, pinning, or garbage-collection policy
+- no production managed gateway or hosted service semantics
 - no stable public API compatibility guarantee yet
 - response-body binding for large-file byte ranges is still a ProofList-schema
   design item
@@ -227,7 +254,7 @@ For a deeper implementation walkthrough, see [ARCHITECTURE.md](./ARCHITECTURE.md
 ## Repository Layout
 
 ```text
-cmd/malt/                      primary runtime CLI
+cmd/malt/                      reference runtime CLI
 cmd/eval/                      malt-eval workloads, schemas, and helpers
 api/http/                      daemon request/response DTOs
 auth/                          arcset, commitment, proof, list/map semantics
@@ -235,7 +262,7 @@ graph/                         resolver and writer port definitions/adapters
 layout/unixfs/                 UnixFS-style layout over map/list semantics and CAS-backed payloads
 runtime/                       node, runtime graph composition, ArcTable, metrics
 sdk/client/                    Go daemon client facade
-server/                        daemon HTTP server
+server/                        reference daemon and eval-gateway HTTP server
 storage/                       CAS and KV storage libraries
 wire/maltcid/                  MALT map/list root CID codecs
 docs/                          implementation docs: policy, evaluation, specs, and MIPs
