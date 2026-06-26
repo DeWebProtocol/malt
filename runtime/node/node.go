@@ -1,6 +1,6 @@
 // Package node provides the application-level API for MALT.
-// MALT (Mutable structure LAyer on Top) provides verifiable, evolvable
-// structures on top of content-addressed storage.
+// MALT provides verifiable, evolvable structures on top of content-addressed
+// storage.
 package node
 
 import (
