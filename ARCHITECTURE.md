@@ -12,6 +12,13 @@ of the abstraction. A MALT graph is not a Go runtime object that merely holds
 dependencies. It is the authenticated structure induced by list/map semantics,
 ArcTable arcset persistence, and stateless commitment proofs.
 
+This repository packages that core as a specification implementation with a
+reference runtime and evaluation gateway. Production managed-gateway behavior
+such as tenancy, identity, authorization, S3 backend orchestration, cache
+policy, quota, billing, pinning, garbage collection, and operations belongs in
+the separate `DeWebProtocol/gateway` service repository or private deployment
+overlays.
+
 ```text
 GraphRead(root, query) -> result + ProofList
 VerifyRead(root, query, result, ProofList) -> valid / invalid
@@ -49,7 +56,7 @@ The target model has four distinct layers:
 | ArcTable | Namespace-scoped arcset persistence/materialization |
 | Commitment backend | Stateless proof and verification over semantic-layer representations |
 | Resolver / writer ports | Read/proof and mutation boundaries over semantic state |
-| Server API | Runtime surface exposing resolver/writer ports |
+| Server API | Reference runtime and eval-gateway surface exposing resolver/writer ports |
 | Application layout | Product data model built above list/map semantics and immutable payload objects |
 
 The public structure layer should expose list/map semantics, not storage
@@ -65,7 +72,7 @@ Conceptually, graph reads return `result + ProofList`, where the ProofList is
 the vector-commitment proof chain from root to destination. Root-centric writer
 mutation accepts semantic mutations that have already been produced by a layout
 and returns an operational receipt without publishing a managed head. The HTTP
-server returns default `GET /{root}/{path}` file and directory reads with
+server in this repository returns default `GET /{root}/{path}` file and directory reads with
 `ProofList` metadata in `X-Malt-ProofList` response
 headers encoded as `base64url-json`. Clients can opt out of default proof
 generation with `?proof=false` or `X-Malt-Proof: omit`; default GET responses
@@ -74,8 +81,9 @@ byte-range reads include path/`@payload` proof plus one measured-list
 `list_range` step. That step carries authenticated fixed chunk metadata, the
 covered segment CIDs, and a proof payload composed from the metadata slot proof
 and the required index proofs. Response-body range binding is still a
-ProofList verifier-contract TODO. File routes are product surfaces around the same
-root-centric mutation namespace.
+ProofList verifier-contract TODO. File routes are reference/evaluation surfaces
+around the same root-centric mutation namespace. They are not a production
+multi-tenant gateway contract.
 
 ### List Semantic
 
@@ -219,8 +227,16 @@ Current package roles are:
 
 ## Runtime Packaging
 
-The product shape is a small primary runtime binary named `malt`, plus one
-evaluation binary named `malt-eval` with workload-specific subcommands.
+The repository shape is a small primary reference runtime binary named `malt`,
+plus one evaluation binary named `malt-eval` with workload-specific
+subcommands. The `malt` daemon and `server` package are retained as a
+reference/evaluation gateway so end-to-end core behavior can be exercised
+without pulling product tenancy and deployment policy into MALT core.
+
+The managed service gateway is separate. It should depend on MALT core
+contracts and return verifier-facing `result + ProofList` responses, but it
+owns product-layer policy such as tenants, identity, authorization, backend
+credentials, cache policy, root publication, quota, and operations.
 
 Current command model:
 
@@ -284,7 +300,7 @@ malt/
 |-- config/
 |-- daemon/
 |-- api/http/         # shared daemon API payloads
-|-- server/          # daemon HTTP server
+|-- server/          # reference daemon and eval-gateway HTTP server
 |-- auth/             # data-authentication core
 |   |-- arcset/       # canonical arcs and coordinates
 |   |-- commitment/   # primitive commitment backends

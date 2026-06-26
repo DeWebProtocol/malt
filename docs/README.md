@@ -8,6 +8,12 @@ with code, tests, schemas, wire formats, and evaluator artifacts. Public
 website pages in `DeWebProtocol/malt-web` may summarize this material, but they
 should link back here for protocol, policy, and compatibility details.
 
+Managed gateway service behavior, including tenancy, identity, authorization,
+root publication, backend orchestration, S3/Filecoin/IPFS deployment policy,
+quota, cache policy, and operations, belongs in `DeWebProtocol/gateway` or
+private deployment overlays. This repository may keep a reference/evaluation
+gateway only to exercise MALT core end to end.
+
 ## Policy
 
 - [Threat model](./policy/threat-model.md)
