@@ -83,7 +83,7 @@ func (s *matrixMALTSystem) Measure(ctx context.Context, iteration int, dataset *
 	if op.Kind != OperationResolvePath {
 		return nil, fmt.Errorf("unsupported operation kind %q", op.Kind)
 	}
-	result, err := s.inner.MeasureResolve(ctx, iteration, dataset.Name, op.Path)
+	result, err := s.inner.MeasureResolveWithTargetFetch(ctx, iteration, dataset.Name, op.Path)
 	if err != nil {
 		return nil, err
 	}

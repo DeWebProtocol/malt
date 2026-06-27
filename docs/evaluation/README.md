@@ -67,7 +67,13 @@ deterministic logical lookup tree, materializes the same paths as flat MALT
 authenticated arcs, IPLD UnixFS MerkleDAG, and IPLD UnixFS HAMT, then emits one
 `resolve_path` record per system, path depth, configured CAS latency, and
 iteration. Use it to compare whether lookup latency grows with path depth under
-warm per-block CAS latency models.
+warm per-block CAS latency models. The MALT record includes flat path
+authentication plus one target blob fetch from CAS; the IPLD baselines include
+their serial directory traversal and terminal target-node fetches.
+
+Use depths `[1, 2, 3, 4, 5, 6]` for the main paper figure. A sweep up to depth
+10 is acceptable for a sensitivity appendix, but depth 16 should be treated as
+an artificial stress case rather than the default dataset shape.
 
 Use `[0, 25, 50, 100, 200]` milliseconds as the primary
 `cas_latency_ms` sweep. These values model local execution, near-region managed
@@ -76,6 +82,15 @@ poor/far public gateway access. A separate `2100` millisecond stress run can be
 used for cold IPFS DHT/provider-discovery behavior, but it should be reported
 separately from the main warm-CAS figure because it is not a normal per-block
 steady-state latency.
+
+Report the read matrix from two views:
+
+- fixed CAS latency: plot path depth on the x-axis, total elapsed time on the
+  y-axis, and one line per system; use two or three latency scenarios such as
+  `25`, `200`, and optionally `2100` ms
+- fixed path depth: hold depth at a representative value such as `4`, plot CAS
+  latency on the x-axis, total elapsed time on the y-axis, and one line per
+  system
 
 The read matrix intentionally excludes full-content reads, range reads,
 list-backed payloads, and data-size/proof-generation sweeps. Dataset size effects

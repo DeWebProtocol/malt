@@ -113,7 +113,7 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 	cfg := Config{
 		Systems:      []string{"maltflat", "merkledag", "hamt"},
 		Dataset:      "read-matrix",
-		Depths:       []int{1, 2, 4, 8, 16},
+		Depths:       []int{1, 2, 3, 4, 5, 6},
 		CASLatencyMS: []int{0, 25, 50, 100, 200},
 		SmallBytes:   1024,
 		Iterations:   5,

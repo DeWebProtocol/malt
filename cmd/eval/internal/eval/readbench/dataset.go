@@ -106,7 +106,7 @@ func (d *MatrixDataset) addFile(seen map[string]struct{}, file MatrixDatasetFile
 
 func normalizeDepths(depths []int) ([]int, error) {
 	if len(depths) == 0 {
-		depths = []int{1, 2, 4, 8, 16}
+		depths = []int{1, 2, 3, 4, 5, 6}
 	}
 	out := append([]int(nil), depths...)
 	slices.Sort(out)

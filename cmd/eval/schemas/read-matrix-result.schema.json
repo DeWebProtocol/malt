@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/read-matrix-result.schema.json",
   "title": "Read matrix suite result",
-  "description": "One read_matrix suite record for a single measured read operation before the common framework envelope is applied.",
+  "description": "One read_matrix suite record for a resolve-path operation plus target fetch before the common framework envelope is applied.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -86,7 +86,7 @@
     },
     "range_header": {
       "type": "string",
-      "description": "HTTP Range header used for content_range records."
+      "description": "Unused by read_matrix; present for compatibility with the shared read result shape."
     },
     "elapsed_ns": {
       "type": "integer",
@@ -99,7 +99,8 @@
     },
     "content_bytes": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Target blob bytes fetched by MALT after flat path resolution; omitted by IPLD baseline path-resolution records."
     },
     "prooflist_step_count": {
       "type": "integer",

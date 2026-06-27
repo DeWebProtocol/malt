@@ -104,13 +104,33 @@ func NewLocalMALTSystemWithFiles(ctx context.Context, store *casmock.CAS, files 
 
 // MeasureResolve measures a single resolve_path operation at the given path.
 func (s *LocalMALTSystem) MeasureResolve(ctx context.Context, iteration int, fixtureName string, filePath string) (*Result, error) {
+	return s.measureResolve(ctx, iteration, fixtureName, filePath, false)
+}
+
+// MeasureResolveWithTargetFetch measures resolve_path plus one target blob
+// fetch. This is the paper-facing read_matrix behavior: MALT resolves the flat
+// authenticated path, then fetches the target payload once from CAS.
+func (s *LocalMALTSystem) MeasureResolveWithTargetFetch(ctx context.Context, iteration int, fixtureName string, filePath string) (*Result, error) {
+	return s.measureResolve(ctx, iteration, fixtureName, filePath, true)
+}
+
+func (s *LocalMALTSystem) measureResolve(ctx context.Context, iteration int, fixtureName string, filePath string, fetchTarget bool) (*Result, error) {
 	s.node.ResetMetrics()
 	start := time.Now()
 	result, err := s.g.Resolver().Resolve(ctx, s.root, filePath)
-	elapsed := positiveElapsedNS(start, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", filePath, err)
 	}
+	var contentBytes *int
+	if fetchTarget {
+		data, err := s.store.Get(ctx, result.Target)
+		if err != nil {
+			return nil, fmt.Errorf("fetch target blob %q: %w", result.Target.String(), err)
+		}
+		count := len(data)
+		contentBytes = &count
+	}
+	elapsed := positiveElapsedNS(start, time.Now())
 	snapshot := s.node.MetricsSnapshot()
 
 	return &Result{
@@ -121,6 +141,7 @@ func (s *LocalMALTSystem) MeasureResolve(ctx context.Context, iteration int, fix
 		FixtureName:        fixtureName,
 		Path:               filePath,
 		ElapsedNS:          elapsed,
+		ContentBytes:       contentBytes,
 		ProofListStepCount: len(result.Transcript.Steps),
 		EvidenceItemCount:  len(result.Transcript.Steps),
 		Target:             result.Target.String(),
