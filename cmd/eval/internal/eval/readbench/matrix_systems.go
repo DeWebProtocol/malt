@@ -6,26 +6,16 @@ import (
 	"io/fs"
 	"time"
 
-	"github.com/dewebprotocol/malt/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/cmd/internal/merkledagimport"
-	"github.com/dewebprotocol/malt/layout/unixfs"
-	"github.com/dewebprotocol/malt/runtime/arctable/versioned"
-	"github.com/dewebprotocol/malt/runtime/metrics"
-	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
-	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
-	"github.com/dewebprotocol/malt/storage/kv/memory"
-	cid "github.com/ipfs/go-cid"
 )
 
 // MatrixOperation is one read operation measured against a shared dataset.
 type MatrixOperation struct {
-	Kind        OperationKind
-	Workload    WorkloadKind
-	Path        string
-	PathDepth   int
-	RangeHeader string
+	Kind      OperationKind
+	Workload  WorkloadKind
+	Path      string
+	PathDepth int
 }
 
 // MatrixSystem measures read operations for one materialized representation.
@@ -35,170 +25,78 @@ type MatrixSystem interface {
 	Close() error
 }
 
-// MatrixOperations returns the paper-facing read operations at one depth.
-func MatrixOperations(dataset *MatrixDataset, depth int, rangeHeader string) ([]MatrixOperation, error) {
+// MatrixOperations returns the paper-facing path lookup operation at one depth.
+func MatrixOperations(dataset *MatrixDataset, depth int) ([]MatrixOperation, error) {
 	if dataset == nil {
 		return nil, fmt.Errorf("dataset is nil")
 	}
-	smallPath := dataset.SmallPaths[depth]
-	largePath := dataset.LargePaths[depth]
-	if smallPath == "" || largePath == "" {
-		return nil, fmt.Errorf("dataset %q has no measured paths at depth %d", dataset.Name, depth)
+	lookupPath := dataset.SmallPaths[depth]
+	if lookupPath == "" {
+		return nil, fmt.Errorf("dataset %q has no measured path at depth %d", dataset.Name, depth)
 	}
 	return []MatrixOperation{
-		{Kind: OperationResolvePath, Workload: WorkloadDeepPathLookup, Path: smallPath, PathDepth: depth},
-		{Kind: OperationContentFull, Workload: WorkloadSmallFileRead, Path: smallPath, PathDepth: depth},
-		{Kind: OperationContentRange, Workload: WorkloadLargeFileRangeRead, Path: largePath, PathDepth: depth, RangeHeader: rangeHeader},
+		{Kind: OperationResolvePath, Workload: WorkloadDeepPathLookup, Path: lookupPath, PathDepth: depth},
 	}, nil
 }
 
-// NewMatrixSystem materializes dataset for one read_matrix system.
-func NewMatrixSystem(ctx context.Context, system SystemName, dataset *MatrixDataset) (MatrixSystem, error) {
+// NewMatrixSystem materializes dataset for one read_matrix system and CAS
+// latency point. Only CAS Get has latency; setup writes remain zero-latency.
+func NewMatrixSystem(ctx context.Context, system SystemName, dataset *MatrixDataset, casLatencyMS int) (MatrixSystem, error) {
+	if casLatencyMS < 0 {
+		return nil, fmt.Errorf("cas latency must be non-negative")
+	}
 	switch system {
 	case SystemMALTFlat:
-		return newMatrixMALTSystem(ctx, dataset)
+		return newMatrixMALTSystem(ctx, dataset, casLatencyMS)
 	case SystemMerkleDAG, SystemHAMT:
-		return newMatrixBaselineSystem(ctx, system, dataset)
+		return newMatrixBaselineSystem(ctx, system, dataset, casLatencyMS)
 	default:
 		return nil, fmt.Errorf("unknown system %q", system)
 	}
 }
 
 type matrixMALTSystem struct {
-	store  *casmock.CAS
-	table  *versioned.ArcTable
-	layout *unixfs.Layout
-	root   cid.Cid
+	inner        *LocalMALTSystem
+	casLatencyMS int
 }
 
-func newMatrixMALTSystem(ctx context.Context, dataset *MatrixDataset) (*matrixMALTSystem, error) {
+func newMatrixMALTSystem(ctx context.Context, dataset *MatrixDataset, casLatencyMS int) (*matrixMALTSystem, error) {
 	if dataset == nil {
 		return nil, fmt.Errorf("dataset is nil")
 	}
-	store := casmock.NewCAS()
-	table, err := versioned.NewArcTable(versioned.WithKVStore(memory.New()))
+	store := newMatrixCAS(casLatencyMS)
+	inner, err := NewLocalMALTSystemWithFiles(ctx, store, dataset.Files)
 	if err != nil {
-		return nil, fmt.Errorf("create arctable: %w", err)
-	}
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		_ = table.Close()
-		return nil, fmt.Errorf("create commitment scheme: %w", err)
-	}
-	maps, err := mappingradix.NewMap(scheme, table)
-	if err != nil {
-		_ = table.Close()
-		return nil, fmt.Errorf("create map semantics: %w", err)
-	}
-	lists, err := listtree.NewList(scheme, table)
-	if err != nil {
-		_ = table.Close()
-		return nil, fmt.Errorf("create list semantics: %w", err)
-	}
-	layout, err := unixfs.New(unixfs.Options{
-		Namespace: "read-matrix",
-		ChunkSize: unixfs.DefaultChunkSize,
-		Map:       maps,
-		List:      lists,
-		Blocks:    store,
-	})
-	if err != nil {
-		_ = table.Close()
 		return nil, err
 	}
-	root := cid.Undef
-	for _, file := range dataset.Files {
-		root, err = layout.AddFile(ctx, root, file.Path, file.Data)
-		if err != nil {
-			_ = table.Close()
-			return nil, fmt.Errorf("materialize %s: %w", file.Path, err)
-		}
-	}
-	return &matrixMALTSystem{store: store, table: table, layout: layout, root: root}, nil
+	return &matrixMALTSystem{inner: inner, casLatencyMS: casLatencyMS}, nil
 }
 
 func (s *matrixMALTSystem) Name() SystemName { return SystemMALTFlat }
 
-func (s *matrixMALTSystem) Close() error {
-	if s == nil || s.table == nil {
-		return nil
-	}
-	return s.table.Close()
-}
+func (s *matrixMALTSystem) Close() error { return nil }
 
 func (s *matrixMALTSystem) Measure(ctx context.Context, iteration int, dataset *MatrixDataset, op MatrixOperation) (*Result, error) {
-	if s == nil || s.store == nil || s.layout == nil {
+	if s == nil || s.inner == nil {
 		return nil, fmt.Errorf("malt matrix system is nil")
 	}
-	s.store.ResetStats()
-
-	start := time.Now()
-	resolution, err := s.layout.Resolve(ctx, s.root, op.Path)
-	if err != nil {
-		return nil, fmt.Errorf("malt resolve %q: %w", op.Path, err)
-	}
-	pl, err := unixfs.ProofListFromSteps(s.root, op.Path, resolution.Steps)
-	if err != nil {
-		return nil, fmt.Errorf("malt prooflist %q: %w", op.Path, err)
-	}
-
-	var contentBytes *int
-	switch op.Kind {
-	case OperationResolvePath:
-	case OperationContentFull:
-		data, err := s.store.Get(ctx, resolution.Payload)
-		if err != nil {
-			return nil, fmt.Errorf("malt content read %q: %w", op.Path, err)
-		}
-		count := len(data)
-		contentBytes = &count
-	case OperationContentRange:
-		startOffset, endExclusive, err := parseReadRangeHeader(op.RangeHeader, int64(dataset.LargeFileBytes))
-		if err != nil {
-			return nil, err
-		}
-		length := uint64(endExclusive - startOffset)
-		data, err := s.layout.ReadListPayloadRange(ctx, resolution.Payload, uint64(startOffset), length)
-		if err != nil {
-			return nil, fmt.Errorf("malt range read %q: %w", op.Path, err)
-		}
-		if err := s.layout.AppendListPayloadRangeProof(ctx, pl, op.Path, resolution.Payload, uint64(startOffset), length); err != nil {
-			return nil, fmt.Errorf("malt range proof %q: %w", op.Path, err)
-		}
-		count := len(data)
-		contentBytes = &count
-	default:
+	if op.Kind != OperationResolvePath {
 		return nil, fmt.Errorf("unsupported operation kind %q", op.Kind)
 	}
-	elapsed := positiveElapsedNS(start, time.Now())
-
-	proofStats := proofStatsFor(pl)
-	result := &Result{
-		System:             SystemMALTFlat,
-		OperationKind:      op.Kind,
-		Workload:           op.Workload,
-		Iteration:          iteration,
-		FixtureName:        dataset.Name,
-		Path:               op.Path,
-		RangeHeader:        op.RangeHeader,
-		ElapsedNS:          elapsed,
-		ContentBytes:       contentBytes,
-		ProofListStepCount: len(pl.Steps),
-		EvidenceItemCount:  len(pl.Steps),
-		Target:             resolution.Payload.String(),
-		CAS:                s.store.SnapshotStats(),
-		ArcTable:           metrics.ArcTableStats{},
-		Proof:              proofStats,
+	result, err := s.inner.MeasureResolve(ctx, iteration, dataset.Name, op.Path)
+	if err != nil {
+		return nil, err
 	}
-	attachDatasetMetadata(result, dataset, op)
+	attachDatasetMetadata(result, dataset, op, s.casLatencyMS)
 	return result, nil
 }
 
 type matrixBaselineSystem struct {
-	inner *BaselineSystem
+	inner        *BaselineSystem
+	casLatencyMS int
 }
 
-func newMatrixBaselineSystem(ctx context.Context, system SystemName, dataset *MatrixDataset) (*matrixBaselineSystem, error) {
+func newMatrixBaselineSystem(ctx context.Context, system SystemName, dataset *MatrixDataset, casLatencyMS int) (*matrixBaselineSystem, error) {
 	if dataset == nil {
 		return nil, fmt.Errorf("dataset is nil")
 	}
@@ -206,7 +104,7 @@ func newMatrixBaselineSystem(ctx context.Context, system SystemName, dataset *Ma
 	if err != nil {
 		return nil, err
 	}
-	store := casmock.NewCAS()
+	store := newMatrixCAS(casLatencyMS)
 	files := make([]merkledagimport.File, 0, len(dataset.Files))
 	for _, file := range dataset.Files {
 		files = append(files, merkledagimport.File{
@@ -224,12 +122,15 @@ func newMatrixBaselineSystem(ctx context.Context, system SystemName, dataset *Ma
 	if err != nil {
 		return nil, fmt.Errorf("%s prepare matrix dataset: %w", system, err)
 	}
-	return &matrixBaselineSystem{inner: &BaselineSystem{
-		system: system,
-		store:  store,
-		dag:    dag,
-		root:   imported.Root,
-	}}, nil
+	return &matrixBaselineSystem{
+		inner: &BaselineSystem{
+			system: system,
+			store:  store,
+			dag:    dag,
+			root:   imported.Root,
+		},
+		casLatencyMS: casLatencyMS,
+	}, nil
 }
 
 func (s *matrixBaselineSystem) Name() SystemName {
@@ -246,28 +147,25 @@ func (s *matrixBaselineSystem) Measure(ctx context.Context, iteration int, datas
 		return nil, fmt.Errorf("baseline matrix system is nil")
 	}
 	result, err := s.inner.measureOperation(ctx, iteration, dataset.Name, operation{
-		kind:        op.Kind,
-		workload:    op.Workload,
-		path:        op.Path,
-		rangeHeader: op.RangeHeader,
+		kind:     op.Kind,
+		workload: op.Workload,
+		path:     op.Path,
 	})
 	if err != nil {
 		return nil, err
 	}
-	attachDatasetMetadata(result, dataset, op)
+	attachDatasetMetadata(result, dataset, op, s.casLatencyMS)
 	return result, nil
 }
 
-func proofStatsFor(pl *prooflist.ProofList) metrics.ProofStats {
-	if pl == nil {
-		return metrics.ProofStats{}
-	}
-	var recorder metrics.ProofStatsRecorder
-	recorder.RecordProofList(*pl)
-	return recorder.Snapshot()
+func newMatrixCAS(casLatencyMS int) *casmock.CAS {
+	return casmock.NewCAS(
+		casmock.WithGetLatency(time.Duration(casLatencyMS)*time.Millisecond),
+		casmock.WithJitter(0),
+	)
 }
 
-func attachDatasetMetadata(result *Result, dataset *MatrixDataset, op MatrixOperation) {
+func attachDatasetMetadata(result *Result, dataset *MatrixDataset, op MatrixOperation, casLatencyMS int) {
 	if result == nil || dataset == nil {
 		return
 	}
@@ -279,6 +177,7 @@ func attachDatasetMetadata(result *Result, dataset *MatrixDataset, op MatrixOper
 	result.LogicalPayloadBytes = dataset.LogicalPayloadBytes
 	result.SmallFileBytes = dataset.SmallFileBytes
 	result.LargeFileBytes = dataset.LargeFileBytes
+	result.CASLatencyMS = casLatencyMS
 }
 
 var _ MatrixSystem = (*matrixMALTSystem)(nil)

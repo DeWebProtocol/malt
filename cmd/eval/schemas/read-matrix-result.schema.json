@@ -12,6 +12,7 @@
     "iteration",
     "fixture",
     "path",
+    "cas_latency_ms",
     "elapsed_ns",
     "prooflist_step_count",
     "evidence_item_count",
@@ -27,11 +28,11 @@
     },
     "operation_kind": {
       "type": "string",
-      "enum": ["resolve_path", "content_full", "content_range"]
+      "enum": ["resolve_path"]
     },
     "workload": {
       "type": "string",
-      "enum": ["deep_path_lookup", "small_file_read", "large_file_range_read"],
+      "enum": ["deep_path_lookup"],
       "description": "Paper-facing read workload represented by this operation."
     },
     "iteration": {
@@ -77,6 +78,11 @@
     "path": {
       "type": "string",
       "minLength": 1
+    },
+    "cas_latency_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Configured fixed per-CAS-Get latency for this matrix point in milliseconds."
     },
     "range_header": {
       "type": "string",

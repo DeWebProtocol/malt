@@ -12,6 +12,7 @@
     "iteration",
     "fixture",
     "path",
+    "cas_latency_ms",
     "elapsed_ns",
     "prooflist_step_count",
     "evidence_item_count",
@@ -77,6 +78,11 @@
     "path": {
       "type": "string",
       "minLength": 1
+    },
+    "cas_latency_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Configured fixed per-CAS-Get latency for this read record in milliseconds; zero for runs without an explicit latency model."
     },
     "range_header": {
       "type": "string",

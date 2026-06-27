@@ -20,14 +20,12 @@ type Suite struct{}
 
 // Config controls the read_matrix suite.
 type Config struct {
-	Systems    []string `json:"systems"`
-	Dataset    string   `json:"dataset"`
-	FileCounts []int    `json:"file_counts"`
-	Depths     []int    `json:"depths"`
-	SmallBytes int      `json:"small_bytes"`
-	LargeBytes int      `json:"large_bytes"`
-	Range      string   `json:"range"`
-	Iterations int      `json:"iterations"`
+	Systems      []string `json:"systems"`
+	Dataset      string   `json:"dataset"`
+	Depths       []int    `json:"depths"`
+	CASLatencyMS []int    `json:"cas_latency_ms"`
+	SmallBytes   int      `json:"small_bytes"`
+	Iterations   int      `json:"iterations"`
 }
 
 // Name returns the fixed suite name expected by framework plans.
@@ -47,25 +45,22 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 		return err
 	}
 
-	total := cfg.Iterations * len(cfg.FileCounts) * len(systems) * len(cfg.Depths) * 3
+	total := cfg.Iterations * len(cfg.CASLatencyMS) * len(systems) * len(cfg.Depths)
 	count := 0
-	log("  systems=%v file_counts=%v depths=%v iterations=%d", systems, cfg.FileCounts, cfg.Depths, cfg.Iterations)
+	log("  systems=%v depths=%v cas_latency_ms=%v iterations=%d", systems, cfg.Depths, cfg.CASLatencyMS, cfg.Iterations)
 
-	for _, fileCount := range cfg.FileCounts {
-		dataset, err := readbench.NewMatrixDataset(readbench.MatrixDatasetConfig{
-			Name:       cfg.Dataset,
-			FileCount:  fileCount,
-			Depths:     cfg.Depths,
-			SmallBytes: cfg.SmallBytes,
-			LargeBytes: cfg.LargeBytes,
-		})
-		if err != nil {
-			return err
-		}
-
+	dataset, err := readbench.NewMatrixDataset(readbench.MatrixDatasetConfig{
+		Name:         cfg.Dataset,
+		Depths:       cfg.Depths,
+		PayloadBytes: cfg.SmallBytes,
+	})
+	if err != nil {
+		return err
+	}
+	for _, latencyMS := range cfg.CASLatencyMS {
 		materialized := make([]readbench.MatrixSystem, 0, len(systems))
 		for _, system := range systems {
-			benchSystem, err := readbench.NewMatrixSystem(ctx, system, dataset)
+			benchSystem, err := readbench.NewMatrixSystem(ctx, system, dataset, latencyMS)
 			if err != nil {
 				closeMatrixSystems(materialized)
 				return err
@@ -89,7 +84,7 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 	for iteration := 0; iteration < cfg.Iterations; iteration++ {
 		for _, system := range systems {
 			for _, depth := range cfg.Depths {
-				ops, err := readbench.MatrixOperations(dataset, depth, cfg.Range)
+				ops, err := readbench.MatrixOperations(dataset, depth)
 				if err != nil {
 					return err
 				}
@@ -103,8 +98,8 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 					}
 					*count = *count + 1
 					if *count%25 == 0 || *count == total {
-						log("  [%d/%d] dataset=%s iter=%d system=%s depth=%d workload=%s elapsed=%s",
-							*count, total, dataset.Name, iteration, system.Name(), depth, op.Workload,
+						log("  [%d/%d] dataset=%s iter=%d system=%s depth=%d cas_latency_ms=%d elapsed=%s",
+							*count, total, dataset.Name, iteration, system.Name(), depth, result.CASLatencyMS,
 							time.Duration(result.ElapsedNS).Round(time.Microsecond))
 					}
 				}
@@ -116,14 +111,12 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 
 func parseConfig(raw json.RawMessage) (Config, error) {
 	cfg := Config{
-		Systems:    []string{"maltflat", "merkledag", "hamt"},
-		Dataset:    "read-matrix",
-		FileCounts: []int{32, 128},
-		Depths:     []int{2, 4, 8},
-		SmallBytes: 1024,
-		LargeBytes: readbench.DefaultLargeFileBytes,
-		Range:      readbench.DefaultRangeHeader,
-		Iterations: 5,
+		Systems:      []string{"maltflat", "merkledag", "hamt"},
+		Dataset:      "read-matrix",
+		Depths:       []int{1, 2, 4, 8, 16},
+		CASLatencyMS: []int{0, 25, 50, 100, 200},
+		SmallBytes:   1024,
+		Iterations:   5,
 	}
 	if len(strings.TrimSpace(string(raw))) > 0 {
 		if err := configjson.Decode(raw, Name, &cfg); err != nil {
@@ -132,14 +125,6 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.Dataset) == "" {
 		return Config{}, fmt.Errorf("dataset must not be empty")
-	}
-	if len(cfg.FileCounts) == 0 {
-		return Config{}, fmt.Errorf("file_counts must not be empty")
-	}
-	for _, fileCount := range cfg.FileCounts {
-		if fileCount <= 0 {
-			return Config{}, fmt.Errorf("file_counts must be positive")
-		}
 	}
 	if len(cfg.Depths) == 0 {
 		return Config{}, fmt.Errorf("depths must not be empty")
@@ -152,14 +137,16 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 	if cfg.SmallBytes <= 0 {
 		return Config{}, fmt.Errorf("small_bytes must be positive")
 	}
-	if cfg.LargeBytes <= 0 {
-		return Config{}, fmt.Errorf("large_bytes must be positive")
+	if len(cfg.CASLatencyMS) == 0 {
+		return Config{}, fmt.Errorf("cas_latency_ms must not be empty")
+	}
+	for _, latencyMS := range cfg.CASLatencyMS {
+		if latencyMS < 0 {
+			return Config{}, fmt.Errorf("cas_latency_ms values must be non-negative")
+		}
 	}
 	if cfg.Iterations < 0 {
 		return Config{}, fmt.Errorf("iterations must be non-negative")
-	}
-	if strings.TrimSpace(cfg.Range) == "" {
-		cfg.Range = readbench.DefaultRangeHeader
 	}
 	return cfg, nil
 }

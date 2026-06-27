@@ -8,8 +8,8 @@ See also the evaluator code under `cmd/eval/`.
 
 `malt-eval` supports:
 
-- the `read_matrix` suite for paper-facing fair read comparisons over shared
-  logical datasets
+- the `read_matrix` suite for paper-facing fair resolve-path comparisons over
+  shared logical paths
 - `malt-eval read` for paper-facing read benchmark records
 - `malt-eval write` for write-trace replay records
 - `malt-eval run` for JSON run plans and durable run directories
@@ -45,8 +45,9 @@ Paper-facing reports should keep these dimensions separate:
 - payload bytes
 - read dataset metadata: `dataset`, `file_count`, `directory_count`,
   `path_count`, `path_depth`, and `logical_payload_bytes`
-- read workload labels: `deep_path_lookup`, `small_file_read`, and
-  `large_file_range_read`
+- read workload labels, with `deep_path_lookup` used for the main
+  path-depth matrix
+- configured per-CAS-Get latency (`cas_latency_ms`)
 - read-path latency (`elapsed_ns`)
 - MALT client ProofList verification latency (`verify_elapsed_ns`)
 - proof bytes
@@ -62,10 +63,23 @@ writer receipt counts as correctness proofs. Receipts and metrics are
 operational accounting unless tied to verifier evidence.
 
 The `read_matrix` suite is the main paper-facing read comparison. It builds one
-deterministic logical file tree per dataset point, materializes that same source
-dataset into MALT, IPLD UnixFS MerkleDAG, and IPLD UnixFS HAMT, then emits one
-record per system, dataset scale, path depth, workload, and iteration. Use it
-to compare how read latency changes as data scale and lookup depth increase.
+deterministic logical lookup tree, materializes the same paths as flat MALT
+authenticated arcs, IPLD UnixFS MerkleDAG, and IPLD UnixFS HAMT, then emits one
+`resolve_path` record per system, path depth, configured CAS latency, and
+iteration. Use it to compare whether lookup latency grows with path depth under
+warm per-block CAS latency models.
+
+Use `[0, 25, 50, 100, 200]` milliseconds as the primary
+`cas_latency_ms` sweep. These values model local execution, near-region managed
+CAS, low-latency public gateway access, typical public internet access, and
+poor/far public gateway access. A separate `2100` millisecond stress run can be
+used for cold IPFS DHT/provider-discovery behavior, but it should be reported
+separately from the main warm-CAS figure because it is not a normal per-block
+steady-state latency.
+
+The read matrix intentionally excludes full-content reads, range reads,
+list-backed payloads, and data-size/proof-generation sweeps. Dataset size effects
+on flat MALT proof generation belong in a separate microbenchmark.
 
 `malt-eval read` and the `read_query` suite remain useful for daemon-oriented
 end-to-end checks. They exercise the HTTP daemon path for MALT and local IPLD

@@ -91,6 +91,7 @@ type Result struct {
 	LogicalPayloadBytes int64                 `json:"logical_payload_bytes,omitempty"`
 	SmallFileBytes      int                   `json:"small_file_bytes,omitempty"`
 	LargeFileBytes      int                   `json:"large_file_bytes,omitempty"`
+	CASLatencyMS        int                   `json:"cas_latency_ms"`
 	Path                string                `json:"path"`
 	RangeHeader         string                `json:"range_header,omitempty"`
 	ElapsedNS           int64                 `json:"elapsed_ns"`

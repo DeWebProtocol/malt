@@ -274,7 +274,7 @@ examples/                      small runnable plans and examples
 MALT's evaluation framework compares authenticated object layouts along four
 primary dimensions:
 
-- traversal depth and shared-dataset read latency
+- path depth under fixed per-CAS-Get latency models
 - verifier-facing proof size
 - rewrite amplification under structural updates
 - materialized-index and storage overhead
@@ -287,8 +287,8 @@ primary dimensions:
 - `malt-eval write` replays Git traces and emits write-amplification JSONL
 - `malt-eval run` executes JSON plans and writes `manifest.json`, raw
   envelopes, and summary CSVs under `result/<run_id>`
-- `malt-eval run` plans can use the `read_matrix` suite for fair read
-  comparisons over the same logical source dataset materialized into MALT,
+- `malt-eval run` plans can use the `read_matrix` suite for fair resolve-path
+  comparisons over the same logical paths materialized as flat MALT arcs,
   MerkleDAG, and HAMT
 - `malt-eval schema` lists or prints embedded JSON schemas
 - `malt-eval summarize` regenerates summary CSVs from a result directory
