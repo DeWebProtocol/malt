@@ -281,8 +281,9 @@ primary dimensions:
 
 `malt-eval` supports both direct commands and a framework runner:
 
-- `malt-eval read` emits read-query JSONL records for MALT and IPLD UnixFS
-  baselines
+- `malt-eval read` emits paper-facing read benchmark records for MALT and IPLD
+  UnixFS baselines, including deep path lookup, small file read, and large file
+  range read workloads
 - `malt-eval write` replays Git traces and emits write-amplification JSONL
 - `malt-eval run` executes JSON plans and writes `manifest.json`, raw
   envelopes, and summary CSVs under `result/<run_id>`

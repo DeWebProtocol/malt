@@ -114,8 +114,8 @@ func TestRunAllowsBaselineOnlyWithoutDaemonArcs(t *testing.T) {
 	}
 
 	envelopes := readRawEnvelopes(t, env.RawPath(Name))
-	if len(envelopes) != 2 {
-		t.Fatalf("envelope count = %d, want 2", len(envelopes))
+	if len(envelopes) != 3 {
+		t.Fatalf("envelope count = %d, want 3", len(envelopes))
 	}
 	for _, envelope := range envelopes {
 		result := decodeEnvelopeResult(t, envelope)
@@ -181,8 +181,8 @@ func TestFrameworkRunWritesEnvelopedReadQueryRecords(t *testing.T) {
 	}
 
 	envelopes := readRawEnvelopes(t, filepath.Join(plan.ResultDir, "raw", "read_query.jsonl"))
-	if len(envelopes) != 2 {
-		t.Fatalf("envelope count = %d, want 2", len(envelopes))
+	if len(envelopes) != 3 {
+		t.Fatalf("envelope count = %d, want 3", len(envelopes))
 	}
 
 	for _, envelope := range envelopes {
@@ -206,9 +206,17 @@ func TestFrameworkRunWritesEnvelopedReadQueryRecords(t *testing.T) {
 			t.Fatalf("CAS metrics not preserved in envelope record: %+v", result.CAS)
 		}
 	}
-	rangeResult := decodeEnvelopeResult(t, envelopes[1])
+	smallReadResult := decodeEnvelopeResult(t, envelopes[1])
+	if smallReadResult.OperationKind != readbench.OperationContentFull {
+		t.Fatalf("second operation = %q, want content_full", smallReadResult.OperationKind)
+	}
+	if smallReadResult.Workload != readbench.WorkloadSmallFileRead {
+		t.Fatalf("second workload = %q, want small_file_read", smallReadResult.Workload)
+	}
+
+	rangeResult := decodeEnvelopeResult(t, envelopes[2])
 	if rangeResult.OperationKind != readbench.OperationContentRange {
-		t.Fatalf("second operation = %q, want content_range", rangeResult.OperationKind)
+		t.Fatalf("third operation = %q, want content_range", rangeResult.OperationKind)
 	}
 	if rangeResult.RangeHeader != "bytes=3-6" {
 		t.Fatalf("range header = %q, want bytes=3-6", rangeResult.RangeHeader)

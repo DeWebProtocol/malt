@@ -8,7 +8,7 @@ See also the evaluator code under `cmd/eval/`.
 
 `malt-eval` supports:
 
-- `malt-eval read` for read-query records
+- `malt-eval read` for paper-facing read benchmark records
 - `malt-eval write` for write-trace replay records
 - `malt-eval run` for JSON run plans and durable run directories
 - `malt-eval summarize` for summary CSV regeneration
@@ -40,6 +40,10 @@ normalization tests in the same PR.
 Paper-facing reports should keep these dimensions separate:
 
 - payload bytes
+- read workload labels: `deep_path_lookup`, `small_file_read`, and
+  `large_file_range_read`
+- read-path latency (`elapsed_ns`)
+- MALT client ProofList verification latency (`verify_elapsed_ns`)
 - proof bytes
 - ProofList step counts
 - comparable baseline evidence items, such as CAS block fetches
@@ -51,6 +55,13 @@ Paper-facing reports should keep these dimensions separate:
 Do not count unverifiable helper metadata as proof evidence. Do not present
 writer receipt counts as correctness proofs. Receipts and metrics are
 operational accounting unless tied to verifier evidence.
+
+`malt-eval read` and the `read_query` suite compare MALT against IPLD UnixFS
+MerkleDAG and HAMT-style baselines. Each iteration emits one record per system
+for deep path lookup, small file read, and large file range read. For MALT
+records, `verify_elapsed_ns` measures client-side verification of returned
+ProofList evidence; baseline records omit it and use CAS block fetches as the
+comparable evidence-item count.
 
 Historical smoke artifacts that predate the current schemas should be labeled
 legacy rather than silently mixed into paper-facing aggregates.

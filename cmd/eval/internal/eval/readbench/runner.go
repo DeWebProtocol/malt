@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	httpapi "github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/runtime/metrics"
 	daemonclient "github.com/dewebprotocol/malt/sdk/client"
 )
@@ -34,7 +36,17 @@ type OperationKind string
 
 const (
 	OperationResolvePath  OperationKind = "resolve_path"
+	OperationContentFull  OperationKind = "content_full"
 	OperationContentRange OperationKind = "content_range"
+)
+
+// WorkloadKind identifies the paper-facing read scenario measured by a record.
+type WorkloadKind string
+
+const (
+	WorkloadDeepPathLookup     WorkloadKind = "deep_path_lookup"
+	WorkloadSmallFileRead      WorkloadKind = "small_file_read"
+	WorkloadLargeFileRangeRead WorkloadKind = "large_file_range_read"
 )
 
 // FixtureConfig controls the deterministic fixture fixture.
@@ -68,11 +80,13 @@ type Fixture struct {
 type Result struct {
 	System             SystemName            `json:"system"`
 	OperationKind      OperationKind         `json:"operation_kind"`
+	Workload           WorkloadKind          `json:"workload"`
 	Iteration          int                   `json:"iteration"`
 	FixtureName        string                `json:"fixture"`
 	Path               string                `json:"path"`
 	RangeHeader        string                `json:"range_header,omitempty"`
 	ElapsedNS          int64                 `json:"elapsed_ns"`
+	VerifyElapsedNS    *int64                `json:"verify_elapsed_ns,omitempty"`
 	ContentBytes       *int                  `json:"content_bytes,omitempty"`
 	ProofListStepCount int                   `json:"prooflist_step_count"`
 	EvidenceItemCount  int                   `json:"evidence_item_count"`
@@ -84,6 +98,7 @@ type Result struct {
 
 type operation struct {
 	kind        OperationKind
+	workload    WorkloadKind
 	path        string
 	rangeHeader string
 }
@@ -187,8 +202,9 @@ func (r *Runner) RunJSONL(ctx context.Context, cfg RunConfig, w io.Writer) error
 	}
 
 	ops := []operation{
-		{kind: OperationResolvePath, path: fixture.SmallPath},
-		{kind: OperationContentRange, path: fixture.LargePath, rangeHeader: normalized.RangeHeader},
+		{kind: OperationResolvePath, workload: WorkloadDeepPathLookup, path: fixture.SmallPath},
+		{kind: OperationContentFull, workload: WorkloadSmallFileRead, path: fixture.SmallPath},
+		{kind: OperationContentRange, workload: WorkloadLargeFileRangeRead, path: fixture.LargePath, rangeHeader: normalized.RangeHeader},
 	}
 
 	enc := json.NewEncoder(w)
@@ -226,9 +242,11 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 
 	start := time.Now()
 	var (
-		target       string
-		contentBytes *int
-		stepCount    int
+		target          string
+		contentBytes    *int
+		stepCount       int
+		pl              *prooflist.ProofList
+		verifyElapsedNS *int64
 	)
 	switch op.kind {
 	case OperationResolvePath:
@@ -236,16 +254,20 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 		if err != nil {
 			return nil, fmt.Errorf("resolve path %q: %w", op.path, err)
 		}
+		if resp.ProofList == nil {
+			return nil, fmt.Errorf("resolve path %q returned no prooflist", op.path)
+		}
 		target = resp.Target
-		stepCount = len(resp.ProofList.Steps)
-	case OperationContentRange:
+		pl = resp.ProofList
+		stepCount = len(pl.Steps)
+	case OperationContentFull, OperationContentRange:
 		content, _, headers, err := r.client.GetContent(ctx, r.root, op.path, op.rangeHeader)
 		if err != nil {
-			return nil, fmt.Errorf("content range read %q: %w", op.path, err)
+			return nil, fmt.Errorf("%s read %q: %w", op.kind, op.path, err)
 		}
-		pl, err := daemonclient.ProofListFromHeaders(headers)
+		pl, err = daemonclient.ProofListFromHeaders(headers)
 		if err != nil {
-			return nil, fmt.Errorf("content range prooflist %q: %w", op.path, err)
+			return nil, fmt.Errorf("%s prooflist %q: %w", op.kind, op.path, err)
 		}
 		count := len(content)
 		contentBytes = &count
@@ -259,15 +281,21 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 	if err != nil {
 		return nil, fmt.Errorf("snapshot metrics after %s: %w", op.kind, err)
 	}
+	verifyElapsedNS, err = r.verifyProofList(ctx, op, pl)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Result{
 		System:             SystemMALTFlat,
 		OperationKind:      op.kind,
+		Workload:           op.workload,
 		Iteration:          iteration,
 		FixtureName:        fixture,
 		Path:               op.path,
 		RangeHeader:        op.rangeHeader,
 		ElapsedNS:          elapsed,
+		VerifyElapsedNS:    verifyElapsedNS,
 		ContentBytes:       contentBytes,
 		ProofListStepCount: stepCount,
 		EvidenceItemCount:  stepCount,
@@ -276,6 +304,22 @@ func (r *Runner) measureOperation(ctx context.Context, iteration int, fixture st
 		ArcTable:           snapshot.ArcTable,
 		Proof:              snapshot.Proof,
 	}, nil
+}
+
+func (r *Runner) verifyProofList(ctx context.Context, op operation, pl *prooflist.ProofList) (*int64, error) {
+	if pl == nil {
+		return nil, fmt.Errorf("%s prooflist is nil", op.kind)
+	}
+	start := time.Now()
+	resp, err := r.client.Verify(ctx, &httpapi.VerifyRequest{ProofList: *pl})
+	elapsed := positiveElapsedNS(start, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("%s verify prooflist %q: %w", op.kind, op.path, err)
+	}
+	if !resp.Valid {
+		return nil, fmt.Errorf("%s prooflist %q did not verify", op.kind, op.path)
+	}
+	return &elapsed, nil
 }
 
 func positiveElapsedNS(start, end time.Time) int64 {

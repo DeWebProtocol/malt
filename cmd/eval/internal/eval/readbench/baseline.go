@@ -117,7 +117,7 @@ func baselineDirLayout(system SystemName) (string, error) {
 
 // MeasureResolve measures a single resolve_path operation at the given path.
 func (b *BaselineSystem) MeasureResolve(ctx context.Context, iteration int, fixture string, filePath string) (*Result, error) {
-	op := operation{kind: OperationResolvePath, path: filePath}
+	op := operation{kind: OperationResolvePath, workload: WorkloadDeepPathLookup, path: filePath}
 	return b.measureOperation(ctx, iteration, fixture, op)
 }
 
@@ -139,7 +139,7 @@ func (b *BaselineSystem) measureOperation(ctx context.Context, iteration int, fi
 			return nil, fmt.Errorf("%s resolve path %q: %w", b.system, op.path, err)
 		}
 		target = node.Cid().String()
-	case OperationContentRange:
+	case OperationContentFull, OperationContentRange:
 		node, err := b.resolvePath(ctx, op.path)
 		if err != nil {
 			return nil, fmt.Errorf("%s resolve content path %q: %w", b.system, op.path, err)
@@ -158,6 +158,7 @@ func (b *BaselineSystem) measureOperation(ctx context.Context, iteration int, fi
 	return &Result{
 		System:            b.system,
 		OperationKind:     op.kind,
+		Workload:          op.workload,
 		Iteration:         iteration,
 		FixtureName:       fixture,
 		Path:              op.path,

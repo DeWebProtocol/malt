@@ -187,8 +187,8 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	}
 
 	got := decodeJSONLResults(t, out.Bytes())
-	if len(got) != 2 {
-		t.Fatalf("result count = %d, want 2\n%s", len(got), out.String())
+	if len(got) != 3 {
+		t.Fatalf("result count = %d, want 3\n%s", len(got), out.String())
 	}
 
 	proofRead := got[0]
@@ -197,6 +197,9 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	}
 	if proofRead.OperationKind != OperationResolvePath {
 		t.Fatalf("first operation = %q, want %q", proofRead.OperationKind, OperationResolvePath)
+	}
+	if proofRead.Workload != WorkloadDeepPathLookup {
+		t.Fatalf("first workload = %q, want %q", proofRead.Workload, WorkloadDeepPathLookup)
 	}
 	if proofRead.FixtureName != "readbench-run" || proofRead.Path != "dir00/dir01/small.txt" {
 		t.Fatalf("proof read target = fixture %q path %q", proofRead.FixtureName, proofRead.Path)
@@ -219,6 +222,9 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	if proofRead.Proof.ProofListCount != 1 {
 		t.Fatalf("prooflist proof metric count = %d, want 1", proofRead.Proof.ProofListCount)
 	}
+	if proofRead.VerifyElapsedNS == nil || *proofRead.VerifyElapsedNS <= 0 {
+		t.Fatalf("verify elapsed ns = %v, want positive MALT verification latency", proofRead.VerifyElapsedNS)
+	}
 	if proofRead.Proof.StepCount != uint64(proofRead.ProofListStepCount) {
 		t.Fatalf("prooflist proof metric steps = %d, result steps = %d", proofRead.Proof.StepCount, proofRead.ProofListStepCount)
 	}
@@ -226,12 +232,41 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 		t.Fatalf("prooflist arctable metrics should include reads: %+v", proofRead.ArcTable)
 	}
 
-	rangeRead := got[1]
+	smallRead := got[1]
+	if smallRead.System != SystemMALTFlat {
+		t.Fatalf("second system = %q, want %q", smallRead.System, SystemMALTFlat)
+	}
+	if smallRead.OperationKind != OperationContentFull {
+		t.Fatalf("second operation = %q, want %q", smallRead.OperationKind, OperationContentFull)
+	}
+	if smallRead.Workload != WorkloadSmallFileRead {
+		t.Fatalf("second workload = %q, want %q", smallRead.Workload, WorkloadSmallFileRead)
+	}
+	if smallRead.Path != "dir00/dir01/small.txt" {
+		t.Fatalf("small read path = %q", smallRead.Path)
+	}
+	if smallRead.RangeHeader != "" {
+		t.Fatalf("small read range header = %q, want empty", smallRead.RangeHeader)
+	}
+	if smallRead.ContentBytes == nil || *smallRead.ContentBytes != 48 {
+		t.Fatalf("small content bytes = %v, want 48", smallRead.ContentBytes)
+	}
+	if smallRead.ProofListStepCount == 0 {
+		t.Fatal("small read prooflist step count should be recorded")
+	}
+	if smallRead.VerifyElapsedNS == nil || *smallRead.VerifyElapsedNS <= 0 {
+		t.Fatalf("small read verify elapsed ns = %v, want positive", smallRead.VerifyElapsedNS)
+	}
+
+	rangeRead := got[2]
 	if rangeRead.System != SystemMALTFlat {
-		t.Fatalf("second system = %q, want %q", rangeRead.System, SystemMALTFlat)
+		t.Fatalf("third system = %q, want %q", rangeRead.System, SystemMALTFlat)
 	}
 	if rangeRead.OperationKind != OperationContentRange {
-		t.Fatalf("second operation = %q, want %q", rangeRead.OperationKind, OperationContentRange)
+		t.Fatalf("third operation = %q, want %q", rangeRead.OperationKind, OperationContentRange)
+	}
+	if rangeRead.Workload != WorkloadLargeFileRangeRead {
+		t.Fatalf("third workload = %q, want %q", rangeRead.Workload, WorkloadLargeFileRangeRead)
 	}
 	if rangeRead.Path != "dir00/dir01/large.bin" {
 		t.Fatalf("content range path = %q", rangeRead.Path)
@@ -250,6 +285,9 @@ func TestRunJSONLMeasuresResolveAndContentRange(t *testing.T) {
 	}
 	if rangeRead.Proof.ProofListCount != 1 {
 		t.Fatalf("content proof metric count = %d, want reset per operation", rangeRead.Proof.ProofListCount)
+	}
+	if rangeRead.VerifyElapsedNS == nil || *rangeRead.VerifyElapsedNS <= 0 {
+		t.Fatalf("range read verify elapsed ns = %v, want positive", rangeRead.VerifyElapsedNS)
 	}
 	if rangeRead.CAS.GetCount == 0 || rangeRead.CAS.BytesGet == 0 {
 		t.Fatalf("content range CAS metrics should include bytes fetched: %+v", rangeRead.CAS)
@@ -277,11 +315,11 @@ func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
 	}
 
 	got := decodeJSONLResults(t, out.Bytes())
-	if len(got) != 4 {
-		t.Fatalf("result count = %d, want 4\n%s", len(got), out.String())
+	if len(got) != 6 {
+		t.Fatalf("result count = %d, want 6\n%s", len(got), out.String())
 	}
 
-	wantSystems := []SystemName{SystemMerkleDAG, SystemMerkleDAG, SystemHAMT, SystemHAMT}
+	wantSystems := []SystemName{SystemMerkleDAG, SystemMerkleDAG, SystemMerkleDAG, SystemHAMT, SystemHAMT, SystemHAMT}
 	for i, result := range got {
 		if result.System != wantSystems[i] {
 			t.Fatalf("record %d system = %q, want %q", i, result.System, wantSystems[i])
@@ -304,12 +342,18 @@ func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
 		if result.Proof != (metrics.ProofStats{}) {
 			t.Fatalf("record %d proof metrics = %+v, want zero baseline metrics", i, result.Proof)
 		}
+		if result.VerifyElapsedNS != nil {
+			t.Fatalf("record %d verify elapsed ns = %v, want omitted for IPLD baseline", i, result.VerifyElapsedNS)
+		}
 	}
 
-	resolveRecords := []Result{got[0], got[2]}
+	resolveRecords := []Result{got[0], got[3]}
 	for _, result := range resolveRecords {
 		if result.OperationKind != OperationResolvePath {
 			t.Fatalf("%s first operation = %q, want %q", result.System, result.OperationKind, OperationResolvePath)
+		}
+		if result.Workload != WorkloadDeepPathLookup {
+			t.Fatalf("%s first workload = %q, want %q", result.System, result.Workload, WorkloadDeepPathLookup)
 		}
 		if result.Path != "dir00/dir01/small.txt" {
 			t.Fatalf("%s resolve path = %q", result.System, result.Path)
@@ -322,10 +366,32 @@ func TestRunJSONLEmitsUnixFSBaselines(t *testing.T) {
 		}
 	}
 
-	rangeRecords := []Result{got[1], got[3]}
+	smallReadRecords := []Result{got[1], got[4]}
+	for _, result := range smallReadRecords {
+		if result.OperationKind != OperationContentFull {
+			t.Fatalf("%s second operation = %q, want %q", result.System, result.OperationKind, OperationContentFull)
+		}
+		if result.Workload != WorkloadSmallFileRead {
+			t.Fatalf("%s second workload = %q, want %q", result.System, result.Workload, WorkloadSmallFileRead)
+		}
+		if result.Path != "dir00/dir01/small.txt" {
+			t.Fatalf("%s small read path = %q", result.System, result.Path)
+		}
+		if result.RangeHeader != "" {
+			t.Fatalf("%s small read range header = %q, want empty", result.System, result.RangeHeader)
+		}
+		if result.ContentBytes == nil || *result.ContentBytes != 48 {
+			t.Fatalf("%s small content bytes = %v, want 48", result.System, result.ContentBytes)
+		}
+	}
+
+	rangeRecords := []Result{got[2], got[5]}
 	for _, result := range rangeRecords {
 		if result.OperationKind != OperationContentRange {
-			t.Fatalf("%s second operation = %q, want %q", result.System, result.OperationKind, OperationContentRange)
+			t.Fatalf("%s third operation = %q, want %q", result.System, result.OperationKind, OperationContentRange)
+		}
+		if result.Workload != WorkloadLargeFileRangeRead {
+			t.Fatalf("%s third workload = %q, want %q", result.System, result.Workload, WorkloadLargeFileRangeRead)
 		}
 		if result.Path != "dir00/dir01/large.bin" {
 			t.Fatalf("%s range path = %q", result.System, result.Path)

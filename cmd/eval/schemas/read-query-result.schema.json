@@ -8,6 +8,7 @@
   "required": [
     "system",
     "operation_kind",
+    "workload",
     "iteration",
     "fixture",
     "path",
@@ -26,7 +27,12 @@
     },
     "operation_kind": {
       "type": "string",
-      "enum": ["resolve_path", "content_range"]
+      "enum": ["resolve_path", "content_full", "content_range"]
+    },
+    "workload": {
+      "type": "string",
+      "enum": ["deep_path_lookup", "small_file_read", "large_file_range_read"],
+      "description": "Paper-facing read workload represented by this operation."
     },
     "iteration": {
       "type": "integer",
@@ -47,6 +53,11 @@
     "elapsed_ns": {
       "type": "integer",
       "minimum": 0
+    },
+    "verify_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "MALT client verification latency for returned ProofList evidence; omitted for IPLD UnixFS baselines."
     },
     "content_bytes": {
       "type": "integer",

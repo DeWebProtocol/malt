@@ -94,6 +94,7 @@ func (s *LocalMALTSystem) MeasureResolve(ctx context.Context, iteration int, fix
 	return &Result{
 		System:             SystemMALTFlat,
 		OperationKind:      OperationResolvePath,
+		Workload:           WorkloadDeepPathLookup,
 		Iteration:          iteration,
 		FixtureName:        fixtureName,
 		Path:               filePath,
