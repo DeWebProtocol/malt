@@ -6,6 +6,7 @@ func TestNewRegistryRegistersProductionSuites(t *testing.T) {
 	registry := NewRegistry()
 	for _, name := range []string{
 		"write_trace",
+		"read_matrix",
 		"read_query",
 		"cas_model",
 		"proof_overhead",

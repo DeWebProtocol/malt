@@ -22,6 +22,7 @@ func Entries() []Entry {
 		{Name: "cas-model-result", Path: "cmd/eval/schemas/cas-model-result.schema.json"},
 		{Name: "common-record", Path: "cmd/eval/schemas/common-record.schema.json"},
 		{Name: "proof-overhead-result", Path: "cmd/eval/schemas/proof-overhead-result.schema.json"},
+		{Name: "read-matrix-result", Path: "cmd/eval/schemas/read-matrix-result.schema.json"},
 		{Name: "read-query-result", Path: "cmd/eval/schemas/read-query-result.schema.json"},
 		{Name: "readbench-result", Path: "cmd/eval/schemas/readbench-result.schema.json"},
 		{Name: "run-manifest", Path: "cmd/eval/schemas/run-manifest.schema.json"},

@@ -17,6 +17,7 @@ var metadataColumns = []string{"schema_version", "run_id", "suite", "emitted_at"
 
 var figureNames = map[string]string{
 	"write_trace":      "figure_write_trace.csv",
+	"read_matrix":      "figure_read_matrix.csv",
 	"read_query":       "figure_read_query.csv",
 	"cas_model":        "figure_cas_model.csv",
 	"proof_overhead":   "figure_proof.csv",

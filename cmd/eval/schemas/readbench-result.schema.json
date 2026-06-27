@@ -42,6 +42,38 @@
       "type": "string",
       "minLength": 1
     },
+    "dataset": {
+      "type": "string",
+      "description": "Logical source dataset shared by read_matrix systems."
+    },
+    "file_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "directory_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_depth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "logical_payload_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "small_file_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "large_file_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
     "path": {
       "type": "string",
       "minLength": 1

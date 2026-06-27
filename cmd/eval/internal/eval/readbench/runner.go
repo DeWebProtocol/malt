@@ -78,22 +78,30 @@ type Fixture struct {
 
 // Result is one benchmark JSONL record.
 type Result struct {
-	System             SystemName            `json:"system"`
-	OperationKind      OperationKind         `json:"operation_kind"`
-	Workload           WorkloadKind          `json:"workload"`
-	Iteration          int                   `json:"iteration"`
-	FixtureName        string                `json:"fixture"`
-	Path               string                `json:"path"`
-	RangeHeader        string                `json:"range_header,omitempty"`
-	ElapsedNS          int64                 `json:"elapsed_ns"`
-	VerifyElapsedNS    *int64                `json:"verify_elapsed_ns,omitempty"`
-	ContentBytes       *int                  `json:"content_bytes,omitempty"`
-	ProofListStepCount int                   `json:"prooflist_step_count"`
-	EvidenceItemCount  int                   `json:"evidence_item_count"`
-	Target             string                `json:"target,omitempty"`
-	CAS                metrics.CASStats      `json:"cas"`
-	ArcTable           metrics.ArcTableStats `json:"arctable"`
-	Proof              metrics.ProofStats    `json:"proof"`
+	System              SystemName            `json:"system"`
+	OperationKind       OperationKind         `json:"operation_kind"`
+	Workload            WorkloadKind          `json:"workload"`
+	Iteration           int                   `json:"iteration"`
+	FixtureName         string                `json:"fixture"`
+	DatasetName         string                `json:"dataset,omitempty"`
+	FileCount           int                   `json:"file_count,omitempty"`
+	DirectoryCount      int                   `json:"directory_count,omitempty"`
+	PathCount           int                   `json:"path_count,omitempty"`
+	PathDepth           int                   `json:"path_depth,omitempty"`
+	LogicalPayloadBytes int64                 `json:"logical_payload_bytes,omitempty"`
+	SmallFileBytes      int                   `json:"small_file_bytes,omitempty"`
+	LargeFileBytes      int                   `json:"large_file_bytes,omitempty"`
+	Path                string                `json:"path"`
+	RangeHeader         string                `json:"range_header,omitempty"`
+	ElapsedNS           int64                 `json:"elapsed_ns"`
+	VerifyElapsedNS     *int64                `json:"verify_elapsed_ns,omitempty"`
+	ContentBytes        *int                  `json:"content_bytes,omitempty"`
+	ProofListStepCount  int                   `json:"prooflist_step_count"`
+	EvidenceItemCount   int                   `json:"evidence_item_count"`
+	Target              string                `json:"target,omitempty"`
+	CAS                 metrics.CASStats      `json:"cas"`
+	ArcTable            metrics.ArcTableStats `json:"arctable"`
+	Proof               metrics.ProofStats    `json:"proof"`
 }
 
 type operation struct {

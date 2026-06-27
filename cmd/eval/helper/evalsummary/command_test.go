@@ -29,6 +29,7 @@ func TestCommandWritesKnownSuiteFilenames(t *testing.T) {
 
 	wantFiles := map[string]string{
 		"write_trace":      "figure_write_trace.csv",
+		"read_matrix":      "figure_read_matrix.csv",
 		"read_query":       "figure_read_query.csv",
 		"cas_model":        "figure_cas_model.csv",
 		"proof_overhead":   "figure_proof.csv",
