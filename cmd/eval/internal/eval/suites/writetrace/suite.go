@@ -34,23 +34,26 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) (e
 	}
 
 	log("  repositories=%d systems=%s", len(repositories), cfg.SystemsCSV())
+	var allRecords []replay.ResultRecord
 	for i, repo := range repositories {
 		log("  [%d/%d] repository=%s", i+1, len(repositories), repo.RepoID)
-		if err := runRepository(ctx, env, cfg, repo, i, len(repositories)); err != nil {
+		records, err := runRepository(ctx, env, cfg, repo, i, len(repositories))
+		if err != nil {
 			return err
 		}
+		allRecords = append(allRecords, records...)
 	}
-	return nil
+	return writeAggregateCSV(env, aggregateRecords(allRecords))
 }
 
-func runRepository(ctx context.Context, env framework.Env, cfg Config, repo RepositoryTarget, index, repoCount int) (err error) {
+func runRepository(ctx context.Context, env framework.Env, cfg Config, repo RepositoryTarget, index, repoCount int) (records []replay.ResultRecord, err error) {
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreMode(cfg.StoreMode),
 		Backend: evalstore.StoreBackend(cfg.StoreBackend),
 		RootDir: storeDirForRepository(env.WorkPath("write-stores"), repo, index, repoCount),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if closeErr := factory.Close(); err == nil {
@@ -60,7 +63,7 @@ func runRepository(ctx context.Context, env framework.Env, cfg Config, repo Repo
 
 	systems, err := evalwrite.BuildSystems(ctx, factory, cfg.SystemsCSV())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	source := gittrace.Source{
@@ -70,12 +73,14 @@ func runRepository(ctx context.Context, env framework.Env, cfg Config, repo Repo
 		Limit:        cfg.MaxCommitsPerRepo,
 		FirstParent:  cfg.FirstParent,
 	}
-	return source.Walk(ctx, func(commit replay.CommitMutation) error {
+	err = source.Walk(ctx, func(commit replay.CommitMutation) error {
 		commit.Repo = repo.RepoID
 		return replay.RunCommitRecords(ctx, commit, systems, func(record replay.ResultRecord) error {
+			records = append(records, record)
 			return env.WriteRecord(SuiteName, record)
 		})
 	})
+	return records, err
 }
 
 var _ framework.Suite = Suite{}

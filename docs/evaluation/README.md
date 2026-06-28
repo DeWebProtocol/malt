@@ -147,6 +147,34 @@ system. Use median latency for the main result and p95 to report tail behavior.
 For the MALT proof-cost figure, plot `median_prove_elapsed_ns` and
 `p95_prove_elapsed_ns` against `file_count` separately from read latency.
 
+The `write_trace` suite is the paper-facing write-amplification comparison. It
+extracts a first-parent Git commit trace and applies the same regular-file
+mutation stream to:
+
+- `maltflat`
+- `merkledag`
+- `hamt`
+
+Unlike early smoke versions, `write_trace` is incremental: after the initial
+root is materialized, each later commit applies only that commit's
+add/modify/delete/rename mutations. It does not rebuild the complete live
+snapshot for every commit. The raw record keeps cumulative storage accounting in
+`accounting` and the current commit's accounting delta in `accounting_delta`.
+Use `physical_persisted_bytes` and `logical_changed_payload_bytes` for per-commit
+write-amplification analysis. `write_amplification` is omitted for structural
+commits with zero logical changed payload bytes, such as pure delete or rename
+commits.
+
+The Merkle DAG and HAMT write baselines use raw file leaves so payload bytes and
+directory/index metadata bytes are visible as separate accounting categories.
+
+The suite writes raw records to `raw/write_trace.jsonl` and a repo/system
+aggregate to `aggregate/write_trace.csv`. Use
+`cumulative_write_amplification` as the main paper number and
+`median_write_amplification` / `p95_write_amplification` as supporting
+per-commit statistics. Small commits can have high per-commit ratios, so the
+cumulative ratio is the more stable repo-level comparison.
+
 `malt-eval read` and the `read_query` suite remain useful for daemon-oriented
 end-to-end checks. They exercise the HTTP daemon path for MALT and local IPLD
 baselines, so they should not be mixed into the same aggregate as `read_matrix`

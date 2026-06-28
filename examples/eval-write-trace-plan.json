@@ -6,7 +6,11 @@
     {
       "name": "write_trace",
       "config": {
-        "max_commits_per_repo": 200
+        "max_commits_per_repo": 200,
+        "systems": ["maltflat", "merkledag", "hamt"],
+        "store_mode": "isolated",
+        "store_backend": "memory",
+        "first_parent": true
       }
     }
   ]

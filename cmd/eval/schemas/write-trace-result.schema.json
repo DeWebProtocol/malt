@@ -13,7 +13,12 @@
     "live_stats",
     "mutations",
     "result",
-    "accounting"
+    "accounting",
+    "accounting_delta",
+    "logical_changed_payload_bytes",
+    "physical_persisted_bytes",
+    "physical_payload_bytes",
+    "physical_metadata_bytes"
   ],
   "properties": {
     "repo": {
@@ -52,6 +57,25 @@
     },
     "accounting": {
       "$ref": "#/$defs/accounting_snapshot"
+    },
+    "accounting_delta": {
+      "$ref": "#/$defs/accounting_snapshot"
+    },
+    "logical_changed_payload_bytes": {
+      "$ref": "#/$defs/counter"
+    },
+    "physical_persisted_bytes": {
+      "$ref": "#/$defs/counter"
+    },
+    "physical_payload_bytes": {
+      "$ref": "#/$defs/counter"
+    },
+    "physical_metadata_bytes": {
+      "$ref": "#/$defs/counter"
+    },
+    "write_amplification": {
+      "type": "number",
+      "minimum": 0
     }
   },
   "$defs": {
@@ -123,7 +147,8 @@
       "required": [
         "applied_mutations",
         "materialized_paths",
-        "accounting"
+        "accounting",
+        "accounting_delta"
       ],
       "properties": {
         "root": {
@@ -133,9 +158,12 @@
         "materialized_paths": { "$ref": "#/$defs/counter" },
         "materialization_strategy": {
           "type": "string",
-          "enum": ["live_snapshot_rebuild"]
+          "enum": ["live_snapshot_rebuild", "incremental_delta"]
         },
         "accounting": {
+          "$ref": "#/$defs/accounting_snapshot"
+        },
+        "accounting_delta": {
           "$ref": "#/$defs/accounting_snapshot"
         }
       }

@@ -207,6 +207,23 @@ func (l *Layout) AddFileStream(ctx context.Context, root cid.Cid, path string, r
 	return l.AddFile(ctx, root, path, data)
 }
 
+// RemovePath removes a file path from the UnixFS tree and prunes empty parent
+// directories created solely to hold that path.
+func (l *Layout) RemovePath(ctx context.Context, root cid.Cid, path string) (cid.Cid, error) {
+	if !root.Defined() {
+		return cid.Undef, fmt.Errorf("root is undefined")
+	}
+	segments, err := splitRelativePath(path)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if len(segments) == 0 {
+		return cid.Undef, fmt.Errorf("file path is empty")
+	}
+	nextRoot, _, err := l.removePath(ctx, root, segments)
+	return nextRoot, err
+}
+
 // Resolve traverses directory arcs and materializes the terminal @payload.
 func (l *Layout) Resolve(ctx context.Context, root cid.Cid, path string) (*Resolution, error) {
 	nodeRoot, steps, err := l.resolveNode(ctx, root, path)
@@ -398,6 +415,58 @@ func (l *Layout) addFile(ctx context.Context, root cid.Cid, segments []string, d
 		return cid.Undef, err
 	}
 	return l.setChild(ctx, root, key, oldChild, nextChild)
+}
+
+func (l *Layout) removePath(ctx context.Context, root cid.Cid, segments []string) (cid.Cid, bool, error) {
+	key := arcset.CanonicalizePath(segments[0])
+	child, _, ok, err := l.lookup(ctx, root, key)
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	if !ok {
+		return cid.Undef, false, fmt.Errorf("%w: %s", ErrNotFound, strings.Join(segments, "/"))
+	}
+
+	kind, err := l.nodeType(ctx, child)
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	if len(segments) == 1 {
+		if kind == typeDirectory {
+			return cid.Undef, false, fmt.Errorf("%w: %s", ErrNotFile, key.String())
+		}
+		nextRoot, err := l.deleteChild(ctx, root, key, child)
+		if err != nil {
+			return cid.Undef, false, err
+		}
+		empty, err := l.directoryIsEmpty(ctx, nextRoot)
+		if err != nil {
+			return cid.Undef, false, err
+		}
+		return nextRoot, empty, nil
+	}
+
+	if kind != typeDirectory {
+		return cid.Undef, false, fmt.Errorf("%w: %s", ErrNotDirectory, key.String())
+	}
+	nextChild, removeChild, err := l.removePath(ctx, child, segments[1:])
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	var nextRoot cid.Cid
+	if removeChild {
+		nextRoot, err = l.deleteChild(ctx, root, key, child)
+	} else {
+		nextRoot, err = l.maps.Update(ctx, l.namespace, root, key, child, nextChild)
+	}
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	empty, err := l.directoryIsEmpty(ctx, nextRoot)
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	return nextRoot, empty, nil
 }
 
 func (l *Layout) commitFile(ctx context.Context, data []byte) (cid.Cid, error) {
@@ -708,6 +777,14 @@ func (l *Layout) setChild(ctx context.Context, root cid.Cid, key arcset.Path, ol
 	return l.addDirectoryEntry(ctx, nextRoot, key.String())
 }
 
+func (l *Layout) deleteChild(ctx context.Context, root cid.Cid, key arcset.Path, oldValue cid.Cid) (cid.Cid, error) {
+	nextRoot, err := l.maps.Update(ctx, l.namespace, root, key, oldValue, cid.Undef)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.removeDirectoryEntry(ctx, nextRoot, key.String())
+}
+
 func (l *Layout) addDirectoryEntry(ctx context.Context, root cid.Cid, name string) (cid.Cid, error) {
 	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
 	if err != nil {
@@ -729,6 +806,52 @@ func (l *Layout) addDirectoryEntry(ctx context.Context, root cid.Cid, name strin
 		return cid.Undef, err
 	}
 	return l.set(ctx, root, payloadPath, payload, nextPayload)
+}
+
+func (l *Layout) removeDirectoryEntry(ctx context.Context, root cid.Cid, name string) (cid.Cid, error) {
+	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if !ok {
+		return cid.Undef, fmt.Errorf("%w: missing directory @payload", ErrNotFound)
+	}
+	entries, err := l.loadDirectoryManifest(ctx, payload)
+	if err != nil {
+		return cid.Undef, err
+	}
+	nextEntries := entries[:0]
+	removed := false
+	for _, entry := range entries {
+		if entry == name {
+			removed = true
+			continue
+		}
+		nextEntries = append(nextEntries, entry)
+	}
+	if !removed {
+		return root, nil
+	}
+	nextPayload, err := l.commitDirectoryManifest(ctx, nextEntries)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.maps.Update(ctx, l.namespace, root, payloadPath, payload, nextPayload)
+}
+
+func (l *Layout) directoryIsEmpty(ctx context.Context, root cid.Cid) (bool, error) {
+	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, fmt.Errorf("%w: missing directory @payload", ErrNotFound)
+	}
+	entries, err := l.loadDirectoryManifest(ctx, payload)
+	if err != nil {
+		return false, err
+	}
+	return len(entries) == 0, nil
 }
 
 func (l *Layout) commitDirectoryManifest(ctx context.Context, entries []string) (cid.Cid, error) {

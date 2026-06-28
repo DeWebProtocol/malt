@@ -3,6 +3,7 @@ package writetrace_test
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"net/url"
 	"os"
@@ -230,12 +231,27 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 		if record.Commit == "" {
 			t.Fatalf("record %d commit is empty", i)
 		}
-		if record.Result.MaterializationStrategy != maltflat.MaterializationStrategyLiveSnapshotRebuild {
-			t.Fatalf("record %d materialization strategy = %q, want %q", i, record.Result.MaterializationStrategy, maltflat.MaterializationStrategyLiveSnapshotRebuild)
+		if record.Result.MaterializationStrategy != maltflat.MaterializationStrategyIncrementalDelta {
+			t.Fatalf("record %d materialization strategy = %q, want %q", i, record.Result.MaterializationStrategy, maltflat.MaterializationStrategyIncrementalDelta)
 		}
 		if record.Result.Accounting.Categories == nil || record.Accounting.Categories == nil {
 			t.Fatalf("record %d accounting missing: %+v", i, record)
 		}
+		if record.AccountingDelta.Categories == nil {
+			t.Fatalf("record %d accounting delta missing: %+v", i, record)
+		}
+	}
+
+	aggregateRows := readAggregateRows(t, filepath.Join(resultDir, "aggregate", "write_trace.csv"))
+	if len(aggregateRows) != 1 {
+		t.Fatalf("aggregate row count = %d, want 1", len(aggregateRows))
+	}
+	row := aggregateRows[0]
+	if row["repo"] != "github.com/ipfs/kubo" || row["system"] != "maltflat" || row["commits"] != "3" {
+		t.Fatalf("aggregate identity = %+v, want repo/system/3 commits", row)
+	}
+	if row["logical_changed_payload_bytes"] == "" || row["physical_persisted_bytes"] == "" || row["cumulative_write_amplification"] == "" {
+		t.Fatalf("aggregate missing write amplification fields: %+v", row)
 	}
 }
 
@@ -366,6 +382,34 @@ func readWriteTraceEnvelopes(t *testing.T, path string) []framework.RecordEnvelo
 		t.Fatalf("scan envelopes: %v", err)
 	}
 	return envelopes
+}
+
+func readAggregateRows(t *testing.T, path string) []map[string]string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open aggregate %s: %v", path, err)
+	}
+	defer f.Close()
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("read aggregate csv: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("aggregate csv missing header")
+	}
+	header := rows[0]
+	out := make([]map[string]string, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		mapped := make(map[string]string, len(header))
+		for i, key := range header {
+			if i < len(row) {
+				mapped[key] = row[i]
+			}
+		}
+		out = append(out, mapped)
+	}
+	return out
 }
 
 func writeFile(t *testing.T, repo, rel, content string) {

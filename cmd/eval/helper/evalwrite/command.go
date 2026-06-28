@@ -132,8 +132,9 @@ func BuildSystems(ctx context.Context, factory *evalstore.Factory, csv string) (
 			systems = append(systems, adapter)
 		case "merkledag":
 			systems = append(systems, merkledag.New(system, merkledag.Options{
-				Name:      "merkledag",
-				DirLayout: merkledagimport.DirLayoutBasic,
+				Name:        "merkledag",
+				DirLayout:   merkledagimport.DirLayoutBasic,
+				RawFileLeaf: true,
 			}))
 		case "hamt":
 			systems = append(systems, hamt.New(system))

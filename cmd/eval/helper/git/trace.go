@@ -104,7 +104,7 @@ func CloneForReplay(ctx context.Context, repoURL, baseDir string) (string, error
 }
 
 func (s Source) revList(ctx context.Context, repo, ref string) ([]string, error) {
-	args := revListArgs(ref, s.Limit, s.FirstParent)
+	args := revListArgs(ref, s.FirstParent)
 	out, err := gitOutput(ctx, repo, args...)
 	if err != nil {
 		return nil, err
@@ -113,16 +113,16 @@ func (s Source) revList(ctx context.Context, repo, ref string) ([]string, error)
 	if len(lines) == 0 {
 		return nil, fmt.Errorf("no commits found for ref %q", ref)
 	}
+	if s.Limit > 0 && len(lines) > s.Limit {
+		lines = lines[:s.Limit]
+	}
 	return lines, nil
 }
 
-func revListArgs(ref string, limit int, firstParent bool) []string {
+func revListArgs(ref string, firstParent bool) []string {
 	args := []string{"rev-list", "--topo-order", "--reverse"}
 	if firstParent {
 		args = append(args, "--first-parent")
-	}
-	if limit > 0 {
-		args = append(args, "-n", strconv.Itoa(limit))
 	}
 	return append(args, ref)
 }

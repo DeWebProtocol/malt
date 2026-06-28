@@ -76,20 +76,27 @@ type ApplyResult struct {
 	MaterializedPaths       int                `json:"materialized_paths"`
 	MaterializationStrategy string             `json:"materialization_strategy,omitempty"`
 	Accounting              evalstore.Snapshot `json:"accounting"`
+	AccountingDelta         evalstore.Snapshot `json:"accounting_delta"`
 }
 
 // ResultRecord is one JSONL measurement point for one system at one commit.
 type ResultRecord struct {
-	Repo        string             `json:"repo"`
-	System      string             `json:"system"`
-	Commit      string             `json:"commit"`
-	Parent      string             `json:"parent,omitempty"`
-	Index       int                `json:"index"`
-	LiveStats   LiveStats          `json:"live_stats"`
-	MutationSet []FileMutation     `json:"mutations"`
-	Skipped     SkipStats          `json:"skipped,omitempty"`
-	Result      ApplyResult        `json:"result"`
-	Accounting  evalstore.Snapshot `json:"accounting"`
+	Repo                       string             `json:"repo"`
+	System                     string             `json:"system"`
+	Commit                     string             `json:"commit"`
+	Parent                     string             `json:"parent,omitempty"`
+	Index                      int                `json:"index"`
+	LiveStats                  LiveStats          `json:"live_stats"`
+	MutationSet                []FileMutation     `json:"mutations"`
+	Skipped                    SkipStats          `json:"skipped,omitempty"`
+	Result                     ApplyResult        `json:"result"`
+	Accounting                 evalstore.Snapshot `json:"accounting"`
+	AccountingDelta            evalstore.Snapshot `json:"accounting_delta"`
+	LogicalChangedPayloadBytes int64              `json:"logical_changed_payload_bytes"`
+	PhysicalPersistedBytes     uint64             `json:"physical_persisted_bytes"`
+	PhysicalPayloadBytes       uint64             `json:"physical_payload_bytes"`
+	PhysicalMetadataBytes      uint64             `json:"physical_metadata_bytes"`
+	WriteAmplification         *float64           `json:"write_amplification,omitempty"`
 }
 
 // SystemAdapter consumes source-domain commit mutations for one representation.

@@ -130,3 +130,66 @@ func TestRunCommitRecordsEmitsStructuredRecords(t *testing.T) {
 		t.Fatalf("top-level accounting = %+v, want result accounting %+v", record.Accounting, record.Result.Accounting)
 	}
 }
+
+type accountingAdapter struct {
+	name string
+}
+
+func (a accountingAdapter) Name() string {
+	return a.name
+}
+
+func (a accountingAdapter) Apply(context.Context, replay.CommitMutation) (replay.ApplyResult, error) {
+	accounting := evalstore.Snapshot{
+		Total: evalstore.Counter{NewPersistedBytes: 30},
+		Categories: map[evalstore.Category]evalstore.Counter{
+			evalstore.CategoryCASPayload: {NewPersistedBytes: 10},
+			evalstore.CategoryArcTable:   {NewPersistedBytes: 20},
+		},
+	}
+	return replay.ApplyResult{
+		Root:             a.name + "-root",
+		AppliedMutations: 1,
+		Accounting:       accounting,
+		AccountingDelta:  accounting,
+	}, nil
+}
+
+func TestRunCommitRecordsReportsWriteAmplificationInputs(t *testing.T) {
+	ctx := context.Background()
+	commit := replay.CommitMutation{
+		Repo:   "example",
+		Commit: "c1",
+		Index:  0,
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationModify, Path: "a.txt", Size: 10},
+			{Kind: replay.MutationRename, OldPath: "b.txt", Path: "c.txt", Size: 99},
+			{Kind: replay.MutationDelete, Path: "d.txt"},
+		},
+	}
+
+	var records []replay.ResultRecord
+	err := replay.RunCommitRecords(ctx, commit, []replay.SystemAdapter{
+		accountingAdapter{name: "maltflat"},
+	}, func(record replay.ResultRecord) error {
+		records = append(records, record)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunCommitRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	record := records[0]
+	if record.LogicalChangedPayloadBytes != 10 {
+		t.Fatalf("logical changed payload bytes = %d, want modify bytes only", record.LogicalChangedPayloadBytes)
+	}
+	if record.PhysicalPersistedBytes != 30 || record.PhysicalPayloadBytes != 10 || record.PhysicalMetadataBytes != 20 {
+		t.Fatalf("physical byte split = total %d payload %d metadata %d, want 30/10/20",
+			record.PhysicalPersistedBytes, record.PhysicalPayloadBytes, record.PhysicalMetadataBytes)
+	}
+	if record.WriteAmplification == nil || *record.WriteAmplification != 3 {
+		t.Fatalf("write amplification = %v, want 3", record.WriteAmplification)
+	}
+}

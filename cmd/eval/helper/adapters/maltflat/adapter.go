@@ -3,8 +3,8 @@ package maltflat
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
@@ -40,7 +40,10 @@ const (
 	CommitmentBackendKZG CommitmentBackend = "kzg"
 )
 
-const MaterializationStrategyLiveSnapshotRebuild = "live_snapshot_rebuild"
+const (
+	MaterializationStrategyLiveSnapshotRebuild = "live_snapshot_rebuild"
+	MaterializationStrategyIncrementalDelta    = "incremental_delta"
+)
 
 // Options configures the MALT-flat adapter.
 type Options struct {
@@ -54,6 +57,7 @@ type Options struct {
 type Adapter struct {
 	system *evalstore.System
 	layout *unixfs.Layout
+	root   cid.Cid
 }
 
 // DefaultOptions returns the paper-aligned MALT-flat evaluation configuration.
@@ -108,44 +112,84 @@ func (a *Adapter) Name() string {
 	return "maltflat"
 }
 
-// Apply materializes the object-backed live snapshot for this commit.
-// Rebuilding from the live trace keeps delete/rename semantics correct even
-// before the UnixFS layout exposes a delete primitive.
+// Apply incrementally applies the commit mutation set to the previous root.
 func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (replay.ApplyResult, error) {
 	if commit.Snapshot == nil {
 		return replay.ApplyResult{}, fmt.Errorf("snapshot reader is nil")
 	}
-	files := append([]replay.LiveFile(nil), commit.LiveFiles...)
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-
-	root := cid.Undef
-	var err error
-	if len(files) == 0 {
+	before := a.system.Meter.Snapshot()
+	root := a.root
+	if !root.Defined() {
+		var err error
 		root, err = a.layout.EmptyDirectory(ctx)
 		if err != nil {
 			return replay.ApplyResult{}, err
 		}
 	}
-	for _, file := range files {
-		data, err := commit.Snapshot.ReadBlob(ctx, file.Hash)
-		if err != nil {
-			return replay.ApplyResult{}, fmt.Errorf("read blob for %s: %w", file.Path, err)
+	materializedPaths := 0
+	for _, mutation := range commit.Mutations {
+		var err error
+		switch mutation.Kind {
+		case replay.MutationAdd, replay.MutationModify:
+			if mutationHasBlob(mutation) {
+				root, err = a.addMutationFile(ctx, root, commit.Snapshot, mutation)
+				materializedPaths++
+			}
+		case replay.MutationDelete:
+			root, err = a.removeMutationPath(ctx, root, mutation.Path)
+		case replay.MutationRename:
+			root, err = a.removeMutationPath(ctx, root, mutation.OldPath)
+			if err == nil && mutationHasBlob(mutation) {
+				root, err = a.addMutationFile(ctx, root, commit.Snapshot, mutation)
+				materializedPaths++
+			}
+		default:
+			if mutationHasBlob(mutation) {
+				root, err = a.addMutationFile(ctx, root, commit.Snapshot, mutation)
+				materializedPaths++
+			}
 		}
-		root, err = a.layout.AddFile(ctx, root, file.Path, data)
 		if err != nil {
-			return replay.ApplyResult{}, fmt.Errorf("materialize %s: %w", file.Path, err)
+			return replay.ApplyResult{}, fmt.Errorf("apply %s %s: %w", mutation.Kind, mutation.Path, err)
 		}
 	}
-	if root.Defined() {
-		a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(root.String()))
-	}
+	a.root = root
+	a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(root.String()))
+	after := a.system.Meter.Snapshot()
 	return replay.ApplyResult{
 		Root:                    root.String(),
 		AppliedMutations:        len(commit.Mutations),
-		MaterializedPaths:       len(files),
-		MaterializationStrategy: MaterializationStrategyLiveSnapshotRebuild,
-		Accounting:              a.system.Meter.Snapshot(),
+		MaterializedPaths:       materializedPaths,
+		MaterializationStrategy: MaterializationStrategyIncrementalDelta,
+		Accounting:              after,
+		AccountingDelta:         evalstore.Delta(after, before),
 	}, nil
+}
+
+func (a *Adapter) addMutationFile(ctx context.Context, root cid.Cid, snapshot replay.SnapshotReader, mutation replay.FileMutation) (cid.Cid, error) {
+	if strings.TrimSpace(mutation.Hash) == "" {
+		return cid.Undef, fmt.Errorf("blob hash is empty")
+	}
+	data, err := snapshot.ReadBlob(ctx, mutation.Hash)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("read blob: %w", err)
+	}
+	return a.layout.AddFile(ctx, root, mutation.Path, data)
+}
+
+func mutationHasBlob(mutation replay.FileMutation) bool {
+	return strings.TrimSpace(mutation.Hash) != ""
+}
+
+func (a *Adapter) removeMutationPath(ctx context.Context, root cid.Cid, path string) (cid.Cid, error) {
+	nextRoot, err := a.layout.RemovePath(ctx, root, path)
+	if err != nil {
+		if errors.Is(err, unixfs.ErrNotFound) {
+			return root, nil
+		}
+		return cid.Undef, err
+	}
+	return nextRoot, nil
 }
 
 var _ replay.SystemAdapter = (*Adapter)(nil)

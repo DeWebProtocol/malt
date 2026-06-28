@@ -3,9 +3,11 @@ package merkledag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
-	"sort"
+	"os"
+	"strings"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
@@ -26,6 +28,7 @@ type Options struct {
 type Adapter struct {
 	system *evalstore.System
 	opts   Options
+	editor *merkledagimport.Editor
 }
 
 // New creates a Merkle DAG adapter.
@@ -46,7 +49,7 @@ func (a *Adapter) Name() string {
 	return "merkledag"
 }
 
-// Apply imports only the files listed in the trace's live snapshot.
+// Apply incrementally applies only the commit mutation set.
 func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (replay.ApplyResult, error) {
 	if a.system == nil {
 		return replay.ApplyResult{}, fmt.Errorf("system store is nil")
@@ -54,38 +57,84 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 	if commit.Snapshot == nil {
 		return replay.ApplyResult{}, fmt.Errorf("snapshot reader is nil")
 	}
-	files := append([]replay.LiveFile(nil), commit.LiveFiles...)
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	importFiles := make([]merkledagimport.File, 0, len(files))
-	for _, file := range files {
-		data, err := commit.Snapshot.ReadBlob(ctx, file.Hash)
-		if err != nil {
-			return replay.ApplyResult{}, fmt.Errorf("read blob for %s: %w", file.Path, err)
-		}
-		importFiles = append(importFiles, merkledagimport.File{
-			Path: file.Path,
-			Data: data,
-			Mode: gitFileMode(file.Mode),
+	if a.editor == nil {
+		editor, err := merkledagimport.NewEditor(a.system.CAS, merkledagimport.Options{
+			Model:       merkledagimport.ModelUnixFS,
+			FileLayout:  a.opts.FileLayout,
+			DirLayout:   a.opts.DirLayout,
+			ChunkSize:   a.opts.ChunkSize,
+			HAMTFanout:  a.opts.HAMTFanout,
+			RawFileLeaf: a.opts.RawFileLeaf,
 		})
+		if err != nil {
+			return replay.ApplyResult{}, err
+		}
+		a.editor = editor
 	}
-	result, err := merkledagimport.ImportFiles(ctx, a.system.CAS, importFiles, merkledagimport.Options{
-		Model:       merkledagimport.ModelUnixFS,
-		FileLayout:  a.opts.FileLayout,
-		DirLayout:   a.opts.DirLayout,
-		ChunkSize:   a.opts.ChunkSize,
-		HAMTFanout:  a.opts.HAMTFanout,
-		RawFileLeaf: a.opts.RawFileLeaf,
-	})
-	if err != nil {
-		return replay.ApplyResult{}, err
+	before := a.system.Meter.Snapshot()
+	materializedPaths := 0
+	for _, mutation := range commit.Mutations {
+		var err error
+		switch mutation.Kind {
+		case replay.MutationAdd, replay.MutationModify:
+			if mutationHasBlob(mutation) {
+				err = a.putMutationFile(ctx, commit.Snapshot, mutation)
+				materializedPaths++
+			}
+		case replay.MutationDelete:
+			err = a.removeMutationPath(ctx, mutation.Path)
+		case replay.MutationRename:
+			err = a.removeMutationPath(ctx, mutation.OldPath)
+			if err == nil && mutationHasBlob(mutation) {
+				err = a.putMutationFile(ctx, commit.Snapshot, mutation)
+				materializedPaths++
+			}
+		default:
+			if mutationHasBlob(mutation) {
+				err = a.putMutationFile(ctx, commit.Snapshot, mutation)
+				materializedPaths++
+			}
+		}
+		if err != nil {
+			return replay.ApplyResult{}, fmt.Errorf("apply %s %s: %w", mutation.Kind, mutation.Path, err)
+		}
 	}
-	a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(result.Root))
+	root := a.editor.Root()
+	a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(root))
+	after := a.system.Meter.Snapshot()
 	return replay.ApplyResult{
-		Root:              result.Root,
-		AppliedMutations:  len(commit.Mutations),
-		MaterializedPaths: len(commit.LiveFiles),
-		Accounting:        a.system.Meter.Snapshot(),
+		Root:                    root,
+		AppliedMutations:        len(commit.Mutations),
+		MaterializedPaths:       materializedPaths,
+		MaterializationStrategy: "incremental_delta",
+		Accounting:              after,
+		AccountingDelta:         evalstore.Delta(after, before),
 	}, nil
+}
+
+func (a *Adapter) putMutationFile(ctx context.Context, snapshot replay.SnapshotReader, mutation replay.FileMutation) error {
+	if strings.TrimSpace(mutation.Hash) == "" {
+		return fmt.Errorf("blob hash is empty")
+	}
+	data, err := snapshot.ReadBlob(ctx, mutation.Hash)
+	if err != nil {
+		return fmt.Errorf("read blob: %w", err)
+	}
+	return a.editor.PutFile(ctx, mutation.Path, data, gitFileMode(mutation.Mode))
+}
+
+func mutationHasBlob(mutation replay.FileMutation) bool {
+	return strings.TrimSpace(mutation.Hash) != ""
+}
+
+func (a *Adapter) removeMutationPath(ctx context.Context, path string) error {
+	if err := a.editor.RemoveFile(ctx, path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func gitFileMode(mode string) fs.FileMode {

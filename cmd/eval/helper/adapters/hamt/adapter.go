@@ -10,7 +10,8 @@ import (
 // New creates an IPLD UnixFS + HAMT adapter.
 func New(system *evalstore.System) *merkledag.Adapter {
 	return merkledag.New(system, merkledag.Options{
-		Name:      "hamt",
-		DirLayout: merkledagimport.DirLayoutHAMT,
+		Name:        "hamt",
+		DirLayout:   merkledagimport.DirLayoutHAMT,
+		RawFileLeaf: true,
 	})
 }

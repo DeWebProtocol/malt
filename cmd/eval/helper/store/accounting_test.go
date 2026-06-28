@@ -116,6 +116,63 @@ func TestMeteredKVCountsEveryChangedRecord(t *testing.T) {
 	}
 }
 
+func TestSnapshotDeltaSubtractsCountersByCategory(t *testing.T) {
+	before := evalstore.Snapshot{
+		Total: evalstore.Counter{
+			AttemptedPutCount: 5,
+			AttemptedPutBytes: 50,
+			NewObjectCount:    3,
+			NewPersistedBytes: 30,
+		},
+		Categories: map[evalstore.Category]evalstore.Counter{
+			evalstore.CategoryCASPayload: {
+				AttemptedPutCount: 2,
+				AttemptedPutBytes: 20,
+				NewObjectCount:    1,
+				NewPersistedBytes: 10,
+			},
+		},
+	}
+	after := evalstore.Snapshot{
+		Total: evalstore.Counter{
+			AttemptedPutCount: 8,
+			AttemptedPutBytes: 90,
+			NewObjectCount:    5,
+			NewPersistedBytes: 70,
+		},
+		Categories: map[evalstore.Category]evalstore.Counter{
+			evalstore.CategoryCASPayload: {
+				AttemptedPutCount: 3,
+				AttemptedPutBytes: 25,
+				NewObjectCount:    1,
+				NewPersistedBytes: 10,
+			},
+			evalstore.CategoryArcTable: {
+				AttemptedPutCount: 2,
+				AttemptedPutBytes: 35,
+				NewObjectCount:    2,
+				NewPersistedBytes: 35,
+			},
+		},
+	}
+
+	delta := evalstore.Delta(after, before)
+
+	if delta.Total.AttemptedPutCount != 3 || delta.Total.AttemptedPutBytes != 40 ||
+		delta.Total.NewObjectCount != 2 || delta.Total.NewPersistedBytes != 40 {
+		t.Fatalf("total delta = %+v, want count/bytes 3/40 and new 2/40", delta.Total)
+	}
+	payload := delta.Categories[evalstore.CategoryCASPayload]
+	if payload.AttemptedPutCount != 1 || payload.AttemptedPutBytes != 5 ||
+		payload.NewObjectCount != 0 || payload.NewPersistedBytes != 0 {
+		t.Fatalf("payload delta = %+v, want attempted 1/5 and no new persisted bytes", payload)
+	}
+	arctable := delta.Categories[evalstore.CategoryArcTable]
+	if arctable.AttemptedPutCount != 2 || arctable.NewPersistedBytes != 35 {
+		t.Fatalf("arctable delta = %+v, want new category delta", arctable)
+	}
+}
+
 func TestMeteredCASPutBatchReportsStoredAlreadyPresentAndDuplicate(t *testing.T) {
 	ctx := context.Background()
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{

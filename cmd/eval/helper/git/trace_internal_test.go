@@ -6,7 +6,7 @@ import (
 )
 
 func TestRevListArgsUseTopoOrder(t *testing.T) {
-	args := revListArgs("HEAD", 10, true)
+	args := revListArgs("HEAD", true)
 	if !slices.Contains(args, "--topo-order") {
 		t.Fatalf("rev-list args = %v, want --topo-order", args)
 	}

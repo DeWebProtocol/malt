@@ -56,8 +56,132 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	if rootHead.NewPersistedBytes != uint64(len(result.Root)) {
 		t.Fatalf("root/head bytes = %d, want emitted root string length %d", rootHead.NewPersistedBytes, len(result.Root))
 	}
-	if result.MaterializationStrategy != maltflat.MaterializationStrategyLiveSnapshotRebuild {
-		t.Fatalf("materialization strategy = %q, want %q", result.MaterializationStrategy, maltflat.MaterializationStrategyLiveSnapshotRebuild)
+	if result.MaterializationStrategy != maltflat.MaterializationStrategyIncrementalDelta {
+		t.Fatalf("materialization strategy = %q, want %q", result.MaterializationStrategy, maltflat.MaterializationStrategyIncrementalDelta)
+	}
+	if result.AccountingDelta.Categories[evalstore.CategoryArcTable].NewObjectCount == 0 {
+		t.Fatal("expected MALT-flat to report per-commit ArcTable delta")
+	}
+}
+
+func TestAdapterAppliesOnlyChangedMutationBlobs(t *testing.T) {
+	ctx := context.Background()
+
+	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
+		Mode:    evalstore.StoreModeIsolated,
+		Backend: evalstore.StoreBackendMemory,
+	})
+	if err != nil {
+		t.Fatalf("NewFactory: %v", err)
+	}
+	t.Cleanup(func() { _ = factory.Close() })
+	system, err := factory.NewSystem(ctx, "maltflat")
+	if err != nil {
+		t.Fatalf("NewSystem: %v", err)
+	}
+	adapter, err := maltflat.New(system, maltflat.Options{Namespace: "test-maltflat-delta", ChunkSize: 4})
+	if err != nil {
+		t.Fatalf("New adapter: %v", err)
+	}
+
+	_, err = adapter.Apply(ctx, replay.CommitMutation{
+		Repo:     "repo",
+		Commit:   "c1",
+		Snapshot: fakeSnapshot{"a-v1": []byte("a1"), "b-v1": []byte("b1")},
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationAdd, Path: "a.txt", Size: int64(len("a1")), Hash: "a-v1"},
+			{Kind: replay.MutationAdd, Path: "b.txt", Size: int64(len("b1")), Hash: "b-v1"},
+		},
+		LiveFiles: []replay.LiveFile{
+			{Path: "a.txt", Size: int64(len("a1")), Hash: "a-v1"},
+			{Path: "b.txt", Size: int64(len("b1")), Hash: "b-v1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply initial commit: %v", err)
+	}
+
+	result, err := adapter.Apply(ctx, replay.CommitMutation{
+		Repo:     "repo",
+		Commit:   "c2",
+		Parent:   "c1",
+		Snapshot: fakeSnapshot{"a-v2": []byte("a2")},
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationModify, Path: "a.txt", Size: int64(len("a2")), Hash: "a-v2"},
+		},
+		LiveFiles: []replay.LiveFile{
+			{Path: "a.txt", Size: int64(len("a2")), Hash: "a-v2"},
+			{Path: "b.txt", Size: int64(len("b1")), Hash: "b-v1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply modify commit should not reread unchanged b.txt: %v", err)
+	}
+	if result.MaterializedPaths != 1 {
+		t.Fatalf("materialized paths = %d, want only the changed path", result.MaterializedPaths)
+	}
+}
+
+func TestAdapterAppliesRenameAndDeleteMutations(t *testing.T) {
+	ctx := context.Background()
+
+	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
+		Mode:    evalstore.StoreModeIsolated,
+		Backend: evalstore.StoreBackendMemory,
+	})
+	if err != nil {
+		t.Fatalf("NewFactory: %v", err)
+	}
+	t.Cleanup(func() { _ = factory.Close() })
+	system, err := factory.NewSystem(ctx, "maltflat")
+	if err != nil {
+		t.Fatalf("NewSystem: %v", err)
+	}
+	adapter, err := maltflat.New(system, maltflat.Options{Namespace: "test-maltflat-rename-delete", ChunkSize: 4})
+	if err != nil {
+		t.Fatalf("New adapter: %v", err)
+	}
+
+	_, err = adapter.Apply(ctx, replay.CommitMutation{
+		Repo:     "repo",
+		Commit:   "c1",
+		Snapshot: fakeSnapshot{"readme-v1": []byte("hello")},
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationAdd, Path: "README.md", Size: int64(len("hello")), Hash: "readme-v1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply initial commit: %v", err)
+	}
+	result, err := adapter.Apply(ctx, replay.CommitMutation{
+		Repo:     "repo",
+		Commit:   "c2",
+		Parent:   "c1",
+		Snapshot: fakeSnapshot{"readme-v1": []byte("hello")},
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationRename, OldPath: "README.md", Path: "docs/README.md", Size: int64(len("hello")), Hash: "readme-v1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply rename commit: %v", err)
+	}
+	if result.MaterializedPaths != 1 {
+		t.Fatalf("rename materialized paths = %d, want 1", result.MaterializedPaths)
+	}
+	result, err = adapter.Apply(ctx, replay.CommitMutation{
+		Repo:   "repo",
+		Commit: "c3",
+		Parent: "c2",
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationDelete, Path: "docs/README.md"},
+		},
+		Snapshot: fakeSnapshot{},
+	})
+	if err != nil {
+		t.Fatalf("Apply delete commit: %v", err)
+	}
+	if result.MaterializedPaths != 0 {
+		t.Fatalf("delete materialized paths = %d, want 0", result.MaterializedPaths)
 	}
 }
 

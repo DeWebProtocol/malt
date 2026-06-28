@@ -3,6 +3,7 @@ package unixfs_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -258,5 +259,37 @@ func TestRejectsReservedPathSegment(t *testing.T) {
 
 	if _, err := layout.AddFile(ctx, cid.Undef, "dir/@payload", []byte("bad")); err == nil {
 		t.Fatal("expected AddFile to reject reserved path segment")
+	}
+}
+
+func TestRemovePathDeletesFileAndPrunesEmptyDirectories(t *testing.T) {
+	ctx := context.Background()
+	layout := newLayout(t, 4)
+
+	root, err := layout.AddFile(ctx, cid.Undef, "docs/a.txt", []byte("a"))
+	if err != nil {
+		t.Fatalf("AddFile(a) failed: %v", err)
+	}
+	root, err = layout.AddFile(ctx, root, "keep.txt", []byte("keep"))
+	if err != nil {
+		t.Fatalf("AddFile(keep) failed: %v", err)
+	}
+
+	root, err = layout.RemovePath(ctx, root, "docs/a.txt")
+	if err != nil {
+		t.Fatalf("RemovePath failed: %v", err)
+	}
+	if _, err := layout.Stat(ctx, root, "docs/a.txt"); !errors.Is(err, unixfs.ErrNotFound) {
+		t.Fatalf("removed file Stat error = %v, want ErrNotFound", err)
+	}
+	if _, err := layout.Stat(ctx, root, "docs"); !errors.Is(err, unixfs.ErrNotFound) {
+		t.Fatalf("empty parent Stat error = %v, want ErrNotFound", err)
+	}
+	got, err := layout.ReadFile(ctx, root, "keep.txt")
+	if err != nil {
+		t.Fatalf("ReadFile(keep) failed: %v", err)
+	}
+	if string(got) != "keep" {
+		t.Fatalf("keep.txt = %q, want keep", got)
 	}
 }

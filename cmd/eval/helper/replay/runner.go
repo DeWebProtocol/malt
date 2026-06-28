@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 )
 
 // RunJSONL replays commits across systems and writes one JSON record per
@@ -56,21 +58,57 @@ func RunCommitRecords(ctx context.Context, commit CommitMutation, systems []Syst
 		if err != nil {
 			return fmt.Errorf("%s apply commit %s: %w", system.Name(), commit.Commit, err)
 		}
+		logicalChangedPayloadBytes := LogicalChangedPayloadBytes(commit.Mutations)
+		physicalPersistedBytes := result.AccountingDelta.Total.NewPersistedBytes
+		physicalPayloadBytes := result.AccountingDelta.Categories[evalstore.CategoryCASPayload].NewPersistedBytes
+		physicalMetadataBytes := physicalPersistedBytes
+		if physicalMetadataBytes >= physicalPayloadBytes {
+			physicalMetadataBytes -= physicalPayloadBytes
+		} else {
+			physicalMetadataBytes = 0
+		}
+		var writeAmplification *float64
+		if logicalChangedPayloadBytes > 0 {
+			value := float64(physicalPersistedBytes) / float64(logicalChangedPayloadBytes)
+			writeAmplification = &value
+		}
 		record := ResultRecord{
-			Repo:        commit.Repo,
-			System:      system.Name(),
-			Commit:      commit.Commit,
-			Parent:      commit.Parent,
-			Index:       commit.Index,
-			LiveStats:   commit.LiveStats,
-			MutationSet: commit.Mutations,
-			Skipped:     commit.Skipped,
-			Result:      result,
-			Accounting:  result.Accounting,
+			Repo:                       commit.Repo,
+			System:                     system.Name(),
+			Commit:                     commit.Commit,
+			Parent:                     commit.Parent,
+			Index:                      commit.Index,
+			LiveStats:                  commit.LiveStats,
+			MutationSet:                commit.Mutations,
+			Skipped:                    commit.Skipped,
+			Result:                     result,
+			Accounting:                 result.Accounting,
+			AccountingDelta:            result.AccountingDelta,
+			LogicalChangedPayloadBytes: logicalChangedPayloadBytes,
+			PhysicalPersistedBytes:     physicalPersistedBytes,
+			PhysicalPayloadBytes:       physicalPayloadBytes,
+			PhysicalMetadataBytes:      physicalMetadataBytes,
+			WriteAmplification:         writeAmplification,
 		}
 		if err := emit(record); err != nil {
 			return fmt.Errorf("emit %s commit %s: %w", system.Name(), commit.Commit, err)
 		}
 	}
 	return nil
+}
+
+// LogicalChangedPayloadBytes returns the payload bytes logically written by a
+// commit. Renames and deletes are structural changes, so they are excluded from
+// the byte denominator used for write-amplification ratios.
+func LogicalChangedPayloadBytes(mutations []FileMutation) int64 {
+	var total int64
+	for _, mutation := range mutations {
+		switch mutation.Kind {
+		case MutationAdd, MutationModify:
+			if mutation.Size > 0 {
+				total += mutation.Size
+			}
+		}
+	}
+	return total
 }

@@ -123,3 +123,38 @@ func (m *Meter) Snapshot() Snapshot {
 	}
 	return out
 }
+
+// Delta returns the non-negative counter difference between after and before.
+// Missing categories are treated as zero-valued counters.
+func Delta(after, before Snapshot) Snapshot {
+	out := Snapshot{
+		Total:      counterDelta(after.Total, before.Total),
+		Categories: make(map[Category]Counter),
+	}
+	for category, afterCounter := range after.Categories {
+		out.Categories[category] = counterDelta(afterCounter, before.Categories[category])
+	}
+	for category := range before.Categories {
+		if _, ok := out.Categories[category]; !ok {
+			out.Categories[category] = Counter{}
+		}
+	}
+	return out
+}
+
+func counterDelta(after, before Counter) Counter {
+	return Counter{
+		AttemptedPutCount:  saturatedSub(after.AttemptedPutCount, before.AttemptedPutCount),
+		AttemptedPutBytes:  saturatedSub(after.AttemptedPutBytes, before.AttemptedPutBytes),
+		NewObjectCount:     saturatedSub(after.NewObjectCount, before.NewObjectCount),
+		NewPersistedBytes:  saturatedSub(after.NewPersistedBytes, before.NewPersistedBytes),
+		ChangedRecordCount: saturatedSub(after.ChangedRecordCount, before.ChangedRecordCount),
+	}
+}
+
+func saturatedSub(after, before uint64) uint64 {
+	if after < before {
+		return 0
+	}
+	return after - before
+}

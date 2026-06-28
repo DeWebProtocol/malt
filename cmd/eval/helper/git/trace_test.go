@@ -100,6 +100,37 @@ func TestSourceWalkUsesGitObjectSnapshotWithoutReplayWorktree(t *testing.T) {
 	}
 }
 
+func TestSourceWalkLimitKeepsEarliestReplayPrefix(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initTraceRepo(t)
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    1,
+	}
+	var commits []replay.CommitMutation
+	if err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		commits = append(commits, commit)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(commits) != 1 {
+		t.Fatalf("commit count = %d, want 1", len(commits))
+	}
+	if commits[0].Parent != "" {
+		t.Fatalf("limited replay starts at parent %q, want initial commit", commits[0].Parent)
+	}
+	if len(commits[0].Mutations) != 1 || commits[0].Mutations[0].Kind != replay.MutationAdd || commits[0].Mutations[0].Path != "README.md" {
+		t.Fatalf("limited first mutation = %+v, want initial README add", commits[0].Mutations)
+	}
+}
+
 func TestSourceWalkReadsCommittedBlobWhenCheckoutIsDirty(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
