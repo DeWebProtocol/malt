@@ -7,6 +7,8 @@ import (
 )
 
 // MeteredKV wraps a KVStore and charges every successful put as a changed record.
+// The byte counter measures persisted record values, not backend addressing
+// keys, to match CAS object-byte accounting.
 type MeteredKV struct {
 	base     kvstore.KVStore
 	meter    *Meter
@@ -30,7 +32,7 @@ func (m *MeteredKV) Put(ctx context.Context, key, value []byte) error {
 	if err := m.base.Put(ctx, key, value); err != nil {
 		return err
 	}
-	m.meter.RecordChangedRecord(m.category, len(key), len(value))
+	m.meter.RecordChangedRecord(m.category, 0, len(value))
 	return nil
 }
 
@@ -38,7 +40,7 @@ func (m *MeteredKV) Delete(ctx context.Context, key []byte) error {
 	if err := m.base.Delete(ctx, key); err != nil {
 		return err
 	}
-	m.meter.RecordChangedRecord(m.category, len(key), 0)
+	m.meter.RecordChangedRecord(m.category, 0, 0)
 	return nil
 }
 
@@ -70,7 +72,6 @@ type meteredBatch struct {
 }
 
 type meteredBatchPut struct {
-	keyBytes   int
 	valueBytes int
 }
 
@@ -78,7 +79,7 @@ func (b *meteredBatch) Put(key, value []byte) error {
 	if err := b.base.Put(key, value); err != nil {
 		return err
 	}
-	b.puts = append(b.puts, meteredBatchPut{keyBytes: len(key), valueBytes: len(value)})
+	b.puts = append(b.puts, meteredBatchPut{valueBytes: len(value)})
 	return nil
 }
 
@@ -86,7 +87,7 @@ func (b *meteredBatch) Delete(key []byte) error {
 	if err := b.base.Delete(key); err != nil {
 		return err
 	}
-	b.puts = append(b.puts, meteredBatchPut{keyBytes: len(key)})
+	b.puts = append(b.puts, meteredBatchPut{})
 	return nil
 }
 
@@ -95,7 +96,7 @@ func (b *meteredBatch) Commit(ctx context.Context) error {
 		return err
 	}
 	for _, put := range b.puts {
-		b.meter.RecordChangedRecord(b.category, put.keyBytes, put.valueBytes)
+		b.meter.RecordChangedRecord(b.category, 0, put.valueBytes)
 	}
 	return nil
 }

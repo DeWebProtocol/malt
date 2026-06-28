@@ -85,7 +85,7 @@ func TestSharedSystemsExposeCrossSystemCASDedupAsDiagnosticMode(t *testing.T) {
 	}
 }
 
-func TestMeteredKVCountsEveryChangedRecord(t *testing.T) {
+func TestMeteredKVCountsEveryChangedRecordValueBytes(t *testing.T) {
 	ctx := context.Background()
 	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
 		Mode:    evalstore.StoreModeIsolated,
@@ -111,8 +111,8 @@ func TestMeteredKVCountsEveryChangedRecord(t *testing.T) {
 	if arctable.NewObjectCount != 2 {
 		t.Fatalf("changed records = %d, want 2", arctable.NewObjectCount)
 	}
-	if arctable.NewPersistedBytes != uint64(len("root")+len("v1")+len("root")+len("v2")) {
-		t.Fatalf("changed bytes = %d, want key+value bytes for both writes", arctable.NewPersistedBytes)
+	if arctable.NewPersistedBytes != uint64(len("v1")+len("v2")) {
+		t.Fatalf("changed bytes = %d, want value bytes for both writes", arctable.NewPersistedBytes)
 	}
 }
 

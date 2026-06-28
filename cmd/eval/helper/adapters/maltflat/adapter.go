@@ -1,22 +1,22 @@
-// Package maltflat replays Git snapshots into the MALT-flat UnixFS layout.
+// Package maltflat replays Git mutations into a flat MALT path-to-blob map.
 package maltflat
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
+	semanticmapping "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/layout/unixfs"
 	"github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	"github.com/dewebprotocol/malt/runtime/arctable/versioned"
-	"github.com/dewebprotocol/malt/runtime/semantic/list/tree"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/storage/kv"
 	cid "github.com/ipfs/go-cid"
@@ -53,11 +53,13 @@ type Options struct {
 	CommitmentBackend CommitmentBackend
 }
 
-// Adapter materializes each commit snapshot as a MALT-flat UnixFS root.
+// Adapter materializes each commit mutation set as a MALT-flat map root.
 type Adapter struct {
-	system *evalstore.System
-	layout *unixfs.Layout
-	root   cid.Cid
+	system    *evalstore.System
+	maps      *mappingradix.Map
+	namespace string
+	root      cid.Cid
+	entries   map[arcset.Path]cid.Cid
 }
 
 // DefaultOptions returns the paper-aligned MALT-flat evaluation configuration.
@@ -88,21 +90,12 @@ func New(system *evalstore.System, opts Options) (*Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create map semantics: %w", err)
 	}
-	lists, err := tree.NewList(scheme, arcs)
-	if err != nil {
-		return nil, fmt.Errorf("create list semantics: %w", err)
-	}
-	layout, err := unixfs.New(unixfs.Options{
-		Namespace: opts.Namespace,
-		ChunkSize: opts.ChunkSize,
-		Map:       maps,
-		List:      lists,
-		Blocks:    system.CAS,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &Adapter{system: system, layout: layout}, nil
+	return &Adapter{
+		system:    system,
+		maps:      maps,
+		namespace: opts.Namespace,
+		entries:   make(map[arcset.Path]cid.Cid),
+	}, nil
 }
 
 func (a *Adapter) Name() string {
@@ -121,31 +114,33 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 	root := a.root
 	if !root.Defined() {
 		var err error
-		root, err = a.layout.EmptyDirectory(ctx)
+		root, err = a.maps.Commit(ctx, a.namespace, semanticmapping.NewViewFromPaths(nil))
 		if err != nil {
 			return replay.ApplyResult{}, err
 		}
 	}
+	nextEntries := cloneEntries(a.entries)
+	updates := make([]semanticmapping.BatchUpdate, 0, len(commit.Mutations))
 	materializedPaths := 0
 	for _, mutation := range commit.Mutations {
 		var err error
 		switch mutation.Kind {
 		case replay.MutationAdd, replay.MutationModify:
 			if mutationHasBlob(mutation) {
-				root, err = a.addMutationFile(ctx, root, commit.Snapshot, mutation)
+				err = a.queuePutMutationFile(ctx, commit.Snapshot, nextEntries, &updates, mutation)
 				materializedPaths++
 			}
 		case replay.MutationDelete:
-			root, err = a.removeMutationPath(ctx, root, mutation.Path)
+			err = a.queueRemoveMutationPath(nextEntries, &updates, mutation.Path)
 		case replay.MutationRename:
-			root, err = a.removeMutationPath(ctx, root, mutation.OldPath)
+			err = a.queueRemoveMutationPath(nextEntries, &updates, mutation.OldPath)
 			if err == nil && mutationHasBlob(mutation) {
-				root, err = a.addMutationFile(ctx, root, commit.Snapshot, mutation)
+				err = a.queuePutMutationFile(ctx, commit.Snapshot, nextEntries, &updates, mutation)
 				materializedPaths++
 			}
 		default:
 			if mutationHasBlob(mutation) {
-				root, err = a.addMutationFile(ctx, root, commit.Snapshot, mutation)
+				err = a.queuePutMutationFile(ctx, commit.Snapshot, nextEntries, &updates, mutation)
 				materializedPaths++
 			}
 		}
@@ -153,7 +148,15 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 			return replay.ApplyResult{}, fmt.Errorf("apply %s %s: %w", mutation.Kind, mutation.Path, err)
 		}
 	}
+	if len(updates) > 0 {
+		var err error
+		root, err = a.maps.BatchUpdate(ctx, a.namespace, root, updates)
+		if err != nil {
+			return replay.ApplyResult{}, err
+		}
+	}
 	a.root = root
+	a.entries = nextEntries
 	a.system.Meter.RecordLogicalBytes(evalstore.CategoryRootHead, len(root.String()))
 	after := a.system.Meter.Snapshot()
 	return replay.ApplyResult{
@@ -166,33 +169,73 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 	}, nil
 }
 
-func (a *Adapter) addMutationFile(ctx context.Context, root cid.Cid, snapshot replay.SnapshotReader, mutation replay.FileMutation) (cid.Cid, error) {
+func (a *Adapter) queuePutMutationFile(ctx context.Context, snapshot replay.SnapshotReader, entries map[arcset.Path]cid.Cid, updates *[]semanticmapping.BatchUpdate, mutation replay.FileMutation) error {
 	if strings.TrimSpace(mutation.Hash) == "" {
-		return cid.Undef, fmt.Errorf("blob hash is empty")
+		return fmt.Errorf("blob hash is empty")
+	}
+	key, err := arcset.NewPath(mutation.Path)
+	if err != nil {
+		return err
 	}
 	data, err := snapshot.ReadBlob(ctx, mutation.Hash)
 	if err != nil {
-		return cid.Undef, fmt.Errorf("read blob: %w", err)
+		return fmt.Errorf("read blob: %w", err)
 	}
-	return a.layout.AddFile(ctx, root, mutation.Path, data)
+	target, err := a.system.CAS.Put(ctx, data)
+	if err != nil {
+		return err
+	}
+	oldValue := entries[key]
+	if sameCID(oldValue, target) {
+		return nil
+	}
+	*updates = append(*updates, semanticmapping.BatchUpdate{
+		Key:      key,
+		OldValue: oldValue,
+		NewValue: target,
+	})
+	entries[key] = target
+	return nil
 }
 
 func mutationHasBlob(mutation replay.FileMutation) bool {
 	return strings.TrimSpace(mutation.Hash) != ""
 }
 
-func (a *Adapter) removeMutationPath(ctx context.Context, root cid.Cid, path string) (cid.Cid, error) {
-	nextRoot, err := a.layout.RemovePath(ctx, root, path)
+func (a *Adapter) queueRemoveMutationPath(entries map[arcset.Path]cid.Cid, updates *[]semanticmapping.BatchUpdate, path string) error {
+	key, err := arcset.NewPath(path)
 	if err != nil {
-		if errors.Is(err, unixfs.ErrNotFound) {
-			return root, nil
-		}
-		return cid.Undef, err
+		return err
 	}
-	return nextRoot, nil
+	oldValue := entries[key]
+	if !oldValue.Defined() {
+		return nil
+	}
+	*updates = append(*updates, semanticmapping.BatchUpdate{
+		Key:      key,
+		OldValue: oldValue,
+		NewValue: cid.Undef,
+	})
+	delete(entries, key)
+	return nil
 }
 
 var _ replay.SystemAdapter = (*Adapter)(nil)
+
+func cloneEntries(entries map[arcset.Path]cid.Cid) map[arcset.Path]cid.Cid {
+	out := make(map[arcset.Path]cid.Cid, len(entries))
+	for key, value := range entries {
+		out[key] = value
+	}
+	return out
+}
+
+func sameCID(a, b cid.Cid) bool {
+	if !a.Defined() && !b.Defined() {
+		return true
+	}
+	return a.Equals(b)
+}
 
 func applyDefaults(opts Options) Options {
 	defaults := DefaultOptions()

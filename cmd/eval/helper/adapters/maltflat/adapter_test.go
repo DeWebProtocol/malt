@@ -122,6 +122,57 @@ func TestAdapterAppliesOnlyChangedMutationBlobs(t *testing.T) {
 	}
 }
 
+func TestAdapterUpdatesFlatPathBindingForModifiedFile(t *testing.T) {
+	ctx := context.Background()
+
+	factory, err := evalstore.NewFactory(evalstore.FactoryConfig{
+		Mode:    evalstore.StoreModeIsolated,
+		Backend: evalstore.StoreBackendMemory,
+	})
+	if err != nil {
+		t.Fatalf("NewFactory: %v", err)
+	}
+	t.Cleanup(func() { _ = factory.Close() })
+	system, err := factory.NewSystem(ctx, "maltflat")
+	if err != nil {
+		t.Fatalf("NewSystem: %v", err)
+	}
+	adapter, err := maltflat.New(system, maltflat.Options{Namespace: "test-maltflat-flat-path", ChunkSize: 4})
+	if err != nil {
+		t.Fatalf("New adapter: %v", err)
+	}
+
+	_, err = adapter.Apply(ctx, replay.CommitMutation{
+		Repo:     "repo",
+		Commit:   "c1",
+		Snapshot: fakeSnapshot{"a-v1": []byte("a1")},
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationAdd, Path: "docs/a.txt", Size: int64(len("a1")), Hash: "a-v1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply initial commit: %v", err)
+	}
+
+	result, err := adapter.Apply(ctx, replay.CommitMutation{
+		Repo:     "repo",
+		Commit:   "c2",
+		Parent:   "c1",
+		Snapshot: fakeSnapshot{"a-v2": []byte("a2")},
+		Mutations: []replay.FileMutation{
+			{Kind: replay.MutationModify, Path: "docs/a.txt", Size: int64(len("a2")), Hash: "a-v2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply modify commit: %v", err)
+	}
+
+	arctable := result.AccountingDelta.Categories[evalstore.CategoryArcTable]
+	if arctable.ChangedRecordCount != 1 {
+		t.Fatalf("changed ArcTable records = %d, want one flat path binding update", arctable.ChangedRecordCount)
+	}
+}
+
 func TestAdapterAppliesRenameAndDeleteMutations(t *testing.T) {
 	ctx := context.Background()
 

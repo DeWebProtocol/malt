@@ -253,6 +253,9 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 	if row["logical_changed_payload_bytes"] == "" || row["physical_persisted_bytes"] == "" || row["cumulative_write_amplification"] == "" {
 		t.Fatalf("aggregate missing write amplification fields: %+v", row)
 	}
+	if row["arctable_persisted_bytes"] == "" {
+		t.Fatalf("aggregate missing ArcTable breakdown field: %+v", row)
+	}
 }
 
 func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {

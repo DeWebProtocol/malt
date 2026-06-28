@@ -165,15 +165,28 @@ write-amplification analysis. `write_amplification` is omitted for structural
 commits with zero logical changed payload bytes, such as pure delete or rename
 commits.
 
+The MALT baseline is flat: `maltflat` stores file payloads in CAS and updates a
+single authenticated map from the canonical complete path to the payload CID. It
+does not materialize UnixFS directory/file nodes for the MALT side of this
+write-amplification comparison.
+
 The Merkle DAG and HAMT write baselines use raw file leaves so payload bytes and
 directory/index metadata bytes are visible as separate accounting categories.
+Write accounting reports logical persisted object/value bytes. It intentionally
+does not include backend addressing keys such as BadgerDB keys or CAS CID lookup
+keys; backend-specific physical footprint should be measured as a separate
+storage-backend experiment.
 
 The suite writes raw records to `raw/write_trace.jsonl` and a repo/system
 aggregate to `aggregate/write_trace.csv`. Use
 `cumulative_write_amplification` as the main paper number and
 `median_write_amplification` / `p95_write_amplification` as supporting
-per-commit statistics. Small commits can have high per-commit ratios, so the
-cumulative ratio is the more stable repo-level comparison.
+per-commit statistics. The aggregate also exposes
+`arctable_persisted_bytes`, `cas_metadata_persisted_bytes`,
+`root_head_persisted_bytes`, and `commitment_persisted_bytes` so metadata can be
+attributed without treating `physical_metadata_bytes` as an ArcTable-only
+number. Small commits can have high per-commit ratios, so the cumulative ratio
+is the more stable repo-level comparison.
 
 `malt-eval read` and the `read_query` suite remain useful for daemon-oriented
 end-to-end checks. They exercise the HTTP daemon path for MALT and local IPLD

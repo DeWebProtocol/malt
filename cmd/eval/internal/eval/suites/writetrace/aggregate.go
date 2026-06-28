@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
+	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/cmd/eval/internal/eval/framework"
 )
 
@@ -22,6 +23,10 @@ type aggregateRow struct {
 	PhysicalPersistedBytes     uint64
 	PhysicalPayloadBytes       uint64
 	PhysicalMetadataBytes      uint64
+	ArcTablePersistedBytes     uint64
+	CASMetadataPersistedBytes  uint64
+	RootHeadPersistedBytes     uint64
+	CommitmentPersistedBytes   uint64
 	CumulativeWriteAmp         float64
 	MedianWriteAmp             float64
 	P95WriteAmp                float64
@@ -66,6 +71,10 @@ func aggregateRecords(records []replay.ResultRecord) []aggregateRow {
 		acc.row.PhysicalPersistedBytes += record.PhysicalPersistedBytes
 		acc.row.PhysicalPayloadBytes += record.PhysicalPayloadBytes
 		acc.row.PhysicalMetadataBytes += record.PhysicalMetadataBytes
+		acc.row.ArcTablePersistedBytes += persistedBytes(record, evalstore.CategoryArcTable)
+		acc.row.CASMetadataPersistedBytes += persistedBytes(record, evalstore.CategoryCASMetadata)
+		acc.row.RootHeadPersistedBytes += persistedBytes(record, evalstore.CategoryRootHead)
+		acc.row.CommitmentPersistedBytes += persistedBytes(record, evalstore.CategoryCommitment)
 		if record.WriteAmplification != nil {
 			acc.waSamples = append(acc.waSamples, *record.WriteAmplification)
 		}
@@ -128,6 +137,10 @@ func writeAggregateCSV(env framework.Env, rows []aggregateRow) error {
 		"physical_persisted_bytes",
 		"physical_payload_bytes",
 		"physical_metadata_bytes",
+		"arctable_persisted_bytes",
+		"cas_metadata_persisted_bytes",
+		"root_head_persisted_bytes",
+		"commitment_persisted_bytes",
 		"cumulative_write_amplification",
 		"median_write_amplification",
 		"p95_write_amplification",
@@ -149,6 +162,10 @@ func writeAggregateCSV(env framework.Env, rows []aggregateRow) error {
 			strconv.FormatUint(row.PhysicalPersistedBytes, 10),
 			strconv.FormatUint(row.PhysicalPayloadBytes, 10),
 			strconv.FormatUint(row.PhysicalMetadataBytes, 10),
+			strconv.FormatUint(row.ArcTablePersistedBytes, 10),
+			strconv.FormatUint(row.CASMetadataPersistedBytes, 10),
+			strconv.FormatUint(row.RootHeadPersistedBytes, 10),
+			strconv.FormatUint(row.CommitmentPersistedBytes, 10),
 			formatFloat(row.CumulativeWriteAmp),
 			formatFloat(row.MedianWriteAmp),
 			formatFloat(row.P95WriteAmp),
@@ -170,6 +187,10 @@ func writeAggregateCSV(env framework.Env, rows []aggregateRow) error {
 
 func aggregatePath(env framework.Env) string {
 	return filepath.Join(env.ResultDir, "aggregate", SuiteName+".csv")
+}
+
+func persistedBytes(record replay.ResultRecord, category evalstore.Category) uint64 {
+	return record.AccountingDelta.Categories[category].NewPersistedBytes
 }
 
 func percentile(values []float64, q float64) float64 {

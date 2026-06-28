@@ -63,7 +63,9 @@ func (m *Meter) RecordCASPut(category Category, bytes int, isNew bool) {
 
 // RecordChangedRecord records a KV-style changed record. KV writes are charged
 // on every successful put because overwrite and delta stores still persist a
-// changed record for the evaluated commit.
+// changed record for the evaluated commit. Byte counts are logical value bytes;
+// backend key bytes are excluded to keep this metric comparable with CAS object
+// byte accounting.
 func (m *Meter) RecordChangedRecord(category Category, keyBytes, valueBytes int) {
 	if m == nil {
 		return
