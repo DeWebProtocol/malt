@@ -256,6 +256,9 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 	if row["arctable_persisted_bytes"] == "" {
 		t.Fatalf("aggregate missing ArcTable breakdown field: %+v", row)
 	}
+	if row["canonical_delta_persisted_bytes"] == "" {
+		t.Fatalf("aggregate missing canonical delta breakdown field: %+v", row)
+	}
 }
 
 func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {

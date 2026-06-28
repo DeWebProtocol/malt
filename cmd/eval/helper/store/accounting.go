@@ -7,11 +7,12 @@ import "sync"
 type Category string
 
 const (
-	CategoryCASPayload  Category = "cas_payload"
-	CategoryCASMetadata Category = "cas_metadata"
-	CategoryArcTable    Category = "arctable"
-	CategoryCommitment  Category = "commitment"
-	CategoryRootHead    Category = "root_head"
+	CategoryCASPayload     Category = "cas_payload"
+	CategoryCASMetadata    Category = "cas_metadata"
+	CategoryCanonicalDelta Category = "canonical_delta"
+	CategoryArcTable       Category = "arctable"
+	CategoryCommitment     Category = "commitment"
+	CategoryRootHead       Category = "root_head"
 )
 
 // Counter captures attempted writes and newly persisted writes for one class.

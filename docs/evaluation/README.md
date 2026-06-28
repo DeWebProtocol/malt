@@ -168,7 +168,12 @@ commits.
 The MALT baseline is flat: `maltflat` stores file payloads in CAS and updates a
 single authenticated map from the canonical complete path to the payload CID. It
 does not materialize UnixFS directory/file nodes for the MALT side of this
-write-amplification comparison.
+write-amplification comparison. For this suite, MALT durable state is charged as
+canonical deltas: a parent-root link plus the changed canonical path-to-target
+CID bindings. Radix nodes and commitment calculation nodes are treated as
+derived latest-root cache material. They may be useful for serving proofs, but
+they are not counted as canonical write-amplification state because they can be
+rebuilt from the committed deltas.
 
 The Merkle DAG and HAMT write baselines use raw file leaves so payload bytes and
 directory/index metadata bytes are visible as separate accounting categories.
@@ -182,11 +187,14 @@ aggregate to `aggregate/write_trace.csv`. Use
 `cumulative_write_amplification` as the main paper number and
 `median_write_amplification` / `p95_write_amplification` as supporting
 per-commit statistics. The aggregate also exposes
-`arctable_persisted_bytes`, `cas_metadata_persisted_bytes`,
-`root_head_persisted_bytes`, and `commitment_persisted_bytes` so metadata can be
-attributed without treating `physical_metadata_bytes` as an ArcTable-only
-number. Small commits can have high per-commit ratios, so the cumulative ratio
-is the more stable repo-level comparison.
+`canonical_delta_persisted_bytes`, `arctable_persisted_bytes`,
+`cas_metadata_persisted_bytes`, `root_head_persisted_bytes`, and
+`commitment_persisted_bytes` so metadata can be attributed without treating
+`physical_metadata_bytes` as an ArcTable-only number. For `maltflat` write-trace
+records, `arctable_persisted_bytes` should remain zero under the canonical-delta
+accounting model; ArcTable materialization belongs to the derived cache or to a
+separate storage-backend experiment. Small commits can have high per-commit
+ratios, so the cumulative ratio is the more stable repo-level comparison.
 
 `malt-eval read` and the `read_query` suite remain useful for daemon-oriented
 end-to-end checks. They exercise the HTTP daemon path for MALT and local IPLD

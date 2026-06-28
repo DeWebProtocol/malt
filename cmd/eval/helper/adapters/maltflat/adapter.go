@@ -14,17 +14,18 @@ import (
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
 	"github.com/dewebprotocol/malt/layout/unixfs"
-	"github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	"github.com/dewebprotocol/malt/runtime/arctable/versioned"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt/storage/kv"
+	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
 	cid "github.com/ipfs/go-cid"
 )
 
 const defaultNamespace = "eval-maltflat"
 
-// ArcTableMode selects the ArcTable persistence strategy used by MALT-flat.
+// ArcTableMode selects the ArcTable materialization mode requested by callers.
+// Write-trace canonical accounting uses an unmetered derived cache regardless
+// of this value, but the option is retained and validated for compatibility
+// with older plans.
 type ArcTableMode string
 
 const (
@@ -78,9 +79,14 @@ func New(system *evalstore.System, opts Options) (*Adapter, error) {
 		return nil, fmt.Errorf("system store is nil")
 	}
 	opts = applyDefaults(opts)
-	arcs, err := newArcTable(system.StateKV, opts.ArcTableMode)
+	if err := validateArcTableMode(opts.ArcTableMode); err != nil {
+		return nil, err
+	}
+	// The radix ArcTable is a proof-serving cache in write_trace. Canonical
+	// durable state is accounted separately as path-to-CID deltas.
+	arcs, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
 	if err != nil {
-		return nil, fmt.Errorf("create arctable: %w", err)
+		return nil, fmt.Errorf("create cache arctable: %w", err)
 	}
 	scheme, err := newCommitmentBackend(opts.CommitmentBackend)
 	if err != nil {
@@ -111,6 +117,7 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 		return replay.ApplyResult{}, fmt.Errorf("snapshot reader is nil")
 	}
 	before := a.system.Meter.Snapshot()
+	parentRoot := a.root
 	root := a.root
 	if !root.Defined() {
 		var err error
@@ -154,6 +161,7 @@ func (a *Adapter) Apply(ctx context.Context, commit replay.CommitMutation) (repl
 		if err != nil {
 			return replay.ApplyResult{}, err
 		}
+		a.recordCanonicalDelta(parentRoot, updates)
 	}
 	a.root = root
 	a.entries = nextEntries
@@ -237,6 +245,23 @@ func sameCID(a, b cid.Cid) bool {
 	return a.Equals(b)
 }
 
+func (a *Adapter) recordCanonicalDelta(parent cid.Cid, updates []semanticmapping.BatchUpdate) {
+	if parent.Defined() {
+		a.system.Meter.RecordLogicalBytes(evalstore.CategoryCanonicalDelta, len(parent.Bytes()))
+	}
+	for _, update := range updates {
+		a.system.Meter.RecordLogicalBytes(evalstore.CategoryCanonicalDelta, canonicalDeltaEntryBytes(update))
+	}
+}
+
+func canonicalDeltaEntryBytes(update semanticmapping.BatchUpdate) int {
+	bytes := 1 + len(update.Key.String())
+	if update.NewValue.Defined() {
+		bytes += len(update.NewValue.Bytes())
+	}
+	return bytes
+}
+
 func applyDefaults(opts Options) Options {
 	defaults := DefaultOptions()
 	if opts.Namespace == "" {
@@ -254,14 +279,12 @@ func applyDefaults(opts Options) Options {
 	return opts
 }
 
-func newArcTable(kv kvstore.KVStore, mode ArcTableMode) (arctable.ArcTable, error) {
+func validateArcTableMode(mode ArcTableMode) error {
 	switch ArcTableMode(strings.ToLower(string(mode))) {
-	case ArcTableModeOverwrite, "simple":
-		return overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	case ArcTableModeVersioned:
-		return versioned.NewArcTable(versioned.WithKVStore(kv))
+	case ArcTableModeOverwrite, ArcTableModeVersioned, "simple":
+		return nil
 	default:
-		return nil, fmt.Errorf("unknown ArcTable mode %q", mode)
+		return fmt.Errorf("unknown ArcTable mode %q", mode)
 	}
 }
 

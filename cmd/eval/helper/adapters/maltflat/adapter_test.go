@@ -49,8 +49,11 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	if result.AppliedMutations != 1 || result.MaterializedPaths != 1 {
 		t.Fatalf("applied/materialized = %d/%d, want 1/1", result.AppliedMutations, result.MaterializedPaths)
 	}
-	if result.Accounting.Categories[evalstore.CategoryArcTable].NewObjectCount == 0 {
-		t.Fatal("expected MALT-flat to charge ArcTable records")
+	if result.Accounting.Categories[evalstore.CategoryCanonicalDelta].NewObjectCount == 0 {
+		t.Fatal("expected MALT-flat to charge canonical delta records")
+	}
+	if result.Accounting.Categories[evalstore.CategoryArcTable].NewObjectCount != 0 {
+		t.Fatalf("ArcTable records should be derived cache only: %+v", result.Accounting.Categories[evalstore.CategoryArcTable])
 	}
 	rootHead := result.Accounting.Categories[evalstore.CategoryRootHead]
 	if rootHead.NewPersistedBytes != uint64(len(result.Root)) {
@@ -59,8 +62,8 @@ func TestAdapterMaterializesLiveSnapshotWithIndependentStoreAccounting(t *testin
 	if result.MaterializationStrategy != maltflat.MaterializationStrategyIncrementalDelta {
 		t.Fatalf("materialization strategy = %q, want %q", result.MaterializationStrategy, maltflat.MaterializationStrategyIncrementalDelta)
 	}
-	if result.AccountingDelta.Categories[evalstore.CategoryArcTable].NewObjectCount == 0 {
-		t.Fatal("expected MALT-flat to report per-commit ArcTable delta")
+	if result.AccountingDelta.Categories[evalstore.CategoryCanonicalDelta].NewObjectCount == 0 {
+		t.Fatal("expected MALT-flat to report per-commit canonical delta")
 	}
 }
 
@@ -167,9 +170,13 @@ func TestAdapterUpdatesFlatPathBindingForModifiedFile(t *testing.T) {
 		t.Fatalf("Apply modify commit: %v", err)
 	}
 
+	canonicalDelta := result.AccountingDelta.Categories[evalstore.CategoryCanonicalDelta]
+	if canonicalDelta.ChangedRecordCount != 2 {
+		t.Fatalf("changed canonical delta records = %d, want parent root plus one flat path binding update", canonicalDelta.ChangedRecordCount)
+	}
 	arctable := result.AccountingDelta.Categories[evalstore.CategoryArcTable]
-	if arctable.ChangedRecordCount != 1 {
-		t.Fatalf("changed ArcTable records = %d, want one flat path binding update", arctable.ChangedRecordCount)
+	if arctable.ChangedRecordCount != 0 {
+		t.Fatalf("ArcTable changed records = %d, want derived cache excluded from canonical writes", arctable.ChangedRecordCount)
 	}
 }
 

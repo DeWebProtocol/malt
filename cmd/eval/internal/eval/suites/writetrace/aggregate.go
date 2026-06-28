@@ -15,25 +15,26 @@ import (
 )
 
 type aggregateRow struct {
-	Repo                       string
-	System                     string
-	Commits                    int
-	FinalLivePayloadBytes      int64
-	LogicalChangedPayloadBytes int64
-	PhysicalPersistedBytes     uint64
-	PhysicalPayloadBytes       uint64
-	PhysicalMetadataBytes      uint64
-	ArcTablePersistedBytes     uint64
-	CASMetadataPersistedBytes  uint64
-	RootHeadPersistedBytes     uint64
-	CommitmentPersistedBytes   uint64
-	CumulativeWriteAmp         float64
-	MedianWriteAmp             float64
-	P95WriteAmp                float64
-	AddCount                   int
-	ModifyCount                int
-	DeleteCount                int
-	RenameCount                int
+	Repo                         string
+	System                       string
+	Commits                      int
+	FinalLivePayloadBytes        int64
+	LogicalChangedPayloadBytes   int64
+	PhysicalPersistedBytes       uint64
+	PhysicalPayloadBytes         uint64
+	PhysicalMetadataBytes        uint64
+	CanonicalDeltaPersistedBytes uint64
+	ArcTablePersistedBytes       uint64
+	CASMetadataPersistedBytes    uint64
+	RootHeadPersistedBytes       uint64
+	CommitmentPersistedBytes     uint64
+	CumulativeWriteAmp           float64
+	MedianWriteAmp               float64
+	P95WriteAmp                  float64
+	AddCount                     int
+	ModifyCount                  int
+	DeleteCount                  int
+	RenameCount                  int
 }
 
 type aggregateKey struct {
@@ -71,6 +72,7 @@ func aggregateRecords(records []replay.ResultRecord) []aggregateRow {
 		acc.row.PhysicalPersistedBytes += record.PhysicalPersistedBytes
 		acc.row.PhysicalPayloadBytes += record.PhysicalPayloadBytes
 		acc.row.PhysicalMetadataBytes += record.PhysicalMetadataBytes
+		acc.row.CanonicalDeltaPersistedBytes += persistedBytes(record, evalstore.CategoryCanonicalDelta)
 		acc.row.ArcTablePersistedBytes += persistedBytes(record, evalstore.CategoryArcTable)
 		acc.row.CASMetadataPersistedBytes += persistedBytes(record, evalstore.CategoryCASMetadata)
 		acc.row.RootHeadPersistedBytes += persistedBytes(record, evalstore.CategoryRootHead)
@@ -137,6 +139,7 @@ func writeAggregateCSV(env framework.Env, rows []aggregateRow) error {
 		"physical_persisted_bytes",
 		"physical_payload_bytes",
 		"physical_metadata_bytes",
+		"canonical_delta_persisted_bytes",
 		"arctable_persisted_bytes",
 		"cas_metadata_persisted_bytes",
 		"root_head_persisted_bytes",
@@ -162,6 +165,7 @@ func writeAggregateCSV(env framework.Env, rows []aggregateRow) error {
 			strconv.FormatUint(row.PhysicalPersistedBytes, 10),
 			strconv.FormatUint(row.PhysicalPayloadBytes, 10),
 			strconv.FormatUint(row.PhysicalMetadataBytes, 10),
+			strconv.FormatUint(row.CanonicalDeltaPersistedBytes, 10),
 			strconv.FormatUint(row.ArcTablePersistedBytes, 10),
 			strconv.FormatUint(row.CASMetadataPersistedBytes, 10),
 			strconv.FormatUint(row.RootHeadPersistedBytes, 10),

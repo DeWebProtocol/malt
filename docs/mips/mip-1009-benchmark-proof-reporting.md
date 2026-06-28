@@ -16,7 +16,7 @@ replaces: none
 This MIP proposes stabilizing the benchmark-facing reporting rules summarized
 in [`docs/evaluation/README.md`](../evaluation/README.md), including proof
 bytes, evidence items, writer receipts, CAS counters, ArcTable counters, and
-summary CSV fields.
+write-amplification summary CSV fields.
 
 ## Motivation
 
@@ -35,6 +35,8 @@ which reporting rules must become stable for paper-facing figures:
 - writer receipt fields
 - CAS operation counters
 - ArcTable operation counters
+- write-amplification accounting categories, including canonical delta bytes
+  and derived-cache bytes
 - summary CSV fields used in paper figures
 
 ## Rationale
