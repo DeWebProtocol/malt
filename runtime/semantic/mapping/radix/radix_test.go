@@ -2,16 +2,22 @@ package radix_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/runtime/arctable"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -110,6 +116,49 @@ func TestMapCommitProveVerify(t *testing.T) {
 	}
 }
 
+func TestProveWithTimingsExcludesArcSetLoadTime(t *testing.T) {
+	ctx := context.Background()
+	base, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
+	if err != nil {
+		t.Fatalf("overwrite.NewArcTable failed: %v", err)
+	}
+	loadDelay := 120 * time.Millisecond
+	openDelay := 5 * time.Millisecond
+	table := delayedArcTable{inner: base, delay: loadDelay}
+	semantic, err := mappingradix.NewMap(fakeTimingScheme{proveDelay: openDelay}, table)
+	if err != nil {
+		t.Fatalf("radix.NewMap failed: %v", err)
+	}
+	view := mapping.NewViewFrom(map[string]cid.Cid{
+		"a": fakeCID("value-a"),
+		"b": fakeCID("value-b"),
+	})
+	root, err := semantic.Commit(ctx, testNamespace+"-timing", view)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	binding, proof, timings, err := semantic.ProveWithTimings(ctx, testNamespace+"-timing", root, arcset.CanonicalizePath("b"))
+	if err != nil {
+		t.Fatalf("ProveWithTimings failed: %v", err)
+	}
+	if !binding.Present || !binding.Value.Equals(fakeCID("value-b")) || len(proof) == 0 {
+		t.Fatalf("proof result = binding %+v proof bytes %d", binding, len(proof))
+	}
+	if timings.LoadElapsedNS < int64(loadDelay) {
+		t.Fatalf("LoadElapsedNS = %d, want at least injected load delay %s", timings.LoadElapsedNS, loadDelay)
+	}
+	if timings.OpenElapsedNS <= 0 {
+		t.Fatalf("OpenElapsedNS = %d, want positive open/prove time", timings.OpenElapsedNS)
+	}
+	if timings.OpenElapsedNS >= int64(loadDelay/2) {
+		t.Fatalf("OpenElapsedNS = %d includes too much load delay, want below %s", timings.OpenElapsedNS, loadDelay/2)
+	}
+	if timings.OpenCount != 1 {
+		t.Fatalf("OpenCount = %d, want one radix open at this cardinality", timings.OpenCount)
+	}
+}
+
 func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 	ctx := context.Background()
 	initialEntries := map[string]cid.Cid{
@@ -203,6 +252,106 @@ func TestMapUpdateReplaceInsertDelete(t *testing.T) {
 			}
 		})
 	}
+}
+
+type delayedArcTable struct {
+	inner arctable.ArcTable
+	delay time.Duration
+}
+
+func (d delayedArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	time.Sleep(d.delay)
+	return d.inner.Get(ctx, namespace, root, path)
+}
+
+func (d delayedArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	time.Sleep(d.delay)
+	return d.inner.BatchGet(ctx, namespace, root, paths)
+}
+
+func (d delayedArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	return d.inner.Update(ctx, namespace, newRoot, oldRoot, arcs)
+}
+
+func (d delayedArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return d.inner.Snapshot(ctx, namespace, root)
+}
+
+func (d delayedArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return d.inner.Iterate(ctx, namespace, root)
+}
+
+func (d delayedArcTable) Close() error {
+	return d.inner.Close()
+}
+
+type fakeTimingScheme struct {
+	proveDelay time.Duration
+}
+
+func (s fakeTimingScheme) MaxValues() int { return 256 }
+
+func (s fakeTimingScheme) Commit(values []commitment.Cell) (cid.Cid, error) {
+	return fakeCommitRoot(values)
+}
+
+func (s fakeTimingScheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitment.Cell, []byte, error) {
+	time.Sleep(s.proveDelay)
+	if index >= uint64(len(values)) {
+		return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
+	}
+	root, err := s.Commit(values)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	return root, commitment.NewCell(values[index]), []byte("proof"), nil
+}
+
+func (s fakeTimingScheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid, []commitment.Cell, []byte, error) {
+	root, err := s.Commit(values)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	proved := make([]commitment.Cell, len(indices))
+	for i, index := range indices {
+		if index >= uint64(len(values)) {
+			return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
+		}
+		proved[i] = commitment.NewCell(values[index])
+	}
+	return root, proved, []byte("batch-proof"), nil
+}
+
+func (s fakeTimingScheme) VerifyIndex(cid.Cid, uint64, commitment.Cell, []byte) (bool, error) {
+	return true, nil
+}
+
+func (s fakeTimingScheme) BatchVerify(cid.Cid, []uint64, []commitment.Cell, []byte) (bool, error) {
+	return true, nil
+}
+
+func (s fakeTimingScheme) VerifyProof(cid.Cid, commitment.Cell, []byte) (bool, error) {
+	return true, nil
+}
+
+func (s fakeTimingScheme) Replace(values []commitment.Cell, index uint64, _, newValue commitment.Cell) (cid.Cid, error) {
+	next := commitment.CloneCells(values)
+	if index >= uint64(len(next)) {
+		return cid.Undef, fmt.Errorf("index %d out of range", index)
+	}
+	next[index] = commitment.NewCell(newValue)
+	return s.Commit(next)
+}
+
+func fakeCommitRoot(values []commitment.Cell) (cid.Cid, error) {
+	h := sha256.New()
+	var lenBuf [4]byte
+	for _, value := range values {
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(value)))
+		h.Write(lenBuf[:])
+		h.Write(value)
+	}
+	return maltcid.NewMapIPACid(h.Sum(nil))
 }
 
 func TestMapUpdateRejectsInconsistentOldValue(t *testing.T) {

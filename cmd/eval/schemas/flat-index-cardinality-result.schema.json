@@ -102,7 +102,7 @@
     "prove_elapsed_ns": {
       "type": "integer",
       "minimum": 0,
-      "description": "MALT proof/open generation latency for the canonical full-path key; omitted for flat HAMT."
+      "description": "MALT commitment open/prove latency for the canonical full-path key after radix slots have been loaded; omitted for flat HAMT."
     },
     "verify_elapsed_ns": {
       "type": "integer",

@@ -52,7 +52,8 @@ Paper-facing reports should keep these dimensions separate:
   path-depth matrix
 - configured per-CAS-Get latency (`cas_latency_ms`)
 - read-path latency (`elapsed_ns`)
-- MALT proof/open generation latency (`prove_elapsed_ns`)
+- MALT commitment open/prove latency after ArcSet materialization
+  (`prove_elapsed_ns`)
 - MALT client ProofList verification latency (`verify_elapsed_ns`)
 - proof bytes
 - ProofList step counts
@@ -130,9 +131,11 @@ record per system, key-count point, lookup sample, configured CAS latency, and
 iteration. Use this benchmark to evaluate the claim that a flat HAMT's latency
 depends on the number of HAMT blocks touched, which grows with key cardinality
 and hash distribution, while flat MALT lookup remains independent of logical
-path depth. For MALT records, `prove_elapsed_ns` separately measures semantic
-proof/open generation for the canonical full-path key without target blob fetch.
-This is the cost that should be compared against the expected MALT radix depth,
+path depth. For MALT records, `prove_elapsed_ns` separately measures only the
+commitment open/prove calls for the canonical full-path key after radix slots
+have already been read from the ArcTable. It excludes target blob fetch,
+resolver longest-prefix lookup, and ArcSet/radix-slot materialization. This is
+the cost that should be compared against the expected MALT radix depth,
 approximately `log_256(key_count)` in the common case. The fixed `path_depth`
 only shapes the canonical string used as the key; it is not the independent
 variable for this suite.

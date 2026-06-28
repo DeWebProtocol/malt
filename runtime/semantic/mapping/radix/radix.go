@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment"
@@ -35,6 +36,15 @@ const (
 type Map struct {
 	commitment *mapping.Commitment
 	arctable   arctable.ArcTable
+}
+
+// ProveTimings separates materialization from commitment-open cost for
+// benchmark reporting. LoadElapsedNS covers ArcTable reads and loaded-node
+// validation; OpenElapsedNS covers only commitment ProveSlot calls.
+type ProveTimings struct {
+	LoadElapsedNS int64
+	OpenElapsedNS int64
+	OpenCount     int
 }
 
 // ErrPathNotFound indicates that a requested radix map path is absent.
@@ -105,11 +115,20 @@ func (s *Map) Commit(ctx context.Context, namespace string, view mapping.View) (
 }
 
 func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
+	binding, proof, _, err := s.ProveWithTimings(ctx, namespace, root, key)
+	return binding, proof, err
+}
+
+// ProveWithTimings proves the existing binding for key and returns a timing
+// breakdown suitable for evaluation. The returned proof is identical to Prove;
+// timings do not change verifier semantics.
+func (s *Map) ProveWithTimings(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, ProveTimings, error) {
+	var timings ProveTimings
 	if !root.Defined() {
-		return mapping.Binding{}, nil, fmt.Errorf("root is undefined")
+		return mapping.Binding{}, nil, timings, fmt.Errorf("root is undefined")
 	}
 	if key.IsEmpty() {
-		return mapping.Binding{}, nil, fmt.Errorf("key is empty")
+		return mapping.Binding{}, nil, timings, fmt.Errorf("key is empty")
 	}
 
 	digest := hashPath(key)
@@ -117,20 +136,25 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 	envelope := proofEnvelope{}
 
 	for depth := 0; depth < len(digest); depth++ {
+		loadStart := time.Now()
 		slots, err := s.loadValidatedNode(ctx, namespace, currentRoot)
+		timings.LoadElapsedNS += time.Since(loadStart).Nanoseconds()
 		if err != nil {
-			return mapping.Binding{}, nil, err
+			return mapping.Binding{}, nil, timings, err
 		}
 
 		slotIndex := digest[depth]
+		openStart := time.Now()
 		value, proof, err := s.commitment.ProveSlot(currentRoot, slots, uint64(slotIndex))
+		timings.OpenElapsedNS += time.Since(openStart).Nanoseconds()
+		timings.OpenCount++
 		if err != nil {
-			return mapping.Binding{}, nil, err
+			return mapping.Binding{}, nil, timings, err
 		}
 
 		slotCID, err := value.AsCID()
 		if err != nil {
-			return mapping.Binding{}, nil, err
+			return mapping.Binding{}, nil, timings, err
 		}
 		envelope.Steps = append(envelope.Steps, proofStep{
 			Slot:  cidBytes(slotCID),
@@ -138,34 +162,36 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		})
 
 		if !slotCID.Defined() {
-			return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+			return mapping.Binding{}, nil, timings, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 		}
 
 		if leafPath, leafValue, ok, err := tryDecodeLeafMarker(slotCID); err != nil {
-			return mapping.Binding{}, nil, err
+			return mapping.Binding{}, nil, timings, err
 		} else if ok {
 			if leafPath != key {
-				return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+				return mapping.Binding{}, nil, timings, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 			}
 			proofBytes, err := json.Marshal(envelope)
 			if err != nil {
-				return mapping.Binding{}, nil, err
+				return mapping.Binding{}, nil, timings, err
 			}
-			return mapping.Binding{Value: leafValue, Present: true}, structure.Proof(proofBytes), nil
+			return mapping.Binding{Value: leafValue, Present: true}, structure.Proof(proofBytes), timings, nil
 		}
 
 		if bucketRoot, ok, err := tryDecodeBucketRef(slotCID); err != nil {
-			return mapping.Binding{}, nil, err
+			return mapping.Binding{}, nil, timings, err
 		} else if ok {
+			loadStart := time.Now()
 			markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
+			timings.LoadElapsedNS += time.Since(loadStart).Nanoseconds()
 			if err != nil {
-				return mapping.Binding{}, nil, err
+				return mapping.Binding{}, nil, timings, err
 			}
 			index := -1
 			for i, marker := range markers {
 				leafPath, _, err := decodeLeafMarker(marker)
 				if err != nil {
-					return mapping.Binding{}, nil, err
+					return mapping.Binding{}, nil, timings, err
 				}
 				if leafPath == key {
 					index = i
@@ -173,29 +199,32 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 				}
 			}
 			if index < 0 {
-				return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+				return mapping.Binding{}, nil, timings, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 			}
 
+			openStart := time.Now()
 			value, proof, err := s.commitment.ProveSlot(bucketRoot, markers, uint64(index))
+			timings.OpenElapsedNS += time.Since(openStart).Nanoseconds()
+			timings.OpenCount++
 			if err != nil {
-				return mapping.Binding{}, nil, err
+				return mapping.Binding{}, nil, timings, err
 			}
 			_, leafValue, err := decodeLeafMarkerCID(value)
 			if err != nil {
-				return mapping.Binding{}, nil, err
+				return mapping.Binding{}, nil, timings, err
 			}
 			envelope.Bucket = &bucketWitness{Proof: proof}
 			proofBytes, err := json.Marshal(envelope)
 			if err != nil {
-				return mapping.Binding{}, nil, err
+				return mapping.Binding{}, nil, timings, err
 			}
-			return mapping.Binding{Value: leafValue, Present: true}, structure.Proof(proofBytes), nil
+			return mapping.Binding{Value: leafValue, Present: true}, structure.Proof(proofBytes), timings, nil
 		}
 
 		currentRoot = slotCID
 	}
 
-	return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+	return mapping.Binding{}, nil, timings, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 }
 
 func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, proof structure.Proof) (bool, error) {
