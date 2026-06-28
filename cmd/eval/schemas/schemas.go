@@ -21,6 +21,7 @@ func Entries() []Entry {
 	return []Entry{
 		{Name: "cas-model-result", Path: "cmd/eval/schemas/cas-model-result.schema.json"},
 		{Name: "common-record", Path: "cmd/eval/schemas/common-record.schema.json"},
+		{Name: "flat-index-cardinality-result", Path: "cmd/eval/schemas/flat-index-cardinality-result.schema.json"},
 		{Name: "proof-overhead-result", Path: "cmd/eval/schemas/proof-overhead-result.schema.json"},
 		{Name: "read-matrix-result", Path: "cmd/eval/schemas/read-matrix-result.schema.json"},
 		{Name: "read-query-result", Path: "cmd/eval/schemas/read-query-result.schema.json"},

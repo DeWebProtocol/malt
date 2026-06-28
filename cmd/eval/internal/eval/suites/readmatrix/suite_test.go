@@ -27,6 +27,10 @@ func TestParseConfigDefaultsUsePaperCASLatencyBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseConfig(nil) error = %v", err)
 	}
+	wantSystems := []string{"maltflat", "merkledag"}
+	if !reflect.DeepEqual(cfg.Systems, wantSystems) {
+		t.Fatalf("Systems = %v, want %v", cfg.Systems, wantSystems)
+	}
 	wantDepths := []int{1, 2, 3, 4, 5, 6}
 	if !reflect.DeepEqual(cfg.Depths, wantDepths) {
 		t.Fatalf("Depths = %v, want %v", cfg.Depths, wantDepths)

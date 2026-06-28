@@ -10,6 +10,8 @@ See also the evaluator code under `cmd/eval/`.
 
 - the `read_matrix` suite for paper-facing fair resolve-path comparisons over
   shared logical paths
+- the `flat_index_cardinality` suite for flat full-path index comparisons over
+  increasing key counts
 - `malt-eval read` for paper-facing read benchmark records
 - `malt-eval write` for write-trace replay records
 - `malt-eval run` for JSON run plans and durable run directories
@@ -28,6 +30,7 @@ Current machine-readable schemas live in `cmd/eval/schemas`:
 - `run-manifest.schema.json`
 - `common-record.schema.json`
 - `read-matrix-result.schema.json`
+- `flat-index-cardinality-result.schema.json`
 - `readbench-result.schema.json`
 - `read-query-result.schema.json`
 - `write-trace-result.schema.json`
@@ -67,15 +70,16 @@ deterministic logical lookup tree and materializes the same paths as:
 
 - `maltflat`: flat MALT authenticated arcs keyed by the complete logical path
 - `merkledag`: IPLD UnixFS basic directory traversal
-- `hamt`: IPLD UnixFS HAMT directory traversal
-- `flathamt`: one IPFS/Boxo HAMT map keyed by the complete logical path
 
 It emits one `resolve_path` record per system, path depth, path sample,
 configured CAS latency, and iteration. Use it to compare whether lookup latency
 grows with path depth under warm per-block CAS latency models. The `maltflat`
-and `flathamt` records include flat path lookup plus one target blob fetch from
-CAS; the IPLD UnixFS baselines include their serial directory traversal and
-terminal target-node fetches.
+records include flat path lookup plus one target blob fetch from CAS; the
+Merkle DAG baseline includes its serial directory traversal and terminal
+target-node fetches. The suite still accepts `hamt` and `flathamt` as explicit
+diagnostic baselines, but they are not the default paper-facing path-depth
+comparison because HAMT's main variable is key cardinality rather than logical
+path depth.
 
 In `read_matrix`, `path_depth` means the number of edges from the root directory
 to the target file. Therefore depth `1` is a file directly under the root,
@@ -113,6 +117,25 @@ Report the read matrix from two views:
 The read matrix intentionally excludes full-content reads, range reads,
 list-backed payloads, and data-size/proof-generation sweeps. Dataset size effects
 on flat MALT proof generation belong in a separate microbenchmark.
+
+The `flat_index_cardinality` suite is the separate flat-structure comparison.
+It fixes logical path depth and materializes complete canonical paths as keys in:
+
+- `maltflat`: flat MALT authenticated arcs keyed by the complete logical path
+- `flathamt`: one IPFS/Boxo HAMT map keyed by the complete logical path
+
+It varies `key_counts` instead of path depth, then emits one `resolve_path`
+record per system, key-count point, lookup sample, configured CAS latency, and
+iteration. Use this benchmark to evaluate the claim that a flat HAMT's latency
+depends on the number of HAMT blocks touched, which grows with key cardinality
+and hash distribution, while flat MALT lookup remains independent of logical
+path depth. The fixed `path_depth` only shapes the canonical string used as the
+key; it is not the independent variable for this suite.
+
+The suite writes raw records to `raw/flat_index_cardinality.jsonl` and a
+figure-facing aggregate to `aggregate/flat_index_cardinality.csv`. Plot
+`file_count` on the x-axis, total elapsed time on the y-axis, and one line per
+system. Use median latency for the main result and p95 to report tail behavior.
 
 `malt-eval read` and the `read_query` suite remain useful for daemon-oriented
 end-to-end checks. They exercise the HTTP daemon path for MALT and local IPLD

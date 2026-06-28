@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/flat-index-cardinality-result.schema.json",
+  "title": "Flat index cardinality suite result",
+  "description": "One flat_index_cardinality suite record for a full-path-key lookup plus target fetch before the common framework envelope is applied.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "system",
+    "operation_kind",
+    "workload",
+    "iteration",
+    "fixture",
+    "path",
+    "cas_latency_ms",
+    "elapsed_ns",
+    "prooflist_step_count",
+    "evidence_item_count",
+    "cas",
+    "arctable",
+    "proof"
+  ],
+  "properties": {
+    "system": {
+      "type": "string",
+      "enum": ["maltflat", "flathamt"],
+      "description": "Evaluated flat full-path index implementation."
+    },
+    "operation_kind": {
+      "type": "string",
+      "enum": ["resolve_path"]
+    },
+    "workload": {
+      "type": "string",
+      "enum": ["deep_path_lookup"],
+      "description": "Full-path-key lookup workload represented by this operation."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dataset": {
+      "type": "string",
+      "description": "Logical source dataset shared by both flat systems at this cardinality."
+    },
+    "file_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of canonical full-path keys in the flat index."
+    },
+    "directory_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_depth": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Fixed logical path depth used to generate canonical full-path strings; not the independent variable for this suite."
+    },
+    "path_sample": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "One-based lookup-key sample index within this key-count point."
+    },
+    "logical_payload_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "small_file_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "large_file_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cas_latency_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Configured fixed per-CAS-Get latency for this matrix point in milliseconds."
+    },
+    "range_header": {
+      "type": "string",
+      "description": "Unused by flat_index_cardinality; present for compatibility with the shared read result shape."
+    },
+    "elapsed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verify_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional MALT client verification latency for returned ProofList evidence."
+    },
+    "content_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Target blob bytes fetched after full-path index lookup."
+    },
+    "prooflist_step_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidence_item_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Comparable evidence count: ProofList steps for MALT, CAS block fetches for flat HAMT."
+    },
+    "target": {
+      "type": "string",
+      "description": "Resolved target CID for resolve_path records."
+    },
+    "cas": {
+      "$ref": "#/$defs/cas_stats"
+    },
+    "arctable": {
+      "$ref": "#/$defs/arctable_stats"
+    },
+    "proof": {
+      "$ref": "#/$defs/proof_stats"
+    }
+  },
+  "$defs": {
+    "counter": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cas_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["put_count", "get_count", "has_count", "bytes_put", "bytes_get"],
+      "properties": {
+        "put_count": { "$ref": "#/$defs/counter" },
+        "get_count": { "$ref": "#/$defs/counter" },
+        "has_count": { "$ref": "#/$defs/counter" },
+        "bytes_put": { "$ref": "#/$defs/counter" },
+        "bytes_get": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "arctable_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "get_count",
+        "batch_get_count",
+        "batch_get_path_count",
+        "update_count",
+        "update_arc_count",
+        "snapshot_count",
+        "snapshot_arc_count",
+        "iterate_count"
+      ],
+      "properties": {
+        "get_count": { "$ref": "#/$defs/counter" },
+        "batch_get_count": { "$ref": "#/$defs/counter" },
+        "batch_get_path_count": { "$ref": "#/$defs/counter" },
+        "update_count": { "$ref": "#/$defs/counter" },
+        "update_arc_count": { "$ref": "#/$defs/counter" },
+        "snapshot_count": { "$ref": "#/$defs/counter" },
+        "snapshot_arc_count": { "$ref": "#/$defs/counter" },
+        "iterate_count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "proof_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proof_list_count",
+        "step_count",
+        "evidence_bytes",
+        "proof_bytes",
+        "total_bytes"
+      ],
+      "properties": {
+        "proof_list_count": { "$ref": "#/$defs/counter" },
+        "step_count": { "$ref": "#/$defs/counter" },
+        "evidence_bytes": { "$ref": "#/$defs/counter" },
+        "proof_bytes": { "$ref": "#/$defs/counter" },
+        "total_bytes": { "$ref": "#/$defs/counter" }
+      }
+    }
+  }
+}

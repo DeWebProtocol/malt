@@ -118,7 +118,7 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 
 func parseConfig(raw json.RawMessage) (Config, error) {
 	cfg := Config{
-		Systems:       []string{"maltflat", "merkledag", "hamt", "flathamt"},
+		Systems:       []string{"maltflat", "merkledag"},
 		Dataset:       "read-matrix",
 		Depths:        []int{1, 2, 3, 4, 5, 6},
 		CASLatencyMS:  []int{0, 25, 50, 100, 200},
@@ -164,7 +164,7 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 
 func parseSystems(values []string) ([]readbench.SystemName, error) {
 	if len(values) == 0 {
-		return []readbench.SystemName{readbench.SystemMALTFlat, readbench.SystemMerkleDAG, readbench.SystemHAMT, readbench.SystemFlatHAMT}, nil
+		return []readbench.SystemName{readbench.SystemMALTFlat, readbench.SystemMerkleDAG}, nil
 	}
 	return readbench.ParseSystemsCSV(strings.Join(values, ","))
 }
