@@ -8,9 +8,11 @@
   "required": [
     "system",
     "operation_kind",
+    "workload",
     "iteration",
     "fixture",
     "path",
+    "cas_latency_ms",
     "elapsed_ns",
     "prooflist_step_count",
     "evidence_item_count",
@@ -21,12 +23,17 @@
   "properties": {
     "system": {
       "type": "string",
-      "enum": ["maltflat", "merkledag", "hamt"],
+      "enum": ["maltflat", "merkledag", "hamt", "flathamt"],
       "description": "Evaluated read implementation."
     },
     "operation_kind": {
       "type": "string",
-      "enum": ["resolve_path", "content_range"]
+      "enum": ["resolve_path", "content_full", "content_range"]
+    },
+    "workload": {
+      "type": "string",
+      "enum": ["deep_path_lookup", "small_file_read", "large_file_range_read"],
+      "description": "Paper-facing read workload represented by this operation."
     },
     "iteration": {
       "type": "integer",
@@ -36,9 +43,50 @@
       "type": "string",
       "minLength": 1
     },
+    "dataset": {
+      "type": "string",
+      "description": "Logical source dataset shared by read_matrix systems."
+    },
+    "file_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "directory_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_depth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_sample": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "logical_payload_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "small_file_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "large_file_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
     "path": {
       "type": "string",
       "minLength": 1
+    },
+    "cas_latency_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Configured fixed per-CAS-Get latency for this read record in milliseconds; zero for runs without an explicit latency model."
     },
     "range_header": {
       "type": "string",
@@ -47,6 +95,16 @@
     "elapsed_ns": {
       "type": "integer",
       "minimum": 0
+    },
+    "prove_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "MALT commitment open/prove latency after radix slots have been loaded; omitted for baselines and read modes that do not measure it separately."
+    },
+    "verify_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "MALT client verification latency for returned ProofList evidence; omitted for IPLD UnixFS baselines."
     },
     "content_bytes": {
       "type": "integer",

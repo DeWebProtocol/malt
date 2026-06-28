@@ -1,0 +1,17 @@
+{
+  "run_id": "read-dht-stress",
+  "suites": [
+    {
+      "name": "read_matrix",
+      "config": {
+        "systems": ["maltflat", "merkledag"],
+        "dataset": "paper-read-cold-dht-stress",
+        "depths": [1, 2, 3, 4, 5, 6],
+        "cas_latency_ms": [2100],
+        "small_bytes": 1024,
+        "paths_per_depth": 1,
+        "iterations": 1
+      }
+    }
+  ]
+}

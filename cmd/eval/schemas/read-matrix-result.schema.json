@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/read-query-result.schema.json",
-  "title": "Read query suite result",
-  "description": "One read_query suite record for a single measured read operation before the common framework envelope is applied.",
+  "$id": "https://github.com/dewebprotocol/malt/cmd/eval/schemas/read-matrix-result.schema.json",
+  "title": "Read matrix suite result",
+  "description": "One read_matrix suite record for a resolve-path operation plus target fetch before the common framework envelope is applied.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,16 +23,16 @@
   "properties": {
     "system": {
       "type": "string",
-      "enum": ["maltflat", "merkledag", "hamt"],
+      "enum": ["maltflat", "merkledag", "hamt", "flathamt"],
       "description": "Evaluated read implementation."
     },
     "operation_kind": {
       "type": "string",
-      "enum": ["resolve_path", "content_full", "content_range"]
+      "enum": ["resolve_path"]
     },
     "workload": {
       "type": "string",
-      "enum": ["deep_path_lookup", "small_file_read", "large_file_range_read"],
+      "enum": ["deep_path_lookup"],
       "description": "Paper-facing read workload represented by this operation."
     },
     "iteration": {
@@ -45,7 +45,7 @@
     },
     "dataset": {
       "type": "string",
-      "description": "Logical source dataset shared by read_matrix systems."
+      "description": "Logical source dataset shared by all systems in this matrix point."
     },
     "file_count": {
       "type": "integer",
@@ -65,7 +65,8 @@
     },
     "path_sample": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "One-based lookup-key sample index within this path depth."
     },
     "logical_payload_bytes": {
       "type": "integer",
@@ -86,11 +87,11 @@
     "cas_latency_ms": {
       "type": "integer",
       "minimum": 0,
-      "description": "Configured fixed per-CAS-Get latency for this read record in milliseconds; zero for read_query daemon runs."
+      "description": "Configured fixed per-CAS-Get latency for this matrix point in milliseconds."
     },
     "range_header": {
       "type": "string",
-      "description": "HTTP Range header used for content_range records."
+      "description": "Unused by read_matrix; present for compatibility with the shared read result shape."
     },
     "elapsed_ns": {
       "type": "integer",
@@ -104,11 +105,12 @@
     "verify_elapsed_ns": {
       "type": "integer",
       "minimum": 0,
-      "description": "MALT client verification latency for returned ProofList evidence; omitted for IPLD UnixFS baselines."
+      "description": "Optional MALT client verification latency for returned ProofList evidence."
     },
     "content_bytes": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Target blob bytes fetched by flat MALT and flat HAMT after path resolution; omitted by IPLD UnixFS path-resolution records."
     },
     "prooflist_step_count": {
       "type": "integer",

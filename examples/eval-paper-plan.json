@@ -43,23 +43,27 @@
       }
     },
     {
-      "name": "read_depth_sweep",
+      "name": "read_matrix",
       "config": {
-        "systems": ["maltflat", "merkledag", "hamt"],
-        "depths": [3, 4, 5, 6],
-        "small_bytes": 256,
-        "large_bytes": 1048576,
+        "systems": ["maltflat", "merkledag"],
+        "dataset": "paper-read",
+        "depths": [1, 2, 3, 4, 5, 6],
+        "cas_latency_ms": [0, 25, 50, 100, 200],
+        "small_bytes": 1024,
+        "paths_per_depth": 5,
         "iterations": 10
       }
     },
     {
-      "name": "read_latency_sweep",
+      "name": "flat_index_cardinality",
       "config": {
-        "systems": ["maltflat", "merkledag", "hamt"],
-        "depth": 6,
-        "cas_latency_ms": [0, 5, 10, 20, 50, 100],
-        "small_bytes": 256,
-        "large_bytes": 1048576,
+        "systems": ["maltflat", "flathamt"],
+        "dataset": "paper-flat-index",
+        "key_counts": [1, 64, 256, 1024, 4096, 16384],
+        "path_depth": 4,
+        "cas_latency_ms": [0, 25, 200],
+        "small_bytes": 1024,
+        "paths_per_key_count": 5,
         "iterations": 10
       }
     }

@@ -9,6 +9,7 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	runtimegraph "github.com/dewebprotocol/malt/runtime/graph"
 	"github.com/dewebprotocol/malt/runtime/node"
+	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 )
@@ -25,6 +26,29 @@ type LocalMALTSystem struct {
 // NewLocalMALTSystem creates a MALT node backed by the given mock CAS,
 // imports fixture files, and returns a ready-to-measure system.
 func NewLocalMALTSystem(ctx context.Context, store *casmock.CAS, multiFix MultiDepthFixture) (*LocalMALTSystem, error) {
+	files := make([]MatrixDatasetFile, 0, len(multiFix.Fixtures)*2)
+	for _, fix := range multiFix.Fixtures {
+		files = append(files, MatrixDatasetFile{
+			Path:  fix.SmallPath,
+			Data:  fix.SmallData,
+			Depth: fix.Depth,
+			Role:  "small",
+		})
+		if fix.LargePath != "" {
+			files = append(files, MatrixDatasetFile{
+				Path:  fix.LargePath,
+				Data:  fix.LargeData,
+				Depth: fix.Depth,
+				Role:  "large",
+			})
+		}
+	}
+	return NewLocalMALTSystemWithFiles(ctx, store, files)
+}
+
+// NewLocalMALTSystemWithFiles creates a flat authenticated MALT structure from
+// explicit logical files.
+func NewLocalMALTSystemWithFiles(ctx context.Context, store *casmock.CAS, files []MatrixDatasetFile) (*LocalMALTSystem, error) {
 	cfg := config.DefaultConfig()
 	cfg.State.KVStore.Type = "memory"
 
@@ -43,18 +67,15 @@ func NewLocalMALTSystem(ctx context.Context, store *casmock.CAS, multiFix MultiD
 
 	// Build arc set from all fixture files at all depths.
 	arcs := map[string]cid.Cid{}
-	for _, fix := range multiFix.Fixtures {
-		// Store file data in the mock CAS and get CIDs.
-		smallCID, err := store.Put(ctx, fix.SmallData)
-		if err != nil {
-			return nil, fmt.Errorf("put small file at depth %d: %w", fix.Depth, err)
+	for _, file := range files {
+		if file.Path == "" {
+			return nil, fmt.Errorf("empty file path in local malt system")
 		}
-		largeCID, err := store.Put(ctx, fix.LargeData)
+		payloadCID, err := store.Put(ctx, file.Data)
 		if err != nil {
-			return nil, fmt.Errorf("put large file at depth %d: %w", fix.Depth, err)
+			return nil, fmt.Errorf("put file %q: %w", file.Path, err)
 		}
-		arcs[fix.SmallPath] = smallCID
-		arcs[fix.LargePath] = largeCID
+		arcs[file.Path] = payloadCID
 	}
 
 	// Every MALT-native map object requires a @payload binding.
@@ -84,22 +105,78 @@ func NewLocalMALTSystem(ctx context.Context, store *casmock.CAS, multiFix MultiD
 
 // MeasureResolve measures a single resolve_path operation at the given path.
 func (s *LocalMALTSystem) MeasureResolve(ctx context.Context, iteration int, fixtureName string, filePath string) (*Result, error) {
+	return s.measureResolve(ctx, iteration, fixtureName, filePath, false)
+}
+
+// MeasureResolveWithTargetFetch measures resolve_path plus one target blob
+// fetch. This is the paper-facing read_matrix behavior: MALT resolves the flat
+// authenticated path, then fetches the target payload once from CAS.
+func (s *LocalMALTSystem) MeasureResolveWithTargetFetch(ctx context.Context, iteration int, fixtureName string, filePath string) (*Result, error) {
+	return s.measureResolve(ctx, iteration, fixtureName, filePath, true)
+}
+
+// MeasureProve measures only commitment open/prove calls for one full-path key.
+// The radix implementation still loads and validates slots to prepare the
+// proof, but this returned latency excludes that ArcTable materialization, target
+// blob fetching, and the resolver's longest-prefix lookup.
+func (s *LocalMALTSystem) MeasureProve(ctx context.Context, filePath string) (*int64, error) {
+	if s == nil || s.g == nil {
+		return nil, fmt.Errorf("local malt system is nil")
+	}
+	semantic, ok := s.g.Semantic().(*mappingradix.Map)
+	if !ok {
+		return nil, fmt.Errorf("local malt semantic does not expose prove timings")
+	}
+	binding, proof, timings, err := semantic.ProveWithTimings(ctx, s.g.Namespace(), s.root, arcset.CanonicalizePath(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("prove %q: %w", filePath, err)
+	}
+	if !binding.Present || !binding.Value.Defined() {
+		return nil, fmt.Errorf("prove %q returned no present binding", filePath)
+	}
+	if len(proof) == 0 {
+		return nil, fmt.Errorf("prove %q returned empty proof", filePath)
+	}
+	elapsed := timings.OpenElapsedNS
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+	return &elapsed, nil
+}
+
+func (s *LocalMALTSystem) measureResolve(ctx context.Context, iteration int, fixtureName string, filePath string, fetchTarget bool) (*Result, error) {
+	s.node.ResetMetrics()
 	start := time.Now()
 	result, err := s.g.Resolver().Resolve(ctx, s.root, filePath)
-	elapsed := positiveElapsedNS(start, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", filePath, err)
 	}
+	var contentBytes *int
+	if fetchTarget {
+		data, err := s.store.Get(ctx, result.Target)
+		if err != nil {
+			return nil, fmt.Errorf("fetch target blob %q: %w", result.Target.String(), err)
+		}
+		count := len(data)
+		contentBytes = &count
+	}
+	elapsed := positiveElapsedNS(start, time.Now())
+	snapshot := s.node.MetricsSnapshot()
 
 	return &Result{
 		System:             SystemMALTFlat,
 		OperationKind:      OperationResolvePath,
+		Workload:           WorkloadDeepPathLookup,
 		Iteration:          iteration,
 		FixtureName:        fixtureName,
 		Path:               filePath,
 		ElapsedNS:          elapsed,
+		ContentBytes:       contentBytes,
 		ProofListStepCount: len(result.Transcript.Steps),
 		EvidenceItemCount:  len(result.Transcript.Steps),
 		Target:             result.Target.String(),
+		CAS:                snapshot.CAS,
+		ArcTable:           snapshot.ArcTable,
+		Proof:              snapshot.Proof,
 	}, nil
 }
