@@ -63,13 +63,30 @@ writer receipt counts as correctness proofs. Receipts and metrics are
 operational accounting unless tied to verifier evidence.
 
 The `read_matrix` suite is the main paper-facing read comparison. It builds one
-deterministic logical lookup tree, materializes the same paths as flat MALT
-authenticated arcs, IPLD UnixFS MerkleDAG, and IPLD UnixFS HAMT, then emits one
-`resolve_path` record per system, path depth, configured CAS latency, and
-iteration. Use it to compare whether lookup latency grows with path depth under
-warm per-block CAS latency models. The MALT record includes flat path
-authentication plus one target blob fetch from CAS; the IPLD baselines include
-their serial directory traversal and terminal target-node fetches.
+deterministic logical lookup tree and materializes the same paths as:
+
+- `maltflat`: flat MALT authenticated arcs keyed by the complete logical path
+- `merkledag`: IPLD UnixFS basic directory traversal
+- `hamt`: IPLD UnixFS HAMT directory traversal
+- `flathamt`: one IPFS/Boxo HAMT map keyed by the complete logical path
+
+It emits one `resolve_path` record per system, path depth, path sample,
+configured CAS latency, and iteration. Use it to compare whether lookup latency
+grows with path depth under warm per-block CAS latency models. The `maltflat`
+and `flathamt` records include flat path lookup plus one target blob fetch from
+CAS; the IPLD UnixFS baselines include their serial directory traversal and
+terminal target-node fetches.
+
+In `read_matrix`, `path_depth` means the number of edges from the root directory
+to the target file. Therefore depth `1` is a file directly under the root,
+depth `2` is one directory plus a file, and so on. It is not the number of
+directory components.
+
+The suite writes raw records to `raw/read_matrix.jsonl` and a figure-facing
+aggregate to `aggregate/read_matrix.csv`. Use the aggregate's median and p95
+columns for plots; raw records remain the audit trail for per-sample behavior.
+Set `paths_per_depth` above `1` for the main paper run so that key-dependent
+radix/HAMT artifacts do not dominate a single depth point.
 
 Use depths `[1, 2, 3, 4, 5, 6]` for the main paper figure. A sweep up to depth
 10 is acceptable for a sensitivity appendix, but depth 16 should be treated as
@@ -86,11 +103,12 @@ steady-state latency.
 Report the read matrix from two views:
 
 - fixed CAS latency: plot path depth on the x-axis, total elapsed time on the
-  y-axis, and one line per system; use two or three latency scenarios such as
-  `25`, `200`, and optionally `2100` ms
+  y-axis, and one line per system; use median latency as the main line and p95
+  as optional error bars or a separate table; use two or three latency scenarios
+  such as `25`, `200`, and optionally `2100` ms
 - fixed path depth: hold depth at a representative value such as `4`, plot CAS
   latency on the x-axis, total elapsed time on the y-axis, and one line per
-  system
+  system; again report median first and p95 as tail latency
 
 The read matrix intentionally excludes full-content reads, range reads,
 list-backed payloads, and data-size/proof-generation sweeps. Dataset size effects

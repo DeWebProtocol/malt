@@ -88,6 +88,7 @@ type Result struct {
 	DirectoryCount      int                   `json:"directory_count,omitempty"`
 	PathCount           int                   `json:"path_count,omitempty"`
 	PathDepth           int                   `json:"path_depth,omitempty"`
+	PathSample          int                   `json:"path_sample,omitempty"`
 	LogicalPayloadBytes int64                 `json:"logical_payload_bytes,omitempty"`
 	SmallFileBytes      int                   `json:"small_file_bytes,omitempty"`
 	LargeFileBytes      int                   `json:"large_file_bytes,omitempty"`
@@ -388,6 +389,11 @@ func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 	systems, err := normalizeSystems(cfg.Systems)
 	if err != nil {
 		return RunConfig{}, err
+	}
+	for _, system := range systems {
+		if system == SystemFlatHAMT {
+			return RunConfig{}, fmt.Errorf("system %q is only supported by read_matrix", system)
+		}
 	}
 	fixture, err := normalizeFixtureConfig(cfg.Fixture)
 	if err != nil {

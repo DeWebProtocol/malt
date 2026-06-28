@@ -20,12 +20,13 @@ type Suite struct{}
 
 // Config controls the read_matrix suite.
 type Config struct {
-	Systems      []string `json:"systems"`
-	Dataset      string   `json:"dataset"`
-	Depths       []int    `json:"depths"`
-	CASLatencyMS []int    `json:"cas_latency_ms"`
-	SmallBytes   int      `json:"small_bytes"`
-	Iterations   int      `json:"iterations"`
+	Systems       []string `json:"systems"`
+	Dataset       string   `json:"dataset"`
+	Depths        []int    `json:"depths"`
+	CASLatencyMS  []int    `json:"cas_latency_ms"`
+	SmallBytes    int      `json:"small_bytes"`
+	PathsPerDepth int      `json:"paths_per_depth"`
+	Iterations    int      `json:"iterations"`
 }
 
 // Name returns the fixed suite name expected by framework plans.
@@ -45,18 +46,21 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 		return err
 	}
 
-	total := cfg.Iterations * len(cfg.CASLatencyMS) * len(systems) * len(cfg.Depths)
+	total := cfg.Iterations * len(cfg.CASLatencyMS) * len(systems) * len(cfg.Depths) * cfg.PathsPerDepth
 	count := 0
-	log("  systems=%v depths=%v cas_latency_ms=%v iterations=%d", systems, cfg.Depths, cfg.CASLatencyMS, cfg.Iterations)
+	log("  systems=%v depths=%v cas_latency_ms=%v paths_per_depth=%d iterations=%d",
+		systems, cfg.Depths, cfg.CASLatencyMS, cfg.PathsPerDepth, cfg.Iterations)
 
 	dataset, err := readbench.NewMatrixDataset(readbench.MatrixDatasetConfig{
-		Name:         cfg.Dataset,
-		Depths:       cfg.Depths,
-		PayloadBytes: cfg.SmallBytes,
+		Name:          cfg.Dataset,
+		Depths:        cfg.Depths,
+		PayloadBytes:  cfg.SmallBytes,
+		PathsPerDepth: cfg.PathsPerDepth,
 	})
 	if err != nil {
 		return err
 	}
+	var results []readbench.Result
 	for _, latencyMS := range cfg.CASLatencyMS {
 		materialized := make([]readbench.MatrixSystem, 0, len(systems))
 		for _, system := range systems {
@@ -68,7 +72,7 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 			materialized = append(materialized, benchSystem)
 		}
 
-		if err := runDataset(ctx, env, cfg, dataset, materialized, total, &count); err != nil {
+		if err := runDataset(ctx, env, cfg, dataset, materialized, total, &count, &results); err != nil {
 			closeMatrixSystems(materialized)
 			return err
 		}
@@ -76,10 +80,10 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 			return err
 		}
 	}
-	return nil
+	return writeAggregateCSV(env, Name, aggregateResults(results))
 }
 
-func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *readbench.MatrixDataset, systems []readbench.MatrixSystem, total int, count *int) error {
+func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *readbench.MatrixDataset, systems []readbench.MatrixSystem, total int, count *int, results *[]readbench.Result) error {
 	log := env.Log()
 	for iteration := 0; iteration < cfg.Iterations; iteration++ {
 		for _, system := range systems {
@@ -96,6 +100,9 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 					if err := env.WriteRecord(Name, result); err != nil {
 						return err
 					}
+					if results != nil {
+						*results = append(*results, *result)
+					}
 					*count = *count + 1
 					if *count%25 == 0 || *count == total {
 						log("  [%d/%d] dataset=%s iter=%d system=%s depth=%d cas_latency_ms=%d elapsed=%s",
@@ -111,12 +118,13 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 
 func parseConfig(raw json.RawMessage) (Config, error) {
 	cfg := Config{
-		Systems:      []string{"maltflat", "merkledag", "hamt"},
-		Dataset:      "read-matrix",
-		Depths:       []int{1, 2, 3, 4, 5, 6},
-		CASLatencyMS: []int{0, 25, 50, 100, 200},
-		SmallBytes:   1024,
-		Iterations:   5,
+		Systems:       []string{"maltflat", "merkledag", "hamt", "flathamt"},
+		Dataset:       "read-matrix",
+		Depths:        []int{1, 2, 3, 4, 5, 6},
+		CASLatencyMS:  []int{0, 25, 50, 100, 200},
+		SmallBytes:    1024,
+		PathsPerDepth: 5,
+		Iterations:    5,
 	}
 	if len(strings.TrimSpace(string(raw))) > 0 {
 		if err := configjson.Decode(raw, Name, &cfg); err != nil {
@@ -137,6 +145,9 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 	if cfg.SmallBytes <= 0 {
 		return Config{}, fmt.Errorf("small_bytes must be positive")
 	}
+	if cfg.PathsPerDepth <= 0 {
+		return Config{}, fmt.Errorf("paths_per_depth must be positive")
+	}
 	if len(cfg.CASLatencyMS) == 0 {
 		return Config{}, fmt.Errorf("cas_latency_ms must not be empty")
 	}
@@ -153,7 +164,7 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 
 func parseSystems(values []string) ([]readbench.SystemName, error) {
 	if len(values) == 0 {
-		return readbench.DefaultSystems(), nil
+		return []readbench.SystemName{readbench.SystemMALTFlat, readbench.SystemMerkleDAG, readbench.SystemHAMT, readbench.SystemFlatHAMT}, nil
 	}
 	return readbench.ParseSystemsCSV(strings.Join(values, ","))
 }

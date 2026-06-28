@@ -12,6 +12,7 @@ const (
 	SystemMALTFlat  SystemName = "maltflat"
 	SystemMerkleDAG SystemName = "merkledag"
 	SystemHAMT      SystemName = "hamt"
+	SystemFlatHAMT  SystemName = "flathamt"
 )
 
 // DefaultSystemsCSV is the default comma-separated read benchmark system list.
@@ -71,7 +72,7 @@ func normalizeSystems(systems []SystemName) ([]SystemName, error) {
 
 func knownSystem(system SystemName) bool {
 	switch system {
-	case SystemMALTFlat, SystemMerkleDAG, SystemHAMT:
+	case SystemMALTFlat, SystemMerkleDAG, SystemHAMT, SystemFlatHAMT:
 		return true
 	default:
 		return false

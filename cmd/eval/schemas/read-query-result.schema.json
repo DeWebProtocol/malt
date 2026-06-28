@@ -63,6 +63,10 @@
       "type": "integer",
       "minimum": 0
     },
+    "path_sample": {
+      "type": "integer",
+      "minimum": 0
+    },
     "logical_payload_bytes": {
       "type": "integer",
       "minimum": 0

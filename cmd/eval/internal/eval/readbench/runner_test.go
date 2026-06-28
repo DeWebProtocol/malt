@@ -505,6 +505,16 @@ func TestNormalizeRunConfigRejectsUnknownSystem(t *testing.T) {
 	}
 }
 
+func TestNormalizeRunConfigRejectsFlatHAMTOutsideReadMatrix(t *testing.T) {
+	_, err := normalizeRunConfig(RunConfig{
+		Systems: []SystemName{SystemFlatHAMT},
+		Fixture: FixtureConfig{LargeFileBytes: 300 * 1024},
+	})
+	if err == nil {
+		t.Fatal("expected flathamt to fail outside read_matrix")
+	}
+}
+
 func TestNormalizeRunConfigRejectsDuplicateSystem(t *testing.T) {
 	_, err := normalizeRunConfig(RunConfig{
 		Systems: []SystemName{SystemMALTFlat, SystemMALTFlat},

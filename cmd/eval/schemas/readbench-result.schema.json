@@ -23,7 +23,7 @@
   "properties": {
     "system": {
       "type": "string",
-      "enum": ["maltflat", "merkledag", "hamt"],
+      "enum": ["maltflat", "merkledag", "hamt", "flathamt"],
       "description": "Evaluated read implementation."
     },
     "operation_kind": {
@@ -60,6 +60,10 @@
       "minimum": 0
     },
     "path_depth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "path_sample": {
       "type": "integer",
       "minimum": 0
     },

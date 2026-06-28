@@ -12,10 +12,11 @@ import (
 
 // MatrixOperation is one read operation measured against a shared dataset.
 type MatrixOperation struct {
-	Kind      OperationKind
-	Workload  WorkloadKind
-	Path      string
-	PathDepth int
+	Kind       OperationKind
+	Workload   WorkloadKind
+	Path       string
+	PathDepth  int
+	PathSample int
 }
 
 // MatrixSystem measures read operations for one materialized representation.
@@ -30,13 +31,21 @@ func MatrixOperations(dataset *MatrixDataset, depth int) ([]MatrixOperation, err
 	if dataset == nil {
 		return nil, fmt.Errorf("dataset is nil")
 	}
-	lookupPath := dataset.SmallPaths[depth]
-	if lookupPath == "" {
+	lookupPaths := dataset.LookupPaths[depth]
+	if len(lookupPaths) == 0 {
 		return nil, fmt.Errorf("dataset %q has no measured path at depth %d", dataset.Name, depth)
 	}
-	return []MatrixOperation{
-		{Kind: OperationResolvePath, Workload: WorkloadDeepPathLookup, Path: lookupPath, PathDepth: depth},
-	}, nil
+	ops := make([]MatrixOperation, 0, len(lookupPaths))
+	for i, lookupPath := range lookupPaths {
+		ops = append(ops, MatrixOperation{
+			Kind:       OperationResolvePath,
+			Workload:   WorkloadDeepPathLookup,
+			Path:       lookupPath,
+			PathDepth:  depth,
+			PathSample: i + 1,
+		})
+	}
+	return ops, nil
 }
 
 // NewMatrixSystem materializes dataset for one read_matrix system and CAS
@@ -50,6 +59,8 @@ func NewMatrixSystem(ctx context.Context, system SystemName, dataset *MatrixData
 		return newMatrixMALTSystem(ctx, dataset, casLatencyMS)
 	case SystemMerkleDAG, SystemHAMT:
 		return newMatrixBaselineSystem(ctx, system, dataset, casLatencyMS)
+	case SystemFlatHAMT:
+		return newMatrixFlatHAMTSystem(ctx, dataset, casLatencyMS)
 	default:
 		return nil, fmt.Errorf("unknown system %q", system)
 	}
@@ -174,6 +185,7 @@ func attachDatasetMetadata(result *Result, dataset *MatrixDataset, op MatrixOper
 	result.DirectoryCount = dataset.DirectoryCount
 	result.PathCount = dataset.PathCount
 	result.PathDepth = op.PathDepth
+	result.PathSample = op.PathSample
 	result.LogicalPayloadBytes = dataset.LogicalPayloadBytes
 	result.SmallFileBytes = dataset.SmallFileBytes
 	result.LargeFileBytes = dataset.LargeFileBytes

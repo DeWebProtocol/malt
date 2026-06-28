@@ -1,3 +1,4 @@
-// Package readmatrix runs fair resolve-path benchmarks across MALT, Merkle DAG,
-// and HAMT using one shared logical source dataset.
+// Package readmatrix runs fair resolve-path benchmarks across flat MALT, UnixFS
+// Merkle DAG, UnixFS HAMT directories, and flat full-path HAMT using one shared
+// logical source dataset.
 package readmatrix

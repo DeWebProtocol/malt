@@ -23,7 +23,7 @@
   "properties": {
     "system": {
       "type": "string",
-      "enum": ["maltflat", "merkledag", "hamt"],
+      "enum": ["maltflat", "merkledag", "hamt", "flathamt"],
       "description": "Evaluated read implementation."
     },
     "operation_kind": {
@@ -63,6 +63,11 @@
       "type": "integer",
       "minimum": 0
     },
+    "path_sample": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "One-based lookup-key sample index within this path depth."
+    },
     "logical_payload_bytes": {
       "type": "integer",
       "minimum": 0
@@ -100,7 +105,7 @@
     "content_bytes": {
       "type": "integer",
       "minimum": 0,
-      "description": "Target blob bytes fetched by MALT after flat path resolution; omitted by IPLD baseline path-resolution records."
+      "description": "Target blob bytes fetched by flat MALT and flat HAMT after path resolution; omitted by IPLD UnixFS path-resolution records."
     },
     "prooflist_step_count": {
       "type": "integer",
