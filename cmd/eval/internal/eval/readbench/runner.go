@@ -96,6 +96,7 @@ type Result struct {
 	Path                string                `json:"path"`
 	RangeHeader         string                `json:"range_header,omitempty"`
 	ElapsedNS           int64                 `json:"elapsed_ns"`
+	ProveElapsedNS      *int64                `json:"prove_elapsed_ns,omitempty"`
 	VerifyElapsedNS     *int64                `json:"verify_elapsed_ns,omitempty"`
 	ContentBytes        *int                  `json:"content_bytes,omitempty"`
 	ProofListStepCount  int                   `json:"prooflist_step_count"`

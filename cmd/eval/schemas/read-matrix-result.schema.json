@@ -97,6 +97,11 @@
       "type": "integer",
       "minimum": 0
     },
+    "prove_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "MALT proof/open generation latency for the requested full-path key; omitted when this suite does not measure it separately."
+    },
     "verify_elapsed_ns": {
       "type": "integer",
       "minimum": 0,

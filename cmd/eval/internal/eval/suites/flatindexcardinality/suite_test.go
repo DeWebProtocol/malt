@@ -85,6 +85,16 @@ func TestRunWritesFlatIndexCardinalityMatrixAndAggregate(t *testing.T) {
 		if result.ContentBytes == nil || *result.ContentBytes != 64 {
 			t.Fatalf("content_bytes = %v, want 64", result.ContentBytes)
 		}
+		switch result.System {
+		case readbench.SystemMALTFlat:
+			if result.ProveElapsedNS == nil || *result.ProveElapsedNS <= 0 {
+				t.Fatalf("malt prove_elapsed_ns = %v, want positive proof/open generation latency", result.ProveElapsedNS)
+			}
+		case readbench.SystemFlatHAMT:
+			if result.ProveElapsedNS != nil {
+				t.Fatalf("flathamt prove_elapsed_ns = %v, want omitted", result.ProveElapsedNS)
+			}
+		}
 	}
 	for _, system := range []readbench.SystemName{readbench.SystemMALTFlat, readbench.SystemFlatHAMT} {
 		if !seenSystems[system] {
@@ -110,6 +120,19 @@ func TestRunWritesFlatIndexCardinalityMatrixAndAggregate(t *testing.T) {
 		}
 		if parseInt64Field(t, row, "p95_elapsed_ns") <= 0 {
 			t.Fatalf("p95_elapsed_ns should be positive in row %+v", row)
+		}
+		switch row["system"] {
+		case string(readbench.SystemMALTFlat):
+			if parseInt64Field(t, row, "median_prove_elapsed_ns") <= 0 {
+				t.Fatalf("median_prove_elapsed_ns should be positive for MALT in row %+v", row)
+			}
+			if parseInt64Field(t, row, "p95_prove_elapsed_ns") <= 0 {
+				t.Fatalf("p95_prove_elapsed_ns should be positive for MALT in row %+v", row)
+			}
+		case string(readbench.SystemFlatHAMT):
+			if row["median_prove_elapsed_ns"] != "0" || row["p95_prove_elapsed_ns"] != "0" {
+				t.Fatalf("proof elapsed aggregate should be zero for flat HAMT in row %+v", row)
+			}
 		}
 	}
 }

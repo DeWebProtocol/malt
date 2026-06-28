@@ -105,6 +105,13 @@ func runDataset(ctx context.Context, env framework.Env, cfg Config, dataset *rea
 				if err != nil {
 					return err
 				}
+				if prover, ok := system.(readbench.MatrixProveSystem); ok {
+					proveElapsedNS, err := prover.MeasureProve(ctx, iteration, dataset, op)
+					if err != nil {
+						return err
+					}
+					result.ProveElapsedNS = proveElapsedNS
+				}
 				if err := env.WriteRecord(Name, result); err != nil {
 					return err
 				}
@@ -127,7 +134,7 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 	cfg := Config{
 		Systems:          []string{"maltflat", "flathamt"},
 		Dataset:          "flat-index-cardinality",
-		KeyCounts:        []int{1, 64, 256, 1024, 4096},
+		KeyCounts:        []int{1, 64, 256, 1024, 4096, 16384},
 		PathDepth:        4,
 		PathsPerKeyCount: 5,
 		CASLatencyMS:     []int{0, 25, 200},

@@ -99,6 +99,11 @@
       "type": "integer",
       "minimum": 0
     },
+    "prove_elapsed_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "MALT proof/open generation latency for the canonical full-path key; omitted for flat HAMT."
+    },
     "verify_elapsed_ns": {
       "type": "integer",
       "minimum": 0,

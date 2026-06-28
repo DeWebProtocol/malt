@@ -52,6 +52,7 @@ Paper-facing reports should keep these dimensions separate:
   path-depth matrix
 - configured per-CAS-Get latency (`cas_latency_ms`)
 - read-path latency (`elapsed_ns`)
+- MALT proof/open generation latency (`prove_elapsed_ns`)
 - MALT client ProofList verification latency (`verify_elapsed_ns`)
 - proof bytes
 - ProofList step counts
@@ -129,13 +130,19 @@ record per system, key-count point, lookup sample, configured CAS latency, and
 iteration. Use this benchmark to evaluate the claim that a flat HAMT's latency
 depends on the number of HAMT blocks touched, which grows with key cardinality
 and hash distribution, while flat MALT lookup remains independent of logical
-path depth. The fixed `path_depth` only shapes the canonical string used as the
-key; it is not the independent variable for this suite.
+path depth. For MALT records, `prove_elapsed_ns` separately measures semantic
+proof/open generation for the canonical full-path key without target blob fetch.
+This is the cost that should be compared against the expected MALT radix depth,
+approximately `log_256(key_count)` in the common case. The fixed `path_depth`
+only shapes the canonical string used as the key; it is not the independent
+variable for this suite.
 
 The suite writes raw records to `raw/flat_index_cardinality.jsonl` and a
 figure-facing aggregate to `aggregate/flat_index_cardinality.csv`. Plot
 `file_count` on the x-axis, total elapsed time on the y-axis, and one line per
 system. Use median latency for the main result and p95 to report tail behavior.
+For the MALT proof-cost figure, plot `median_prove_elapsed_ns` and
+`p95_prove_elapsed_ns` against `file_count` separately from read latency.
 
 `malt-eval read` and the `read_query` suite remain useful for daemon-oriented
 end-to-end checks. They exercise the HTTP daemon path for MALT and local IPLD

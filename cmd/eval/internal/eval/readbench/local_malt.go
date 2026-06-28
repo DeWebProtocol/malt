@@ -114,6 +114,29 @@ func (s *LocalMALTSystem) MeasureResolveWithTargetFetch(ctx context.Context, ite
 	return s.measureResolve(ctx, iteration, fixtureName, filePath, true)
 }
 
+// MeasureProve measures semantic proof/open generation for one full-path key.
+// It excludes target blob fetching and the resolver's longest-prefix lookup so
+// flat-index cardinality runs can report MALT's proof cost independently from
+// end-to-end read latency.
+func (s *LocalMALTSystem) MeasureProve(ctx context.Context, filePath string) (*int64, error) {
+	if s == nil || s.g == nil {
+		return nil, fmt.Errorf("local malt system is nil")
+	}
+	start := time.Now()
+	binding, proof, err := s.g.Semantic().Prove(ctx, s.g.Namespace(), s.root, arcset.CanonicalizePath(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("prove %q: %w", filePath, err)
+	}
+	if !binding.Present || !binding.Value.Defined() {
+		return nil, fmt.Errorf("prove %q returned no present binding", filePath)
+	}
+	if len(proof) == 0 {
+		return nil, fmt.Errorf("prove %q returned empty proof", filePath)
+	}
+	elapsed := positiveElapsedNS(start, time.Now())
+	return &elapsed, nil
+}
+
 func (s *LocalMALTSystem) measureResolve(ctx context.Context, iteration int, fixtureName string, filePath string, fetchTarget bool) (*Result, error) {
 	s.node.ResetMetrics()
 	start := time.Now()

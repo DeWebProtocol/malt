@@ -26,6 +26,12 @@ type MatrixSystem interface {
 	Close() error
 }
 
+// MatrixProveSystem optionally exposes proof/open generation timing for flat
+// MALT systems. Baselines that do not generate ProofList evidence omit it.
+type MatrixProveSystem interface {
+	MeasureProve(context.Context, int, *MatrixDataset, MatrixOperation) (*int64, error)
+}
+
 // MatrixOperations returns the paper-facing path lookup operation at one depth.
 func MatrixOperations(dataset *MatrixDataset, depth int) ([]MatrixOperation, error) {
 	if dataset == nil {
@@ -100,6 +106,16 @@ func (s *matrixMALTSystem) Measure(ctx context.Context, iteration int, dataset *
 	}
 	attachDatasetMetadata(result, dataset, op, s.casLatencyMS)
 	return result, nil
+}
+
+func (s *matrixMALTSystem) MeasureProve(ctx context.Context, _ int, _ *MatrixDataset, op MatrixOperation) (*int64, error) {
+	if s == nil || s.inner == nil {
+		return nil, fmt.Errorf("malt matrix system is nil")
+	}
+	if op.Kind != OperationResolvePath {
+		return nil, fmt.Errorf("unsupported operation kind %q", op.Kind)
+	}
+	return s.inner.MeasureProve(ctx, op.Path)
 }
 
 type matrixBaselineSystem struct {
@@ -194,3 +210,4 @@ func attachDatasetMetadata(result *Result, dataset *MatrixDataset, op MatrixOper
 
 var _ MatrixSystem = (*matrixMALTSystem)(nil)
 var _ MatrixSystem = (*matrixBaselineSystem)(nil)
+var _ MatrixProveSystem = (*matrixMALTSystem)(nil)

@@ -20,6 +20,8 @@ type aggregateRow struct {
 	Samples                         int
 	MedianElapsedNS                 int64
 	P95ElapsedNS                    int64
+	MedianProveElapsedNS            int64
+	P95ProveElapsedNS               int64
 	MedianCASGetCount               uint64
 	P95CASGetCount                  uint64
 	MedianEvidenceItemCount         uint64
@@ -86,6 +88,8 @@ func aggregateResults(results []readbench.Result) []aggregateRow {
 			Samples:                         len(group),
 			MedianElapsedNS:                 medianInt64(mapElapsedNS(group)),
 			P95ElapsedNS:                    p95Int64(mapElapsedNS(group)),
+			MedianProveElapsedNS:            medianInt64(mapProveElapsedNS(group)),
+			P95ProveElapsedNS:               p95Int64(mapProveElapsedNS(group)),
 			MedianCASGetCount:               medianUint64(mapCASGetCount(group)),
 			P95CASGetCount:                  p95Uint64(mapCASGetCount(group)),
 			MedianEvidenceItemCount:         medianUint64(mapEvidenceItemCount(group)),
@@ -122,6 +126,8 @@ func writeAggregateCSV(env framework.Env, suite string, rows []aggregateRow) err
 		"samples",
 		"median_elapsed_ns",
 		"p95_elapsed_ns",
+		"median_prove_elapsed_ns",
+		"p95_prove_elapsed_ns",
 		"median_cas_get_count",
 		"p95_cas_get_count",
 		"median_evidence_item_count",
@@ -146,6 +152,8 @@ func writeAggregateCSV(env framework.Env, suite string, rows []aggregateRow) err
 			strconv.Itoa(row.Samples),
 			strconv.FormatInt(row.MedianElapsedNS, 10),
 			strconv.FormatInt(row.P95ElapsedNS, 10),
+			strconv.FormatInt(row.MedianProveElapsedNS, 10),
+			strconv.FormatInt(row.P95ProveElapsedNS, 10),
 			strconv.FormatUint(row.MedianCASGetCount, 10),
 			strconv.FormatUint(row.P95CASGetCount, 10),
 			strconv.FormatUint(row.MedianEvidenceItemCount, 10),
@@ -177,6 +185,16 @@ func mapElapsedNS(results []readbench.Result) []int64 {
 	out := make([]int64, len(results))
 	for i, result := range results {
 		out[i] = result.ElapsedNS
+	}
+	return out
+}
+
+func mapProveElapsedNS(results []readbench.Result) []int64 {
+	out := make([]int64, len(results))
+	for i, result := range results {
+		if result.ProveElapsedNS != nil {
+			out[i] = *result.ProveElapsedNS
+		}
 	}
 	return out
 }
