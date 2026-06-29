@@ -164,6 +164,7 @@ func TestRunCommitRecordsReportsWriteAmplificationInputs(t *testing.T) {
 		Mutations: []replay.FileMutation{
 			{Kind: replay.MutationModify, Path: "a.txt", Size: 10},
 			{Kind: replay.MutationRename, OldPath: "b.txt", Path: "c.txt", Size: 99},
+			{Kind: replay.MutationRename, OldPath: "edited-old.txt", Path: "edited-new.txt", Size: 20, ContentChanged: true},
 			{Kind: replay.MutationDelete, Path: "d.txt"},
 		},
 	}
@@ -182,14 +183,14 @@ func TestRunCommitRecordsReportsWriteAmplificationInputs(t *testing.T) {
 		t.Fatalf("record count = %d, want 1", len(records))
 	}
 	record := records[0]
-	if record.LogicalChangedPayloadBytes != 10 {
-		t.Fatalf("logical changed payload bytes = %d, want modify bytes only", record.LogicalChangedPayloadBytes)
+	if record.LogicalChangedPayloadBytes != 30 {
+		t.Fatalf("logical changed payload bytes = %d, want modify plus edited rename bytes", record.LogicalChangedPayloadBytes)
 	}
 	if record.PhysicalPersistedBytes != 30 || record.PhysicalPayloadBytes != 10 || record.PhysicalMetadataBytes != 20 {
 		t.Fatalf("physical byte split = total %d payload %d metadata %d, want 30/10/20",
 			record.PhysicalPersistedBytes, record.PhysicalPayloadBytes, record.PhysicalMetadataBytes)
 	}
-	if record.WriteAmplification == nil || *record.WriteAmplification != 3 {
-		t.Fatalf("write amplification = %v, want 3", record.WriteAmplification)
+	if record.WriteAmplification == nil || *record.WriteAmplification != 1 {
+		t.Fatalf("write amplification = %v, want 1", record.WriteAmplification)
 	}
 }

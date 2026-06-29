@@ -19,12 +19,13 @@ const (
 
 // FileMutation is one logical file mutation extracted from a Git commit.
 type FileMutation struct {
-	Kind    MutationKind `json:"kind"`
-	Path    string       `json:"path"`
-	OldPath string       `json:"old_path,omitempty"`
-	Mode    string       `json:"mode,omitempty"`
-	Size    int64        `json:"size,omitempty"`
-	Hash    string       `json:"hash,omitempty"`
+	Kind           MutationKind `json:"kind"`
+	Path           string       `json:"path"`
+	OldPath        string       `json:"old_path,omitempty"`
+	ContentChanged bool         `json:"content_changed,omitempty"`
+	Mode           string       `json:"mode,omitempty"`
+	Size           int64        `json:"size,omitempty"`
+	Hash           string       `json:"hash,omitempty"`
 }
 
 // LiveFile describes a regular file present in the commit snapshot.

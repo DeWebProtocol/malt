@@ -98,14 +98,18 @@ func RunCommitRecords(ctx context.Context, commit CommitMutation, systems []Syst
 }
 
 // LogicalChangedPayloadBytes returns the payload bytes logically written by a
-// commit. Renames and deletes are structural changes, so they are excluded from
-// the byte denominator used for write-amplification ratios.
+// commit. Pure renames and deletes are structural changes, but Git can report
+// rename-with-edit as one rename mutation; those count the new payload size.
 func LogicalChangedPayloadBytes(mutations []FileMutation) int64 {
 	var total int64
 	for _, mutation := range mutations {
 		switch mutation.Kind {
 		case MutationAdd, MutationModify:
 			if mutation.Size > 0 {
+				total += mutation.Size
+			}
+		case MutationRename:
+			if mutation.ContentChanged && mutation.Size > 0 {
 				total += mutation.Size
 			}
 		}

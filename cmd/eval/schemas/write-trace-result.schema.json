@@ -122,6 +122,9 @@
         "old_path": {
           "type": "string"
         },
+        "content_changed": {
+          "type": "boolean"
+        },
         "mode": {
           "type": "string"
         },

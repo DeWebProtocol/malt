@@ -51,6 +51,9 @@ func TestSourceWalkEmitsFirstParentCommitMutationsAndLiveStats(t *testing.T) {
 	if commits[2].Mutations[0].Kind != replay.MutationRename || commits[2].Mutations[0].OldPath != "README.md" || commits[2].Mutations[0].Path != "docs/README.md" {
 		t.Fatalf("third mutation = %+v, want rename README.md -> docs/README.md", commits[2].Mutations[0])
 	}
+	if commits[2].Mutations[0].ContentChanged {
+		t.Fatalf("third mutation = %+v, want pure rename without content_changed", commits[2].Mutations[0])
+	}
 	if commits[2].LiveStats.FileCount != 1 || commits[2].LiveStats.LivePayloadBytes != int64(len("hello world\n")) {
 		t.Fatalf("third live stats = %+v, want one renamed file with current bytes", commits[2].LiveStats)
 	}
@@ -166,6 +169,86 @@ func TestSourceWalkReadsCommittedBlobWhenCheckoutIsDirty(t *testing.T) {
 	}
 	if branch := currentBranch(t, repo); branch != "main" {
 		t.Fatalf("source repo branch = %q, want main", branch)
+	}
+}
+
+func TestSourceWalkTreatsRegularFileToSymlinkAsDelete(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initSingleFileRepo(t, "a.txt", "regular\n")
+	if err := os.Remove(filepath.Join(repo, "a.txt")); err != nil {
+		t.Fatalf("remove regular file: %v", err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(repo, "a.txt")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-m", "turn file into symlink")
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    2,
+	}
+	var commits []replay.CommitMutation
+	if err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		commits = append(commits, commit)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("commit count = %d, want 2", len(commits))
+	}
+	got := commits[1].Mutations
+	if len(got) != 1 || got[0].Kind != replay.MutationDelete || got[0].Path != "a.txt" || got[0].Hash != "" {
+		t.Fatalf("type-change mutations = %+v, want delete a.txt without hash", got)
+	}
+	if commits[1].LiveStats.FileCount != 0 || len(commits[1].LiveFiles) != 0 || commits[1].Skipped.SymlinkCount != 1 {
+		t.Fatalf("type-change live/skipped = files %+v stats %+v skipped %+v, want symlink skipped and no live files",
+			commits[1].LiveFiles, commits[1].LiveStats, commits[1].Skipped)
+	}
+}
+
+func TestSourceWalkMarksRenameWithContentChange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initSingleFileRepo(t, "old.txt", strings.Repeat("same\n", 20))
+	if err := os.Rename(filepath.Join(repo, "old.txt"), filepath.Join(repo, "new.txt")); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	writeFile(t, repo, "new.txt", strings.Repeat("same\n", 20)+"changed\n")
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-m", "rename and edit")
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    2,
+	}
+	var commits []replay.CommitMutation
+	if err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		commits = append(commits, commit)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("commit count = %d, want 2", len(commits))
+	}
+	got := commits[1].Mutations
+	if len(got) != 1 || got[0].Kind != replay.MutationRename || got[0].OldPath != "old.txt" || got[0].Path != "new.txt" {
+		t.Fatalf("rename-with-edit mutation = %+v, want old.txt -> new.txt rename", got)
+	}
+	if !got[0].ContentChanged {
+		t.Fatalf("rename-with-edit mutation = %+v, want content_changed", got[0])
+	}
+	if got[0].Size != int64(len(strings.Repeat("same\n", 20)+"changed\n")) || got[0].Hash == "" {
+		t.Fatalf("rename-with-edit mutation = %+v, want new blob metadata", got[0])
 	}
 }
 

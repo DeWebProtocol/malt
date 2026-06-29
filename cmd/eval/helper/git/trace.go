@@ -158,6 +158,10 @@ func mutationsForCommit(ctx context.Context, repo, parent, commit string) ([]rep
 	if err != nil {
 		return nil, err
 	}
+	renamedContent, err := renamedContentChanges(ctx, repo, parent, commit)
+	if err != nil {
+		return nil, err
+	}
 	var mutations []replay.FileMutation
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -179,16 +183,52 @@ func mutationsForCommit(ctx context.Context, repo, parent, commit string) ([]rep
 			if len(fields) < 3 {
 				return nil, fmt.Errorf("invalid rename line %q", line)
 			}
+			oldPath := filepath.ToSlash(fields[1])
+			path := filepath.ToSlash(fields[2])
 			mutations = append(mutations, replay.FileMutation{
-				Kind:    replay.MutationRename,
-				OldPath: filepath.ToSlash(fields[1]),
-				Path:    filepath.ToSlash(fields[2]),
+				Kind:           replay.MutationRename,
+				OldPath:        oldPath,
+				Path:           path,
+				ContentChanged: renamedContent[renameKey{oldPath: oldPath, path: path}],
 			})
 		default:
 			mutations = append(mutations, replay.FileMutation{Kind: replay.MutationModify, Path: filepath.ToSlash(fields[len(fields)-1])})
 		}
 	}
 	return mutations, nil
+}
+
+type renameKey struct {
+	oldPath string
+	path    string
+}
+
+func renamedContentChanges(ctx context.Context, repo, parent, commit string) (map[renameKey]bool, error) {
+	out, err := gitOutput(ctx, repo, "diff-tree", "--no-commit-id", "--raw", "-r", "-M", parent, commit)
+	if err != nil {
+		return nil, err
+	}
+	changed := make(map[renameKey]bool)
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			return nil, fmt.Errorf("invalid git diff-tree raw line %q", line)
+		}
+		meta := strings.Fields(fields[0])
+		if len(meta) < 5 || !strings.HasPrefix(meta[4], "R") {
+			continue
+		}
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("invalid rename raw line %q", line)
+		}
+		oldPath := filepath.ToSlash(fields[1])
+		path := filepath.ToSlash(fields[2])
+		changed[renameKey{oldPath: oldPath, path: path}] = meta[2] != meta[3]
+	}
+	return changed, nil
 }
 
 func scanSnapshot(ctx context.Context, repo, commit string) ([]replay.LiveFile, replay.LiveStats, replay.SkipStats, error) {
@@ -269,6 +309,9 @@ func enrichMutations(mutations []replay.FileMutation, files []replay.LiveFile) {
 	for i := range mutations {
 		file, ok := byPath[mutations[i].Path]
 		if !ok {
+			if mutations[i].Kind == replay.MutationModify {
+				mutations[i].Kind = replay.MutationDelete
+			}
 			continue
 		}
 		mutations[i].Mode = file.Mode
