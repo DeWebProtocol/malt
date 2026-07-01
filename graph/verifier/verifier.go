@@ -1,4 +1,6 @@
-package server
+// Package verifier verifies verifier-facing ProofList artifacts against a
+// caller-supplied graph runtime.
+package verifier
 
 import (
 	"context"
@@ -8,15 +10,33 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/evidence"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
-	"github.com/dewebprotocol/malt/auth/semantic"
+	structure "github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/layout/unixfs"
 )
 
-type proofVerifier struct {
-	runtime runtimeGraph
+// Runtime is the minimal graph runtime surface needed to verify ProofList
+// evidence. It deliberately excludes server, daemon, head-publication, and
+// gateway policy concerns.
+type Runtime interface {
+	Resolver() graph.Resolver
+	Semantic() mapping.Semantics
+	ListSemantic() list.Semantics
+}
+
+// Verifier verifies ProofList evidence against a runtime's resolver and
+// semantic implementations.
+type Verifier struct {
+	runtime Runtime
+}
+
+// New creates a verifier over runtime.
+func New(runtime Runtime) *Verifier {
+	return &Verifier{runtime: runtime}
 }
 
 type proofListVerifiedPath struct {
@@ -44,7 +64,12 @@ func (p proofListVerifiedPath) logicalQueryPath() string {
 	return strings.Join(p.parts, "/")
 }
 
-func (v proofVerifier) VerifyProofList(ctx context.Context, pl prooflist.ProofList) (bool, error) {
+// VerifyProofList verifies the ordered ProofList structure, query binding, and
+// per-step evidence against the verifier runtime.
+func (v *Verifier) VerifyProofList(ctx context.Context, pl prooflist.ProofList) (bool, error) {
+	if v == nil || v.runtime == nil {
+		return false, fmt.Errorf("verifier runtime is nil")
+	}
 	if err := pl.ValidateShape(prooflist.RequireSteps()); err != nil {
 		return false, err
 	}
@@ -98,7 +123,7 @@ func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifi
 	return fmt.Errorf("prooflist query %q does not match ordered traversal path %q", want, got)
 }
 
-func (v proofVerifier) verifyStep(ctx context.Context, index int, step prooflist.Step) (bool, error) {
+func (v *Verifier) verifyStep(ctx context.Context, index int, step prooflist.Step) (bool, error) {
 	switch step.EvidenceKind {
 	case "explicit":
 		ev, err := decodeEvidence(step.EvidenceKind, step.Evidence)

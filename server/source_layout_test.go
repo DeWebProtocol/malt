@@ -13,11 +13,10 @@ func TestServerRoutesAreSplitByGraphPort(t *testing.T) {
 		symbols []string
 	}{
 		{"service_graph.go", []string{"type graphService struct", "func (s *Server) graphService", "func (svc graphService) ResolveKey", "func (svc graphService) ApplyMutation"}},
-		{"service_verify.go", []string{"type proofVerifier struct", "func (v proofVerifier) VerifyProofList"}},
 		{"routes_write.go", []string{"func (s *Server) handleSemanticMutation", "func (s *Server) handleCreateStructure"}},
 		{"routes_unixfs_compat.go", []string{"func (s *Server) handleWrite", "UnixFSWriteResponse"}},
 		{"routes_resolve.go", []string{"func (s *Server) handleResolve", "func (s *Server) serveResolve"}},
-		{"routes_verify.go", []string{"func (s *Server) handleVerify"}},
+		{"routes_verify.go", []string{"func (s *Server) handleVerify", "verifier.New(svc.runtime).VerifyProofList"}},
 		{"routes_content.go", []string{"func (s *Server) handleContent", "func (s *Server) readContentPayload"}},
 		{"routes_admin.go", []string{"func (s *Server) handleHealth", "func (s *Server) handleMetrics"}},
 	}

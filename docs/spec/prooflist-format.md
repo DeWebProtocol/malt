@@ -103,14 +103,21 @@ The `list_range` step carries fixed chunk metadata, covered segment CIDs, and
 metadata/index proof bytes. Verifiers must reject range proofs that shift byte
 boundaries, omit covered segment bindings, or mismatch the measured metadata.
 
-Full response-body binding for returned range bytes remains an open
-verifier-contract design item. The current proof authenticates the range
-metadata and segment CIDs; clients must still validate fetched payload bytes
-against their CIDs.
+The `list_range` step authenticates range metadata and segment CIDs, not raw
+HTTP body bytes by itself. A verifier that accepts returned range body bytes
+must:
+
+1. verify the ProofList against the trusted root,
+2. fetch or otherwise resolve each authenticated segment CID, and
+3. call `layout/unixfs.VerifyRangeBody(pl, body, start, end, fetch)` or an
+   equivalent byte-binding check before trusting the body.
+
+`VerifyRangeBody` rejects shifted ranges, missing range evidence, segment CID
+mismatches, short segment data, and tampered returned bytes.
 
 ## Related Proposals
 
-- [MIP-1003](../mips/mip-1003-prooflist-verification-schema.md) tracks the
-  remaining formalization work and body-binding decision.
+- [MIP-1003](../mips/mip-1003-prooflist-verification-schema.md) tracks verifier-contract
+  formalization and range-body helper integration.
 - [MIP-1006](../mips/mip-1006-variable-size-measured-list-evidence.md) tracks a
   future variable-size measured-list model.

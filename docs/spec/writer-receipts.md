@@ -21,7 +21,21 @@ stable release.
 | `ArcCount` | Number of canonical arc changes applied. |
 
 The writer does not publish authoritative heads, choose freshness, or merge
-concurrent roots. Applications decide whether a produced root becomes current.
+concurrent roots. Applications decide whether to publish or select a produced result root.
+
+## Writer Ports
+
+`graph.MutationWriter` is the stable core mutation boundary. It exposes
+`Apply(ctx, namespace, writer.SemanticMutation)` and returns a
+`writer.WriteReceipt` with the caller-supplied base root and produced result
+root.
+
+`graph.CompatWriter` groups reference-runtime helper methods such as
+`CreateStructure`, `UpdateArc`, `BatchUpdateArcs`, `GetArc`, and
+`GetSnapshot`. These helpers remain available to the local reference runtime,
+CLI, and tests, but they are not the gateway product API. New integrations
+should prefer semantic mutations through `MutationWriter` unless they
+intentionally need reference compatibility helpers.
 
 ## HTTP Projection
 

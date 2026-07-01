@@ -9,5 +9,7 @@ import (
 
 func TestResolverAndWriterImplementGraphPorts(t *testing.T) {
 	var _ Resolver = (*resolver.Resolver)(nil)
+	var _ MutationWriter = (*writer.Writer)(nil)
+	var _ CompatWriter = (*writer.Writer)(nil)
 	var _ Writer = (*writer.Writer)(nil)
 }

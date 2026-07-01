@@ -13,15 +13,15 @@ change. It is not production-ready.
 The near-term goal is to make the repository easier to understand, validate,
 and integrate experimentally while preserving honest boundaries around unstable
 schemas and deployment policy. The in-tree daemon/server remains a
-reference/evaluation gateway for explicit-root behavior, not the production
-managed gateway.
+reference/evaluation HTTP surface for explicit-root behavior, not the production
+managed gateway product.
 
 ## Near Term
 
 - Stabilize the public `malt` CLI around root-centric add, resolve, verify, and
   daemon lifecycle workflows.
 - Keep proof-bearing HTTP reads explicit and verifier-facing.
-- Document and test the reference/evaluation gateway boundary for
+- Document and test the reference/evaluation HTTP surface boundary for
   `Read(root, query) -> result + ProofList`.
 - Tighten `ProofList` verifier documentation for path resolution, terminal
   `@payload` binding, and list-backed byte-range evidence.
@@ -33,7 +33,7 @@ managed gateway.
 
 ## Active Research And Design Areas
 
-- Response-body binding for large-file byte ranges.
+- Range-body helper integration in clients and gateway.
 - Writer receipt semantics and accounting.
 - Benchmark-facing proof reporting.
 - Variable-size measured list evidence.
@@ -62,8 +62,13 @@ Before the first public release tag:
 - `malt-eval run --plan examples/eval-smoke-plan.json` writes a manifest and
   summaries.
 - Security reporting path is enabled in GitHub repository settings.
-- Release notes state experimental limits and any known ProofList verifier
-  contract TODOs.
+- Release notes state experimental limits and known ProofList verifier limits.
+- `/verify` still works through `graph/verifier`.
+- `malt resolve` returns ProofList evidence by default.
+- `malt verify` verifies a resolve output or bare ProofList.
+- Large-file byte-range body binding is documented through
+  `layout/unixfs.VerifyRangeBody`.
+- The writer core/compat split is documented in `docs/spec/writer-receipts.md`.
 - Public docs avoid claims that are not implemented in the current code.
 - Repository docs distinguish MALT core/reference evaluation surfaces from
   managed gateway product behavior in `DeWebProtocol/gateway`.

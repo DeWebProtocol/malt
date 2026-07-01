@@ -206,7 +206,7 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout *
 func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
 	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
 		if maltcid.SemanticKindOf(newRoot) != maltcid.SemanticKindMap {
-			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
+			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
 		}
 		return writer.WriteReceipt{
 			BaseRoot: oldRoot,
@@ -224,7 +224,7 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, 
 		return writer.WriteReceipt{}, err
 	}
 	if maltcid.SemanticKindOf(receipt.NewRoot) != maltcid.SemanticKindMap {
-		return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map current root")
+		return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
 	}
 	return receipt, nil
 }
