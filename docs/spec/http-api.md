@@ -1,6 +1,6 @@
 # HTTP API
 
-This document describes the current root-centric daemon HTTP surface and DTO
+This document describes the root-relative reference/evaluation HTTP surface and DTO
 boundaries. It is a reference for implementation docs, not a stable public API
 contract.
 
@@ -57,7 +57,11 @@ Range content reads use standard byte range headers where supported:
 - response: `Accept-Ranges: bytes`
 - partial response: `Content-Range: bytes start-end/total`
 
-See [ProofList format](./prooflist-format.md) for proof semantics.
+See [ProofList format](./prooflist-format.md) for proof semantics. For
+large-file range responses, `/verify` authenticates the ProofList metadata and
+segment CIDs. Clients that trust the returned body bytes must first verify the
+ProofList and then call `layout/unixfs.VerifyRangeBody` or an equivalent
+segment-byte binding check.
 
 ## Main DTOs
 

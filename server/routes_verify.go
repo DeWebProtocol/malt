@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/graph/verifier"
 )
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
@@ -18,7 +19,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		writeBodyDecodeError(w, err)
 		return
 	}
-	valid, err := (proofVerifier{runtime: svc.runtime}).VerifyProofList(r.Context(), req.ProofList)
+	valid, err := verifier.New(svc.runtime).VerifyProofList(r.Context(), req.ProofList)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

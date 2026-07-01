@@ -26,7 +26,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(addCmd)
-	addCmd.Flags().StringVarP(&addPrefixFlag, "prefix", "p", "", "Prefix inside the current root")
+	addCmd.Flags().StringVarP(&addPrefixFlag, "prefix", "p", "", "Prefix inside the result tree")
 	addCmd.Flags().BoolVarP(&addWrapFlag, "wrap", "w", false, "Wrap all inputs under one directory")
 	addCmd.Flags().StringVar(&addWrapNameFlag, "wrap-name", "", "Wrapper directory name (required for multi-input --wrap)")
 	addCmd.Flags().StringVar(&addTargetFlag, "target", addTargetMALT, "Authenticated target substrate: malt or merkle-dag")
@@ -37,12 +37,12 @@ func init() {
 	addCmd.Flags().BoolVar(&addNoGitignoreFlag, "no-gitignore", false, "Do not read .gitignore files while adding directories")
 	addCmd.Flags().BoolVar(&addNoMaltignoreFlag, "no-maltignore", false, "Do not read .maltignore files while adding directories")
 	addCmd.Flags().StringArrayVar(&addIgnoreFileFlags, "ignore-file", nil, "Additional gitignore-style ignore file to apply while adding directories")
-	addCmd.Flags().StringVar(&addRootFlag, "root", "", "Root CID to add files under (creates a new root if empty)")
+	addCmd.Flags().StringVar(&addRootFlag, "root", "", "Base root CID to add files under (creates a new root if empty)")
 }
 
 var addCmd = &cobra.Command{
 	Use:   "add <local-path> [<local-path>...]",
-	Short: "Upload local files/directories and merge into the current root",
+	Short: "Upload local files/directories from a base root to a result root",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runAdd,
 }

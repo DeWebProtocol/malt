@@ -1,7 +1,7 @@
 // Package querypath implements locked path canonicalization for stat and content APIs.
 //
 // Rules:
-//   - empty or omitted path means current root
+//   - empty or omitted path means the caller-supplied root
 //   - leading "/" is accepted and removed
 //   - ".", "..", empty interior segments, and NUL bytes are rejected
 package querypath

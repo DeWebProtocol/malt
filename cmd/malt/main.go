@@ -24,7 +24,7 @@ Primary commands:
   status      Show the local MALT daemon status
   stop        Stop the managed local MALT daemon
   restart     Restart the managed local MALT daemon
-  add         Upload local files/directories to CAS and merge into the current root
+  add         Upload local files/directories to CAS from a base root and print a result root
   resolve     Resolve a path via the daemon
   verify      Verify a ProofList`,
 	Version: Version,
