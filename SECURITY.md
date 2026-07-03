@@ -17,15 +17,17 @@ After releases begin, this file will name supported release lines.
 
 Do not open a public issue for a suspected vulnerability.
 
+Current security contact: security@deweb.world
+
 Preferred reporting path:
 
 1. Use GitHub private vulnerability reporting or open a private GitHub Security
    Advisory for this repository.
-2. Include a short description, reproduction steps, affected commit or version,
+2. If private vulnerability reporting is not enabled yet, contact
+   security@deweb.world privately with `SECURITY` in the subject or opening
+   line.
+3. Include a short description, reproduction steps, affected commit or version,
    and any proof-of-concept data needed to reproduce the issue.
-3. If private vulnerability reporting is not enabled yet, open a minimal public
-   issue asking for a private contact path. Do not include vulnerability details
-   in that issue.
 
 Maintainers should acknowledge reports within 7 days when practical and keep the
 reporter updated on triage, fix, and disclosure timing.
