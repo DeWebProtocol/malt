@@ -71,7 +71,8 @@ The `graph` package is a small port/composition surface, not a separate
 semantic owner.
 
 - resolver is the read/proof port: `(root, query) -> result + ProofList`
-- writer is the mutation port: `(baseRoot, semantic mutation) -> newRoot + receipt`
+- writer is the mutation port: `graph.MutationWriter.Apply(baseRoot, semantic mutation) -> newRoot + receipt`
+- `graph.CompatWriter` contains reference-runtime helper methods and is not the gateway product API
 
 Resolver traversal lives under `graph/resolver`. Mutation application lives
 under `graph/writer`. Layouts translate source-domain data into semantic

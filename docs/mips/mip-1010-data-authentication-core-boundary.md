@@ -288,6 +288,25 @@ API responsibilities:
   ownership inside DTO packages
 - keep schema validation separate from cryptographic or semantic verification
 
+### Gateway Integration Contract
+
+A managed gateway should depend on MALT through core packages, not the
+reference server. The expected import surface is:
+
+- `auth/proof/prooflist` for verifier-facing proof artifacts
+- `graph/verifier` for reusable ProofList verification
+- `graph` resolver and writer contracts where a gateway exposes root-relative
+  core operations
+- `graph/writer` semantic mutation and receipt types
+- `layout/unixfs` only when the gateway intentionally reuses the reference UnixFS-style layout
+
+A managed gateway must not import `server` as its product API boundary. The
+gateway owns tenants, projects, API keys, authorization, root registry,
+latest-head publication, freshness and rollback policy, backend credentials,
+S3/Filecoin/IPFS orchestration, cache policy, quota, billing, pinning, garbage
+collection, abuse controls, and operations. Gateway roots are product metadata;
+they do not become MALT core state.
+
 ## Rationale
 
 Three layouts were considered.

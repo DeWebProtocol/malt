@@ -77,7 +77,7 @@ Those deployment and product concerns belong in the separate
 
 ```mermaid
 flowchart TB
-  app["Applications / CLI / Go client"] --> api["Reference daemon / eval gateway HTTP API"]
+  app["Applications / CLI / Go client"] --> api["Reference daemon / evaluation HTTP API"]
   api --> rw["Resolver / Writer"]
   rw --> semantics["Authenticated list / map semantics"]
   semantics --> proofs["ProofList and commitment backends"]
@@ -98,7 +98,7 @@ change. It is not production-ready.
 Current in-tree capabilities:
 
 - root-centric `malt` CLI for local daemon lifecycle, add, resolve, and verify
-- reference/evaluation gateway surface for explicit-root HTTP reads and writes
+- reference/evaluation HTTP surface for explicit-root HTTP reads and writes
 - proof-bearing HTTP reads for file bytes, directory JSON, and byte ranges
 - pure MALT UnixFS-style layout built from map/list semantics and CAS-backed
   immutable payloads
@@ -114,8 +114,7 @@ Current experimental boundaries:
 - no tenant, quota, pinning, or garbage-collection policy
 - no production managed gateway or hosted service semantics
 - no stable public API compatibility guarantee yet
-- response-body binding for large-file byte ranges is still a ProofList-schema
-  design item
+- large-file byte-range response bodies must be bound to authenticated segment CIDs with layout/unixfs.VerifyRangeBody after ProofList verification
 
 ## Use Cases
 
@@ -262,7 +261,7 @@ graph/                         resolver and writer port definitions/adapters
 layout/unixfs/                 UnixFS-style layout over map/list semantics and CAS-backed payloads
 runtime/                       node, runtime graph composition, ArcTable, metrics
 sdk/client/                    Go daemon client facade
-server/                        reference daemon and eval-gateway HTTP server
+server/                        reference daemon and evaluation HTTP server
 storage/                       CAS and KV storage libraries
 wire/maltcid/                  MALT map/list root CID codecs
 docs/                          implementation docs: policy, evaluation, specs, and MIPs

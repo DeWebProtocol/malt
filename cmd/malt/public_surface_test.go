@@ -2,6 +2,7 @@ package main
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -21,6 +22,23 @@ func TestRootCommandOnlyExposesProductCommands(t *testing.T) {
 
 	if !slices.Equal(got, want) {
 		t.Fatalf("public commands = %v, want %v", got, want)
+	}
+}
+
+func TestAddCommandRootWordingIsRootRelative(t *testing.T) {
+	texts := map[string]string{
+		"root help":       rootCmd.Long,
+		"add short":       addCmd.Short,
+		"add prefix flag": addCmd.Flag("prefix").Usage,
+		"add root flag":   addCmd.Flag("root").Usage,
+	}
+	for name, text := range texts {
+		if strings.Contains(text, "current root") {
+			t.Fatalf("%s contains current-root wording: %q", name, text)
+		}
+	}
+	if !strings.Contains(addCmd.Short, "base root") || !strings.Contains(addCmd.Short, "result root") {
+		t.Fatalf("add short = %q, want base root and result root wording", addCmd.Short)
 	}
 }
 
