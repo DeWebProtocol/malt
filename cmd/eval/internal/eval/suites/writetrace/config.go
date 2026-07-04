@@ -27,6 +27,8 @@ type Config struct {
 	StoreBackend      string     `json:"store_backend,omitempty"`
 	Systems           SystemList `json:"systems,omitempty"`
 	FirstParent       bool       `json:"first_parent"`
+	Jobs              int        `json:"jobs,omitempty"`
+	Resume            bool       `json:"resume,omitempty"`
 }
 
 // RepositoryTarget is one repository-level replay target resolved from a repo
@@ -58,6 +60,7 @@ func DefaultConfig() Config {
 		StoreBackend: string(evalstore.StoreBackendMemory),
 		Systems:      SystemList{"maltflat", "merkledag", "hamt"},
 		FirstParent:  true,
+		Jobs:         1,
 	}
 }
 
@@ -91,6 +94,9 @@ func (c Config) validate() error {
 func (c Config) RepositoryTargets() ([]RepositoryTarget, error) {
 	if c.MaxCommitsPerRepo < 0 {
 		return nil, fmt.Errorf("max_commits_per_repo must be non-negative")
+	}
+	if c.Jobs < 1 {
+		return nil, fmt.Errorf("jobs must be at least 1")
 	}
 	urls := c.RepoURLs
 	if len(urls) == 0 && strings.TrimSpace(c.RepoURLsFile) != "" {

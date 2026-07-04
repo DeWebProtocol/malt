@@ -84,7 +84,11 @@ func New(system *evalstore.System, opts Options) (*Adapter, error) {
 	}
 	// The radix ArcTable is a proof-serving cache in write_trace. Canonical
 	// durable state is accounted separately as path-to-CID deltas.
-	arcs, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
+	cacheKV := system.CacheKV
+	if cacheKV == nil {
+		cacheKV = kvmemory.New()
+	}
+	arcs, err := overwrite.NewArcTable(overwrite.WithKVStore(cacheKV))
 	if err != nil {
 		return nil, fmt.Errorf("create cache arctable: %w", err)
 	}

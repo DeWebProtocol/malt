@@ -16,6 +16,7 @@ type Env struct {
 	CASEndpoint string
 	OutputDir   string
 	ResultDir   string
+	Resume      bool
 	clock       func() time.Time
 	logf        func(string, ...any)
 }
@@ -72,7 +73,11 @@ func (e Env) WriteRecord(suite string, record any) error {
 		EmittedAt:     e.clock().UTC().Format(time.RFC3339Nano),
 		Record:        payload,
 	}
-	f, err := os.OpenFile(e.RawPath(suite), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	rawPath := e.RawPath(suite)
+	if err := os.MkdirAll(filepath.Dir(rawPath), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(rawPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}

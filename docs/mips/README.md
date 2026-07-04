@@ -47,7 +47,7 @@ shapes, and benchmark record rules belong in:
 
 - [`../spec/`](../spec/) for protocol, API, proof, receipt, artifact, and wire
   references
-- [`../evaluation/`](../evaluation/) for evaluator artifacts and reporting
+- [`../evaluation.md`](../evaluation.md) for evaluator artifacts and reporting
   rules
 - `cmd/eval/schemas` for machine-readable evaluator JSON schemas
 
@@ -91,7 +91,7 @@ not become the only copy of a schema or specification.
 2. Keep open design questions in Draft MIPs.
 3. Move a MIP to Review only when its proposal boundary and rationale are
    concrete enough for maintainer judgment. Reference-spec details may live in
-   `../spec/`, `../evaluation/`, or schema files and be linked from the MIP.
+   `../spec/`, `../evaluation.md`, or schema files and be linked from the MIP.
 4. Move a MIP to Accepted only after maintainer approval.
 5. For Accepted MIPs, create a GitHub issue, PR plan, or repository planning
    note that names the implementation owner and review boundary.

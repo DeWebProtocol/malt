@@ -212,6 +212,55 @@ func TestSourceWalkTreatsRegularFileToSymlinkAsDelete(t *testing.T) {
 	}
 }
 
+func TestSourceWalkMaintainsLiveFilesIncrementallyAcrossAddRenameDelete(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initSingleFileRepo(t, "a.txt", "alpha\n")
+	writeFile(t, repo, "b.txt", "bravo\n")
+	runGit(t, repo, "add", "b.txt")
+	runGit(t, repo, "commit", "-m", "add b")
+	if err := os.MkdirAll(filepath.Join(repo, "dir"), 0o755); err != nil {
+		t.Fatalf("mkdir dir: %v", err)
+	}
+	if err := os.Rename(filepath.Join(repo, "a.txt"), filepath.Join(repo, "dir", "renamed.txt")); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-m", "rename a")
+	if err := os.Remove(filepath.Join(repo, "b.txt")); err != nil {
+		t.Fatalf("remove b: %v", err)
+	}
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-m", "delete b")
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+	}
+	var commits []replay.CommitMutation
+	if err := source.Walk(ctx, func(commit replay.CommitMutation) error {
+		commits = append(commits, commit)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(commits) != 4 {
+		t.Fatalf("commit count = %d, want 4", len(commits))
+	}
+	rename := commits[2].Mutations[0]
+	if rename.Kind != replay.MutationRename || rename.Path != "dir/renamed.txt" || rename.Hash == "" || rename.Size != int64(len("alpha\n")) {
+		t.Fatalf("rename mutation = %+v, want target metadata from incremental live index", rename)
+	}
+	if commits[3].LiveStats.FileCount != 1 || commits[3].LiveStats.DirectoryCount != 1 || commits[3].LiveStats.LivePayloadBytes != int64(len("alpha\n")) {
+		t.Fatalf("final live stats = %+v, want only dir/renamed.txt", commits[3].LiveStats)
+	}
+	if len(commits[3].LiveFiles) != 1 || commits[3].LiveFiles[0].Path != "dir/renamed.txt" {
+		t.Fatalf("final live files = %+v, want dir/renamed.txt", commits[3].LiveFiles)
+	}
+}
+
 func TestSourceWalkMarksRenameWithContentChange(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")

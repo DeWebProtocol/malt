@@ -21,6 +21,7 @@ type Plan struct {
 	CASEndpoint       string      `json:"cas_endpoint,omitempty"`
 	OutputDir         string      `json:"output_dir,omitempty"`
 	ResultDir         string      `json:"result_dir,omitempty"`
+	Resume            bool        `json:"resume,omitempty"`
 	Suites            []SuitePlan `json:"suites"`
 	outputDirExplicit bool
 	resultDirExplicit bool
@@ -185,6 +186,14 @@ func (p *Plan) OverrideResultDir(resultDir string) {
 	}
 	p.ResultDir = strings.TrimSpace(resultDir)
 	p.resultDirExplicit = true
+}
+
+// EnableResume preserves raw results and output workspace files across reruns.
+func (p *Plan) EnableResume() {
+	if p == nil {
+		return
+	}
+	p.Resume = true
 }
 
 // OutputDirExplicit reports whether output_dir was set by the loaded plan or a CLI override.

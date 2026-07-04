@@ -45,7 +45,7 @@ A MIP is not implementation work by default.
 
 A MIP is also not the canonical home for long-lived field tables, wire formats,
 JSON schemas, benchmark record rules, or other reference specifications. Those
-belong in `docs/spec/`, `docs/evaluation/`, or implementation-owned schema
+belong in `docs/spec/`, `docs/evaluation.md`, or implementation-owned schema
 directories. A MIP may propose or record changes to those references.
 
 ### MIP Types
@@ -130,7 +130,7 @@ one-sentence summary, and `Abstract` is the short technical summary.
 
 The `Specification` section should describe the proposed decision or behavior
 boundary precisely enough for review. If the change needs a durable reference
-document, link to the relevant file under `docs/spec/`, `docs/evaluation/`, or
+document, link to the relevant file under `docs/spec/`, `docs/evaluation.md`, or
 an implementation schema directory instead of duplicating the full reference
 inside the MIP.
 

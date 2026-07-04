@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/cmd/eval/helper/adapters/maltflat"
@@ -30,7 +31,9 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 		"store_mode": "shared",
 		"store_backend": "fs",
 		"systems": ["maltflat", "hamt"],
-		"first_parent": false
+		"first_parent": false,
+		"jobs": 3,
+		"resume": true
 	}`))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
@@ -44,6 +47,9 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	if cfg.StoreMode != "shared" || cfg.StoreBackend != "fs" || cfg.FirstParent {
 		t.Fatalf("mode config = %+v, want JSON values", cfg)
 	}
+	if cfg.Jobs != 3 || !cfg.Resume {
+		t.Fatalf("execution config = %+v, want jobs=3 resume=true", cfg)
+	}
 	if got := cfg.SystemsCSV(); got != "maltflat,hamt" {
 		t.Fatalf("systems CSV = %q, want maltflat,hamt", got)
 	}
@@ -54,6 +60,9 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	}
 	if defaults.StoreMode != "isolated" || defaults.StoreBackend != "memory" || !defaults.FirstParent {
 		t.Fatalf("defaults = %+v, want isolated memory first-parent", defaults)
+	}
+	if defaults.Jobs != 1 || defaults.Resume {
+		t.Fatalf("execution defaults = %+v, want jobs=1 resume=false", defaults)
 	}
 	if got := defaults.SystemsCSV(); got != "maltflat,merkledag,hamt" {
 		t.Fatalf("default systems = %q, want maltflat,merkledag,hamt", got)
@@ -319,6 +328,87 @@ func TestSuiteRunReplaysRepoURLListWithCanonicalRepoLabels(t *testing.T) {
 	}
 	if records[1].Repo != "github.com/fork/kubo" || records[1].Index != 0 {
 		t.Fatalf("record 1 = %+v, want github.com/fork/kubo index 0", records[1])
+	}
+}
+
+func TestSuiteRunWritesPerSystemCheckpoints(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+
+	cfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 2,
+		"store_backend": "badger",
+		"systems": ["maltflat", "hamt"],
+		"jobs": 2
+	}`)
+	err := (writetrace.Suite{}).Run(ctx, framework.Env{
+		RunID:     "run-write-trace-checkpoints",
+		OutputDir: outputDir,
+		ResultDir: resultDir,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(resultDir, "raw", "write_trace.jsonl"))
+	if len(envelopes) != 4 {
+		t.Fatalf("envelope count = %d, want 4", len(envelopes))
+	}
+	for _, system := range []string{"maltflat", "hamt"} {
+		path := filepath.Join(outputDir, "write-checkpoints", "000-github.com-ipfs-kubo", system+".json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read checkpoint %s: %v", system, err)
+		}
+		if !strings.Contains(string(data), `"complete": true`) {
+			t.Fatalf("checkpoint %s = %s, want complete", system, data)
+		}
+	}
+	rows := readAggregateRows(t, filepath.Join(resultDir, "aggregate", "write_trace.csv"))
+	if len(rows) != 2 {
+		t.Fatalf("aggregate row count = %d, want 2", len(rows))
+	}
+}
+
+func TestSuiteRunResumeSkipsCompletedTaskWithoutDuplicatingRaw(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+
+	cfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 1,
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"resume": true
+	}`)
+	env := framework.Env{
+		RunID:     "run-write-trace-resume",
+		OutputDir: outputDir,
+		ResultDir: resultDir,
+	}
+	if err := (writetrace.Suite{}).Run(ctx, env, cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := (writetrace.Suite{}).Run(ctx, env, cfg); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(resultDir, "raw", "write_trace.jsonl"))
+	if len(envelopes) != 1 {
+		t.Fatalf("envelope count after resume = %d, want 1", len(envelopes))
 	}
 }
 

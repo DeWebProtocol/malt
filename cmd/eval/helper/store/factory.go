@@ -48,6 +48,7 @@ type Factory struct {
 type System struct {
 	Name    string
 	StateKV kvstore.KVStore
+	CacheKV kvstore.KVStore
 	CAS     *MeteredCAS
 	Meter   *Meter
 }
@@ -91,12 +92,18 @@ func (f *Factory) NewSystem(ctx context.Context, name string) (*System, error) {
 	if err != nil {
 		return nil, err
 	}
+	cacheKV, err := f.newKV(name, "cache")
+	if err != nil {
+		_ = stateKV.Close()
+		return nil, err
+	}
 	var casKV kvstore.KVStore
 	if f.cfg.Mode == StoreModeShared {
 		if f.sharedCASKV == nil {
 			f.sharedCASKV, err = f.newKV("_shared", "cas")
 			if err != nil {
 				_ = stateKV.Close()
+				_ = cacheKV.Close()
 				return nil, err
 			}
 		}
@@ -105,12 +112,14 @@ func (f *Factory) NewSystem(ctx context.Context, name string) (*System, error) {
 		casKV, err = f.newKV(name, "cas")
 		if err != nil {
 			_ = stateKV.Close()
+			_ = cacheKV.Close()
 			return nil, err
 		}
 	}
 	return &System{
 		Name:    name,
 		StateKV: NewMeteredKV(stateKV, meter, CategoryArcTable),
+		CacheKV: cacheKV,
 		CAS:     NewMeteredCAS(casKV, meter),
 		Meter:   meter,
 	}, nil
@@ -155,4 +164,13 @@ func (f *Factory) newKV(system, role string) (kvstore.KVStore, error) {
 	default:
 		return nil, fmt.Errorf("unsupported store backend %q", f.cfg.Backend)
 	}
+}
+
+// RemoveStoreDir removes a persistent evaluation store directory before a
+// replay task reconstructs adapter state from raw progress.
+func RemoveStoreDir(path string) error {
+	if path == "" {
+		return nil
+	}
+	return os.RemoveAll(path)
 }

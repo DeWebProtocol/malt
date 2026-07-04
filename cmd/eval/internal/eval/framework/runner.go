@@ -30,10 +30,10 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 	if clock == nil {
 		clock = time.Now
 	}
-	if err := prepareResultLayout(plan.ResultDir); err != nil {
+	if err := prepareResultLayout(plan.ResultDir, plan.Resume); err != nil {
 		return err
 	}
-	if err := prepareOutputLayout(plan.OutputDir); err != nil {
+	if err := prepareOutputLayout(plan.OutputDir, plan.Resume); err != nil {
 		return err
 	}
 
@@ -46,6 +46,7 @@ func Run(ctx context.Context, plan Plan, registry Registry, opts RunOptions) err
 		CASEndpoint: plan.CASEndpoint,
 		OutputDir:   plan.OutputDir,
 		ResultDir:   plan.ResultDir,
+		Resume:      plan.Resume,
 		clock:       clock,
 		logf:        log,
 	}
@@ -114,26 +115,35 @@ func preflightSuites(plan Plan, registry Registry) error {
 	return nil
 }
 
-func prepareResultLayout(resultDir string) error {
+func prepareResultLayout(resultDir string, resume bool) error {
 	manifestPath := filepath.Join(resultDir, "manifest.json")
 	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	for _, dir := range []string{"raw", "summary"} {
-		path := filepath.Join(resultDir, dir)
-		if err := os.RemoveAll(path); err != nil {
+	rawPath := filepath.Join(resultDir, "raw")
+	if !resume {
+		if err := os.RemoveAll(rawPath); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			return err
-		}
+	}
+	if err := os.MkdirAll(rawPath, 0o755); err != nil {
+		return err
+	}
+	summaryPath := filepath.Join(resultDir, "summary")
+	if err := os.RemoveAll(summaryPath); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(summaryPath, 0o755); err != nil {
+		return err
 	}
 	return nil
 }
 
-func prepareOutputLayout(outputDir string) error {
-	if err := os.RemoveAll(outputDir); err != nil {
-		return err
+func prepareOutputLayout(outputDir string, resume bool) error {
+	if !resume {
+		if err := os.RemoveAll(outputDir); err != nil {
+			return err
+		}
 	}
 	for _, dir := range []string{"", "logs"} {
 		if err := os.MkdirAll(filepath.Join(outputDir, dir), 0o755); err != nil {
