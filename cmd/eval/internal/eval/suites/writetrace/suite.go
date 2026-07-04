@@ -45,11 +45,17 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 	if err != nil {
 		return err
 	}
-	progress, err := loadRawProgress(env.RawPath(SuiteName))
+	rawPath := env.RawPath(SuiteName)
+	if cfg.Resume {
+		if err := repairRawTail(rawPath); err != nil {
+			return err
+		}
+	}
+	tasks := buildTasks(cfg, repositories, repoPaths)
+	progress, err := loadRawProgress(rawPath)
 	if err != nil {
 		return err
 	}
-	tasks := buildTasks(cfg, repositories, repoPaths)
 	writer := &recordWriter{env: env}
 	if cfg.Jobs == 1 {
 		err = runTasksSerial(ctx, env, cfg, tasks, progress, writer, log)
@@ -59,18 +65,11 @@ func (Suite) Run(ctx context.Context, env framework.Env, raw json.RawMessage) er
 	if err != nil {
 		return err
 	}
-	rows, err := aggregateRawRecords(env.RawPath(SuiteName))
+	rows, err := aggregateRawRecords(rawPath)
 	if err != nil {
 		return err
 	}
 	return writeAggregateCSV(env, rows)
-}
-
-type replayTask struct {
-	repo      RepositoryTarget
-	repoIndex int
-	repoPath  string
-	system    string
 }
 
 type repoReplayTask struct {
@@ -171,41 +170,15 @@ func runTasksParallel(ctx context.Context, env framework.Env, cfg Config, tasks 
 	return runErr
 }
 
-func runRepoTask(ctx context.Context, env framework.Env, cfg Config, task repoReplayTask, progress map[taskKey]taskProgress, writer *recordWriter, log func(string, ...any)) error {
-	var runErr error
-	for _, system := range task.systems {
-		systemTask := replayTask{
-			repo:      task.repo,
-			repoIndex: task.repoIndex,
-			repoPath:  task.repoPath,
-			system:    system,
-		}
-		log("    system=%s", system)
-		if err := runTask(ctx, env, cfg, systemTask, progress[systemTask.key()], writer); err != nil {
-			runErr = errors.Join(runErr, err)
-		}
+func runRepoTask(ctx context.Context, env framework.Env, cfg Config, task repoReplayTask, progress map[taskKey]taskProgress, writer *recordWriter, log func(string, ...any)) (err error) {
+	progresses, complete, allComplete, err := loadRepoTaskProgress(env, cfg, task, progress)
+	if err != nil {
+		return err
 	}
-	return runErr
-}
-
-func runTask(ctx context.Context, env framework.Env, cfg Config, task replayTask, progress taskProgress, writer *recordWriter) (err error) {
-	if progress.Repo == "" {
-		progress = taskProgress{Repo: task.repo.RepoID, System: task.system, Index: -1}
+	if allComplete {
+		return nil
 	}
-	checkpointPath := task.checkpointPath(env)
-	if cfg.Resume {
-		checkpoint, found, err := loadCheckpoint(checkpointPath)
-		if err != nil {
-			return err
-		}
-		if found && (checkpoint.Complete || checkpoint.Index > progress.Index) {
-			progress = checkpoint
-		}
-		if progress.Complete {
-			return nil
-		}
-	}
-	storeRoot := storeDirForTask(env.WorkPath("write-stores"), task)
+	storeRoot := storeDirForRepo(env.WorkPath("write-stores"), task)
 	if cfg.Resume {
 		if err := evalstore.RemoveStoreDir(storeRoot); err != nil {
 			return err
@@ -225,12 +198,9 @@ func runTask(ctx context.Context, env framework.Env, cfg Config, task replayTask
 		}
 	}()
 
-	systems, err := evalwrite.BuildSystems(ctx, factory, task.system)
+	systems, err := evalwrite.BuildSystems(ctx, factory, strings.Join(task.systems, ","))
 	if err != nil {
 		return err
-	}
-	if len(systems) != 1 {
-		return fmt.Errorf("write_trace task built %d systems, want 1", len(systems))
 	}
 
 	source := gittrace.Source{
@@ -240,58 +210,174 @@ func runTask(ctx context.Context, env framework.Env, cfg Config, task replayTask
 		Limit:       cfg.MaxCommitsPerRepo,
 		FirstParent: cfg.FirstParent,
 	}
-	last := progress
 	err = source.Walk(ctx, func(commit replay.CommitMutation) error {
 		commit.Repo = task.repo.RepoID
-		if cfg.Resume && progress.Index >= 0 && commit.Index <= progress.Index {
-			if commit.Index == progress.Index && progress.Commit != "" && progress.Commit != commit.Commit {
-				return fmt.Errorf("checkpoint commit mismatch for %s/%s index %d: checkpoint=%s replay=%s",
-					task.repo.RepoID, task.system, commit.Index, progress.Commit, commit.Commit)
-			}
-			_, err := systems[0].Apply(ctx, commit)
+		for _, system := range systems {
+			name := system.Name()
+			result, err := system.Apply(ctx, commit)
 			if err != nil {
-				return err
+				return fmt.Errorf("%s apply commit %s: %w", name, commit.Commit, err)
 			}
-			last = taskProgress{Repo: task.repo.RepoID, System: task.system, Index: commit.Index, Commit: commit.Commit}
-			return nil
-		}
-		return replay.RunCommitRecords(ctx, commit, systems, func(record replay.ResultRecord) error {
+			progress := progresses[name]
+			if cfg.Resume && progress.Index >= 0 && commit.Index <= progress.Index {
+				if err := verifyWarmProgress(task, name, progress, commit, result); err != nil {
+					return err
+				}
+				continue
+			}
+			if complete[name] {
+				continue
+			}
+			record := resultRecord(commit, name, result)
 			if err := writer.Write(record); err != nil {
 				return err
 			}
-			last = taskProgress{
+			next := taskProgress{
 				Repo:   record.Repo,
 				System: record.System,
 				Index:  record.Index,
 				Commit: record.Commit,
 				Root:   record.Result.Root,
 			}
-			return saveCheckpoint(checkpointPath, last)
-		})
+			progresses[name] = next
+			if err := saveCheckpoint(task.checkpointPath(env, name), next); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if last.Repo == "" {
-		last = taskProgress{Repo: task.repo.RepoID, System: task.system, Index: -1}
+	for _, system := range systems {
+		name := system.Name()
+		last := progresses[name]
+		if last.Repo == "" {
+			last = initialTaskProgress(task.repo.RepoID, name)
+		}
+		last.Complete = true
+		if err := saveCheckpoint(task.checkpointPath(env, name), last); err != nil {
+			return err
+		}
 	}
-	last.Complete = true
-	return saveCheckpoint(checkpointPath, last)
+	return nil
 }
 
 var _ framework.Suite = Suite{}
 
-func (t replayTask) key() taskKey {
-	return taskKey{repo: t.repo.RepoID, system: t.system}
+func loadRepoTaskProgress(env framework.Env, cfg Config, task repoReplayTask, rawProgress map[taskKey]taskProgress) (map[string]taskProgress, map[string]bool, bool, error) {
+	progresses := make(map[string]taskProgress, len(task.systems))
+	complete := make(map[string]bool, len(task.systems))
+	allComplete := cfg.Resume && len(task.systems) > 0
+	for _, system := range task.systems {
+		progress := rawProgress[taskKey{repo: task.repo.RepoID, system: system}]
+		if progress.Repo == "" {
+			progress = initialTaskProgress(task.repo.RepoID, system)
+		}
+		if cfg.Resume {
+			checkpoint, found, err := loadCheckpoint(task.checkpointPath(env, system))
+			if err != nil {
+				return nil, nil, false, err
+			}
+			if found {
+				progress, err = mergeProgress(progress, checkpoint)
+				if err != nil {
+					return nil, nil, false, err
+				}
+			}
+		}
+		progresses[system] = progress
+		complete[system] = progress.Complete
+		if !progress.Complete {
+			allComplete = false
+		}
+	}
+	return progresses, complete, allComplete, nil
 }
 
-func (t replayTask) checkpointPath(env framework.Env) string {
-	return filepath.Join(env.WorkPath("write-checkpoints"), t.repo.StoreName(t.repoIndex), t.system+".json")
+func initialTaskProgress(repo, system string) taskProgress {
+	return taskProgress{Repo: repo, System: system, Index: -1}
 }
 
-func storeDirForTask(base string, task replayTask) string {
+func mergeProgress(raw, checkpoint taskProgress) (taskProgress, error) {
+	if checkpoint.Index == raw.Index {
+		if raw.Commit != "" && checkpoint.Commit != "" && raw.Commit != checkpoint.Commit {
+			return taskProgress{}, fmt.Errorf("checkpoint commit mismatch for %s/%s index %d: raw=%s checkpoint=%s",
+				raw.Repo, raw.System, raw.Index, raw.Commit, checkpoint.Commit)
+		}
+		if raw.Root != "" && checkpoint.Root != "" && raw.Root != checkpoint.Root {
+			return taskProgress{}, fmt.Errorf("checkpoint root mismatch for %s/%s index %d: raw=%s checkpoint=%s",
+				raw.Repo, raw.System, raw.Index, raw.Root, checkpoint.Root)
+		}
+		if raw.Root == "" {
+			raw.Root = checkpoint.Root
+		}
+		raw.Complete = checkpoint.Complete
+		return raw, nil
+	}
+	if checkpoint.Complete || checkpoint.Index > raw.Index {
+		return checkpoint, nil
+	}
+	return raw, nil
+}
+
+func verifyWarmProgress(task repoReplayTask, system string, progress taskProgress, commit replay.CommitMutation, result replay.ApplyResult) error {
+	if commit.Index != progress.Index {
+		return nil
+	}
+	if progress.Commit != "" && progress.Commit != commit.Commit {
+		return fmt.Errorf("checkpoint commit mismatch for %s/%s index %d: checkpoint=%s replay=%s",
+			task.repo.RepoID, system, commit.Index, progress.Commit, commit.Commit)
+	}
+	if progress.Root != "" && result.Root != progress.Root {
+		return fmt.Errorf("checkpoint root mismatch for %s/%s index %d: checkpoint=%s replay=%s",
+			task.repo.RepoID, system, commit.Index, progress.Root, result.Root)
+	}
+	return nil
+}
+
+func resultRecord(commit replay.CommitMutation, system string, result replay.ApplyResult) replay.ResultRecord {
+	logicalChangedPayloadBytes := replay.LogicalChangedPayloadBytes(commit.Mutations)
+	physicalPersistedBytes := result.AccountingDelta.Total.NewPersistedBytes
+	physicalPayloadBytes := result.AccountingDelta.Categories[evalstore.CategoryCASPayload].NewPersistedBytes
+	physicalMetadataBytes := physicalPersistedBytes
+	if physicalMetadataBytes >= physicalPayloadBytes {
+		physicalMetadataBytes -= physicalPayloadBytes
+	} else {
+		physicalMetadataBytes = 0
+	}
+	var writeAmplification *float64
+	if logicalChangedPayloadBytes > 0 {
+		value := float64(physicalPersistedBytes) / float64(logicalChangedPayloadBytes)
+		writeAmplification = &value
+	}
+	return replay.ResultRecord{
+		Repo:                       commit.Repo,
+		System:                     system,
+		Commit:                     commit.Commit,
+		Parent:                     commit.Parent,
+		Index:                      commit.Index,
+		LiveStats:                  commit.LiveStats,
+		MutationSet:                commit.Mutations,
+		Skipped:                    commit.Skipped,
+		Result:                     result,
+		Accounting:                 result.Accounting,
+		AccountingDelta:            result.AccountingDelta,
+		LogicalChangedPayloadBytes: logicalChangedPayloadBytes,
+		PhysicalPersistedBytes:     physicalPersistedBytes,
+		PhysicalPayloadBytes:       physicalPayloadBytes,
+		PhysicalMetadataBytes:      physicalMetadataBytes,
+		WriteAmplification:         writeAmplification,
+	}
+}
+
+func (t repoReplayTask) checkpointPath(env framework.Env, system string) string {
+	return filepath.Join(env.WorkPath("write-checkpoints"), t.repo.StoreName(t.repoIndex), system+".json")
+}
+
+func storeDirForRepo(base string, task repoReplayTask) string {
 	if base == "" {
 		return base
 	}
-	return filepath.Join(base, task.repo.StoreName(task.repoIndex), task.system)
+	return filepath.Join(base, task.repo.StoreName(task.repoIndex))
 }

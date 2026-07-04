@@ -1,6 +1,8 @@
 package writetrace
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,5 +95,48 @@ func readRawRecords(path string, visit func(replay.ResultRecord)) error {
 			return fmt.Errorf("decode write_trace record %s: %w", path, err)
 		}
 		visit(record)
+	}
+}
+
+func repairRawTail(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	var offset int64
+	for {
+		start := offset
+		line, readErr := reader.ReadBytes('\n')
+		offset += int64(len(line))
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			var envelope framework.RecordEnvelope
+			if err := json.Unmarshal(trimmed, &envelope); err != nil {
+				if errors.Is(readErr, io.EOF) {
+					return file.Truncate(start)
+				}
+				return fmt.Errorf("decode raw envelope %s: %w", path, err)
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			if len(line) > 0 && line[len(line)-1] != '\n' {
+				if _, err := file.Seek(0, io.SeekEnd); err != nil {
+					return err
+				}
+				if _, err := file.Write([]byte("\n")); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
 	}
 }

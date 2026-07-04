@@ -412,6 +412,172 @@ func TestSuiteRunResumeSkipsCompletedTaskWithoutDuplicatingRaw(t *testing.T) {
 	}
 }
 
+func TestSuiteRunResumeRepairsTruncatedRawTail(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+	env := framework.Env{
+		RunID:     "run-write-trace-truncated-raw",
+		OutputDir: outputDir,
+		ResultDir: resultDir,
+	}
+
+	firstCfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 1,
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"resume": true
+	}`)
+	if err := (writetrace.Suite{}).Run(ctx, env, firstCfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(outputDir, "write-checkpoints")); err != nil {
+		t.Fatalf("remove checkpoints: %v", err)
+	}
+	rawPath := filepath.Join(resultDir, "raw", "write_trace.jsonl")
+	f, err := os.OpenFile(rawPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open raw for append: %v", err)
+	}
+	if _, err := f.WriteString(`{"schema_version":"`); err != nil {
+		_ = f.Close()
+		t.Fatalf("append truncated raw tail: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	secondCfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 2,
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"resume": true
+	}`)
+	if err := (writetrace.Suite{}).Run(ctx, env, secondCfg); err != nil {
+		t.Fatalf("resume Run: %v", err)
+	}
+	envelopes := readWriteTraceEnvelopes(t, rawPath)
+	if len(envelopes) != 2 {
+		t.Fatalf("envelope count after resume = %d, want 2", len(envelopes))
+	}
+}
+
+func TestSuiteRunSharedStoreModeSharesCASAcrossSystems(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+
+	cfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 1,
+		"store_mode": "shared",
+		"store_backend": "memory",
+		"systems": ["maltflat", "hamt"]
+	}`)
+	if err := (writetrace.Suite{}).Run(ctx, framework.Env{
+		RunID:     "run-write-trace-shared-cas",
+		OutputDir: outputDir,
+		ResultDir: resultDir,
+	}, cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	envelopes := readWriteTraceEnvelopes(t, filepath.Join(resultDir, "raw", "write_trace.jsonl"))
+	if len(envelopes) != 2 {
+		t.Fatalf("envelope count = %d, want 2", len(envelopes))
+	}
+	records := map[string]replay.ResultRecord{}
+	for i, envelope := range envelopes {
+		var record replay.ResultRecord
+		if err := json.Unmarshal(envelope.Record, &record); err != nil {
+			t.Fatalf("unmarshal record %d: %v", i, err)
+		}
+		records[record.System] = record
+	}
+	if records["maltflat"].PhysicalPayloadBytes == 0 {
+		t.Fatalf("maltflat payload bytes = 0, want first system to store payload")
+	}
+	if got := records["hamt"].PhysicalPayloadBytes; got != 0 {
+		t.Fatalf("hamt payload bytes = %d, want shared CAS duplicate payload to count as 0", got)
+	}
+}
+
+func TestSuiteRunResumeRejectsCheckpointRootMismatch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	resultDir := t.TempDir()
+	outputDir := t.TempDir()
+	env := framework.Env{
+		RunID:     "run-write-trace-root-mismatch",
+		OutputDir: outputDir,
+		ResultDir: resultDir,
+	}
+	firstCfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 1,
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"resume": true
+	}`)
+	if err := (writetrace.Suite{}).Run(ctx, env, firstCfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := os.Remove(filepath.Join(resultDir, "raw", "write_trace.jsonl")); err != nil {
+		t.Fatalf("remove raw: %v", err)
+	}
+	checkpointPath := filepath.Join(outputDir, "write-checkpoints", "000-github.com-ipfs-kubo", "maltflat.json")
+	data, err := os.ReadFile(checkpointPath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	var checkpoint map[string]any
+	if err := json.Unmarshal(data, &checkpoint); err != nil {
+		t.Fatalf("unmarshal checkpoint: %v", err)
+	}
+	checkpoint["root"] = "mismatch-root"
+	checkpoint["complete"] = false
+	data, err = json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatalf("marshal checkpoint: %v", err)
+	}
+	if err := os.WriteFile(checkpointPath, data, 0644); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+
+	secondCfg := json.RawMessage(`{
+		"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+		"max_commits_per_repo": 2,
+		"store_backend": "memory",
+		"systems": ["maltflat"],
+		"resume": true
+	}`)
+	err = (writetrace.Suite{}).Run(ctx, env, secondCfg)
+	if err == nil {
+		t.Fatal("resume Run should reject checkpoint root mismatch")
+	}
+	if !strings.Contains(err.Error(), "root mismatch") {
+		t.Fatalf("resume error = %v, want root mismatch", err)
+	}
+}
+
 func initWriteTraceRepoAt(t *testing.T, repo string) string {
 	t.Helper()
 	if err := os.MkdirAll(repo, 0755); err != nil {
