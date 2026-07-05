@@ -98,7 +98,15 @@ func readRawRecords(path string, visit func(replay.ResultRecord)) error {
 	}
 }
 
-func repairRawTail(path string) error {
+type rawRepairFile interface {
+	io.Reader
+	io.Seeker
+	io.Writer
+	Truncate(int64) error
+	Close() error
+}
+
+func repairRawTail(path string) (err error) {
 	file, err := os.OpenFile(path, os.O_RDWR, 0o644)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -106,7 +114,15 @@ func repairRawTail(path string) error {
 		}
 		return err
 	}
-	defer file.Close()
+	return repairRawTailFile(path, file)
+}
+
+func repairRawTailFile(path string, file rawRepairFile) (err error) {
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	reader := bufio.NewReader(file)
 	var offset int64
