@@ -21,4 +21,4 @@ changes to this layer.
 - `mips/` remains the proposal, decision, and process bucket. It should link to
   reference specs instead of duplicating long schema definitions.
 - `policy/` holds compatibility, release, and threat-model policy.
-- `evaluation/` holds evaluator-facing protocol and artifact rules.
+- `evaluation.md` holds evaluator-facing benchmark methods and artifact rules.

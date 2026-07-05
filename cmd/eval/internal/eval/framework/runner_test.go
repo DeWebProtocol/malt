@@ -152,6 +152,78 @@ func TestRunnerRefreshesOutputDirectoriesBeforeRun(t *testing.T) {
 	}
 }
 
+func TestRunnerResumePreservesRawAndOutputWorkspace(t *testing.T) {
+	tmp := t.TempDir()
+	reg := NewRegistry()
+	if err := reg.Register(fakeSuite{name: "write_trace"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plan := Plan{
+		RunID:     "resume",
+		OutputDir: filepath.Join(tmp, "output", "resume"),
+		ResultDir: filepath.Join(tmp, "result", "resume"),
+		Resume:    true,
+		Suites: []SuitePlan{{
+			Name:   "write_trace",
+			Config: json.RawMessage(`{"limit": 2}`),
+		}},
+	}
+	if err := os.MkdirAll(filepath.Join(plan.ResultDir, "raw"), 0o755); err != nil {
+		t.Fatalf("mkdir raw: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(plan.ResultDir, "summary"), 0o755); err != nil {
+		t.Fatalf("mkdir summary: %v", err)
+	}
+	if err := os.MkdirAll(plan.OutputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	rawPath := filepath.Join(plan.ResultDir, "raw", "write_trace.jsonl")
+	workPath := filepath.Join(plan.OutputDir, "checkpoint.json")
+	summaryPath := filepath.Join(plan.ResultDir, "summary", "stale.csv")
+	manifestPath := filepath.Join(plan.ResultDir, "manifest.json")
+	previous := RecordEnvelope{
+		SchemaVersion: SchemaVersion,
+		RunID:         "resume",
+		Suite:         "write_trace",
+		EmittedAt:     time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		Record:        json.RawMessage(`{"previous":true}`),
+	}
+	previousBytes, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatalf("marshal previous raw: %v", err)
+	}
+	previousBytes = append(previousBytes, '\n')
+	if err := os.WriteFile(rawPath, previousBytes, 0o644); err != nil {
+		t.Fatalf("write raw: %v", err)
+	}
+	if err := os.WriteFile(workPath, []byte("checkpoint\n"), 0o644); err != nil {
+		t.Fatalf("write work: %v", err)
+	}
+	if err := os.WriteFile(summaryPath, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale summary: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("stale manifest\n"), 0o644); err != nil {
+		t.Fatalf("write stale manifest: %v", err)
+	}
+
+	if err := Run(context.Background(), plan, reg, RunOptions{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	rawBytes, err := os.ReadFile(rawPath)
+	if err != nil {
+		t.Fatalf("read raw: %v", err)
+	}
+	if !strings.Contains(string(rawBytes), `"previous":true`) {
+		t.Fatalf("resume run removed previous raw: %q", rawBytes)
+	}
+	if got, err := os.ReadFile(workPath); err != nil || string(got) != "checkpoint\n" {
+		t.Fatalf("resume run should preserve output checkpoint, got %q err=%v", got, err)
+	}
+	if _, err := os.Stat(summaryPath); !os.IsNotExist(err) {
+		t.Fatalf("resume run should refresh summary dir, stat err=%v", err)
+	}
+}
+
 func TestRunnerRemovesStaleManifestBeforeFailedRerun(t *testing.T) {
 	tmp := t.TempDir()
 	successRegistry := NewRegistry()

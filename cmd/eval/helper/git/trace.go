@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,7 @@ func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) 
 		return err
 	}
 	snapshot := objectSnapshot{repo: sourceRepo}
+	var live *liveIndex
 	for i, commit := range commits {
 		parent, err := firstParent(ctx, sourceRepo, commit)
 		if err != nil {
@@ -52,11 +54,22 @@ func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) 
 		if err != nil {
 			return err
 		}
-		liveFiles, liveStats, skipped, err := scanSnapshot(ctx, sourceRepo, commit)
-		if err != nil {
-			return err
+		if live == nil {
+			live, err = scanSnapshotIndex(ctx, sourceRepo, commit)
+			if err != nil {
+				return err
+			}
+			enrichMutations(mutations, live.filesSlice())
+		} else {
+			files, skippedTargets, err := changedPathMetadata(ctx, sourceRepo, commit, mutations)
+			if err != nil {
+				return err
+			}
+			enrichMutationsFromMap(mutations, files)
+			live.apply(mutations, files, skippedTargets)
 		}
-		enrichMutations(mutations, liveFiles)
+		liveFiles := live.filesSlice()
+		liveStats, skipped := live.stats()
 		if err := fn(replay.CommitMutation{
 			Repo:      repoName(sourceRepo, s.RepoURL),
 			Commit:    commit,
@@ -232,51 +245,131 @@ func renamedContentChanges(ctx context.Context, repo, parent, commit string) (ma
 }
 
 func scanSnapshot(ctx context.Context, repo, commit string) ([]replay.LiveFile, replay.LiveStats, replay.SkipStats, error) {
-	var (
-		files       []replay.LiveFile
-		stats       replay.LiveStats
-		skipped     replay.SkipStats
-		directories = map[string]struct{}{}
-		depthSum    int
-	)
-	out, err := gitOutput(ctx, repo, "ls-tree", "-r", "--long", commit)
+	index, err := scanSnapshotIndex(ctx, repo, commit)
 	if err != nil {
 		return nil, replay.LiveStats{}, replay.SkipStats{}, err
+	}
+	files := index.filesSlice()
+	stats, skipped := index.stats()
+	return files, stats, skipped, nil
+}
+
+type skippedKind int
+
+const (
+	skippedSymlink skippedKind = iota + 1
+	skippedOther
+)
+
+type liveIndex struct {
+	files    map[string]replay.LiveFile
+	symlinks map[string]struct{}
+	other    map[string]struct{}
+}
+
+func newLiveIndex() *liveIndex {
+	return &liveIndex{
+		files:    make(map[string]replay.LiveFile),
+		symlinks: make(map[string]struct{}),
+		other:    make(map[string]struct{}),
+	}
+}
+
+func scanSnapshotIndex(ctx context.Context, repo, commit string) (*liveIndex, error) {
+	index := newLiveIndex()
+	out, err := gitOutput(ctx, repo, "ls-tree", "-r", "--long", commit)
+	if err != nil {
+		return nil, err
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		head, path, ok := strings.Cut(line, "\t")
-		if !ok {
-			return nil, replay.LiveStats{}, replay.SkipStats{}, fmt.Errorf("invalid ls-tree line %q", line)
-		}
-		fields := strings.Fields(head)
-		if len(fields) < 4 {
-			return nil, replay.LiveStats{}, replay.SkipStats{}, fmt.Errorf("invalid ls-tree metadata %q", head)
-		}
-		mode, objectType, objectHash, sizeText := fields[0], fields[1], fields[2], fields[3]
-		rel := filepath.ToSlash(path)
-		if mode == "120000" {
-			skipped.SymlinkCount++
-			continue
-		}
-		if objectType != "blob" || !strings.HasPrefix(mode, "100") {
-			skipped.OtherCount++
-			continue
-		}
-		size, err := strconv.ParseInt(sizeText, 10, 64)
+		file, kind, ok, err := parseTreeEntry(line)
 		if err != nil {
-			skipped.OtherCount++
+			return nil, err
+		}
+		if !ok {
 			continue
 		}
-		files = append(files, replay.LiveFile{
-			Path: rel,
-			Mode: mode,
-			Size: size,
-			Hash: objectHash,
-		})
-		stats.LivePayloadBytes += size
+		index.setPath(file.Path, file, kind)
+	}
+	return index, nil
+}
+
+func (idx *liveIndex) apply(mutations []replay.FileMutation, files map[string]replay.LiveFile, skipped map[string]skippedKind) {
+	if idx == nil {
+		return
+	}
+	for _, mutation := range mutations {
+		switch mutation.Kind {
+		case replay.MutationDelete:
+			idx.deletePath(mutation.Path)
+			idx.applyTarget(mutation.Path, files, skipped)
+		case replay.MutationRename:
+			idx.deletePath(mutation.OldPath)
+			idx.applyTarget(mutation.Path, files, skipped)
+		case replay.MutationAdd, replay.MutationModify:
+			idx.deletePath(mutation.Path)
+			idx.applyTarget(mutation.Path, files, skipped)
+		default:
+			idx.deletePath(mutation.Path)
+			idx.applyTarget(mutation.Path, files, skipped)
+		}
+	}
+}
+
+func (idx *liveIndex) applyTarget(path string, files map[string]replay.LiveFile, skipped map[string]skippedKind) {
+	if file, ok := files[path]; ok {
+		idx.setPath(path, file, 0)
+		return
+	}
+	if kind, ok := skipped[path]; ok {
+		idx.setPath(path, replay.LiveFile{Path: path}, kind)
+	}
+}
+
+func (idx *liveIndex) setPath(path string, file replay.LiveFile, kind skippedKind) {
+	idx.deletePath(path)
+	switch kind {
+	case skippedSymlink:
+		idx.symlinks[path] = struct{}{}
+	case skippedOther:
+		idx.other[path] = struct{}{}
+	default:
+		idx.files[path] = file
+	}
+}
+
+func (idx *liveIndex) deletePath(path string) {
+	delete(idx.files, path)
+	delete(idx.symlinks, path)
+	delete(idx.other, path)
+}
+
+func (idx *liveIndex) filesSlice() []replay.LiveFile {
+	if idx == nil {
+		return nil
+	}
+	files := make([]replay.LiveFile, 0, len(idx.files))
+	for _, file := range idx.files {
+		files = append(files, file)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files
+}
+
+func (idx *liveIndex) stats() (replay.LiveStats, replay.SkipStats) {
+	var (
+		stats       replay.LiveStats
+		directories = map[string]struct{}{}
+		depthSum    int
+	)
+	for _, file := range idx.files {
+		stats.LivePayloadBytes += file.Size
+		rel := file.Path
 		depth := pathDepth(rel)
 		depthSum += depth
 		if depth > stats.MaxPathDepth {
@@ -292,13 +385,98 @@ func scanSnapshot(ctx context.Context, repo, commit string) ([]replay.LiveFile, 
 			parent = next
 		}
 	}
-	stats.FileCount = len(files)
+	stats.FileCount = len(idx.files)
 	stats.DirectoryCount = len(directories)
 	stats.PathCount = stats.FileCount + stats.DirectoryCount
 	if stats.FileCount > 0 {
 		stats.AveragePathDepth = float64(depthSum) / float64(stats.FileCount)
 	}
-	return files, stats, skipped, nil
+	return stats, replay.SkipStats{
+		SymlinkCount: len(idx.symlinks),
+		OtherCount:   len(idx.other),
+	}
+}
+
+func changedPathMetadata(ctx context.Context, repo, commit string, mutations []replay.FileMutation) (map[string]replay.LiveFile, map[string]skippedKind, error) {
+	paths := changedTargetPaths(mutations)
+	if len(paths) == 0 {
+		return map[string]replay.LiveFile{}, map[string]skippedKind{}, nil
+	}
+	args := append([]string{"ls-tree", "--long", commit, "--"}, paths...)
+	out, err := gitOutput(ctx, repo, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	files := make(map[string]replay.LiveFile, len(paths))
+	skipped := make(map[string]skippedKind)
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		file, kind, ok, err := parseTreeEntry(line)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			continue
+		}
+		if kind == 0 {
+			files[file.Path] = file
+		} else {
+			skipped[file.Path] = kind
+		}
+	}
+	return files, skipped, nil
+}
+
+func changedTargetPaths(mutations []replay.FileMutation) []string {
+	seen := make(map[string]struct{}, len(mutations))
+	var paths []string
+	for _, mutation := range mutations {
+		switch mutation.Kind {
+		case replay.MutationDelete:
+			continue
+		}
+		if strings.TrimSpace(mutation.Path) == "" {
+			continue
+		}
+		if _, ok := seen[mutation.Path]; ok {
+			continue
+		}
+		seen[mutation.Path] = struct{}{}
+		paths = append(paths, mutation.Path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func parseTreeEntry(line string) (replay.LiveFile, skippedKind, bool, error) {
+	head, path, ok := strings.Cut(line, "\t")
+	if !ok {
+		return replay.LiveFile{}, 0, false, fmt.Errorf("invalid ls-tree line %q", line)
+	}
+	fields := strings.Fields(head)
+	if len(fields) < 4 {
+		return replay.LiveFile{}, 0, false, fmt.Errorf("invalid ls-tree metadata %q", head)
+	}
+	mode, objectType, objectHash, sizeText := fields[0], fields[1], fields[2], fields[3]
+	rel := filepath.ToSlash(path)
+	if mode == "120000" {
+		return replay.LiveFile{Path: rel}, skippedSymlink, true, nil
+	}
+	if objectType != "blob" || !strings.HasPrefix(mode, "100") {
+		return replay.LiveFile{Path: rel}, skippedOther, true, nil
+	}
+	size, err := strconv.ParseInt(sizeText, 10, 64)
+	if err != nil {
+		return replay.LiveFile{Path: rel}, skippedOther, true, nil
+	}
+	return replay.LiveFile{
+		Path: rel,
+		Mode: mode,
+		Size: size,
+		Hash: objectHash,
+	}, 0, true, nil
 }
 
 func enrichMutations(mutations []replay.FileMutation, files []replay.LiveFile) {
@@ -306,6 +484,10 @@ func enrichMutations(mutations []replay.FileMutation, files []replay.LiveFile) {
 	for _, file := range files {
 		byPath[file.Path] = file
 	}
+	enrichMutationsFromMap(mutations, byPath)
+}
+
+func enrichMutationsFromMap(mutations []replay.FileMutation, byPath map[string]replay.LiveFile) {
 	for i := range mutations {
 		file, ok := byPath[mutations[i].Path]
 		if !ok {
@@ -431,9 +613,11 @@ func gitOutput(ctx context.Context, repo string, args ...string) (string, error)
 	if repo != "" {
 		cmd.Dir = repo
 	}
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s failed: %w\n%s", strings.Join(args, " "), err, out)
+		return "", fmt.Errorf("git %s failed: %w\n%s", strings.Join(args, " "), err, stderr.String())
 	}
 	return string(out), nil
 }

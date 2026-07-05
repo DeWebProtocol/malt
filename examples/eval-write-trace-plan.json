@@ -2,15 +2,17 @@
   "run_id": "write-trace-default-repos",
   "api_base_url": "http://127.0.0.1:4317",
   "cas_endpoint": "http://127.0.0.1:4318",
+  "resume": true,
   "suites": [
     {
       "name": "write_trace",
       "config": {
-        "max_commits_per_repo": 200,
         "systems": ["maltflat", "merkledag", "hamt"],
         "store_mode": "isolated",
-        "store_backend": "memory",
-        "first_parent": true
+        "store_backend": "badger",
+        "first_parent": true,
+        "jobs": 1,
+        "resume": true
       }
     }
   ]

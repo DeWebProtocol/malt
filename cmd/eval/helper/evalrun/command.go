@@ -16,6 +16,7 @@ type options struct {
 	outputDir string
 	resultDir string
 	runID     string
+	resume    bool
 }
 
 // NewCommand creates `malt-eval run`.
@@ -35,6 +36,7 @@ func NewCommand(registry framework.Registry) *cobra.Command {
 	cmd.Flags().StringVar(&opts.resultDir, "result-dir", opts.resultDir, "Override result directory")
 	cmd.Flags().StringVar(&opts.outputDir, "output-dir", opts.outputDir, "Override disposable output workspace directory")
 	cmd.Flags().StringVar(&opts.runID, "run-id", opts.runID, "Override run identifier")
+	cmd.Flags().BoolVar(&opts.resume, "resume", opts.resume, "Resume an interrupted run by preserving raw results and output workspace files")
 	return cmd
 }
 
@@ -57,6 +59,9 @@ func run(cmd *cobra.Command, registry framework.Registry, opts *options) error {
 	}
 	if strings.TrimSpace(opts.runID) != "" {
 		plan.OverrideRunID(opts.runID)
+	}
+	if opts.resume {
+		plan.EnableResume()
 	}
 	return framework.Run(cmd.Context(), plan, registry, framework.RunOptions{Stderr: cmd.ErrOrStderr()})
 }

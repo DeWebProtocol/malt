@@ -33,7 +33,7 @@ This MIP should choose a demo shape:
 - whether the result is a paper-facing capability case study
 
 It does not define a protocol schema. If accepted, any reusable benchmark or
-artifact rules should be documented under `docs/evaluation/`.
+artifact rules should be documented in `docs/evaluation.md`.
 
 ## Rationale
 

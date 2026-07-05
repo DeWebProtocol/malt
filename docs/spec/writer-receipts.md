@@ -76,5 +76,5 @@ Receipts do not prove:
 
 - [MIP-1002](../mips/mip-1002-writer-receipt-accounting.md) tracks whether the
   current receipt fields should become a stable API and evaluation contract.
-- [Benchmark reporting](../evaluation/README.md#benchmark-reporting) describes
-  how receipts are interpreted in evaluator output.
+- [Evaluation](../evaluation.md) describes how receipts and accounting fields
+  are interpreted in evaluator output.

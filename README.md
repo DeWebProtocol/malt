@@ -15,7 +15,7 @@ managed product gateway lives outside this repository.
 
 [Documentation](./docs/README.md) · [Architecture](./ARCHITECTURE.md) ·
 [Threat Model](./docs/policy/threat-model.md) ·
-[Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation/README.md) ·
+[Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
 [MIPs](./docs/mips/README.md) ·
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
@@ -270,34 +270,16 @@ examples/                      small runnable plans and examples
 
 ## Evaluation
 
-MALT's evaluation framework compares authenticated object layouts along four
-primary dimensions:
+MALT's evaluator focuses on the core performance questions behind the project:
 
-- path depth under fixed per-CAS-Get latency models
-- verifier-facing proof size
-- rewrite amplification under structural updates
-- materialized-index and storage overhead
+- whether path lookup remains practical as logical depth grows
+- whether flat authenticated lookup scales with key count
+- whether real update traces avoid Merkle-DAG-style structural rewrite
+  amplification
 
-`malt-eval` supports both direct commands and a framework runner:
-
-- `malt-eval read` emits paper-facing read benchmark records for MALT and IPLD
-  UnixFS baselines, including deep path lookup, small file read, and large file
-  range read workloads
-- `malt-eval write` replays Git traces and emits write-amplification JSONL
-- `malt-eval run` executes JSON plans and writes `manifest.json`, raw
-  envelopes, and summary CSVs under `result/<run_id>`
-- `malt-eval run` plans can use the `read_matrix` suite for fair resolve-path
-  comparisons over the same logical paths materialized as flat MALT arcs,
-  MerkleDAG, and HAMT
-- `malt-eval schema` lists or prints embedded JSON schemas
-- `malt-eval summarize` regenerates summary CSVs from a result directory
-- `malt-eval metrics` inspects daemon evaluation metrics
-
-See [docs/evaluation/README.md](./docs/evaluation/README.md) for commands, result layout, and
-schema notes.
-
-Published benchmark tables will be added once the paper evaluation
-configuration and raw artifacts are frozen.
+See [docs/evaluation.md](./docs/evaluation.md) for the current
+benchmark suites and commands. Detailed paper tables and figure interpretation
+live in the research documents workspace.
 
 ## Roadmap
 

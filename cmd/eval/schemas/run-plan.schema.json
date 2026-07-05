@@ -32,6 +32,10 @@
       "minLength": 1,
       "description": "Durable result directory for manifest, raw envelopes, and summary outputs."
     },
+    "resume": {
+      "type": "boolean",
+      "description": "When true, preserve raw results and the output workspace so suites can resume from their own checkpoints."
+    },
     "suites": {
       "type": "array",
       "minItems": 1,

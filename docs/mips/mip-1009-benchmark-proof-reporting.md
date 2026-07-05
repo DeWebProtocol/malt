@@ -14,7 +14,7 @@ replaces: none
 ## Abstract
 
 This MIP proposes stabilizing the benchmark-facing reporting rules summarized
-in [`docs/evaluation/README.md`](../evaluation/README.md), including proof
+in [`docs/evaluation.md`](../evaluation.md), including proof
 bytes, evidence items, writer receipts, CAS counters, ArcTable counters, and
 write-amplification summary CSV fields.
 
@@ -27,7 +27,7 @@ figures.
 ## Specification
 
 The current evaluation reference lives in
-[`docs/evaluation/README.md`](../evaluation/README.md). This MIP should decide
+[`docs/evaluation.md`](../evaluation.md). This MIP should decide
 which reporting rules must become stable for paper-facing figures:
 
 - ProofList bytes and step counts
@@ -67,5 +67,5 @@ benchmark protocol docs, and fixture/result validation.
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
-- 2026-06-25: Moved current reporting guidance to `docs/evaluation/README.md`;
+- 2026-06-25: Moved current reporting guidance to `docs/evaluation.md`;
   this MIP now tracks stabilization of paper-facing benchmark reporting.

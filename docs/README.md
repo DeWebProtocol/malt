@@ -22,7 +22,7 @@ gateway only to exercise MALT core end to end.
 
 ## Evaluation
 
-- [Evaluation guide](./evaluation/README.md)
+- [Evaluation guide](./evaluation.md)
 
 ## Specifications
 
@@ -37,7 +37,7 @@ changes before they become implementation work.
 MIPs should define the proposal boundary, motivation, decision, alternatives,
 compatibility impact, security impact, and implementation planning state. Long
 field lists, wire formats, JSON schemas, and benchmark record rules belong in
-the reference docs under `spec/` or `evaluation/`, with MIPs linking to them.
+the reference docs under `spec/` or `evaluation.md`, with MIPs linking to them.
 
 The previous `documents/MIPs` mirror in the research-paper workspace was
 removed after migration. New implementation-bound MIP work should happen here.
@@ -45,6 +45,6 @@ removed after migration. New implementation-bound MIP work should happen here.
 ## What Goes Where
 
 - `policy/` for stability, safety, and release policy
-- `evaluation/` for benchmark protocol and artifact rules
+- `evaluation.md` for benchmark methods, headline results, and artifact rules
 - `spec/` for formal protocol and schema documents
 - `mips/` for design proposals and process records

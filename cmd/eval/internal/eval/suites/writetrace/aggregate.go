@@ -48,54 +48,75 @@ type aggregateAccumulator struct {
 	seen      map[string]struct{}
 }
 
+type aggregateCollector struct {
+	groups map[aggregateKey]*aggregateAccumulator
+}
+
+func newAggregateCollector() *aggregateCollector {
+	return &aggregateCollector{groups: make(map[aggregateKey]*aggregateAccumulator)}
+}
+
 func aggregateRecords(records []replay.ResultRecord) []aggregateRow {
-	groups := make(map[aggregateKey]*aggregateAccumulator)
+	collector := newAggregateCollector()
 	for _, record := range records {
-		key := aggregateKey{repo: record.Repo, system: record.System}
-		acc := groups[key]
-		if acc == nil {
-			acc = &aggregateAccumulator{
-				row: aggregateRow{
-					Repo:   record.Repo,
-					System: record.System,
-				},
-				seen: make(map[string]struct{}),
-			}
-			groups[key] = acc
+		collector.Observe(record)
+	}
+	return collector.Rows()
+}
+
+func (c *aggregateCollector) Observe(record replay.ResultRecord) {
+	if c == nil {
+		return
+	}
+	key := aggregateKey{repo: record.Repo, system: record.System}
+	acc := c.groups[key]
+	if acc == nil {
+		acc = &aggregateAccumulator{
+			row: aggregateRow{
+				Repo:   record.Repo,
+				System: record.System,
+			},
+			seen: make(map[string]struct{}),
 		}
-		if _, ok := acc.seen[record.Commit]; !ok {
-			acc.seen[record.Commit] = struct{}{}
-			acc.row.Commits++
-		}
-		acc.row.FinalLivePayloadBytes = record.LiveStats.LivePayloadBytes
-		acc.row.LogicalChangedPayloadBytes += record.LogicalChangedPayloadBytes
-		acc.row.PhysicalPersistedBytes += record.PhysicalPersistedBytes
-		acc.row.PhysicalPayloadBytes += record.PhysicalPayloadBytes
-		acc.row.PhysicalMetadataBytes += record.PhysicalMetadataBytes
-		acc.row.CanonicalDeltaPersistedBytes += persistedBytes(record, evalstore.CategoryCanonicalDelta)
-		acc.row.ArcTablePersistedBytes += persistedBytes(record, evalstore.CategoryArcTable)
-		acc.row.CASMetadataPersistedBytes += persistedBytes(record, evalstore.CategoryCASMetadata)
-		acc.row.RootHeadPersistedBytes += persistedBytes(record, evalstore.CategoryRootHead)
-		acc.row.CommitmentPersistedBytes += persistedBytes(record, evalstore.CategoryCommitment)
-		if record.WriteAmplification != nil {
-			acc.waSamples = append(acc.waSamples, *record.WriteAmplification)
-		}
-		for _, mutation := range record.MutationSet {
-			switch mutation.Kind {
-			case replay.MutationAdd:
-				acc.row.AddCount++
-			case replay.MutationModify:
-				acc.row.ModifyCount++
-			case replay.MutationDelete:
-				acc.row.DeleteCount++
-			case replay.MutationRename:
-				acc.row.RenameCount++
-			}
+		c.groups[key] = acc
+	}
+	if _, ok := acc.seen[record.Commit]; !ok {
+		acc.seen[record.Commit] = struct{}{}
+		acc.row.Commits++
+	}
+	acc.row.FinalLivePayloadBytes = record.LiveStats.LivePayloadBytes
+	acc.row.LogicalChangedPayloadBytes += record.LogicalChangedPayloadBytes
+	acc.row.PhysicalPersistedBytes += record.PhysicalPersistedBytes
+	acc.row.PhysicalPayloadBytes += record.PhysicalPayloadBytes
+	acc.row.PhysicalMetadataBytes += record.PhysicalMetadataBytes
+	acc.row.CanonicalDeltaPersistedBytes += persistedBytes(record, evalstore.CategoryCanonicalDelta)
+	acc.row.ArcTablePersistedBytes += persistedBytes(record, evalstore.CategoryArcTable)
+	acc.row.CASMetadataPersistedBytes += persistedBytes(record, evalstore.CategoryCASMetadata)
+	acc.row.RootHeadPersistedBytes += persistedBytes(record, evalstore.CategoryRootHead)
+	acc.row.CommitmentPersistedBytes += persistedBytes(record, evalstore.CategoryCommitment)
+	if record.WriteAmplification != nil {
+		acc.waSamples = append(acc.waSamples, *record.WriteAmplification)
+	}
+	for _, mutation := range record.MutationSet {
+		switch mutation.Kind {
+		case replay.MutationAdd:
+			acc.row.AddCount++
+		case replay.MutationModify:
+			acc.row.ModifyCount++
+		case replay.MutationDelete:
+			acc.row.DeleteCount++
+		case replay.MutationRename:
+			acc.row.RenameCount++
 		}
 	}
+}
 
-	keys := make([]aggregateKey, 0, len(groups))
-	for key := range groups {
+func (c *aggregateCollector) Rows() []aggregateRow {
+	if c == nil {
+		return nil
+	}
+	keys := make([]aggregateKey, 0, len(c.groups))
+	for key := range c.groups {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
@@ -107,7 +128,7 @@ func aggregateRecords(records []replay.ResultRecord) []aggregateRow {
 
 	rows := make([]aggregateRow, 0, len(keys))
 	for _, key := range keys {
-		acc := groups[key]
+		acc := c.groups[key]
 		if acc.row.LogicalChangedPayloadBytes > 0 {
 			acc.row.CumulativeWriteAmp = float64(acc.row.PhysicalPersistedBytes) / float64(acc.row.LogicalChangedPayloadBytes)
 		}
