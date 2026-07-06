@@ -37,6 +37,11 @@ Review:
 - `SECURITY.md` reporting path is still accurate.
 - `cmd/eval/schemas` match current evaluator outputs.
 
+For the current core-boundary release candidate, use
+[`docs/releases/v0.0.3-core-boundary.md`](../releases/v0.0.3-core-boundary.md)
+as the release-note and validation checklist. That candidate is still
+experimental and should be tagged only after maintainer approval.
+
 ## Tagging
 
 After checks pass:

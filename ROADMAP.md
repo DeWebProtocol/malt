@@ -72,3 +72,6 @@ Before the first public release tag:
 - Public docs avoid claims that are not implemented in the current code.
 - Repository docs distinguish MALT core/reference evaluation surfaces from
   managed gateway product behavior in `DeWebProtocol/gateway`.
+
+The current release-candidate checklist lives in
+[`docs/releases/v0.0.3-core-boundary.md`](docs/releases/v0.0.3-core-boundary.md).

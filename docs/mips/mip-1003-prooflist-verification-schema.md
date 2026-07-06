@@ -3,7 +3,7 @@ mip: 1003
 title: ProofList Verification Contract
 description: Formalize ProofList step semantics, body/header binding, proof omission, and range-body verification.
 author: MALT maintainers
-status: Draft
+status: Review
 type: Standards Track
 category: Core
 created: 2026-05-25
@@ -13,68 +13,84 @@ replaces: none
 
 ## Abstract
 
-This MIP proposes formalizing the verifier contract described in
+This MIP formalizes the verifier contract described in
 [`docs/spec/prooflist-format.md`](../spec/prooflist-format.md), including map
 traversal, terminal `@payload`, blob binding, measured-list `list_range`
 evidence, proof omission, and returned-body binding.
 
 ## Motivation
 
-The implementation emits and verifies ProofList evidence, but the paper-facing
-contract remains incomplete. The main remaining gap is binding returned HTTP
-bytes to the requested byte range and proved segment contents.
+The implementation emits and verifies ProofList evidence through a reusable
+`graph/verifier` package. The paper-facing contract still needs a clear review
+boundary so readers can distinguish ProofList verification from HTTP body-byte
+binding and from JSON shape validation.
 
 ## Specification
 
 The current ProofList reference lives in
-[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md). This MIP should
-decide which parts of that reference are ready to become accepted verifier
-contract:
+[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md). For the
+`v0.0.3-core-boundary` candidate, the review boundary is:
 
-- ordered path traversal
-- terminal `@payload` binding
-- raw blob binding
-- measured-list `list_range` step semantics
-- optional proof omission via query/header
-- `X-Malt-ProofList` header semantics
-- returned byte range binding to proved segment contents
+- ordered path traversal is verifier-facing and implemented by
+  `graph/verifier`;
+- terminal `@payload` binding is a terminal proof step and must not be followed
+  by later traversal steps;
+- map, list-index, and measured-list `list_range` structure evidence is
+  verified through the runtime semantic backends;
+- proof omission via query/header is a transport option and does not change the
+  verifier contract for artifacts that are returned;
+- `X-Malt-ProofList` carries base64url-encoded ProofList JSON for content reads;
+- returned byte-range body bytes are not authenticated by `/verify` alone and
+  must be bound with `layout/unixfs.VerifyRangeBody` or an equivalent segment
+  byte check after ProofList verification.
 
-The last item remains the main open design issue. The reference document states
-the current implementation boundary and the gap.
+This MIP does not promote ProofList JSON to a stable cross-release schema. It
+records the current verifier contract for review before a stable API line.
 
 ## Rationale
 
 Current code evidence:
 
 - `auth/proof/prooflist/prooflist.go` defines ProofList shape.
-- `server/service_verify.go` verifies map, list, and measured-list
-  structure evidence.
+- `graph/verifier/verifier.go` verifies ordered traversal, query binding, map
+  evidence, list evidence, and measured-list range evidence.
+- `server/routes_verify.go` projects the reusable verifier through `/verify`.
 - `server/routes_content.go` sends proof-bearing content responses in
   `X-Malt-ProofList`.
 - `layout/unixfs/prooflist.go` emits map, payload, list-index, and
   `list_range` evidence.
+- `layout/unixfs/range_body.go` binds returned range bytes to authenticated
+  segment CIDs.
 
 ## Backwards Compatibility
 
-The first accepted version may be documentation-only. If fields or verifier
-behavior change, existing CLI and API compatibility must be handled in the
-implementation plan.
+The `v0.0.3-core-boundary` contract remains experimental. If field names,
+evidence labels, or verifier behavior change before a stable release, the same
+change must update `docs/spec/prooflist-format.md`, tests, CLI/HTTP examples,
+and release notes.
 
 ## Security Considerations
 
 This MIP is security-sensitive because it defines what a client actually
-verifies. It must reject forged paths, malformed list metadata, branch jumps,
-and mismatches between returned bytes and proved segment contents.
+verifies. ProofList verification must reject forged paths, malformed list
+metadata, branch jumps, and traversal after terminal payload bindings. Range
+body acceptance must also reject shifted ranges, segment CID mismatches, short
+segment data, and tampered returned bytes.
 
 ## Implementation Plan
 
-No implementation work is approved while this MIP is Draft. If accepted, a
-phase plan should include reference docs, verifier tests, CLI validation, and
-benchmark artifact validation.
+For the current review pass:
+
+- keep the durable field reference in `docs/spec/prooflist-format.md`;
+- keep reusable verifier code in `graph/verifier`;
+- keep range body-byte binding in `layout/unixfs.VerifyRangeBody`;
+- run verifier, server, UnixFS, CLI, and full Go validation before tagging.
 
 ## History
 
 - 2026-05-25: Created from the previous open TODO list.
 - 2026-06-25: Moved current ProofList shape and transport rules to
-  `docs/spec/prooflist-format.md`; this MIP now tracks formal acceptance and
-  remaining body-binding work.
+  `docs/spec/prooflist-format.md`; this MIP tracks formal acceptance of the
+  verifier contract.
+- 2026-07-06: Updated for `graph/verifier` extraction and
+  `layout/unixfs.VerifyRangeBody`; moved to Review for maintainer judgment.
