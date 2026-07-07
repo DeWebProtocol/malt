@@ -3,10 +3,11 @@
 [![Go CI](https://github.com/dewebprotocol/malt/actions/workflows/go.yml/badge.svg)](https://github.com/dewebprotocol/malt/actions/workflows/go.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**MALT is a verifiable mutable structure layer for content-addressed data.**
+**MALT is a Merkle-DAG alternative for authenticating mutable application data.**
 
-It lets applications update and resolve authenticated relationships among
-immutable objects without rewriting unrelated payload blocks.
+It gives applications direct `root + path` reads, dedicated `ProofList`
+evidence, and low rewrite amplification while keeping payload bytes in ordinary
+content-addressed storage.
 
 This repository is the MALT core specification implementation. It owns the
 verifier-facing semantics, ProofList behavior, root/query/result contracts,
@@ -32,26 +33,38 @@ naturally in ordinary CAS blocks and keep ordinary CIDs; MALT binds structure
 to those payload objects without making the daemon, cache, or materialized index
 state trusted.
 
+MALT also makes verifiable reads work over ordinary HTTP(S): content routes can
+return the application result in the response body and carry proof evidence in
+`X-Malt-ProofList`, so clients verify `root + path -> result` without trusting
+the gateway or downloading the Merkle-DAG traversal chain.
+
 **Status:** Experimental reference implementation. Runnable end to end, not
 production-ready.
 
 ## Why This Exists
 
 Traditional Merkle-DAG traversal authenticates structure by embedding child
-links in parent content. A local structural change can force rootward object
-rewrites because the relationship and the object identity are coupled.
+links in parent content. To verify a path, clients usually need the linked
+object chain itself as proof material. A local structural change can also force
+rootward object rewrites because the relationship and the object identity are
+coupled.
 
-MALT separates those concerns:
+MALT separates proof material, structure, and payload bytes:
 
-- graph-shaped structure is authenticated by independent structure roots
-- list/map semantics define typed read and write operations
-- reads return verifier-facing `ProofList` evidence
 - immutable payload content can remain ordinary CAS data
+- authenticated relationships are maintained under independent structure roots
+- list/map semantics define typed read and write operations
+- flat `root + path` lookups return dedicated, fixed-size `ProofList` evidence
+  for each semantic lookup
+- content reads can return normal HTTP bodies plus `X-Malt-ProofList` headers
+- clients verify `root + path -> result` without trusting gateways, caches, or
+  materialized indexes
 - local structure updates advance structure roots without rewriting unrelated
   payload objects
 
 The claim is not that updates are free. The claim is that MALT replaces
-implicit ancestor-rewrite cost with explicit, verifiable structure maintenance.
+Merkle-DAG object-chain proofs and implicit ancestor-rewrite cost with explicit,
+verifiable structure maintenance.
 
 ## Repository Boundary
 
@@ -99,7 +112,9 @@ Current in-tree capabilities:
 
 - root-centric `malt` CLI for local daemon lifecycle, add, resolve, and verify
 - reference/evaluation HTTP surface for explicit-root HTTP reads and writes
-- proof-bearing HTTP reads for file bytes, directory JSON, and byte ranges
+- HTTP-native content reads for file bytes, directory JSON, and byte ranges,
+  with proof evidence carried in `X-Malt-ProofList`
+- fixed-size proof material for flat `root + path` semantic lookups
 - pure MALT UnixFS-style layout built from map/list semantics and CAS-backed
   immutable payloads
 - stateless commitment backends for semantic proof primitives
