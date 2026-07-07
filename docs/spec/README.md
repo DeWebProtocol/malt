@@ -6,6 +6,10 @@ These documents stay aligned with code, tests, and MIPs in this repository.
 They are the reference layer for current behavior; MIPs propose or record
 changes to this layer.
 
+For reader-facing background on hash authentication, Merkle DAGs, and MALT's
+positioning, start with [Concepts](../concepts/README.md). Keep normative
+behavior, wire formats, and proof semantics in this folder.
+
 ## Documents
 
 - [Semantic model](./semantic.md)

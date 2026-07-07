@@ -14,6 +14,12 @@ quota, cache policy, and operations, belongs in `DeWebProtocol/gateway` or
 private deployment overlays. This repository may keep a reference/evaluation
 gateway only to exercise MALT core end to end.
 
+## Concepts
+
+- [Concepts index](./concepts/README.md)
+- [Data authentication background](./concepts/data-authentication.md)
+- [Merkle DAG vs MALT](./concepts/merkle-dag-vs-malt.md)
+
 ## Policy
 
 - [Threat model](./policy/threat-model.md)
@@ -45,6 +51,7 @@ removed after migration. New implementation-bound MIP work should happen here.
 
 ## What Goes Where
 
+- `concepts/` for reader-facing background, comparisons, and orientation
 - `policy/` for stability, safety, and release policy
 - `releases/` for source-release candidate notes and validation checklists
 - `evaluation.md` for benchmark methods, headline results, and artifact rules
