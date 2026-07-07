@@ -87,6 +87,24 @@ func (s Source) Walk(ctx context.Context, fn func(replay.CommitMutation) error) 
 	return nil
 }
 
+// CommitCount returns the number of commits Source.Walk would visit after
+// applying ref, first-parent, and limit settings.
+func (s Source) CommitCount(ctx context.Context) (int, error) {
+	sourceRepo, err := s.repositoryPath(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ref := strings.TrimSpace(s.Ref)
+	if ref == "" {
+		ref = "HEAD"
+	}
+	commits, err := s.revList(ctx, sourceRepo, ref)
+	if err != nil {
+		return 0, err
+	}
+	return len(commits), nil
+}
+
 func (s Source) repositoryPath(ctx context.Context) (string, error) {
 	if strings.TrimSpace(s.RepoPath) != "" {
 		return filepath.Abs(s.RepoPath)

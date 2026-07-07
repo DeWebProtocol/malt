@@ -12,7 +12,8 @@
         "store_backend": "badger",
         "first_parent": true,
         "jobs": 1,
-        "resume": true
+        "resume": true,
+        "progress_interval_commits": 1000
       }
     }
   ]

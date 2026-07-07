@@ -210,6 +210,17 @@ func runRepoTask(ctx context.Context, env framework.Env, cfg Config, task repoRe
 		Limit:       cfg.MaxCommitsPerRepo,
 		FirstParent: cfg.FirstParent,
 	}
+	totalCommits, err := source.CommitCount(ctx)
+	if err != nil {
+		return err
+	}
+	progressLog := newCommitProgressLogger(commitProgressConfig{
+		repo:     task.repo.RepoID,
+		systems:  task.systems,
+		total:    totalCommits,
+		interval: cfg.ProgressIntervalCommits,
+		logf:     log,
+	})
 	err = source.Walk(ctx, func(commit replay.CommitMutation) error {
 		commit.Repo = task.repo.RepoID
 		for _, system := range systems {
@@ -244,11 +255,13 @@ func runRepoTask(ctx context.Context, env framework.Env, cfg Config, task repoRe
 				return err
 			}
 		}
+		progressLog.Observe(commit.Index + 1)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
+	progressLog.Complete()
 	for _, system := range systems {
 		name := system.Name()
 		last := progresses[name]
