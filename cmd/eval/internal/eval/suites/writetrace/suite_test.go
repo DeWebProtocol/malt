@@ -2,6 +2,7 @@ package writetrace_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -33,7 +34,8 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 		"systems": ["maltflat", "hamt"],
 		"first_parent": false,
 		"jobs": 3,
-		"resume": true
+		"resume": true,
+		"progress_interval_commits": 2
 	}`))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
@@ -50,6 +52,9 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	if cfg.Jobs != 3 || !cfg.Resume {
 		t.Fatalf("execution config = %+v, want jobs=3 resume=true", cfg)
 	}
+	if cfg.ProgressIntervalCommits != 2 {
+		t.Fatalf("progress interval = %d, want JSON override 2", cfg.ProgressIntervalCommits)
+	}
 	if got := cfg.SystemsCSV(); got != "maltflat,hamt" {
 		t.Fatalf("systems CSV = %q, want maltflat,hamt", got)
 	}
@@ -63,6 +68,9 @@ func TestParseConfigAppliesWriteCommandDefaultsAndJSONOverrides(t *testing.T) {
 	}
 	if defaults.Jobs != 1 || defaults.Resume {
 		t.Fatalf("execution defaults = %+v, want jobs=1 resume=false", defaults)
+	}
+	if defaults.ProgressIntervalCommits != 1000 {
+		t.Fatalf("progress interval default = %d, want 1000", defaults.ProgressIntervalCommits)
 	}
 	if got := defaults.SystemsCSV(); got != "maltflat,merkledag,hamt" {
 		t.Fatalf("default systems = %q, want maltflat,merkledag,hamt", got)
@@ -267,6 +275,49 @@ func TestSuiteRunWritesFrameworkEnvelopedReplayRecords(t *testing.T) {
 	}
 	if row["canonical_delta_persisted_bytes"] == "" {
 		t.Fatalf("aggregate missing canonical delta breakdown field: %+v", row)
+	}
+}
+
+func TestSuiteRunLogsCommitProgress(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	sourceBase := filepath.Join(t.TempDir(), "github.com")
+	initWriteTraceRepoAt(t, filepath.Join(sourceBase, "ipfs", "kubo.git"))
+	installGitHubInsteadOf(t, sourceBase)
+	tmp := t.TempDir()
+	var log bytes.Buffer
+
+	reg := framework.NewRegistry()
+	if err := reg.Register(writetrace.Suite{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	plan := framework.Plan{
+		RunID:     "run-write-trace-progress",
+		OutputDir: filepath.Join(tmp, "output"),
+		ResultDir: filepath.Join(tmp, "result"),
+		Suites: []framework.SuitePlan{{
+			Name: "write_trace",
+			Config: json.RawMessage(`{
+				"repo_urls": [` + strconvQuote(githubRepoURL("ipfs", "kubo")) + `],
+				"max_commits_per_repo": 3,
+				"store_backend": "memory",
+				"systems": ["maltflat"],
+				"progress_interval_commits": 2
+			}`),
+		}},
+	}
+
+	if err := framework.Run(ctx, plan, reg, framework.RunOptions{Stderr: &log}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	logText := log.String()
+	if !strings.Contains(logText, "progress repository=github.com/ipfs/kubo systems=maltflat replayed=2/3 percent=66.67%") {
+		t.Fatalf("progress log = %q, want 2/3 progress", logText)
+	}
+	if !strings.Contains(logText, "progress repository=github.com/ipfs/kubo systems=maltflat replayed=3/3 percent=100.00%") {
+		t.Fatalf("progress log = %q, want completion progress", logText)
 	}
 }
 

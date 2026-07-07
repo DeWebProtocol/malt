@@ -29,6 +29,9 @@ type Config struct {
 	FirstParent       bool       `json:"first_parent"`
 	Jobs              int        `json:"jobs,omitempty"`
 	Resume            bool       `json:"resume,omitempty"`
+	// ProgressIntervalCommits controls write-trace progress logging. A value of
+	// zero disables commit progress logs.
+	ProgressIntervalCommits int `json:"progress_interval_commits,omitempty"`
 }
 
 // RepositoryTarget is one repository-level replay target resolved from a repo
@@ -55,12 +58,13 @@ func init() {
 // DefaultConfig returns framework-managed write-trace replay defaults.
 func DefaultConfig() Config {
 	return Config{
-		RepoURLs:     defaultBenchmarkRepos,
-		StoreMode:    string(evalstore.StoreModeIsolated),
-		StoreBackend: string(evalstore.StoreBackendMemory),
-		Systems:      SystemList{"maltflat", "merkledag", "hamt"},
-		FirstParent:  true,
-		Jobs:         1,
+		RepoURLs:                defaultBenchmarkRepos,
+		StoreMode:               string(evalstore.StoreModeIsolated),
+		StoreBackend:            string(evalstore.StoreBackendMemory),
+		Systems:                 SystemList{"maltflat", "merkledag", "hamt"},
+		FirstParent:             true,
+		Jobs:                    1,
+		ProgressIntervalCommits: 1000,
 	}
 }
 
@@ -97,6 +101,9 @@ func (c Config) RepositoryTargets() ([]RepositoryTarget, error) {
 	}
 	if c.Jobs < 1 {
 		return nil, fmt.Errorf("jobs must be at least 1")
+	}
+	if c.ProgressIntervalCommits < 0 {
+		return nil, fmt.Errorf("progress_interval_commits must be non-negative")
 	}
 	urls := c.RepoURLs
 	if len(urls) == 0 && strings.TrimSpace(c.RepoURLsFile) != "" {

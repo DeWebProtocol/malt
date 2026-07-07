@@ -93,6 +93,9 @@ plans use the Badger store backend so replay state does not have to remain in
 process memory. The suite runs each `repository + system` pair as an independent
 task, writes per-task checkpoints under `output/<run_id>/write-checkpoints/`,
 and can resume an interrupted run without duplicating existing raw records.
+Progress logs include `replayed/total` commit counts per repository; set
+`progress_interval_commits` in the `write_trace` suite config to control the
+commit interval, or set it to `0` to disable commit progress logs.
 `jobs` controls task parallelism; the checked-in plans keep `jobs: 1` to minimize
 memory pressure during full-history replay.
 

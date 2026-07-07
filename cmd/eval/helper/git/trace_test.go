@@ -134,6 +134,27 @@ func TestSourceWalkLimitKeepsEarliestReplayPrefix(t *testing.T) {
 	}
 }
 
+func TestSourceCommitCountMatchesLimitedReplayPrefix(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	ctx := context.Background()
+	repo := initTraceRepo(t)
+
+	source := gittrace.Source{
+		RepoPath: repo,
+		Ref:      "HEAD",
+		Limit:    2,
+	}
+	count, err := source.CommitCount(ctx)
+	if err != nil {
+		t.Fatalf("CommitCount: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("CommitCount = %d, want 2", count)
+	}
+}
+
 func TestSourceWalkReadsCommittedBlobWhenCheckoutIsDirty(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
