@@ -6,7 +6,9 @@ JSON, content-proof headers, and evaluator schemas.
 ## Status
 
 Experimental and implementation-bound. Only evaluator schemas currently have
-machine-readable JSON Schema files in the repository.
+machine-readable JSON Schema files in the repository. For
+`v0.0.3-core-boundary`, resolve JSON and bare ProofList JSON remain documented
+Go DTO artifacts rather than stable named JSON schemas.
 
 ## Current Artifact Surfaces
 
@@ -53,6 +55,11 @@ Clients must decode the header before running ProofList verification.
 Evaluator JSON schemas live under `cmd/eval/schemas` and are embedded in the
 `malt-eval schema` command. Resolve JSON and bare ProofList JSON do not yet have
 stable named schema files.
+
+The current release-candidate decision is to keep that boundary: document
+resolve and ProofList shapes, but avoid stable named schema files until the
+project is ready to commit to artifact compatibility. JSON shape validation is
+still separate from ProofList verification through `graph/verifier`.
 
 If resolve or ProofList artifacts are promoted to stable named schemas, the
 same change should:

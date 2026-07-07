@@ -19,6 +19,7 @@ gateway only to exercise MALT core end to end.
 - [Threat model](./policy/threat-model.md)
 - [Compatibility policy](./policy/compatibility.md)
 - [Release process](./policy/releasing.md)
+- [Release notes](./releases/v0.0.3-core-boundary.md)
 
 ## Evaluation
 
@@ -45,6 +46,7 @@ removed after migration. New implementation-bound MIP work should happen here.
 ## What Goes Where
 
 - `policy/` for stability, safety, and release policy
+- `releases/` for source-release candidate notes and validation checklists
 - `evaluation.md` for benchmark methods, headline results, and artifact rules
 - `spec/` for formal protocol and schema documents
 - `mips/` for design proposals and process records
