@@ -15,6 +15,7 @@ wire formats, reference runtime, and core benchmark/evaluation framework. The
 managed product gateway lives outside this repository.
 
 [Documentation](./docs/README.md) · [Architecture](./ARCHITECTURE.md) ·
+[Concepts](./docs/concepts/README.md) ·
 [Threat Model](./docs/policy/threat-model.md) ·
 [Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
 [MIPs](./docs/mips/README.md) ·
@@ -37,6 +38,10 @@ MALT also makes verifiable reads work over ordinary HTTP(S): content routes can
 return the application result in the response body and carry proof evidence in
 `X-Malt-ProofList`, so clients verify `root + path -> result` without trusting
 the gateway or downloading the Merkle-DAG traversal chain.
+
+For background on hashes, Merkle trees, Merkle DAGs, and MALT's data
+authentication model, see
+[Data authentication background](./docs/concepts/data-authentication.md).
 
 **Status:** Experimental reference implementation. Runnable end to end, not
 production-ready.
