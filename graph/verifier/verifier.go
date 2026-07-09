@@ -13,10 +13,10 @@ import (
 	structure "github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 	"github.com/dewebprotocol/malt/graph"
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
-	"github.com/dewebprotocol/malt/layout/unixfs"
 )
 
 // Runtime is the minimal graph runtime surface needed to verify ProofList
@@ -143,7 +143,7 @@ func (v *Verifier) verifyStep(ctx context.Context, index int, step prooflist.Ste
 			key := arcset.CanonicalizePath(step.Path)
 			return v.runtime.Semantic().Verify(step.From, key, mapping.Binding{Value: step.Target, Present: true}, structure.Proof(step.Proof))
 		case "list", "measured_list":
-			return unixfs.VerifyProofListListStructure(v.runtime.ListSemantic(), step, index)
+			return authverifier.VerifyProofListListStructure(v.runtime.ListSemantic(), step, index)
 		default:
 			return false, fmt.Errorf("prooflist step %d has unsupported structure evidence backend %q", index, step.EvidenceBackend)
 		}

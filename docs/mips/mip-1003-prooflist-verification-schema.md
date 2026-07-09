@@ -52,8 +52,10 @@ records the current verifier contract for review before a stable API line.
 Current code evidence:
 
 - `auth/proof/prooflist/prooflist.go` defines ProofList shape.
-- `graph/verifier/verifier.go` verifies ordered traversal, query binding, map
-  evidence, list evidence, and measured-list range evidence.
+- `graph/verifier/verifier.go` verifies ordered traversal, query binding, and
+  map evidence.
+- `auth/verifier/list.go` verifies list evidence and measured-list range
+  evidence against the runtime semantic backends.
 - `server/routes_verify.go` projects the reusable verifier through `/verify`.
 - `server/routes_content.go` sends proof-bearing content responses in
   `X-Malt-ProofList`.
@@ -82,7 +84,8 @@ segment data, and tampered returned bytes.
 For the current review pass:
 
 - keep the durable field reference in `docs/spec/prooflist-format.md`;
-- keep reusable verifier code in `graph/verifier`;
+- keep reusable verifier orchestration in `graph/verifier`;
+- keep verifier-critical list-step helpers in `auth/verifier`;
 - keep range body-byte binding in `layout/unixfs.VerifyRangeBody`;
 - run verifier, server, UnixFS, CLI, and full Go validation before tagging.
 

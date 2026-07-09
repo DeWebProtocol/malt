@@ -151,6 +151,7 @@ auth/
   semantic/
     list/
     mapping/
+  verifier/
 
 wire/
   maltcid/
