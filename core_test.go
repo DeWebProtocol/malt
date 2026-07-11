@@ -3,6 +3,7 @@ package malt_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/dewebprotocol/malt"
@@ -191,6 +192,54 @@ func TestEngineReportsMissingReadCapability(t *testing.T) {
 	}
 }
 
+func TestEngineReadMapMapsSemanticAbsenceToFacadeError(t *testing.T) {
+	query, err := malt.MapKeyQuery("missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := malt.NewEngine(malt.EngineOptions{
+		Scope: "missing-map",
+		Maps:  errorMaps{err: fmt.Errorf("radix lookup: %w", mapping.ErrPathNotFound)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = engine.Read(context.Background(), malt.ReadRequest{Root: testCID(t, "missing-root"), Query: query})
+	if !errors.Is(err, malt.ErrQueryNotFound) {
+		t.Fatalf("Read error = %v, want ErrQueryNotFound", err)
+	}
+	if !malt.IsQueryNotFound(err) {
+		t.Fatalf("IsQueryNotFound(%v) = false", err)
+	}
+	if !errors.Is(err, mapping.ErrPathNotFound) {
+		t.Fatalf("Read error = %v, want semantic not-found cause", err)
+	}
+}
+
+func TestEngineReadMapPreservesExecutionError(t *testing.T) {
+	query, err := malt.MapKeyQuery("profile/name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionErr := errors.New("map backend unavailable")
+	engine, err := malt.NewEngine(malt.EngineOptions{
+		Scope: "failed-map",
+		Maps:  errorMaps{err: executionErr},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = engine.Read(context.Background(), malt.ReadRequest{Root: testCID(t, "failed-root"), Query: query})
+	if err != executionErr {
+		t.Fatalf("Read error = %v, want original execution error %v", err, executionErr)
+	}
+	if malt.IsQueryNotFound(err) {
+		t.Fatalf("IsQueryNotFound(%v) = true", err)
+	}
+}
+
 func TestVerifyReadRejectsCrossKindProof(t *testing.T) {
 	root := testCID(t, "cross-kind-root")
 	target := testCID(t, "cross-kind-target")
@@ -242,6 +291,14 @@ type fakeMaps struct {
 	target cid.Cid
 	proof  structure.Proof
 	scope  string
+}
+
+type errorMaps struct {
+	err error
+}
+
+func (m errorMaps) Prove(context.Context, string, cid.Cid, arcset.Path) (mapping.Binding, structure.Proof, error) {
+	return mapping.Binding{}, nil, m.err
 }
 
 func (m *fakeMaps) Prove(_ context.Context, scope string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {

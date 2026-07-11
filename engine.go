@@ -17,7 +17,8 @@ import (
 
 // MapReader is the minimum execution-plane capability needed to authenticate
 // one keyed relation. Stateful map implementations satisfy it without exposing
-// their commit or mutation methods through Engine.
+// their commit or mutation methods through Engine. Implementations must wrap
+// mapping.ErrPathNotFound when the requested binding is absent.
 type MapReader interface {
 	Prove(context.Context, string, cid.Cid, arcset.Path) (mapping.Binding, structure.Proof, error)
 }
@@ -114,6 +115,9 @@ func (e *Engine) readMap(ctx context.Context, req ReadRequest) (ReadResult, erro
 	}
 	binding, proof, err := e.maps.Prove(ctx, e.scope, req.Root, req.Query.Key)
 	if err != nil {
+		if errors.Is(err, mapping.ErrPathNotFound) {
+			return ReadResult{}, fmt.Errorf("%w: %w", ErrQueryNotFound, err)
+		}
 		return ReadResult{}, err
 	}
 	if !binding.Present || !binding.Value.Defined() {

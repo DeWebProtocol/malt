@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
@@ -81,6 +82,47 @@ func TestPortableVerifierAcceptsRuntimeRadixAndTreeProofs(t *testing.T) {
 
 				pl.Steps[0].Target = portableTestCID(t, "forged-map-target")
 				assertPortableRejected(t, portable, pl)
+			})
+
+			t.Run("generic_map_coordinates", func(t *testing.T) {
+				tests := []struct {
+					name       string
+					coordinate string
+				}{
+					{name: "current_directory", coordinate: "."},
+					{name: "parent_directory", coordinate: ".."},
+					{name: "surrounding_whitespace", coordinate: " profile "},
+					{name: "nul", coordinate: "profile\x00name"},
+				}
+				for _, test := range tests {
+					t.Run(test.name, func(t *testing.T) {
+						target := portableTestCID(t, "generic-"+test.name)
+						scope := fmt.Sprintf("portable-generic-map-%s-%s", name, test.name)
+						root, err := maps.Commit(ctx, scope, mapping.NewViewFrom(map[string]cid.Cid{test.coordinate: target}))
+						if err != nil {
+							t.Fatalf("Commit: %v", err)
+						}
+						engine, err := malt.NewEngine(malt.EngineOptions{Scope: scope, Maps: maps, Verifier: portable})
+						if err != nil {
+							t.Fatalf("NewEngine: %v", err)
+						}
+						query, err := malt.MapKeyQuery(test.coordinate)
+						if err != nil {
+							t.Fatalf("MapKeyQuery: %v", err)
+						}
+						request := malt.ReadRequest{Root: root, Query: query}
+						result, err := engine.Read(ctx, request)
+						if err != nil {
+							t.Fatalf("Read: %v", err)
+						}
+						if !result.Target.Equals(target) {
+							t.Fatalf("target = %s, want %s", result.Target, target)
+						}
+						if err := engine.VerifyRead(ctx, request, result); err != nil {
+							t.Fatalf("VerifyRead: %v", err)
+						}
+					})
+				}
 			})
 
 			t.Run("list_index", func(t *testing.T) {

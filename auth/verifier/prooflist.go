@@ -192,11 +192,11 @@ func (v *Verifier) verifyMapStep(index int, step prooflist.Step, proof structure
 }
 
 func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifiedPath) error {
-	cleanQuery, err := canonicalizeQueryPath(pl.Query)
-	if err != nil {
-		return fmt.Errorf("invalid prooflist query path: %w", err)
-	}
-	want := arcset.CanonicalizePath(cleanQuery).String()
+	// ProofList query labels live in semantic coordinate space. Transport and
+	// layout adapters may apply their own path policy before constructing a
+	// typed query, but the portable verifier must use the same canonical arc
+	// coordinate rules as map creation and proof generation.
+	want := arcset.CanonicalizePath(pl.Query).String()
 	if want == "" {
 		return nil
 	}
@@ -247,26 +247,4 @@ func typedListQuery(steps []prooflist.Step) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func canonicalizeQueryPath(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "/")
-	if path == "" {
-		return "", nil
-	}
-	if strings.ContainsRune(path, '\x00') {
-		return "", fmt.Errorf("contains NUL byte")
-	}
-	for _, part := range strings.Split(path, "/") {
-		switch part {
-		case "":
-			return "", fmt.Errorf("contains empty segment")
-		case ".":
-			return "", fmt.Errorf("contains current-directory segment")
-		case "..":
-			return "", fmt.Errorf("contains parent-directory segment")
-		}
-	}
-	return path, nil
 }

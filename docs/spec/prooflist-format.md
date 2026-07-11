@@ -102,6 +102,11 @@ The `v0alpha1` `Query.Kind` values are `map_key`, `list_index`, and
 | `list_index` | `list:<index>` |
 | `list_range` | `range:<start>:<end>`; an empty end means authenticated EOF |
 
+Map query labels are compared using the canonical coordinate rules in
+`auth/arcset`. Portable verification does not trim whitespace or apply
+HTTP/UnixFS path cleaning. Transport and layout adapters may enforce their own
+path policy before constructing a typed query.
+
 These encodings remain experimental and consumers must pin a MALT release.
 
 ## HTTP Transport

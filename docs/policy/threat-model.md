@@ -112,6 +112,9 @@ not match the query and evidence.
 ### Path Canonicalization Ambiguity
 
 Path parsing ambiguity can create disagreement between writer, resolver, and
-verifier behavior. Current APIs reject ambiguous read query paths such as parent
-traversal forms; future path-policy changes should include verifier-facing
-tests and documentation updates.
+verifier behavior. Root-relative HTTP and UnixFS path parsers reject ambiguous
+transport paths such as parent traversal forms before typed-query construction.
+Generic map coordinates are not Unix paths: the portable verifier compares them
+using `auth/arcset` canonicalization and does not add transport-layer cleaning.
+Future changes to either policy should include verifier-facing tests and
+documentation updates.

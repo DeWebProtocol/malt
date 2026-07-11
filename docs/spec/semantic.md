@@ -83,6 +83,10 @@ facade:
 - `Engine.VerifyRead` binds the request and result before portable proof
   verification.
 
+When a map implementation reports `mapping.ErrPathNotFound`, `Engine.Read`
+returns an error recognizable through `errors.Is(err, malt.ErrQueryNotFound)`
+or `malt.IsQueryNotFound`. Other execution-plane errors are returned unchanged.
+
 Layouts compose primitive arc operations into domain traversal. A Unix path is
 therefore a UnixFS layout concern, not a generic core query requirement.
 
