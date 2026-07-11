@@ -1,8 +1,9 @@
 # Commitment Model
 
-MALT uses stateless commitment backends to authenticate semantic-layer
-representations. The semantic layer chooses what is committed; the backend
-commits, proves, and verifies already-positioned values.
+MALT uses vector-commitment (VC) backends to authenticate typed graph arcs.
+The semantic layer chooses the coordinate and value representation; the
+backend commits, proves, and verifies already-positioned values. Payload bytes
+remain ordinary CAS objects and are not stored inside the VC backend.
 
 ## Status
 
@@ -26,10 +27,13 @@ They do not own:
 - application layouts
 - ArcTable materialization
 - head publication or freshness policy
+- payload storage or retrieval
 
 The current public backend interfaces live under `auth/commitment`.
 Semantic-facing list and map contracts live under `auth/semantic/list` and
-`auth/semantic/mapping`.
+`auth/semantic/mapping`. Portable ProofList orchestration lives under
+`auth/verifier`; it selects verification-only backends from typed MALT roots
+without consulting runtime state.
 
 ## Map Binding-CID Slot Model
 
@@ -60,5 +64,7 @@ byte-size rules.
 - [MIP-1005](../mips/mip-1005-kzg-map-label-domain.md) records the accepted
   binding-CID slot decision.
 - [MIP-1010](../mips/mip-1010-data-authentication-core-boundary.md) records the
-  package-boundary decision that keeps commitment primitives inside the
-  data-authentication core.
+  historical package-boundary decision that keeps commitment primitives inside
+  the data-authentication core.
+- [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
+  VC-backed portable arc-authentication boundary.

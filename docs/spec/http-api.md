@@ -10,6 +10,10 @@ Experimental and implementation-bound. Breaking route or DTO changes are
 allowed before a stable release, but they should update tests and docs in the
 same PR.
 
+This API is a reference transport projection. The application-neutral core
+contract is the module-root `malt` facade; managed gateways do not need to
+import `server` or reproduce these routes.
+
 ## Core Routes
 
 | Route | Method | Purpose |
@@ -18,7 +22,7 @@ same PR.
 | `/_lifecycle/identity` | `GET` | Local managed-daemon identity check. |
 | `/metrics` | `GET` | Runtime evaluation counters. |
 | `/metrics:reset` | `POST` | Reset runtime evaluation counters. |
-| `/verify` | `POST` | Verify a ProofList. |
+| `/verify` | `POST` | Verify a ProofList through the portable auth verifier adapter. |
 | `/{root}/_mutate` | `POST` | Apply a root-relative semantic mutation. |
 | `/_unixfs?path=...` | `POST` | Create a new UnixFS-style root from uploaded payload data. |
 | `/resolve/{root}` and `/resolve/{root}/{path...}` | `GET` | Resolve a target CID and optional ProofList. |
@@ -108,7 +112,8 @@ boolean `valid` field.
 
 Schema validation is not proof verification. JSON shape checks can reject
 malformed artifacts, but semantic and cryptographic verification must run
-through the verifier.
+through `auth/verifier`. The `graph/verifier` package used by the reference
+server is only a compatibility adapter.
 
 ## CORS Boundary
 
@@ -122,3 +127,5 @@ through browser CORS by default.
   accounting decisions.
 - [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) tracks the
   decision about stable named schemas for resolve and ProofList artifacts.
+- [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
+  transport-independent typed read and verification boundary.

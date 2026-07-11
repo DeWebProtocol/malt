@@ -33,7 +33,7 @@ func (s *Server) handleUnixFSWrite(w http.ResponseWriter, r *http.Request, root 
 		return
 	}
 
-	layout, err := s.unixFSLayout(g)
+	layout, err := s.unixFSWriter(g)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

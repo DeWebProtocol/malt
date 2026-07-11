@@ -288,7 +288,7 @@ func (n *Node) OpenGraph(ctx context.Context, id string) (*runtimegraph.RuntimeG
 		return nil, fmt.Errorf("failed to create commitment scheme for graph %q: %w", id, err)
 	}
 
-	return runtimegraph.NewGraph(id, n.arctable, n.cas, runtimegraph.WithCommitmentScheme(scheme))
+	return runtimegraph.NewGraph(id, n.arctable, runtimegraph.WithCommitmentScheme(scheme))
 }
 
 // NewGraph creates a new ad hoc per-graph instance with its own per-graph
@@ -310,7 +310,7 @@ func (n *Node) NewGraph(id string, opts ...runtimegraph.Option) (*runtimegraph.R
 		graphOpts = append([]runtimegraph.Option{runtimegraph.WithCommitmentScheme(n.commitment)}, opts...)
 	}
 
-	return runtimegraph.NewGraph(id, n.arctable, n.cas, graphOpts...)
+	return runtimegraph.NewGraph(id, n.arctable, graphOpts...)
 }
 
 // Commitment returns the default commitment scheme type from config.

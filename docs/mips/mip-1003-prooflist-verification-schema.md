@@ -20,23 +20,24 @@ evidence, proof omission, and returned-body binding.
 
 ## Motivation
 
-The implementation emits and verifies ProofList evidence through a reusable
-`graph/verifier` package. The paper-facing contract still needs a clear review
-boundary so readers can distinguish ProofList verification from HTTP body-byte
-binding and from JSON shape validation.
+The implementation verifies ProofList evidence through portable
+`auth/verifier`; `graph/verifier` is a thin reference-runtime adapter. The
+paper-facing contract still needs a clear review boundary so readers can
+distinguish ProofList verification from HTTP body-byte binding and JSON shape
+validation.
 
 ## Specification
 
 The current ProofList reference lives in
 [`docs/spec/prooflist-format.md`](../spec/prooflist-format.md). For the
-`v0.0.3-core-boundary` candidate, the review boundary is:
+`v0.0.3` candidate, the review boundary is:
 
 - ordered path traversal is verifier-facing and implemented by
-  `graph/verifier`;
+  `auth/verifier`;
 - terminal `@payload` binding is a terminal proof step and must not be followed
   by later traversal steps;
 - map, list-index, and measured-list `list_range` structure evidence is
-  verified through the runtime semantic backends;
+  verified through verification-only backends selected from typed roots;
 - proof omission via query/header is a transport option and does not change the
   verifier contract for artifacts that are returned;
 - `X-Malt-ProofList` carries base64url-encoded ProofList JSON for content reads;
@@ -52,10 +53,10 @@ records the current verifier contract for review before a stable API line.
 Current code evidence:
 
 - `auth/proof/prooflist/prooflist.go` defines ProofList shape.
-- `graph/verifier/verifier.go` verifies ordered traversal, query binding, and
-  map evidence.
-- `auth/verifier/list.go` verifies list evidence and measured-list range
-  evidence against the runtime semantic backends.
+- `auth/verifier` verifies ordered traversal, typed query binding, and map/list
+  evidence without runtime or storage lookup.
+- `graph/verifier/verifier.go` adapts reference runtime semantics to that
+  portable verifier.
 - `server/routes_verify.go` projects the reusable verifier through `/verify`.
 - `server/routes_content.go` sends proof-bearing content responses in
   `X-Malt-ProofList`.
@@ -66,7 +67,7 @@ Current code evidence:
 
 ## Backwards Compatibility
 
-The `v0.0.3-core-boundary` contract remains experimental. If field names,
+The `v0.0.3` `v0alpha1` contract remains experimental. If field names,
 evidence labels, or verifier behavior change before a stable release, the same
 change must update `docs/spec/prooflist-format.md`, tests, CLI/HTTP examples,
 and release notes.
@@ -84,8 +85,9 @@ segment data, and tampered returned bytes.
 For the current review pass:
 
 - keep the durable field reference in `docs/spec/prooflist-format.md`;
-- keep reusable verifier orchestration in `graph/verifier`;
-- keep verifier-critical list-step helpers in `auth/verifier`;
+- keep reusable verifier orchestration and verification-only backends in
+  `auth/verifier`;
+- keep `graph/verifier` as a compatibility adapter only;
 - keep range body-byte binding in `layout/unixfs.VerifyRangeBody`;
 - run verifier, server, UnixFS, CLI, and full Go validation before tagging.
 
@@ -97,3 +99,6 @@ For the current review pass:
   verifier contract.
 - 2026-07-06: Updated for `graph/verifier` extraction and
   `layout/unixfs.VerifyRangeBody`; moved to Review for maintainer judgment.
+- 2026-07-11: Moved trust-critical orchestration and built-in KZG/IPA proof
+  verification to portable `auth/verifier`; retained `graph/verifier` as an
+  adapter.

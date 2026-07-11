@@ -111,7 +111,9 @@ func (r *Resolver) ResolveKey(ctx context.Context, root cid.Cid, path string) (*
 	}, nil
 }
 
-// Resolve resolves a path from a root CID through explicit MALT arcs only.
+// Resolve is the compatibility materializing resolver. It first performs
+// generic explicit relation traversal, then follows a terminal @payload
+// binding for map roots. Use ResolveKey when a generic map may omit @payload.
 // It stops with RemainingPath set when it reaches a non-MALT CID, a terminal
 // list root, or a root with no matching explicit arc.
 func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path string) (*ResolveResult, error) {
@@ -127,7 +129,7 @@ func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path string) (*Res
 	if maltcid.SemanticKindOf(keyResult.Target) == maltcid.SemanticKindMap && r.explicitStep != nil {
 		_, target, ev, err := r.explicitStep.Resolve(ctx, keyResult.Target, explicit.PayloadArc)
 		if err != nil {
-			return nil, fmt.Errorf("%w: map root %s is missing mandatory @payload binding: %w", ErrResolutionFailed, keyResult.Target.String(), err)
+			return nil, fmt.Errorf("%w: map root %s cannot be materialized through @payload: %w", ErrResolutionFailed, keyResult.Target.String(), err)
 		}
 		keyResult.Transcript.Steps = append(keyResult.Transcript.Steps, StepEvidence{
 			Path:     explicit.PayloadArc,

@@ -16,6 +16,11 @@ replaces: none
 > problem statement; current package names are summarized in the migration table
 > and now use `auth`, `graph`, `runtime`, `storage`, `wire`, `api/http`, and
 > `sdk/client` boundaries.
+>
+> **Historical scope:** this MIP records the completed package-ownership split.
+> It does not define the current public core API. The portable arc-level
+> `Read`/`Apply`/`VerifyRead` contract and the `v0.0.3` release boundary are
+> specified by [MIP-1011](./mip-1011-arc-authentication-core-contract.md).
 
 ## Abstract
 
@@ -295,7 +300,9 @@ A managed gateway should depend on MALT through core packages, not the
 reference server. The expected import surface is:
 
 - `auth/proof/prooflist` for verifier-facing proof artifacts
-- `graph/verifier` for reusable ProofList verification
+- `auth/verifier` for portable ProofList verification
+- the module-root `malt` package for typed read, mutation, and verification
+  orchestration
 - `graph` resolver and writer contracts where a gateway exposes root-relative
   core operations
 - `graph/writer` semantic mutation and receipt types
@@ -381,3 +388,5 @@ repository's normal issue or PR workflow.
 - 2026-05-25: Finalized by PR #76, which moved the former broad `core`
   package surface into current `auth`, `graph`, `runtime`, `storage`,
   `api/http`, `sdk/client`, and `wire/maltcid` package families.
+- 2026-07-11: Clarified that this MIP is the historical package-split record;
+  MIP-1011 now owns the portable arc-authentication contract.

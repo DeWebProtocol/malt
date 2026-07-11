@@ -78,30 +78,37 @@ propagate toward the root. If a client wants to verify a path without trusting a
 gateway, the linked objects along the traversal path are also part of the
 evidence the client needs.
 
-## MALT Authenticates Mutable Relationships Separately
+## MALT Authenticates Graph Arcs Separately
 
-MALT is a Merkle-DAG alternative for authenticating mutable application data.
-It keeps payload bytes in ordinary content-addressed storage, but moves mutable
-relationships into authenticated map/list semantics under independent structure
-roots.
+MALT is a general graph data-authentication system whose authentication
+granularity is an arc rather than a storage block. It keeps payload bytes in
+ordinary content-addressed storage, while vector-commitment backends commit to
+and prove typed map/list relations under independent roots.
 
 ```text
-trusted MALT root + path
+trusted MALT root + typed arc query
         |
         v
 result + ProofList
 ```
 
-The client verifies `root + path -> result` with a dedicated `ProofList`.
-Payload objects remain ordinary CAS data. They are not the proof carrier for
-the application path.
+The client verifies `trusted root + query -> result` with a dedicated
+`ProofList`. Payload objects remain ordinary CAS data; ArcTable, caches,
+daemons, and gateways remain untrusted execution state.
+
+MALT separates three concerns that an implicit Merkle-DAG link couples at the
+block boundary:
+
+- payload storage in CAS
+- relation authentication through typed arc commitments and proofs
+- execution and access through layouts, indexes, daemons, gateways, or clients
 
 This separation gives MALT four core advantages:
 
 - **Dedicated proof material:** verification uses `ProofList` evidence instead
   of the Merkle-DAG traversal object chain.
-- **Direct application reads:** clients can ask for `root + path` instead of
-  walking object links themselves.
+- **Direct application-shaped reads:** clients use typed arc queries; layouts
+  such as UnixFS may compose them into familiar path operations.
 - **HTTP-native verification:** content reads can return normal HTTP bodies
   with proof evidence in `X-Malt-ProofList`.
 - **Lower rewrite amplification:** relationship updates advance MALT structure
@@ -114,3 +121,5 @@ This separation gives MALT four core advantages:
   [ProofList format](../spec/prooflist-format.md).
 - For the current resolver and writer model, read
   [Semantic model](../spec/semantic.md).
+- For the portable core contract, read
+  [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md).

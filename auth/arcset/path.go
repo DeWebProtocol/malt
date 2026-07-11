@@ -44,6 +44,11 @@ func (e *PathError) Unwrap() error {
 // The zero value represents an empty path.
 type Path string
 
+// PayloadPath is the standard coordinate used by layouts that bind a semantic
+// object to payload data. Generic maps may omit or delete this coordinate;
+// layouts such as UnixFS define when it is required.
+const PayloadPath Path = "@payload"
+
 // CanonicalizePath normalizes a raw path into a stable arcset form.
 // It removes empty segments and joins the remaining segments with '/'.
 func CanonicalizePath(path string) Path {

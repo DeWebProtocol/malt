@@ -22,7 +22,6 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -41,7 +40,7 @@ const (
 )
 
 var (
-	payloadPath   = arcset.CanonicalizePath("@payload")
+	payloadPath   = arcset.PayloadPath
 	typePath      = arcset.CanonicalizePath("@type")
 	sizePath      = arcset.CanonicalizePath("@size")
 	chunkSizePath = arcset.CanonicalizePath("@chunksize")
@@ -64,11 +63,12 @@ type Options struct {
 
 // Layout materializes a UnixFS-style hierarchy with MALT map/list semantics.
 type Layout struct {
-	namespace string
-	chunkSize int
-	maps      mapping.Semantics
-	lists     list.Semantics
-	blocks    cas.Client
+	namespace   string
+	chunkSize   int
+	maps        mapping.Semantics
+	lists       list.Semantics
+	blocks      cas.Reader
+	blockWriter cas.Writer
 }
 
 // Step records one verified map binding used during path resolution.
@@ -105,6 +105,8 @@ type fileInfo struct {
 }
 
 // New creates a UnixFS layout over caller-supplied map/list semantics and CAS.
+//
+// Deprecated: use NewReader or NewWriter so CAS capabilities are explicit.
 func New(opts Options) (*Layout, error) {
 	if opts.Map == nil {
 		return nil, fmt.Errorf("map semantic is nil")
@@ -128,11 +130,12 @@ func New(opts Options) (*Layout, error) {
 	}
 
 	return &Layout{
-		namespace: opts.Namespace,
-		chunkSize: chunkSize,
-		maps:      opts.Map,
-		lists:     opts.List,
-		blocks:    opts.Blocks,
+		namespace:   opts.Namespace,
+		chunkSize:   chunkSize,
+		maps:        opts.Map,
+		lists:       opts.List,
+		blocks:      opts.Blocks,
+		blockWriter: opts.Blocks,
 	}, nil
 }
 
@@ -498,7 +501,7 @@ func (l *Layout) commitFile(ctx context.Context, data []byte) (cid.Cid, error) {
 
 func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error) {
 	if len(data) <= l.chunkSize {
-		return l.blocks.Put(ctx, data)
+		return l.blockWriter.Put(ctx, data)
 	}
 
 	chunkData, err := PayloadChunks(data, l.chunkSize)
@@ -509,7 +512,7 @@ func (l *Layout) commitPayload(ctx context.Context, data []byte) (cid.Cid, error
 	for _, chunk := range chunkData {
 		blocks = append(blocks, cas.Block{Data: chunk})
 	}
-	results, err := cas.PutBlocks(ctx, l.blocks, blocks)
+	results, err := cas.PutBlocks(ctx, l.blockWriter, blocks)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -859,7 +862,7 @@ func (l *Layout) commitDirectoryManifest(ctx context.Context, entries []string) 
 	if err != nil {
 		return cid.Undef, err
 	}
-	return l.blocks.Put(ctx, payload)
+	return l.blockWriter.Put(ctx, payload)
 }
 
 func (l *Layout) loadDirectoryManifest(ctx context.Context, payload cid.Cid) ([]string, error) {
@@ -901,7 +904,7 @@ func isPortableUnixFSSegment(segment string) bool {
 }
 
 func isMapAbsent(err error) bool {
-	return errors.Is(err, mappingradix.ErrPathNotFound)
+	return errors.Is(err, mapping.ErrPathNotFound)
 }
 
 func typeMarker(kind string) (cid.Cid, error) {

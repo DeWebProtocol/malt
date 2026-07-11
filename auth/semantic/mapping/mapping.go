@@ -12,6 +12,7 @@ package mapping
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -23,6 +24,12 @@ import (
 )
 
 const bindingPrefix = "malt:map:binding:v1:"
+
+// ErrPathNotFound indicates that a requested map path is absent from the
+// committed semantic state. Implementations should wrap this sentinel
+// when Prove cannot find the requested binding so layout adapters do not need
+// to depend on implementation-specific runtime packages.
+var ErrPathNotFound = errors.New("map path not found")
 
 // Iterator iterates over a map view in canonical key order.
 type Iterator interface {

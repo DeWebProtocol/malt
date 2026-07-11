@@ -14,27 +14,33 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/graph/resolver/step"
 	"github.com/dewebprotocol/malt/logger"
-	"github.com/dewebprotocol/malt/runtime/arctable"
 	cid "github.com/ipfs/go-cid"
 )
+
+// ArcLookup is the minimal explicit-arc lookup capability consumed by the
+// resolver. Runtime indexes can implement it without becoming a graph-layer
+// dependency.
+type ArcLookup interface {
+	Get(context.Context, string, cid.Cid, arcset.Path) (cid.Cid, error)
+}
 
 // Reserved arc paths for MALT structures
 const (
 	// PayloadArc is the reserved path that binds a structure root to its payload CID.
 	// When resolving a MALT object with an empty path, the upper resolver loop
 	// redirects to this arc to materialize the payload.
-	PayloadArc arcset.Path = "@payload"
+	PayloadArc arcset.Path = arcset.PayloadPath
 )
 
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
-	arctable  arctable.ArcTable
+	arctable  ArcLookup
 	semantic  mapping.Semantics
 	namespace string
 }
 
 // NewResolver creates a new explicit arc resolver.
-func NewResolver(e arctable.ArcTable, semantic mapping.Semantics, namespace string) *Resolver {
+func NewResolver(e ArcLookup, semantic mapping.Semantics, namespace string) *Resolver {
 	return &Resolver{
 		arctable:  e,
 		semantic:  semantic,

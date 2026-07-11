@@ -3,11 +3,12 @@
 [![Go CI](https://github.com/dewebprotocol/malt/actions/workflows/go.yml/badge.svg)](https://github.com/dewebprotocol/malt/actions/workflows/go.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**MALT is a Merkle-DAG alternative for authenticating mutable application data.**
+**MALT is a general, arc-granularity graph data-authentication system.**
 
-It gives applications direct `root + path` reads, dedicated `ProofList`
-evidence, and low rewrite amplification while keeping payload bytes in ordinary
-content-addressed storage.
+MALT keeps payload bytes in ordinary content-addressed storage (CAS) and uses
+vector-commitment (VC) backends to authenticate typed relations. Applications
+read and verify `trusted root + typed query -> result` without treating a
+Merkle-DAG block chain as the application proof path.
 
 This repository is the MALT core specification implementation. It owns the
 verifier-facing semantics, ProofList behavior, root/query/result contracts,
@@ -22,17 +23,16 @@ managed product gateway lives outside this repository.
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
 
-MALT targets authenticated structured data: data whose relationships can be
-normalized into graph-shaped nodes and relations. Example workloads include
+MALT targets data whose relationships can be normalized into graph-shaped
+objects and arcs. Example workloads include
 verifiable local-first files, persistent agent memory, mutable manifests, and
 tamper-evident audit trails over Filecoin, IPFS, S3, local CAS, or another
-object store.
+object store. UnixFS is one current layout over the core, not the core model.
 
-MALT authenticates those structural relationships through list/map semantics,
-roots, and verifier-facing ProofLists. Immutable payload bytes can still live
-naturally in ordinary CAS blocks and keep ordinary CIDs; MALT binds structure
-to those payload objects without making the daemon, cache, or materialized index
-state trusted.
+MALT authenticates arcs through list/map semantics, typed roots, VC proofs, and
+verifier-facing ProofLists. Immutable payload bytes keep ordinary CIDs. The
+daemon, gateway, cache, ArcTable, and other materialized indexes are untrusted
+execution state rather than correctness authorities.
 
 MALT also makes verifiable reads work over ordinary HTTP(S): content routes can
 return the application result in the response body and carry proof evidence in
@@ -49,15 +49,16 @@ production-ready.
 ## Why This Exists
 
 Traditional Merkle-DAG traversal authenticates structure by embedding child
-links in parent content. To verify a path, clients usually need the linked
-object chain itself as proof material. A local structural change can also force
-rootward object rewrites because the relationship and the object identity are
-coupled.
+links in parent blocks. That implicit arc couples payload serialization,
+relation authentication, and traversal/proof material at block granularity. A
+local relation change can therefore force rootward object rewrites.
 
-MALT separates proof material, structure, and payload bytes:
+MALT separates payload storage, arc authentication, and execution/access:
 
 - immutable payload content can remain ordinary CAS data
-- authenticated relationships are maintained under independent structure roots
+- typed arcs are committed and proved by VC backends under independent roots
+- ArcTable, indexes, caches, daemons, and gateways may accelerate execution
+  without entering the verifier trust boundary
 - list/map semantics define typed read and write operations
 - flat `root + path` lookups return dedicated, fixed-size `ProofList` evidence
   for each semantic lookup
@@ -67,9 +68,9 @@ MALT separates proof material, structure, and payload bytes:
 - local structure updates advance structure roots without rewriting unrelated
   payload objects
 
-The claim is not that updates are free. The claim is that MALT replaces
-Merkle-DAG object-chain proofs and implicit ancestor-rewrite cost with explicit,
-verifiable structure maintenance.
+The claim is not that updates are free. MALT replaces Merkle-DAG object-chain
+proofs and implicit ancestor-rewrite cost with explicit, verifiable arc
+maintenance whose performance remains backend- and workload-dependent.
 
 ## Repository Boundary
 
@@ -95,17 +96,19 @@ Those deployment and product concerns belong in the separate
 
 ```mermaid
 flowchart TB
-  app["Applications / CLI / Go client"] --> api["Reference daemon / evaluation HTTP API"]
-  api --> rw["Resolver / Writer"]
-  rw --> semantics["Authenticated list / map semantics"]
-  semantics --> proofs["ProofList and commitment backends"]
-  semantics --> arctable["ArcTable materialization"]
-  rw --> cas["Immutable payloads in external CAS"]
+  app["Application / layout / client"] --> facade["package malt: typed Read / Apply / VerifyRead"]
+  facade --> engine["Untrusted execution engine"]
+  engine --> semantics["Map / list arc semantics"]
+  semantics --> vc["VC commitment and proof generation"]
+  engine --> arctable["ArcTable / indexes / caches"]
+  engine --> cas["Immutable payloads in CAS"]
+  facade --> verifier["Portable auth/verifier kernel"]
+  verifier --> decision["Accept relative to trusted root + query"]
 ```
 
-Applications interact with resolver and writer surfaces. List/map semantics own
-the authenticated structure. ArcTable is materialized runtime state, not a trust
-root. Payloads remain immutable CAS objects, and proofs are verifier-facing.
+The engine may produce a candidate result and proof, but only portable
+verification establishes correctness. ArcTable is reusable materialization,
+not a trust root. Payloads remain immutable CAS objects.
 
 ## Current Status
 
@@ -135,6 +138,10 @@ Current experimental boundaries:
 - no production managed gateway or hosted service semantics
 - no stable public API compatibility guarantee yet
 - large-file byte-range response bodies must be bound to authenticated segment CIDs with layout/unixfs.VerifyRangeBody after ProofList verification
+
+The core facade and ProofList binding rules introduced for `v0.0.3` use the
+experimental `v0alpha1` profile. The first candidate is `v0.0.3-rc.1`; after
+release validation the final tag must be exactly `v0.0.3`.
 
 ## Use Cases
 
@@ -242,26 +249,27 @@ MALT's current implementation is easiest to read through these layers:
 
 | Layer | Role |
 | --- | --- |
-| Semantic layer | Abstract list/map read and write semantics |
-| ArcTable | Namespace-scoped arcset persistence and materialization |
-| Commitment backend | Stateless proof primitives over semantic representations |
-| Resolver / writer ports | Read/proof path and semantic mutation path |
-| Server API | Runtime surface for daemon HTTP routes |
-| Application layout | Product data model above list/map semantics and immutable payload objects |
+| Portable auth kernel | Canonical arcs, typed roots, VC verification, and ProofList validation |
+| Root `malt` facade | Typed `Query`, `ReadRequest`, `ReadResult`, `Engine.Read`, `Apply`, and `VerifyRead` |
+| Semantic layer | Abstract map/list arc read and mutation semantics |
+| Execution engine | Proof generation, writer orchestration, and operational scope; untrusted for correctness |
+| ArcTable | Optional namespace-scoped materialization outside the trust boundary |
+| Application layout | Domain model above typed arcs and immutable payload objects; UnixFS is one layout |
 
 The verifier-facing shape is:
 
 ```text
-Read(root, query) -> result + ProofList
-VerifyRead(root, query, result, ProofList) -> valid / invalid
+Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
+VerifyRead(request, result) -> valid / invalid
 
-ApplyMutation(baseRoot, semantic mutation) -> newRoot + writeReceipt
+Apply(semantic mutation with base root) -> result root + write receipt
 ```
 
 `list` describes stable-indexed child references. `map` describes authenticated
-key-to-target relations and reserves `@payload` as the terminal materialization
-binding for map semantic objects. Layouts translate source-domain data into
-semantic mutations; they do not define the core semantics.
+key-to-target relations. `@payload` is a reserved standard coordinate but is
+optional for generic maps; the UnixFS layout requires it. Layouts translate
+source-domain data into typed queries and semantic mutations without defining
+the core semantics.
 
 `graph` is not a separate semantic owner or node-interface hierarchy. In the
 current runtime it is a small composition boundary that wires resolver and
@@ -276,7 +284,8 @@ For a deeper implementation walkthrough, see [ARCHITECTURE.md](./ARCHITECTURE.md
 cmd/malt/                      reference runtime CLI
 cmd/eval/                      malt-eval workloads, schemas, and helpers
 api/http/                      daemon request/response DTOs
-auth/                          arcset, commitment, proof, list/map semantics
+auth/                          portable arc, commitment, proof, semantics, and verifier kernel
+core.go, engine.go             module-root typed MALT facade
 graph/                         resolver and writer port definitions/adapters
 layout/unixfs/                 UnixFS-style layout over map/list semantics and CAS-backed payloads
 runtime/                       node, runtime graph composition, ArcTable, metrics

@@ -1,0 +1,148 @@
+// Package malt exposes the application-neutral MALT core facade.
+//
+// The facade is intentionally small. Application layouts translate their
+// domain operations into typed map/list queries and semantic mutations, while
+// runtime state placement, ArcTable namespaces, HTTP transport, and payload CAS
+// access remain outside the caller-visible contract.
+package malt
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt/graph/writer"
+	cid "github.com/ipfs/go-cid"
+)
+
+// QueryKind identifies one application-neutral semantic query.
+type QueryKind string
+
+const (
+	// QueryMapKey authenticates one keyed map relation.
+	QueryMapKey QueryKind = "map_key"
+	// QueryListIndex authenticates one stable list index.
+	QueryListIndex QueryKind = "list_index"
+	// QueryListRange authenticates one measured-list byte range.
+	QueryListRange QueryKind = "list_range"
+)
+
+var (
+	// ErrInvalidQuery is returned when a typed query is incomplete or malformed.
+	ErrInvalidQuery = errors.New("invalid MALT query")
+	// ErrQueryNotFound is returned when a query has no authenticated target.
+	ErrQueryNotFound = errors.New("MALT query target not found")
+	// ErrVerifierRejected is returned when proof verification returns false.
+	ErrVerifierRejected = errors.New("MALT verifier rejected read result")
+	// ErrCapabilityUnavailable is returned when an Engine was not configured
+	// with the capability required by an operation.
+	ErrCapabilityUnavailable = errors.New("MALT engine capability is unavailable")
+)
+
+// Query is a single typed arc query. Multi-step application traversal is
+// composed by layouts from these primitive map/list operations.
+type Query struct {
+	Kind  QueryKind
+	Key   arcset.Path
+	Index uint64
+	Start uint64
+	End   *uint64
+}
+
+// MapKeyQuery creates an exact keyed-map query.
+func MapKeyQuery(rawKey string) (Query, error) {
+	key, err := arcset.NewPath(rawKey)
+	if err != nil {
+		return Query{}, fmt.Errorf("%w: %v", ErrInvalidQuery, err)
+	}
+	return Query{Kind: QueryMapKey, Key: key}, nil
+}
+
+// ListIndexQuery creates a stable-indexed list query.
+func ListIndexQuery(index uint64) Query {
+	return Query{Kind: QueryListIndex, Index: index}
+}
+
+// ListRangeQuery creates a measured-list range query over [start, end). A nil
+// end means the authenticated total size.
+func ListRangeQuery(start uint64, end *uint64) (Query, error) {
+	if end != nil && *end <= start {
+		return Query{}, fmt.Errorf("%w: range end must be greater than start", ErrInvalidQuery)
+	}
+	return Query{Kind: QueryListRange, Start: start, End: cloneUint64(end)}, nil
+}
+
+// Validate checks the typed query contract.
+func (q Query) Validate() error {
+	switch q.Kind {
+	case QueryMapKey:
+		if q.Key.IsEmpty() {
+			return fmt.Errorf("%w: map key is empty", ErrInvalidQuery)
+		}
+	case QueryListIndex:
+		return nil
+	case QueryListRange:
+		if q.End != nil && *q.End <= q.Start {
+			return fmt.Errorf("%w: range end must be greater than start", ErrInvalidQuery)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported kind %q", ErrInvalidQuery, q.Kind)
+	}
+	return nil
+}
+
+// String returns the current v0alpha1 query label used in ProofList artifacts.
+func (q Query) String() string {
+	switch q.Kind {
+	case QueryMapKey:
+		return q.Key.String()
+	case QueryListIndex:
+		return "list:" + strconv.FormatUint(q.Index, 10)
+	case QueryListRange:
+		end := ""
+		if q.End != nil {
+			end = strconv.FormatUint(*q.End, 10)
+		}
+		return "range:" + strconv.FormatUint(q.Start, 10) + ":" + end
+	default:
+		return ""
+	}
+}
+
+// ReadRequest binds a typed query to a caller-supplied trusted root.
+type ReadRequest struct {
+	Root  cid.Cid
+	Query Query
+}
+
+// ReadResult is the verifier-facing result of one typed query. Target is the
+// authenticated relation target. Segments is populated only for measured-list
+// ranges and remains ordered as authenticated by ProofList.
+type ReadResult struct {
+	Target    cid.Cid
+	Segments  []cid.Cid
+	ProofList prooflist.ProofList
+}
+
+// Mutation is the current v0alpha1 semantic mutation contract. Runtime state
+// placement is deliberately absent; Engine supplies its configured scope.
+type Mutation = writer.SemanticMutation
+
+// WriteResult is the current v0alpha1 result-root receipt.
+type WriteResult = writer.WriteReceipt
+
+// Reader is the application-neutral root-relative read port.
+type Reader interface {
+	Read(context.Context, ReadRequest) (ReadResult, error)
+}
+
+func cloneUint64(value *uint64) *uint64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}

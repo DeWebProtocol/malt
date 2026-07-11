@@ -995,7 +995,7 @@ func TestServerVerifyAcceptsProofList(t *testing.T) {
 			if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
 				t.Fatalf("decode legacy verify error: %v", err)
 			}
-			if !strings.Contains(errorResp.Error, "server verifier supports explicit evidence only") {
+			if !strings.Contains(errorResp.Error, "portable verifier supports explicit MALT evidence only") {
 				t.Fatalf("legacy verify error = %q, want explicit-only verifier message", errorResp.Error)
 			}
 		})

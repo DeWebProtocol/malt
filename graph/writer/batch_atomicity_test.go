@@ -2,6 +2,7 @@ package writer
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -14,9 +15,10 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-// TestBatchUpdateArcs_Atomicity verifies that BatchUpdateArcs is truly atomic:
-// if any update in the batch fails, no updates are applied.
-func TestBatchUpdateArcs_Atomicity(t *testing.T) {
+// TestBatchUpdateArcs_AllowsPayloadDeletion verifies that the generic graph
+// writer treats @payload as an ordinary reserved coordinate. Layouts such as
+// UnixFS are responsible for requiring that binding.
+func TestBatchUpdateArcs_AllowsPayloadDeletion(t *testing.T) {
 	ctx := context.Background()
 	namespace := "test"
 
@@ -65,8 +67,7 @@ func TestBatchUpdateArcs_Atomicity(t *testing.T) {
 	}
 	t.Logf("Batch update succeeded, new root: %v", result.NewRoot)
 
-	// Test Case 2: Failing batch update - try to delete @payload (mandatory)
-	// This should fail and NOT modify any state
+	// Generic maps may delete @payload while updating another coordinate.
 	initialArcs2, err := arcset.NewArcSet(map[string]cid.Cid{
 		"@payload": payload,
 		"x":        valueA,
@@ -79,39 +80,28 @@ func TestBatchUpdateArcs_Atomicity(t *testing.T) {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
 
-	// Try batch update that includes deleting @payload (which should fail)
-	failingUpdates := map[string]cid.Cid{
-		"x":        makeCID(t, "new-x"), // Valid update
-		"@payload": cid.Undef,           // INVALID: cannot delete @payload
+	newX := makeCID(t, "new-x")
+	updatesWithoutPayload := map[string]cid.Cid{
+		"x":        newX,
+		"@payload": cid.Undef,
 	}
 
-	_, err = writer.BatchUpdateArcs(ctx, namespace+"_fail", root2, failingUpdates)
-	if err == nil {
-		t.Fatalf("BatchUpdateArcs should have failed due to @payload deletion, but succeeded")
-	}
-	t.Logf("BatchUpdateArcs correctly failed: %v", err)
-
-	// Verify atomicity: 'x' should still have original value
-	// The update to 'x' should NOT have been applied because the batch failed
-	gotX, err := writer.GetArc(ctx, namespace+"_fail", root2, "x")
+	result2, err := writer.BatchUpdateArcs(ctx, namespace+"_fail", root2, updatesWithoutPayload)
 	if err != nil {
-		t.Fatalf("GetArc(x) after failed batch: %v", err)
-	}
-	if !gotX.Equals(valueA) {
-		t.Errorf("After failed batch: x = %v, want original %v (atomicity violated!)", gotX, valueA)
+		t.Fatalf("BatchUpdateArcs deleting @payload failed: %v", err)
 	}
 
-	// Verify @payload still exists with original value
-	gotPayload, err := writer.GetArc(ctx, namespace+"_fail", root2, "@payload")
+	gotX, err := writer.GetArc(ctx, namespace+"_fail", result2.NewRoot, "x")
 	if err != nil {
-		t.Fatalf("GetArc(@payload) after failed batch: %v", err)
+		t.Fatalf("GetArc(x) after batch: %v", err)
 	}
-	if !gotPayload.Equals(payload) {
-		t.Errorf("After failed batch: @payload = %v, want original %v", gotPayload, payload)
+	if !gotX.Equals(newX) {
+		t.Errorf("x after batch = %v, want %v", gotX, newX)
 	}
 
-	t.Log("Atomicity verified: failed batch did not modify any arcs")
-	t.Log("All atomicity tests passed")
+	if _, err := writer.GetArc(ctx, namespace+"_fail", result2.NewRoot, "@payload"); !errors.Is(err, ErrArcNotFound) {
+		t.Fatalf("GetArc(@payload) error = %v, want ErrArcNotFound", err)
+	}
 }
 
 // TestSemanticBatchUpdate_MidBatchFailure tests the deferred persistence path in

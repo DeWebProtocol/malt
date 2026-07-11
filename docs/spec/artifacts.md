@@ -5,17 +5,19 @@ JSON, content-proof headers, and evaluator schemas.
 
 ## Status
 
-Experimental and implementation-bound. Only evaluator schemas currently have
-machine-readable JSON Schema files in the repository. For
-`v0.0.3-core-boundary`, resolve JSON and bare ProofList JSON remain documented
-Go DTO artifacts rather than stable named JSON schemas.
+Experimental and implementation-bound. The typed read/result and ProofList
+binding rules form the `v0alpha1` artifact profile targeted by `v0.0.3`. Only
+evaluator schemas currently have machine-readable JSON Schema files in the
+repository; resolve JSON and bare ProofList JSON remain documented Go DTO
+artifacts rather than stable named JSON schemas.
 
 ## Current Artifact Surfaces
 
 | Surface | Current owner | Stability |
 | --- | --- | --- |
 | `malt resolve` JSON | `api/http.ResolveResponse` | Experimental |
-| bare ProofList JSON | `auth/proof/prooflist.ProofList` | Experimental and verifier-facing |
+| typed core read | root `malt.ReadRequest` and `malt.ReadResult` | Experimental `v0alpha1` binding contract |
+| bare ProofList JSON | `auth/proof/prooflist.ProofList` | Experimental `v0alpha1` verifier-facing artifact |
 | content proof headers | `server` and `sdk/client` | Experimental |
 | evaluator records | `cmd/eval/schemas` | Versioned where practical |
 
@@ -33,6 +35,11 @@ Go DTO artifacts rather than stable named JSON schemas.
 The `prooflist` field is omitted when proof generation is disabled. The target
 CID is not self-authenticating as a path result; callers need the root, query,
 target, and ProofList to verify the binding.
+
+The generic Go facade represents those inputs as `malt.ReadRequest` and
+`malt.ReadResult`, then checks them with `Engine.VerifyRead` or package-level
+`malt.VerifyRead`. The HTTP DTO remains a reference transport projection rather
+than the generic core contract.
 
 ## Bare ProofList JSON
 
@@ -56,10 +63,10 @@ Evaluator JSON schemas live under `cmd/eval/schemas` and are embedded in the
 `malt-eval schema` command. Resolve JSON and bare ProofList JSON do not yet have
 stable named schema files.
 
-The current release-candidate decision is to keep that boundary: document
-resolve and ProofList shapes, but avoid stable named schema files until the
+The `v0.0.3` decision is to keep that boundary: document the `v0alpha1` resolve,
+typed read, and ProofList shapes, but avoid stable named schema files until the
 project is ready to commit to artifact compatibility. JSON shape validation is
-still separate from ProofList verification through `graph/verifier`.
+still separate from portable ProofList verification through `auth/verifier`.
 
 If resolve or ProofList artifacts are promoted to stable named schemas, the
 same change should:

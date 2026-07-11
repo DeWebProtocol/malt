@@ -10,6 +10,11 @@ For reader-facing background on hash authentication, Merkle DAGs, and MALT's
 positioning, start with [Concepts](../concepts/README.md). Keep normative
 behavior, wire formats, and proof semantics in this folder.
 
+The current experimental core profile is `v0alpha1`: typed map/list queries,
+root/request/result binding through the module-root `malt` facade, and portable
+ProofList verification through `auth/verifier`. See
+[MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md).
+
 ## Documents
 
 - [Semantic model](./semantic.md)

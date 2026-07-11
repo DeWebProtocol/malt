@@ -54,6 +54,7 @@ func TestGraphServiceStaysOnGraphPorts(t *testing.T) {
 func TestGenericWriteRoutesDoNotOwnUnixFSCompatibility(t *testing.T) {
 	assertFileExcludes(t, "routes_write.go", []string{
 		"unixFSLayout",
+		"unixFSWriter",
 		"prepareUnixFSRoot",
 		"applyUnixFSLayoutMutation",
 		"MutationPlanForRoot",
@@ -107,6 +108,9 @@ func TestUnixFSWriteRouteUsesStreamFacade(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "AddFileStream(") {
 		t.Fatal("routes_unixfs_compat.go should stream file bodies through the UnixFS layout facade")
+	}
+	if !strings.Contains(string(data), "unixFSWriter(") {
+		t.Fatal("routes_unixfs_compat.go should request the UnixFS writer capability")
 	}
 	assertFileExcludes(t, "routes_unixfs_compat.go", []string{
 		"io.ReadAll(r.Body)",
@@ -180,7 +184,7 @@ func TestAuthCoreDoesNotImportOperationalLayers(t *testing.T) {
 		"github.com/dewebprotocol/malt/server",
 		"github.com/dewebprotocol/malt/storage",
 	} {
-		assertTreeExcludes(t, "../auth", forbidden)
+		assertProductionTreeExcludes(t, "../auth", forbidden)
 	}
 }
 
@@ -312,5 +316,33 @@ func assertTreeExcludes(t *testing.T, path string, forbidden string) {
 	}
 	for _, entry := range entries {
 		assertTreeExcludes(t, filepath.Join(path, entry.Name()), forbidden)
+	}
+}
+
+func assertProductionTreeExcludes(t *testing.T, path string, forbidden string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s): %v", path, err)
+	}
+	if !info.IsDir() {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("%s should not contain %q", path, forbidden)
+		}
+		return
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", path, err)
+	}
+	for _, entry := range entries {
+		assertProductionTreeExcludes(t, filepath.Join(path, entry.Name()), forbidden)
 	}
 }

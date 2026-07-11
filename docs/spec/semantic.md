@@ -1,8 +1,9 @@
 # Semantic Model
 
-MALT's core semantic model is an authenticated list/map layer over immutable
-CAS payload objects. This document is the implementation-bound reference for
-the terms used by code, docs, and MIPs.
+MALT's core semantic model authenticates graph arcs independently from immutable
+CAS payload objects. Current typed arc coordinates are expressed through map
+and list semantics, and vector-commitment backends authenticate the resulting
+relations. This document is the implementation-bound terminology reference.
 
 ## Status
 
@@ -15,6 +16,7 @@ stable release, but new docs should use this terminology.
 | --- | --- |
 | Semantic object | A typed authenticated structure object, currently a map root or list root. |
 | Graph root | A caller-supplied MALT structure root used as the verification handle for a read or mutation. |
+| Arc query | A typed coordinate selecting one authenticated relation, currently `map_key`, `list_index`, or `list_range`. |
 | Payload | Immutable application bytes or metadata stored as ordinary CAS content and bound from MALT structure. |
 | Outgoing arc | A canonical coordinate-to-CID binding represented in an arc set. |
 | Map relation | A key/path-like authenticated binding from a map object to a target CID. |
@@ -37,9 +39,11 @@ Native map operations are:
 - insert, replace, and delete of canonical keyed bindings
 - commitment and verification of committed map state
 
-Every MALT-native map object carries a reserved `@payload` binding. That
-binding is the terminal materialization edge for file, directory, or other
-layout payloads. It is not UnixFS-specific.
+`@payload` is the standard reserved coordinate for a terminal layout-payload
+binding. Generic maps may omit it; relation-only maps without a payload binding
+are valid MALT state. When present, `@payload` must use terminal
+`payload_binding` proof semantics. The UnixFS layout requires the coordinate
+for its file and directory objects.
 
 ## List Semantics
 
@@ -65,6 +69,27 @@ count, total size, chunk size, index-to-CID bindings, and the selected byte
 range's covered segment CIDs. A future variable-size measured list remains a
 proposal-stage topic in [MIP-1006](../mips/mip-1006-variable-size-measured-list-evidence.md).
 
+## Typed Core Facade
+
+The module-root `package malt` exposes the application-neutral `v0alpha1`
+facade:
+
+- `Query` selects one primitive map key, list index, or measured-list range.
+- `ReadRequest` binds a typed query to a caller-supplied root.
+- `ReadResult` carries the target, optional ordered range segments, and
+  ProofList.
+- `Engine.Read` generates a candidate result and proof.
+- `Engine.Apply` applies a semantic mutation and returns a result-root receipt.
+- `Engine.VerifyRead` binds the request and result before portable proof
+  verification.
+
+When a map implementation reports `mapping.ErrPathNotFound`, `Engine.Read`
+returns an error recognizable through `errors.Is(err, malt.ErrQueryNotFound)`
+or `malt.IsQueryNotFound`. Other execution-plane errors are returned unchanged.
+
+Layouts compose primitive arc operations into domain traversal. A Unix path is
+therefore a UnixFS layout concern, not a generic core query requirement.
+
 ## Resolver And Writer Ports
 
 The `graph` package is a small port/composition surface, not a separate
@@ -78,12 +103,16 @@ Resolver traversal lives under `graph/resolver`. Mutation application lives
 under `graph/writer`. Layouts translate source-domain data into semantic
 queries and mutations; they do not redefine map or list semantics.
 
+The portable verification path lives under `auth/verifier` and does not depend
+on resolver, writer, runtime, ArcTable, CAS, layout, server, or daemon state.
+
 ## ArcTable Boundary
 
-ArcTable is namespace-scoped arcset persistence and materialization. It helps
-the runtime prove and update structure efficiently, but it is not the trust
-root. Incorrect materialized state should either fail proof generation or
-produce evidence that the verifier rejects.
+ArcTable is namespace-scoped arcset persistence and materialization in the
+untrusted execution engine. It helps the runtime prove and update structure
+efficiently, but it is not part of the portable authentication kernel or the
+trust root. Incorrect state should either fail proof generation or produce
+evidence that the verifier rejects.
 
 Freshness, head publication, merge policy, CAS availability, pinning, garbage
 collection, tenant isolation, and quotas are deployment or application policy,
@@ -94,6 +123,6 @@ not core MALT semantics.
 - [MIP-1001](../mips/mip-1001-semantic-object-and-arc-terminology.md) tracks
   terminology adoption.
 - [MIP-1010](../mips/mip-1010-data-authentication-core-boundary.md) records the
-  package-boundary decision that moved verifier-critical semantics into
-  `auth/` and kept runtime, storage, API, and SDK code outside the data-auth
-  core.
+  historical package-boundary split.
+- [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
+  portable arc-authentication contract and root-package facade.

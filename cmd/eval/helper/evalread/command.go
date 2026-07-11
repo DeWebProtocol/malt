@@ -57,7 +57,7 @@ func newCommand(use, short string, out io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&opts.largeBytes, "large-bytes", opts.largeBytes, "large list-backed file size in bytes")
 	cmd.Flags().StringVar(&opts.rangeValue, "range", opts.rangeValue, "HTTP Range header for content_range reads")
 	cmd.Flags().IntVar(&opts.iterations, "iterations", opts.iterations, "number of prooflist/content-range operation pairs")
-	cmd.Flags().StringArrayVar(&opts.arcFlags, "arc", nil, "Initial fixture arc as path=cid; repeatable and must include @payload")
+	cmd.Flags().StringArrayVar(&opts.arcFlags, "arc", nil, "Initial maltflat fixture arc as path=cid; repeatable; maltflat requires @payload")
 	return cmd
 }
 
@@ -78,10 +78,10 @@ func run(cmd *cobra.Command, opts *options) error {
 		}
 		apiBaseURL = cfg.APIBaseURL()
 		if len(arcs) == 0 {
-			return fmt.Errorf("--arc is required at least once and must include @payload")
+			return fmt.Errorf("maltflat requires --arc at least once and an @payload fixture binding")
 		}
 		if _, ok := arcs["@payload"]; !ok {
-			return fmt.Errorf("--arc is required at least once and must include @payload")
+			return fmt.Errorf("maltflat requires --arc at least once and an @payload fixture binding")
 		}
 	}
 

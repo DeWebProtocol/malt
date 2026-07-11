@@ -417,7 +417,7 @@ func TestApply_MapDeltaIndexWriteFailure(t *testing.T) {
 // backend window where the old root mapping has already been removed before
 // ArcTable.Update reports failure. In that state, re-running the original
 // writer operation cannot recover because Snapshot(oldRoot) no longer finds the
-// mandatory payload binding; replaying IndexDelta from the error still works.
+// root; replaying IndexDelta from the error still works.
 func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 	ctx := context.Background()
 	namespace := "ns-partial-index-fail"
@@ -453,8 +453,8 @@ func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 	}
 
 	_, retryErr := w.UpdateArc(ctx, namespace, root, "a", newA)
-	if !errors.Is(retryErr, ErrMissingPayloadBinding) {
-		t.Fatalf("retrying original UpdateArc error = %v, want ErrMissingPayloadBinding", retryErr)
+	if retryErr == nil {
+		t.Fatal("retrying the original UpdateArc unexpectedly succeeded after the base root was removed")
 	}
 
 	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {

@@ -11,12 +11,13 @@ release line exists.
 
 | Surface | Current status |
 | --- | --- |
+| Root `malt` typed facade | Experimental `v0alpha1` |
 | Go internal packages | Unstable |
 | Public Go semantic interfaces | Experimental |
 | CLI command names | Best-effort stability |
 | CLI output text | Experimental |
 | Daemon HTTP API | Experimental |
-| ProofList JSON | Experimental and verifier-facing |
+| ProofList JSON and typed read binding | Experimental `v0alpha1` and verifier-facing |
 | MALT root encoding | Experimental |
 | CID codecs and root-kind metadata | Experimental |
 | ArcTable internal storage | Not a public compatibility surface |
@@ -35,6 +36,7 @@ PR:
 - daemon request or response shapes
 - CLI commands used in README or contributor workflows
 - ProofList JSON fields or proof-step semantics
+- root-facade query labels and request/result binding rules
 - root/CID encodings
 - wire-format behavior
 - evaluator record schemas
@@ -53,6 +55,11 @@ experimental. A verifier should not assume that a ProofList JSON shape or MALT
 root encoding from an unreleased commit will remain compatible with a future
 commit unless release notes say so.
 
+The `v0.0.3` source release names the current typed read/result and ProofList
+binding profile `v0alpha1`. That name does not add an embedded wire-version
+field or a stable JSON Schema. Experimental consumers should pin an exact MALT
+tag or module version and review release notes before upgrading.
+
 ArcTable records, local KV paths, materialized indexes, caches, metrics
 counters, and daemon process files are operational state. They are not public
 compatibility surfaces.
@@ -69,5 +76,5 @@ When releases begin, release notes should call out changes to:
 - evaluator schemas
 - known verification or body-binding limitations
 
-Until then, users should treat `main` as an experimental integration branch and
-pin commits for reproducible experiments.
+Users should treat `main` as an experimental integration branch and pin exact
+release tags or commits for reproducible experiments.
