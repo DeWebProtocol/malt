@@ -162,8 +162,8 @@ mismatches, short segment data, and tampered returned bytes.
 
 ## Related Proposals
 
-- [MIP-1003](../mips/mip-1003-prooflist-verification-schema.md) tracks verifier-contract
-  formalization and range-body helper integration.
+- [MIP-1003](../mips/mip-1003-prooflist-verification-schema.md) tracks
+  verifier-contract stabilization beyond the released `v0alpha1` profile.
 - [MIP-1006](../mips/mip-1006-variable-size-measured-list-evidence.md) tracks a
   future variable-size measured-list model.
 - [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the

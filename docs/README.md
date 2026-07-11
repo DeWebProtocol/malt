@@ -49,14 +49,14 @@ the reference docs under `spec/` or `evaluation.md`, with MIPs linking to them.
 The previous `documents/MIPs` mirror in the research-paper workspace was
 removed after migration. New implementation-bound MIP work should happen here.
 
-The current public-core proposal is
+The current public-core contract is
 [MIP-1011: Arc Authentication Core Contract](./mips/mip-1011-arc-authentication-core-contract.md).
 
 ## What Goes Where
 
 - `concepts/` for reader-facing background, comparisons, and orientation
 - `policy/` for stability, safety, and release policy
-- `releases/` for source-release candidate notes and validation checklists
+- `releases/` for source-release notes and validation records
 - `evaluation.md` for benchmark methods, headline results, and artifact rules
 - `spec/` for formal protocol and schema documents
 - `mips/` for design proposals and process records

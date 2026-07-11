@@ -29,8 +29,8 @@ validation.
 ## Specification
 
 The current ProofList reference lives in
-[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md). For the
-`v0.0.3` candidate, the review boundary is:
+[`docs/spec/prooflist-format.md`](../spec/prooflist-format.md). The `v0.0.3`
+source release records this review boundary:
 
 - ordered path traversal is verifier-facing and implemented by
   `auth/verifier`;

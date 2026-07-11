@@ -51,8 +51,10 @@ For an accepted root and query, MALT aims to provide:
 
 For HTTP content reads, the daemon returns body bytes together with
 `X-Malt-ProofList` evidence by default. Large-file byte-range reads include
-measured-list range evidence; full response-body binding for large-file ranges
-remains a ProofList schema design item.
+measured-list range evidence that authenticates layout metadata and segment
+CIDs. Portable ProofList verification does not by itself hash the returned HTTP
+body; UnixFS callers must additionally use `layout/unixfs.VerifyRangeBody` or
+an equivalent segment-byte binding before accepting those bytes.
 
 ## Not Guaranteed By Core MALT
 

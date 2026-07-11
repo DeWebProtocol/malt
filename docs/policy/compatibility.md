@@ -66,7 +66,7 @@ compatibility surfaces.
 
 ## Release Notes
 
-When releases begin, release notes should call out changes to:
+Release notes must call out changes to:
 
 - CLI workflows
 - daemon API routes and DTOs

@@ -20,6 +20,7 @@ managed product gateway lives outside this repository.
 [Threat Model](./docs/policy/threat-model.md) ·
 [Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
 [MIPs](./docs/mips/README.md) ·
+[v0.0.3 Release](./docs/releases/v0.0.3.md) ·
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
 
@@ -139,9 +140,16 @@ Current experimental boundaries:
 - no stable public API compatibility guarantee yet
 - large-file byte-range response bodies must be bound to authenticated segment CIDs with layout/unixfs.VerifyRangeBody after ProofList verification
 
-The core facade and ProofList binding rules introduced for `v0.0.3` use the
-experimental `v0alpha1` profile. The first candidate is `v0.0.3-rc.1`; after
-release validation the final tag must be exactly `v0.0.3`.
+The `v0.0.3` source release introduces the core facade and ProofList binding
+rules as the experimental `v0alpha1` profile. Integrators should pin the exact
+release and review the compatibility notes before upgrading:
+
+```bash
+go get github.com/dewebprotocol/malt@v0.0.3
+```
+
+See the [release notes](./docs/releases/v0.0.3.md) and the
+[GitHub Release](https://github.com/DeWebProtocol/malt/releases/tag/v0.0.3).
 
 ## Use Cases
 
