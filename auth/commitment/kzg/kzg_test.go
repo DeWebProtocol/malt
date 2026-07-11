@@ -1,6 +1,7 @@
 package kzg_test
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
@@ -97,4 +98,57 @@ func TestKZGBatchProveIsStateless(t *testing.T) {
 	if ok {
 		t.Fatal("expected wrong batch value verification to fail")
 	}
+}
+
+func TestKZGVerifyRejectsMalformedProofMetadata(t *testing.T) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{commitment.NewCell([]byte("slot0"))}
+	root, value, proof, err := scheme.Prove(values, 0)
+	if err != nil {
+		t.Fatalf("Prove failed: %v", err)
+	}
+
+	outOfRange := append([]byte(nil), proof...)
+	binary.BigEndian.PutUint32(outOfRange[80:84], uint32(kzg.MaxValues))
+	if ok, err := scheme.VerifyProof(root, value, outOfRange); err == nil || ok {
+		t.Fatalf("VerifyProof(out-of-range index) = %v, %v; want false, error", ok, err)
+	}
+	if ok, err := scheme.VerifyIndex(root, 0, value, outOfRange); err == nil || ok {
+		t.Fatalf("VerifyIndex(proof index out of range) = %v, %v; want false, error", ok, err)
+	}
+
+	if ok, err := scheme.VerifyIndex(root, kzg.MaxValues, value, proof); err == nil || ok {
+		t.Fatalf("VerifyIndex(out-of-range index) = %v, %v; want false, error", ok, err)
+	}
+
+	withTrailingData := append(append([]byte(nil), proof...), 0)
+	if ok, err := scheme.VerifyProof(root, value, withTrailingData); err == nil || ok {
+		t.Fatalf("VerifyProof(trailing data) = %v, %v; want false, error", ok, err)
+	}
+}
+
+func FuzzKZGVerifyProofDoesNotPanic(f *testing.F) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		f.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{commitment.NewCell([]byte("slot0"))}
+	root, value, proof, err := scheme.Prove(values, 0)
+	if err != nil {
+		f.Fatalf("Prove failed: %v", err)
+	}
+
+	outOfRange := append([]byte(nil), proof...)
+	binary.BigEndian.PutUint32(outOfRange[80:84], uint32(kzg.MaxValues))
+	f.Add(proof)
+	f.Add(outOfRange)
+	f.Add(append(append([]byte(nil), proof...), 0))
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, candidate []byte) {
+		_, _ = scheme.VerifyProof(root, value, candidate)
+	})
 }

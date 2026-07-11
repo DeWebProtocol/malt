@@ -18,6 +18,7 @@ import (
 	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
 	mapradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -79,6 +80,15 @@ func TestPortableVerifierAcceptsRuntimeRadixAndTreeProofs(t *testing.T) {
 					EvidenceKind: "structure", EvidenceBackend: "map", Proof: proof,
 				}}}
 				assertPortableValid(t, portable, pl)
+
+				if name == "kzg" {
+					malformedRoot := portableMalformedRoot(t, root)
+					malformed := pl
+					malformed.Root = malformedRoot
+					malformed.Steps = append([]prooflist.Step(nil), pl.Steps...)
+					malformed.Steps[0].From = malformedRoot
+					assertPortableRejected(t, portable, malformed)
+				}
 
 				pl.Steps[0].Target = portableTestCID(t, "forged-map-target")
 				assertPortableRejected(t, portable, pl)
@@ -201,4 +211,18 @@ func portableTestCID(t *testing.T, seed string) cid.Cid {
 		t.Fatalf("hash seed: %v", err)
 	}
 	return cid.NewCidV1(cid.Raw, sum)
+}
+
+func portableMalformedRoot(t *testing.T, root cid.Cid) cid.Cid {
+	t.Helper()
+	digest, err := maltcid.ExtractCommitment(root)
+	if err != nil {
+		t.Fatalf("ExtractCommitment: %v", err)
+	}
+	digest = append(append([]byte(nil), digest...), 0x42)
+	hash, err := mh.Encode(digest, mh.IDENTITY)
+	if err != nil {
+		t.Fatalf("encode malformed root: %v", err)
+	}
+	return cid.NewCidV1(root.Prefix().Codec, hash)
 }

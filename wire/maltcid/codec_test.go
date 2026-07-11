@@ -5,6 +5,7 @@ import (
 
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 func TestNewKZGCid(t *testing.T) {
@@ -175,5 +176,42 @@ func TestExtractCommitmentNonMalt(t *testing.T) {
 	_, err := maltcid.ExtractCommitment(c)
 	if err == nil {
 		t.Error("Expected error for non-MALT CID")
+	}
+}
+
+func TestExtractCommitmentRejectsInvalidDigestSize(t *testing.T) {
+	tests := []struct {
+		codec uint64
+		size  int
+	}{
+		{codec: maltcid.CodecMaltMapKZG, size: maltcid.KZGCommitmentSize},
+		{codec: maltcid.CodecMaltListKZG, size: maltcid.KZGCommitmentSize},
+		{codec: maltcid.CodecMaltMapIPA, size: maltcid.IPACommitmentSize},
+		{codec: maltcid.CodecMaltListIPA, size: maltcid.IPACommitmentSize},
+	}
+
+	for _, test := range tests {
+		invalidSizes := []struct {
+			name string
+			size int
+		}{
+			{name: "short", size: test.size - 1},
+			{name: "long", size: test.size + 1},
+		}
+		for _, invalid := range invalidSizes {
+			name := maltcid.CodecName(test.codec) + "/" + invalid.name
+			t.Run(name, func(t *testing.T) {
+				invalidSize := invalid.size
+				digest := make([]byte, invalidSize)
+				hash, err := mh.Encode(digest, mh.IDENTITY)
+				if err != nil {
+					t.Fatalf("encode identity multihash: %v", err)
+				}
+				malformed := cid.NewCidV1(test.codec, hash)
+				if _, err := maltcid.ExtractCommitment(malformed); err == nil {
+					t.Fatalf("ExtractCommitment accepted %d-byte digest, want %d", invalidSize, test.size)
+				}
+			})
+		}
 	}
 }
