@@ -3,7 +3,7 @@ mip: 1011
 title: Arc Authentication Core Contract
 description: Define MALT as a portable arc-granularity graph data-authentication system with typed read, mutation, and verification contracts.
 author: MALT maintainers
-status: Review
+status: Final
 type: Standards Track
 category: Core
 created: 2026-07-11
@@ -19,7 +19,7 @@ remain ordinary immutable objects in content-addressed storage (CAS), while
 vector-commitment (VC) backends commit to and prove typed relations. UnixFS is
 one layout over this core; it is not the definition of MALT.
 
-This MIP defines the public core contract targeted by `v0.0.3`: a portable,
+This MIP defines the public core contract introduced in `v0.0.3`: a portable,
 trusted authentication kernel; an untrusted execution engine; typed
 `Read`/`Apply`/`VerifyRead` operations in the module-root `malt` package; and an
 experimental ProofList artifact profile named `v0alpha1`.
@@ -248,11 +248,11 @@ MIP-1010 remains the historical record of the repository package split. This
 MIP defines the subsequent public arc-authentication contract; it does not
 reverse the ownership boundaries established by MIP-1010.
 
-## Release Plan
+## Release Record
 
-The first candidate for this contract must be tagged `v0.0.3-rc.1`. After the
-candidate passes the repository validation and an external-consumer smoke test,
-the final release tag must be exactly `v0.0.3`.
+This contract was validated first as `v0.0.3-rc.1`, then published from the
+same approved source commit as `v0.0.3` after repository, external-consumer,
+evaluator, and CLI proof smokes passed.
 
 `v0.0.3-core-boundary` may remain in historical milestone or planning text, but
 it is not a valid final release tag for this contract.
@@ -271,6 +271,13 @@ it is not a valid final release tag for this contract.
   are rejected.
 - Full tests, vet, command builds, evaluator smoke, and an external consumer
   compile/run smoke pass before tagging.
+
+## History
+
+- 2026-07-11: Implemented the portable facade and authentication kernel in PR
+  #159.
+- 2026-07-12: Hardened typed-root and malformed KZG proof handling in PR #160,
+  completed release validation, and finalized the contract for `v0.0.3`.
 
 ## References
 

@@ -38,7 +38,7 @@ The current artifact reference lives in
 - evaluator record schemas remain the only checked-in machine-readable JSON
   schemas;
 - resolve JSON and bare ProofList JSON remain experimental and do not get
-  stable named schema files in this release candidate.
+  stable named schema files in the `v0.0.3` source release.
 
 A later stable-schema proposal may add named schema files, CLI schema listing,
 and compatibility rules, but that work should happen in a separate issue or PR

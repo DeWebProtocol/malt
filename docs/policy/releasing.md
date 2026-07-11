@@ -38,24 +38,27 @@ Review:
 - `SECURITY.md` reporting path is still accurate.
 - `cmd/eval/schemas` match current evaluator outputs.
 
-For the current release candidate, use
-[`docs/releases/v0.0.3.md`](../releases/v0.0.3.md) as the release-note and
-validation checklist. It requires a portable-verifier smoke, a relation-only
-map test, import-boundary checks, and an external-consumer compile test in
-addition to the repository-wide commands.
+The completed `v0.0.3` validation record lives in
+[`docs/releases/v0.0.3.md`](../releases/v0.0.3.md). It includes a
+portable-verifier smoke, a relation-only map test, import-boundary checks, an
+external-consumer compile test, evaluator smoke, and isolated CLI proof smoke.
+Future releases should add a new release-note file with equivalent gates rather
+than editing the historical `v0.0.3` record.
 
 ## Tagging
 
-For `v0.0.3`, tag the validated candidate first:
+For a new release, tag the validated candidate first using a standard
+prerelease suffix:
 
 ```bash
-git tag -a v0.0.3-rc.1 -m "MALT v0.0.3-rc.1"
-git push origin v0.0.3-rc.1
+git tag -a vX.Y.Z-rc.1 -m "MALT vX.Y.Z-rc.1"
+git push origin vX.Y.Z-rc.1
 ```
 
 After candidate and external-consumer validation, tag the exact same approved
-release commit as `v0.0.3`, or rerun validation if the commit changes. Do not
-use `v0.0.3-core-boundary` as the final tag.
+release commit as `vX.Y.Z`, or rerun validation if the commit changes. The
+`v0.0.3` release followed this process with `v0.0.3-rc.1` and `v0.0.3`; the
+historical `v0.0.3-core-boundary` milestone was not used as a tag.
 
 Create GitHub release notes with:
 

@@ -6,7 +6,7 @@ JSON, content-proof headers, and evaluator schemas.
 ## Status
 
 Experimental and implementation-bound. The typed read/result and ProofList
-binding rules form the `v0alpha1` artifact profile targeted by `v0.0.3`. Only
+binding rules form the `v0alpha1` artifact profile introduced in `v0.0.3`. Only
 evaluator schemas currently have machine-readable JSON Schema files in the
 repository; resolve JSON and bare ProofList JSON remain documented Go DTO
 artifacts rather than stable named JSON schemas.

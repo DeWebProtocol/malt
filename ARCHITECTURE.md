@@ -85,10 +85,11 @@ advertise that request-header variance with `Vary: X-Malt-Proof`. Large-file
 byte-range reads include path/`@payload` proof plus one measured-list
 `list_range` step. That step carries authenticated fixed chunk metadata, the
 covered segment CIDs, and a proof payload composed from the metadata slot proof
-and the required index proofs. Response-body range binding is still a
-ProofList verifier-contract TODO. File routes are reference/evaluation surfaces
-around the same root-centric mutation namespace. They are not a production
-multi-tenant gateway contract.
+and the required index proofs. Portable ProofList verification authenticates
+that metadata and those segment CIDs; UnixFS callers bind the returned HTTP
+body with `layout/unixfs.VerifyRangeBody` or an equivalent segment-byte check.
+File routes are reference/evaluation surfaces around the same root-centric
+mutation namespace. They are not a production multi-tenant gateway contract.
 
 ### List Semantic
 
@@ -531,12 +532,10 @@ Metrics:
 
 Open proposal-stage MIPs for the next discussion:
 
-- review the portable arc-authentication contract in MIP-1011 and its
-  `v0alpha1` artifact profile
 - decide whether writer receipts in `docs/spec/writer-receipts.md` become a
   stable API and evaluation accounting contract
-- accept the current ProofList verifier contract in
-  `docs/spec/prooflist-format.md`, especially response-body range binding
+- stabilize the current `v0alpha1` ProofList verifier contract and add
+  versioned cross-language conformance vectors
 - decide whether resolve JSON and bare ProofList JSON need stable named schemas
   beyond the artifact reference in `docs/spec/artifacts.md`
 - decide whether list needs a future variable-size or compact range-proof API;
