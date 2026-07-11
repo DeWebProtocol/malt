@@ -116,9 +116,15 @@ func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid
 
 // VerifyIndex verifies a proof for a stable index without cache state.
 func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, proof []byte) (bool, error) {
+	if index >= uint64(len(s.domainPoints)) {
+		return false, fmt.Errorf("index %d exceeds max %d", index, len(s.domainPoints)-1)
+	}
 	kzgProof, claimedValue, proofIndex, err := deserializeProof(proof)
 	if err != nil {
 		return false, err
+	}
+	if proofIndex >= uint64(len(s.domainPoints)) {
+		return false, fmt.Errorf("proof index %d exceeds max %d", proofIndex, len(s.domainPoints)-1)
 	}
 	if proofIndex != index {
 		return false, nil
@@ -248,8 +254,8 @@ func serializeProof(proof gokzg4844.KZGProof, claimedValue gokzg4844.Scalar, ind
 }
 
 func deserializeProof(data []byte) (gokzg4844.KZGProof, gokzg4844.Scalar, uint64, error) {
-	if len(data) < ProofSize {
-		return gokzg4844.KZGProof{}, gokzg4844.Scalar{}, 0, fmt.Errorf("proof too short: %d", len(data))
+	if len(data) != ProofSize {
+		return gokzg4844.KZGProof{}, gokzg4844.Scalar{}, 0, fmt.Errorf("proof has wrong size: expected %d, got %d", ProofSize, len(data))
 	}
 	var proof gokzg4844.KZGProof
 	var claimed gokzg4844.Scalar

@@ -185,6 +185,21 @@ func ExtractCommitment(c cid.Cid) ([]byte, error) {
 	if decoded.Code != mh.IDENTITY {
 		return nil, fmt.Errorf("expected identity hash, got code=%x", decoded.Code)
 	}
+	expectedSize := 0
+	switch BackendKindOf(c) {
+	case BackendKindKZG:
+		expectedSize = KZGCommitmentSize
+	case BackendKindIPA:
+		expectedSize = IPACommitmentSize
+	default:
+		return nil, fmt.Errorf("unsupported MALT commitment backend for codec=%x", c.Prefix().Codec)
+	}
+	if len(decoded.Digest) != expectedSize {
+		return nil, fmt.Errorf(
+			"invalid %s commitment size: %d, expected %d",
+			CodecName(c.Prefix().Codec), len(decoded.Digest), expectedSize,
+		)
+	}
 	return decoded.Digest, nil
 }
 
