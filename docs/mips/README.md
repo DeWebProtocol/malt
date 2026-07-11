@@ -83,7 +83,8 @@ not become the only copy of a schema or specification.
 | [MIP-1007](mip-1007-incremental-add-root-optimization.md) | Draft | Standards Track | Tooling | Explore path-local incremental add for very large existing roots. |
 | [MIP-1008](mip-1008-semantic-reachability-demo.md) | Draft | Informational | Evaluation | Define a small demo for reverse, cross-object, and multi-view relations. |
 | [MIP-1009](mip-1009-benchmark-proof-reporting.md) | Draft | Standards Track | Evaluation | Define paper-facing proof, receipt, and metrics reporting across benchmark suites. |
-| [MIP-1010](mip-1010-data-authentication-core-boundary.md) | Final | Standards Track | Core | Narrow MALT core to data authentication and separate graph ports, layouts, SDKs, APIs, runtime, and storage. |
+| [MIP-1010](mip-1010-data-authentication-core-boundary.md) | Final | Standards Track | Core | Record the completed package-ownership split among authentication, graph ports, layouts, runtime, storage, SDK, and transport code. |
+| [MIP-1011](mip-1011-arc-authentication-core-contract.md) | Review | Standards Track | Core | Define the portable arc-level `Read`/`Apply`/`VerifyRead` contract targeted by `v0.0.3`. |
 
 ## Promotion Protocol
 

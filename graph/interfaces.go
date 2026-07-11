@@ -11,7 +11,11 @@ import (
 
 // Resolver is the graph read/proof port.
 type Resolver interface {
+	// ResolveKey traverses explicit authenticated relations without assuming a
+	// payload coordinate. It is the generic graph-data authentication port.
 	ResolveKey(ctx context.Context, root cid.Cid, path string) (*resolver.ResolveResult, error)
+	// Resolve retains the reference materialization behavior that follows a
+	// terminal @payload binding on map roots.
 	Resolve(ctx context.Context, root cid.Cid, path string) (*resolver.ResolveResult, error)
 	VerifyTranscript(ctx context.Context, root cid.Cid, transcript *resolver.Transcript) (bool, error)
 }

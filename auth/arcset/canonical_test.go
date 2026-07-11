@@ -74,12 +74,15 @@ func TestCanonicalArcSetDuplicateRejectionAndCollapse(t *testing.T) {
 	}
 }
 
-func TestCanonicalMapRequiresPayload(t *testing.T) {
-	_, err := NewCanonicalMapArcSet(map[string]cid.Cid{
-		"a": testCID(t, "a"),
-	})
-	if !errors.Is(err, ErrMissingPayloadBinding) {
-		t.Fatalf("err = %v, want ErrMissingPayloadBinding", err)
+func TestCanonicalMapDoesNotRequirePayload(t *testing.T) {
+	target := testCID(t, "a")
+	set, err := NewCanonicalMapArcSet(map[string]cid.Cid{"a": target})
+	if err != nil {
+		t.Fatalf("NewCanonicalMapArcSet failed: %v", err)
+	}
+	entries := set.Entries()
+	if len(entries) != 1 || entries[0].Coordinate.String() != "a" || !entries[0].Target.CID().Equals(target) {
+		t.Fatalf("entries = %#v, want one a binding", entries)
 	}
 }
 

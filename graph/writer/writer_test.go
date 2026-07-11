@@ -379,9 +379,13 @@ func TestWriterApplySemanticMapMutation(t *testing.T) {
 	oldChild := fakeCID("old-child")
 	newChild := fakeCID("new-child")
 
-	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
+	snapshot, err := arcset.NewArcSet(map[string]cid.Cid{
 		"child": oldChild,
-	}))
+	})
+	if err != nil {
+		t.Fatalf("NewArcSet failed: %v", err)
+	}
+	root, err := w.CreateStructure(ctx, namespace, snapshot)
 	if err != nil {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
@@ -411,6 +415,33 @@ func TestWriterApplySemanticMapMutation(t *testing.T) {
 	}
 	if !got.Equals(newChild) {
 		t.Fatalf("child target = %s, want %s", got, newChild)
+	}
+}
+
+func TestWriterApplySemanticMapCreateWithoutPayload(t *testing.T) {
+	w, _, _, _ := newTestWriter(t)
+	ctx := context.Background()
+	target := fakeCID("profile-name")
+
+	receipt, err := w.Apply(ctx, "generic-map", SemanticMutation{
+		BaseRoot: fakeCID("application-base"),
+		Deltas: []ArcSetDelta{{
+			Kind: arcset.KindMap,
+			Changes: mustWriterDelta(t, arcset.KindMap, []arcset.ArcChange{{
+				Coordinate: mustMapCoordinate(t, "profile/name"),
+				After:      targetRefPtr(arcset.NewCASTarget(target)),
+			}}),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply generic map create failed: %v", err)
+	}
+	got, err := w.GetArc(ctx, "generic-map", receipt.NewRoot, "profile/name")
+	if err != nil {
+		t.Fatalf("GetArc failed: %v", err)
+	}
+	if !got.Equals(target) {
+		t.Fatalf("profile/name target = %s, want %s", got, target)
 	}
 }
 
@@ -1248,55 +1279,6 @@ func TestWriter_GetSnapshot(t *testing.T) {
 	}
 	if target != fakeCID("data-x") {
 		t.Errorf("snapshot arc 'x' wrong: got %s", target)
-	}
-}
-
-func TestHasDefinedPayloadBindingPropagatesIteratorError(t *testing.T) {
-	iterErr := fmt.Errorf("iterator exploded")
-	found, err := hasDefinedPayloadBinding(errArcSet{
-		arcs: []struct {
-			path   arcset.Path
-			target cid.Cid
-		}{{
-			path:   arcset.CanonicalizePath("a"),
-			target: fakeCID("data-a"),
-		}},
-		err: iterErr,
-	})
-	if err == nil {
-		t.Fatal("hasDefinedPayloadBinding returned nil error for failing iterator")
-	}
-	if !errors.Is(err, iterErr) {
-		t.Fatalf("hasDefinedPayloadBinding error = %v, want %v", err, iterErr)
-	}
-	if found {
-		t.Fatal("hasDefinedPayloadBinding found payload despite iterator error")
-	}
-}
-
-func TestHasDefinedPayloadBindingChecksErrorAfterPayload(t *testing.T) {
-	iterErr := fmt.Errorf("iterator exploded")
-	found, err := hasDefinedPayloadBinding(errArcSet{
-		arcs: []struct {
-			path   arcset.Path
-			target cid.Cid
-		}{{
-			path:   mandatoryPayloadPath,
-			target: fakeCID("payload"),
-		}, {
-			path:   arcset.CanonicalizePath("a"),
-			target: fakeCID("data-a"),
-		}},
-		err: iterErr,
-	})
-	if err == nil {
-		t.Fatal("hasDefinedPayloadBinding returned nil error after seeing payload")
-	}
-	if !errors.Is(err, iterErr) {
-		t.Fatalf("hasDefinedPayloadBinding error = %v, want %v", err, iterErr)
-	}
-	if found {
-		t.Fatal("hasDefinedPayloadBinding returned found=true with iterator error")
 	}
 }
 

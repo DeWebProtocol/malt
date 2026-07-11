@@ -11,7 +11,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -47,8 +46,9 @@ type ProveTimings struct {
 	OpenCount     int
 }
 
-// ErrPathNotFound indicates that a requested radix map path is absent.
-var ErrPathNotFound = errors.New("radix map path not found")
+// ErrPathNotFound is retained as a compatibility alias for the semantic-level
+// mapping absence sentinel.
+var ErrPathNotFound = mapping.ErrPathNotFound
 
 // pendingNode represents a node that needs to be persisted.
 type pendingNode struct {

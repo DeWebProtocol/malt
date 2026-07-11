@@ -25,7 +25,7 @@ gateway only to exercise MALT core end to end.
 - [Threat model](./policy/threat-model.md)
 - [Compatibility policy](./policy/compatibility.md)
 - [Release process](./policy/releasing.md)
-- [Release notes](./releases/v0.0.3-core-boundary.md)
+- [v0.0.3 release notes](./releases/v0.0.3.md)
 
 ## Evaluation
 
@@ -48,6 +48,9 @@ the reference docs under `spec/` or `evaluation.md`, with MIPs linking to them.
 
 The previous `documents/MIPs` mirror in the research-paper workspace was
 removed after migration. New implementation-bound MIP work should happen here.
+
+The current public-core proposal is
+[MIP-1011: Arc Authentication Core Contract](./mips/mip-1011-arc-authentication-core-contract.md).
 
 ## What Goes Where
 

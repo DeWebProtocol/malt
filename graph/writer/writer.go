@@ -13,9 +13,24 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/runtime/arctable"
 	cid "github.com/ipfs/go-cid"
 )
+
+// ArcTable is the minimal explicit-arc index capability consumed by Writer.
+// Runtime backends satisfy this interface without becoming a dependency of the
+// graph package.
+type ArcTable interface {
+	Get(context.Context, string, cid.Cid, arcset.Path) (cid.Cid, error)
+	BatchGet(context.Context, string, cid.Cid, []arcset.Path) (map[arcset.Path]cid.Cid, error)
+	Update(context.Context, string, cid.Cid, cid.Cid, arcset.ArcSet) error
+	Snapshot(context.Context, string, cid.Cid) (arcset.ArcSet, error)
+}
+
+// BranchingArcTable is the optional capability exposed by indexes that retain
+// concurrent children of one root.
+type BranchingArcTable interface {
+	SupportsConcurrentBranches() bool
+}
 
 var (
 	// ErrArcNotFound is returned when the target arc does not exist for a replace/delete operation.
@@ -26,14 +41,6 @@ var (
 
 	// ErrEmptyPath is returned when the path is empty.
 	ErrEmptyPath = arcset.ErrEmptyPath
-
-	// ErrMissingPayloadBinding is returned when a MALT-native object is missing
-	// its mandatory @payload binding.
-	ErrMissingPayloadBinding = errors.New("mandatory @payload binding is missing")
-
-	// ErrDeletingPayloadBinding is returned when an update attempts to remove the
-	// mandatory @payload binding from a MALT-native object.
-	ErrDeletingPayloadBinding = errors.New("mandatory @payload binding cannot be deleted")
 
 	// ErrStaleRoot is returned when a legacy root-consuming write attempts to
 	// update a base root that this writer has already advanced in the same
@@ -96,11 +103,11 @@ func (e *IndexWriteFailedError) Unwrap() error {
 // error. Prefer Writer.RetryIndexWrite when a writer is available: the writer
 // method reuses the same freshness guard as normal updates and serializes retry
 // against concurrent root-consuming writes.
-func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
+func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table ArcTable) error {
 	return e.retryIndexWrite(ctx, table)
 }
 
-func (e *IndexWriteFailedError) retryIndexWrite(ctx context.Context, table arctable.ArcTable) error {
+func (e *IndexWriteFailedError) retryIndexWrite(ctx context.Context, table ArcTable) error {
 	if e == nil {
 		return fmt.Errorf("index write failure is nil")
 	}
@@ -147,7 +154,7 @@ func (e *IndexWriteFailedError) retryIndexWrite(ctx context.Context, table arcta
 	return nil
 }
 
-func indexRetryBase(ctx context.Context, table arctable.ArcTable, namespace string) (arcset.ArcSet, error) {
+func indexRetryBase(ctx context.Context, table ArcTable, namespace string) (arcset.ArcSet, error) {
 	if table == nil || supportsConcurrentBranches(table) {
 		return nil, nil
 	}
@@ -195,8 +202,6 @@ func arcSetsEqual(a, b arcset.ArcSet) (bool, error) {
 	}
 	return true, nil
 }
-
-var mandatoryPayloadPath = arcset.CanonicalizePath("@payload")
 
 // ArcOp describes the type of arc operation performed.
 type ArcOp uint8
@@ -271,7 +276,7 @@ type BatchUpdateResult struct {
 type Writer struct {
 	semantic     mapping.Semantics
 	listSemantic list.Semantics
-	arctable     arctable.ArcTable
+	arctable     ArcTable
 	freshness    *rootFreshnessGuard
 }
 
@@ -280,7 +285,7 @@ type Writer struct {
 // Parameters:
 //   - semantic: keyed-map semantic (required)
 //   - arctable: Explicit Arc Table (required)
-func NewWriter(semantic mapping.Semantics, arctable arctable.ArcTable, lists ...list.Semantics) *Writer {
+func NewWriter(semantic mapping.Semantics, arctable ArcTable, lists ...list.Semantics) *Writer {
 	var listSemantic list.Semantics
 	if len(lists) > 0 {
 		listSemantic = lists[0]
@@ -339,7 +344,7 @@ func newRootFreshnessGuard() *rootFreshnessGuard {
 	}
 }
 
-func sharedRootFreshnessGuard(table arctable.ArcTable) *rootFreshnessGuard {
+func sharedRootFreshnessGuard(table ArcTable) *rootFreshnessGuard {
 	key, ok := arctableFreshnessIdentity(table)
 	if !ok {
 		return newRootFreshnessGuard()
@@ -348,7 +353,7 @@ func sharedRootFreshnessGuard(table arctable.ArcTable) *rootFreshnessGuard {
 	return guard.(*rootFreshnessGuard)
 }
 
-func arctableFreshnessIdentity(table arctable.ArcTable) (any, bool) {
+func arctableFreshnessIdentity(table ArcTable) (any, bool) {
 	if table == nil {
 		return nil, false
 	}
@@ -358,18 +363,18 @@ func arctableFreshnessIdentity(table arctable.ArcTable) (any, bool) {
 	return table, true
 }
 
-func rootFreshnessGuardFor(table arctable.ArcTable) *rootFreshnessGuard {
+func rootFreshnessGuardFor(table ArcTable) *rootFreshnessGuard {
 	if supportsConcurrentBranches(table) {
 		return nil
 	}
 	return sharedRootFreshnessGuard(table)
 }
 
-func supportsConcurrentBranches(table arctable.ArcTable) bool {
+func supportsConcurrentBranches(table ArcTable) bool {
 	if table == nil {
 		return false
 	}
-	branching, ok := table.(arctable.BranchingArcTable)
+	branching, ok := table.(BranchingArcTable)
 	return ok && branching.SupportsConcurrentBranches()
 }
 
@@ -504,27 +509,6 @@ func filterLogicalArcSet(arcs arcset.ArcSet) (arcset.ArcSet, error) {
 	return filtered, nil
 }
 
-func hasDefinedPayloadBinding(arcs arcset.ArcSet) (bool, error) {
-	if arcs == nil {
-		return false, nil
-	}
-
-	iter := arcs.Iterate()
-	found := false
-	for {
-		path, target, ok := iter.Next()
-		if !ok {
-			if err := iter.Err(); err != nil {
-				return false, fmt.Errorf("arc iteration error: %w", err)
-			}
-			return found, nil
-		}
-		if path == mandatoryPayloadPath && target.Defined() {
-			found = true
-		}
-	}
-}
-
 // UpdateArc executes the unified arc update procedure.
 //
 // Given a structure root, path, and new target CID, this method:
@@ -549,10 +533,6 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if canonicalPath.IsEmpty() {
 		return nil, ErrEmptyPath
 	}
-	if canonicalPath == mandatoryPayloadPath && !newTarget.Defined() {
-		return nil, ErrDeletingPayloadBinding
-	}
-
 	if w.freshness != nil {
 		unlock, err := w.freshness.beginUpdate(namespace, root)
 		if err != nil {
@@ -561,8 +541,8 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 		defer unlock()
 	}
 
-	// Step 1: Snapshot the current arc set for delta computation and payload
-	// validation, then read the target path through ArcTable.Get for operation
+	// Step 1: Snapshot the current arc set for delta computation, then read the
+	// target path through ArcTable.Get for operation
 	// classification. Get must stay in the classification path because some
 	// backends may tolerate corrupt entries while materializing broad snapshots;
 	// a targeted read needs to fail closed instead of turning corruption into a
@@ -571,16 +551,9 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if err != nil {
 		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
-	hasPayload, err := hasDefinedPayloadBinding(snapshot)
-	if err != nil {
-		return nil, err
-	}
-	if !hasPayload && !(canonicalPath == mandatoryPayloadPath && newTarget.Defined()) {
-		return nil, ErrMissingPayloadBinding
-	}
 	oldTarget, err := w.arctable.Get(ctx, namespace, root, canonicalPath)
 	if err != nil {
-		if !arctable.IsNotFound(err) {
+		if !errors.Is(err, arcset.ErrNotFound) {
 			return nil, fmt.Errorf("ArcTable.Get failed: %w", err)
 		}
 		oldTarget = cid.Undef
@@ -697,10 +670,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err != nil {
 		return nil, err
 	}
-	if payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]; ok && !payloadTarget.Defined() {
-		return nil, ErrDeletingPayloadBinding
-	}
-
 	if w.freshness != nil {
 		unlock, err := w.freshness.beginUpdate(namespace, root)
 		if err != nil {
@@ -714,17 +683,6 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err != nil {
 		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
 	}
-	hasPayload, err := hasDefinedPayloadBinding(snapshot)
-	if err != nil {
-		return nil, err
-	}
-	if !hasPayload {
-		payloadTarget, ok := normalizedUpdates[mandatoryPayloadPath]
-		if !ok || !payloadTarget.Defined() {
-			return nil, ErrMissingPayloadBinding
-		}
-	}
-
 	// Step 2: Look up current bindings and classify operations. The snapshot is
 	// still used below to build the ArcTable delta, but classification uses
 	// BatchGet so backend read failures fail closed while missing paths are
@@ -856,14 +814,6 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	if err != nil {
 		return cid.Undef, err
 	}
-	hasPayload, err := hasDefinedPayloadBinding(normalizedSnapshot)
-	if err != nil {
-		return cid.Undef, err
-	}
-	if !hasPayload {
-		return cid.Undef, ErrMissingPayloadBinding
-	}
-
 	// Step 1: Commit arc set via semantic layer
 	view, err := mapping.NewViewFromArcSet(normalizedSnapshot)
 	if err != nil {
@@ -918,7 +868,7 @@ func (w *Writer) GetArc(ctx context.Context, namespace string, root cid.Cid, pat
 
 	target, err := w.arctable.Get(ctx, namespace, root, canonicalPath)
 	if err != nil {
-		if arctable.IsNotFound(err) {
+		if errors.Is(err, arcset.ErrNotFound) {
 			return cid.Undef, fmt.Errorf("%s: %w", canonicalPath.String(), ErrArcNotFound)
 		}
 		return cid.Undef, fmt.Errorf("ArcTable.Get failed: %w", err)

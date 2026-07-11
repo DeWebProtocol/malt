@@ -78,7 +78,8 @@ func NewLocalMALTSystemWithFiles(ctx context.Context, store *casmock.CAS, files 
 		arcs[file.Path] = payloadCID
 	}
 
-	// Every MALT-native map object requires a @payload binding.
+	// The maltflat benchmark exercises terminal payload materialization, so its
+	// fixture includes the standard @payload coordinate.
 	payloadCID, err := store.Put(ctx, []byte("eval-payload"))
 	if err != nil {
 		return nil, fmt.Errorf("put payload: %w", err)

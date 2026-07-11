@@ -11,8 +11,6 @@ import (
 	structure "github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/graph"
-	"github.com/dewebprotocol/malt/graph/resolver"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -193,21 +191,15 @@ func testCID(t *testing.T, seed string) cid.Cid {
 }
 
 type fakeRuntime struct {
-	resolver *fakeResolver
-	maps     *fakeMapSemantics
-	lists    *fakeListSemantics
+	maps  *fakeMapSemantics
+	lists *fakeListSemantics
 }
 
 func newFakeRuntime() *fakeRuntime {
 	return &fakeRuntime{
-		resolver: &fakeResolver{valid: true},
-		maps:     &fakeMapSemantics{valid: true},
-		lists:    &fakeListSemantics{valid: true},
+		maps:  &fakeMapSemantics{valid: true},
+		lists: &fakeListSemantics{valid: true},
 	}
-}
-
-func (r *fakeRuntime) Resolver() graph.Resolver {
-	return r.resolver
 }
 
 func (r *fakeRuntime) Semantic() mapping.Semantics {
@@ -216,23 +208,6 @@ func (r *fakeRuntime) Semantic() mapping.Semantics {
 
 func (r *fakeRuntime) ListSemantic() list.Semantics {
 	return r.lists
-}
-
-type fakeResolver struct {
-	valid bool
-	err   error
-}
-
-func (r *fakeResolver) ResolveKey(context.Context, cid.Cid, string) (*resolver.ResolveResult, error) {
-	return nil, errors.New("ResolveKey should not be called")
-}
-
-func (r *fakeResolver) Resolve(context.Context, cid.Cid, string) (*resolver.ResolveResult, error) {
-	return nil, errors.New("Resolve should not be called")
-}
-
-func (r *fakeResolver) VerifyTranscript(context.Context, cid.Cid, *resolver.Transcript) (bool, error) {
-	return r.valid, r.err
 }
 
 type mapVerifyCall struct {

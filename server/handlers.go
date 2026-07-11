@@ -85,7 +85,7 @@ func (s *Server) pathStatForTarget(ctx context.Context, g runtimeGraph, target c
 		} else if !errors.Is(err, errNotUnixFSFile) {
 			return nil, err
 		}
-		payload, err := mandatoryMapPayload(ctx, g, target)
+		payload, err := materializedMapPayload(ctx, g, target)
 		if err != nil {
 			return nil, err
 		}
@@ -139,11 +139,11 @@ func (s *Server) readProofList(ctx context.Context, g runtimeGraph, resolved *pa
 		if start < 0 {
 			return nil, fmt.Errorf("range start is negative")
 		}
-		layout, err := s.unixFSLayout(g)
+		reader, err := s.unixFSReader(g)
 		if err != nil {
 			return nil, err
 		}
-		if err := layout.AppendListPayloadRangeProof(ctx, &pl, resolved.queryPath, listRoot, uint64(start), uint64(endExclusive-start)); err != nil {
+		if err := reader.AppendListPayloadRangeProof(ctx, &pl, resolved.queryPath, listRoot, uint64(start), uint64(endExclusive-start)); err != nil {
 			return nil, err
 		}
 	}
@@ -172,20 +172,31 @@ func (s *Server) legacyPathStat(ctx context.Context, g runtimeGraph, root cid.Ci
 	return s.pathStatForTarget(ctx, g, key, false)
 }
 
-func (s *Server) unixFSLayout(g runtimeGraph) (*unixfs.Layout, error) {
-	blocks, ok := s.node.CAS().(cas.Client)
-	if !ok {
-		return nil, fmt.Errorf("configured CAS does not support writes")
-	}
-	return unixfs.New(unixfs.Options{
+func (s *Server) unixFSReader(g runtimeGraph) (unixfs.Reader, error) {
+	return unixfs.NewReader(unixfs.ReaderOptions{
 		Namespace: g.Namespace(),
 		Map:       g.Semantic(),
 		List:      g.ListSemantic(),
-		Blocks:    blocks,
+		Blocks:    s.node.CAS(),
 	})
 }
 
-func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
+func (s *Server) unixFSWriter(g runtimeGraph) (unixfs.Writer, error) {
+	blocks := s.node.CAS()
+	blockWriter, ok := blocks.(cas.Writer)
+	if !ok {
+		return nil, fmt.Errorf("configured CAS does not support writes")
+	}
+	return unixfs.NewWriter(unixfs.WriterOptions{
+		Namespace:   g.Namespace(),
+		Map:         g.Semantic(),
+		List:        g.ListSemantic(),
+		Blocks:      blocks,
+		BlockWriter: blockWriter,
+	})
+}
+
+func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout unixfs.Writer, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, nil
 	}
@@ -203,7 +214,7 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout *
 	return cid.Undef, nil
 }
 
-func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
+func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, layout unixfs.Writer, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
 	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
 		if maltcid.SemanticKindOf(newRoot) != maltcid.SemanticKindMap {
 			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
@@ -233,11 +244,11 @@ func (s *Server) applyWriterMutation(ctx context.Context, g runtimeGraph, mut wr
 	return graphService{runtime: g}.ApplyMutation(ctx, mut)
 }
 
-func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, legacyRoot cid.Cid) (cid.Cid, error) {
+func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g runtimeGraph, layout unixfs.Writer, legacyRoot cid.Cid) (cid.Cid, error) {
 	return s.copyLegacyPathToUnixFS(ctx, g, layout, legacyRoot, "", cid.Undef, "")
 }
 
-func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g runtimeGraph, layout *unixfs.Layout, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
+func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g runtimeGraph, layout unixfs.Writer, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
 	stat, err := s.legacyPathStat(ctx, g, legacyRoot, legacyPath)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("migrate legacy path %q: %w", legacyPath, err)
@@ -327,11 +338,11 @@ func (s *Server) readStatFile(ctx context.Context, g runtimeGraph, stat *httpapi
 }
 
 func (s *Server) unixFSPathStat(ctx context.Context, g runtimeGraph, root cid.Cid, p string) (*httpapi.PathStatResponse, error) {
-	layout, err := s.unixFSLayout(g)
+	reader, err := s.unixFSReader(g)
 	if err != nil {
 		return nil, err
 	}
-	stat, err := layout.Stat(ctx, root, p)
+	stat, err := reader.Stat(ctx, root, p)
 	if err != nil {
 		return nil, fmt.Errorf("%w: stat unixfs node: %v", errNotUnixFSFile, err)
 	}
@@ -363,11 +374,11 @@ func (s *Server) unixFSPathStat(ctx context.Context, g runtimeGraph, root cid.Ci
 }
 
 func (s *Server) listFileSize(ctx context.Context, g runtimeGraph, listRoot cid.Cid) (int64, uint64, error) {
-	layout, err := s.unixFSLayout(g)
+	reader, err := s.unixFSReader(g)
 	if err != nil {
 		return 0, 0, err
 	}
-	size, count, err := layout.ListPayloadSize(ctx, listRoot)
+	size, count, err := reader.ListPayloadSize(ctx, listRoot)
 	return int64(size), count, err
 }
 
@@ -378,11 +389,11 @@ func (s *Server) readListRange(ctx context.Context, g runtimeGraph, listRoot cid
 	if start < 0 {
 		return nil, fmt.Errorf("range start is negative")
 	}
-	layout, err := s.unixFSLayout(g)
+	reader, err := s.unixFSReader(g)
 	if err != nil {
 		return nil, err
 	}
-	return layout.ReadListPayloadRange(ctx, listRoot, uint64(start), uint64(endExclusive-start))
+	return reader.ReadListPayloadRange(ctx, listRoot, uint64(start), uint64(endExclusive-start))
 }
 
 func parseRangeHeader(raw string, size int64) (start int64, endExclusive int64, partial bool, err error) {
@@ -446,13 +457,13 @@ func resolveMiss(_ cid.Cid, _ string, result *resolver.ResolveResult) bool {
 	return !result.RemainingPath.IsEmpty()
 }
 
-func mandatoryMapPayload(ctx context.Context, g runtimeGraph, root cid.Cid) (cid.Cid, error) {
+func materializedMapPayload(ctx context.Context, g runtimeGraph, root cid.Cid) (cid.Cid, error) {
 	payload, err := g.Writer().GetArc(ctx, g.Namespace(), root, explicit.PayloadArc.String())
 	if err != nil {
 		return cid.Undef, err
 	}
 	if !payload.Defined() {
-		return cid.Undef, fmt.Errorf("map root %s is missing mandatory @payload binding", root.String())
+		return cid.Undef, fmt.Errorf("map root %s cannot be materialized without an @payload binding", root.String())
 	}
 	return payload, nil
 }

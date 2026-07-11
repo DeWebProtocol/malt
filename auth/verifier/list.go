@@ -11,8 +11,11 @@ import (
 )
 
 // VerifyProofListListStructure verifies list-backed ProofList structure steps
-// through the supplied list semantic backend.
-func VerifyProofListListStructure(lists list.Semantics, step prooflist.Step, stepIndex int) (bool, error) {
+// through the supplied verification-only list backend.
+func VerifyProofListListStructure(lists ListVerifier, step prooflist.Step, stepIndex int) (bool, error) {
+	if lists == nil {
+		return false, fmt.Errorf("prooflist step %d list verifier is nil", stepIndex)
+	}
 	switch step.EvidenceBackend {
 	case "list":
 		if step.Index == nil {
@@ -38,7 +41,7 @@ func VerifyProofListListStructure(lists list.Semantics, step prooflist.Step, ste
 		if step.ChunkSize == nil {
 			return false, fmt.Errorf("prooflist step %d list range chunk size is missing", stepIndex)
 		}
-		measured, ok := lists.(list.MeasuredSemantics)
+		measured, ok := lists.(MeasuredListVerifier)
 		if !ok {
 			return false, fmt.Errorf("prooflist step %d has measured list evidence but graph list semantic does not support measured ranges", stepIndex)
 		}

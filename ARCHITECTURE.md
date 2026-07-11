@@ -2,15 +2,17 @@
 
 ## Overview
 
-MALT targets authentication for structured data whose relationships can be
-normalized into semantic objects and authenticated relations.
+MALT is a general graph data-authentication system. Its authentication
+granularity is a typed arc rather than a storage block. Immutable payload bytes
+remain in content-addressed storage (CAS), while vector-commitment (VC) backends
+commit to and prove map/list relations under typed MALT roots.
 
-MALT core consists of ArcTable, stateless commitment backends, and the list/map
-semantic layer. Immutable payload bytes can be stored naturally in CAS, but CAS
-is an engineering substrate for payload objects rather than the first definition
-of the abstraction. A MALT graph is not a Go runtime object that merely holds
-dependencies. It is the authenticated structure induced by list/map semantics,
-ArcTable arcset persistence, and stateless commitment proofs.
+The trusted MALT kernel consists of canonical arc and root rules, commitment
+verification, semantic proof rules, and portable ProofList verification.
+ArcTable, concrete semantic implementations used to generate proofs, caches,
+storage adapters, daemons, and gateways form an untrusted execution engine.
+They may accelerate reads and mutations, but they are not correctness
+authorities. UnixFS is one application layout over this model.
 
 This repository packages that core as a specification implementation with a
 reference runtime and evaluation gateway. Production managed-gateway behavior
@@ -20,10 +22,10 @@ the separate `DeWebProtocol/gateway` service repository or private deployment
 overlays.
 
 ```text
-GraphRead(root, query) -> result + ProofList
-VerifyRead(root, query, result, ProofList) -> valid / invalid
+Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
+VerifyRead(request, result) -> valid / invalid
 
-ApplyMutation(baseRoot, semantic mutation) -> newRoot + writeReceipt
+Apply(semantic mutation with base root) -> result root + write receipt
 ```
 
 List and map are semantic abstractions:
@@ -33,34 +35,37 @@ List and map are semantic abstractions:
 - map semantic: authenticated keyed/path-like relations from semantic objects
   to target CIDs
 
-ArcTable is namespace-scoped arcset persistence/materialization and does
-not provide correctness by itself. Commitment backends are stateless
-vector-commitment primitives used to authenticate semantic-layer
-representations. `graph` is a runtime composition boundary around resolver and
-writer ports, not a separate semantic owner or a graph-node interface
-hierarchy. Resolver traversal lives under `graph/resolver`; mutation
-application lives under `graph/writer`. Layouts translate source-domain data
-into writer semantic mutations. Server routes execute resolver/writer ports;
-client-side layout code composes layout mutations.
+The module-root `package malt` is the typed application-neutral facade.
+`Engine.Read`, `Engine.Apply`, and `Engine.VerifyRead` compose execution-plane
+implementations while hiding runtime scope from canonical requests. The engine
+is still untrusted: `VerifyRead` binds a caller-supplied trusted root and typed
+query to the returned target, optional range segments, and ProofList before the
+portable `auth/verifier` checks the evidence.
+
+ArcTable is namespace-scoped arcset persistence/materialization and provides no
+correctness by itself. `graph` is a runtime composition boundary around
+resolver and writer ports, not a semantic owner or graph-node hierarchy.
+Layouts translate domain operations into typed arc queries and semantic
+mutations. Server routes execute adapters over these contracts.
 
 This document is implementation-oriented. For the shorter system overview, see
 [`README.md`](./README.md).
 
-## Target Core Model
+## Core Model
 
-The target model has four distinct layers:
+The implementation separates the trusted authentication kernel from reusable
+but untrusted execution and application layers:
 
 | Layer | Responsibility |
 | --- | --- |
-| Semantic layer | Abstract list/map semantics |
-| ArcTable | Namespace-scoped arcset persistence/materialization |
-| Commitment backend | Stateless proof and verification over semantic-layer representations |
-| Resolver / writer ports | Read/proof and mutation boundaries over semantic state |
-| Server API | Reference runtime and eval-gateway surface exposing resolver/writer ports |
-| Application layout | Product data model built above list/map semantics and immutable payload objects |
+| Portable auth kernel | Canonical arcs, typed roots, VC verification, semantic proof rules, and ProofList validation |
+| Root `malt` facade | Typed `Query`, `ReadRequest`, `ReadResult`, and `Engine.Read`/`Apply`/`VerifyRead` |
+| Execution engine | Proof generation, mutation application, operational scope, ArcTable, indexes, and caches |
+| Runtime adapters | Resolver/writer ports, reference daemon, HTTP transport, SDK, and storage wiring |
+| Application layout | Domain model over typed arcs and CAS payloads; UnixFS is one layout |
 
-The public structure layer should expose list/map semantics, not storage
-machinery.
+The public core facade exposes typed semantic operations, not storage machinery
+or a UnixFS path API.
 
 ### Semantic Layer
 
@@ -126,7 +131,8 @@ Native writes:
 - insert absent key
 - replace existing key
 - delete existing key
-- reserved `@payload` binding for every map semantic object
+- optional reserved `@payload` binding when a layout associates payload
+  materialization with the semantic object
 
 The current public package is `auth/semantic/mapping`.
 The primary implementation is `runtime/semantic/mapping/radix`.
@@ -139,9 +145,10 @@ The current explicit resolver is best understood as a compatibility layer above
 map reads. It can implement longest-prefix path policy, but the map semantic
 owns exact key proof generation and verification.
 
-`@payload` is not a UnixFS-only convention. It is the reserved terminal
-materialization binding for map semantic objects. List semantic objects do not
-implicitly redirect through `@payload`.
+`@payload` is the standard reserved terminal materialization coordinate. The
+coordinate is available to every layout, but generic maps are valid without
+it. UnixFS requires it for its file and directory objects. List semantic
+objects do not implicitly redirect through `@payload`.
 
 ### ArcTable
 
@@ -209,6 +216,12 @@ Current package roles are:
     disabled unless the ArcTable is constructed with a BloomCache
 - `auth/commitment`
   - stateless primitive commitment backends
+- `auth/verifier`
+  - portable ProofList verification without runtime, ArcTable, CAS, layout,
+    server, or daemon dependencies
+- module-root `package malt`
+  - typed `Query`, `ReadRequest`, `ReadResult`, and
+    `Engine.Read`/`Apply`/`VerifyRead` facade
 - `layout/unixfs`
   - current pure MALT UnixFS-style layout prototype built directly over
     `mapping.Semantics`, `list.Semantics`, and CAS-backed payload storage
@@ -274,15 +287,17 @@ Current runtime invariants:
 
 - a directory root is a directory-shaped map root
 - a list root represents file-content structure and is not a directory root
-- every MALT-native map root carries the reserved `@payload` binding as a map
-  semantic invariant
-- materializing a bare map root means resolving `@payload` first
+- every UnixFS file or directory map carries the reserved `@payload` binding as
+  a layout invariant; generic MALT maps may omit it
+- the reference compatibility `Resolve` path materializes map roots through
+  `@payload`; generic maps that omit it use `ResolveKey` or typed `Engine.Read`
 - list roots are terminal typed keys and do not auto-redirect through
   `@payload`
 - root-relative path misses are reported as `not found`
 
-Path-miss behavior is a file-layout and product-runtime invariant. The reserved
-`@payload` binding belongs to map semantic objects.
+Path-miss and payload-materialization behavior are file-layout and
+product-runtime invariants. Generic map semantics only reserve the `@payload`
+coordinate; they do not require it.
 
 ## Code Layout
 
@@ -424,12 +439,14 @@ layout-produced semantic mutations, applies map/list deltas, and returns an
 operational receipt. It does not publish an authoritative head; applications
 decide which resulting root becomes current.
 
-`ProofList` is the standard verifier-facing read artifact. It should cover map
+`ProofList` is the standard verifier-facing read artifact. It covers map
 step proofs, terminal `@payload` proofs, list index proofs, measured-list
 `list_range` evidence for range reads, and blob target binding proofs from the
 queried root to the destination. Current `list_range` steps carry fixed chunk
-metadata, covered segment CIDs, and metadata/index proof payload. Response-body
-range binding remains a verifier-contract TODO.
+metadata, covered segment CIDs, and metadata/index proof payload. The portable
+`auth/verifier` checks proof structure and evidence without runtime lookup;
+`layout/unixfs.VerifyRangeBody` separately binds authenticated range segments
+to returned body bytes.
 
 The current daemon has two HTTP proof-bearing read surfaces:
 
@@ -481,10 +498,11 @@ Current boundary:
   `_mutate`.
 - The public CLI exposes ingestion through `malt add`; reads are available
   through the daemon API and proof-bearing resolve/content endpoints.
-- The package still directly injects `mapping.Semantics`, `list.Semantics`,
-  and `cas.Client`; current `graph`, `graph/writer`, and `graph/resolver`
-  remain runtime composition and compatibility adapters rather than semantic
-  owners.
+- The package injects `mapping.Semantics`, `list.Semantics`, and narrow CAS
+  reader/writer capabilities. `NewReader` grants no payload write capability;
+  `NewWriter` receives read and write capabilities explicitly.
+- Current `graph`, `graph/writer`, and `graph/resolver` remain runtime
+  composition and compatibility adapters rather than semantic owners.
 - The current writer receipt, artifact, and `ProofList` reference docs live
   under `docs/spec/`. Proposal-stage MIPs in `docs/mips/` track acceptance,
   remaining open decisions, and follow-up implementation planning rather than
@@ -513,8 +531,8 @@ Metrics:
 
 Open proposal-stage MIPs for the next discussion:
 
-- accept or revise the semantic terminology now summarized in
-  `docs/spec/semantic.md`
+- review the portable arc-authentication contract in MIP-1011 and its
+  `v0alpha1` artifact profile
 - decide whether writer receipts in `docs/spec/writer-receipts.md` become a
   stable API and evaluation accounting contract
 - accept the current ProofList verifier contract in

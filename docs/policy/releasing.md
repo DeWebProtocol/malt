@@ -1,16 +1,16 @@
 # Releasing
 
-MALT does not have a public release line yet. This document defines the release
-process to use once maintainers decide that a commit is ready to tag.
+MALT uses source tags for experimental releases. This document defines the
+process for selecting and validating the exact commit to tag.
 
 ## Versioning
 
-Use semantic version tags once public releases begin:
+Use semantic version tags and standard prerelease identifiers:
 
 ```text
+v0.0.3-rc.1
+v0.0.3
 v0.1.0
-v0.1.1
-v0.2.0
 ```
 
 Before `v1.0.0`, API and schema compatibility may still change. Release notes
@@ -24,6 +24,7 @@ Run from the repository root:
 go test ./...
 go vet ./...
 mkdir -p bin
+go build -buildvcs=false -o bin/cas ./cmd/cas
 go build -buildvcs=false -o bin/malt ./cmd/malt
 go build -buildvcs=false -o bin/malt-eval ./cmd/eval/malt-eval
 bin/malt-eval run --plan examples/eval-smoke-plan.json --run-id release-smoke
@@ -37,19 +38,24 @@ Review:
 - `SECURITY.md` reporting path is still accurate.
 - `cmd/eval/schemas` match current evaluator outputs.
 
-For the current core-boundary release candidate, use
-[`docs/releases/v0.0.3-core-boundary.md`](../releases/v0.0.3-core-boundary.md)
-as the release-note and validation checklist. That candidate is still
-experimental and should be tagged only after maintainer approval.
+For the current release candidate, use
+[`docs/releases/v0.0.3.md`](../releases/v0.0.3.md) as the release-note and
+validation checklist. It requires a portable-verifier smoke, a relation-only
+map test, import-boundary checks, and an external-consumer compile test in
+addition to the repository-wide commands.
 
 ## Tagging
 
-After checks pass:
+For `v0.0.3`, tag the validated candidate first:
 
 ```bash
-git tag -a v0.1.0 -m "MALT v0.1.0"
-git push origin v0.1.0
+git tag -a v0.0.3-rc.1 -m "MALT v0.0.3-rc.1"
+git push origin v0.0.3-rc.1
 ```
+
+After candidate and external-consumer validation, tag the exact same approved
+release commit as `v0.0.3`, or rerun validation if the commit changes. Do not
+use `v0.0.3-core-boundary` as the final tag.
 
 Create GitHub release notes with:
 

@@ -6,8 +6,13 @@ resolved target.
 
 ## Status
 
-Experimental and implementation-bound. The JSON shape is verifier-facing but
-not yet a stable release contract.
+The current contract profile is `v0alpha1`. It is experimental and
+implementation-bound: the JSON shape is verifier-facing but not a stable
+cross-release contract. The envelope does not yet carry an embedded version
+field or have a stable named JSON Schema.
+
+Portable verification is implemented by `auth/verifier`. It performs no
+ArcTable, CAS, runtime, layout, server, daemon, or network lookup.
 
 ## Envelope
 
@@ -28,7 +33,7 @@ unknown step kinds, undefined `from` or `target` CIDs, and any step whose
 | Kind | Role |
 | --- | --- |
 | `map_step` | Authenticates a keyed map relation. |
-| `payload_binding` | Authenticates the reserved terminal `@payload` map binding. |
+| `payload_binding` | Authenticates the optional reserved terminal `@payload` map binding when a layout uses it. |
 | `list_index` | Authenticates one list index binding. |
 | `list_range` | Authenticates measured-list byte range metadata and covered segments. |
 | `blob_binding` | Binds a resolved structure target to an immutable blob target. |
@@ -65,8 +70,39 @@ Steps form a linear chain unless they are terminal list evidence:
 3. List index or list range evidence may appear at the terminal phase.
 4. No later traversal step may appear after list index or list range evidence.
 
-This shape validation is structural. Cryptographic or semantic verification is
-owned by the concrete backend that emitted each proof payload.
+This shape validation is structural. `auth/verifier` then selects a
+verification-only backend from the typed root and checks the map/list evidence.
+The verifier must reject unsupported or mismatched evidence labels rather than
+falling back to runtime state.
+
+## Typed Read Binding
+
+The root `malt` facade binds a ProofList to a typed read before accepting it:
+
+```text
+ReadRequest{Root, Query}
+ReadResult{Target, Segments, ProofList}
+VerifyRead(request, result)
+```
+
+`VerifyRead` requires the ProofList root and query to match the request, exactly
+one primitive proof step whose kind and coordinate match the typed query, the
+last proof target to match `ReadResult.Target`, and range segments to match
+`ReadResult.Segments`. This rejects cross-kind confusion such as satisfying a
+list query with a valid map proof for a similarly named key. Only after those
+bindings pass does it delegate cryptographic and semantic checks to
+`auth/verifier`.
+
+The `v0alpha1` `Query.Kind` values are `map_key`, `list_index`, and
+`list_range`. Their current ProofList `query` labels are:
+
+| Query kind | ProofList `query` label |
+| --- | --- |
+| `map_key` | canonical map key/path text |
+| `list_index` | `list:<index>` |
+| `list_range` | `range:<start>:<end>`; an empty end means authenticated EOF |
+
+These encodings remain experimental and consumers must pin a MALT release.
 
 ## HTTP Transport
 
@@ -93,7 +129,7 @@ JSON and place proof evidence in headers:
 
 ## Range Evidence
 
-Large-file byte-range reads currently use:
+UnixFS large-file byte-range reads currently use:
 
 1. map/path proof to the file object
 2. terminal `@payload` proof to the list root
@@ -102,6 +138,10 @@ Large-file byte-range reads currently use:
 The `list_range` step carries fixed chunk metadata, covered segment CIDs, and
 metadata/index proof bytes. Verifiers must reject range proofs that shift byte
 boundaries, omit covered segment bindings, or mismatch the measured metadata.
+
+`@payload` is reserved but optional in generic map state. The UnixFS layout
+requires it and therefore emits the terminal payload-binding step shown above;
+a generic relation-only map ProofList does not need such a step.
 
 The `list_range` step authenticates range metadata and segment CIDs, not raw
 HTTP body bytes by itself. A verifier that accepts returned range body bytes
@@ -121,3 +161,5 @@ mismatches, short segment data, and tampered returned bytes.
   formalization and range-body helper integration.
 - [MIP-1006](../mips/mip-1006-variable-size-measured-list-evidence.md) tracks a
   future variable-size measured-list model.
+- [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
+  typed read/result binding around this artifact.

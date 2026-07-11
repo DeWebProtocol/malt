@@ -165,7 +165,6 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 	changes := delta.Changes.Changes()
 	if !delta.Object.Defined() {
 		entries := make(map[arcset.Path]cid.Cid, len(changes))
-		hasPayload := false
 		for _, change := range changes {
 			if change.Before != nil {
 				return cid.Undef, fmt.Errorf("create map delta has before value for %s", change.Coordinate.String())
@@ -174,13 +173,7 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 				return cid.Undef, fmt.Errorf("create map delta deletes %s", change.Coordinate.String())
 			}
 			key := arcset.CanonicalizePath(change.Coordinate.String())
-			if key.String() == "@payload" {
-				hasPayload = true
-			}
 			entries[key] = change.After.CID()
-		}
-		if !hasPayload {
-			return cid.Undef, arcset.ErrMissingPayloadBinding
 		}
 		view := mapping.NewViewFromPaths(entries)
 		root, err := w.semantic.Commit(ctx, namespace, view)
@@ -227,9 +220,6 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 		newValue := cid.Undef
 		if change.After != nil {
 			newValue = change.After.CID()
-		}
-		if key.String() == "@payload" && !newValue.Defined() {
-			return cid.Undef, arcset.ErrMissingPayloadBinding
 		}
 		nextRoot, err := w.semantic.Update(ctx, namespace, root, key, oldValue, newValue)
 		if err != nil {

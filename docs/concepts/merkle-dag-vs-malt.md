@@ -8,10 +8,12 @@ does not use the Merkle-DAG object chain as the application proof path.
 
 | Concern | Merkle DAG | MALT |
 | --- | --- | --- |
+| Authentication granularity | Parent/child links committed at block boundaries | Typed arcs committed independently from payload blocks |
 | Payload storage | Immutable content-addressed objects | Ordinary immutable CAS payloads |
 | Relationship authentication | Links embedded in parent object content | Typed map/list semantics under structure roots |
-| Read shape | Traverse linked objects from a root CID | Query `root + path` |
+| Read shape | Traverse linked objects from a root CID | Query `trusted root + typed arc`; layouts may expose paths |
 | Proof material | Traversal objects and sibling or linked evidence | Dedicated `ProofList` evidence |
+| Trusted components | Traversed content-addressed object chain | Portable auth kernel; indexes and gateways remain untrusted |
 | HTTP content reads | HTTP can transport blocks or gateway responses | Body can be ordinary HTTP content, proof can ride in `X-Malt-ProofList` |
 | Update cost | Child-reference changes can propagate rootward | Structure roots advance without rewriting unrelated payload objects |
 
@@ -26,7 +28,7 @@ MALT separates the proof from the payload object chain. The verifier checks a
 `ProofList` against a trusted MALT root, query, and result:
 
 ```text
-VerifyRead(root, query, result, ProofList) -> valid / invalid
+VerifyRead(ReadRequest, ReadResult) -> valid / invalid
 ```
 
 For flat MALT lookups, proof material for each semantic lookup is fixed-size
@@ -35,20 +37,22 @@ multiple semantic lookups or range segments carries the corresponding proof
 steps, but the proof is still a dedicated verifier artifact rather than the
 Merkle-DAG traversal objects themselves.
 
-## Direct Root And Path Reads
+## Direct Root And Typed Query Reads
 
 Merkle-DAG readers normally traverse from object to object. A gateway can hide
 that traversal, but then the client must either trust the gateway's answer or
 fetch enough evidence to verify the traversal.
 
-MALT's read contract is root-relative:
+MALT's core read contract is root-relative and typed:
 
 ```text
-Read(root, path) -> result + ProofList
+Read(ReadRequest{Root, Query}) -> ReadResult{Target, ProofList}
 ```
 
-The application can request the object it wants by path, and the verifier checks
-the result against the trusted root.
+The application requests one authenticated relation, and the verifier checks
+the result against the trusted root and query. A layout such as UnixFS can
+compose primitive arc reads into a path without making Unix paths part of the
+generic core.
 
 ## HTTP Proof Transport
 

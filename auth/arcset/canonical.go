@@ -28,9 +28,6 @@ var (
 	// ErrDuplicateCoordinate is returned when one canonical coordinate has conflicting targets.
 	ErrDuplicateCoordinate = errors.New("duplicate canonical coordinate")
 
-	// ErrMissingPayloadBinding is returned when a map canonical arc set lacks its mandatory payload binding.
-	ErrMissingPayloadBinding = errors.New("mandatory @payload binding is missing")
-
 	// ErrInvalidMapCoordinate is returned when map coordinates are not canonical path/key tokens.
 	ErrInvalidMapCoordinate = errors.New("invalid canonical map coordinate")
 
@@ -55,8 +52,6 @@ const (
 	TargetKindMap     TargetKind = "map"
 	TargetKindList    TargetKind = "list"
 )
-
-var canonicalPayloadCoordinate = []byte("@payload")
 
 // TargetRef is a typed CID reference stored by a canonical entry.
 type TargetRef struct {
@@ -214,10 +209,6 @@ func NewCanonicalArcSet(kind Kind, entries []ArcEntry) (*CanonicalArcSet, error)
 		return nil, err
 	}
 	normalized = collapseEquivalentDuplicates(normalized)
-
-	if kind == KindMap && !hasPayloadBinding(normalized) {
-		return nil, ErrMissingPayloadBinding
-	}
 
 	return &CanonicalArcSet{kind: kind, entries: cloneEntries(normalized)}, nil
 }
@@ -573,16 +564,6 @@ func collapseEquivalentDuplicates(entries []ArcEntry) []ArcEntry {
 		out = append(out, cloneEntry(entry))
 	}
 	return out
-}
-
-func hasPayloadBinding(entries []ArcEntry) bool {
-	count := 0
-	for _, entry := range entries {
-		if bytes.Equal(entry.Coordinate.bytes, canonicalPayloadCoordinate) && entry.Target.target.Defined() {
-			count++
-		}
-	}
-	return count == 1
 }
 
 func cloneEntries(entries []ArcEntry) []ArcEntry {
