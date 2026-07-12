@@ -10,9 +10,12 @@ Experimental and implementation-bound. Breaking route or DTO changes are
 allowed before a stable release, but they should update tests and docs in the
 same PR.
 
-This API is a reference transport projection. The application-neutral core
-contract is the module-root `malt` facade; managed gateways do not need to
-import `server` or reproduce these routes.
+Most of this API is a reference transport projection. The application-neutral
+core contract is the module-root `malt` facade; managed gateways do not need to
+import `server` or reproduce the local runtime routes. The three
+`/v1/artifacts/*` routes are the stable transport projection for new gateway,
+daemon, and SDK integrations. Their schemas are defined in
+[Artifacts and schemas](./artifacts.md).
 
 ## Core Routes
 
@@ -23,6 +26,9 @@ import `server` or reproduce these routes.
 | `/metrics` | `GET` | Runtime evaluation counters. |
 | `/metrics:reset` | `POST` | Reset runtime evaluation counters. |
 | `/verify` | `POST` | Verify a ProofList through the portable auth verifier adapter. |
+| `/v1/artifacts/resolve` | `POST` | Resolve a segment array and return a profiled proof-carrying artifact. |
+| `/v1/artifacts/prove` | `POST` | Prove one primitive typed map/list query. |
+| `/v1/artifacts/verify` | `POST` | Verify a complete profiled artifact. |
 | `/{root}/_mutate` | `POST` | Apply a root-relative semantic mutation. |
 | `/_unixfs?path=...` | `POST` | Create a new UnixFS-style root from uploaded payload data. |
 | `/resolve/{root}` and `/resolve/{root}/{path...}` | `GET` | Resolve a target CID and optional ProofList. |
@@ -125,7 +131,7 @@ through browser CORS by default.
 
 - [MIP-1002](../mips/mip-1002-writer-receipt-accounting.md) tracks receipt
   accounting decisions.
-- [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) tracks the
-  decision about stable named schemas for resolve and ProofList artifacts.
+- [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) defines the
+  profiled resolve/prove/verify artifacts and named schemas.
 - [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
   transport-independent typed read and verification boundary.

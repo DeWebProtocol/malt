@@ -151,6 +151,11 @@ applications compose primitive reads when their domain operation requires
 multi-step traversal. The core facade does not standardize a Unix path policy,
 directory manifest, HTTP response, or latest-head service.
 
+MIP-1012 extends this boundary in `v0.0.4` with an application-neutral segment
+array and proof-carrying multi-arc resolution. It does not add Unix, URL, or
+language-object parsing to core and does not change the primitive `Query`
+contract defined here.
+
 ### Reserved `@payload` Coordinate
 
 `@payload` is the standard reserved coordinate for binding a semantic object to
@@ -198,6 +203,11 @@ envelope does not carry an embedded version discriminator and does not yet have
 a stable named JSON Schema. Consumers must pin the MALT module or source
 release. A later MIP may add explicit wire version negotiation or promote a
 machine-readable schema without treating the current shape as stable.
+
+MIP-1004 later publishes `malt.artifact/v0alpha2` as a separate explicit
+cross-process envelope around resolve, primitive prove, and verify. The
+original `v0alpha1` facade described here remains the in-process primitive
+binding baseline.
 
 ### Import Direction
 

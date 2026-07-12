@@ -1,0 +1,126 @@
+package artifact_test
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"testing"
+
+	malt "github.com/dewebprotocol/malt"
+	"github.com/dewebprotocol/malt/artifact"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
+)
+
+type acceptingVerifier struct{}
+
+func (acceptingVerifier) VerifyProofList(context.Context, prooflist.ProofList) (bool, error) {
+	return true, nil
+}
+
+func TestVerifyResolveArtifactBindsSegmentsAndTarget(t *testing.T) {
+	root := testCID(t, "root")
+	target := testCID(t, "target")
+	pl := prooflist.ProofList{
+		Root:  root,
+		Query: "a/b/c/d",
+		Steps: []prooflist.Step{
+			{Kind: prooflist.KindMapStep, From: root, Path: "a/b", Target: target},
+		},
+	}
+	req := artifact.ResolveRequest{
+		Profile:  artifact.Profile,
+		Root:     root.String(),
+		Segments: []string{"a", "b", "c", "d"},
+	}
+	// Build the complete existential derivation expected by the request.
+	root2 := target
+	target2 := testCID(t, "target-2")
+	target3 := testCID(t, "target-3")
+	pl.Steps = []prooflist.Step{
+		{Kind: prooflist.KindMapStep, From: root, Path: "a/b", Target: root2},
+		{Kind: prooflist.KindMapStep, From: root2, Path: "c", Target: target2},
+		{Kind: prooflist.KindMapStep, From: target2, Path: "d", Target: target3},
+	}
+	art, err := artifact.NewResolveArtifact(req, target3, pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.Verify(context.Background(), artifact.VerifyRequest{
+		Profile: artifact.Profile, Artifact: art,
+	}, acceptingVerifier{}); err != nil {
+		t.Fatalf("Verify() failed: %v", err)
+	}
+
+	art.Target = testCID(t, "tampered").String()
+	if err := artifact.Verify(context.Background(), artifact.VerifyRequest{
+		Profile: artifact.Profile, Artifact: art,
+	}, acceptingVerifier{}); err == nil {
+		t.Fatal("Verify() accepted a tampered target")
+	}
+}
+
+func TestResolveArtifactDoesNotRequireLongestOrUniqueProof(t *testing.T) {
+	root := testCID(t, "root")
+	target := testCID(t, "target")
+	req := artifact.ResolveRequest{Profile: artifact.Profile, Root: root.String(), Segments: []string{"a", "b"}}
+	pl := prooflist.ProofList{
+		Root: root, Query: "a/b",
+		Steps: []prooflist.Step{{Kind: prooflist.KindMapStep, From: root, Path: "a/b", Target: target}},
+	}
+	art, err := artifact.NewResolveArtifact(req, target, pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.Verify(context.Background(), artifact.VerifyRequest{
+		Profile: artifact.Profile, Artifact: art,
+	}, acceptingVerifier{}); err != nil {
+		t.Fatalf("Verify() failed: %v", err)
+	}
+}
+
+func TestPublishedSchemasAreJSONObjects(t *testing.T) {
+	for _, name := range artifact.SchemaNames() {
+		data, err := artifact.Schema(name)
+		if err != nil {
+			t.Fatalf("Schema(%q): %v", name, err)
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			t.Fatalf("Schema(%q) is invalid JSON: %v", name, err)
+		}
+		if parsed["$schema"] == nil || parsed["$id"] == nil {
+			t.Fatalf("Schema(%q) lacks identity metadata", name)
+		}
+	}
+}
+
+func TestQueryFromCoreRejectsUnsupportedKind(t *testing.T) {
+	if _, err := artifact.QueryFromCore(malt.Query{Kind: malt.QueryKind("future")}); err == nil {
+		t.Fatal("QueryFromCore accepted an unsupported query kind")
+	}
+}
+
+func TestRootIdentityConformanceFixture(t *testing.T) {
+	data, err := os.ReadFile("testdata/v0alpha2/verify-root-request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request artifact.VerifyRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.Verify(context.Background(), request, acceptingVerifier{}); err != nil {
+		t.Fatalf("fixture did not verify: %v", err)
+	}
+}
+
+func testCID(t *testing.T, seed string) cid.Cid {
+	t.Helper()
+	hash, err := mh.Sum([]byte(seed), mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cid.NewCidV1(cid.Raw, hash)
+}

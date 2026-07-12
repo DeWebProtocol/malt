@@ -114,9 +114,17 @@ not match the query and evidence.
 ### Path Canonicalization Ambiguity
 
 Path parsing ambiguity can create disagreement between writer, resolver, and
-verifier behavior. Root-relative HTTP and UnixFS path parsers reject ambiguous
-transport paths such as parent traversal forms before typed-query construction.
-Generic map coordinates are not Unix paths: the portable verifier compares them
-using `auth/arcset` canonicalization and does not add transport-layer cleaning.
-Future changes to either policy should include verifier-facing tests and
-documentation updates.
+verifier behavior. The profiled artifact API carries canonical segment arrays;
+it does not apply filesystem dot-segment or whitespace cleaning. Root-relative
+legacy HTTP and UnixFS adapters may reject reserved transport paths before
+typed-query construction. Generic map coordinates are not Unix paths.
+
+### Alternative Valid Derivation
+
+If a root authenticates overlapping arcs, an untrusted resolver may choose a
+different complete derivation than an application expected. The artifact
+verifier proves the returned derivation but does not prove it was longest or
+unique. Applications that require one deterministic namespace must enforce an
+overlap/conflict policy when constructing or accepting the layout. This is
+separate from proof soundness: invalid evidence or a path that does not fully
+consume the requested segments is still rejected.

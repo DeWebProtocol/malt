@@ -13,12 +13,13 @@ persistence.
 | Version | Security support |
 | --- | --- |
 | `main` | Best-effort review of current integration code |
-| `v0.0.3` | Current supported experimental source release |
+| `v0.0.4` | Current supported experimental source release |
+| `v0.0.3` | Previous experimental source release |
 | `v0.0.2` and earlier | Not supported |
 
 MALT remains pre-`v1.0.0` and experimental. Security fixes may require
 breaking API, proof, root, or wire-format changes. Reproducible consumers
-should pin `v0.0.3` rather than depend on `main`.
+should pin `v0.0.4` rather than depend on `main`.
 
 ## Reporting a Vulnerability
 

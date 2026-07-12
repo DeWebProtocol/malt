@@ -1,91 +1,68 @@
 ---
 mip: 1004
-title: Resolve And ProofList Artifact Schema
-description: Decide whether exported resolve JSON and bare ProofList JSON need stable named schemas.
+title: Resolve, Prove, And Verify Artifact Schema
+description: Publish profiled transport-neutral artifacts and schemas for resolution, primitive proofs, and verification.
 author: MALT maintainers
-status: Review
+status: Final
 type: Standards Track
 category: Interface
 created: 2026-05-25
-requires: 1003
+requires: 1003, 1011, 1012
 replaces: none
 ---
 
 ## Abstract
 
-This MIP records the current decision boundary for the artifact surfaces
-described in [`docs/spec/artifacts.md`](../spec/artifacts.md): what is
-documented for `v0.0.3`, and what is deferred until a stable schema line.
+MALT `v0.0.4` publishes the `malt.artifact/v0alpha2` contract for `resolve`,
+`prove`, and `verify`. The contract binds a trusted root, typed query, target,
+optional measured-range segments, and ProofList in one transport-neutral
+envelope with checked-in JSON Schemas.
 
 ## Motivation
 
-`malt resolve` currently prints JSON containing `target` plus optional
-`prooflist`, and `malt verify --prooflist` accepts both bare ProofList JSON and
-resolve JSON containing a `prooflist` field. Benchmark and paper artifacts need
-the current shape documented, but premature stable named schemas would imply a
-compatibility commitment the repository has not yet made.
+The `v0.0.3` facade stabilized the in-process root/query/result binding but the
+CLI resolve DTO and bare ProofList did not carry a version discriminator or a
+complete self-describing request binding. Gateways, daemons, and cross-language
+SDKs need one shared contract rather than independently reconstructing those
+bindings from routes or headers.
 
-## Specification
+## Decision
 
-The current artifact reference lives in
-[`docs/spec/artifacts.md`](../spec/artifacts.md). For
-`v0.0.3`:
+- The Go package is the unversioned `artifact`; package names do not contain
+  release or alpha suffixes.
+- Every serialized request, artifact, and result carries the exact profile
+  `malt.artifact/v0alpha2`.
+- `resolve` accepts a root plus canonical MALT segments and returns one complete
+  proof-carrying derivation.
+- `prove` accepts exactly one primitive `map_key`, `list_index`, or
+  `list_range` query.
+- `verify` validates the envelope bindings before portable proof verification.
+- JSON Schemas are checked in under `artifact/schemas`, embedded in the Go
+  package, and identified by stable `$id` values.
+- Schema validation remains distinct from cryptographic and semantic proof
+  verification.
+- Legacy CLI, bare ProofList, and proof-header surfaces remain compatibility
+  adapters rather than the contract new integrations should copy.
 
-- `malt resolve` JSON is documented as `api/http.ResolveResponse`;
-- bare ProofList JSON is documented as `auth/proof/prooflist.ProofList`;
-- proof-bearing content response metadata is documented as
-  `X-Malt-ProofList` plus `X-Malt-ProofList-Encoding`;
-- evaluator record schemas remain the only checked-in machine-readable JSON
-  schemas;
-- resolve JSON and bare ProofList JSON remain experimental and do not get
-  stable named schema files in the `v0.0.3` source release.
+The normative field and verification rules live in
+[`docs/spec/artifacts.md`](../spec/artifacts.md).
 
-A later stable-schema proposal may add named schema files, CLI schema listing,
-and compatibility rules, but that work should happen in a separate issue or PR
-after the verifier contract has settled.
+## Compatibility
 
-## Rationale
-
-Current code evidence:
-
-- `cmd/malt/resolve.go` prints `api/http.ResolveResponse`.
-- `api/http/types.go` defines `ResolveResponse`.
-- `cmd/malt/verify.go` accepts ProofList inputs.
-- `auth/proof/prooflist/prooflist.go` defines bare ProofList.
-- `cmd/eval/schemas` has evaluator schemas but no stable resolve or
-  bare ProofList schema.
-- `docs/spec/artifacts.md` records the current artifact surfaces and explains
-  that schema validation is separate from proof verification.
-
-## Backwards Compatibility
-
-The review decision is intentionally non-breaking: document the current shapes,
-do not add stable named schemas, and do not change runtime output. Adding named
-schemas later must not be presented as proof verification and must document any
-compatibility commitment it introduces.
+This is an opt-in profiled contract. Consumers must reject unknown profiles.
+An incompatible pre-`v1` revision will publish a new profile value and schemas
+instead of silently changing `v0alpha2`.
 
 ## Security Considerations
 
-Schema validation is not proof verification. The MIP must keep structural JSON
-validation separate from cryptographic or semantic verification.
-
-## Implementation Plan
-
-For the current review pass:
-
-- keep the durable artifact reference in `docs/spec/artifacts.md`;
-- do not add stable resolve or ProofList JSON Schema files for `v0.0.3`;
-- keep evaluator schema listing scoped to `cmd/eval/schemas`;
-- revisit named schemas when the repository is ready to commit to a stable
-  artifact compatibility policy.
+A gateway-produced artifact is untrusted until verified relative to a
+caller-accepted root. JSON Schema validation only checks shape. Verification
+must also bind the root, query, target, range segments, ProofList ordering, and
+all backend evidence.
 
 ## History
 
-- 2026-05-25: Created from the previous open TODO list.
-- 2026-06-25: Moved current artifact boundaries to `docs/spec/artifacts.md`;
-  this MIP now tracks whether those artifacts need stable named schemas.
-- 2026-07-06: Recorded the initial core-boundary decision to document current
-  shapes without adding stable named resolve or ProofList JSON schemas; moved
-  to Review for maintainer judgment.
-- 2026-07-11: Carried the same decision into the `v0.0.3` `v0alpha1` artifact
-  profile.
+- 2026-05-25: Opened the question of stable resolve and ProofList schemas.
+- 2026-07-11: Deferred named schemas from the `v0.0.3` `v0alpha1` profile.
+- 2026-07-12: Finalized the profiled resolve/prove/verify contract and schemas
+  for `v0.0.4`.

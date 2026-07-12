@@ -20,7 +20,7 @@ managed product gateway lives outside this repository.
 [Threat Model](./docs/policy/threat-model.md) ·
 [Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
 [MIPs](./docs/mips/README.md) ·
-[v0.0.3 Release](./docs/releases/v0.0.3.md) ·
+[v0.0.4 Release](./docs/releases/v0.0.4.md) ·
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
 
@@ -66,6 +66,10 @@ MALT separates payload storage, arc authentication, and execution/access:
 - content reads can return normal HTTP bodies plus `X-Malt-ProofList` headers
 - clients verify `root + path -> result` without trusting gateways, caches, or
   materialized indexes
+- clients submit canonical segment arrays without discovering how each root
+  groups those segments into authenticated arcs
+- profiled resolve, prove, and verify artifacts carry the trusted inputs,
+  result, and ProofList together across gateway, daemon, and SDK boundaries
 - local structure updates advance structure roots without rewriting unrelated
   payload objects
 
@@ -140,16 +144,18 @@ Current experimental boundaries:
 - no stable public API compatibility guarantee yet
 - large-file byte-range response bodies must be bound to authenticated segment CIDs with layout/unixfs.VerifyRangeBody after ProofList verification
 
-The `v0.0.3` source release introduces the core facade and ProofList binding
-rules as the experimental `v0alpha1` profile. Integrators should pin the exact
-release and review the compatibility notes before upgrading:
+The `v0.0.4` source release adds canonical segment paths and the
+`malt.artifact/v0alpha2` resolve/prove/verify contract with embedded JSON
+Schemas. Integrators should pin the exact release and reject unknown artifact
+profiles:
 
 ```bash
-go get github.com/dewebprotocol/malt@v0.0.3
+go get github.com/dewebprotocol/malt@v0.0.4
 ```
 
-See the [release notes](./docs/releases/v0.0.3.md) and the
-[GitHub Release](https://github.com/DeWebProtocol/malt/releases/tag/v0.0.3).
+See the [release notes](./docs/releases/v0.0.4.md), the
+[artifact contract](./docs/spec/artifacts.md), and the
+[GitHub Release](https://github.com/DeWebProtocol/malt/releases/tag/v0.0.4).
 
 ## Use Cases
 

@@ -193,6 +193,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /metrics:reset", s.handleMetricsReset)
 	mux.HandleFunc("POST /verify", s.handleVerify)
+	mux.HandleFunc("POST /v1/artifacts/resolve", s.handleArtifactResolve)
+	mux.HandleFunc("POST /v1/artifacts/prove", s.handleArtifactProve)
+	mux.HandleFunc("POST /v1/artifacts/verify", s.handleArtifactVerify)
 
 	// Removed public APIs stay reserved so they do not fall through to root
 	// content routes.

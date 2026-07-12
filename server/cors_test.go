@@ -58,6 +58,24 @@ func TestBrowserCORSAllowsConfiguredResolveAndVerifyRoutes(t *testing.T) {
 			t.Fatalf("Access-Control-Allow-Headers = %q, want content-type", headers)
 		}
 	})
+
+	for _, path := range []string{"/v1/artifacts/resolve", "/v1/artifacts/prove", "/v1/artifacts/verify"} {
+		t.Run(path+" POST preflight", func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, path, nil)
+			req.Header.Set("Origin", "https://docs.example")
+			req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+			req.Header.Set("Access-Control-Request-Headers", "content-type")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("preflight status = %d, want %d", rec.Code, http.StatusNoContent)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://docs.example" {
+				t.Fatalf("Access-Control-Allow-Origin = %q", got)
+			}
+		})
+	}
 }
 
 func TestBrowserCORSAllowsConfiguredUnixFSWriteRoutes(t *testing.T) {

@@ -42,6 +42,18 @@ is still untrusted: `VerifyRead` binds a caller-supplied trusted root and typed
 query to the returned target, optional range segments, and ProofList before the
 portable `auth/verifier` checks the evidence.
 
+`malt.SegmentPath` is the application-neutral composition coordinate. Clients
+send segment arrays; the reference resolver may consume multiple leading
+segments with one authenticated arc and currently prefers the longest prefix at
+each root. The proof contract is existential: it authenticates the returned
+complete derivation, not the uniqueness or maximality of the selected path.
+Applications and layouts own overlap/conflict policy.
+
+The unversioned `artifact` package projects resolve, primitive prove, and
+verify operations into the explicit `malt.artifact/v0alpha2` envelope. This is
+the cross-process boundary for gateway, daemon, and SDK integrations. Profile
+versions belong in serialized artifacts and schemas, not Go package names.
+
 ArcTable is namespace-scoped arcset persistence/materialization and provides no
 correctness by itself. `graph` is a runtime composition boundary around
 resolver and writer ports, not a semantic owner or graph-node hierarchy.
@@ -59,13 +71,14 @@ but untrusted execution and application layers:
 | Layer | Responsibility |
 | --- | --- |
 | Portable auth kernel | Canonical arcs, typed roots, VC verification, semantic proof rules, and ProofList validation |
-| Root `malt` facade | Typed `Query`, `ReadRequest`, `ReadResult`, and `Engine.Read`/`Apply`/`VerifyRead` |
+| Root `malt` facade | Typed primitive queries, immutable segment paths, and `Engine.Read`/`Apply`/`VerifyRead` |
+| `artifact` contract | Profiled resolve/prove/verify request, result, ProofList binding, and schemas |
 | Execution engine | Proof generation, mutation application, operational scope, ArcTable, indexes, and caches |
 | Runtime adapters | Resolver/writer ports, reference daemon, HTTP transport, SDK, and storage wiring |
 | Application layout | Domain model over typed arcs and CAS payloads; UnixFS is one layout |
 
-The public core facade exposes typed semantic operations, not storage machinery
-or a UnixFS path API.
+The public core facade exposes typed semantic operations and MALT segment paths,
+not storage machinery, JavaScript/filesystem syntax, or a UnixFS path API.
 
 ### Semantic Layer
 
@@ -534,10 +547,10 @@ Open proposal-stage MIPs for the next discussion:
 
 - decide whether writer receipts in `docs/spec/writer-receipts.md` become a
   stable API and evaluation accounting contract
-- stabilize the current `v0alpha1` ProofList verifier contract and add
-  versioned cross-language conformance vectors
-- decide whether resolve JSON and bare ProofList JSON need stable named schemas
-  beyond the artifact reference in `docs/spec/artifacts.md`
+- expand `malt.artifact/v0alpha2` with cross-language map/list/range
+  conformance vectors while keeping incompatible profiles explicit
+- keep gateway, daemon, and SDK projections aligned with the checked-in
+  resolve/prove/verify schemas
 - decide whether list needs a future variable-size or compact range-proof API;
   the current prototype uses path/`@payload` proof plus one measured-list
   `list_range` step carrying metadata, segment CIDs, and metadata/index proofs
