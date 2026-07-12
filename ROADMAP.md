@@ -10,19 +10,19 @@ MALT is an experimental reference implementation. It is runnable end to end, but
 its public APIs, ProofList schemas, wire formats, and deployment policies may
 change. It is not production-ready.
 
-`v0.0.3` established the application-neutral, arc-granularity authentication
-baseline. The post-release focus is to consume that tagged core from product
-and application layers without importing the reference server or treating
-UnixFS as the core abstraction.
+`v0.0.4` establishes canonical segment-path composition and profiled
+resolve/prove/verify artifacts. The post-release focus is to consume that
+contract from product and application layers without importing the reference
+server or treating UnixFS as the core abstraction.
 
 ## Near Term
 
-- Wire `DeWebProtocol/gateway` to the tagged root `malt` facade and portable
-  verifier through a typed backend, with product-level end-to-end tests.
+- Harden the `DeWebProtocol/gateway` integration around identity,
+  authorization, root publication, backend availability, and cache policy.
 - Define the standalone client daemon/CLI boundary: local root selection,
   upload/synchronization, proof verification, and gateway interaction.
-- Add versioned conformance fixtures and test vectors for the experimental
-  `v0alpha1` typed read/result and ProofList profile before cross-language SDKs
+- Expand `malt.artifact/v0alpha2` conformance vectors with KZG/IPA map, list,
+  multi-hop resolve, and measured-range examples before cross-language SDKs
   depend on it.
 - Demonstrate at least one non-UnixFS layout, such as a PoDs-style personal
   datastore or agent-memory relation model.
@@ -69,3 +69,16 @@ The `v0.0.3` source release was completed on 2026-07-12. It includes:
 
 The validation record and compatibility limits live in
 [`docs/releases/v0.0.3.md`](docs/releases/v0.0.3.md).
+
+## v0.0.4 Release Layer
+
+The `v0.0.4` source release adds:
+
+- canonical `SegmentPath` semantics and slash textual projection
+- longest-prefix candidate discovery without a verifier maximality claim
+- the unversioned `artifact` package and `malt.artifact/v0alpha2` profile
+- checked-in and embedded resolve/prove/verify JSON Schemas
+- stable `/v1/artifacts/{resolve,prove,verify}` reference endpoints
+- root-identity codec fixtures and end-to-end artifact verification tests
+
+See [`docs/releases/v0.0.4.md`](docs/releases/v0.0.4.md).

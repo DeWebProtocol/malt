@@ -1,84 +1,130 @@
-# Artifacts and Schemas
+# Resolve, Prove, And Verify Artifacts
 
-This document records the current artifact boundaries for CLI JSON, ProofList
-JSON, content-proof headers, and evaluator schemas.
+This document defines the transport-neutral artifact contract introduced in
+MALT `v0.0.4`.
 
-## Status
+## Profile And Ownership
 
-Experimental and implementation-bound. The typed read/result and ProofList
-binding rules form the `v0alpha1` artifact profile introduced in `v0.0.3`. Only
-evaluator schemas currently have machine-readable JSON Schema files in the
-repository; resolve JSON and bare ProofList JSON remain documented Go DTO
-artifacts rather than stable named JSON schemas.
+The serialized profile is `malt.artifact/v0alpha2`. The Go package is the
+unversioned `github.com/dewebprotocol/malt/artifact`; version identifiers live
+in artifact envelopes and schema identifiers rather than package names.
 
-## Current Artifact Surfaces
+The profile is stable by explicit discriminator: consumers must reject an
+unknown `profile` instead of guessing compatibility. It remains pre-`v1` and a
+future incompatible shape will use a different profile value.
 
-| Surface | Current owner | Stability |
-| --- | --- | --- |
-| `malt resolve` JSON | `api/http.ResolveResponse` | Experimental |
-| typed core read | root `malt.ReadRequest` and `malt.ReadResult` | Experimental `v0alpha1` binding contract |
-| bare ProofList JSON | `auth/proof/prooflist.ProofList` | Experimental `v0alpha1` verifier-facing artifact |
-| content proof headers | `server` and `sdk/client` | Experimental |
-| evaluator records | `cmd/eval/schemas` | Versioned where practical |
+The checked-in JSON Schemas live in `artifact/schemas/`, are embedded in the Go
+package, and are available through `artifact.Schema` and
+`artifact.SchemaNames`.
 
-## Resolve JSON
+## Operations
 
-`malt resolve` prints the daemon `ResolveResponse` shape:
+| Operation | Request | Result | Meaning |
+| --- | --- | --- | --- |
+| `resolve` | trusted root plus `segments` | artifact with `query.kind=path` | Authenticate one complete derivation for the supplied segment path. |
+| `prove` | trusted root plus one primitive typed query | artifact with `query.kind=map_key`, `list_index`, or `list_range` | Produce evidence for one primitive semantic query. |
+| `verify` | one complete artifact | `{profile, valid}` | Check envelope bindings and all portable proof evidence. |
+
+The reference HTTP projection is:
+
+```text
+POST /v1/artifacts/resolve
+POST /v1/artifacts/prove
+POST /v1/artifacts/verify
+```
+
+HTTP is only one projection. RPC and SDK integrations should carry the same
+typed fields directly and should not reconstruct path meaning from a URL.
+
+## Resolve Request
 
 ```json
 {
-  "target": "cid-string",
-  "prooflist": {}
+  "profile": "malt.artifact/v0alpha2",
+  "root": "b...",
+  "segments": ["a", "b", "c", "d"]
 }
 ```
 
-The `prooflist` field is omitted when proof generation is disabled. The target
-CID is not self-authenticating as a path result; callers need the root, query,
-target, and ProofList to verify the binding.
+`segments` is the canonical interface. The slash form `a/b/c/d` is only the
+MALT textual projection. See [Segment paths and resolution](./segment-paths.md).
 
-The generic Go facade represents those inputs as `malt.ReadRequest` and
-`malt.ReadResult`, then checks them with `Engine.VerifyRead` or package-level
-`malt.VerifyRead`. The HTTP DTO remains a reference transport projection rather
-than the generic core contract.
+The resulting artifact binds the request, target, and ProofList:
 
-## Bare ProofList JSON
+```json
+{
+  "profile": "malt.artifact/v0alpha2",
+  "operation": "resolve",
+  "root": "b...",
+  "query": {"kind": "path", "segments": ["a", "b", "c", "d"]},
+  "target": "b...",
+  "prooflist": {"root": {"/": "b..."}, "query": "a/b/c/d", "steps": []}
+}
+```
 
-`malt verify --prooflist` accepts a bare ProofList JSON document and also accepts
-resolve JSON containing a `prooflist` field. The structural shape is documented
-in [ProofList format](./prooflist-format.md).
+The abbreviated `steps` value above is not a real non-empty-path proof. A real
+artifact carries every selected proof step. Only a zero-segment root-identity
+resolve has no steps, in which case `target` must equal `root`.
 
-## Content Proof Headers
+The outer artifact uses CID strings for SDK-friendly request/result fields.
+The nested ProofList preserves the existing `go-cid` DAG-JSON link form
+`{"/":"cid"}` for its root, step endpoints, and range segment CIDs.
 
-Default content reads return proof evidence in headers instead of the response
-body:
+## Primitive Prove Request
 
-- `X-Malt-ProofList: <base64url-json>`
-- `X-Malt-ProofList-Encoding: base64url-json`
+Map key:
 
-Clients must decode the header before running ProofList verification.
+```json
+{
+  "profile": "malt.artifact/v0alpha2",
+  "root": "b...",
+  "query": {"kind": "map_key", "segments": ["account", "name"]}
+}
+```
 
-## Machine-Readable Schemas
+List index and measured range queries use `index`, or `start` plus optional
+`end`, respectively. A prove artifact may also carry `range_segments` for the
+ordered CIDs authenticated by a measured-list range proof.
 
-Evaluator JSON schemas live under `cmd/eval/schemas` and are embedded in the
-`malt-eval schema` command. Resolve JSON and bare ProofList JSON do not yet have
-stable named schema files.
+`prove` does not accept `query.kind=path`; multi-step composition belongs to
+`resolve`. Conversely, `resolve` does not erase primitive query kinds.
 
-The `v0.0.3` decision is to keep that boundary: document the `v0alpha1` resolve,
-typed read, and ProofList shapes, but avoid stable named schema files until the
-project is ready to commit to artifact compatibility. JSON shape validation is
-still separate from portable ProofList verification through `auth/verifier`.
+## Verification Contract
 
-If resolve or ProofList artifacts are promoted to stable named schemas, the
-same change should:
+Verification checks all of the following:
 
-- add the schema file in an implementation-owned path
-- add schema listing or discovery if needed by CLI users
-- update CLI help and examples
-- add tests that validate representative artifacts
-- keep schema validation separate from proof verification
+- request and artifact profiles are recognized;
+- root and target are valid CIDs;
+- the artifact root equals the ProofList root;
+- the final ProofList target equals the artifact target;
+- a resolve ProofList query equals the canonical projection of its segments;
+- a prove query and optional range segments match the proof evidence; and
+- the portable verifier accepts every cryptographic/semantic proof step.
 
-## Related Proposals
+Schema validation is not proof verification. A structurally valid JSON object
+must still pass `artifact.Verify` or an equivalent conforming implementation.
 
-[MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) tracks the
-decision about whether resolve JSON, bare ProofList JSON, and content proof
-metadata need stable named schemas.
+Resolution proofs are existential. They prove the ordered authenticated
+derivation returned by the execution engine. They do not prove that the
+derivation was unique, globally shortest, globally longest, or preferred by an
+application. Candidate choice can affect behavior and availability, but an
+accepted artifact always authenticates the returned path-to-target binding.
+
+## Legacy Transport Surfaces
+
+The legacy `malt resolve` DTO, bare ProofList input, `/verify`, and proof headers
+remain available as reference/compatibility surfaces in `v0.0.4`. New gateway,
+daemon, and SDK integrations should use the profiled artifact contract so the
+root, query, target, and evidence travel together.
+
+## Schemas
+
+- `artifact.schema.json`
+- `resolve-request.schema.json`
+- `prove-request.schema.json`
+- `verify-request.schema.json`
+- `verify-result.schema.json`
+
+Schema `$id` values are rooted at
+`https://deweb.world/schemas/malt/artifact/v0alpha2/`. The repository copy and
+embedded package data are authoritative for this release.

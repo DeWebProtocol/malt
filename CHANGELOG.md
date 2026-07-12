@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-12
+
+### Added
+
+- Canonical immutable `SegmentPath` values and slash textual projection for
+  application-neutral multi-arc resolution.
+- Unversioned `artifact` package with the explicit
+  `malt.artifact/v0alpha2` resolve/prove/verify contract.
+- Embedded JSON Schemas, root-identity conformance fixtures, and stable
+  `/v1/artifacts/{resolve,prove,verify}` reference endpoints.
+- MIP-1012 and reference specifications for segment-path composition and
+  existential resolution.
+
+### Changed
+
+- New integrations carry canonical segment arrays instead of pre-discovering
+  how the current graph groups a long path into arcs.
+- Reference resolution may prefer the longest prefix, while verification proves
+  only the complete returned derivation and makes no longest/unique claim.
+- MIP-1004 is finalized with profiled artifacts and machine-readable schemas.
+
 ## [0.0.3] - 2026-07-12
 
 ### Added
@@ -40,5 +61,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - KZG verification rejects out-of-range proof indices and non-canonical proof
   lengths instead of allowing malformed input to panic or reuse a commitment.
 
-[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/DeWebProtocol/malt/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/DeWebProtocol/malt/compare/v0.0.2...v0.0.3
