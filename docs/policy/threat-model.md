@@ -53,7 +53,7 @@ For HTTP content reads, the daemon returns body bytes together with
 `X-Malt-ProofList` evidence by default. Large-file byte-range reads include
 measured-list range evidence that authenticates layout metadata and segment
 CIDs. Portable ProofList verification does not by itself hash the returned HTTP
-body; UnixFS callers must additionally use `layout/unixfs.VerifyRangeBody` or
+body; UnixFS callers must additionally use `sdk/unixfs.VerifyRangeBody` or
 an equivalent segment-byte binding before accepting those bytes.
 
 ## Not Guaranteed By Core MALT
@@ -114,17 +114,17 @@ not match the query and evidence.
 ### Path Canonicalization Ambiguity
 
 Path parsing ambiguity can create disagreement between writer, resolver, and
-verifier behavior. The profiled artifact API carries canonical segment arrays;
+verifier behavior. The profiled resolve API carries canonical segment arrays;
 it does not apply filesystem dot-segment or whitespace cleaning. Root-relative
 legacy HTTP and UnixFS adapters may reject reserved transport paths before
 typed-query construction. Generic map coordinates are not Unix paths.
 
 ### Alternative Valid Derivation
 
-If a root authenticates overlapping arcs, an untrusted resolver may choose a
-different complete derivation than an application expected. The artifact
-verifier proves the returned derivation but does not prove it was longest or
-unique. Applications that require one deterministic namespace must enforce an
-overlap/conflict policy when constructing or accepting the layout. This is
-separate from proof soundness: invalid evidence or a path that does not fully
-consume the requested segments is still rejected.
+If a root authenticates overlapping arcs, an untrusted resolver may choose any
+complete derivation that reaches the requested target. `VerifyResolve` proves
+the returned derivation but intentionally does not prove it was longest or
+unique. This is a resolution feature rather than a proof-soundness failure.
+Applications may add a deterministic preference when they need one; otherwise
+any successfully verified derivation is acceptable. Invalid evidence or a path
+that does not fully consume the requested segments is still rejected.

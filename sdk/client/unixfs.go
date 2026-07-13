@@ -7,22 +7,22 @@ import (
 
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/arcset"
-	"github.com/dewebprotocol/malt/graph/writer"
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	unixfs "github.com/dewebprotocol/malt/model/unixfs"
+	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
-// UnixFSClient composes UnixFS layout plans with the graph writer endpoint.
+// UnixFSClient composes UnixFS application plans with the executor mutation endpoint.
 type UnixFSClient struct {
 	client *Client
 }
 
-// UnixFS returns the client-side UnixFS layout facade.
+// UnixFS returns the client-side UnixFS application facade.
 func (c *Client) UnixFS() *UnixFSClient {
 	return &UnixFSClient{client: c}
 }
 
-// ApplyPlan materializes a client-side UnixFS layout plan through the graph writer endpoint.
+// ApplyPlan materializes a client-side UnixFS plan through the executor mutation endpoint.
 func (u *UnixFSClient) ApplyPlan(ctx context.Context, plan *unixfs.MutationPlan, fallbackRoot cid.Cid) (*httpapi.SemanticMutationResponse, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("unixfs mutation plan is nil")
@@ -31,11 +31,11 @@ func (u *UnixFSClient) ApplyPlan(ctx context.Context, plan *unixfs.MutationPlan,
 }
 
 // ApplySemanticMutation materializes a writer mutation through the graph writer endpoint.
-func (c *Client) ApplySemanticMutation(ctx context.Context, mut writer.SemanticMutation) (*httpapi.SemanticMutationResponse, error) {
+func (c *Client) ApplySemanticMutation(ctx context.Context, mut mutation.SemanticMutation) (*httpapi.SemanticMutationResponse, error) {
 	if !mut.BaseRoot.Defined() {
 		return nil, fmt.Errorf("semantic mutation base root is undefined")
 	}
-	req, err := semanticMutationRequestFromWriter(mut)
+	req, err := semanticMutationRequestFromCore(mut)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (c *Client) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
 
 // ApplyFixedListPayloadMutation applies a fixed-list payload writer mutation
 // and returns the resulting list root.
-func (c *Client) ApplyFixedListPayloadMutation(ctx context.Context, mut writer.SemanticMutation) (cid.Cid, error) {
+func (c *Client) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
 	resp, err := c.ApplySemanticMutation(ctx, mut)
 	if err != nil {
 		return cid.Undef, err
@@ -70,7 +70,7 @@ func (c *Client) ApplyFixedListPayloadMutation(ctx context.Context, mut writer.S
 	return listRoot, nil
 }
 
-func semanticMutationRequestFromWriter(mut writer.SemanticMutation) (*httpapi.SemanticMutationRequest, error) {
+func semanticMutationRequestFromCore(mut mutation.SemanticMutation) (*httpapi.SemanticMutationRequest, error) {
 	req := &httpapi.SemanticMutationRequest{
 		Deltas: make([]httpapi.SemanticMutationDelta, 0, len(mut.Deltas)),
 	}

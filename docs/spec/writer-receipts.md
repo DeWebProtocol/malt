@@ -11,7 +11,7 @@ stable release.
 
 ## Library Receipt
 
-`graph/writer.WriteReceipt` records:
+`mutation.WriteReceipt` records:
 
 | Field | Meaning |
 | --- | --- |
@@ -20,15 +20,20 @@ stable release.
 | `DeltaCount` | Number of semantic deltas applied. |
 | `ArcCount` | Number of canonical arc changes applied. |
 
-The writer does not publish authoritative heads, choose freshness, or merge
-concurrent roots. Applications decide whether to publish or select a produced result root.
+The writer does not publish authoritative heads, choose freshness, prove a
+state transition, or merge concurrent roots. Applications decide whether to
+accept, publish, or select a produced candidate root.
 
-## Writer Ports
+## Mutation And Execution Ports
 
-`graph.MutationWriter` is the stable core mutation boundary. It exposes
-`Apply(ctx, namespace, writer.SemanticMutation)` and returns a
-`writer.WriteReceipt` with the caller-supplied base root and produced result
-root.
+Package `mutation` is the stable portable contract. It defines
+`SemanticMutation`, `ArcSetDelta`, commit descriptors, validation, and
+`WriteReceipt` without namespace or storage placement.
+
+`execution.MutationApplier` is the untrusted execution port. It exposes
+`Apply(ctx, namespace, mutation.SemanticMutation)` and returns a
+`mutation.WriteReceipt` with the caller-supplied base root and produced result
+root. `graph.MutationWriter` is the reference graph adapter over that contract.
 
 `graph.CompatWriter` groups reference-runtime helper methods such as
 `CreateStructure`, `UpdateArc`, `BatchUpdateArcs`, `GetArc`, and
@@ -48,11 +53,11 @@ intentionally need reference compatibility helpers.
 | `result_root` | Optional application-level result root. |
 | `delta_count` | Semantic delta count. |
 | `arc_count` | Canonical arc change count. |
-| `malt_object_count` | Optional layout-produced object count. |
-| `map_count` | Optional layout-produced map object count. |
-| `list_count` | Optional layout-produced list object count. |
+| `malt_object_count` | Optional application-produced object count. |
+| `map_count` | Optional application-produced map object count. |
+| `list_count` | Optional application-produced list object count. |
 
-Layout-level counts are diagnostics and evaluation aids. They should not be
+Application-level counts are diagnostics and evaluation aids. They should not be
 treated as verifier evidence unless separately tied to a ProofList or
 commitment proof.
 
@@ -71,6 +76,12 @@ Receipts do not prove:
 - freshness of the selected root
 - correctness of an unverified read
 - publication or merge policy
+- that a delta correctly transformed the accepted base root into the returned
+  candidate root
+
+MALT does not currently define a delta/state-transition proof. Therefore write
+receipts stay separate from the proof-bearing resolve/read contracts instead
+of being placed in a generic artifact union.
 
 ## Related Proposals
 

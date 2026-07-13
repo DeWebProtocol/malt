@@ -1,0 +1,125 @@
+# Resolve And Read Contracts
+
+This document defines the current transport-neutral result contracts for MALT
+core. They are operation-specific: ProofList is evidence for a resolve or read,
+not a generic operation envelope.
+
+## Profiles And Schemas
+
+| Contract | Profile | Go values |
+| --- | --- | --- |
+| path resolution | `malt.resolve/v0alpha1` | `malt.ResolveRequest`, `malt.ResolveResult`, `malt.VerifyResolve` |
+| primitive semantic read | `malt.read/v0alpha1` | `malt.ReadRequest`, `malt.ReadResult`, `malt.VerifyRead` |
+
+Serialized values live in `github.com/dewebprotocol/malt/protocol`. Checked-in
+JSON Schemas live in `protocol/schemas/` and are embedded through
+`protocol.Schema` and `protocol.SchemaNames`.
+
+## Resolve
+
+A request carries the caller-selected root and canonical segment array:
+
+```json
+{
+  "profile": "malt.resolve/v0alpha1",
+  "root": "b...root",
+  "segments": ["docs", "readme", "@payload"]
+}
+```
+
+The untrusted executor returns:
+
+```json
+{
+  "profile": "malt.resolve/v0alpha1",
+  "target": "b...payload",
+  "prooflist": {
+    "root": {"/": "b...root"},
+    "query": "docs/readme/@payload",
+    "steps": []
+  }
+}
+```
+
+The empty `steps` array above is abbreviated; a non-empty segment path requires
+real evidence. A client verifies the original request and returned result
+together:
+
+```go
+err := verifier.VerifyResolve(ctx, protocol.ResolveVerification{
+    Request: request,
+    Result: result,
+})
+```
+
+Verification binds the trusted root, exact segment path, ordered proof steps,
+terminal target, and all commitment evidence.
+
+### Explicit `@payload`
+
+Payload materialization is not an implicit special result:
+
+- `segments: []` is strict zero-step root identity and requires `target == root`;
+- `segments: ["@payload"]` authenticates the root object's payload CID; and
+- `segments: ["a", "b", "@payload"]` authenticates a nested payload CID.
+
+UnixFS clients append `@payload` when they want bytes. Other applications may
+use the same reserved core coordinate without adopting UnixFS path syntax.
+
+### Existential Selection
+
+Resolution authenticates one complete derivation selected by the executor. It
+does not prove that the derivation was globally longest, shortest, unique, or
+preferred by an application. If several authenticated derivations could serve
+an application request, choosing among them is application/client policy. Each
+accepted result still proves its own root-to-target relation.
+
+## Primitive Read
+
+Read is the proof-bearing primitive formerly named `prove` in the frozen
+artifact profile. It accepts exactly one typed query:
+
+- `map_key` with a non-empty segment array;
+- `list_index` with `index`; or
+- `list_range` with `start` and optional exclusive `end`.
+
+Example:
+
+```json
+{
+  "profile": "malt.read/v0alpha1",
+  "root": "b...map",
+  "query": {"kind": "map_key", "segments": ["name"]}
+}
+```
+
+The result carries `target`, optional ordered `range_segments`, and
+`prooflist`. `VerifyRead` binds those fields to the original typed request.
+Read is intentionally primitive; multi-root prefix consumption belongs to
+resolve.
+
+## HTTP Projection
+
+The reference executor exposes:
+
+```text
+POST /v1/resolve
+POST /v1/read
+POST /v1/verify/resolve   # diagnostic only
+POST /v1/verify/read      # diagnostic only
+```
+
+HTTP uses `/` only as the canonical textual projection between segments. RPC
+and language SDKs can carry the segment array directly. Application syntaxes
+such as JavaScript `.` and `[]` remain client concerns.
+
+## Payload Bytes And Mutation
+
+A verified payload resolve authenticates a CID, not arbitrary response bytes.
+Clients must also hash full raw/manifest bytes to the authenticated CID, or use
+the UnixFS range-body verifier for measured-list reads.
+
+Semantic mutation inputs and writer receipts remain separate contracts. A
+receipt describes execution and a candidate new root; it is not a delta or
+state-transition proof. MALT will only introduce a proof-bearing mutation
+result after its transition semantics and verification algorithm exist.

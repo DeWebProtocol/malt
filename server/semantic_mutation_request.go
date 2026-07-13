@@ -6,7 +6,7 @@ import (
 	httpapi "github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -22,28 +22,28 @@ func parseArcMap(raw map[string]string) (map[string]cid.Cid, error) {
 	return out, nil
 }
 
-func semanticMutationFromRequest(baseRoot cid.Cid, deltaRequests []httpapi.SemanticMutationDelta) (writer.SemanticMutation, error) {
-	deltas := make([]writer.ArcSetDelta, 0, len(deltaRequests))
+func semanticMutationFromRequest(baseRoot cid.Cid, deltaRequests []httpapi.SemanticMutationDelta) (mutation.SemanticMutation, error) {
+	deltas := make([]mutation.ArcSetDelta, 0, len(deltaRequests))
 	for i, deltaReq := range deltaRequests {
 		delta, err := semanticDeltaFromRequest(deltaReq)
 		if err != nil {
-			return writer.SemanticMutation{}, fmt.Errorf("delta %d: %w", i, err)
+			return mutation.SemanticMutation{}, fmt.Errorf("delta %d: %w", i, err)
 		}
 		deltas = append(deltas, delta)
 	}
 
-	return writer.SemanticMutation{
+	return mutation.SemanticMutation{
 		BaseRoot: baseRoot,
 		Deltas:   deltas,
 	}, nil
 }
 
-func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (writer.ArcSetDelta, error) {
+func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (mutation.ArcSetDelta, error) {
 	object := cid.Undef
 	if req.Object != "" {
 		parsed, err := decodeCID(req.Object)
 		if err != nil {
-			return writer.ArcSetDelta{}, fmt.Errorf("invalid object: %w", err)
+			return mutation.ArcSetDelta{}, fmt.Errorf("invalid object: %w", err)
 		}
 		object = parsed
 	}
@@ -51,7 +51,7 @@ func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (writer.ArcSetD
 	if req.ExpectedRoot != "" {
 		parsed, err := decodeCID(req.ExpectedRoot)
 		if err != nil {
-			return writer.ArcSetDelta{}, fmt.Errorf("invalid expected root: %w", err)
+			return mutation.ArcSetDelta{}, fmt.Errorf("invalid expected root: %w", err)
 		}
 		expectedRoot = parsed
 	}
@@ -61,23 +61,23 @@ func semanticDeltaFromRequest(req httpapi.SemanticMutationDelta) (writer.ArcSetD
 	for i, changeReq := range req.Changes {
 		change, err := semanticChangeFromRequest(kind, changeReq)
 		if err != nil {
-			return writer.ArcSetDelta{}, fmt.Errorf("change %d: %w", i, err)
+			return mutation.ArcSetDelta{}, fmt.Errorf("change %d: %w", i, err)
 		}
 		changes = append(changes, change)
 	}
 
 	delta, err := arcset.NewCanonicalArcDelta(kind, changes)
 	if err != nil {
-		return writer.ArcSetDelta{}, err
+		return mutation.ArcSetDelta{}, err
 	}
-	out := writer.ArcSetDelta{
+	out := mutation.ArcSetDelta{
 		Object:       object,
 		ExpectedRoot: expectedRoot,
 		Kind:         kind,
 		Changes:      delta,
 	}
 	if req.Commit != nil && req.Commit.FixedList != nil {
-		out.Commit.FixedList = &writer.FixedListCommit{
+		out.Commit.FixedList = &mutation.FixedListCommit{
 			TotalSize: req.Commit.FixedList.TotalSize,
 			ChunkSize: req.Commit.FixedList.ChunkSize,
 		}
@@ -135,7 +135,7 @@ func semanticTargetFromRequest(req httpapi.SemanticMutationTarget) (arcset.Targe
 	return semanticTargetRef(req.TargetKind, target)
 }
 
-func countSemanticDeltas(deltas []writer.ArcSetDelta, kind arcset.Kind) int {
+func countSemanticDeltas(deltas []mutation.ArcSetDelta, kind arcset.Kind) int {
 	count := 0
 	for _, delta := range deltas {
 		if delta.Kind == kind {

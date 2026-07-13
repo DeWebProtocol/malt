@@ -3,9 +3,12 @@
 package runtimegraph
 
 import (
+	"context"
 	"fmt"
 
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/graph"
@@ -109,6 +112,37 @@ func (g *RuntimeGraph) ListSemantic() list.Semantics {
 // Resolver returns the per-graph resolver.
 func (g *RuntimeGraph) Resolver() graph.Resolver {
 	return g.resolver
+}
+
+// Resolve adapts the reference graph resolver transcript to the portable core
+// result consumed by execution.Executor and malt.VerifyResolve.
+func (g *RuntimeGraph) Resolve(ctx context.Context, req malt.ResolveRequest) (malt.ResolveResult, error) {
+	if g == nil {
+		return malt.ResolveResult{}, fmt.Errorf("runtime graph is nil")
+	}
+	if err := req.Validate(); err != nil {
+		return malt.ResolveResult{}, err
+	}
+	path, _ := malt.NewSegmentPath(req.Segments)
+	if path.Empty() {
+		return malt.ResolveResult{
+			Target:    req.Root,
+			ProofList: prooflist.ProofList{Root: req.Root, Query: "", Steps: []prooflist.Step{}},
+		}, nil
+	}
+	resolved, err := g.resolver.ResolveKey(ctx, req.Root, path.String())
+	if err != nil {
+		return malt.ResolveResult{}, err
+	}
+	if resolved == nil || !resolved.RemainingPath.IsEmpty() || !resolved.Target.Defined() {
+		return malt.ResolveResult{}, malt.ErrQueryNotFound
+	}
+	pl, err := resolver.ProofListFromTranscript(req.Root, resolved.Transcript)
+	if err != nil {
+		return malt.ResolveResult{}, err
+	}
+	pl.Query = path.String()
+	return malt.ResolveResult{Target: resolved.Target, ProofList: *pl}, nil
 }
 
 // Writer returns the per-graph writer.

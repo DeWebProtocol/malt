@@ -54,7 +54,7 @@ func daemonCommandError(err error) error {
 	}
 	var apiErr *daemonclient.Error
 	if errors.As(err, &apiErr) {
-		return fmt.Errorf("daemon request failed: %s", apiErr.Message)
+		return fmt.Errorf("reference executor request failed: %s", apiErr.Message)
 	}
-	return fmt.Errorf("daemon unavailable or config invalid: %w", err)
+	return fmt.Errorf("reference executor unavailable or config invalid: %w", err)
 }

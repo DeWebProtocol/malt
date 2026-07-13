@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
@@ -64,6 +65,7 @@ func (s *Server) resolvePath(ctx context.Context, svc graphService, root cid.Cid
 	}
 
 	transcript := keyResult.Transcript
+	proofQuery := cleanPath
 	if maltcid.SemanticKindOf(key) == maltcid.SemanticKindMap {
 		payloadResult, err := svc.ResolveMapPayload(ctx, key)
 		if err != nil {
@@ -75,21 +77,30 @@ func (s *Server) resolvePath(ctx context.Context, svc graphService, root cid.Cid
 		steps := append([]resolver.StepEvidence(nil), transcript.Steps...)
 		steps = append(steps, payloadResult.Transcript.Steps...)
 		transcript = &resolver.Transcript{Steps: steps}
+		proofQuery = explicitPayloadQuery(cleanPath)
 	}
 
-	pl, err := svc.ProofList(root, cleanPath, transcript)
+	pl, err := svc.ProofList(root, proofQuery, transcript)
 	if err != nil {
 		return nil, err
 	}
 	resolved.proofList = pl
+	resolved.queryPath = proofQuery
 	return resolved, nil
+}
+
+func explicitPayloadQuery(path string) string {
+	if path == "" {
+		return "@payload"
+	}
+	return path + "/@payload"
 }
 
 func resolvePathStatus(err error) int {
 	switch {
 	case errors.Is(err, querypath.ErrInvalidQueryPath):
 		return http.StatusBadRequest
-	case errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed):
+	case malt.IsQueryNotFound(err) || errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError

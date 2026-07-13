@@ -5,7 +5,7 @@ its public APIs, ProofList schemas, wire formats, and deployment policies may
 change. It is not production-ready.
 
 Security reports are still important because the project deals with proof
-verification, authenticated structure, daemon APIs, untrusted storage, and local
+verification, authenticated structure, executor APIs, untrusted storage, and local
 persistence.
 
 ## Supported Versions

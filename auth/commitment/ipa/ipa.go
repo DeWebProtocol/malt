@@ -404,3 +404,5 @@ func valuesToVector(values []commitment.Cell) []fr.Element {
 
 // Ensure Scheme implements commitment.IndexCommitment.
 var _ commitment.IndexCommitment = (*Scheme)(nil)
+var _ commitment.IndexVerifier = (*Scheme)(nil)
+var _ commitment.IndexProver = (*Scheme)(nil)

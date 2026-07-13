@@ -39,10 +39,10 @@ Native map operations are:
 - insert, replace, and delete of canonical keyed bindings
 - commitment and verification of committed map state
 
-`@payload` is the standard reserved coordinate for a terminal layout-payload
+`@payload` is the standard reserved coordinate for a terminal application-payload
 binding. Generic maps may omit it; relation-only maps without a payload binding
 are valid MALT state. When present, `@payload` must use terminal
-`payload_binding` proof semantics. The UnixFS layout requires the coordinate
+`payload_binding` proof semantics. The UnixFS application model requires the coordinate
 for its file and directory objects.
 
 ## List Semantics
@@ -61,7 +61,7 @@ Native list operations are:
   layout metadata
 
 List objects do not auto-redirect through `@payload`, and list reads do not own
-path-resolution semantics. Application layouts translate file ranges or domain
+path-resolution semantics. Application/client adapters translate file ranges or domain
 queries into list index or measured-range reads.
 
 The current measured-list implementation is fixed-width. It authenticates child
@@ -74,21 +74,28 @@ proposal-stage topic in [MIP-1006](../mips/mip-1006-variable-size-measured-list-
 The module-root `package malt` exposes the application-neutral `v0alpha1`
 facade:
 
+- `ResolveRequest` binds canonical segments to a caller-supplied root.
+- `ResolveResult` carries the resolved target and ordered ProofList.
+- `Resolver` and package-level `VerifyResolve` separate untrusted path
+  execution from the client trust decision.
 - `Query` selects one primitive map key, list index, or measured-list range.
 - `ReadRequest` binds a typed query to a caller-supplied root.
 - `ReadResult` carries the target, optional ordered range segments, and
   ProofList.
-- `Engine.Read` generates a candidate result and proof.
-- `Engine.Apply` applies a semantic mutation and returns a result-root receipt.
-- `Engine.VerifyRead` binds the request and result before portable proof
+- `Mutation` and `WriteResult` project the namespace-free contracts from
+  package `mutation`.
+- package-level `VerifyRead` binds the request and result before portable proof
   verification.
+- `execution.Executor.Resolve`, `Read`, and `Apply` are the separate, untrusted
+  execution facade.
 
-When a map implementation reports `mapping.ErrPathNotFound`, `Engine.Read`
+When a map implementation reports `mapping.ErrPathNotFound`, `execution.Executor.Read`
 returns an error recognizable through `errors.Is(err, malt.ErrQueryNotFound)`
 or `malt.IsQueryNotFound`. Other execution-plane errors are returned unchanged.
 
-Layouts compose primitive arc operations into domain traversal. A Unix path is
-therefore a UnixFS layout concern, not a generic core query requirement.
+Client/application adapters compose primitive arc operations into domain
+traversal. A Unix path is therefore a UnixFS client concern, not a generic core
+query requirement.
 
 ## Resolver And Writer Ports
 
@@ -96,15 +103,17 @@ The `graph` package is a small port/composition surface, not a separate
 semantic owner.
 
 - resolver is the read/proof port: `(root, query) -> result + ProofList`
-- writer is the mutation port: `graph.MutationWriter.Apply(baseRoot, semantic mutation) -> newRoot + receipt`
+- writer is an execution port: `Apply(baseRoot, semantic mutation) -> newRoot + receipt`
 - `graph.CompatWriter` contains reference-runtime helper methods and is not the gateway product API
 
 Resolver traversal lives under `graph/resolver`. Mutation application lives
-under `graph/writer`. Layouts translate source-domain data into semantic
+under `graph/writer`. These are reference execution implementations, not core
+contracts. Client/application adapters translate source-domain data into
 queries and mutations; they do not redefine map or list semantics.
 
-The portable verification path lives under `auth/verifier` and does not depend
-on resolver, writer, runtime, ArcTable, CAS, layout, server, or daemon state.
+The portable verification path lives under `auth/verifier` and `sdk/verifier`.
+It does not depend on resolver, writer, runtime, ArcTable, CAS, application
+model, server, gateway, or reference-executor state.
 
 ## ArcTable Boundary
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestResolvePrintsProofListByDefault(t *testing.T) {
+func TestResolvePrintsOperationSpecificResult(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
 	defaultClient = daemon
@@ -45,9 +45,12 @@ func TestResolvePrintsProofListByDefault(t *testing.T) {
 	if _, ok := payload["transcript"]; ok {
 		t.Fatalf("resolve output should not expose transcript: %#v", payload["transcript"])
 	}
+	if payload["profile"] != "malt.resolve/v0alpha1" {
+		t.Fatalf("profile = %v", payload["profile"])
+	}
 }
 
-func TestResolveCanOmitProofList(t *testing.T) {
+func TestResolveUsesExplicitPayloadSegment(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
 	defaultClient = daemon
@@ -63,10 +66,8 @@ func TestResolveCanOmitProofList(t *testing.T) {
 		t.Fatalf("create root structure: %v", err)
 	}
 
-	cmd := testCommandWithContext(ctx)
-	cmd.Flags().Bool("proof", false, "")
 	out := captureStdout(t, func() {
-		if err := runResolve(cmd, []string{createResp.Root, "name"}); err != nil {
+		if err := runResolve(testCommandWithContext(ctx), []string{createResp.Root, "@payload"}); err != nil {
 			t.Fatalf("run resolve: %v", err)
 		}
 	})
@@ -78,7 +79,8 @@ func TestResolveCanOmitProofList(t *testing.T) {
 	if payload["target"] != target {
 		t.Fatalf("target = %v, want %s", payload["target"], target)
 	}
-	if _, ok := payload["prooflist"]; ok {
-		t.Fatalf("prooflist should be omitted when --proof=false: %#v", payload["prooflist"])
+	proof, ok := payload["prooflist"].(map[string]any)
+	if !ok || proof["query"] != "@payload" {
+		t.Fatalf("prooflist = %#v", payload["prooflist"])
 	}
 }

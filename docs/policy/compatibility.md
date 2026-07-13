@@ -18,7 +18,9 @@ release line exists.
 | CLI output text | Experimental |
 | Daemon HTTP API | Experimental |
 | ProofList JSON and typed read binding | Experimental `v0alpha1` and verifier-facing |
-| `artifact` resolve/prove/verify envelope | Profiled `malt.artifact/v0alpha2`; incompatible revisions require a new profile |
+| operation-specific resolve contract | Profiled `malt.resolve/v0alpha1`; incompatible revisions require a new profile |
+| operation-specific primitive read contract | Profiled `malt.read/v0alpha1`; incompatible revisions require a new profile |
+| legacy `artifact` resolve/prove/verify envelope | Frozen `malt.artifact/v0alpha2` from v0.0.4 |
 | `SegmentPath` textual projection | `/`-joined UTF-8 segments; experimental before `v1` |
 | MALT root encoding | Experimental |
 | CID codecs and root-kind metadata | Experimental |
@@ -42,7 +44,7 @@ PR:
 - root/CID encodings
 - wire-format behavior
 - evaluator record schemas
-- UnixFS layout behavior that affects verification
+- UnixFS model/runtime behavior that affects verification
 
 Where practical, include migration notes or test vectors for serialized formats
 that another implementation or stored artifact could depend on.
@@ -59,9 +61,12 @@ commit unless release notes say so.
 
 The `v0.0.3` source release names the typed read/result and ProofList binding
 profile `v0alpha1`. The `v0.0.4` source release adds the explicit serialized
-profile `malt.artifact/v0alpha2` and checked-in JSON Schemas for resolve, prove,
-and verify. Consumers must reject unknown profiles, pin an exact MALT tag or
-module version, and review release notes before upgrading.
+profile `malt.artifact/v0alpha2` and checked-in JSON Schemas for `resolve`,
+`prove`, and `verify`. That operation set is frozen. Current unreleased work
+defines new operation-specific `malt.resolve/v0alpha1` and
+`malt.read/v0alpha1` profiles rather than extending v0alpha2 in place.
+Consumers must reject unknown profiles, pin an exact MALT tag or module
+version, and review release notes before upgrading.
 
 ArcTable records, local KV paths, materialized indexes, caches, metrics
 counters, and daemon process files are operational state. They are not public

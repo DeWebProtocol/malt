@@ -6,6 +6,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -21,10 +22,10 @@ type Resolver interface {
 }
 
 // MutationWriter is the stable graph mutation port. Callers supply an explicit
-// base root through writer.SemanticMutation and receive a result root in the
+// base root through mutation.SemanticMutation and receive a result root in the
 // write receipt; this interface does not publish heads or arbitrate freshness.
 type MutationWriter interface {
-	Apply(ctx context.Context, namespace string, mut writer.SemanticMutation) (writer.WriteReceipt, error)
+	Apply(ctx context.Context, namespace string, mut mutation.SemanticMutation) (mutation.WriteReceipt, error)
 }
 
 // CompatWriter exposes reference-runtime helper methods used by the local

@@ -42,7 +42,7 @@ source release records this review boundary:
   verifier contract for artifacts that are returned;
 - `X-Malt-ProofList` carries base64url-encoded ProofList JSON for content reads;
 - returned byte-range body bytes are not authenticated by `/verify` alone and
-  must be bound with `layout/unixfs.VerifyRangeBody` or an equivalent segment
+  must be bound with `sdk/unixfs.VerifyRangeBody` or an equivalent segment
   byte check after ProofList verification.
 
 This MIP does not promote ProofList JSON to a stable cross-release schema. It
@@ -60,9 +60,9 @@ Current code evidence:
 - `server/routes_verify.go` projects the reusable verifier through `/verify`.
 - `server/routes_content.go` sends proof-bearing content responses in
   `X-Malt-ProofList`.
-- `layout/unixfs/prooflist.go` emits map, payload, list-index, and
+- `runtime/unixfs/prooflist.go` emits map, payload, list-index, and
   `list_range` evidence.
-- `layout/unixfs/range_body.go` binds returned range bytes to authenticated
+- `sdk/unixfs/range_body.go` binds returned range bytes to authenticated
   segment CIDs.
 
 ## Backwards Compatibility
@@ -88,7 +88,7 @@ For the current review pass:
 - keep reusable verifier orchestration and verification-only backends in
   `auth/verifier`;
 - keep `graph/verifier` as a compatibility adapter only;
-- keep range body-byte binding in `layout/unixfs.VerifyRangeBody`;
+- keep range body-byte binding in `sdk/unixfs.VerifyRangeBody`;
 - run verifier, server, UnixFS, CLI, and full Go validation before tagging.
 
 ## History
@@ -98,7 +98,7 @@ For the current review pass:
   `docs/spec/prooflist-format.md`; this MIP tracks formal acceptance of the
   verifier contract.
 - 2026-07-06: Updated for `graph/verifier` extraction and
-  `layout/unixfs.VerifyRangeBody`; moved to Review for maintainer judgment.
+  `sdk/unixfs.VerifyRangeBody`; moved to Review for maintainer judgment.
 - 2026-07-11: Moved trust-critical orchestration and built-in KZG/IPA proof
   verification to portable `auth/verifier`; retained `graph/verifier` as an
   adapter.

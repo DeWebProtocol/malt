@@ -1,12 +1,16 @@
 package main
 
 import (
-	"github.com/dewebprotocol/malt/api/http"
+	"fmt"
+
+	malt "github.com/dewebprotocol/malt"
+	"github.com/dewebprotocol/malt/protocol"
+	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
 func init() {
-	resolveCmd.Flags().Bool("proof", true, "Include ProofList evidence in resolve output")
 	rootCmd.AddCommand(resolveCmd)
 }
 
@@ -20,23 +24,38 @@ var resolveCmd = &cobra.Command{
 func runResolve(cmd *cobra.Command, args []string) error {
 	client := mustDaemonClient()
 
-	path := ""
+	rawPath := ""
 	if len(args) > 1 {
-		path = args[1]
+		rawPath = args[1]
 	}
-	includeProof := true
-	if cmd.Flags().Lookup("proof") != nil {
-		includeProof, _ = cmd.Flags().GetBool("proof")
+	root, err := cid.Parse(args[0])
+	if err != nil {
+		return err
 	}
-	result, err := client.ResolveRootWithProof(cmd.Context(), args[0], path, includeProof)
+	segmentPath, err := malt.ParseSegmentPath(rawPath)
+	if err != nil {
+		return err
+	}
+	request, err := protocol.NewResolveRequest(malt.ResolveRequest{Root: root, Segments: segmentPath.Segments()})
+	if err != nil {
+		return err
+	}
+	result, err := client.ResolveContract(cmd.Context(), request)
 	if err != nil {
 		return daemonCommandError(err)
+	}
+	verifier, err := clientverifier.NewDefault()
+	if err != nil {
+		return fmt.Errorf("initialize local verifier: %w", err)
+	}
+	if err := verifier.VerifyResolve(cmd.Context(), protocol.ResolveVerification{Request: request, Result: *result}); err != nil {
+		return fmt.Errorf("verify resolve result locally: %w", err)
 	}
 
 	return printResolveResult(cmd, result)
 }
 
-func printResolveResult(cmd *cobra.Command, result *httpapi.ResolveResponse) error {
+func printResolveResult(cmd *cobra.Command, result *protocol.ResolveResult) error {
 	printJSON(result)
 	return nil
 }

@@ -1,4 +1,5 @@
-// Package httpapi defines the daemon HTTP API payloads shared by server and client.
+// Package httpapi defines reference-executor HTTP payloads shared by server
+// and client adapters.
 package httpapi
 
 import (
@@ -10,13 +11,13 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// HealthResponse is returned by the daemon health endpoint.
+// HealthResponse is returned by the reference-executor health endpoint.
 type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-// LifecycleIdentityResponse is returned by the local managed-daemon identity
-// endpoint.
+// LifecycleIdentityResponse is returned by the local managed-process identity
+// endpoint for the reference executor.
 type LifecycleIdentityResponse struct {
 	Status string `json:"status"`
 }
@@ -124,7 +125,7 @@ type PathStatResponse struct {
 	Entries     []string `json:"entries,omitempty"` // directory entries when available
 }
 
-// UnixFSWriteResponse returns the result of a UnixFS layout mutation.
+// UnixFSWriteResponse returns the result of a UnixFS application mutation.
 type UnixFSWriteResponse struct {
 	Path     string `json:"path"`
 	Kind     string `json:"kind"`

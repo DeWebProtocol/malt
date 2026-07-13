@@ -47,7 +47,7 @@ Current code evidence:
   interfaces.
 - `runtime/semantic/list/tree` supports fixed-width measured range
   evidence.
-- `layout/unixfs/prooflist.go` emits `list_range` ProofList steps with
+- `runtime/unixfs/prooflist.go` emits `list_range` ProofList steps with
   metadata and segment CIDs.
 
 ## Backwards Compatibility

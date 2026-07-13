@@ -1,4 +1,4 @@
-// Package server provides the MALT daemon HTTP API.
+// Package server provides the MALT reference-executor HTTP API.
 package server
 
 import (
@@ -23,7 +23,7 @@ const defaultRootGraphID = "default"
 // Conservative HTTP server hardening defaults. These are intentionally generous
 // for normal MALT workloads (large UnixFS uploads, slow CAS materialization)
 // but tight enough to keep a single misbehaving client from holding sockets
-// open indefinitely (slowloris) or burying the daemon under one giant header
+// open indefinitely (slowloris) or burying the executor under one giant header
 // stream.
 //
 // Callers that need different limits can override them via the
@@ -52,7 +52,7 @@ const (
 	DefaultMaxHeaderBytes = 64 * 1024
 )
 
-// ServerLimits configures HTTP-level resource bounds for the daemon server.
+// ServerLimits configures HTTP-level resource bounds for the reference executor.
 // Zero values fall back to the defaults above.
 type ServerLimits struct {
 	ReadHeaderTimeout time.Duration
@@ -81,7 +81,7 @@ func (l ServerLimits) withDefaults() ServerLimits {
 	return l
 }
 
-// Server serves the daemon HTTP API.
+// Server serves the reference-executor HTTP API.
 type Server struct {
 	node           *node.Node
 	addr           string
@@ -92,9 +92,10 @@ type Server struct {
 	server         *http.Server
 	defaultGraph   runtimeGraph
 	graphMu        sync.Mutex
+	verifierCache  portableVerifierCache
 }
 
-// Option configures the daemon server.
+// Option configures the reference-executor server.
 type Option func(*Server)
 
 // WithLifecycleToken configures the local managed-process identity token used
@@ -105,7 +106,7 @@ func WithLifecycleToken(token string) Option {
 	}
 }
 
-// WithBrowserOrigins allows browser-based tools to call the local daemon from
+// WithBrowserOrigins allows browser-based tools to call the local executor from
 // the configured origins.
 func WithBrowserOrigins(origins []string) Option {
 	return func(s *Server) {
@@ -122,7 +123,7 @@ func WithServerLimits(limits ServerLimits) Option {
 	}
 }
 
-// New creates a new daemon server.
+// New creates a new reference-executor server.
 func New(node *node.Node, addr string, opts ...Option) *Server {
 	s := &Server{
 		node: node,
@@ -193,6 +194,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /metrics:reset", s.handleMetricsReset)
 	mux.HandleFunc("POST /verify", s.handleVerify)
+	mux.HandleFunc("POST /v1/resolve", s.handleResolveContract)
+	mux.HandleFunc("POST /v1/read", s.handleReadContract)
+	mux.HandleFunc("POST /v1/verify/resolve", s.handleVerifyResolveContract)
+	mux.HandleFunc("POST /v1/verify/read", s.handleVerifyReadContract)
+	// malt.artifact/v0alpha2 is a frozen v0.0.4 compatibility surface. New
+	// clients use the operation-specific resolve/read contracts above.
 	mux.HandleFunc("POST /v1/artifacts/resolve", s.handleArtifactResolve)
 	mux.HandleFunc("POST /v1/artifacts/prove", s.handleArtifactProve)
 	mux.HandleFunc("POST /v1/artifacts/verify", s.handleArtifactVerify)
@@ -217,7 +224,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /resolve/{root}", s.handleResolve)
 	mux.HandleFunc("GET /resolve/{root}/{path...}", s.handleResolve)
 
-	// Core read/write (/{root}/{path...} format). POST is a UnixFS layout
+	// Core read/write (/{root}/{path...} format). POST is a UnixFS application
 	// convenience for UnixFS roots; legacy root migration requires explicit
 	// opt-in before file operations are converted into semantic mutations.
 	mux.HandleFunc("GET /{root}", s.handleContent)

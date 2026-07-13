@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt/layout/unixfs"
 	daemonclient "github.com/dewebprotocol/malt/sdk/client"
+	"github.com/dewebprotocol/malt/sdk/unixfs"
 	cid "github.com/ipfs/go-cid"
 )
 

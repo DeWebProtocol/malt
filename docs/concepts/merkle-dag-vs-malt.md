@@ -29,12 +29,13 @@ MALT separates the proof from the payload object chain. The verifier checks a
 
 ```text
 VerifyRead(ReadRequest, ReadResult) -> valid / invalid
+VerifyResolve(ResolveRequest, ResolveResult) -> valid / invalid
 ```
 
 For flat MALT lookups, proof material for each semantic lookup is fixed-size
 under the selected commitment backend. A response that intentionally combines
 multiple semantic lookups or range segments carries the corresponding proof
-steps, but the proof is still a dedicated verifier artifact rather than the
+steps, but the ProofList is still dedicated verifier evidence rather than the
 Merkle-DAG traversal objects themselves.
 
 ## Direct Root And Typed Query Reads

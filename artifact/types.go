@@ -1,8 +1,11 @@
-// Package artifact defines the transport-neutral, versioned MALT artifacts
-// shared by resolvers, provers, verifiers, gateways, daemons, and SDKs.
+// Package artifact implements the frozen malt.artifact/v0alpha2 compatibility
+// profile published by MALT v0.0.4. New integrations use package protocol's
+// operation-specific resolve and read contracts.
 package artifact
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 
 	malt "github.com/dewebprotocol/malt"
@@ -10,8 +13,9 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Profile identifies the artifact contract introduced by MALT v0.0.4. The
-// Go package remains unversioned; the serialized envelope carries the profile.
+// Profile identifies the frozen artifact contract introduced by MALT v0.0.4.
+// Its operation set is resolve and prove; incompatible extensions require a
+// different serialized profile.
 const Profile = "malt.artifact/v0alpha2"
 
 type Operation string
@@ -38,6 +42,147 @@ type Query struct {
 	Index    *uint64   `json:"index,omitempty"`
 	Start    *uint64   `json:"start,omitempty"`
 	End      *uint64   `json:"end,omitempty"`
+}
+
+// Equal reports whether two canonical artifact queries select the same
+// operation input. Callers should validate both queries before relying on the
+// result so irrelevant fields cannot be smuggled through an envelope.
+func (q Query) Equal(other Query) bool {
+	return q.Kind == other.Kind &&
+		stringSlicesEqual(q.Segments, other.Segments) &&
+		uint64PointersEqual(q.Index, other.Index) &&
+		uint64PointersEqual(q.Start, other.Start) &&
+		uint64PointersEqual(q.End, other.End)
+}
+
+// MarshalJSON emits exactly the fields allowed by the selected query kind.
+// Path queries always carry segments, including the zero-segment identity
+// query required by the published schema.
+func (q Query) MarshalJSON() ([]byte, error) {
+	if err := q.Validate(q.Kind == QueryPath); err != nil {
+		return nil, err
+	}
+	switch q.Kind {
+	case QueryPath, QueryMapKey:
+		segments := q.Segments
+		if segments == nil {
+			segments = []string{}
+		}
+		return json.Marshal(struct {
+			Kind     QueryKind `json:"kind"`
+			Segments []string  `json:"segments"`
+		}{Kind: q.Kind, Segments: segments})
+	case QueryListIndex:
+		return json.Marshal(struct {
+			Kind  QueryKind `json:"kind"`
+			Index uint64    `json:"index"`
+		}{Kind: q.Kind, Index: *q.Index})
+	case QueryListRange:
+		return json.Marshal(struct {
+			Kind  QueryKind `json:"kind"`
+			Start uint64    `json:"start"`
+			End   *uint64   `json:"end,omitempty"`
+		}{Kind: q.Kind, Start: *q.Start, End: q.End})
+	default:
+		return nil, fmt.Errorf("unsupported artifact query kind %q", q.Kind)
+	}
+}
+
+// UnmarshalJSON enforces the same conditional field set as the published JSON
+// Schema instead of silently ignoring unrelated or unknown query fields.
+func (q *Query) UnmarshalJSON(data []byte) error {
+	if q == nil {
+		return fmt.Errorf("artifact query receiver is nil")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode artifact query: %w", err)
+	}
+	kindField, ok := fields["kind"]
+	if !ok {
+		return fmt.Errorf("artifact query has no kind")
+	}
+	var kind QueryKind
+	if err := json.Unmarshal(kindField, &kind); err != nil {
+		return fmt.Errorf("decode artifact query kind: %w", err)
+	}
+
+	decoded := Query{Kind: kind}
+	switch kind {
+	case QueryPath:
+		if err := requireOnlyQueryFields(fields, "kind", "segments"); err != nil {
+			return err
+		}
+		segments, ok := fields["segments"]
+		if !ok {
+			// v0.0.4 encoded the zero-segment identity query without a
+			// segments field because the slice used omitempty. Keep the same
+			// artifact profile compatible and normalize it to the canonical
+			// empty segment array.
+			decoded.Segments = []string{}
+			break
+		}
+		if bytes.Equal(bytes.TrimSpace(segments), []byte("null")) {
+			return fmt.Errorf("path query segments are null")
+		}
+		if err := json.Unmarshal(segments, &decoded.Segments); err != nil {
+			return fmt.Errorf("decode path query segments: %w", err)
+		}
+	case QueryMapKey:
+		if err := requireOnlyQueryFields(fields, "kind", "segments"); err != nil {
+			return err
+		}
+		segments, ok := fields["segments"]
+		if !ok || bytes.Equal(bytes.TrimSpace(segments), []byte("null")) {
+			return fmt.Errorf("map_key query has no segments")
+		}
+		if err := json.Unmarshal(segments, &decoded.Segments); err != nil {
+			return fmt.Errorf("decode map_key query segments: %w", err)
+		}
+	case QueryListIndex:
+		if err := requireOnlyQueryFields(fields, "kind", "index"); err != nil {
+			return err
+		}
+		index, ok := fields["index"]
+		if !ok || bytes.Equal(bytes.TrimSpace(index), []byte("null")) {
+			return fmt.Errorf("list_index query has no index")
+		}
+		var value uint64
+		if err := json.Unmarshal(index, &value); err != nil {
+			return fmt.Errorf("decode list_index query index: %w", err)
+		}
+		decoded.Index = &value
+	case QueryListRange:
+		if err := requireOnlyQueryFields(fields, "kind", "start", "end"); err != nil {
+			return err
+		}
+		start, ok := fields["start"]
+		if !ok || bytes.Equal(bytes.TrimSpace(start), []byte("null")) {
+			return fmt.Errorf("list_range query has no start")
+		}
+		var value uint64
+		if err := json.Unmarshal(start, &value); err != nil {
+			return fmt.Errorf("decode list_range query start: %w", err)
+		}
+		decoded.Start = &value
+		if end, ok := fields["end"]; ok {
+			if bytes.Equal(bytes.TrimSpace(end), []byte("null")) {
+				return fmt.Errorf("list_range query end is null")
+			}
+			var endValue uint64
+			if err := json.Unmarshal(end, &endValue); err != nil {
+				return fmt.Errorf("decode list_range query end: %w", err)
+			}
+			decoded.End = &endValue
+		}
+	default:
+		return fmt.Errorf("unsupported artifact query kind %q", kind)
+	}
+	if err := decoded.Validate(kind == QueryPath); err != nil {
+		return err
+	}
+	*q = decoded
+	return nil
 }
 
 // ResolveRequest asks an execution engine for one authenticated derivation of
@@ -115,6 +260,9 @@ func (q Query) Validate(allowPath bool) error {
 	case QueryPath:
 		if !allowPath {
 			return fmt.Errorf("path query is only valid for resolve artifacts")
+		}
+		if q.Index != nil || q.Start != nil || q.End != nil {
+			return fmt.Errorf("path query contains list fields")
 		}
 		_, err := malt.NewSegmentPath(q.Segments)
 		return err
@@ -271,4 +419,42 @@ func cloneUint64(value *uint64) *uint64 {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func uint64PointersEqual(left, right *uint64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func requireOnlyQueryFields(fields map[string]json.RawMessage, allowed ...string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, field := range allowed {
+		allowedSet[field] = struct{}{}
+	}
+	for field := range fields {
+		if _, ok := allowedSet[field]; !ok {
+			return fmt.Errorf("%s query contains unrelated field %q", fieldsQueryKind(fields), field)
+		}
+	}
+	return nil
+}
+
+func fieldsQueryKind(fields map[string]json.RawMessage) QueryKind {
+	var kind QueryKind
+	_ = json.Unmarshal(fields["kind"], &kind)
+	return kind
 }

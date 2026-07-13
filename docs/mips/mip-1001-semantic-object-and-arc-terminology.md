@@ -49,8 +49,8 @@ Current code evidence:
 - `auth/semantic/mapping` defines map semantics.
 - `auth/semantic/list` defines indexed child-reference semantics.
 - `graph` composes resolver and writer ports.
-- `layout/unixfs` is an application layout built from map/list/CAS blob
-  composition.
+- UnixFS is an application model/profile split across `model/unixfs`,
+  `sdk/unixfs`, and `runtime/unixfs`.
 
 ## Backwards Compatibility
 

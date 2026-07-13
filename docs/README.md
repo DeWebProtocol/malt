@@ -11,8 +11,8 @@ should link back here for protocol, policy, and compatibility details.
 Managed gateway service behavior, including tenancy, identity, authorization,
 root publication, backend orchestration, S3/Filecoin/IPFS deployment policy,
 quota, cache policy, and operations, belongs in `DeWebProtocol/gateway` or
-private deployment overlays. This repository may keep a reference/evaluation
-gateway only to exercise MALT core end to end.
+private deployment overlays. This repository keeps an all-in-one
+reference/evaluation executor only to exercise MALT core end to end.
 
 ## Concepts
 
@@ -38,7 +38,7 @@ gateway only to exercise MALT core end to end.
 ## MALT Improvement Proposals
 
 MALT Improvement Proposals live in [docs/mips](./mips/). MIPs are the review
-path for semantic, verifier-facing, API, layout, tooling, and evaluation
+path for semantic, verifier-facing, API, application-model, tooling, and evaluation
 changes before they become implementation work.
 
 MIPs should define the proposal boundary, motivation, decision, alternatives,
@@ -52,7 +52,10 @@ removed after migration. New implementation-bound MIP work should happen here.
 The current public-core contracts are
 [MIP-1011: Arc Authentication Core Contract](./mips/mip-1011-arc-authentication-core-contract.md),
 [MIP-1012: Segment Path Resolution](./mips/mip-1012-segment-path-resolution.md),
-and the profiled artifacts finalized by
+the active
+[MIP-1013: Client, Gateway, And Core Responsibility Boundary](./mips/mip-1013-client-gateway-core-boundary.md),
+the operation-specific resolve/read profiles in that active MIP, and the
+frozen v0.0.4 artifact compatibility profile recorded by
 [MIP-1004](./mips/mip-1004-resolve-prooflist-artifact-schema.md).
 
 ## What Goes Where

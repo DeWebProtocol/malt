@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Portable `mutation` value contracts and a separate untrusted
+  `execution.Executor` facade.
+- Client-local `sdk/verifier` plus a reproducible browser/WASM verifier build.
+- Explicit UnixFS `model/unixfs`, `sdk/unixfs`, and `runtime/unixfs` boundaries.
+
+### Changed
+
+- The module-root `malt` package no longer imports graph writer/execution code;
+  it owns query/result/mutation projections and verification bindings only.
+- Commitment verification-only interfaces are separated from prover/updater
+  capabilities for light-client and WASM consumers.
+- The old local daemon bootstrap is identified as a reference executor, and
+  remote verify routes are diagnostic/conformance surfaces only.
+- `malt verify` performs portable verification locally, binds an explicit
+  trusted root and caller-selected canonical query, and exits non-zero on
+  rejection.
+- The local Go/WASM verifier request binds caller-selected root, operation,
+  query, and optional expected target inside the verifier boundary.
+
+### Fixed
+
+- `malt.artifact/v0alpha2` decoders preserve compatibility with v0.0.4
+  zero-segment identity queries that omitted `segments`, while canonical output
+  emits `segments: []`.
+- `malt verify --query ""` accepts a valid zero-step root-identity artifact and
+  still binds its root and implied target locally.
+- Reference diagnostic verification reuses one lazily initialized portable
+  verifier per server and rejects oversized request bodies before initializing
+  the KZG/IPA registry.
+- UnixFS compatibility helpers return a diagnostic error for a nil CAS reader
+  instead of panicking.
+- Reference-executor CORS exposes `X-Malt-Verification-Role` so browser clients
+  can distinguish diagnostic verification responses.
+
 ## [0.0.4] - 2026-07-12
 
 ### Added

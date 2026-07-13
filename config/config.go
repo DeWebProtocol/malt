@@ -337,7 +337,7 @@ func (c *Config) RPCBaseURL() string {
 	return listen
 }
 
-// APIBaseURL returns the daemon API base URL.
+// APIBaseURL returns the configured reference-executor API base URL.
 func (c *Config) APIBaseURL() string {
 	return strings.TrimRight(c.RPCBaseURL(), "/")
 }

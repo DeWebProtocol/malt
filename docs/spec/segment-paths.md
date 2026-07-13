@@ -29,6 +29,11 @@ according to its own transport policy.
 The module-root `malt.SegmentPath`, `malt.NewSegmentPath`, and
 `malt.ParseSegmentPath` implement this contract.
 
+`@payload` is a reserved MALT coordinate expressed as an ordinary explicit
+segment. A client that wants the payload bound to `a/b` resolves
+`["a", "b", "@payload"]`; it does not ask core for a separate payload
+operation. The empty segment array remains strict root identity.
+
 ## Arc Selection And Composition
 
 One MALT map arc may consume one or more leading segments. Given the requested
@@ -68,6 +73,5 @@ This division keeps the contract small:
 - core owns segments, canonical arc projection, proof-carrying composition,
   and verification of the returned derivation;
 - execution owns candidate discovery and may prefer longest-prefix lookup;
-- applications/layouts own their namespace, overlap, and conflict policy;
+- applications/clients own their namespace, overlap, and conflict policy;
 - transports own URL, RPC, object-syntax, and escaping rules.
-

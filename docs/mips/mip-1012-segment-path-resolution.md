@@ -45,8 +45,8 @@ escaping and conflict rules.
 - Verification proves the returned complete derivation. It does not prove that
   the chosen prefix or derivation was longest, shortest, unique, or otherwise
   application-preferred.
-- Applications and layouts own overlap/conflict policy when multiple valid
-  derivations exist.
+- When multiple valid derivations exist, accepting any verified derivation is
+  normal core behavior; a client may add an application-specific preference.
 
 The normative rules and examples live in
 [`docs/spec/segment-paths.md`](../spec/segment-paths.md).
@@ -66,9 +66,9 @@ also enlarge the proof and couple verifier semantics to one execution policy.
 
 Alternative valid derivations can return different authenticated targets if an
 application creates overlapping relations. This is not proof forgery: each
-accepted artifact still proves its own root-to-target derivation. Applications
-that require deterministic namespace behavior must impose and validate a layout
-policy for overlap.
+accepted result still proves its own root-to-target derivation. Applications
+that require deterministic namespace behavior may impose and validate their
+own overlap policy; MALT core does not require one.
 
 Transport adapters must not silently apply dot-segment or whitespace
 normalization to the canonical segment contract. If a transport reserves such
@@ -77,4 +77,3 @@ values, it must reject or reversibly encode them before calling core.
 ## History
 
 - 2026-07-12: Accepted and implemented for `v0.0.4`.
-

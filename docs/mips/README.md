@@ -77,7 +77,7 @@ not become the only copy of a schema or specification.
 | [MIP-1001](mip-1001-semantic-object-and-arc-terminology.md) | Draft | Standards Track | Core | Define graph root, semantic object, payload, outgoing arc, map relation, and list child-reference terminology. |
 | [MIP-1002](mip-1002-writer-receipt-accounting.md) | Draft | Standards Track | Interface | Decide how writer receipts support storage, indexing, accounting, and benchmark reporting. |
 | [MIP-1003](mip-1003-prooflist-verification-schema.md) | Review | Standards Track | Core | Formalize ProofList verifier contract, body/header binding, omission behavior, and range-body verification. |
-| [MIP-1004](mip-1004-resolve-prooflist-artifact-schema.md) | Final | Standards Track | Interface | Publish profiled resolve, prove, and verify artifacts with named schemas. |
+| [MIP-1004](mip-1004-resolve-prooflist-artifact-schema.md) | Final | Standards Track | Interface | Record the frozen v0.0.4 resolve/prove/verify artifact profile and schemas. |
 | [MIP-1005](mip-1005-kzg-map-label-domain.md) | Final | Standards Track | Core | Record the canonical binding-CID slot model for storage-free map commitment primitives. |
 | [MIP-1006](mip-1006-variable-size-measured-list-evidence.md) | Draft | Standards Track | Core | Specify a future range-addressable list model for variable-size children. |
 | [MIP-1007](mip-1007-incremental-add-root-optimization.md) | Draft | Standards Track | Tooling | Explore path-local incremental add for very large existing roots. |
@@ -86,6 +86,7 @@ not become the only copy of a schema or specification.
 | [MIP-1010](mip-1010-data-authentication-core-boundary.md) | Final | Standards Track | Core | Record the completed package-ownership split among authentication, graph ports, layouts, runtime, storage, SDK, and transport code. |
 | [MIP-1011](mip-1011-arc-authentication-core-contract.md) | Final | Standards Track | Core | Define the portable arc-level `Read`/`Apply`/`VerifyRead` contract introduced in `v0.0.3`. |
 | [MIP-1012](mip-1012-segment-path-resolution.md) | Final | Standards Track | Core | Define segment arrays, proof-carrying arc composition, and existential resolution. |
+| [MIP-1013](mip-1013-client-gateway-core-boundary.md) | In Progress | Standards Track | Core | Separate client trust, gateway execution, CAS payload, and UnixFS application-model responsibilities. |
 
 ## Promotion Protocol
 

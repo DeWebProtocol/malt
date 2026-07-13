@@ -49,7 +49,7 @@ func (r *BackendRegistry) Register(kind maltcid.BackendKind, maps MapVerifier, l
 
 // RegisterScheme installs the built-in radix-map and tree-list proof decoders
 // over one primitive commitment scheme.
-func (r *BackendRegistry) RegisterScheme(kind maltcid.BackendKind, scheme commitment.IndexCommitment) error {
+func (r *BackendRegistry) RegisterScheme(kind maltcid.BackendKind, scheme commitment.IndexVerifier) error {
 	if scheme == nil {
 		return fmt.Errorf("commitment scheme for backend %q is nil", kind)
 	}

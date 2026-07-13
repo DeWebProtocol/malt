@@ -12,9 +12,10 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	unixfsmodel "github.com/dewebprotocol/malt/model/unixfs"
 	"github.com/dewebprotocol/malt/runtime/node"
 	daemonclient "github.com/dewebprotocol/malt/sdk/client"
+	"github.com/dewebprotocol/malt/sdk/unixfs"
 	"github.com/dewebprotocol/malt/server"
 	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/storage/cas/ipfs"
@@ -627,12 +628,12 @@ func TestAddCASBatcherDeduplicatesBlocks(t *testing.T) {
 	if !first.Equals(second) {
 		t.Fatalf("duplicate CID = %s, want %s", second, first)
 	}
-	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), unixfs.DirectoryManifestCodec)
+	typed, err := batcher.PutWithCodec(ctx, []byte(`{"entries":["a.txt"]}`), unixfsmodel.DirectoryManifestCodec)
 	if err != nil {
 		t.Fatalf("PutWithCodec: %v", err)
 	}
-	if typed.Prefix().Codec != unixfs.DirectoryManifestCodec {
-		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, unixfs.DirectoryManifestCodec)
+	if typed.Prefix().Codec != unixfsmodel.DirectoryManifestCodec {
+		t.Fatalf("typed codec = %x, want %x", typed.Prefix().Codec, unixfsmodel.DirectoryManifestCodec)
 	}
 	if err := batcher.Flush(ctx); err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -996,6 +997,8 @@ func TestAddResolveVerifyDaemonClientFlow(t *testing.T) {
 
 	cmd := testCommandWithContext(ctx)
 	cmd.Flags().String("prooflist", proofPath, "")
+	cmd.Flags().String("root", added.NewRoot, "")
+	cmd.Flags().String("query", filepath.Base(inputRoot)+"/note.txt", "")
 	verifyOut := captureStdout(t, func() {
 		if err := runVerify(cmd, nil); err != nil {
 			t.Fatalf("run verify: %v", err)

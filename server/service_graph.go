@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	listsemantic "github.com/dewebprotocol/malt/auth/semantic/list"
@@ -11,11 +12,12 @@ import (
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
 type runtimeGraph interface {
+	malt.Resolver
 	ID() string
 	Namespace() string
 	Resolver() graph.Resolver
@@ -36,7 +38,7 @@ func (s *Server) graphService(ctx context.Context) (graphService, error) {
 	return graphService{runtime: runtime}, nil
 }
 
-func (svc graphService) ApplyMutation(ctx context.Context, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
+func (svc graphService) ApplyMutation(ctx context.Context, mut mutation.SemanticMutation) (mutation.WriteReceipt, error) {
 	return svc.runtime.Writer().Apply(ctx, svc.runtime.Namespace(), mut)
 }
 

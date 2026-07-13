@@ -1,4 +1,4 @@
-// Package client provides a thin HTTP client for the local MALT daemon.
+// Package client provides a thin HTTP client for the MALT reference executor.
 package client
 
 import (
@@ -18,19 +18,20 @@ import (
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/protocol"
 )
 
-// Error is a structured daemon API error.
+// Error is a structured reference-executor API error.
 type Error struct {
 	StatusCode int
 	Message    string
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("daemon API error (%d): %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("reference executor API error (%d): %s", e.StatusCode, e.Message)
 }
 
-// Client is a thin HTTP client over the local daemon API.
+// Client is a thin HTTP client over the reference-executor API.
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -51,7 +52,7 @@ func NewWithBaseURL(baseURL string) *Client {
 	}
 }
 
-// Health checks daemon health.
+// Health checks reference-executor health.
 func (c *Client) Health(ctx context.Context) (*httpapi.HealthResponse, error) {
 	var resp httpapi.HealthResponse
 	if err := c.do(ctx, http.MethodGet, "/health", nil, nil, &resp); err != nil {
@@ -60,7 +61,7 @@ func (c *Client) Health(ctx context.Context) (*httpapi.HealthResponse, error) {
 	return &resp, nil
 }
 
-// MetricsSnapshot returns node-local daemon evaluation counters.
+// MetricsSnapshot returns reference-executor evaluation counters.
 func (c *Client) MetricsSnapshot(ctx context.Context) (*httpapi.MetricsResponse, error) {
 	var resp httpapi.MetricsResponse
 	if err := c.do(ctx, http.MethodGet, "/metrics", nil, nil, &resp); err != nil {
@@ -69,7 +70,7 @@ func (c *Client) MetricsSnapshot(ctx context.Context) (*httpapi.MetricsResponse,
 	return &resp, nil
 }
 
-// ResetMetrics clears node-local daemon evaluation counters and returns the
+// ResetMetrics clears reference-executor evaluation counters and returns the
 // post-reset snapshot.
 func (c *Client) ResetMetrics(ctx context.Context) (*httpapi.MetricsResponse, error) {
 	var resp httpapi.MetricsResponse
@@ -85,19 +86,71 @@ func (c *Client) ResolveRoot(ctx context.Context, root string, p string) (*httpa
 }
 
 // ResolveRootWithProof resolves a path from an explicit root and controls
-// whether ProofList evidence is included in the daemon response.
+// whether ProofList evidence is included in the executor response.
 func (c *Client) ResolveRootWithProof(ctx context.Context, root string, p string, includeProof bool) (*httpapi.ResolveResponse, error) {
 	return c.ResolveWithProof(ctx, root, p, includeProof)
 }
 
-// Resolve resolves a path relative to a root CID and returns ProofList evidence
-// by default.
+// ResolveContract executes the operation-specific MALT resolve contract. The
+// caller must verify the returned result against the original request before
+// accepting its target.
+func (c *Client) ResolveContract(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var result protocol.ResolveResult
+	if err := c.do(ctx, http.MethodPost, "/v1/resolve", nil, request, &result); err != nil {
+		return nil, err
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid resolve result: %w", err)
+	}
+	return &result, nil
+}
+
+// ReadContract executes one primitive map/list read contract.
+func (c *Client) ReadContract(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var result protocol.ReadResult
+	if err := c.do(ctx, http.MethodPost, "/v1/read", nil, request, &result); err != nil {
+		return nil, err
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid read result: %w", err)
+	}
+	return &result, nil
+}
+
+// VerifyResolveContract calls the reference executor's diagnostic verifier.
+// Trust decisions should use sdk/verifier locally instead.
+func (c *Client) VerifyResolveContract(ctx context.Context, value protocol.ResolveVerification) (*protocol.VerificationResult, error) {
+	var result protocol.VerificationResult
+	if err := c.do(ctx, http.MethodPost, "/v1/verify/resolve", nil, value, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// VerifyReadContract calls the reference executor's diagnostic verifier.
+// Trust decisions should use sdk/verifier locally instead.
+func (c *Client) VerifyReadContract(ctx context.Context, value protocol.ReadVerification) (*protocol.VerificationResult, error) {
+	var result protocol.VerificationResult
+	if err := c.do(ctx, http.MethodPost, "/v1/verify/read", nil, value, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Resolve resolves and materializes a path through the legacy UnixFS-oriented
+// GET adapter. Generic callers should use ResolveContract.
 func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
 	return c.ResolveWithProof(ctx, root, rawPath, true)
 }
 
 // ResolveWithProof resolves a path relative to a root CID and controls whether
-// ProofList evidence is included in the daemon response.
+// ProofList evidence is included in the executor response.
 func (c *Client) ResolveWithProof(ctx context.Context, root, rawPath string, includeProof bool) (*httpapi.ResolveResponse, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
@@ -331,13 +384,21 @@ func (c *Client) CreatePayloadRoot(ctx context.Context, extras map[string]string
 	return c.CreateRootStructure(ctx, arcs)
 }
 
-// Verify verifies a ProofList.
-func (c *Client) Verify(ctx context.Context, req *httpapi.VerifyRequest) (*httpapi.VerifyResponse, error) {
+// VerifyDiagnostic asks the reference executor to run its verifier. The result
+// is useful for diagnostics and conformance only; clients making a trust
+// decision must use sdk/verifier locally.
+func (c *Client) VerifyDiagnostic(ctx context.Context, req *httpapi.VerifyRequest) (*httpapi.VerifyResponse, error) {
 	var resp httpapi.VerifyResponse
 	if err := c.do(ctx, http.MethodPost, "/verify", nil, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// Verify is the legacy remote diagnostic verifier.
+// Deprecated: use sdk/verifier locally, or VerifyDiagnostic for diagnostics.
+func (c *Client) Verify(ctx context.Context, req *httpapi.VerifyRequest) (*httpapi.VerifyResponse, error) {
+	return c.VerifyDiagnostic(ctx, req)
 }
 
 func (c *Client) do(ctx context.Context, method string, route string, query map[string]string, body any, out any) error {

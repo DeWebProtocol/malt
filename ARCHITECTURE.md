@@ -12,7 +12,8 @@ verification, semantic proof rules, and portable ProofList verification.
 ArcTable, concrete semantic implementations used to generate proofs, caches,
 storage adapters, daemons, and gateways form an untrusted execution engine.
 They may accelerate reads and mutations, but they are not correctness
-authorities. UnixFS is one application layout over this model.
+authorities. UnixFS is one first-party application model/profile over this
+core; layout refers only to a model's materialization strategy.
 
 This repository packages that core as a specification implementation with a
 reference runtime and evaluation gateway. Production managed-gateway behavior
@@ -22,10 +23,10 @@ the separate `DeWebProtocol/gateway` service repository or private deployment
 overlays.
 
 ```text
-Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
+execution.Executor.Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
 VerifyRead(request, result) -> valid / invalid
 
-Apply(semantic mutation with base root) -> result root + write receipt
+execution.Executor.Apply(semantic mutation with base root) -> result root + write receipt
 ```
 
 List and map are semantic abstractions:
@@ -35,30 +36,37 @@ List and map are semantic abstractions:
 - map semantic: authenticated keyed/path-like relations from semantic objects
   to target CIDs
 
-The module-root `package malt` is the typed application-neutral facade.
-`Engine.Read`, `Engine.Apply`, and `Engine.VerifyRead` compose execution-plane
-implementations while hiding runtime scope from canonical requests. The engine
-is still untrusted: `VerifyRead` binds a caller-supplied trusted root and typed
+The module-root `package malt` is the typed, application-neutral verification
+facade. It defines query/result bindings and `VerifyRead`; portable mutation
+values live in `mutation`. The separate `execution.Executor` composes map/list
+provers and mutation appliers while hiding runtime scope from canonical
+requests. Execution is untrusted: clients bind a caller-selected root and typed
 query to the returned target, optional range segments, and ProofList before the
-portable `auth/verifier` checks the evidence.
+portable verifier checks the evidence.
 
 `malt.SegmentPath` is the application-neutral composition coordinate. Clients
 send segment arrays; the reference resolver may consume multiple leading
 segments with one authenticated arc and currently prefers the longest prefix at
 each root. The proof contract is existential: it authenticates the returned
 complete derivation, not the uniqueness or maximality of the selected path.
-Applications and layouts own overlap/conflict policy.
+Applications and clients own overlap/conflict policy.
 
 The unversioned `artifact` package projects resolve, primitive prove, and
 verify operations into the explicit `malt.artifact/v0alpha2` envelope. This is
-the cross-process boundary for gateway, daemon, and SDK integrations. Profile
+the cross-process boundary for gateway, reference-executor, and SDK integrations. Profile
 versions belong in serialized artifacts and schemas, not Go package names.
 
 ArcTable is namespace-scoped arcset persistence/materialization and provides no
 correctness by itself. `graph` is a runtime composition boundary around
 resolver and writer ports, not a semantic owner or graph-node hierarchy.
-Layouts translate domain operations into typed arc queries and semantic
-mutations. Server routes execute adapters over these contracts.
+Client/application adapters translate domain operations into segment arrays,
+typed queries, and semantic mutations. Server routes execute untrusted adapters
+over the same contracts.
+
+The role boundary is independent of deployment topology. A managed gateway may
+embed the executor or call it remotely. In either form the executor owns
+ArcTable/KV materialization and proof generation; CAS remains a separate payload
+backend, and the client performs the final verification decision locally.
 
 This document is implementation-oriented. For the shorter system overview, see
 [`README.md`](./README.md).
@@ -71,11 +79,13 @@ but untrusted execution and application layers:
 | Layer | Responsibility |
 | --- | --- |
 | Portable auth kernel | Canonical arcs, typed roots, VC verification, semantic proof rules, and ProofList validation |
-| Root `malt` facade | Typed primitive queries, immutable segment paths, and `Engine.Read`/`Apply`/`VerifyRead` |
+| Root `malt` facade | Typed primitive queries, immutable segment paths, and `VerifyRead` |
+| `mutation` contract | Portable, namespace-free mutation/delta/receipt values |
 | `artifact` contract | Profiled resolve/prove/verify request, result, ProofList binding, and schemas |
-| Execution engine | Proof generation, mutation application, operational scope, ArcTable, indexes, and caches |
-| Runtime adapters | Resolver/writer ports, reference daemon, HTTP transport, SDK, and storage wiring |
-| Application layout | Domain model over typed arcs and CAS payloads; UnixFS is one layout |
+| `execution` package | Proof generation, mutation application, and operational scope; always untrusted |
+| Runtime adapters | Resolver/writer implementations, reference executor, HTTP transport, and storage wiring |
+| Client SDK | Domain mapping, trusted-root policy, local artifact/proof/payload verification |
+| Application model | Domain schema over typed arcs and CAS payloads; UnixFS is one model/profile |
 
 The public core facade exposes typed semantic operations and MALT segment paths,
 not storage machinery, JavaScript/filesystem syntax, or a UnixFS path API.
@@ -100,7 +110,7 @@ byte-range reads include path/`@payload` proof plus one measured-list
 covered segment CIDs, and a proof payload composed from the metadata slot proof
 and the required index proofs. Portable ProofList verification authenticates
 that metadata and those segment CIDs; UnixFS callers bind the returned HTTP
-body with `layout/unixfs.VerifyRangeBody` or an equivalent segment-byte check.
+body with `sdk/unixfs.VerifyRangeBody` or an equivalent segment-byte check.
 File routes are reference/evaluation surfaces around the same root-centric
 mutation namespace. They are not a production multi-tenant gateway contract.
 
@@ -203,7 +213,7 @@ They are not responsible for:
 - map key semantics
 - list range semantics
 - path resolution
-- application layout
+- application model or client syntax
 - graph lifecycle
 
 Current in-tree backends:
@@ -231,33 +241,40 @@ Current package roles are:
 - `auth/commitment`
   - stateless primitive commitment backends
 - `auth/verifier`
-  - portable ProofList verification without runtime, ArcTable, CAS, layout,
-    server, or daemon dependencies
+  - portable ProofList verification without runtime, ArcTable, CAS,
+    application, server, or executor dependencies
 - module-root `package malt`
-  - typed `Query`, `ReadRequest`, `ReadResult`, and
-    `Engine.Read`/`Apply`/`VerifyRead` facade
-- `layout/unixfs`
-  - current pure MALT UnixFS-style layout prototype built directly over
-    `mapping.Semantics`, `list.Semantics`, and CAS-backed payload storage
+  - typed `Query`, `ReadRequest`, `ReadResult`, mutation projections, and
+    package-level `VerifyRead`
+- `mutation`
+  - portable, namespace-free mutation/delta/receipt values
+- `execution`
+  - untrusted `Executor.Read`/`Apply` composition
+- `model/unixfs`
+  - UnixFS profile, formats, invariants, and mutation plans
+- `sdk/unixfs`
+  - client staging, upload planning, and range-body verification
+- `runtime/unixfs`
+  - optional in-process UnixFS reader/writer/proof/content adapter
 - `graph/resolver`
   - resolver read port and explicit proof path
 - `graph/writer`
-  - writer mutation model and executor
+  - reference mutation executor; portable mutation values live in `mutation`
 - `graph`
   - resolver/writer port contracts around graph-shaped semantic state
 - `runtime/graph`
   - concrete graph runtime composition around resolver and writer executors
 - `graph/querypath`
   - current query-path canonicalization helper for root-relative paths
-- `layout/unixfs/internal/manifest`
-  - current UnixFS directory-manifest helper above the semantic layer
+- `sdk/verifier`
+  - client-local artifact and ProofList verification facade
 
 ## Runtime Packaging
 
 The repository shape is a small primary reference runtime binary named `malt`,
 plus one evaluation binary named `malt-eval` with workload-specific
-subcommands. The `malt` daemon and `server` package are retained as a
-reference/evaluation gateway so end-to-end core behavior can be exercised
+subcommands. The process managed by `malt start` and the `server` package are
+retained as a reference executor so end-to-end core behavior can be exercised
 without pulling product tenancy and deployment policy into MALT core.
 
 The managed service gateway is separate. It should depend on MALT core
@@ -270,8 +287,8 @@ Current command model:
 - `malt init`
   - creates the local configuration file and state-root directory
 - `malt start/status/stop/restart`
-  - manage the local daemon as a background process
-  - owns hot structure state
+  - manage the local reference executor as a background process
+  - owns ArcTable/KV execution state
   - serves local HTTP/JSON API requests
 - `malt add ...`
   - client-side file and directory ingestion
@@ -282,7 +299,8 @@ Current command model:
 - `malt resolve ...`
   - returns `target + ProofList` by default for a root-relative read
 - `malt verify ...`
-  - verifies a ProofList
+  - verifies a ProofList locally against an explicit trusted root and canonical
+    caller-selected query without calling the executor
 - `malt-eval read`
   - read benchmark driver for `maltflat`, IPLD UnixFS, and IPLD UnixFS+HAMT
     baselines
@@ -295,21 +313,22 @@ Current command model:
 - `malt-eval summarize`
   - regenerates figure CSVs from framework raw envelopes
 - `malt-eval metrics`
-  - daemon evaluation metrics client
+  - reference-executor evaluation metrics client
 
 Current runtime invariants:
 
 - a directory root is a directory-shaped map root
 - a list root represents file-content structure and is not a directory root
 - every UnixFS file or directory map carries the reserved `@payload` binding as
-  a layout invariant; generic MALT maps may omit it
+  a model invariant; generic MALT maps may omit it
 - the reference compatibility `Resolve` path materializes map roots through
-  `@payload`; generic maps that omit it use `ResolveKey` or typed `Engine.Read`
+  `@payload`; generic maps that omit it use `ResolveKey` or typed
+  `execution.Executor.Read`
 - list roots are terminal typed keys and do not auto-redirect through
   `@payload`
 - root-relative path misses are reported as `not found`
 
-Path-miss and payload-materialization behavior are file-layout and
+Path-miss and payload-materialization behavior are UnixFS application and
 product-runtime invariants. Generic map semantics only reserve the `@payload`
 coordinate; they do not require it.
 
@@ -328,8 +347,9 @@ malt/
 |   `-- malt/
 |-- config/
 |-- daemon/
-|-- api/http/         # shared daemon API payloads
-|-- server/          # reference daemon and eval-gateway HTTP server
+|-- reference/executor/ # all-in-one local reference executor
+|-- api/http/         # reference transport DTOs
+|-- server/           # reference executor/evaluation HTTP server
 |-- auth/             # data-authentication core
 |   |-- arcset/       # canonical arcs and coordinates
 |   |-- commitment/   # primitive commitment backends
@@ -338,12 +358,16 @@ malt/
 |-- graph/            # thin resolver/writer port surface
 |   |-- querypath/    # root-relative query path canonicalization
 |   |-- resolver/     # resolver read port and explicit proof path
-|   `-- writer/       # writer mutation model and executor
-|-- layout/
-|   `-- unixfs/       # current map/list-based UnixFS layout prototype
+|   `-- writer/       # reference mutation executor
+|-- mutation/         # portable mutation/delta/receipt contracts
+|-- execution/        # untrusted read/apply composition
+|-- model/unixfs/     # UnixFS application model/profile
 |-- runtime/          # node, graph composition, ArcTable, metrics, and semantic implementations
+|   `-- unixfs/       # optional UnixFS execution/content adapter
 |-- sdk/
-|   `-- client/       # Go daemon client facade
+|   |-- client/       # Go reference-executor transport client
+|   |-- unixfs/       # UnixFS client planner/body verification
+|   `-- verifier/     # local artifact/ProofList verification
 |-- storage/          # CAS and KV storage libraries
 |-- wire/
 |   `-- maltcid/      # MALT map/list root CID codecs
@@ -432,7 +456,7 @@ interpretation is narrower: list/map semantics own authenticated operations,
 owns semantic mutation application, and `runtime/graph` only composes those
 ports with concrete semantic implementations.
 
-- layouts translate source-domain data into MALT semantic mutations
+- client/application adapters translate source-domain data into portable MALT mutations
 - the writer port applies converted semantic mutations through list/map
   semantic operations and returns a write receipt
 - resolver reads return `result + ProofList`
@@ -448,10 +472,10 @@ The explicit resolver is a map compatibility adapter:
 2. call map semantic proof generation for the selected exact key
 3. wrap the map proof as resolver evidence
 
-The current concrete `writer.Writer` is the mutation boundary. It accepts
-layout-produced semantic mutations, applies map/list deltas, and returns an
-operational receipt. It does not publish an authoritative head; applications
-decide which resulting root becomes current.
+The portable mutation boundary lives in package `mutation`. The concrete
+`writer.Writer` is a reference executor that accepts those mutations, applies
+map/list deltas, and returns an operational receipt. It does not publish an
+authoritative head; applications decide which resulting root becomes current.
 
 `ProofList` is the standard verifier-facing read artifact. It covers map
 step proofs, terminal `@payload` proofs, list index proofs, measured-list
@@ -459,10 +483,10 @@ step proofs, terminal `@payload` proofs, list index proofs, measured-list
 queried root to the destination. Current `list_range` steps carry fixed chunk
 metadata, covered segment CIDs, and metadata/index proof payload. The portable
 `auth/verifier` checks proof structure and evidence without runtime lookup;
-`layout/unixfs.VerifyRangeBody` separately binds authenticated range segments
+`sdk/unixfs.VerifyRangeBody` separately binds authenticated range segments
 to returned body bytes.
 
-The current daemon has two HTTP proof-bearing read surfaces:
+The current reference executor has two HTTP proof-bearing read surfaces:
 
 - default `GET /{root}/{path}` returns content or directory JSON and places the
   verifier-facing `ProofList` in `X-Malt-ProofList` with
@@ -473,10 +497,10 @@ The current daemon has two HTTP proof-bearing read surfaces:
 `HEAD /{root}/{path}` is intentionally stat-only and returns stat headers
 without generating proof metadata.
 
-## MALT UnixFS-Style Layout
+## MALT UnixFS Application Model
 
-The current code includes a first pure MALT structure UnixFS-like layout in
-`layout/unixfs`.
+The current code includes a first-party MALT UnixFS application model split
+across `model/unixfs`, `sdk/unixfs`, and `runtime/unixfs`.
 
 Current implementation:
 
@@ -488,8 +512,8 @@ Current implementation:
 - path lookup composes exact map reads
 - range load translates byte ranges to list index reads
 
-This layout is not the definition of MALT. It is an application model that
-demonstrates that list/map semantics can express practical file-system
+This model is not the definition of MALT. It demonstrates that list/map
+semantics can express practical file-system
 semantics.
 
 `malt add --target malt --model unixfs` currently accepts `--layout flat` and
@@ -502,17 +526,19 @@ evaluate pure root-map `flat` behavior separately from pure per-directory
 
 Current boundary:
 
-- The package remains the direct UnixFS-style layout library over map/list
-  semantics and CAS-backed payload storage, translating source-domain
-  file/directory data into MALT semantic mutations.
-- `POST /{root}/_mutate` is the writer mutation route. Root-centric daemon
-  routes also expose `POST /{root}/{path}` as a UnixFS layout convenience: it
+- `model/unixfs` owns schema, manifests, chunk rules, and model mutations;
+  `sdk/unixfs` owns client staging and body verification; `runtime/unixfs` owns
+  the optional in-process reader/writer/content adapter.
+- `POST /{root}/_mutate` is the writer mutation route. Root-centric
+  reference-executor routes also expose `POST /{root}/{path}` as a UnixFS
+  adapter convenience: it
   stages a file or directory operation, converts the resulting layout state into
   a semantic mutation, and then uses the same writer mutation path as
   `_mutate`.
-- The public CLI exposes ingestion through `malt add`; reads are available
-  through the daemon API and proof-bearing resolve/content endpoints.
-- The package injects `mapping.Semantics`, `list.Semantics`, and narrow CAS
+- The public CLI exposes ingestion through `malt add`; remote reads are
+  available through the reference-executor API and proof-bearing
+  resolve/content endpoints, while `malt verify` remains local.
+- The runtime adapter injects `mapping.Semantics`, `list.Semantics`, and narrow CAS
   reader/writer capabilities. `NewReader` grants no payload write capability;
   `NewWriter` receives read and write capabilities explicitly.
 - Current `graph`, `graph/writer`, and `graph/resolver` remain runtime
@@ -523,7 +549,7 @@ Current boundary:
   serving as the only schema copy.
 - Graph manager metadata is limited to lifecycle and runtime profile
   compatibility. It does not store an authoritative current root or publish
-  freshness. The current daemon path creates an ad hoc default `Graph` through
+  freshness. The current reference-executor path creates an ad hoc default `Graph` through
   `Node.NewGraph("default")` and does not expose the managed graph lifecycle as
   a public API.
 
@@ -549,7 +575,7 @@ Open proposal-stage MIPs for the next discussion:
   stable API and evaluation accounting contract
 - expand `malt.artifact/v0alpha2` with cross-language map/list/range
   conformance vectors while keeping incompatible profiles explicit
-- keep gateway, daemon, and SDK projections aligned with the checked-in
+- keep gateway, reference-executor, and SDK projections aligned with the checked-in
   resolve/prove/verify schemas
 - decide whether list needs a future variable-size or compact range-proof API;
   the current prototype uses path/`@payload` proof plus one measured-list
@@ -597,7 +623,7 @@ Write path:
 Read path:
 
 - MALT may need CAS to materialize payloads
-- application layouts may fetch chunks or directory manifests
+- application/client adapters may fetch chunks or directory manifests
 - compatibility traversal may read ordinary IPLD blocks
 
 MALT should not be framed primarily as a payload-upload proxy. Its core role is
@@ -607,8 +633,9 @@ authenticated structure management and proof generation.
 
 Correctness is cryptographic:
 
-- clients verify proofs or receipts against roots
-- daemon, resolver adapters, ArcTable, and caches are untrusted execution state
+- clients verify artifacts and proofs against roots; receipts remain
+  operational results rather than correctness proofs
+- gateway, executor, resolver adapters, ArcTable, and caches are untrusted execution state
 - bad state can affect latency or availability, but not accepted correctness
 
 Freshness, root publication, and multi-writer arbitration remain application or

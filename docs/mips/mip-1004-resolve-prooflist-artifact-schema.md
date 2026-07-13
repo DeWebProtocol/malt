@@ -1,7 +1,7 @@
 ---
 mip: 1004
 title: Resolve, Prove, And Verify Artifact Schema
-description: Publish profiled transport-neutral artifacts and schemas for resolution, primitive proofs, and verification.
+description: Record the frozen v0.0.4 transport-neutral artifact compatibility profile.
 author: MALT maintainers
 status: Final
 type: Standards Track
@@ -41,8 +41,11 @@ bindings from routes or headers.
   package, and identified by stable `$id` values.
 - Schema validation remains distinct from cryptographic and semantic proof
   verification.
-- Legacy CLI, bare ProofList, and proof-header surfaces remain compatibility
-  adapters rather than the contract new integrations should copy.
+- The operation set and field schema are frozen. In particular,
+  `resolve_payload` was not published by v0.0.4 and cannot be added under the
+  same profile discriminator.
+- Operation-specific resolve/read contracts may supersede this envelope for
+  new integrations while its released schema remains decodable.
 
 The normative field and verification rules live in
 [`docs/spec/artifacts.md`](../spec/artifacts.md).
@@ -66,3 +69,6 @@ all backend evidence.
 - 2026-07-11: Deferred named schemas from the `v0.0.3` `v0alpha1` profile.
 - 2026-07-12: Finalized the profiled resolve/prove/verify contract and schemas
   for `v0.0.4`.
+- 2026-07-13: Froze the published operation set and moved new integrations to
+  operation-specific resolve/read contracts; payload selection is represented
+  by an explicit `@payload` resolve segment.

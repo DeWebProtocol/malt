@@ -8,6 +8,7 @@ import (
 
 	"github.com/dewebprotocol/malt/config"
 	daemonapp "github.com/dewebprotocol/malt/daemon"
+	referenceexecutor "github.com/dewebprotocol/malt/reference/executor"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +18,7 @@ func init() {
 	rootCmd.AddCommand(daemonStopCmd)
 	rootCmd.AddCommand(daemonRestartCmd)
 	for _, cmd := range []*cobra.Command{daemonStartCmd, daemonStatusCmd, daemonStopCmd, daemonRestartCmd} {
-		cmd.Flags().StringVar(&daemonListenOverride, "listen", "", "override daemon listen address")
+		cmd.Flags().StringVar(&daemonListenOverride, "listen", "", "override reference-executor listen address")
 	}
 }
 
@@ -31,7 +32,7 @@ var daemonListenOverride string
 
 var daemonStartCmd = &cobra.Command{
 	Use:           "start",
-	Short:         "Start the local MALT daemon in the background",
+	Short:         "Start the local MALT reference executor in the background",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -40,7 +41,7 @@ var daemonStartCmd = &cobra.Command{
 
 var daemonStatusCmd = &cobra.Command{
 	Use:           "status",
-	Short:         "Show the local MALT daemon status",
+	Short:         "Show the local MALT reference executor status",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -49,7 +50,7 @@ var daemonStatusCmd = &cobra.Command{
 
 var daemonStopCmd = &cobra.Command{
 	Use:           "stop",
-	Short:         "Stop the managed local MALT daemon",
+	Short:         "Stop the managed local MALT reference executor",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -58,7 +59,7 @@ var daemonStopCmd = &cobra.Command{
 
 var daemonRestartCmd = &cobra.Command{
 	Use:           "restart",
-	Short:         "Restart the managed local MALT daemon",
+	Short:         "Restart the managed local MALT reference executor",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -81,9 +82,9 @@ func loadManagedDaemonConfig() (*config.Config, error) {
 }
 
 func runDaemonComponent(cfg *config.Config, listenOverride string) error {
-	return daemonapp.Run(cfg, daemonapp.RunOptions{
+	return referenceexecutor.Run(cfg, referenceexecutor.Options{
 		ListenOverride: listenOverride,
-		APILabel:       "malt daemon",
+		APILabel:       "MALT reference executor",
 		LifecycleToken: os.Getenv(daemonapp.LifecycleTokenEnv),
 		Stdout:         os.Stdout,
 		Stderr:         os.Stderr,
@@ -122,7 +123,7 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	}
 	printDaemonStatus(os.Stdout, status)
 	if !status.Running {
-		return fmt.Errorf("daemon is not running")
+		return fmt.Errorf("reference executor is not running")
 	}
 	return nil
 }
@@ -138,12 +139,12 @@ func runDaemonStop(cmd *cobra.Command, args []string) error {
 	}
 	status, err := manager.Stop(cmd.Context(), cfg)
 	if errors.Is(err, daemonapp.ErrDaemonStateNotFound) {
-		return fmt.Errorf("no managed daemon state found")
+		return fmt.Errorf("no managed reference-executor state found")
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "malt daemon stopped\n")
+	fmt.Fprintf(os.Stdout, "MALT reference executor stopped\n")
 	if status.PID > 0 {
 		fmt.Fprintf(os.Stdout, "pid: %d\n", status.PID)
 	}
@@ -250,9 +251,9 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 
 func printDaemonRunningStatus(w io.Writer, status *daemonapp.DaemonStatus) {
 	if status.Managed {
-		fmt.Fprintf(w, "malt daemon running\n")
+		fmt.Fprintf(w, "malt reference executor running\n")
 	} else {
-		fmt.Fprintf(w, "malt daemon already running\n")
+		fmt.Fprintf(w, "malt reference executor already running\n")
 	}
 	printDaemonStatusFields(w, status)
 }
@@ -262,7 +263,7 @@ func printDaemonStatus(w io.Writer, status *daemonapp.DaemonStatus) {
 		printDaemonRunningStatus(w, status)
 		return
 	}
-	fmt.Fprintf(w, "malt daemon stopped\n")
+	fmt.Fprintf(w, "malt reference executor stopped\n")
 	printDaemonStatusFields(w, status)
 	if status.HealthError != nil {
 		fmt.Fprintf(w, "health_error: %v\n", status.HealthError)

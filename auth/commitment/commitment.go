@@ -7,10 +7,26 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// IndexCommitment is the semantic-neutral primitive interface for
-// index-addressed authenticated values.
-type IndexCommitment interface {
+// IndexVerifier is the verification-only primitive surface required by light
+// clients, browser/WASM builds, and portable ProofList verification.
+type IndexVerifier interface {
 	// MaxValues returns the maximum number of authenticated values per root.
+	MaxValues() int
+
+	// VerifyIndex verifies a proof for one index against the expected cell.
+	VerifyIndex(root cid.Cid, index uint64, value Cell, proof []byte) (bool, error)
+
+	// BatchVerify verifies a proof payload for an ordered index list against
+	// the expected cells in the same order as indices.
+	BatchVerify(root cid.Cid, indices []uint64, values []Cell, proof []byte) (bool, error)
+
+	// VerifyProof verifies a proof that already carries its own index metadata.
+	VerifyProof(root cid.Cid, value Cell, proof []byte) (bool, error)
+}
+
+// IndexProver is the execution-only primitive surface used to create and
+// update commitments and generate proofs.
+type IndexProver interface {
 	MaxValues() int
 
 	// Commit generates a commitment to a stable indexed cell vector.
@@ -23,16 +39,13 @@ type IndexCommitment interface {
 	// returns the proved cells in the same order as indices.
 	BatchProve(values []Cell, indices []uint64) (root cid.Cid, proved []Cell, proof []byte, err error)
 
-	// VerifyIndex verifies a proof for one index against the expected cell.
-	VerifyIndex(root cid.Cid, index uint64, value Cell, proof []byte) (bool, error)
-
-	// BatchVerify verifies a proof payload for an ordered index list against
-	// the expected cells in the same order as indices.
-	BatchVerify(root cid.Cid, indices []uint64, values []Cell, proof []byte) (bool, error)
-
-	// VerifyProof verifies a proof that already carries its own index metadata.
-	VerifyProof(root cid.Cid, value Cell, proof []byte) (bool, error)
-
 	// Replace performs an index-stable replacement and returns the new root.
 	Replace(values []Cell, index uint64, oldValue, newValue Cell) (cid.Cid, error)
+}
+
+// IndexCommitment is the full execution backend. Client verification code
+// should depend on IndexVerifier instead.
+type IndexCommitment interface {
+	IndexVerifier
+	IndexProver
 }

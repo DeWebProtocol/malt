@@ -10,7 +10,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	coremutation "github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -18,84 +18,36 @@ var (
 	// ErrInvalidNamespace is returned when an executor has no internal materialization namespace.
 	ErrInvalidNamespace = errors.New("invalid materialization namespace")
 
-	// ErrInvalidBaseRoot is returned when an update mutation has no base root.
-	ErrInvalidBaseRoot = errors.New("invalid base root")
-
-	// ErrEmptyDeltas is returned when a semantic mutation carries no arc deltas.
-	ErrEmptyDeltas = errors.New("empty deltas")
-
-	// ErrObjectKindMismatch is returned when a delta kind disagrees with its object or changes kind.
-	ErrObjectKindMismatch = errors.New("object kind mismatch")
-
-	// ErrNilDelta is returned when a mutation has no canonical delta.
-	ErrNilDelta = errors.New("nil delta")
-
-	// ErrExpectedRootMismatch is returned when a replayed delta does not
-	// reproduce the root declared by the mutation plan.
-	ErrExpectedRootMismatch = errors.New("expected root mismatch")
+	// Deprecated: use the corresponding portable sentinel in package mutation.
+	ErrInvalidBaseRoot = coremutation.ErrInvalidBaseRoot
+	// Deprecated: use the corresponding portable sentinel in package mutation.
+	ErrEmptyDeltas = coremutation.ErrEmptyDeltas
+	// Deprecated: use the corresponding portable sentinel in package mutation.
+	ErrObjectKindMismatch = coremutation.ErrObjectKindMismatch
+	// Deprecated: use the corresponding portable sentinel in package mutation.
+	ErrNilDelta = coremutation.ErrNilDelta
+	// Deprecated: use the corresponding portable sentinel in package mutation.
+	ErrExpectedRootMismatch = coremutation.ErrExpectedRootMismatch
 )
 
-// SemanticMutation is the writer mutation boundary emitted by application layouts.
-type SemanticMutation struct {
-	BaseRoot cid.Cid
-	Deltas   []ArcSetDelta
-}
+// Deprecated: import package mutation for portable contract types.
+type SemanticMutation = coremutation.SemanticMutation
 
-// ArcSetDelta applies coordinate-level changes to one semantic object.
-type ArcSetDelta struct {
-	Object       cid.Cid
-	ExpectedRoot cid.Cid
-	Kind         arcset.Kind
-	Changes      *arcset.CanonicalArcDelta
-	Commit       CommitDescriptor
-}
+// Deprecated: import package mutation for portable contract types.
+type ArcSetDelta = coremutation.ArcSetDelta
 
-// CommitDescriptor records how a logical canonical arcset should be committed
-// into a concrete semantic root. The zero value is the default map/list commit.
-type CommitDescriptor struct {
-	FixedList *FixedListCommit
-}
+// Deprecated: import package mutation for portable contract types.
+type CommitDescriptor = coremutation.CommitDescriptor
 
-// FixedListCommit describes the measured fixed-width list commit profile.
-type FixedListCommit struct {
-	TotalSize uint64
-	ChunkSize uint64
-}
+// Deprecated: import package mutation for portable contract types.
+type FixedListCommit = coremutation.FixedListCommit
 
-// WriteReceipt records the library-level outcome of applying a semantic mutation.
-type WriteReceipt struct {
-	BaseRoot   cid.Cid
-	NewRoot    cid.Cid
-	DeltaCount int
-	ArcCount   int
-}
+// Deprecated: import package mutation for portable contract types.
+type WriteReceipt = coremutation.WriteReceipt
 
 // ValidateSemanticMutation validates the shape of an update semantic mutation.
 func ValidateSemanticMutation(mut SemanticMutation) error {
-	if !mut.BaseRoot.Defined() {
-		return ErrInvalidBaseRoot
-	}
-	if len(mut.Deltas) == 0 {
-		return ErrEmptyDeltas
-	}
-	for i, delta := range mut.Deltas {
-		if delta.Changes == nil {
-			return fmt.Errorf("delta %d: %w", i, ErrNilDelta)
-		}
-		if delta.Kind != delta.Changes.Kind() {
-			return fmt.Errorf("delta %d: %w", i, ErrObjectKindMismatch)
-		}
-		if !objectKindMatches(delta.Object, delta.Kind) {
-			return fmt.Errorf("delta %d: %w", i, ErrObjectKindMismatch)
-		}
-		if !objectKindMatches(delta.ExpectedRoot, delta.Kind) {
-			return fmt.Errorf("delta %d expected root: %w", i, ErrObjectKindMismatch)
-		}
-		if delta.Commit.FixedList != nil && delta.Kind != arcset.KindList {
-			return fmt.Errorf("delta %d fixed list commit on %q: %w", i, delta.Kind, ErrObjectKindMismatch)
-		}
-	}
-	return nil
+	return coremutation.Validate(mut)
 }
 
 // Apply commits canonical arc deltas in order.
@@ -443,21 +395,4 @@ func checkExpectedRoot(expectedRoot, actualRoot cid.Cid) error {
 		return nil
 	}
 	return fmt.Errorf("%w: got %s want %s", ErrExpectedRootMismatch, actualRoot, expectedRoot)
-}
-
-func objectKindMatches(object cid.Cid, kind arcset.Kind) bool {
-	if !object.Defined() {
-		return true
-	}
-
-	switch maltcid.SemanticKindOf(object) {
-	case maltcid.SemanticKindUnknown:
-		return true
-	case maltcid.SemanticKindMap:
-		return kind == arcset.KindMap
-	case maltcid.SemanticKindList:
-		return kind == arcset.KindList
-	default:
-		return false
-	}
 }
