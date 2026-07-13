@@ -29,7 +29,7 @@ func TestBrowserCORSAllowsConfiguredResolveAndVerifyRoutes(t *testing.T) {
 			t.Fatalf("Vary headers = %v, want Origin", got)
 		}
 		expose := rec.Header().Get("Access-Control-Expose-Headers")
-		for _, want := range []string{"X-Malt-ProofList", "X-Malt-ProofList-Encoding", "Content-Range", "X-Malt-Key"} {
+		for _, want := range []string{"X-Malt-ProofList", "X-Malt-ProofList-Encoding", "Content-Range", "X-Malt-Key", "X-Malt-Verification-Role"} {
 			if !strings.Contains(expose, want) {
 				t.Fatalf("Access-Control-Expose-Headers = %q, want %s", expose, want)
 			}
@@ -73,6 +73,32 @@ func TestBrowserCORSAllowsConfiguredResolveAndVerifyRoutes(t *testing.T) {
 			}
 			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://docs.example" {
 				t.Fatalf("Access-Control-Allow-Origin = %q", got)
+			}
+		})
+	}
+}
+
+func TestBrowserCORSExposesDiagnosticRoleOnVerifyResponses(t *testing.T) {
+	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{"https://docs.example"}))
+	handler := s.Handler()
+
+	for _, path := range []string{"/verify", "/v1/artifacts/verify"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{"))
+			req.Header.Set("Origin", "https://docs.example")
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("verify status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+			if got := rec.Header().Get("X-Malt-Verification-Role"); got != "diagnostic" {
+				t.Fatalf("X-Malt-Verification-Role = %q, want diagnostic", got)
+			}
+			if expose := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(expose, "X-Malt-Verification-Role") {
+				t.Fatalf("Access-Control-Expose-Headers = %q, want X-Malt-Verification-Role", expose)
 			}
 		})
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 const browserCORSAllowHeaders = "Content-Type, Range, X-Malt-Proof"
-const browserCORSExposeHeaders = "X-Malt-ProofList, X-Malt-ProofList-Encoding, Content-Range, X-Malt-Kind, X-Malt-Storage-Kind, X-Malt-Key, X-Malt-Payload"
+const browserCORSExposeHeaders = "X-Malt-ProofList, X-Malt-ProofList-Encoding, Content-Range, X-Malt-Kind, X-Malt-Storage-Kind, X-Malt-Key, X-Malt-Payload, X-Malt-Verification-Role"
 const browserCORSAllowMethods = "GET, HEAD, POST, OPTIONS"
 
 type browserOriginPolicy struct {

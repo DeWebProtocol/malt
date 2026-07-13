@@ -2,6 +2,7 @@ package unixfs
 
 import (
 	"context"
+	"fmt"
 
 	unixfsmodel "github.com/dewebprotocol/malt/model/unixfs"
 	cid "github.com/ipfs/go-cid"
@@ -30,6 +31,9 @@ func ManifestDirectoryEntries(ctx context.Context, blocks interface {
 func DirectoryManifestPayloadEntries(ctx context.Context, blocks interface {
 	Get(context.Context, cid.Cid) ([]byte, error)
 }, payload cid.Cid) ([]string, error) {
+	if blocks == nil {
+		return nil, fmt.Errorf("CAS reader is nil")
+	}
 	data, err := blocks.Get(ctx, payload)
 	if err != nil {
 		return nil, err

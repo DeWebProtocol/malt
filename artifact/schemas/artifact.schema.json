@@ -33,10 +33,13 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "segments"],
+          "required": ["kind"],
           "properties": {
             "kind": {"const": "path"},
-            "segments": {"$ref": "#/$defs/segments"}
+            "segments": {
+              "$ref": "#/$defs/segments",
+              "default": []
+            }
           }
         },
         {

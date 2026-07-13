@@ -9,6 +9,10 @@ The fixture proves only identity: the trusted root is the returned target and
 the ProofList has no traversal steps. Non-empty resolve and primitive prove
 artifacts require real backend evidence and are covered by Go integration tests.
 
+`resolve-root-artifact-v004.json` preserves the exact zero-segment query shape
+emitted by v0.0.4 (`{"kind":"path"}`). Decoders for the same profile normalize
+the missing `segments` field to `[]`; canonical encoders always emit the array.
+
 Consumers should validate the JSON shape against the checked-in schemas and
 then run semantic/cryptographic verification. Passing schema validation alone
 is not conformance.

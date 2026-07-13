@@ -92,6 +92,7 @@ type Server struct {
 	server         *http.Server
 	defaultGraph   runtimeGraph
 	graphMu        sync.Mutex
+	verifierCache  portableVerifierCache
 }
 
 // Option configures the reference-executor server.

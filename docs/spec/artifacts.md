@@ -90,6 +90,13 @@ The abbreviated `steps` value above is not a real non-empty-path proof. A real
 artifact carries every selected proof step. Only a zero-segment root-identity
 resolve has no steps, in which case `target` must equal `root`.
 
+The v0.0.4 Go encoder omitted `segments` for that zero-segment query because the
+field used `omitempty`. Since the profile remains `malt.artifact/v0alpha2`,
+conforming decoders accept both `{"kind":"path"}` and
+`{"kind":"path","segments":[]}` as the same identity query. Canonical output
+uses the explicit empty array. Missing `segments` is not accepted for
+`map_key`, and `null` is not an empty path.
+
 The outer artifact uses CID strings for SDK-friendly request/result fields.
 The nested ProofList preserves the existing `go-cid` DAG-JSON link form
 `{"/":"cid"}` for its root, step endpoints, and range segment CIDs.

@@ -27,6 +27,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The local Go/WASM verifier request binds caller-selected root, operation,
   query, and optional expected target inside the verifier boundary.
 
+### Fixed
+
+- `malt.artifact/v0alpha2` decoders preserve compatibility with v0.0.4
+  zero-segment identity queries that omitted `segments`, while canonical output
+  emits `segments: []`.
+- `malt verify --query ""` accepts a valid zero-step root-identity artifact and
+  still binds its root and implied target locally.
+- Reference diagnostic verification reuses one lazily initialized portable
+  verifier per server and rejects oversized request bodies before initializing
+  the KZG/IPA registry.
+- UnixFS compatibility helpers return a diagnostic error for a nil CAS reader
+  instead of panicking.
+- Reference-executor CORS exposes `X-Malt-Verification-Role` so browser clients
+  can distinguish diagnostic verification responses.
+
 ## [0.0.4] - 2026-07-12
 
 ### Added

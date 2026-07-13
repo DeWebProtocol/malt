@@ -107,16 +107,35 @@ func (q *Query) UnmarshalJSON(data []byte) error {
 
 	decoded := Query{Kind: kind}
 	switch kind {
-	case QueryPath, QueryMapKey:
+	case QueryPath:
+		if err := requireOnlyQueryFields(fields, "kind", "segments"); err != nil {
+			return err
+		}
+		segments, ok := fields["segments"]
+		if !ok {
+			// v0.0.4 encoded the zero-segment identity query without a
+			// segments field because the slice used omitempty. Keep the same
+			// artifact profile compatible and normalize it to the canonical
+			// empty segment array.
+			decoded.Segments = []string{}
+			break
+		}
+		if bytes.Equal(bytes.TrimSpace(segments), []byte("null")) {
+			return fmt.Errorf("path query segments are null")
+		}
+		if err := json.Unmarshal(segments, &decoded.Segments); err != nil {
+			return fmt.Errorf("decode path query segments: %w", err)
+		}
+	case QueryMapKey:
 		if err := requireOnlyQueryFields(fields, "kind", "segments"); err != nil {
 			return err
 		}
 		segments, ok := fields["segments"]
 		if !ok || bytes.Equal(bytes.TrimSpace(segments), []byte("null")) {
-			return fmt.Errorf("%s query has no segments", kind)
+			return fmt.Errorf("map_key query has no segments")
 		}
 		if err := json.Unmarshal(segments, &decoded.Segments); err != nil {
-			return fmt.Errorf("decode %s query segments: %w", kind, err)
+			return fmt.Errorf("decode map_key query segments: %w", err)
 		}
 	case QueryListIndex:
 		if err := requireOnlyQueryFields(fields, "kind", "index"); err != nil {

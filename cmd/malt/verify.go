@@ -7,6 +7,7 @@ import (
 	"os"
 
 	malt "github.com/dewebprotocol/malt"
+	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
 	cid "github.com/ipfs/go-cid"
@@ -26,7 +27,8 @@ bare ProofList or a resolve response containing a prooflist field.
 
 Examples:
   malt verify --root "$ROOT" --query "docs/readme.md" --prooflist resolve.json
-  malt verify --root "$ROOT" --query "docs/readme.md" --prooflist -`,
+  malt verify --root "$ROOT" --query "docs/readme.md" --prooflist -
+  malt verify --root "$ROOT" --query "" --prooflist root-identity.json`,
 	Args: cobra.NoArgs,
 	RunE: runVerify,
 }
@@ -63,6 +65,29 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing local verifier: %w", err)
 	}
+	if len(pl.Steps) == 0 {
+		identityQuery := artifact.Query{Kind: artifact.QueryPath, Segments: []string{}}
+		if err := portable.Verify(cmd.Context(), clientverifier.Request{
+			Profile:     artifact.Profile,
+			TrustedRoot: trustedRoot.String(),
+			Expected: clientverifier.Expectation{
+				Operation: artifact.OperationResolve,
+				Query:     identityQuery,
+				Target:    trustedRoot.String(),
+			},
+			Artifact: artifact.Artifact{
+				Profile:   artifact.Profile,
+				Operation: artifact.OperationResolve,
+				Root:      trustedRoot.String(),
+				Query:     identityQuery,
+				Target:    trustedRoot.String(),
+				ProofList: *pl,
+			},
+		}); err != nil {
+			return fmt.Errorf("verifying root-identity artifact locally: %w", err)
+		}
+		return reportLocalVerification(true)
+	}
 	valid, err := portable.VerifyProofList(cmd.Context(), *pl)
 	if err != nil {
 		return fmt.Errorf("verifying ProofList locally: %w", err)
@@ -86,7 +111,8 @@ func readExpectedQuery(cmd *cobra.Command) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading --query: %w", err)
 	}
-	if raw == "" {
+	flag := cmd.Flags().Lookup("query")
+	if raw == "" && (flag == nil || !flag.Changed) {
 		return "", fmt.Errorf("--query flag is required")
 	}
 	return raw, nil
@@ -129,7 +155,7 @@ func readProofListInput(cmd *cobra.Command) (*prooflist.ProofList, error) {
 	}
 	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.ProofList != nil {
 		if wrapped.Target != "" {
-			lastTarget, err := wrapped.ProofList.LastStepTarget()
+			lastTarget, err := proofListTerminalTarget(*wrapped.ProofList)
 			if err != nil {
 				return nil, fmt.Errorf("resolve ProofList shape: %w", err)
 			}
@@ -145,4 +171,17 @@ func readProofListInput(cmd *cobra.Command) (*prooflist.ProofList, error) {
 		return nil, fmt.Errorf("parsing ProofList: %w", err)
 	}
 	return &pl, nil
+}
+
+func proofListTerminalTarget(pl prooflist.ProofList) (cid.Cid, error) {
+	if len(pl.Steps) != 0 {
+		return pl.LastStepTarget()
+	}
+	if !pl.Root.Defined() {
+		return cid.Undef, fmt.Errorf("prooflist root is undefined")
+	}
+	if pl.Query != "" {
+		return cid.Undef, fmt.Errorf("zero-step ProofList has non-empty query %q", pl.Query)
+	}
+	return pl.Root, nil
 }

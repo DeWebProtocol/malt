@@ -134,8 +134,23 @@ func TestQueryJSONMatchesConditionalSchemaShape(t *testing.T) {
 		t.Fatalf("list-index query JSON contains unrelated segments: %s", encodedIndex)
 	}
 
+	var legacyIdentity artifact.Query
+	if err := json.Unmarshal([]byte(`{"kind":"path"}`), &legacyIdentity); err != nil {
+		t.Fatalf("decode v0.0.4 identity query: %v", err)
+	}
+	if legacyIdentity.Kind != artifact.QueryPath || len(legacyIdentity.Segments) != 0 {
+		t.Fatalf("legacy identity query = %#v, want canonical zero-segment path", legacyIdentity)
+	}
+	canonicalIdentity, err := json.Marshal(legacyIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(canonicalIdentity, []byte(`"segments":[]`)) {
+		t.Fatalf("canonicalized legacy identity query JSON = %s", canonicalIdentity)
+	}
+
 	for _, raw := range []string{
-		`{"kind":"path"}`,
+		`{"kind":"path","segments":null}`,
 		`{"kind":"path","segments":[],"index":0}`,
 		`{"kind":"list_index","index":0,"unexpected":true}`,
 	} {
@@ -143,6 +158,30 @@ func TestQueryJSONMatchesConditionalSchemaShape(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &query); err == nil {
 			t.Fatalf("accepted schema-invalid query %s", raw)
 		}
+	}
+}
+
+func TestV004RootIdentityArtifactRemainsCompatible(t *testing.T) {
+	data, err := os.ReadFile("testdata/v0alpha2/resolve-root-artifact-v004.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value artifact.Artifact
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatalf("decode v0.0.4 root identity artifact: %v", err)
+	}
+	if err := value.Validate(); err != nil {
+		t.Fatalf("validate v0.0.4 root identity artifact: %v", err)
+	}
+	if len(value.Query.Segments) != 0 {
+		t.Fatalf("identity segments = %v, want empty", value.Query.Segments)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"query":{"kind":"path","segments":[]}`)) {
+		t.Fatalf("canonical artifact JSON did not restore empty segments: %s", encoded)
 	}
 }
 

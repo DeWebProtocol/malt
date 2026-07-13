@@ -4,20 +4,18 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt/api/http"
-	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 )
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Malt-Verification-Role", "diagnostic")
-	portable, err := authverifier.NewDefault()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
 	var req httpapi.VerifyRequest
 	if err := s.decodeJSONBody(w, r, &req); err != nil {
 		writeBodyDecodeError(w, err)
+		return
+	}
+	portable, err := s.verifierCache.load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	valid, err := portable.VerifyProofList(r.Context(), req.ProofList)

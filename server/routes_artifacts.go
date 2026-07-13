@@ -7,7 +7,6 @@ import (
 	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 	"github.com/dewebprotocol/malt/execution"
 	cid "github.com/ipfs/go-cid"
 )
@@ -110,7 +109,7 @@ func (s *Server) handleArtifactVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	verifier, err := authverifier.NewDefault()
+	verifier, err := s.verifierCache.load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

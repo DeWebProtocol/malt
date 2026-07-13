@@ -74,6 +74,39 @@ func TestVerifyRejectedResultReturnsFailure(t *testing.T) {
 	}
 }
 
+func TestVerifyAcceptsRootIdentityArtifact(t *testing.T) {
+	data, err := os.ReadFile("../../artifact/testdata/v0alpha2/resolve-root-artifact-v004.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity struct {
+		Root string `json:"root"`
+	}
+	if err := json.Unmarshal(data, &identity); err != nil {
+		t.Fatal(err)
+	}
+	proofPath := filepath.Join(t.TempDir(), "root-identity.json")
+	if err := os.WriteFile(proofPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := testCommandWithContext(context.Background())
+	cmd.Flags().String("prooflist", proofPath, "")
+	cmd.Flags().String("root", identity.Root, "")
+	cmd.Flags().String("query", "not-set", "")
+	if err := cmd.Flags().Set("query", ""); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := runVerify(cmd, nil); err != nil {
+			t.Fatalf("run identity verify: %v", err)
+		}
+	})
+	if !strings.Contains(out, "valid: true") {
+		t.Fatalf("identity verify output = %q, want valid true", out)
+	}
+}
+
 func TestVerifyRejectsResolveJSONWithMismatchedTarget(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)
