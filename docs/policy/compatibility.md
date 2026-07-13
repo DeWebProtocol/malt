@@ -18,7 +18,7 @@ release line exists.
 | CLI output text | Experimental |
 | Daemon HTTP API | Experimental |
 | ProofList JSON and typed read binding | Experimental `v0alpha1` and verifier-facing |
-| `artifact` resolve/prove/verify envelope | Profiled `malt.artifact/v0alpha2`; incompatible revisions require a new profile |
+| `artifact` resolve/resolve_payload/prove/verify envelope | Profiled `malt.artifact/v0alpha2`; incompatible revisions require a new profile |
 | `SegmentPath` textual projection | `/`-joined UTF-8 segments; experimental before `v1` |
 | MALT root encoding | Experimental |
 | CID codecs and root-kind metadata | Experimental |
@@ -59,8 +59,8 @@ commit unless release notes say so.
 
 The `v0.0.3` source release names the typed read/result and ProofList binding
 profile `v0alpha1`. The `v0.0.4` source release adds the explicit serialized
-profile `malt.artifact/v0alpha2` and checked-in JSON Schemas for resolve, prove,
-and verify. Consumers must reject unknown profiles, pin an exact MALT tag or
+profile `malt.artifact/v0alpha2` and checked-in JSON Schemas for resolve,
+resolve_payload, prove, and verify. Consumers must reject unknown profiles, pin an exact MALT tag or
 module version, and review release notes before upgrading.
 
 ArcTable records, local KV paths, materialized indexes, caches, metrics

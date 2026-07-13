@@ -133,6 +133,6 @@ through browser CORS by default.
 - [MIP-1002](../mips/mip-1002-writer-receipt-accounting.md) tracks receipt
   accounting decisions.
 - [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) defines the
-  profiled resolve/prove/verify artifacts and named schemas.
+  profiled resolve/resolve_payload/prove/verify artifacts and named schemas.
 - [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
   transport-independent typed read and verification boundary.

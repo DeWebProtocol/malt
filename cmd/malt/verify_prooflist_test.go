@@ -107,6 +107,48 @@ func TestVerifyAcceptsRootIdentityArtifact(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsTraversalProofWithEmptyExpectedQuery(t *testing.T) {
+	ctx := context.Background()
+	daemon, casClient := newAddTestClients(t)
+
+	targetCID, err := casClient.Put(ctx, []byte("verify-target"))
+	if err != nil {
+		t.Fatalf("put target content: %v", err)
+	}
+	createResp, err := daemon.CreateRootStructure(ctx, map[string]string{
+		"@payload": targetCID.String(),
+		"name":     targetCID.String(),
+	})
+	if err != nil {
+		t.Fatalf("create root structure: %v", err)
+	}
+	resolveResp, err := daemon.ResolveRoot(ctx, createResp.Root, "name")
+	if err != nil {
+		t.Fatalf("resolve root: %v", err)
+	}
+	resolveResp.ProofList.Query = ""
+
+	proofPath := filepath.Join(t.TempDir(), "erased-query-proof.json")
+	data, err := json.Marshal(resolveResp.ProofList)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(proofPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := testCommandWithContext(ctx)
+	cmd.Flags().String("prooflist", proofPath, "")
+	cmd.Flags().String("root", createResp.Root, "")
+	cmd.Flags().String("query", "not-set", "")
+	if err := cmd.Flags().Set("query", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := runVerify(cmd, nil); err == nil || !strings.Contains(err.Error(), "only valid for a zero-step root-identity") {
+		t.Fatalf("runVerify() error = %v, want empty-query traversal rejection", err)
+	}
+}
+
 func TestVerifyRejectsResolveJSONWithMismatchedTarget(t *testing.T) {
 	ctx := context.Background()
 	daemon, casClient := newAddTestClients(t)

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/api/http"
+	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	listsemantic "github.com/dewebprotocol/malt/auth/semantic/list"
@@ -22,6 +23,7 @@ import (
 	"github.com/dewebprotocol/malt/graph"
 	unixfs "github.com/dewebprotocol/malt/model/unixfs"
 	"github.com/dewebprotocol/malt/runtime/node"
+	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -2340,6 +2342,94 @@ func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 			t.Fatalf("small raw file included list-index step at %d: %+v", i, step)
 		}
 	}
+}
+
+func TestServerRootDirectoryContentProofUsesResolvePayloadArtifact(t *testing.T) {
+	node := newTestNode(t)
+	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
+	defer ts.Close()
+
+	createBody, _ := json.Marshal(&httpapi.CreateStructureRequest{
+		Arcs: withPayloadBinding(map[string]string{"dummy": fakeCIDString("dummy")}),
+	})
+	resp, err := http.Post(ts.URL+"/_", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("create structure request failed: %v", err)
+	}
+	var createResp httpapi.CreateStructureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/"+createResp.Root+"/docs/readme.txt?migrate=1", "application/octet-stream", strings.NewReader("root directory proof"))
+	if err != nil {
+		t.Fatalf("create unixfs file: %v", err)
+	}
+	var writeResp httpapi.UnixFSWriteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&writeResp); err != nil {
+		t.Fatalf("decode unixfs write: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(ts.URL + "/" + writeResp.NewRoot)
+	if err != nil {
+		t.Fatalf("root directory content request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("root directory content status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	proof := requireProofListHeader(t, resp)
+	payloadTarget, ok := payloadBindingTarget(proof)
+	if !ok {
+		t.Fatal("root directory ProofList has no @payload binding")
+	}
+	value, err := artifact.NewResolvePayloadArtifact(artifact.ResolveRequest{
+		Profile: artifact.Profile, Root: writeResp.NewRoot, Segments: []string{},
+	}, payloadTarget, proof)
+	if err != nil {
+		t.Fatalf("build resolve_payload artifact: %v", err)
+	}
+	local, err := clientverifier.NewDefault()
+	if err != nil {
+		t.Fatalf("initialize local verifier: %v", err)
+	}
+	if err := local.Verify(t.Context(), clientverifier.Request{
+		Profile:     artifact.Profile,
+		TrustedRoot: writeResp.NewRoot,
+		Expected: clientverifier.Expectation{
+			Operation: artifact.OperationResolvePayload,
+			Query:     artifact.Query{Kind: artifact.QueryPath, Segments: []string{}},
+		},
+		Artifact: value,
+	}); err != nil {
+		t.Fatalf("verify root directory resolve_payload artifact: %v", err)
+	}
+
+	identity := value
+	identity.Operation = artifact.OperationResolve
+	identity.Target = writeResp.NewRoot
+	if err := local.Verify(t.Context(), clientverifier.Request{
+		Profile:     artifact.Profile,
+		TrustedRoot: writeResp.NewRoot,
+		Expected: clientverifier.Expectation{
+			Operation: artifact.OperationResolve,
+			Query:     artifact.Query{Kind: artifact.QueryPath, Segments: []string{}},
+		},
+		Artifact: identity,
+	}); err == nil || !strings.Contains(err.Error(), "root identity artifact contains traversal evidence") {
+		t.Fatalf("identity verification error = %v, want traversal-evidence rejection", err)
+	}
+}
+
+func payloadBindingTarget(pl prooflist.ProofList) (cid.Cid, bool) {
+	for _, step := range pl.Steps {
+		if step.Kind == prooflist.KindPayloadBinding && step.Path == "@payload" {
+			return step.Target, true
+		}
+	}
+	return cid.Undef, false
 }
 
 func TestServerDefaultGETRangeIncludesMeasuredListRangeStep(t *testing.T) {

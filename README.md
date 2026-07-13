@@ -70,7 +70,7 @@ MALT separates payload storage, arc authentication, and execution/access:
   materialized indexes
 - clients submit canonical segment arrays without discovering how each root
   groups those segments into authenticated arcs
-- profiled resolve, prove, and verify artifacts carry the trusted inputs,
+- profiled resolve, payload-resolve, prove, and verify artifacts carry the trusted inputs,
   result, and ProofList together across gateway, executor, and SDK boundaries
 - local structure updates advance structure roots without rewriting unrelated
   payload objects
@@ -150,7 +150,7 @@ Current experimental boundaries:
   CIDs with `sdk/unixfs.VerifyRangeBody` after local ProofList verification
 
 The `v0.0.4` source release adds canonical segment paths and the
-`malt.artifact/v0alpha2` resolve/prove/verify contract with embedded JSON
+`malt.artifact/v0alpha2` resolve/resolve_payload/prove/verify contract with embedded JSON
 Schemas. Integrators should pin the exact release and reject unknown artifact
 profiles:
 

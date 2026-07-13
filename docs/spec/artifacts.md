@@ -1,4 +1,4 @@
-# Resolve, Prove, And Verify Artifacts
+# Resolve, Payload, Prove, And Verify Artifacts
 
 This document defines the transport-neutral artifact contract introduced in
 MALT `v0.0.4`.
@@ -22,6 +22,7 @@ package, and are available through `artifact.Schema` and
 | Operation | Request | Result | Meaning |
 | --- | --- | --- | --- |
 | `resolve` | trusted root plus `segments` | artifact with `query.kind=path` | Authenticate one complete derivation for the supplied segment path. |
+| `resolve_payload` | trusted root plus `segments` | artifact with `query.kind=path` whose target is the authenticated `@payload` CID | Authenticate a path derivation plus its reserved CAS payload binding. |
 | `prove` | trusted root plus one primitive typed query | artifact with `query.kind=map_key`, `list_index`, or `list_range` | Produce evidence for one primitive semantic query. |
 | `verify` | one complete artifact | local success/error, or diagnostic `{profile, valid}` | Check envelope bindings and all portable proof evidence on the client. |
 
@@ -32,6 +33,12 @@ POST /v1/artifacts/resolve
 POST /v1/artifacts/prove
 POST /v1/artifacts/verify
 ```
+
+`resolve_payload` is an artifact/verifier operation, not a separate execution
+route. A content adapter constructs it from the caller-selected path and the
+ProofList returned with content bytes. This keeps HTTP content routing outside
+the core artifact contract while giving local verifiers an exact expression
+for the terminal `@payload` binding.
 
 HTTP is only one projection. RPC and SDK integrations should carry the same
 typed fields directly and should not reconstruct path meaning from a URL.
@@ -90,6 +97,32 @@ The abbreviated `steps` value above is not a real non-empty-path proof. A real
 artifact carries every selected proof step. Only a zero-segment root-identity
 resolve has no steps, in which case `target` must equal `root`.
 
+An empty segment path does not by itself mean root identity. When a client
+reads content at the root, the ProofList contains an authenticated
+`payload_binding` step for `@payload`. That evidence is represented as a
+`resolve_payload` artifact:
+
+```json
+{
+  "profile": "malt.artifact/v0alpha2",
+  "operation": "resolve_payload",
+  "root": "b...root",
+  "query": {"kind": "path", "segments": []},
+  "target": "b...payload",
+  "prooflist": {
+    "root": {"/": "b...root"},
+    "query": "",
+    "steps": [{"kind": "payload_binding", "path": "@payload"}]
+  }
+}
+```
+
+A conforming `resolve_payload` verifier requires exactly one `@payload`
+binding and binds the artifact target to that step's target. Later
+`list_range` evidence may authenticate covered chunks, so the final ProofList
+step is not used as the payload target. Re-labeling this evidence as an empty
+`resolve` remains invalid because it would weaken the root-identity contract.
+
 The v0.0.4 Go encoder omitted `segments` for that zero-segment query because the
 field used `omitempty`. Since the profile remains `malt.artifact/v0alpha2`,
 conforming decoders accept both `{"kind":"path"}` and
@@ -129,10 +162,17 @@ Verification checks all of the following:
   target;
 - root and target are valid CIDs;
 - the artifact root equals the ProofList root;
-- the final ProofList target equals the artifact target;
+- the final ProofList target equals the artifact target for `resolve` and
+  `prove`, while `resolve_payload` binds the target to its unique `@payload`
+  step;
 - a resolve ProofList query equals the canonical projection of its segments;
 - a prove query and optional range segments match the proof evidence; and
 - the portable verifier accepts every cryptographic/semantic proof step.
+
+Artifact verification authenticates the payload CID, not the returned bytes
+by itself. Content clients must additionally match full raw or directory bytes
+to that CID, or validate measured-list range bytes against the authenticated
+range evidence and segment CIDs.
 
 Schema validation is not proof verification. The authoritative client path must
 pass `sdk/verifier`, the published browser WASM verifier, or an equivalent

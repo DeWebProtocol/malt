@@ -19,8 +19,9 @@ const Profile = "malt.artifact/v0alpha2"
 type Operation string
 
 const (
-	OperationResolve Operation = "resolve"
-	OperationProve   Operation = "prove"
+	OperationResolve        Operation = "resolve"
+	OperationResolvePayload Operation = "resolve_payload"
+	OperationProve          Operation = "prove"
 )
 
 type QueryKind string
@@ -353,6 +354,19 @@ func NewResolveArtifact(req ResolveRequest, target cid.Cid, pl prooflist.ProofLi
 	}, nil
 }
 
+// NewResolvePayloadArtifact binds a resolved segment path to the authenticated
+// CAS payload selected by its reserved @payload arc. Unlike a zero-segment
+// resolve artifact, a zero-segment resolve_payload artifact carries traversal
+// evidence and is not a root-identity assertion.
+func NewResolvePayloadArtifact(req ResolveRequest, target cid.Cid, pl prooflist.ProofList) (Artifact, error) {
+	value, err := NewResolveArtifact(req, target, pl)
+	if err != nil {
+		return Artifact{}, err
+	}
+	value.Operation = OperationResolvePayload
+	return value, nil
+}
+
 func NewProveArtifact(req ProveRequest, result malt.ReadResult) (Artifact, error) {
 	if err := req.Validate(); err != nil {
 		return Artifact{}, err
@@ -386,15 +400,15 @@ func (a Artifact) Validate() error {
 		return fmt.Errorf("invalid artifact target CID: %w", err)
 	}
 	switch a.Operation {
-	case OperationResolve:
+	case OperationResolve, OperationResolvePayload:
 		if err := a.Query.Validate(true); err != nil {
 			return err
 		}
 		if a.Query.Kind != QueryPath {
-			return fmt.Errorf("resolve artifact must use a path query")
+			return fmt.Errorf("%s artifact must use a path query", a.Operation)
 		}
 		if len(a.RangeSegments) != 0 {
-			return fmt.Errorf("resolve artifact contains range segments")
+			return fmt.Errorf("%s artifact contains range segments", a.Operation)
 		}
 	case OperationProve:
 		if err := a.Query.Validate(false); err != nil {

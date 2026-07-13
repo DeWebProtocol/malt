@@ -1,7 +1,7 @@
 ---
 mip: 1004
-title: Resolve, Prove, And Verify Artifact Schema
-description: Publish profiled transport-neutral artifacts and schemas for resolution, primitive proofs, and verification.
+title: Resolve, Payload, Prove, And Verify Artifact Schema
+description: Publish profiled transport-neutral artifacts and schemas for resolution, payload binding, primitive proofs, and verification.
 author: MALT maintainers
 status: Final
 type: Standards Track
@@ -14,7 +14,7 @@ replaces: none
 ## Abstract
 
 MALT `v0.0.4` publishes the `malt.artifact/v0alpha2` contract for `resolve`,
-`prove`, and `verify`. The contract binds a trusted root, typed query, target,
+`resolve_payload`, `prove`, and `verify`. The contract binds a trusted root, typed query, target,
 optional measured-range segments, and ProofList in one transport-neutral
 envelope with checked-in JSON Schemas.
 
@@ -34,6 +34,9 @@ bindings from routes or headers.
   `malt.artifact/v0alpha2`.
 - `resolve` accepts a root plus canonical MALT segments and returns one complete
   proof-carrying derivation.
+- `resolve_payload` authenticates the same caller-selected path plus exactly
+  one reserved `@payload` binding; a zero-segment payload read is distinct from
+  the zero-step `resolve` root identity.
 - `prove` accepts exactly one primitive `map_key`, `list_index`, or
   `list_range` query.
 - `verify` validates the envelope bindings before portable proof verification.
@@ -66,3 +69,5 @@ all backend evidence.
 - 2026-07-11: Deferred named schemas from the `v0.0.3` `v0alpha1` profile.
 - 2026-07-12: Finalized the profiled resolve/prove/verify contract and schemas
   for `v0.0.4`.
+- 2026-07-13: Added the `resolve_payload` operation so root content proofs do
+  not weaken the strict zero-step root-identity meaning of `resolve`.

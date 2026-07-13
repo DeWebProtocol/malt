@@ -13,7 +13,7 @@
       "additionalProperties": false,
       "required": ["operation", "query"],
       "properties": {
-        "operation": {"enum": ["resolve", "prove"]},
+        "operation": {"enum": ["resolve", "resolve_payload", "prove"]},
         "query": {"$ref": "artifact.schema.json#/$defs/query"},
         "target": {"type": "string", "minLength": 1}
       }

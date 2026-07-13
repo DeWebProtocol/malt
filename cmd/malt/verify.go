@@ -61,6 +61,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if pl.Query != expectedQuery {
 		return fmt.Errorf("ProofList query %q does not match expected query %q", pl.Query, expectedQuery)
 	}
+	if expectedQuery == "" && len(pl.Steps) != 0 {
+		return fmt.Errorf("empty expected query is only valid for a zero-step root-identity ProofList")
+	}
 	portable, err := clientverifier.NewDefault()
 	if err != nil {
 		return fmt.Errorf("initializing local verifier: %w", err)
