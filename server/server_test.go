@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
@@ -396,6 +397,10 @@ func (g *stubGraphRuntime) ID() string {
 
 func (g *stubGraphRuntime) Namespace() string {
 	return g.namespace
+}
+
+func (g *stubGraphRuntime) Resolve(context.Context, malt.ResolveRequest) (malt.ResolveResult, error) {
+	return malt.ResolveResult{}, nil
 }
 
 func (g *stubGraphRuntime) Resolver() graph.Resolver {

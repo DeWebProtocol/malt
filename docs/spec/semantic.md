@@ -74,6 +74,10 @@ proposal-stage topic in [MIP-1006](../mips/mip-1006-variable-size-measured-list-
 The module-root `package malt` exposes the application-neutral `v0alpha1`
 facade:
 
+- `ResolveRequest` binds canonical segments to a caller-supplied root.
+- `ResolveResult` carries the resolved target and ordered ProofList.
+- `Resolver` and package-level `VerifyResolve` separate untrusted path
+  execution from the client trust decision.
 - `Query` selects one primitive map key, list index, or measured-list range.
 - `ReadRequest` binds a typed query to a caller-supplied root.
 - `ReadResult` carries the target, optional ordered range segments, and
@@ -82,8 +86,8 @@ facade:
   package `mutation`.
 - package-level `VerifyRead` binds the request and result before portable proof
   verification.
-- `execution.Executor.Read` and `execution.Executor.Apply` are the separate,
-  untrusted execution facade.
+- `execution.Executor.Resolve`, `Read`, and `Apply` are the separate, untrusted
+  execution facade.
 
 When a map implementation reports `mapping.ErrPathNotFound`, `execution.Executor.Read`
 returns an error recognizable through `errors.Is(err, malt.ErrQueryNotFound)`

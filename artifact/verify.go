@@ -21,39 +21,15 @@ func Verify(ctx context.Context, req VerifyRequest, verifier malt.ProofVerifier)
 
 	root, _ := cid.Parse(req.Artifact.Root)
 	target, _ := cid.Parse(req.Artifact.Target)
-	if !req.Artifact.ProofList.Root.Equals(root) {
-		return fmt.Errorf("artifact ProofList root does not match artifact root")
-	}
-	if req.Artifact.Operation == OperationResolve && len(req.Artifact.Query.Segments) == 0 {
-		if len(req.Artifact.ProofList.Steps) != 0 || req.Artifact.ProofList.Query != "" {
-			return fmt.Errorf("root identity artifact contains traversal evidence")
-		}
-		if !target.Equals(root) {
-			return fmt.Errorf("root identity artifact target does not match root")
-		}
-		return nil
-	}
 	switch req.Artifact.Operation {
 	case OperationResolve:
-		lastTarget, err := req.Artifact.ProofList.LastStepTarget()
-		if err != nil {
-			return err
-		}
-		if !lastTarget.Equals(target) {
-			return fmt.Errorf("artifact ProofList target does not match artifact target")
-		}
-		path, _ := malt.NewSegmentPath(req.Artifact.Query.Segments)
-		if req.Artifact.ProofList.Query != path.String() {
-			return fmt.Errorf("artifact ProofList query %q does not match segment path %q", req.Artifact.ProofList.Query, path.String())
-		}
-		ok, err := verifier.VerifyProofList(ctx, req.Artifact.ProofList)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return malt.ErrVerifierRejected
-		}
-		return nil
+		return malt.VerifyResolve(ctx, malt.ResolveRequest{
+			Root:     root,
+			Segments: req.Artifact.Query.Segments,
+		}, malt.ResolveResult{
+			Target:    target,
+			ProofList: req.Artifact.ProofList,
+		}, verifier)
 	case OperationProve:
 		lastTarget, err := req.Artifact.ProofList.LastStepTarget()
 		if err != nil {

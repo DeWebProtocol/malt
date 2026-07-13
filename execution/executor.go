@@ -39,29 +39,53 @@ type MutationApplier interface {
 }
 
 type Options struct {
-	Scope  string
-	Maps   MapReader
-	Lists  ListReader
-	Writer MutationApplier
+	Scope    string
+	Resolver malt.Resolver
+	Maps     MapReader
+	Lists    ListReader
+	Writer   MutationApplier
 }
 
 // Executor is an untrusted execution facade. Scope is backend placement state,
 // not part of canonical queries or mutations.
 type Executor struct {
-	scope  string
-	maps   MapReader
-	lists  ListReader
-	writer MutationApplier
+	scope    string
+	resolver malt.Resolver
+	maps     MapReader
+	lists    ListReader
+	writer   MutationApplier
 }
 
 func NewExecutor(opts Options) (*Executor, error) {
 	if opts.Scope == "" {
 		return nil, fmt.Errorf("MALT executor scope is empty")
 	}
-	if opts.Maps == nil && opts.Lists == nil && opts.Writer == nil {
+	if opts.Resolver == nil && opts.Maps == nil && opts.Lists == nil && opts.Writer == nil {
 		return nil, fmt.Errorf("MALT executor has no configured capabilities")
 	}
-	return &Executor{scope: opts.Scope, maps: opts.Maps, lists: opts.Lists, writer: opts.Writer}, nil
+	return &Executor{scope: opts.Scope, resolver: opts.Resolver, maps: opts.Maps, lists: opts.Lists, writer: opts.Writer}, nil
+}
+
+// Resolve executes one canonical segment-path derivation. The returned result
+// is untrusted until the caller applies malt.VerifyResolve.
+func (e *Executor) Resolve(ctx context.Context, req malt.ResolveRequest) (malt.ResolveResult, error) {
+	if e == nil {
+		return malt.ResolveResult{}, fmt.Errorf("MALT executor is nil")
+	}
+	if err := req.Validate(); err != nil {
+		return malt.ResolveResult{}, err
+	}
+	path, _ := malt.NewSegmentPath(req.Segments)
+	if path.Empty() {
+		return malt.ResolveResult{
+			Target:    req.Root,
+			ProofList: prooflist.ProofList{Root: req.Root, Query: "", Steps: []prooflist.Step{}},
+		}, nil
+	}
+	if e.resolver == nil {
+		return malt.ResolveResult{}, fmt.Errorf("%w: path resolver", ErrCapabilityUnavailable)
+	}
+	return e.resolver.Resolve(ctx, req)
 }
 
 func (e *Executor) Read(ctx context.Context, req malt.ReadRequest) (malt.ReadResult, error) {

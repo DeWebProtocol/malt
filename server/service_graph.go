@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	listsemantic "github.com/dewebprotocol/malt/auth/semantic/list"
@@ -16,6 +17,7 @@ import (
 )
 
 type runtimeGraph interface {
+	malt.Resolver
 	ID() string
 	Namespace() string
 	Resolver() graph.Resolver

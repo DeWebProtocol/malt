@@ -81,6 +81,37 @@ func TestResolveArtifactDoesNotRequireLongestOrUniqueProof(t *testing.T) {
 	}
 }
 
+func TestVerifyResolveArtifactRejectsPrimitiveReadEvidence(t *testing.T) {
+	root := testCID(t, "list-root")
+	target := testCID(t, "list-target")
+	index, length := uint64(0), uint64(1)
+	value := artifact.Artifact{
+		Profile:   artifact.Profile,
+		Operation: artifact.OperationResolve,
+		Root:      root.String(),
+		Query:     artifact.Query{Kind: artifact.QueryPath, Segments: []string{"list:0"}},
+		Target:    target.String(),
+		ProofList: prooflist.ProofList{
+			Root:  root,
+			Query: "list:0",
+			Steps: []prooflist.Step{{
+				Kind:   prooflist.KindListIndex,
+				From:   root,
+				Query:  "list:0",
+				Index:  &index,
+				Length: &length,
+				Target: target,
+			}},
+		},
+	}
+	if err := artifact.Verify(context.Background(), artifact.VerifyRequest{
+		Profile:  artifact.Profile,
+		Artifact: value,
+	}, acceptingVerifier{}); err == nil {
+		t.Fatal("Verify() accepted list-index evidence as a resolve artifact")
+	}
+}
+
 func TestPublishedSchemasAreJSONObjects(t *testing.T) {
 	for _, name := range artifact.SchemaNames() {
 		data, err := artifact.Schema(name)

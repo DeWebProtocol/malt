@@ -278,7 +278,7 @@ MALT's current implementation is easiest to read through these layers:
 | Layer | Role |
 | --- | --- |
 | Portable auth kernel | Canonical arcs, typed roots, VC verification, and ProofList validation |
-| Root `malt` facade | Typed `Query`, `ReadRequest`, `ReadResult`, portable mutation aliases, and `VerifyRead` |
+| Root `malt` facade | `ResolveRequest`/`ResolveResult`, typed primitive read values, portable mutation aliases, and `VerifyResolve`/`VerifyRead` |
 | Portable mutation contract | Namespace-free mutation/delta/receipt values under `mutation/` |
 | Semantic layer | Abstract map/list arc read and mutation semantics |
 | Execution package | `execution.Executor` proof generation, mutation application, and operational scope; untrusted for correctness |
@@ -288,6 +288,9 @@ MALT's current implementation is easiest to read through these layers:
 The verifier-facing shape is:
 
 ```text
+execution.Executor.Resolve(ResolveRequest{Root, Segments}) -> ResolveResult{Target, ProofList}
+VerifyResolve(request, result) -> valid / invalid
+
 execution.Executor.Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
 VerifyRead(request, result) -> valid / invalid
 

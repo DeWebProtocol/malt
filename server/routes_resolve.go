@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
@@ -99,7 +100,7 @@ func resolvePathStatus(err error) int {
 	switch {
 	case errors.Is(err, querypath.ErrInvalidQueryPath):
 		return http.StatusBadRequest
-	case errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed):
+	case malt.IsQueryNotFound(err) || errors.Is(err, errPathNotFound) || errors.Is(err, resolver.ErrResolutionFailed):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError

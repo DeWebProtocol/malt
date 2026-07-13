@@ -59,6 +59,65 @@ func TestExecutorReadMapAndVerifyBindsRequest(t *testing.T) {
 	}
 }
 
+func TestExecutorResolveAndVerifyBindsRequest(t *testing.T) {
+	root := testCID(t, "resolve-root")
+	target := testCID(t, "resolve-target")
+	path, err := arcset.NewPath("profile/name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := &fakePathResolver{result: malt.ResolveResult{
+		Target: target,
+		ProofList: prooflist.ProofList{Root: root, Query: path.String(), Steps: []prooflist.Step{{
+			Kind:   prooflist.KindMapStep,
+			From:   root,
+			Path:   path.String(),
+			Target: target,
+		}}},
+	}}
+	engine, err := execution.NewExecutor(execution.Options{
+		Scope:    "resolve-scope",
+		Resolver: paths,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := malt.ResolveRequest{Root: root, Segments: []string{"profile", "name"}}
+	result, err := engine.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receivedPath, err := malt.NewSegmentPath(paths.request.Segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !paths.request.Root.Equals(root) || receivedPath.String() != "profile/name" || !result.Target.Equals(target) {
+		t.Fatalf("request/target = %+v/%s, want profile/name/%s", paths.request, result.Target, target)
+	}
+	if err := malt.VerifyResolve(context.Background(), req, result, acceptingVerifier{}); err != nil {
+		t.Fatalf("VerifyResolve: %v", err)
+	}
+}
+
+func TestExecutorResolveIdentityDoesNotRequireRuntimeCapability(t *testing.T) {
+	root := testCID(t, "identity-root")
+	engine, err := execution.NewExecutor(execution.Options{
+		Scope:  "identity-scope",
+		Writer: &fakeWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := malt.ResolveRequest{Root: root, Segments: []string{}}
+	result, err := engine.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := malt.VerifyResolve(context.Background(), req, result, acceptingVerifier{}); err != nil {
+		t.Fatalf("VerifyResolve identity: %v", err)
+	}
+}
+
 func TestExecutorReadPayloadUsesTerminalProofKind(t *testing.T) {
 	root := testCID(t, "payload-root")
 	target := testCID(t, "payload-target")
@@ -274,6 +333,17 @@ func (acceptingVerifier) VerifyProofList(context.Context, prooflist.ProofList) (
 	return true, nil
 }
 
+type fakePathResolver struct {
+	request malt.ResolveRequest
+	result  malt.ResolveResult
+	err     error
+}
+
+func (r *fakePathResolver) Resolve(_ context.Context, request malt.ResolveRequest) (malt.ResolveResult, error) {
+	r.request = request
+	return r.result, r.err
+}
+
 type fakeWriter struct {
 	scope   string
 	receipt mutation.WriteReceipt
@@ -349,7 +419,9 @@ func testCID(t *testing.T, seed string) cid.Cid {
 }
 
 var (
+	_ malt.Resolver                = (*execution.Executor)(nil)
 	_ malt.Reader                  = (*execution.Executor)(nil)
+	_ malt.Resolver                = (*fakePathResolver)(nil)
 	_ execution.MapReader          = (*fakeMaps)(nil)
 	_ execution.ListReader         = fakeLists{}
 	_ execution.MeasuredListReader = fakeMeasuredLists{}

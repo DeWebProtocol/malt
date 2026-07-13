@@ -25,32 +25,22 @@ func (s *Server) handleResolveContract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := s.graphService(r.Context())
+	executor, err := s.protocolExecutor(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	path, _ := malt.NewSegmentPath(request.Segments)
-	resolved, err := svc.runtime.Resolver().ResolveKey(r.Context(), request.Root, path.String())
+	resolved, err := executor.Resolve(r.Context(), request)
 	if err != nil {
 		writeError(w, resolvePathStatus(err), err.Error())
 		return
 	}
-	if resolved == nil || !resolved.RemainingPath.IsEmpty() || !resolved.Target.Defined() {
-		writeError(w, http.StatusNotFound, "segment path was not fully resolved")
-		return
-	}
-	pl, err := svc.ProofList(request.Root, path.String(), resolved.Transcript)
+	result, err := protocol.NewResolveResult(resolved)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	result, err := protocol.NewResolveResult(malt.ResolveResult{Target: resolved.Target, ProofList: *pl})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.node.RecordProofList(*pl)
+	s.node.RecordProofList(result.ProofList)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -141,10 +131,11 @@ func (s *Server) protocolExecutor(r *http.Request) (*execution.Executor, error) 
 		return nil, err
 	}
 	return execution.NewExecutor(execution.Options{
-		Scope:  svc.runtime.Namespace(),
-		Maps:   svc.runtime.Semantic(),
-		Lists:  svc.runtime.ListSemantic(),
-		Writer: svc.runtime.Writer(),
+		Scope:    svc.runtime.Namespace(),
+		Resolver: svc.runtime,
+		Maps:     svc.runtime.Semantic(),
+		Lists:    svc.runtime.ListSemantic(),
+		Writer:   svc.runtime.Writer(),
 	})
 }
 
