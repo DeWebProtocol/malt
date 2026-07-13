@@ -24,7 +24,7 @@ They do not own:
 - map key semantics
 - list index or range semantics
 - path resolution
-- application layouts
+- application models and client adapters
 - ArcTable materialization
 - head publication or freshness policy
 - payload storage or retrieval

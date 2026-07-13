@@ -14,7 +14,7 @@ Most of this API is a reference transport projection. The application-neutral
 core contract is the module-root `malt` facade; managed gateways do not need to
 import `server` or reproduce the local runtime routes. The three
 `/v1/artifacts/*` routes are the stable transport projection for new gateway,
-daemon, and SDK integrations. Their schemas are defined in
+reference-executor, and SDK integrations. Their schemas are defined in
 [Artifacts and schemas](./artifacts.md).
 
 ## Core Routes
@@ -22,19 +22,19 @@ daemon, and SDK integrations. Their schemas are defined in
 | Route | Method | Purpose |
 | --- | --- | --- |
 | `/health` | `GET` | Runtime health check. |
-| `/_lifecycle/identity` | `GET` | Local managed-daemon identity check. |
+| `/_lifecycle/identity` | `GET` | Local managed reference-executor identity check. |
 | `/metrics` | `GET` | Runtime evaluation counters. |
 | `/metrics:reset` | `POST` | Reset runtime evaluation counters. |
-| `/verify` | `POST` | Verify a ProofList through the portable auth verifier adapter. |
+| `/verify` | `POST` | Diagnostic/conformance verification of a ProofList. |
 | `/v1/artifacts/resolve` | `POST` | Resolve a segment array and return a profiled proof-carrying artifact. |
 | `/v1/artifacts/prove` | `POST` | Prove one primitive typed map/list query. |
-| `/v1/artifacts/verify` | `POST` | Verify a complete profiled artifact. |
+| `/v1/artifacts/verify` | `POST` | Diagnostic/conformance verification of a complete artifact. |
 | `/{root}/_mutate` | `POST` | Apply a root-relative semantic mutation. |
 | `/_unixfs?path=...` | `POST` | Create a new UnixFS-style root from uploaded payload data. |
 | `/resolve/{root}` and `/resolve/{root}/{path...}` | `GET` | Resolve a target CID and optional ProofList. |
 | `/{root}` and `/{root}/{path...}` | `GET` | Read content or directory JSON with optional proof headers. |
 | `/{root}` and `/{root}/{path...}` | `HEAD` | Return stat headers without proof metadata. |
-| `/{root}/{path...}` | `POST` | UnixFS layout convenience write through the writer path. |
+| `/{root}/{path...}` | `POST` | UnixFS application-adapter convenience write. |
 | `/_` | `POST` | Create a low-level structure from an arc set. |
 
 Removed lineage and batch-update public routes intentionally return removed or
@@ -68,10 +68,10 @@ Range content reads use standard byte range headers where supported:
 - partial response: `Content-Range: bytes start-end/total`
 
 See [ProofList format](./prooflist-format.md) for proof semantics. For
-large-file range responses, `/verify` authenticates the ProofList metadata and
-segment CIDs. Clients that trust the returned body bytes must first verify the
-ProofList and then call `layout/unixfs.VerifyRangeBody` or an equivalent
-segment-byte binding check.
+large-file range responses, clients authenticate ProofList metadata and segment
+CIDs locally through `sdk/verifier`, then call `sdk/unixfs.VerifyRangeBody` or
+an equivalent segment-byte binding check. `/verify` is retained only as a
+diagnostic/conformance endpoint and must not supply the client's trust decision.
 
 ## Main DTOs
 
@@ -114,12 +114,13 @@ Receipt counts are operational accounting, not correctness proofs. See
 ### VerifyRequest / VerifyResponse
 
 `VerifyRequest` carries one `prooflist` field. `VerifyResponse` returns one
-boolean `valid` field.
+boolean `valid` field. Both remote verify routes set
+`X-Malt-Verification-Role: diagnostic`.
 
 Schema validation is not proof verification. JSON shape checks can reject
-malformed artifacts, but semantic and cryptographic verification must run
-through `auth/verifier`. The `graph/verifier` package used by the reference
-server is only a compatibility adapter.
+malformed artifacts, but semantic and cryptographic verification for an
+acceptance decision must run locally through `sdk/verifier`/`auth/verifier`.
+The `graph/verifier` package and remote routes are compatibility adapters.
 
 ## CORS Boundary
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	unixfs "github.com/dewebprotocol/malt/model/unixfs"
 )
 
 const addFixedChunkSize = unixfs.DefaultChunkSize

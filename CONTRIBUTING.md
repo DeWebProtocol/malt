@@ -19,18 +19,19 @@ Before opening a pull request:
 
 For design-level changes, open an issue first. Examples include new semantic
 operations, ProofList schema changes, new ArcTable modes, root publication
-policy, evaluator schema changes, and new application layouts.
+policy, evaluator schema changes, and new application models or materialization
+strategies.
 
 Changes that affect public or verifier-facing surfaces should update
 documentation and tests in the same PR. This includes:
 
-- public daemon APIs or CLI behavior
+- public reference-executor APIs or CLI behavior
 - ProofList schemas and proof-step semantics
 - root or CID encodings
 - wire formats and serialized request/response shapes
 - compatibility policy
 - evaluator schemas
-- application layout behavior
+- application-model or materialization behavior
 
 When serialized or verifier-facing formats change, include focused tests and,
 where practical, migration notes or test vectors.
@@ -44,7 +45,7 @@ go test ./...
 go vet ./...
 ```
 
-Build local binaries when you need to exercise the daemon lifecycle:
+Build local binaries when you need to exercise the reference-executor lifecycle:
 
 ```bash
 mkdir -p bin
@@ -52,8 +53,8 @@ go build -buildvcs=false -o bin/malt ./cmd/malt
 go build -buildvcs=false -o bin/malt-eval ./cmd/eval/malt-eval
 ```
 
-The managed daemon uses the current executable path, so `bin/malt start` is the
-recommended local workflow for daemon testing.
+The managed reference executor uses the current executable path. For executor
+testing, `bin/malt start` is the recommended local workflow.
 
 ## Pull Requests
 
@@ -86,8 +87,8 @@ command when the documentation claims a command, schema, or workflow.
 - Prefer semantic names over storage-mechanism names.
 - Keep `list` and `map` as semantic abstractions.
 - Keep resolver and writer as graph ports over those semantics.
-- Keep `layout/unixfs` as an application layout, not the core definition of
-  MALT.
+- Keep UnixFS responsibilities separated across `model/unixfs`, `sdk/unixfs`,
+  and `runtime/unixfs`; none of those packages defines MALT core.
 - Treat `@payload` as a reserved map semantic binding.
 - Keep compatibility and benchmark code under `cmd/eval/internal` when it is not
   part of the product runtime.

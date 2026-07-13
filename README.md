@@ -28,7 +28,9 @@ MALT targets data whose relationships can be normalized into graph-shaped
 objects and arcs. Example workloads include
 verifiable local-first files, persistent agent memory, mutable manifests, and
 tamper-evident audit trails over Filecoin, IPFS, S3, local CAS, or another
-object store. UnixFS is one current layout over the core, not the core model.
+object store. UnixFS is the current first-party application model/profile built
+on the core; it is not part of the authentication kernel. Within UnixFS,
+`flat` and `hierarchical` are materialization layouts.
 
 MALT authenticates arcs through list/map semantics, typed roots, VC proofs, and
 verifier-facing ProofLists. Immutable payload bytes keep ordinary CIDs. The
@@ -69,7 +71,7 @@ MALT separates payload storage, arc authentication, and execution/access:
 - clients submit canonical segment arrays without discovering how each root
   groups those segments into authenticated arcs
 - profiled resolve, prove, and verify artifacts carry the trusted inputs,
-  result, and ProofList together across gateway, daemon, and SDK boundaries
+  result, and ProofList together across gateway, executor, and SDK boundaries
 - local structure updates advance structure roots without rewriting unrelated
   payload objects
 
@@ -83,7 +85,7 @@ This repository owns:
 
 - MALT core semantics and verifier-facing contracts
 - root CID, ProofList, and wire-format documentation
-- reference CLI, daemon, HTTP server, and local/mock CAS surfaces
+- reference CLI, execution backend, HTTP server, and local/mock CAS surfaces
 - component benchmarks, conformance tests, and end-to-end evaluation harnesses
 - implementation-bound MIPs and evaluator schemas
 
@@ -101,14 +103,15 @@ Those deployment and product concerns belong in the separate
 
 ```mermaid
 flowchart TB
-  app["Application / layout / client"] --> facade["package malt: typed Read / Apply / VerifyRead"]
-  facade --> engine["Untrusted execution engine"]
-  engine --> semantics["Map / list arc semantics"]
-  semantics --> vc["VC commitment and proof generation"]
-  engine --> arctable["ArcTable / indexes / caches"]
-  engine --> cas["Immutable payloads in CAS"]
-  facade --> verifier["Portable auth/verifier kernel"]
-  verifier --> decision["Accept relative to trusted root + query"]
+  client["Client: CLI / Web / SDK"] --> gateway["Gateway / execution API"]
+  client --> localverify["sdk/verifier + portable auth kernel"]
+  gateway --> executor["Untrusted executor"]
+  executor --> semantics["Map / list proof and mutation execution"]
+  executor --> arctable["ArcTable / KV / caches"]
+  gateway --> cas["Immutable payload backend"]
+  localverify --> decision["Accept relative to client-selected root"]
+  core["MALT core contracts"] --> client
+  core --> executor
 ```
 
 The engine may produce a candidate result and proof, but only portable
@@ -123,13 +126,14 @@ change. It is not production-ready.
 
 Current in-tree capabilities:
 
-- root-centric `malt` CLI for local daemon lifecycle, add, resolve, and verify
+- root-centric `malt` CLI for local reference-executor lifecycle, add, resolve,
+  and local verification
 - reference/evaluation HTTP surface for explicit-root HTTP reads and writes
 - HTTP-native content reads for file bytes, directory JSON, and byte ranges,
   with proof evidence carried in `X-Malt-ProofList`
 - fixed-size proof material for flat `root + path` semantic lookups
-- pure MALT UnixFS-style layout built from map/list semantics and CAS-backed
-  immutable payloads
+- UnixFS application model plus separate client planner and reference-runtime
+  adapter over map/list semantics and CAS-backed immutable payloads
 - stateless commitment backends for semantic proof primitives
 - ArcTable-backed structure materialization with overwrite and versioned modes
 - `malt-eval` workloads for read queries, write traces, CAS models, proof
@@ -142,7 +146,8 @@ Current experimental boundaries:
 - no tenant, quota, pinning, or garbage-collection policy
 - no production managed gateway or hosted service semantics
 - no stable public API compatibility guarantee yet
-- large-file byte-range response bodies must be bound to authenticated segment CIDs with layout/unixfs.VerifyRangeBody after ProofList verification
+- large-file byte-range response bodies must be bound to authenticated segment
+  CIDs with `sdk/unixfs.VerifyRangeBody` after local ProofList verification
 
 The `v0.0.4` source release adds canonical segment paths and the
 `malt.artifact/v0alpha2` resolve/prove/verify contract with embedded JSON
@@ -186,24 +191,27 @@ Prerequisites:
 - Go 1.25.7 or newer
 - Git
 
-Build the three local binaries:
+Build the local binaries and optional browser verifier:
 
 ```bash
 mkdir -p bin
 go build -buildvcs=false -o bin/malt ./cmd/malt
 go build -buildvcs=false -o bin/cas ./cmd/cas
 go build -buildvcs=false -o bin/malt-eval ./cmd/eval/malt-eval
+scripts/build-verifier-wasm.sh dist/verifier
 ```
 
 Initialize the local runtime. The default configuration expects an external CAS
-at `127.0.0.1:4318` and a daemon API at `127.0.0.1:4317`. For local development
+at `127.0.0.1:4318` and a reference-executor API at `127.0.0.1:4317`. For local development
 without a real IPFS node, start the standalone mock CAS server first:
 
 ```bash
 bin/cas start
 ```
 
-Then initialize and start the daemon:
+Then initialize and start the local reference executor. The retained `malt
+start/status/stop` spelling manages that backend process; it is not a client
+verification daemon:
 
 ```bash
 bin/malt init --non-interactive
@@ -217,14 +225,15 @@ Add a file, resolve it, and verify the returned ProofList:
 printf 'hello malt\n' >/tmp/malt-hello.txt
 ROOT=$(bin/malt add /tmp/malt-hello.txt | awk '/Result root:/ {print $3}')
 bin/malt resolve "$ROOT" malt-hello.txt >/tmp/malt-resolve.json
-bin/malt verify --prooflist /tmp/malt-resolve.json
+bin/malt verify --root "$ROOT" --query "malt-hello.txt" --prooflist /tmp/malt-resolve.json
 ```
 
 This example stores file bytes through the configured local CAS, produces a
 MALT structure root, resolves a path relative to that root, and verifies the
-returned target and ProofList against the trusted root.
+returned target and ProofList locally against the trusted root. `malt verify`
+does not call the reference executor.
 
-Stop the managed daemon when finished:
+Stop the managed reference executor when finished:
 
 ```bash
 bin/malt stop
@@ -264,26 +273,27 @@ MALT's current implementation is easiest to read through these layers:
 | Layer | Role |
 | --- | --- |
 | Portable auth kernel | Canonical arcs, typed roots, VC verification, and ProofList validation |
-| Root `malt` facade | Typed `Query`, `ReadRequest`, `ReadResult`, `Engine.Read`, `Apply`, and `VerifyRead` |
+| Root `malt` facade | Typed `Query`, `ReadRequest`, `ReadResult`, portable mutation aliases, and `VerifyRead` |
+| Portable mutation contract | Namespace-free mutation/delta/receipt values under `mutation/` |
 | Semantic layer | Abstract map/list arc read and mutation semantics |
-| Execution engine | Proof generation, writer orchestration, and operational scope; untrusted for correctness |
+| Execution package | `execution.Executor` proof generation, mutation application, and operational scope; untrusted for correctness |
 | ArcTable | Optional namespace-scoped materialization outside the trust boundary |
-| Application layout | Domain model above typed arcs and immutable payload objects; UnixFS is one layout |
+| Application model | Domain schema above typed arcs and immutable payloads; UnixFS is one model/profile |
 
 The verifier-facing shape is:
 
 ```text
-Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
+execution.Executor.Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
 VerifyRead(request, result) -> valid / invalid
 
-Apply(semantic mutation with base root) -> result root + write receipt
+execution.Executor.Apply(semantic mutation with base root) -> result root + write receipt
 ```
 
 `list` describes stable-indexed child references. `map` describes authenticated
 key-to-target relations. `@payload` is a reserved standard coordinate but is
-optional for generic maps; the UnixFS layout requires it. Layouts translate
-source-domain data into typed queries and semantic mutations without defining
-the core semantics.
+optional for generic maps; the UnixFS model requires it. Client adapters
+translate source-domain data into segments, typed queries, and semantic
+mutations without defining core semantics.
 
 `graph` is not a separate semantic owner or node-interface hierarchy. In the
 current runtime it is a small composition boundary that wires resolver and
@@ -295,16 +305,23 @@ For a deeper implementation walkthrough, see [ARCHITECTURE.md](./ARCHITECTURE.md
 ## Repository Layout
 
 ```text
-cmd/malt/                      reference runtime CLI
+cmd/malt/                      CLI/client and reference-executor lifecycle commands
+cmd/malt-verifier-wasm/        browser-local portable verifier entrypoint
 cmd/eval/                      malt-eval workloads, schemas, and helpers
-api/http/                      daemon request/response DTOs
+api/http/                      reference transport request/response DTOs
 auth/                          portable arc, commitment, proof, semantics, and verifier kernel
-core.go, engine.go             module-root typed MALT facade
+core.go, verify.go             module-root typed MALT verification facade
+mutation/                      portable mutation and receipt contracts
+execution/                     untrusted prover/mutation executor composition
 graph/                         resolver and writer port definitions/adapters
-layout/unixfs/                 UnixFS-style layout over map/list semantics and CAS-backed payloads
+model/unixfs/                  UnixFS model/profile, formats, and mutation plans
+sdk/unixfs/                    client staging, materialization planning, and body verification
+runtime/unixfs/                optional in-process UnixFS execution/content adapter
 runtime/                       node, runtime graph composition, ArcTable, metrics
-sdk/client/                    Go daemon client facade
-server/                        reference daemon and evaluation HTTP server
+reference/executor/            all-in-one local reference execution backend
+sdk/client/                    Go reference-executor transport client
+sdk/verifier/                  local client artifact/ProofList verifier
+server/                        reference executor and evaluation HTTP server
 storage/                       CAS and KV storage libraries
 wire/maltcid/                  MALT map/list root CID codecs
 docs/                          implementation docs: policy, evaluation, specs, and MIPs
@@ -327,7 +344,7 @@ live in the research documents workspace.
 ## Roadmap
 
 The near-term roadmap is focused on stabilizing proof schemas, evaluator
-outputs, and the UnixFS-style layout boundary before claiming production
+outputs, and the UnixFS application boundary before claiming production
 readiness. See [ROADMAP.md](./ROADMAP.md).
 
 ## Contributing

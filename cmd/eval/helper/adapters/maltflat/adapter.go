@@ -13,7 +13,7 @@ import (
 	semanticmapping "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/cmd/eval/helper/replay"
 	evalstore "github.com/dewebprotocol/malt/cmd/eval/helper/store"
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	unixfs "github.com/dewebprotocol/malt/model/unixfs"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
 	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"

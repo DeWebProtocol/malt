@@ -11,7 +11,7 @@ import (
 	"github.com/dewebprotocol/malt/graph/querypath"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -36,7 +36,7 @@ func (s *Server) graphService(ctx context.Context) (graphService, error) {
 	return graphService{runtime: runtime}, nil
 }
 
-func (svc graphService) ApplyMutation(ctx context.Context, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
+func (svc graphService) ApplyMutation(ctx context.Context, mut mutation.SemanticMutation) (mutation.WriteReceipt, error) {
 	return svc.runtime.Writer().Apply(ctx, svc.runtime.Namespace(), mut)
 }
 

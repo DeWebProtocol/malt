@@ -8,6 +8,7 @@ import (
 	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	authverifier "github.com/dewebprotocol/malt/auth/verifier"
+	"github.com/dewebprotocol/malt/execution"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -70,18 +71,17 @@ func (s *Server) handleArtifactProve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	engine, err := malt.NewEngine(malt.EngineOptions{
-		Scope:    svc.runtime.Namespace(),
-		Maps:     svc.runtime.Semantic(),
-		Lists:    svc.runtime.ListSemantic(),
-		Writer:   svc.runtime.Writer(),
-		Verifier: authverifier.New(svc.runtime.Semantic(), svc.runtime.ListSemantic()),
+	executor, err := execution.NewExecutor(execution.Options{
+		Scope:  svc.runtime.Namespace(),
+		Maps:   svc.runtime.Semantic(),
+		Lists:  svc.runtime.ListSemantic(),
+		Writer: svc.runtime.Writer(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	readResult, err := engine.Read(r.Context(), malt.ReadRequest{Root: root, Query: query})
+	readResult, err := executor.Read(r.Context(), malt.ReadRequest{Root: root, Query: query})
 	if err != nil {
 		status := http.StatusInternalServerError
 		if malt.IsQueryNotFound(err) || errors.Is(err, mapping.ErrPathNotFound) {
@@ -100,6 +100,7 @@ func (s *Server) handleArtifactProve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleArtifactVerify(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Malt-Verification-Role", "diagnostic")
 	var req artifact.VerifyRequest
 	if err := s.decodeJSONBody(w, r, &req); err != nil {
 		writeBodyDecodeError(w, err)
@@ -109,12 +110,11 @@ func (s *Server) handleArtifactVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	svc, err := s.graphService(r.Context())
+	verifier, err := authverifier.NewDefault()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	verifier := authverifier.New(svc.runtime.Semantic(), svc.runtime.ListSemantic())
 	if err := artifact.Verify(r.Context(), req, verifier); err != nil {
 		writeJSON(w, http.StatusOK, artifact.VerifyResult{Profile: artifact.Profile, Valid: false})
 		return

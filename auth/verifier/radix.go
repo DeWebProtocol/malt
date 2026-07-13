@@ -25,7 +25,7 @@ const (
 // locked runtime wire format, but verification requires only the primitive
 // commitment scheme.
 type radixMapVerifier struct {
-	scheme commitment.IndexCommitment
+	scheme commitment.IndexVerifier
 }
 
 type radixProofEnvelope struct {
@@ -42,7 +42,7 @@ type radixBucketWitness struct {
 	Proof []byte `json:"proof"`
 }
 
-func newRadixMapVerifier(scheme commitment.IndexCommitment) MapVerifier {
+func newRadixMapVerifier(scheme commitment.IndexVerifier) MapVerifier {
 	return &radixMapVerifier{scheme: scheme}
 }
 

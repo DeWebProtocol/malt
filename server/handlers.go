@@ -16,8 +16,8 @@ import (
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/graph/writer"
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	"github.com/dewebprotocol/malt/mutation"
+	unixfsruntime "github.com/dewebprotocol/malt/runtime/unixfs"
 	"github.com/dewebprotocol/malt/storage/cas"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -66,7 +66,7 @@ func statReadTarget(stat *httpapi.PathStatResponse) (cid.Cid, error) {
 }
 
 func (s *Server) pathStatForTarget(ctx context.Context, g runtimeGraph, target cid.Cid, rawMustExist bool) (*httpapi.PathStatResponse, error) {
-	if entries, ok, err := unixfs.ManifestDirectoryEntries(ctx, s.node.CAS(), target); ok || err != nil {
+	if entries, ok, err := unixfsruntime.ManifestDirectoryEntries(ctx, s.node.CAS(), target); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -172,8 +172,8 @@ func (s *Server) legacyPathStat(ctx context.Context, g runtimeGraph, root cid.Ci
 	return s.pathStatForTarget(ctx, g, key, false)
 }
 
-func (s *Server) unixFSReader(g runtimeGraph) (unixfs.Reader, error) {
-	return unixfs.NewReader(unixfs.ReaderOptions{
+func (s *Server) unixFSReader(g runtimeGraph) (unixfsruntime.Reader, error) {
+	return unixfsruntime.NewReader(unixfsruntime.ReaderOptions{
 		Namespace: g.Namespace(),
 		Map:       g.Semantic(),
 		List:      g.ListSemantic(),
@@ -181,13 +181,13 @@ func (s *Server) unixFSReader(g runtimeGraph) (unixfs.Reader, error) {
 	})
 }
 
-func (s *Server) unixFSWriter(g runtimeGraph) (unixfs.Writer, error) {
+func (s *Server) unixFSWriter(g runtimeGraph) (unixfsruntime.Writer, error) {
 	blocks := s.node.CAS()
 	blockWriter, ok := blocks.(cas.Writer)
 	if !ok {
 		return nil, fmt.Errorf("configured CAS does not support writes")
 	}
-	return unixfs.NewWriter(unixfs.WriterOptions{
+	return unixfsruntime.NewWriter(unixfsruntime.WriterOptions{
 		Namespace:   g.Namespace(),
 		Map:         g.Semantic(),
 		List:        g.ListSemantic(),
@@ -196,7 +196,7 @@ func (s *Server) unixFSWriter(g runtimeGraph) (unixfs.Writer, error) {
 	})
 }
 
-func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout unixfs.Writer, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
+func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout unixfsruntime.Writer, root cid.Cid, allowLegacyMigration bool) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, nil
 	}
@@ -214,12 +214,12 @@ func (s *Server) prepareUnixFSRoot(ctx context.Context, g runtimeGraph, layout u
 	return cid.Undef, nil
 }
 
-func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, layout unixfs.Writer, oldRoot cid.Cid, newRoot cid.Cid) (writer.WriteReceipt, error) {
+func (s *Server) applyUnixFSModelMutation(ctx context.Context, g runtimeGraph, layout unixfsruntime.Writer, oldRoot cid.Cid, newRoot cid.Cid) (mutation.WriteReceipt, error) {
 	if oldRoot.Defined() && oldRoot.Equals(newRoot) {
 		if maltcid.SemanticKindOf(newRoot) != maltcid.SemanticKindMap {
-			return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
+			return mutation.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
 		}
-		return writer.WriteReceipt{
+		return mutation.WriteReceipt{
 			BaseRoot: oldRoot,
 			NewRoot:  newRoot,
 		}, nil
@@ -227,28 +227,28 @@ func (s *Server) applyUnixFSLayoutMutation(ctx context.Context, g runtimeGraph, 
 
 	plan, err := layout.MutationPlanForRoot(ctx, oldRoot, newRoot)
 	if err != nil {
-		return writer.WriteReceipt{}, err
+		return mutation.WriteReceipt{}, err
 	}
 	mut := plan.WriterMutation(newRoot)
 	receipt, err := s.applyWriterMutation(ctx, g, mut)
 	if err != nil {
-		return writer.WriteReceipt{}, err
+		return mutation.WriteReceipt{}, err
 	}
 	if maltcid.SemanticKindOf(receipt.NewRoot) != maltcid.SemanticKindMap {
-		return writer.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
+		return mutation.WriteReceipt{}, fmt.Errorf("unixfs mutation result must be a map result root")
 	}
 	return receipt, nil
 }
 
-func (s *Server) applyWriterMutation(ctx context.Context, g runtimeGraph, mut writer.SemanticMutation) (writer.WriteReceipt, error) {
+func (s *Server) applyWriterMutation(ctx context.Context, g runtimeGraph, mut mutation.SemanticMutation) (mutation.WriteReceipt, error) {
 	return graphService{runtime: g}.ApplyMutation(ctx, mut)
 }
 
-func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g runtimeGraph, layout unixfs.Writer, legacyRoot cid.Cid) (cid.Cid, error) {
+func (s *Server) migrateLegacyTreeToUnixFS(ctx context.Context, g runtimeGraph, layout unixfsruntime.Writer, legacyRoot cid.Cid) (cid.Cid, error) {
 	return s.copyLegacyPathToUnixFS(ctx, g, layout, legacyRoot, "", cid.Undef, "")
 }
 
-func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g runtimeGraph, layout unixfs.Writer, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
+func (s *Server) copyLegacyPathToUnixFS(ctx context.Context, g runtimeGraph, layout unixfsruntime.Writer, legacyRoot cid.Cid, legacyPath string, unixRoot cid.Cid, unixPath string) (cid.Cid, error) {
 	stat, err := s.legacyPathStat(ctx, g, legacyRoot, legacyPath)
 	if err != nil {
 		return cid.Undef, fmt.Errorf("migrate legacy path %q: %w", legacyPath, err)
@@ -307,7 +307,7 @@ func (s *Server) directoryEntriesFromStat(ctx context.Context, stat *httpapi.Pat
 	if err != nil {
 		return nil, err
 	}
-	return unixfs.DirectoryManifestPayloadEntries(ctx, s.node.CAS(), payloadCID)
+	return unixfsruntime.DirectoryManifestPayloadEntries(ctx, s.node.CAS(), payloadCID)
 }
 
 func (s *Server) readStatFile(ctx context.Context, g runtimeGraph, stat *httpapi.PathStatResponse) ([]byte, error) {

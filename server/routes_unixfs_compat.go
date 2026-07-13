@@ -51,7 +51,7 @@ func (s *Server) handleUnixFSWrite(w http.ResponseWriter, r *http.Request, root 
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		receipt, err := s.applyUnixFSLayoutMutation(r.Context(), g, layout, root, newRoot)
+		receipt, err := s.applyUnixFSModelMutation(r.Context(), g, layout, root, newRoot)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -82,7 +82,7 @@ func (s *Server) handleUnixFSWrite(w http.ResponseWriter, r *http.Request, root 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	receipt, err := s.applyUnixFSLayoutMutation(r.Context(), g, layout, root, newRoot)
+	receipt, err := s.applyUnixFSModelMutation(r.Context(), g, layout, root, newRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

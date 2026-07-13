@@ -1,0 +1,942 @@
+// Package unixfs implements the reference execution adapter for the MALT
+// UnixFS application model on top of map and list structural semantics.
+//
+// Directories and files are committed as map roots. Directory entries are map
+// bindings from one path segment to a child map root. File payloads are stored
+// under the reserved @payload binding; small payloads point to a raw CAS block,
+// while large payloads point to a list root whose entries are chunk CIDs.
+package unixfs
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/semantic"
+	"github.com/dewebprotocol/malt/auth/semantic/list"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	unixfsmodel "github.com/dewebprotocol/malt/model/unixfs"
+	"github.com/dewebprotocol/malt/storage/cas"
+	"github.com/dewebprotocol/malt/wire/maltcid"
+	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
+)
+
+const (
+	typeFile      = "file"
+	typeDirectory = "directory"
+
+	typePrefix      = "malt:unixfs:type:v1:"
+	sizePrefix      = "malt:unixfs:size:v1:"
+	chunkSizePrefix = "malt:unixfs:chunk-size:v1:"
+)
+
+var (
+	payloadPath   = arcset.PayloadPath
+	typePath      = arcset.CanonicalizePath("@type")
+	sizePath      = arcset.CanonicalizePath("@size")
+	chunkSizePath = arcset.CanonicalizePath("@chunksize")
+
+	ErrNotFound     = errors.New("unixfs path not found")
+	ErrNotDirectory = errors.New("unixfs path is not a directory")
+	ErrNotFile      = errors.New("unixfs path is not a file")
+	ErrReservedPath = unixfsmodel.ErrReservedPath
+	ErrInvalidPath  = unixfsmodel.ErrInvalidPath
+)
+
+// Options configures the legacy combined UnixFS runtime adapter.
+type Options struct {
+	Namespace string
+	ChunkSize int
+	Map       mapping.Semantics
+	List      list.Semantics
+	Blocks    cas.Client
+}
+
+// Adapter materializes the UnixFS application model with MALT map/list semantics.
+type Adapter struct {
+	namespace   string
+	chunkSize   int
+	maps        mapping.Semantics
+	lists       list.Semantics
+	blocks      cas.Reader
+	blockWriter cas.Writer
+}
+
+// Step records one verified map binding used during path resolution.
+type Step struct {
+	Root   cid.Cid
+	Path   arcset.Path
+	Target cid.Cid
+	Proof  structure.Proof
+}
+
+// Resolution records terminal @payload materialization for a path.
+type Resolution struct {
+	NodeRoot cid.Cid
+	Payload  cid.Cid
+	Steps    []Step
+}
+
+// Stat describes a UnixFS application node.
+type Stat struct {
+	Kind        string
+	NodeRoot    cid.Cid
+	Payload     cid.Cid
+	StorageKind string
+	Size        uint64
+	ChunkSize   uint64
+	Entries     []string
+}
+
+type fileInfo struct {
+	nodeRoot  cid.Cid
+	payload   cid.Cid
+	size      uint64
+	chunkSize uint64
+}
+
+// New creates the combined UnixFS runtime adapter over map/list semantics and CAS.
+//
+// Deprecated: use NewReader or NewWriter so CAS capabilities are explicit.
+func New(opts Options) (*Adapter, error) {
+	if opts.Map == nil {
+		return nil, fmt.Errorf("map semantic is nil")
+	}
+	if opts.List == nil {
+		return nil, fmt.Errorf("list semantic is nil")
+	}
+	if opts.Blocks == nil {
+		return nil, fmt.Errorf("CAS client is nil")
+	}
+	if opts.Namespace == "" {
+		return nil, fmt.Errorf("namespace is empty")
+	}
+
+	chunkSize := opts.ChunkSize
+	if chunkSize == 0 {
+		chunkSize = DefaultChunkSize
+	}
+	if chunkSize < 0 {
+		return nil, fmt.Errorf("chunk size must be positive")
+	}
+
+	return &Adapter{
+		namespace:   opts.Namespace,
+		chunkSize:   chunkSize,
+		maps:        opts.Map,
+		lists:       opts.List,
+		blocks:      opts.Blocks,
+		blockWriter: opts.Blocks,
+	}, nil
+}
+
+// EmptyDirectory commits an empty directory map root.
+func (l *Adapter) EmptyDirectory(ctx context.Context) (cid.Cid, error) {
+	dirMarker, err := typeMarker(typeDirectory)
+	if err != nil {
+		return cid.Undef, err
+	}
+	payload, err := l.commitDirectoryManifest(ctx, nil)
+	if err != nil {
+		return cid.Undef, err
+	}
+	entries := map[arcset.Path]cid.Cid{
+		typePath:    dirMarker,
+		payloadPath: payload,
+	}
+	return l.maps.Commit(ctx, l.namespace, mapping.NewViewFromPaths(entries))
+}
+
+// AddDirectory ensures that path exists as a directory and returns the new root.
+func (l *Adapter) AddDirectory(ctx context.Context, root cid.Cid, path string) (cid.Cid, error) {
+	if !root.Defined() {
+		var err error
+		root, err = l.EmptyDirectory(ctx)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	segments, err := splitRelativePath(path)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if len(segments) == 0 {
+		return root, nil
+	}
+	return l.ensureDirectory(ctx, root, segments)
+}
+
+// AddFile writes data at path and returns the updated root directory.
+func (l *Adapter) AddFile(ctx context.Context, root cid.Cid, path string, data []byte) (cid.Cid, error) {
+	if !root.Defined() {
+		var err error
+		root, err = l.EmptyDirectory(ctx)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	segments, err := splitRelativePath(path)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if len(segments) == 0 {
+		return cid.Undef, fmt.Errorf("file path is empty")
+	}
+	return l.addFile(ctx, root, segments, data)
+}
+
+// AddFileStream writes data read from r at path and returns the updated root
+// directory. The current planner materializes the stream before committing so
+// it can compute the payload size and chunk list consistently.
+func (l *Adapter) AddFileStream(ctx context.Context, root cid.Cid, path string, r io.Reader) (cid.Cid, error) {
+	if r == nil {
+		return cid.Undef, fmt.Errorf("file stream is nil")
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("read file stream: %w", err)
+	}
+	return l.AddFile(ctx, root, path, data)
+}
+
+// RemovePath removes a file path from the UnixFS tree and prunes empty parent
+// directories created solely to hold that path.
+func (l *Adapter) RemovePath(ctx context.Context, root cid.Cid, path string) (cid.Cid, error) {
+	if !root.Defined() {
+		return cid.Undef, fmt.Errorf("root is undefined")
+	}
+	segments, err := splitRelativePath(path)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if len(segments) == 0 {
+		return cid.Undef, fmt.Errorf("file path is empty")
+	}
+	nextRoot, _, err := l.removePath(ctx, root, segments)
+	return nextRoot, err
+}
+
+// Resolve traverses directory arcs and materializes the terminal @payload.
+func (l *Adapter) Resolve(ctx context.Context, root cid.Cid, path string) (*Resolution, error) {
+	nodeRoot, steps, err := l.resolveNode(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+
+	payload, proof, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
+	}
+	steps = append(steps, Step{
+		Root:   nodeRoot,
+		Path:   payloadPath,
+		Target: payload,
+		Proof:  proof,
+	})
+
+	return &Resolution{
+		NodeRoot: nodeRoot,
+		Payload:  payload,
+		Steps:    steps,
+	}, nil
+}
+
+// Stat resolves path and returns UnixFS node metadata.
+func (l *Adapter) Stat(ctx context.Context, root cid.Cid, path string) (*Stat, error) {
+	nodeRoot, _, err := l.resolveNode(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+
+	kind, err := l.nodeType(ctx, nodeRoot)
+	if err != nil {
+		return nil, err
+	}
+	payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
+	}
+
+	switch kind {
+	case typeDirectory:
+		entries, err := l.loadDirectoryManifest(ctx, payload)
+		if err != nil {
+			return nil, err
+		}
+		return &Stat{
+			Kind:        typeDirectory,
+			NodeRoot:    nodeRoot,
+			Payload:     payload,
+			StorageKind: "map",
+			Entries:     entries,
+		}, nil
+	case typeFile:
+		info, err := l.fileInfo(ctx, nodeRoot, payload)
+		if err != nil {
+			return nil, err
+		}
+		return &Stat{
+			Kind:        typeFile,
+			NodeRoot:    nodeRoot,
+			Payload:     payload,
+			StorageKind: StorageKindFromCID(info.payload),
+			Size:        info.size,
+			ChunkSize:   info.chunkSize,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported unixfs node kind %q", kind)
+	}
+}
+
+// ReadFile reads the complete file payload at path.
+func (l *Adapter) ReadFile(ctx context.Context, root cid.Cid, path string) ([]byte, error) {
+	info, err := l.resolveFile(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+	return l.readPayloadRange(ctx, info, 0, info.size)
+}
+
+// ReadFileRange reads a byte range from the file at path. Ranges past EOF are
+// clipped; an offset at or beyond EOF returns an empty slice.
+func (l *Adapter) ReadFileRange(ctx context.Context, root cid.Cid, path string, offset, length uint64) ([]byte, error) {
+	if length == 0 {
+		return nil, nil
+	}
+
+	info, err := l.resolveFile(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+	if offset >= info.size {
+		return nil, nil
+	}
+	if length > info.size-offset {
+		length = info.size - offset
+	}
+	return l.readPayloadRange(ctx, info, offset, length)
+}
+
+func (l *Adapter) ensureDirectory(ctx context.Context, root cid.Cid, segments []string) (cid.Cid, error) {
+	if len(segments) == 0 {
+		return root, nil
+	}
+
+	key := arcset.CanonicalizePath(segments[0])
+	child, _, ok, err := l.lookup(ctx, root, key)
+	if err != nil {
+		return cid.Undef, err
+	}
+	oldChild := cid.Undef
+	if ok {
+		oldChild = child
+		kind, err := l.nodeType(ctx, child)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if kind != typeDirectory {
+			return cid.Undef, fmt.Errorf("%w: %s", ErrNotDirectory, segments[0])
+		}
+	} else {
+		child, err = l.EmptyDirectory(ctx)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	nextChild, err := l.ensureDirectory(ctx, child, segments[1:])
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.setChild(ctx, root, key, oldChild, nextChild)
+}
+
+func (l *Adapter) addFile(ctx context.Context, root cid.Cid, segments []string, data []byte) (cid.Cid, error) {
+	key := arcset.CanonicalizePath(segments[0])
+	if len(segments) == 1 {
+		oldChild, _, ok, err := l.lookup(ctx, root, key)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if ok {
+			kind, err := l.nodeType(ctx, oldChild)
+			if err != nil {
+				return cid.Undef, err
+			}
+			if kind == typeDirectory {
+				return cid.Undef, fmt.Errorf("%w: %s", ErrNotFile, key.String())
+			}
+		}
+
+		fileRoot, err := l.commitFile(ctx, data)
+		if err != nil {
+			return cid.Undef, err
+		}
+		return l.setChild(ctx, root, key, oldChild, fileRoot)
+	}
+
+	child, _, ok, err := l.lookup(ctx, root, key)
+	if err != nil {
+		return cid.Undef, err
+	}
+	oldChild := cid.Undef
+	if ok {
+		oldChild = child
+		kind, err := l.nodeType(ctx, child)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if kind != typeDirectory {
+			return cid.Undef, fmt.Errorf("%w: %s", ErrNotDirectory, key.String())
+		}
+	} else {
+		child, err = l.EmptyDirectory(ctx)
+		if err != nil {
+			return cid.Undef, err
+		}
+	}
+
+	nextChild, err := l.addFile(ctx, child, segments[1:], data)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.setChild(ctx, root, key, oldChild, nextChild)
+}
+
+func (l *Adapter) removePath(ctx context.Context, root cid.Cid, segments []string) (cid.Cid, bool, error) {
+	key := arcset.CanonicalizePath(segments[0])
+	child, _, ok, err := l.lookup(ctx, root, key)
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	if !ok {
+		return cid.Undef, false, fmt.Errorf("%w: %s", ErrNotFound, strings.Join(segments, "/"))
+	}
+
+	kind, err := l.nodeType(ctx, child)
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	if len(segments) == 1 {
+		if kind == typeDirectory {
+			return cid.Undef, false, fmt.Errorf("%w: %s", ErrNotFile, key.String())
+		}
+		nextRoot, err := l.deleteChild(ctx, root, key, child)
+		if err != nil {
+			return cid.Undef, false, err
+		}
+		empty, err := l.directoryIsEmpty(ctx, nextRoot)
+		if err != nil {
+			return cid.Undef, false, err
+		}
+		return nextRoot, empty, nil
+	}
+
+	if kind != typeDirectory {
+		return cid.Undef, false, fmt.Errorf("%w: %s", ErrNotDirectory, key.String())
+	}
+	nextChild, removeChild, err := l.removePath(ctx, child, segments[1:])
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	var nextRoot cid.Cid
+	if removeChild {
+		nextRoot, err = l.deleteChild(ctx, root, key, child)
+	} else {
+		nextRoot, err = l.maps.Update(ctx, l.namespace, root, key, child, nextChild)
+	}
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	empty, err := l.directoryIsEmpty(ctx, nextRoot)
+	if err != nil {
+		return cid.Undef, false, err
+	}
+	return nextRoot, empty, nil
+}
+
+func (l *Adapter) commitFile(ctx context.Context, data []byte) (cid.Cid, error) {
+	payload, err := l.commitPayload(ctx, data)
+	if err != nil {
+		return cid.Undef, err
+	}
+	fileMarker, err := typeMarker(typeFile)
+	if err != nil {
+		return cid.Undef, err
+	}
+	sizeMarker, err := uintMarker(sizePrefix, uint64(len(data)))
+	if err != nil {
+		return cid.Undef, err
+	}
+	chunkSizeMarker, err := uintMarker(chunkSizePrefix, uint64(l.chunkSize))
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	entries := map[arcset.Path]cid.Cid{
+		typePath:      fileMarker,
+		payloadPath:   payload,
+		sizePath:      sizeMarker,
+		chunkSizePath: chunkSizeMarker,
+	}
+	return l.maps.Commit(ctx, l.namespace, mapping.NewViewFromPaths(entries))
+}
+
+func (l *Adapter) commitPayload(ctx context.Context, data []byte) (cid.Cid, error) {
+	if len(data) <= l.chunkSize {
+		return l.blockWriter.Put(ctx, data)
+	}
+
+	chunkData, err := PayloadChunks(data, l.chunkSize)
+	if err != nil {
+		return cid.Undef, err
+	}
+	blocks := make([]cas.Block, 0, len(chunkData))
+	for _, chunk := range chunkData {
+		blocks = append(blocks, cas.Block{Data: chunk})
+	}
+	results, err := cas.PutBlocks(ctx, l.blockWriter, blocks)
+	if err != nil {
+		return cid.Undef, err
+	}
+	chunks := make([]cid.Cid, len(results))
+	for i, result := range results {
+		chunks[i] = result.CID
+	}
+	if measured, ok := l.lists.(interface {
+		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
+	}); ok {
+		return measured.CommitFixed(ctx, l.namespace, chunks, uint64(l.chunkSize), uint64(len(data)))
+	}
+	return l.lists.Commit(ctx, l.namespace, list.NewViewFromSlice(chunks))
+}
+
+func (l *Adapter) resolveNode(ctx context.Context, root cid.Cid, path string) (cid.Cid, []Step, error) {
+	if !root.Defined() {
+		return cid.Undef, nil, fmt.Errorf("root is undefined")
+	}
+
+	segments, err := splitRelativePath(path)
+	if err != nil {
+		return cid.Undef, nil, err
+	}
+
+	current := root
+	steps := make([]Step, 0, len(segments)+1)
+	for _, segment := range segments {
+		key := arcset.CanonicalizePath(segment)
+		target, proof, ok, err := l.lookup(ctx, current, key)
+		if err != nil {
+			return cid.Undef, nil, err
+		}
+		if !ok {
+			return cid.Undef, nil, fmt.Errorf("%w: %s", ErrNotFound, path)
+		}
+		steps = append(steps, Step{
+			Root:   current,
+			Path:   key,
+			Target: target,
+			Proof:  proof,
+		})
+		current = target
+	}
+	return current, steps, nil
+}
+
+func (l *Adapter) resolveFile(ctx context.Context, root cid.Cid, path string) (*fileInfo, error) {
+	nodeRoot, _, err := l.resolveNode(ctx, root, path)
+	if err != nil {
+		return nil, err
+	}
+
+	kind, err := l.nodeType(ctx, nodeRoot)
+	if err != nil {
+		return nil, err
+	}
+	if kind != typeFile {
+		return nil, fmt.Errorf("%w: %s", ErrNotFile, path)
+	}
+
+	payload, _, ok, err := l.lookup(ctx, nodeRoot, payloadPath)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: missing @payload", ErrNotFound)
+	}
+
+	return l.fileInfo(ctx, nodeRoot, payload)
+}
+
+func (l *Adapter) fileInfo(ctx context.Context, nodeRoot cid.Cid, payload cid.Cid) (*fileInfo, error) {
+	sizeCID, _, ok, err := l.lookup(ctx, nodeRoot, sizePath)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: missing @size", ErrNotFound)
+	}
+	size, err := parseUintMarker(sizeCID, sizePrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	chunkSizeCID, _, ok, err := l.lookup(ctx, nodeRoot, chunkSizePath)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: missing @chunksize", ErrNotFound)
+	}
+	chunkSize, err := parseUintMarker(chunkSizeCID, chunkSizePrefix)
+	if err != nil {
+		return nil, err
+	}
+	if chunkSize == 0 {
+		return nil, fmt.Errorf("stored chunk size is zero")
+	}
+
+	return &fileInfo{
+		nodeRoot:  nodeRoot,
+		payload:   payload,
+		size:      size,
+		chunkSize: chunkSize,
+	}, nil
+}
+
+func (l *Adapter) readPayloadRange(ctx context.Context, info *fileInfo, offset, length uint64) ([]byte, error) {
+	if length == 0 {
+		return nil, nil
+	}
+
+	if maltcid.SemanticKindOf(info.payload) == maltcid.SemanticKindList {
+		return l.readListRange(ctx, info.payload, offset, length, info.chunkSize)
+	}
+
+	data, err := l.blocks.Get(ctx, info.payload)
+	if err != nil {
+		return nil, err
+	}
+	if offset > uint64(len(data)) {
+		return nil, nil
+	}
+	end := offset + length
+	if end > uint64(len(data)) {
+		end = uint64(len(data))
+	}
+	return cloneBytes(data[offset:end]), nil
+}
+
+// ListPayloadSize returns the byte size and chunk count for a fixed-width list
+// payload using the layout chunk size. It is intended for compatibility paths
+// that already resolved a file payload to a list root and therefore do not have
+// the containing UnixFS file node available.
+func (l *Adapter) ListPayloadSize(ctx context.Context, root cid.Cid) (uint64, uint64, error) {
+	chunkSize := uint64(l.chunkSize)
+	query, _, err := l.lists.Prove(ctx, l.namespace, root, ^uint64(0))
+	if err != nil {
+		return 0, 0, err
+	}
+	count := query.Length
+	if count == 0 {
+		return 0, 0, nil
+	}
+	last, _, err := l.lists.Prove(ctx, l.namespace, root, count-1)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !last.Key.Defined() {
+		return 0, 0, fmt.Errorf("%w: missing chunk %d", ErrNotFound, count-1)
+	}
+	lastChunk, err := l.blocks.Get(ctx, last.Key)
+	if err != nil {
+		return 0, 0, err
+	}
+	size := (count-1)*chunkSize + uint64(len(lastChunk))
+	return size, count, nil
+}
+
+// ReadListPayloadRange reads a byte range from a fixed-width list payload using
+// the layout chunk size. It is the payload-level counterpart of ReadFileRange
+// for callers that already hold the list root.
+func (l *Adapter) ReadListPayloadRange(ctx context.Context, root cid.Cid, offset, length uint64) ([]byte, error) {
+	if length == 0 {
+		return nil, nil
+	}
+	return l.readListRange(ctx, root, offset, length, uint64(l.chunkSize))
+}
+
+func (l *Adapter) readListRange(ctx context.Context, root cid.Cid, offset, length, chunkSize uint64) ([]byte, error) {
+	startIndex := offset / chunkSize
+	endOffset := offset + length
+	endIndex := (endOffset - 1) / chunkSize
+
+	out := bytes.Buffer{}
+	for index := startIndex; index <= endIndex; index++ {
+		query, proof, err := l.lists.Prove(ctx, l.namespace, root, index)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := l.lists.Verify(root, index, query, proof)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("list proof failed at index %d", index)
+		}
+		if !query.Key.Defined() {
+			return nil, fmt.Errorf("%w: missing chunk %d", ErrNotFound, index)
+		}
+
+		chunk, err := l.blocks.Get(ctx, query.Key)
+		if err != nil {
+			return nil, err
+		}
+
+		chunkStart := index * chunkSize
+		from := uint64(0)
+		if offset > chunkStart {
+			from = offset - chunkStart
+		}
+		to := uint64(len(chunk))
+		if endOffset < chunkStart+to {
+			to = endOffset - chunkStart
+		}
+		if from > to || to > uint64(len(chunk)) {
+			return nil, fmt.Errorf("invalid chunk bounds at index %d", index)
+		}
+		out.Write(chunk[from:to])
+	}
+	return out.Bytes(), nil
+}
+
+func (l *Adapter) nodeType(ctx context.Context, root cid.Cid) (string, error) {
+	typeCID, _, ok, err := l.lookup(ctx, root, typePath)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%w: missing @type", ErrNotFound)
+	}
+	return parseTypeMarker(typeCID)
+}
+
+func (l *Adapter) lookup(ctx context.Context, root cid.Cid, key arcset.Path) (cid.Cid, structure.Proof, bool, error) {
+	binding, proof, err := l.maps.Prove(ctx, l.namespace, root, key)
+	if err != nil {
+		if isMapAbsent(err) {
+			return cid.Undef, nil, false, nil
+		}
+		return cid.Undef, nil, false, err
+	}
+	if !binding.Present || !binding.Value.Defined() {
+		return cid.Undef, proof, false, nil
+	}
+	ok, err := l.maps.Verify(root, key, binding, proof)
+	if err != nil {
+		return cid.Undef, nil, false, err
+	}
+	if !ok {
+		return cid.Undef, nil, false, fmt.Errorf("map proof failed for %s", key.String())
+	}
+	return binding.Value, proof, true, nil
+}
+
+func (l *Adapter) set(ctx context.Context, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	if key.IsEmpty() {
+		return cid.Undef, fmt.Errorf("key is empty")
+	}
+	if !newValue.Defined() {
+		return cid.Undef, fmt.Errorf("new value is undefined")
+	}
+	if !oldValue.Defined() {
+		oldValue = cid.Undef
+	}
+	return l.maps.Update(ctx, l.namespace, root, key, oldValue, newValue)
+}
+
+func (l *Adapter) setChild(ctx context.Context, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
+	nextRoot, err := l.set(ctx, root, key, oldValue, newValue)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.addDirectoryEntry(ctx, nextRoot, key.String())
+}
+
+func (l *Adapter) deleteChild(ctx context.Context, root cid.Cid, key arcset.Path, oldValue cid.Cid) (cid.Cid, error) {
+	nextRoot, err := l.maps.Update(ctx, l.namespace, root, key, oldValue, cid.Undef)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.removeDirectoryEntry(ctx, nextRoot, key.String())
+}
+
+func (l *Adapter) addDirectoryEntry(ctx context.Context, root cid.Cid, name string) (cid.Cid, error) {
+	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if !ok {
+		return cid.Undef, fmt.Errorf("%w: missing directory @payload", ErrNotFound)
+	}
+	entries, err := l.loadDirectoryManifest(ctx, payload)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if slices.Contains(entries, name) {
+		return root, nil
+	}
+	entries = append(entries, name)
+	nextPayload, err := l.commitDirectoryManifest(ctx, entries)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.set(ctx, root, payloadPath, payload, nextPayload)
+}
+
+func (l *Adapter) removeDirectoryEntry(ctx context.Context, root cid.Cid, name string) (cid.Cid, error) {
+	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if !ok {
+		return cid.Undef, fmt.Errorf("%w: missing directory @payload", ErrNotFound)
+	}
+	entries, err := l.loadDirectoryManifest(ctx, payload)
+	if err != nil {
+		return cid.Undef, err
+	}
+	nextEntries := entries[:0]
+	removed := false
+	for _, entry := range entries {
+		if entry == name {
+			removed = true
+			continue
+		}
+		nextEntries = append(nextEntries, entry)
+	}
+	if !removed {
+		return root, nil
+	}
+	nextPayload, err := l.commitDirectoryManifest(ctx, nextEntries)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.maps.Update(ctx, l.namespace, root, payloadPath, payload, nextPayload)
+}
+
+func (l *Adapter) directoryIsEmpty(ctx context.Context, root cid.Cid) (bool, error) {
+	payload, _, ok, err := l.lookup(ctx, root, payloadPath)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, fmt.Errorf("%w: missing directory @payload", ErrNotFound)
+	}
+	entries, err := l.loadDirectoryManifest(ctx, payload)
+	if err != nil {
+		return false, err
+	}
+	return len(entries) == 0, nil
+}
+
+func (l *Adapter) commitDirectoryManifest(ctx context.Context, entries []string) (cid.Cid, error) {
+	payload, err := DirectoryManifestPayload(entries)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return l.blockWriter.Put(ctx, payload)
+}
+
+func (l *Adapter) loadDirectoryManifest(ctx context.Context, payload cid.Cid) ([]string, error) {
+	return DirectoryManifestPayloadEntries(ctx, l.blocks, payload)
+}
+
+func splitRelativePath(path string) ([]string, error) {
+	return unixfsmodel.ParsePath(path)
+}
+
+func isMapAbsent(err error) bool {
+	return errors.Is(err, mapping.ErrPathNotFound)
+}
+
+func typeMarker(kind string) (cid.Cid, error) {
+	return identityCID([]byte(typePrefix + kind))
+}
+
+func parseTypeMarker(c cid.Cid) (string, error) {
+	payload, err := identityPayload(c)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(string(payload), typePrefix) {
+		return "", fmt.Errorf("invalid unixfs type marker")
+	}
+	kind := strings.TrimPrefix(string(payload), typePrefix)
+	switch kind {
+	case typeFile, typeDirectory:
+		return kind, nil
+	default:
+		return "", fmt.Errorf("unknown unixfs type %q", kind)
+	}
+}
+
+func uintMarker(prefix string, value uint64) (cid.Cid, error) {
+	return identityCID([]byte(prefix + strconv.FormatUint(value, 10)))
+}
+
+func parseUintMarker(c cid.Cid, prefix string) (uint64, error) {
+	payload, err := identityPayload(c)
+	if err != nil {
+		return 0, err
+	}
+	text := string(payload)
+	if !strings.HasPrefix(text, prefix) {
+		return 0, fmt.Errorf("invalid uint marker")
+	}
+	return strconv.ParseUint(strings.TrimPrefix(text, prefix), 10, 64)
+}
+
+func identityCID(payload []byte) (cid.Cid, error) {
+	if len(payload) > math.MaxInt32 {
+		return cid.Undef, fmt.Errorf("identity payload too large")
+	}
+	hash, err := mh.Sum(payload, mh.IDENTITY, len(payload))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, hash), nil
+}
+
+func identityPayload(c cid.Cid) ([]byte, error) {
+	decoded, err := mh.Decode(c.Hash())
+	if err != nil {
+		return nil, err
+	}
+	if decoded.Code != mh.IDENTITY {
+		return nil, fmt.Errorf("CID is not an identity marker")
+	}
+	return decoded.Digest, nil
+}
+
+func cloneBytes(data []byte) []byte {
+	out := make([]byte, len(data))
+	copy(out, data)
+	return out
+}

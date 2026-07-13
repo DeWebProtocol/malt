@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 
-	"github.com/dewebprotocol/malt/api/http"
+	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -16,48 +18,90 @@ func init() {
 }
 
 var verifyCmd = &cobra.Command{
-	Use:   "verify --prooflist <file|->",
+	Use:   "verify --root <trusted-root> --query <canonical-query> --prooflist <file|->",
 	Short: "Verify a ProofList",
 	Long: `Verify that a ProofList is valid.
 The ProofList can be provided as a JSON file or via stdin. The input may be a
 bare ProofList or a resolve response containing a prooflist field.
 
 Examples:
-  malt verify --prooflist resolve.json
-  malt verify --prooflist -`,
+  malt verify --root "$ROOT" --query "docs/readme.md" --prooflist resolve.json
+  malt verify --root "$ROOT" --query "docs/readme.md" --prooflist -`,
 	Args: cobra.NoArgs,
 	RunE: runVerify,
 }
 
 func init() {
 	verifyCmd.Flags().String("prooflist", "", "Path to ProofList JSON file, resolve JSON file, or - for stdin")
+	verifyCmd.Flags().String("root", "", "Caller-selected trusted root CID")
+	verifyCmd.Flags().String("query", "", "Caller-selected canonical ProofList query")
 	_ = verifyCmd.MarkFlagRequired("prooflist")
+	_ = verifyCmd.MarkFlagRequired("root")
+	_ = verifyCmd.MarkFlagRequired("query")
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	client := mustDaemonClient()
-
 	pl, err := readProofListInput(cmd)
 	if err != nil {
 		return err
 	}
-
-	resp, err := client.Verify(cmd.Context(), &httpapi.VerifyRequest{
-		ProofList: *pl,
-	})
+	trustedRoot, err := readTrustedRoot(cmd)
 	if err != nil {
-		return daemonCommandError(err)
+		return err
 	}
+	if !pl.Root.Equals(trustedRoot) {
+		return fmt.Errorf("ProofList root %s does not match trusted root %s", pl.Root, trustedRoot)
+	}
+	expectedQuery, err := readExpectedQuery(cmd)
+	if err != nil {
+		return err
+	}
+	if pl.Query != expectedQuery {
+		return fmt.Errorf("ProofList query %q does not match expected query %q", pl.Query, expectedQuery)
+	}
+	portable, err := clientverifier.NewDefault()
+	if err != nil {
+		return fmt.Errorf("initializing local verifier: %w", err)
+	}
+	valid, err := portable.VerifyProofList(cmd.Context(), *pl)
+	if err != nil {
+		return fmt.Errorf("verifying ProofList locally: %w", err)
+	}
+	return reportLocalVerification(valid)
+}
 
-	if resp.Valid {
+func reportLocalVerification(valid bool) error {
+	if valid {
 		fmt.Println("valid: true")
-		fmt.Fprintf(os.Stderr, "ProofList verified successfully\n")
-	} else {
-		fmt.Println("valid: false")
-		fmt.Fprintf(os.Stderr, "ProofList verification failed\n")
+		fmt.Fprintf(os.Stderr, "ProofList verified locally\n")
+		return nil
 	}
+	fmt.Println("valid: false")
+	fmt.Fprintf(os.Stderr, "local ProofList verification failed\n")
+	return malt.ErrVerifierRejected
+}
 
-	return nil
+func readExpectedQuery(cmd *cobra.Command) (string, error) {
+	raw, err := cmd.Flags().GetString("query")
+	if err != nil {
+		return "", fmt.Errorf("reading --query: %w", err)
+	}
+	if raw == "" {
+		return "", fmt.Errorf("--query flag is required")
+	}
+	return raw, nil
+}
+
+func readTrustedRoot(cmd *cobra.Command) (cid.Cid, error) {
+	raw, err := cmd.Flags().GetString("root")
+	if err != nil || raw == "" {
+		return cid.Undef, fmt.Errorf("--root flag is required")
+	}
+	root, err := cid.Decode(raw)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("invalid trusted root: %w", err)
+	}
+	return root, nil
 }
 
 func readProofListInput(cmd *cobra.Command) (*prooflist.ProofList, error) {

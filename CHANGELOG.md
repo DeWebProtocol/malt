@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Portable `mutation` value contracts and a separate untrusted
+  `execution.Executor` facade.
+- Client-local `sdk/verifier` plus a reproducible browser/WASM verifier build.
+- Explicit UnixFS `model/unixfs`, `sdk/unixfs`, and `runtime/unixfs` boundaries.
+
+### Changed
+
+- The module-root `malt` package no longer imports graph writer/execution code;
+  it owns query/result/mutation projections and verification bindings only.
+- Commitment verification-only interfaces are separated from prover/updater
+  capabilities for light-client and WASM consumers.
+- The old local daemon bootstrap is identified as a reference executor, and
+  remote verify routes are diagnostic/conformance surfaces only.
+- `malt verify` performs portable verification locally, binds an explicit
+  trusted root and caller-selected canonical query, and exits non-zero on
+  rejection.
+- The local Go/WASM verifier request binds caller-selected root, operation,
+  query, and optional expected target inside the verifier boundary.
+
 ## [0.0.4] - 2026-07-12
 
 ### Added

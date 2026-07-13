@@ -1,6 +1,6 @@
 // Package malt exposes the application-neutral MALT core facade.
 //
-// The facade is intentionally small. Application layouts translate their
+// The facade is intentionally small. Client/application adapters translate
 // domain operations into typed map/list queries and semantic mutations, while
 // runtime state placement, ArcTable namespaces, HTTP transport, and payload CAS
 // access remain outside the caller-visible contract.
@@ -14,7 +14,7 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
-	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -37,13 +37,10 @@ var (
 	ErrQueryNotFound = errors.New("MALT query target not found")
 	// ErrVerifierRejected is returned when proof verification returns false.
 	ErrVerifierRejected = errors.New("MALT verifier rejected read result")
-	// ErrCapabilityUnavailable is returned when an Engine was not configured
-	// with the capability required by an operation.
-	ErrCapabilityUnavailable = errors.New("MALT engine capability is unavailable")
 )
 
 // Query is a single typed arc query. Multi-step application traversal is
-// composed by layouts from these primitive map/list operations.
+// composed by clients/application adapters from these primitive operations.
 type Query struct {
 	Kind  QueryKind
 	Key   arcset.Path
@@ -127,12 +124,12 @@ type ReadResult struct {
 	ProofList prooflist.ProofList
 }
 
-// Mutation is the current v0alpha1 semantic mutation contract. Runtime state
-// placement is deliberately absent; Engine supplies its configured scope.
-type Mutation = writer.SemanticMutation
+// Mutation is the portable semantic mutation contract. Runtime state placement
+// and publication policy are deliberately absent.
+type Mutation = mutation.SemanticMutation
 
 // WriteResult is the current v0alpha1 result-root receipt.
-type WriteResult = writer.WriteReceipt
+type WriteResult = mutation.WriteReceipt
 
 // Reader is the application-neutral root-relative read port.
 type Reader interface {

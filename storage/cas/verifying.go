@@ -204,8 +204,8 @@ func verifyPutResult(got cid.Cid, data []byte, requestedCodec uint64) (cid.Cid, 
 // verifyBatchResults walks parallel slices of input blocks and writer
 // results, recomputing the CID for every entry. The wrapper requires every
 // returned PutResult to commit to a defined CID with the codec that was
-// asked for: layout/unixfs writes the chunk list straight from the
-// PutResult slice (see layout/unixfs/layout.go), and propagating an
+// asked for: runtime/unixfs writes the chunk list straight from the
+// PutResult slice, and propagating an
 // undefined or codec-mismatched CID would let a hostile or buggy CAS
 // produce a root with invalid chunk references.
 func verifyBatchResults(blocks []Block, results []PutResult) error {

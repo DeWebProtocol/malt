@@ -14,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	authverifier "github.com/dewebprotocol/malt/auth/verifier"
+	"github.com/dewebprotocol/malt/execution"
 	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
 	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
 	mapradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
@@ -112,23 +113,23 @@ func TestPortableVerifierAcceptsRuntimeRadixAndTreeProofs(t *testing.T) {
 						if err != nil {
 							t.Fatalf("Commit: %v", err)
 						}
-						engine, err := malt.NewEngine(malt.EngineOptions{Scope: scope, Maps: maps, Verifier: portable})
+						executor, err := execution.NewExecutor(execution.Options{Scope: scope, Maps: maps})
 						if err != nil {
-							t.Fatalf("NewEngine: %v", err)
+							t.Fatalf("NewExecutor: %v", err)
 						}
 						query, err := malt.MapKeyQuery(test.coordinate)
 						if err != nil {
 							t.Fatalf("MapKeyQuery: %v", err)
 						}
 						request := malt.ReadRequest{Root: root, Query: query}
-						result, err := engine.Read(ctx, request)
+						result, err := executor.Read(ctx, request)
 						if err != nil {
 							t.Fatalf("Read: %v", err)
 						}
 						if !result.Target.Equals(target) {
 							t.Fatalf("target = %s, want %s", result.Target, target)
 						}
-						if err := engine.VerifyRead(ctx, request, result); err != nil {
+						if err := malt.VerifyRead(ctx, request, result, portable); err != nil {
 							t.Fatalf("VerifyRead: %v", err)
 						}
 					})

@@ -144,7 +144,7 @@ The `list_range` step carries fixed chunk metadata, covered segment CIDs, and
 metadata/index proof bytes. Verifiers must reject range proofs that shift byte
 boundaries, omit covered segment bindings, or mismatch the measured metadata.
 
-`@payload` is reserved but optional in generic map state. The UnixFS layout
+`@payload` is reserved but optional in generic map state. The UnixFS model
 requires it and therefore emits the terminal payload-binding step shown above;
 a generic relation-only map ProofList does not need such a step.
 
@@ -154,7 +154,7 @@ must:
 
 1. verify the ProofList against the trusted root,
 2. fetch or otherwise resolve each authenticated segment CID, and
-3. call `layout/unixfs.VerifyRangeBody(pl, body, start, end, fetch)` or an
+3. call `sdk/unixfs.VerifyRangeBody(pl, body, start, end, fetch)` or an
    equivalent byte-binding check before trusting the body.
 
 `VerifyRangeBody` rejects shifted ranges, missing range evidence, segment CID

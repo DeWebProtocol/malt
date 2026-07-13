@@ -45,7 +45,7 @@ escaping and conflict rules.
 - Verification proves the returned complete derivation. It does not prove that
   the chosen prefix or derivation was longest, shortest, unique, or otherwise
   application-preferred.
-- Applications and layouts own overlap/conflict policy when multiple valid
+- Applications and clients own overlap/conflict policy when multiple valid
   derivations exist.
 
 The normative rules and examples live in
@@ -77,4 +77,3 @@ values, it must reject or reversibly encode them before calling core.
 ## History
 
 - 2026-07-12: Accepted and implemented for `v0.0.4`.
-

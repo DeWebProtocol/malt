@@ -44,7 +44,8 @@ Current code evidence:
 - `cmd/malt/add_workflow.go` routes `malt add` through staged UnixFS
   ingestion.
 - `cmd/malt/add_staging.go` builds the staged tree.
-- `layout/unixfs/mutation.go` exposes root-relative mutation plans.
+- `model/unixfs` defines mutation plans and `runtime/unixfs/mutation.go`
+  exposes root-relative plan construction.
 - PR #49 completed the current batch/dedup path without making updates
   path-local in the old daemon-write sense.
 

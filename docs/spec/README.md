@@ -14,7 +14,9 @@ The current transport-neutral artifact profile is `malt.artifact/v0alpha2`:
 segment-path resolution, primitive typed proofs, and portable verification in a
 versioned envelope. See
 [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) and
-[MIP-1012](../mips/mip-1012-segment-path-resolution.md).
+[MIP-1012](../mips/mip-1012-segment-path-resolution.md). Client-local trusted
+root verification and the core/gateway/executor boundary are recorded by
+[MIP-1013](../mips/mip-1013-client-gateway-core-boundary.md).
 
 ## Documents
 

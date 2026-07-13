@@ -2,7 +2,8 @@
 
 These fixtures exercise the zero-segment root-identity case without relying on
 a commitment backend or mutable runtime state. They are stable byte-level
-examples for SDK request/response codecs.
+examples for resolve, remote diagnostic verify, and local trusted-root plus
+caller-expectation verifier request/response codecs.
 
 The fixture proves only identity: the trusted root is the returned target and
 the ProofList has no traversal steps. Non-empty resolve and primitive prove

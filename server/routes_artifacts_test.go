@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	httpapi "github.com/dewebprotocol/malt/api/http"
@@ -167,6 +168,9 @@ func postArtifactRequest[Request, Response any](t *testing.T, url string, reques
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post %s status = %d, want %d", url, resp.StatusCode, http.StatusOK)
+	}
+	if strings.HasSuffix(url, "/verify") && resp.Header.Get("X-Malt-Verification-Role") != "diagnostic" {
+		t.Fatalf("post %s verification role = %q, want diagnostic", url, resp.Header.Get("X-Malt-Verification-Role"))
 	}
 	var response Response
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {

@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	malt "github.com/dewebprotocol/malt"
 )
 
 func TestVerifyAcceptsResolveProofListJSON(t *testing.T) {
@@ -40,9 +43,13 @@ func TestVerifyAcceptsResolveProofListJSON(t *testing.T) {
 	if err := os.WriteFile(proofPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("write proof file: %v", err)
 	}
+	// Verification must remain available after the execution client is removed.
+	defaultClient = nil
 
 	cmd := testCommandWithContext(ctx)
 	cmd.Flags().String("prooflist", proofPath, "")
+	cmd.Flags().String("root", createResp.Root, "")
+	cmd.Flags().String("query", "name", "")
 	out := captureStdout(t, func() {
 		if err := runVerify(cmd, nil); err != nil {
 			t.Fatalf("run verify: %v", err)
@@ -50,6 +57,20 @@ func TestVerifyAcceptsResolveProofListJSON(t *testing.T) {
 	})
 	if !strings.Contains(out, "valid: true") {
 		t.Fatalf("verify output = %q, want valid true", out)
+	}
+
+	tamperedRootCmd := testCommandWithContext(ctx)
+	tamperedRootCmd.Flags().String("prooflist", proofPath, "")
+	tamperedRootCmd.Flags().String("root", fakeAddCID("different-trusted-root").String(), "")
+	tamperedRootCmd.Flags().String("query", "name", "")
+	if err := runVerify(tamperedRootCmd, nil); err == nil {
+		t.Fatal("local verify accepted a ProofList under a different trusted root")
+	}
+}
+
+func TestVerifyRejectedResultReturnsFailure(t *testing.T) {
+	if err := reportLocalVerification(false); !errors.Is(err, malt.ErrVerifierRejected) {
+		t.Fatalf("reportLocalVerification(false) error = %v, want ErrVerifierRejected", err)
 	}
 }
 

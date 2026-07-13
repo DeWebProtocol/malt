@@ -21,6 +21,8 @@ func Schema(name string) ([]byte, error) {
 func SchemaNames() []string {
 	return []string{
 		"artifact.schema.json",
+		"local-verify-request.schema.json",
+		"local-verify-result.schema.json",
 		"prove-request.schema.json",
 		"resolve-request.schema.json",
 		"verify-request.schema.json",

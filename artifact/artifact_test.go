@@ -1,6 +1,7 @@
 package artifact_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -99,6 +100,49 @@ func TestPublishedSchemasAreJSONObjects(t *testing.T) {
 func TestQueryFromCoreRejectsUnsupportedKind(t *testing.T) {
 	if _, err := artifact.QueryFromCore(malt.Query{Kind: malt.QueryKind("future")}); err == nil {
 		t.Fatal("QueryFromCore accepted an unsupported query kind")
+	}
+}
+
+func TestQueryEqualComparesPointerValuesAndSegments(t *testing.T) {
+	indexA, indexB := uint64(7), uint64(7)
+	left := artifact.Query{Kind: artifact.QueryListIndex, Index: &indexA}
+	right := artifact.Query{Kind: artifact.QueryListIndex, Index: &indexB}
+	if !left.Equal(right) {
+		t.Fatal("equal list-index queries compared unequal")
+	}
+	right = artifact.Query{Kind: artifact.QueryPath, Segments: []string{"a", "b"}}
+	if right.Equal(artifact.Query{Kind: artifact.QueryPath, Segments: []string{"a", "c"}}) {
+		t.Fatal("different path queries compared equal")
+	}
+}
+
+func TestQueryJSONMatchesConditionalSchemaShape(t *testing.T) {
+	identity, err := json.Marshal(artifact.Query{Kind: artifact.QueryPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(identity, []byte(`"segments":[]`)) {
+		t.Fatalf("identity query JSON = %s, want required empty segments", identity)
+	}
+
+	index := uint64(7)
+	encodedIndex, err := json.Marshal(artifact.Query{Kind: artifact.QueryListIndex, Index: &index})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encodedIndex, []byte(`"segments"`)) {
+		t.Fatalf("list-index query JSON contains unrelated segments: %s", encodedIndex)
+	}
+
+	for _, raw := range []string{
+		`{"kind":"path"}`,
+		`{"kind":"path","segments":[],"index":0}`,
+		`{"kind":"list_index","index":0,"unexpected":true}`,
+	} {
+		var query artifact.Query
+		if err := json.Unmarshal([]byte(raw), &query); err == nil {
+			t.Fatalf("accepted schema-invalid query %s", raw)
+		}
 	}
 }
 

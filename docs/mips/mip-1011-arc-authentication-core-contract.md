@@ -17,12 +17,17 @@ MALT is a general graph data-authentication system whose authentication
 granularity is an arc rather than a storage block. Application payload bytes
 remain ordinary immutable objects in content-addressed storage (CAS), while
 vector-commitment (VC) backends commit to and prove typed relations. UnixFS is
-one layout over this core; it is not the definition of MALT.
+one application model/profile over this core; it is not the definition of MALT.
 
 This MIP defines the public core contract introduced in `v0.0.3`: a portable,
 trusted authentication kernel; an untrusted execution engine; typed
 `Read`/`Apply`/`VerifyRead` operations in the module-root `malt` package; and an
 experimental ProofList artifact profile named `v0alpha1`.
+
+> **Boundary update:** MIP-1013 preserves these typed contracts while moving
+> proof generation and mutation application to `execution.Executor`, leaving
+> package-level `VerifyRead` in the root facade. It also replaces the old
+> `layout/unixfs` ownership with model/client/runtime packages.
 
 ## Motivation
 
@@ -38,8 +43,9 @@ MALT separates three concerns that an implicit arc couples:
 1. **Payload storage:** immutable bytes keep ordinary CIDs and live in CAS.
 2. **Relation authentication:** a typed arc is committed and proved by a VC
    backend under a MALT root.
-3. **Execution and access:** indexes, ArcTable materialization, caches, daemons,
-   gateways, and layouts locate or serve the relation and its proof.
+3. **Execution and access:** indexes, ArcTable materialization, caches,
+   reference executors, gateways, and application adapters locate or serve the
+   relation and its proof.
 
 This separation permits direct application-shaped queries without making the
 payload block the proof carrier. It also permits execution-plane optimizations
@@ -70,7 +76,7 @@ coordinates without changing the separation between payload, authentication,
 and execution.
 
 CAS is the payload backend. VC schemes are the commitment and proof backends.
-Neither choice makes UnixFS, an HTTP route, a daemon, or ArcTable part of the
+Neither choice makes UnixFS, an HTTP route, an executor, or ArcTable part of the
 abstract data model.
 
 ### Trusted Authentication Kernel
@@ -85,8 +91,8 @@ relative to caller-supplied trusted inputs:
 - ProofList shape, ordering, query, target, and evidence verification
 
 The portable verifier lives under `auth/verifier`. Its verification path must
-not require ArcTable, CAS access, a graph runtime, a layout, an HTTP server, or
-daemon state. The built-in registry may select KZG or IPA verification from a
+not require ArcTable, CAS access, a graph runtime, an application model, an HTTP
+server, or executor state. The built-in registry may select KZG or IPA verification from a
 typed MALT root; integrations may provide compatible verification-only
 backends through the narrow verifier interfaces.
 
@@ -106,7 +112,7 @@ serve results. It includes:
 - ArcTable and other materialized indexes
 - storage and cache adapters
 - resolver and writer orchestration
-- reference daemons and HTTP servers
+- reference executors and HTTP servers
 - managed gateways
 
 These components can affect availability, latency, and which candidate result
@@ -129,22 +135,21 @@ Its `v0alpha1` contract exposes:
   and ProofList
 - `Mutation` and `WriteResult` aliases for the current semantic mutation and
   result-root receipt
-- `Engine.Read`
-- `Engine.Apply`
-- `Engine.VerifyRead` and package-level `VerifyRead`
+- package-level `VerifyRead`
+- portable `Mutation` and `WriteResult` projections from package `mutation`
 
 Conceptually:
 
 ```text
-Engine.Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
-Engine.Apply(Mutation{BaseRoot, ...})  -> WriteResult{NewRoot, ...}
-Engine.VerifyRead(request, result)     -> nil / error
+execution.Executor.Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
+execution.Executor.Apply(Mutation{BaseRoot, ...})  -> WriteResult{NewRoot, ...}
+VerifyRead(request, result)                         -> nil / error
 ```
 
-`Engine` composes execution-plane implementations and a portable verifier. It
-also supplies an operational scope so scope placement does not leak into the
-canonical request or mutation contract. The engine itself remains untrusted;
-the trust decision is `VerifyRead` relative to the caller's inputs.
+`execution.Executor` composes execution-plane implementations and supplies an
+operational scope so placement does not leak into canonical requests or
+mutations. It deliberately does not own a verifier or trust decision;
+`VerifyRead` is called separately by the client.
 
 One `Query` represents one primitive typed arc operation. Layouts and
 applications compose primitive reads when their domain operation requires
@@ -159,7 +164,7 @@ contract defined here.
 ### Reserved `@payload` Coordinate
 
 `@payload` is the standard reserved coordinate for binding a semantic object to
-its layout payload. Reservation means that layouts and generic applications
+its application payload. Reservation means that application models and generic applications
 must not assign conflicting semantics to that coordinate.
 
 It is not mandatory for every generic map. A relation-only map with no payload
@@ -167,14 +172,14 @@ binding is valid MALT state. When `@payload` is present, its proof step uses the
 terminal `payload_binding` semantics and traversal must not continue through it
 as if it were an ordinary relation.
 
-The UnixFS layout requires `@payload` for its file and directory objects. That
-requirement belongs to `layout/unixfs`, not to generic map semantics. Other
-layouts may require the coordinate, omit it, or define additional reserved
+The UnixFS model requires `@payload` for its file and directory objects. That
+requirement belongs to `model/unixfs`, not to generic map semantics. Other
+models may require the coordinate, omit it, or define additional reserved
 coordinates while preserving the core rules.
 
-### UnixFS Layout Boundary
+### UnixFS Application Boundary
 
-`layout/unixfs` is the first broadly used application layout over MALT. It maps
+UnixFS is the first broadly used application model over MALT. It maps
 file and directory operations to generic map/list relations and keeps file
 bytes or chunks in CAS.
 
@@ -186,10 +191,10 @@ UnixFS-specific behavior includes:
 - byte-range body binding
 - file and directory mutation planning
 
-The layout exposes separate reader and writer capabilities so an integration
-that only resolves content does not implicitly receive CAS write access.
-Neither these capabilities nor the UnixFS data model become requirements for a
-future Pod, protocol, agent-memory, manifest, or other graph layout.
+The model, client, and runtime responsibilities live in `model/unixfs`,
+`sdk/unixfs`, and `runtime/unixfs`. Neither these capabilities nor the UnixFS
+data model become requirements for a future Pod, protocol, agent-memory,
+manifest, or other graph application.
 
 ### Proof Artifact Profile
 
@@ -214,22 +219,22 @@ binding baseline.
 The implementation should maintain this ownership direction:
 
 ```text
-auth kernel <- module-root malt facade <- layouts / SDKs / applications
+auth kernel <- module-root malt + mutation <- clients / applications
                          ^
                          |
-                 graph + runtime engine
+              execution <- graph + runtime
 ```
 
 Normative dependency constraints are:
 
-- `auth/**` must not import graph runtime, ArcTable, storage, layouts, server,
-  or daemon packages.
+- `auth/**` must not import graph runtime, ArcTable, storage, application,
+  server, or executor packages.
 - the portable `auth/verifier` must perform no runtime or storage lookup.
 - `graph/**` may consume authentication contracts but must not own concrete
   runtime storage.
-- layouts may consume core value types and narrow payload capabilities, but
-  must not redefine proof or root semantics.
-- server and daemon packages are adapters over the same contracts, not the
+- model/client adapters may consume core value types and narrow payload
+  capabilities, but must not redefine proof or root semantics.
+- server and reference-executor packages are adapters over the same contracts, not the
   integration API for a managed gateway.
 
 The repository remains one Go module for `v0.0.3`. This MIP does not require a

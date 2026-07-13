@@ -15,17 +15,29 @@ resolve/prove/verify artifacts. The post-release focus is to consume that
 contract from product and application layers without importing the reference
 server or treating UnixFS as the core abstraction.
 
+## Completed In The Active Core-Boundary Refactor
+
+- Separate portable mutation values from graph writer execution.
+- Move proof generation and mutation application behind `execution.Executor`.
+- Split commitment verification-only capabilities from prover/update methods.
+- Split UnixFS into model, client SDK, and reference-runtime adapter packages.
+- Publish a browser/WASM verifier and make CLI/Web verification local.
+- Define the existing local daemon as a reference executor and remote verify as
+  diagnostic-only.
+
 ## Near Term
 
 - Harden the `DeWebProtocol/gateway` integration around identity,
   authorization, root publication, backend availability, and cache policy.
-- Define the standalone client daemon/CLI boundary: local root selection,
-  upload/synchronization, proof verification, and gateway interaction.
+- Implement a standalone client agent/daemon for local root selection,
+  upload/synchronization, local verification, and gateway interaction. This is
+  distinct from the existing reference executor process.
 - Expand `malt.artifact/v0alpha2` conformance vectors with KZG/IPA map, list,
   multi-hop resolve, and measured-range examples before cross-language SDKs
   depend on it.
-- Demonstrate at least one non-UnixFS layout, such as a PoDs-style personal
-  datastore or agent-memory relation model.
+- After the tightened core boundary is reviewed, demonstrate a second
+  application model such as a PoDs-style datastore or agent-memory relation
+  model.
 - Refresh paper-grade evaluation artifacts with locked workloads, repeated
   runs, backend/config labels, and explicit aggregation policy.
 - Keep `auth/verifier` free of runtime, storage, layout, server, daemon, and
@@ -33,13 +45,14 @@ server or treating UnixFS as the core abstraction.
 
 ## Active Research And Design Areas
 
-- Portable range-body helper integration in clients and gateway.
+- Complete payload CID/range-body verification integration in every client.
 - Writer receipt semantics and accounting.
 - Benchmark-facing proof reporting.
 - Variable-size measured list evidence.
 - Incremental `malt add --root` optimization.
 - Native KZG multi-opening proofs instead of concatenated single-index proofs.
-- Additional layouts for Pods, protocols, agent memory, and application data.
+- Additional application models for Pods, protocols, agent memory, and
+  application data.
 - Head publication, freshness, and multi-writer policy as application or
   deployment concerns.
 

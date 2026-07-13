@@ -4,11 +4,12 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt/api/http"
-	"github.com/dewebprotocol/malt/graph/verifier"
+	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 )
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
-	svc, err := s.graphService(r.Context())
+	w.Header().Set("X-Malt-Verification-Role", "diagnostic")
+	portable, err := authverifier.NewDefault()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -19,7 +20,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		writeBodyDecodeError(w, err)
 		return
 	}
-	valid, err := verifier.New(svc.runtime).VerifyProofList(r.Context(), req.ProofList)
+	valid, err := portable.VerifyProofList(r.Context(), req.ProofList)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

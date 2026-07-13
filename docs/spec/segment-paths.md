@@ -68,6 +68,5 @@ This division keeps the contract small:
 - core owns segments, canonical arc projection, proof-carrying composition,
   and verification of the returned derivation;
 - execution owns candidate discovery and may prefer longest-prefix lookup;
-- applications/layouts own their namespace, overlap, and conflict policy;
+- applications/clients own their namespace, overlap, and conflict policy;
 - transports own URL, RPC, object-syntax, and escaping rules.
-

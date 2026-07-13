@@ -20,7 +20,7 @@ import (
 	mappingsemantic "github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/graph"
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	unixfs "github.com/dewebprotocol/malt/model/unixfs"
 	"github.com/dewebprotocol/malt/runtime/node"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 	cid "github.com/ipfs/go-cid"

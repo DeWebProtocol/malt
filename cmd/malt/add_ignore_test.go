@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	"github.com/dewebprotocol/malt/sdk/unixfs"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
 )
 

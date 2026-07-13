@@ -16,7 +16,7 @@ func TestServerRoutesAreSplitByGraphPort(t *testing.T) {
 		{"routes_write.go", []string{"func (s *Server) handleSemanticMutation", "func (s *Server) handleCreateStructure"}},
 		{"routes_unixfs_compat.go", []string{"func (s *Server) handleWrite", "UnixFSWriteResponse"}},
 		{"routes_resolve.go", []string{"func (s *Server) handleResolve", "func (s *Server) serveResolve"}},
-		{"routes_verify.go", []string{"func (s *Server) handleVerify", "verifier.New(svc.runtime).VerifyProofList"}},
+		{"routes_verify.go", []string{"func (s *Server) handleVerify", "authverifier.NewDefault", "portable.VerifyProofList"}},
 		{"routes_content.go", []string{"func (s *Server) handleContent", "func (s *Server) readContentPayload"}},
 		{"routes_admin.go", []string{"func (s *Server) handleHealth", "func (s *Server) handleMetrics"}},
 	}
@@ -56,7 +56,7 @@ func TestGenericWriteRoutesDoNotOwnUnixFSCompatibility(t *testing.T) {
 		"unixFSLayout",
 		"unixFSWriter",
 		"prepareUnixFSRoot",
-		"applyUnixFSLayoutMutation",
+		"applyUnixFSModelMutation",
 		"MutationPlanForRoot",
 		"AddFile",
 		"AddDirectory",
@@ -70,10 +70,8 @@ func TestEntrypointsUseUnixFSFacadeForLayoutDetails(t *testing.T) {
 		"../cmd/malt/add_materialize.go",
 	} {
 		assertFileExcludes(t, file, []string{
-			"layout/unixfs/manifest",
-			"layout/unixfs/wire",
-			"layout/unixfs/internal/manifest",
-			"layout/unixfs/internal/format",
+			"model/unixfs/internal/manifest",
+			"model/unixfs/internal/format",
 			"manifest.ParseDirectoryJSON",
 			"manifest.MarshalDirectoryEntries",
 			"unixfsformat.",
@@ -83,17 +81,17 @@ func TestEntrypointsUseUnixFSFacadeForLayoutDetails(t *testing.T) {
 
 func TestUnixFSManifestFormatImplementationsAreInternal(t *testing.T) {
 	for _, dir := range []string{
-		"../layout/unixfs/manifest",
-		"../layout/unixfs/wire",
-		"../layout/unixfs/internal/wire",
+		"../model/unixfs/manifest",
+		"../model/unixfs/wire",
+		"../model/unixfs/internal/wire",
 	} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Fatalf("%s should not exist outside layout/unixfs/internal/format", dir)
+			t.Fatalf("%s should not exist outside model/unixfs/internal/format", dir)
 		}
 	}
 	for _, dir := range []string{
-		"../layout/unixfs/internal/manifest",
-		"../layout/unixfs/internal/format",
+		"../model/unixfs/internal/manifest",
+		"../model/unixfs/internal/format",
 	} {
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 			t.Fatalf("%s should exist as an internal implementation package", dir)
@@ -107,7 +105,7 @@ func TestUnixFSWriteRouteUsesStreamFacade(t *testing.T) {
 		t.Fatalf("ReadFile(routes_unixfs_compat.go): %v", err)
 	}
 	if !strings.Contains(string(data), "AddFileStream(") {
-		t.Fatal("routes_unixfs_compat.go should stream file bodies through the UnixFS layout facade")
+		t.Fatal("routes_unixfs_compat.go should stream file bodies through the UnixFS runtime adapter")
 	}
 	if !strings.Contains(string(data), "unixFSWriter(") {
 		t.Fatal("routes_unixfs_compat.go should request the UnixFS writer capability")
@@ -136,7 +134,7 @@ func TestCLIAddDelegatesUnixFSPlanningToLayout(t *testing.T) {
 		"func materializeDirectoryWithBatcher",
 	})
 	if _, err := os.Stat("../cmd/malt/add_tree.go"); !os.IsNotExist(err) {
-		t.Fatal("../cmd/malt/add_tree.go should not exist after staged planner moved to layout/unixfs")
+		t.Fatal("../cmd/malt/add_tree.go should not exist after staged planner moved to sdk/unixfs")
 	}
 }
 
@@ -144,7 +142,7 @@ func TestServerDoesNotTranslateUnixFSMutationPlans(t *testing.T) {
 	assertRepositoryExcludes(t, ".", "semanticMutationFrom"+"UnixFSPlan")
 }
 
-func TestUnixFSLayoutIsOutsideCore(t *testing.T) {
+func TestUnixFSApplicationIsOutsideCore(t *testing.T) {
 	assertRepositoryExcludes(t, "..", "co"+"re/layout/malt/"+"unixfs")
 }
 

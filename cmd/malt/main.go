@@ -15,17 +15,17 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "malt",
-	Short: "MALT runtime CLI",
+	Short: "MALT client tools and reference executor CLI",
 	Long: `MALT is an authenticated structure layer over immutable content-addressed storage.
 
 Primary commands:
   init        Create ~/.malt/malt.json and choose local state paths
-  start       Start the local MALT daemon in the background
-  status      Show the local MALT daemon status
-  stop        Stop the managed local MALT daemon
-  restart     Restart the managed local MALT daemon
+  start       Start the local MALT reference executor in the background
+  status      Show the local MALT reference executor status
+  stop        Stop the managed local MALT reference executor
+  restart     Restart the managed local MALT reference executor
   add         Upload local files/directories to CAS from a base root and print a result root
-  resolve     Resolve a path via the daemon
+  resolve     Resolve a path via the reference executor
   verify      Verify a ProofList`,
 	Version: Version,
 	CompletionOptions: cobra.CompletionOptions{

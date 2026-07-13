@@ -21,7 +21,7 @@ const (
 // semantic. It authenticates both index and measured-range results using only
 // proof envelopes and the primitive commitment scheme.
 type treeListVerifier struct {
-	scheme commitment.IndexCommitment
+	scheme commitment.IndexVerifier
 }
 
 type treeProofEnvelope struct {
@@ -53,7 +53,7 @@ type treeNodeMetadata struct {
 	ChunkSize  uint64
 }
 
-func newTreeListVerifier(scheme commitment.IndexCommitment) ListVerifier {
+func newTreeListVerifier(scheme commitment.IndexVerifier) ListVerifier {
 	return &treeListVerifier{scheme: scheme}
 }
 

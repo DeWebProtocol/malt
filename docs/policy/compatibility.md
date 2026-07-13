@@ -42,7 +42,7 @@ PR:
 - root/CID encodings
 - wire-format behavior
 - evaluator record schemas
-- UnixFS layout behavior that affects verification
+- UnixFS model/runtime behavior that affects verification
 
 Where practical, include migration notes or test vectors for serialized formats
 that another implementation or stored artifact could depend on.

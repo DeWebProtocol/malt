@@ -14,7 +14,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
-	"github.com/dewebprotocol/malt/layout/unixfs"
+	unixfs "github.com/dewebprotocol/malt/model/unixfs"
 	"github.com/dewebprotocol/malt/runtime/node"
 	"github.com/dewebprotocol/malt/server"
 	"github.com/dewebprotocol/malt/storage/cas/ipfs"
