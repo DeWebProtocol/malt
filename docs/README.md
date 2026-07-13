@@ -25,6 +25,7 @@ reference/evaluation executor only to exercise MALT core end to end.
 - [Threat model](./policy/threat-model.md)
 - [Compatibility policy](./policy/compatibility.md)
 - [Release process](./policy/releasing.md)
+- [v0.0.5 release notes](./releases/v0.0.5.md)
 - [v0.0.4 release notes](./releases/v0.0.4.md)
 
 ## Evaluation
@@ -52,9 +53,9 @@ removed after migration. New implementation-bound MIP work should happen here.
 The current public-core contracts are
 [MIP-1011: Arc Authentication Core Contract](./mips/mip-1011-arc-authentication-core-contract.md),
 [MIP-1012: Segment Path Resolution](./mips/mip-1012-segment-path-resolution.md),
-the active
+the final
 [MIP-1013: Client, Gateway, And Core Responsibility Boundary](./mips/mip-1013-client-gateway-core-boundary.md),
-the operation-specific resolve/read profiles in that active MIP, and the
+the operation-specific resolve/read profiles introduced by that MIP, and the
 frozen v0.0.4 artifact compatibility profile recorded by
 [MIP-1004](./mips/mip-1004-resolve-prooflist-artifact-schema.md).
 

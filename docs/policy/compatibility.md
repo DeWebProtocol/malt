@@ -62,8 +62,8 @@ commit unless release notes say so.
 The `v0.0.3` source release names the typed read/result and ProofList binding
 profile `v0alpha1`. The `v0.0.4` source release adds the explicit serialized
 profile `malt.artifact/v0alpha2` and checked-in JSON Schemas for `resolve`,
-`prove`, and `verify`. That operation set is frozen. Current unreleased work
-defines new operation-specific `malt.resolve/v0alpha1` and
+`prove`, and `verify`. That operation set is frozen. The `v0.0.5` source
+release defines operation-specific `malt.resolve/v0alpha1` and
 `malt.read/v0alpha1` profiles rather than extending v0alpha2 in place.
 Consumers must reject unknown profiles, pin an exact MALT tag or module
 version, and review release notes before upgrading.

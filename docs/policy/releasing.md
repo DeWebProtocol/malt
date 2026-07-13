@@ -42,8 +42,9 @@ Review:
 - the browser verifier passes its accept/tamper-reject smoke and the published
   WASM checksum matches the web application asset.
 
-The completed `v0.0.3` validation record lives in
-[`docs/releases/v0.0.3.md`](../releases/v0.0.3.md). It includes a
+The latest validation record lives in
+[`docs/releases/v0.0.5.md`](../releases/v0.0.5.md). The completed `v0.0.3`
+record in [`docs/releases/v0.0.3.md`](../releases/v0.0.3.md) includes a
 portable-verifier smoke, a relation-only map test, import-boundary checks, an
 external-consumer compile test, evaluator smoke, and isolated CLI proof smoke.
 Future releases should add a new release-note file with equivalent gates rather

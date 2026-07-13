@@ -10,12 +10,13 @@ MALT is an experimental reference implementation. It is runnable end to end, but
 its public APIs, ProofList schemas, wire formats, and deployment policies may
 change. It is not production-ready.
 
-`v0.0.4` establishes canonical segment-path composition and profiled
-resolve/prove/verify artifacts. The post-release focus is to consume that
-contract from product and application layers without importing the reference
-server or treating UnixFS as the core abstraction.
+`v0.0.5` establishes operation-specific resolve/read contracts, client-local
+verification, an untrusted resolve/read/apply executor, and explicit UnixFS
+model/SDK/runtime ownership. The post-release focus is to harden conformance
+and product integration without importing the reference server or treating
+UnixFS as the core abstraction.
 
-## Completed In The Active Core-Boundary Refactor
+## Completed In v0.0.5
 
 - Separate portable mutation values from graph writer execution.
 - Move proof generation and mutation application behind `execution.Executor`.
@@ -32,12 +33,12 @@ server or treating UnixFS as the core abstraction.
 - Implement a standalone client agent/daemon for local root selection,
   upload/synchronization, local verification, and gateway interaction. This is
   distinct from the existing reference executor process.
-- Expand `malt.artifact/v0alpha2` conformance vectors with KZG/IPA map, list,
-  multi-hop resolve, and measured-range examples before cross-language SDKs
-  depend on it.
-- After the tightened core boundary is reviewed, demonstrate a second
-  application model such as a PoDs-style datastore or agent-memory relation
-  model.
+- Expand `malt.resolve/v0alpha1` and `malt.read/v0alpha1` conformance vectors
+  with KZG/IPA map, list, multi-hop resolve, identity, payload, measured-range,
+  cross-kind, and cross-root cases before cross-language SDKs depend on them.
+- After resolve/read conformance and the UnixFS product path are stable,
+  demonstrate a second application model such as a PoDs-style datastore or
+  agent-memory relation model.
 - Refresh paper-grade evaluation artifacts with locked workloads, repeated
   runs, backend/config labels, and explicit aggregation policy.
 - Keep `auth/verifier` free of runtime, storage, layout, server, daemon, and
@@ -95,3 +96,18 @@ The `v0.0.4` source release adds:
 - root-identity codec fixtures and end-to-end artifact verification tests
 
 See [`docs/releases/v0.0.4.md`](docs/releases/v0.0.4.md).
+
+## v0.0.5 Release Layer
+
+The `v0.0.5` source release adds:
+
+- operation-specific `malt.resolve/v0alpha1` and `malt.read/v0alpha1` contracts
+- caller-request-bound `VerifyResolve` and `VerifyRead` trust decisions
+- untrusted `execution.Executor` resolve/read/apply composition
+- portable mutation values under `mutation`
+- separate `model/unixfs`, `sdk/unixfs`, and `runtime/unixfs` ownership
+- local Go, CLI, and browser/WASM verification with diagnostic-only remote
+  verify routes
+- frozen compatibility for the v0.0.4 `malt.artifact/v0alpha2` operation set
+
+See [`docs/releases/v0.0.5.md`](docs/releases/v0.0.5.md).

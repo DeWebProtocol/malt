@@ -3,7 +3,7 @@ mip: 1013
 title: Client, Gateway, And Core Responsibility Boundary
 description: Separate client trust decisions, gateway execution, CAS payload storage, and UnixFS application-model responsibilities.
 author: MALT maintainers
-status: In Progress
+status: Final
 type: Standards Track
 category: Core
 created: 2026-07-13
@@ -147,8 +147,7 @@ multi-writer policy remain application or managed-gateway concerns.
 
 ## Implementation Status
 
-The active implementation branch introduces the package split,
-operation-specific resolve/read profiles, local CLI and browser/WASM verifier,
-import-boundary tests, reference-executor terminology, and diagnostic remote
-verification. Move this MIP to Final only after that PR is merged and current
-documentation points at the merged package paths.
+Implemented by PR #163 and released in v0.0.5. The release includes the package
+split, operation-specific resolve/read profiles, local CLI and browser/WASM
+verification, import-boundary tests, reference-executor terminology, and
+diagnostic-only remote verification.
