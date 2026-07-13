@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
@@ -15,6 +16,75 @@ import (
 // implementation must not require ArcTable, CAS, server, or executor state.
 type ProofVerifier interface {
 	VerifyProofList(context.Context, prooflist.ProofList) (bool, error)
+}
+
+// VerifyResolve validates a complete path-resolution result against the
+// caller-selected root and segment sequence. ProofList is evidence for the
+// result, not the source of the caller's trust inputs.
+func VerifyResolve(ctx context.Context, req ResolveRequest, result ResolveResult, verifier ProofVerifier) error {
+	if verifier == nil {
+		return fmt.Errorf("portable MALT verifier is nil")
+	}
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	path, _ := NewSegmentPath(req.Segments)
+	if !result.ProofList.Root.Equals(req.Root) {
+		return fmt.Errorf("ProofList root does not match trusted root")
+	}
+	if result.ProofList.Query != path.String() {
+		return fmt.Errorf("ProofList query %q does not match segment path %q", result.ProofList.Query, path.String())
+	}
+	if path.Empty() {
+		if len(result.ProofList.Steps) != 0 {
+			return fmt.Errorf("root identity result contains traversal evidence")
+		}
+		if !result.Target.Equals(req.Root) {
+			return fmt.Errorf("root identity target does not match trusted root")
+		}
+		return nil
+	}
+	if err := result.ProofList.ValidateShape(prooflist.RequireSteps()); err != nil {
+		return err
+	}
+
+	parts := make([]string, 0, len(result.ProofList.Steps))
+	var target cid.Cid
+	for i, step := range result.ProofList.Steps {
+		switch step.Kind {
+		case prooflist.KindMapStep:
+			part := arcset.CanonicalizePath(step.Path).String()
+			if part == "" || part == arcset.PayloadPath.String() {
+				return fmt.Errorf("resolve proof step %d has invalid map path %q", i, step.Path)
+			}
+			parts = append(parts, part)
+			target = step.Target
+		case prooflist.KindPayloadBinding:
+			if arcset.CanonicalizePath(step.Path) != arcset.PayloadPath {
+				return fmt.Errorf("resolve proof step %d does not select @payload", i)
+			}
+			parts = append(parts, arcset.PayloadPath.String())
+			target = step.Target
+		case prooflist.KindListIndex, prooflist.KindListRange:
+			return fmt.Errorf("resolve result contains primitive read evidence at step %d", i)
+		default:
+			return fmt.Errorf("resolve proof step %d has unsupported kind %q", i, step.Kind)
+		}
+	}
+	if actual := strings.Join(parts, PathSeparator); actual != path.String() {
+		return fmt.Errorf("resolve proof path %q does not match segment path %q", actual, path.String())
+	}
+	if !result.Target.Defined() || !target.Equals(result.Target) {
+		return fmt.Errorf("ProofList target does not match resolve result")
+	}
+	valid, err := verifier.VerifyProofList(ctx, result.ProofList)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return ErrVerifierRejected
+	}
+	return nil
 }
 
 // VerifyRead validates the complete verifier-facing read contract.

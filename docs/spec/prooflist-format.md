@@ -1,15 +1,15 @@
 # ProofList Format
 
-ProofList is the verifier-facing read artifact returned by MALT resolve and
-content reads. It records the ordered proof path from a trusted root to a
-resolved target.
+ProofList is verifier-facing evidence returned with MALT resolve and primitive
+read results, and by UnixFS content adapters. It records ordered authenticated
+relations from a trusted root.
 
 ## Status
 
-The current contract profile is `v0alpha1`. It is experimental and
-implementation-bound: the JSON shape is verifier-facing but not a stable
-cross-release contract. The envelope does not yet carry an embedded version
-field or have a stable named JSON Schema.
+ProofList has no standalone operation discriminator. It is embedded in the
+profiled `malt.resolve/v0alpha1` and `malt.read/v0alpha1` results. Its named JSON
+Schema is checked in at `protocol/schemas/prooflist.schema.json`; incompatible
+result-contract revisions require a new enclosing profile.
 
 Portable verification is implemented by `auth/verifier`. It performs no
 ArcTable, CAS, runtime, layout, server, daemon, or network lookup.
@@ -167,4 +167,4 @@ mismatches, short segment data, and tampered returned bytes.
 - [MIP-1006](../mips/mip-1006-variable-size-measured-list-evidence.md) tracks a
   future variable-size measured-list model.
 - [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
-  typed read/result binding around this artifact.
+  typed read/result binding around this evidence.

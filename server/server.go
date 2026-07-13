@@ -194,6 +194,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /metrics:reset", s.handleMetricsReset)
 	mux.HandleFunc("POST /verify", s.handleVerify)
+	mux.HandleFunc("POST /v1/resolve", s.handleResolveContract)
+	mux.HandleFunc("POST /v1/read", s.handleReadContract)
+	mux.HandleFunc("POST /v1/verify/resolve", s.handleVerifyResolveContract)
+	mux.HandleFunc("POST /v1/verify/read", s.handleVerifyReadContract)
+	// malt.artifact/v0alpha2 is a frozen v0.0.4 compatibility surface. New
+	// clients use the operation-specific resolve/read contracts above.
 	mux.HandleFunc("POST /v1/artifacts/resolve", s.handleArtifactResolve)
 	mux.HandleFunc("POST /v1/artifacts/prove", s.handleArtifactProve)
 	mux.HandleFunc("POST /v1/artifacts/verify", s.handleArtifactVerify)

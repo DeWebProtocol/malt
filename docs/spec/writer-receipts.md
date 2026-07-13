@@ -20,8 +20,9 @@ stable release.
 | `DeltaCount` | Number of semantic deltas applied. |
 | `ArcCount` | Number of canonical arc changes applied. |
 
-The writer does not publish authoritative heads, choose freshness, or merge
-concurrent roots. Applications decide whether to publish or select a produced result root.
+The writer does not publish authoritative heads, choose freshness, prove a
+state transition, or merge concurrent roots. Applications decide whether to
+accept, publish, or select a produced candidate root.
 
 ## Mutation And Execution Ports
 
@@ -75,6 +76,12 @@ Receipts do not prove:
 - freshness of the selected root
 - correctness of an unverified read
 - publication or merge policy
+- that a delta correctly transformed the accepted base root into the returned
+  candidate root
+
+MALT does not currently define a delta/state-transition proof. Therefore write
+receipts stay separate from the proof-bearing resolve/read contracts instead
+of being placed in a generic artifact union.
 
 ## Related Proposals
 

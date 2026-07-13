@@ -1,5 +1,6 @@
-// Package artifact defines the transport-neutral, versioned MALT artifacts
-// shared by resolvers, provers, verifiers, gateways, executors, and SDKs.
+// Package artifact implements the frozen malt.artifact/v0alpha2 compatibility
+// profile published by MALT v0.0.4. New integrations use package protocol's
+// operation-specific resolve and read contracts.
 package artifact
 
 import (
@@ -12,16 +13,16 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Profile identifies the artifact contract introduced by MALT v0.0.4. The
-// Go package remains unversioned; the serialized envelope carries the profile.
+// Profile identifies the frozen artifact contract introduced by MALT v0.0.4.
+// Its operation set is resolve and prove; incompatible extensions require a
+// different serialized profile.
 const Profile = "malt.artifact/v0alpha2"
 
 type Operation string
 
 const (
-	OperationResolve        Operation = "resolve"
-	OperationResolvePayload Operation = "resolve_payload"
-	OperationProve          Operation = "prove"
+	OperationResolve Operation = "resolve"
+	OperationProve   Operation = "prove"
 )
 
 type QueryKind string
@@ -354,19 +355,6 @@ func NewResolveArtifact(req ResolveRequest, target cid.Cid, pl prooflist.ProofLi
 	}, nil
 }
 
-// NewResolvePayloadArtifact binds a resolved segment path to the authenticated
-// CAS payload selected by its reserved @payload arc. Unlike a zero-segment
-// resolve artifact, a zero-segment resolve_payload artifact carries traversal
-// evidence and is not a root-identity assertion.
-func NewResolvePayloadArtifact(req ResolveRequest, target cid.Cid, pl prooflist.ProofList) (Artifact, error) {
-	value, err := NewResolveArtifact(req, target, pl)
-	if err != nil {
-		return Artifact{}, err
-	}
-	value.Operation = OperationResolvePayload
-	return value, nil
-}
-
 func NewProveArtifact(req ProveRequest, result malt.ReadResult) (Artifact, error) {
 	if err := req.Validate(); err != nil {
 		return Artifact{}, err
@@ -400,15 +388,15 @@ func (a Artifact) Validate() error {
 		return fmt.Errorf("invalid artifact target CID: %w", err)
 	}
 	switch a.Operation {
-	case OperationResolve, OperationResolvePayload:
+	case OperationResolve:
 		if err := a.Query.Validate(true); err != nil {
 			return err
 		}
 		if a.Query.Kind != QueryPath {
-			return fmt.Errorf("%s artifact must use a path query", a.Operation)
+			return fmt.Errorf("resolve artifact must use a path query")
 		}
 		if len(a.RangeSegments) != 0 {
-			return fmt.Errorf("%s artifact contains range segments", a.Operation)
+			return fmt.Errorf("resolve artifact contains range segments")
 		}
 	case OperationProve:
 		if err := a.Query.Validate(false); err != nil {

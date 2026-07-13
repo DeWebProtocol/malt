@@ -12,10 +12,10 @@ same PR.
 
 Most of this API is a reference transport projection. The application-neutral
 core contract is the module-root `malt` facade; managed gateways do not need to
-import `server` or reproduce the local runtime routes. The three
-`/v1/artifacts/*` routes are the stable transport projection for new gateway,
-reference-executor, and SDK integrations. Their schemas are defined in
-[Artifacts and schemas](./artifacts.md).
+import `server` or reproduce the local runtime routes. The operation-specific
+`/v1/resolve` and `/v1/read` routes are the transport projection for new
+gateway, reference-executor, and SDK integrations. Their schemas are defined
+in [Resolve and read contracts](./resolve-read-contracts.md).
 
 ## Core Routes
 
@@ -26,9 +26,11 @@ reference-executor, and SDK integrations. Their schemas are defined in
 | `/metrics` | `GET` | Runtime evaluation counters. |
 | `/metrics:reset` | `POST` | Reset runtime evaluation counters. |
 | `/verify` | `POST` | Diagnostic/conformance verification of a ProofList. |
-| `/v1/artifacts/resolve` | `POST` | Resolve a segment array and return a profiled proof-carrying artifact. |
-| `/v1/artifacts/prove` | `POST` | Prove one primitive typed map/list query. |
-| `/v1/artifacts/verify` | `POST` | Diagnostic/conformance verification of a complete artifact. |
+| `/v1/resolve` | `POST` | Resolve a segment array and return `malt.resolve/v0alpha1` target plus ProofList. |
+| `/v1/read` | `POST` | Execute one `malt.read/v0alpha1` primitive map/list query. |
+| `/v1/verify/resolve` | `POST` | Diagnostic verification of one resolve request/result pair. |
+| `/v1/verify/read` | `POST` | Diagnostic verification of one read request/result pair. |
+| `/v1/artifacts/resolve`, `/prove`, `/verify` | `POST` | Frozen `malt.artifact/v0alpha2` compatibility routes. |
 | `/{root}/_mutate` | `POST` | Apply a root-relative semantic mutation. |
 | `/_unixfs?path=...` | `POST` | Create a new UnixFS-style root from uploaded payload data. |
 | `/resolve/{root}` and `/resolve/{root}/{path...}` | `GET` | Resolve a target CID and optional ProofList. |
@@ -42,10 +44,11 @@ not-found behavior and should not be documented as active API.
 
 ## Proof Transport
 
-Resolve responses include proof evidence by default:
+The operation-specific resolve result always includes proof evidence:
 
 ```json
 {
+  "profile": "malt.resolve/v0alpha1",
   "target": "cid-string",
   "prooflist": {}
 }
@@ -75,14 +78,29 @@ diagnostic/conformance endpoint and must not supply the client's trust decision.
 
 ## Main DTOs
 
-Current DTOs live in `api/http/types.go`.
+The operation-specific serialized DTOs live in `protocol/`. Legacy content,
+stat, mutation, and compatibility DTOs live in `api/http/types.go`.
 
-### ResolveResponse
+### ResolveRequest / ResolveResult
 
 | JSON field | Meaning |
 | --- | --- |
+| `profile` | Exact `malt.resolve/v0alpha1` discriminator. |
+| `root` | Caller-selected trusted root in the request. |
+| `segments` | Canonical segment array in the request. |
 | `target` | Resolved target CID string. |
-| `prooflist` | Optional ProofList evidence. |
+| `prooflist` | Required ProofList evidence in the result. |
+
+`[]` means root identity. Payload selection is explicit: append `@payload` to
+the segment array. The legacy GET `/resolve/{root}/{path...}` materializes
+UnixFS/map payloads and is not the generic core resolve contract.
+
+### ReadRequest / ReadResult
+
+`malt.read/v0alpha1` carries one `map_key`, `list_index`, or `list_range` query.
+The result contains `target`, optional `range_segments`, and required
+`prooflist`. “Read” replaces the misleading generic operation name “prove”:
+the proof is evidence for the read result, not a separate semantic operation.
 
 ### SemanticMutationResponse
 
@@ -114,25 +132,28 @@ Receipt counts are operational accounting, not correctness proofs. See
 ### VerifyRequest / VerifyResponse
 
 `VerifyRequest` carries one `prooflist` field. `VerifyResponse` returns one
-boolean `valid` field. Both remote verify routes set
+boolean `valid` field. All remote verify routes set
 `X-Malt-Verification-Role: diagnostic`.
 
 Schema validation is not proof verification. JSON shape checks can reject
-malformed artifacts, but semantic and cryptographic verification for an
+malformed payloads, but semantic and cryptographic verification for an
 acceptance decision must run locally through `sdk/verifier`/`auth/verifier`.
 The `graph/verifier` package and remote routes are compatibility adapters.
 
 ## CORS Boundary
 
-Browser CORS, when configured, exposes read/proof surfaces, `POST /verify`, and
-UnixFS browser write routes. Admin and semantic-mutation routes are not exposed
-through browser CORS by default.
+Browser CORS, when configured, exposes the resolve/read contracts, their
+diagnostic verify routes, legacy read/proof surfaces, and UnixFS browser write
+routes. Admin and semantic-mutation routes are not exposed through browser
+CORS by default.
 
 ## Related Proposals
 
 - [MIP-1002](../mips/mip-1002-writer-receipt-accounting.md) tracks receipt
   accounting decisions.
-- [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) defines the
-  profiled resolve/resolve_payload/prove/verify artifacts and named schemas.
+- [MIP-1004](../mips/mip-1004-resolve-prooflist-artifact-schema.md) records the
+  frozen v0.0.4 artifact compatibility profile.
+- [MIP-1013](../mips/mip-1013-client-gateway-core-boundary.md) defines the
+  current operation-specific client/gateway/core boundary.
 - [MIP-1011](../mips/mip-1011-arc-authentication-core-contract.md) defines the
   transport-independent typed read and verification boundary.

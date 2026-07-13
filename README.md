@@ -70,8 +70,8 @@ MALT separates payload storage, arc authentication, and execution/access:
   materialized indexes
 - clients submit canonical segment arrays without discovering how each root
   groups those segments into authenticated arcs
-- profiled resolve, payload-resolve, prove, and verify artifacts carry the trusted inputs,
-  result, and ProofList together across gateway, executor, and SDK boundaries
+- operation-specific resolve and primitive-read results carry ProofList
+  evidence across gateway, executor, and SDK boundaries
 - local structure updates advance structure roots without rewriting unrelated
   payload objects
 
@@ -149,10 +149,10 @@ Current experimental boundaries:
 - large-file byte-range response bodies must be bound to authenticated segment
   CIDs with `sdk/unixfs.VerifyRangeBody` after local ProofList verification
 
-The `v0.0.4` source release adds canonical segment paths and the
-`malt.artifact/v0alpha2` resolve/resolve_payload/prove/verify contract with embedded JSON
-Schemas. Integrators should pin the exact release and reject unknown artifact
-profiles:
+The `v0.0.4` source release adds canonical segment paths and the frozen
+`malt.artifact/v0alpha2` resolve/prove/verify compatibility profile with
+embedded JSON Schemas. Integrators should pin the exact release and reject
+unknown profiles:
 
 ```bash
 go get github.com/dewebprotocol/malt@v0.0.4
@@ -161,6 +161,11 @@ go get github.com/dewebprotocol/malt@v0.0.4
 See the [release notes](./docs/releases/v0.0.4.md), the
 [artifact contract](./docs/spec/artifacts.md), and the
 [GitHub Release](https://github.com/DeWebProtocol/malt/releases/tag/v0.0.4).
+
+The active pre-release contract on this branch replaces the generic artifact
+union for new integrations with `malt.resolve/v0alpha1` and
+`malt.read/v0alpha1`. Payload selection is an explicit `@payload` segment. See
+[Resolve and read contracts](./docs/spec/resolve-read-contracts.md).
 
 ## Use Cases
 
@@ -320,7 +325,7 @@ runtime/unixfs/                optional in-process UnixFS execution/content adap
 runtime/                       node, runtime graph composition, ArcTable, metrics
 reference/executor/            all-in-one local reference execution backend
 sdk/client/                    Go reference-executor transport client
-sdk/verifier/                  local client artifact/ProofList verifier
+sdk/verifier/                  local resolve/read and legacy artifact verifier
 server/                        reference executor and evaluation HTTP server
 storage/                       CAS and KV storage libraries
 wire/maltcid/                  MALT map/list root CID codecs

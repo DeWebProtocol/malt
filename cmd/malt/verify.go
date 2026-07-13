@@ -7,8 +7,8 @@ import (
 	"os"
 
 	malt "github.com/dewebprotocol/malt"
-	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt/protocol"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
@@ -69,25 +69,19 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing local verifier: %w", err)
 	}
 	if len(pl.Steps) == 0 {
-		identityQuery := artifact.Query{Kind: artifact.QueryPath, Segments: []string{}}
-		if err := portable.Verify(cmd.Context(), clientverifier.Request{
-			Profile:     artifact.Profile,
-			TrustedRoot: trustedRoot.String(),
-			Expected: clientverifier.Expectation{
-				Operation: artifact.OperationResolve,
-				Query:     identityQuery,
-				Target:    trustedRoot.String(),
+		if err := portable.VerifyResolve(cmd.Context(), protocol.ResolveVerification{
+			Request: protocol.ResolveRequest{
+				Profile:  protocol.ResolveProfile,
+				Root:     trustedRoot.String(),
+				Segments: []string{},
 			},
-			Artifact: artifact.Artifact{
-				Profile:   artifact.Profile,
-				Operation: artifact.OperationResolve,
-				Root:      trustedRoot.String(),
-				Query:     identityQuery,
+			Result: protocol.ResolveResult{
+				Profile:   protocol.ResolveProfile,
 				Target:    trustedRoot.String(),
 				ProofList: *pl,
 			},
 		}); err != nil {
-			return fmt.Errorf("verifying root-identity artifact locally: %w", err)
+			return fmt.Errorf("verifying root identity locally: %w", err)
 		}
 		return reportLocalVerification(true)
 	}

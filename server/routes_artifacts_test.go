@@ -169,7 +169,7 @@ func postArtifactRequest[Request, Response any](t *testing.T, url string, reques
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post %s status = %d, want %d", url, resp.StatusCode, http.StatusOK)
 	}
-	if strings.HasSuffix(url, "/verify") && resp.Header.Get("X-Malt-Verification-Role") != "diagnostic" {
+	if (strings.HasSuffix(url, "/verify") || strings.Contains(url, "/verify/")) && resp.Header.Get("X-Malt-Verification-Role") != "diagnostic" {
 		t.Fatalf("post %s verification role = %q, want diagnostic", url, resp.Header.Get("X-Malt-Verification-Role"))
 	}
 	var response Response

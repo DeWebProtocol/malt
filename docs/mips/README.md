@@ -77,7 +77,7 @@ not become the only copy of a schema or specification.
 | [MIP-1001](mip-1001-semantic-object-and-arc-terminology.md) | Draft | Standards Track | Core | Define graph root, semantic object, payload, outgoing arc, map relation, and list child-reference terminology. |
 | [MIP-1002](mip-1002-writer-receipt-accounting.md) | Draft | Standards Track | Interface | Decide how writer receipts support storage, indexing, accounting, and benchmark reporting. |
 | [MIP-1003](mip-1003-prooflist-verification-schema.md) | Review | Standards Track | Core | Formalize ProofList verifier contract, body/header binding, omission behavior, and range-body verification. |
-| [MIP-1004](mip-1004-resolve-prooflist-artifact-schema.md) | Final | Standards Track | Interface | Publish profiled resolve, payload-resolve, prove, and verify artifacts with named schemas. |
+| [MIP-1004](mip-1004-resolve-prooflist-artifact-schema.md) | Final | Standards Track | Interface | Record the frozen v0.0.4 resolve/prove/verify artifact profile and schemas. |
 | [MIP-1005](mip-1005-kzg-map-label-domain.md) | Final | Standards Track | Core | Record the canonical binding-CID slot model for storage-free map commitment primitives. |
 | [MIP-1006](mip-1006-variable-size-measured-list-evidence.md) | Draft | Standards Track | Core | Specify a future range-addressable list model for variable-size children. |
 | [MIP-1007](mip-1007-incremental-add-root-optimization.md) | Draft | Standards Track | Tooling | Explore path-local incremental add for very large existing roots. |

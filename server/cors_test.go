@@ -59,7 +59,7 @@ func TestBrowserCORSAllowsConfiguredResolveAndVerifyRoutes(t *testing.T) {
 		}
 	})
 
-	for _, path := range []string{"/v1/artifacts/resolve", "/v1/artifacts/prove", "/v1/artifacts/verify"} {
+	for _, path := range []string{"/v1/resolve", "/v1/read", "/v1/verify/resolve", "/v1/verify/read", "/v1/artifacts/resolve", "/v1/artifacts/prove", "/v1/artifacts/verify"} {
 		t.Run(path+" POST preflight", func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodOptions, path, nil)
 			req.Header.Set("Origin", "https://docs.example")
@@ -82,7 +82,7 @@ func TestBrowserCORSExposesDiagnosticRoleOnVerifyResponses(t *testing.T) {
 	s := New(nil, "127.0.0.1:0", WithBrowserOrigins([]string{"https://docs.example"}))
 	handler := s.Handler()
 
-	for _, path := range []string{"/verify", "/v1/artifacts/verify"} {
+	for _, path := range []string{"/verify", "/v1/verify/resolve", "/v1/verify/read", "/v1/artifacts/verify"} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{"))
 			req.Header.Set("Origin", "https://docs.example")

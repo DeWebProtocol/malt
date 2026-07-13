@@ -8,7 +8,7 @@ import (
 )
 
 // Expectation contains the operation inputs selected by the caller before it
-// accepts an untrusted artifact. Target is optional because resolve/payload/prove
+// accepts an untrusted artifact. Target is optional because resolve/prove
 // callers normally learn the authenticated target from the result.
 type Expectation struct {
 	Operation artifact.Operation `json:"operation"`
@@ -66,12 +66,12 @@ func (r Request) Validate() error {
 // artifact fields.
 func (e Expectation) Validate() error {
 	switch e.Operation {
-	case artifact.OperationResolve, artifact.OperationResolvePayload:
+	case artifact.OperationResolve:
 		if err := e.Query.Validate(true); err != nil {
-			return fmt.Errorf("invalid expected %s query: %w", e.Operation, err)
+			return fmt.Errorf("invalid expected resolve query: %w", err)
 		}
 		if e.Query.Kind != artifact.QueryPath {
-			return fmt.Errorf("expected %s operation must use a path query", e.Operation)
+			return fmt.Errorf("expected resolve operation must use a path query")
 		}
 	case artifact.OperationProve:
 		if err := e.Query.Validate(false); err != nil {

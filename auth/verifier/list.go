@@ -1,4 +1,4 @@
-// Package verifier contains verifier-critical helpers for auth proof artifacts.
+// Package verifier contains verifier-critical helpers for ProofList evidence.
 package verifier
 
 import (

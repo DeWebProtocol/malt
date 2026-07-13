@@ -10,26 +10,37 @@ After loading the matching Go `wasm_exec.js` and starting the Go runtime, the
 module registers:
 
 ```text
-globalThis.maltVerifyArtifact(requestJSON) -> resultJSON
+globalThis.maltVerifyResolve(verificationJSON) -> resultJSON
+globalThis.maltVerifyRead(verificationJSON) -> resultJSON
+globalThis.maltVerifyArtifact(requestJSON) -> resultJSON  # v0.0.4 compatibility
 ```
 
-The request shape is the checked-in
-`artifact/schemas/local-verify-request.schema.json` contract:
+`maltVerifyResolve` accepts one `malt.resolve/v0alpha1` request/result pair;
+`maltVerifyRead` accepts one `malt.read/v0alpha1` request/result pair. The
+caller constructs the request from its trusted root and intended query before
+passing the untrusted result to WASM. Schemas live in `protocol/schemas/`.
+
+For example:
 
 ```json
 {
-  "profile": "malt.artifact/v0alpha2",
-  "trusted_root": "<client-selected CID>",
-  "expected": {
-    "operation": "resolve",
-    "query": {"kind": "path", "segments": ["docs", "readme.md"]}
+  "request": {
+    "profile": "malt.resolve/v0alpha1",
+    "root": "<client-selected CID>",
+    "segments": ["docs", "readme.md", "@payload"]
   },
-  "artifact": {"profile": "malt.artifact/v0alpha2", "operation": "resolve"}
+  "result": {
+    "profile": "malt.resolve/v0alpha1",
+    "target": "<untrusted returned CID>",
+    "prooflist": {}
+  }
 }
 ```
 
-The real artifact must be complete. Verification fails closed unless the
-trusted root and caller-selected expectation match the artifact and all
-envelope, query, target, ordering, and cryptographic proof bindings validate locally. The output follows
-`local-verify-result.schema.json`; `error` is diagnostic and `valid` is the only
-acceptance boolean.
+The abbreviated ProofList above is not valid evidence. Verification fails
+closed unless the request/result profile, root, exact query, target, ordering,
+and all cryptographic bindings validate locally. `error` is diagnostic and
+`valid` is the acceptance boolean.
+
+`maltVerifyArtifact` remains available solely for the frozen
+`malt.artifact/v0alpha2` v0.0.4 compatibility envelope.

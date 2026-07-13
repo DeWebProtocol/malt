@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/api/http"
-	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	listsemantic "github.com/dewebprotocol/malt/auth/semantic/list"
@@ -22,6 +21,7 @@ import (
 	"github.com/dewebprotocol/malt/config"
 	"github.com/dewebprotocol/malt/graph"
 	unixfs "github.com/dewebprotocol/malt/model/unixfs"
+	"github.com/dewebprotocol/malt/protocol"
 	"github.com/dewebprotocol/malt/runtime/node"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
 	casmock "github.com/dewebprotocol/malt/storage/cas/mock"
@@ -2305,8 +2305,8 @@ func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 		t.Fatalf("Accept-Ranges = %q, want bytes", resp.Header.Get("Accept-Ranges"))
 	}
 	proofResp := requireProofListHeader(t, resp)
-	if proofResp.Query != "docs/readme.txt" {
-		t.Fatalf("proof query = %q, want docs/readme.txt", proofResp.Query)
+	if proofResp.Query != "docs/readme.txt/@payload" {
+		t.Fatalf("proof query = %q, want docs/readme.txt/@payload", proofResp.Query)
 	}
 	if err := proofResp.ValidateShape(prooflist.RequireSteps()); err != nil {
 		t.Fatalf("prooflist shape: %v", err)
@@ -2344,7 +2344,7 @@ func TestServerDefaultGETSmallUnixFSFileIncludesPayloadProof(t *testing.T) {
 	}
 }
 
-func TestServerRootDirectoryContentProofUsesResolvePayloadArtifact(t *testing.T) {
+func TestServerRootDirectoryContentProofUsesExplicitPayloadResolve(t *testing.T) {
 	node := newTestNode(t)
 	ts := httptest.NewServer(New(node, "127.0.0.1:0").Handler())
 	defer ts.Close()
@@ -2385,40 +2385,23 @@ func TestServerRootDirectoryContentProofUsesResolvePayloadArtifact(t *testing.T)
 	if !ok {
 		t.Fatal("root directory ProofList has no @payload binding")
 	}
-	value, err := artifact.NewResolvePayloadArtifact(artifact.ResolveRequest{
-		Profile: artifact.Profile, Root: writeResp.NewRoot, Segments: []string{},
-	}, payloadTarget, proof)
-	if err != nil {
-		t.Fatalf("build resolve_payload artifact: %v", err)
+	value := protocol.ResolveVerification{
+		Request: protocol.ResolveRequest{Profile: protocol.ResolveProfile, Root: writeResp.NewRoot, Segments: []string{"@payload"}},
+		Result:  protocol.ResolveResult{Profile: protocol.ResolveProfile, Target: payloadTarget.String(), ProofList: proof},
 	}
 	local, err := clientverifier.NewDefault()
 	if err != nil {
 		t.Fatalf("initialize local verifier: %v", err)
 	}
-	if err := local.Verify(t.Context(), clientverifier.Request{
-		Profile:     artifact.Profile,
-		TrustedRoot: writeResp.NewRoot,
-		Expected: clientverifier.Expectation{
-			Operation: artifact.OperationResolvePayload,
-			Query:     artifact.Query{Kind: artifact.QueryPath, Segments: []string{}},
-		},
-		Artifact: value,
-	}); err != nil {
-		t.Fatalf("verify root directory resolve_payload artifact: %v", err)
+	if err := local.VerifyResolve(t.Context(), value); err != nil {
+		t.Fatalf("verify root directory explicit payload resolve: %v", err)
 	}
 
 	identity := value
-	identity.Operation = artifact.OperationResolve
-	identity.Target = writeResp.NewRoot
-	if err := local.Verify(t.Context(), clientverifier.Request{
-		Profile:     artifact.Profile,
-		TrustedRoot: writeResp.NewRoot,
-		Expected: clientverifier.Expectation{
-			Operation: artifact.OperationResolve,
-			Query:     artifact.Query{Kind: artifact.QueryPath, Segments: []string{}},
-		},
-		Artifact: identity,
-	}); err == nil || !strings.Contains(err.Error(), "root identity artifact contains traversal evidence") {
+	identity.Request.Segments = []string{}
+	identity.Result.Target = writeResp.NewRoot
+	identity.Result.ProofList.Query = ""
+	if err := local.VerifyResolve(t.Context(), identity); err == nil || !strings.Contains(err.Error(), "root identity result contains traversal evidence") {
 		t.Fatalf("identity verification error = %v, want traversal-evidence rejection", err)
 	}
 }

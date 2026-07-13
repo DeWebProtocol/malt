@@ -7,7 +7,7 @@
   "required": ["profile", "operation", "root", "query", "target", "prooflist"],
   "properties": {
     "profile": {"const": "malt.artifact/v0alpha2"},
-    "operation": {"enum": ["resolve", "resolve_payload", "prove"]},
+    "operation": {"enum": ["resolve", "prove"]},
     "root": {"type": "string", "minLength": 1},
     "query": {"$ref": "#/$defs/query"},
     "target": {"type": "string", "minLength": 1},

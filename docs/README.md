@@ -54,7 +54,8 @@ The current public-core contracts are
 [MIP-1012: Segment Path Resolution](./mips/mip-1012-segment-path-resolution.md),
 the active
 [MIP-1013: Client, Gateway, And Core Responsibility Boundary](./mips/mip-1013-client-gateway-core-boundary.md),
-and the profiled artifacts finalized by
+the operation-specific resolve/read profiles in that active MIP, and the
+frozen v0.0.4 artifact compatibility profile recorded by
 [MIP-1004](./mips/mip-1004-resolve-prooflist-artifact-schema.md).
 
 ## What Goes Where

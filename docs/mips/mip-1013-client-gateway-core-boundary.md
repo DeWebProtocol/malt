@@ -41,9 +41,9 @@ Those ambiguities make a second application model harder to add safely.
 
 | Role | Owns | Does not own |
 | --- | --- | --- |
-| MALT core | canonical arcs/segments, root/CID rules, query and mutation values, ProofList/artifact schemas, commitment verification, portable verification | HTTP, ArcTable placement, CAS I/O, tenant policy, UnixFS or language-object syntax |
-| Client | application syntax mapping, mutation construction, trusted-root selection, local artifact/proof verification, authenticated payload-byte checks | ArcTable, proof generation, server indexes |
-| Gateway/executor | resolve/prove/apply execution, ArcTable/KV, proof generation, CAS orchestration, identity/authorization/cache/quota policy | the client's final proof acceptance decision |
+| MALT core | canonical arcs/segments, root/CID rules, resolve/read/mutation values, ProofList and serialized contract schemas, commitment verification, portable verification | HTTP, ArcTable placement, CAS I/O, tenant policy, UnixFS or language-object syntax |
+| Client | application syntax mapping, mutation construction, trusted-root selection, local resolve/read verification, authenticated payload-byte checks | ArcTable, proof generation, server indexes |
+| Gateway/executor | resolve/read/apply execution, ArcTable/KV, proof generation, CAS orchestration, identity/authorization/cache/quota policy | the client's final proof acceptance decision |
 | CAS backend | immutable bytes addressed by CID | graph paths, arcs, ProofLists, application syntax |
 
 Gateway is a logical product/execution boundary, not a required process
@@ -52,22 +52,26 @@ ArcTable is untrusted materialized execution state.
 
 ### Operation Ownership
 
-- `resolve`: core defines segment/artifact and verification semantics; the
+- `resolve`: core defines segment/result and verification semantics; the
   gateway/executor selects and proves a complete derivation; the client verifies
   it locally. Selection is existential and need not prove longest or unique.
-- `prove`: core defines typed query and proof bindings; the executor produces
-  evidence; the client verifies it locally.
+- `read`: core defines one primitive typed map/list query, result, and proof
+  binding; the executor produces the result and evidence; the client verifies
+  them locally. Proof generation is part of execution, not a separate generic
+  `prove` operation.
 - `verify`: core supplies deterministic algorithms; the client executes the
   authoritative decision. Remote verify routes are diagnostic only.
 - `apply`: core defines namespace-free mutation and receipt values; the client
-  application constructs mutations; the gateway/executor applies them.
+  application constructs mutations; the gateway/executor applies them. A
+  receipt is not a delta or state-transition proof.
 
 ### Package Boundary
 
 The target implementation packages are:
 
 ```text
-core contracts:       package malt, auth/, artifact/, mutation/, wire/
+core contracts:       package malt, auth/, protocol/, mutation/, wire/
+legacy compatibility: artifact/
 execution contract:   execution/
 reference backend:    graph/, runtime/, reference/executor/, server/
 client verification:  sdk/verifier/, cmd/malt-verifier-wasm/
@@ -115,9 +119,11 @@ server ArcTable.
 ## Compatibility
 
 This is a pre-`v1` source-level boundary change. The serialized
-`malt.artifact/v0alpha2` profile does not change. Remote verify endpoints remain
-available for diagnostics, and the `graph/writer` mutation names are retained as
-deprecated aliases while integrations move to `mutation`.
+`malt.artifact/v0alpha2` profile remains frozen with `resolve` and `prove` for
+v0.0.4 compatibility. New integrations use `malt.resolve/v0alpha1` and
+`malt.read/v0alpha1`; remote verify endpoints remain diagnostic. The
+`graph/writer` mutation names are retained as deprecated aliases while
+integrations move to `mutation`.
 
 The former `layout/unixfs` package path is removed rather than made normative
 through a forwarding package. Integrators should select the model, client, or
@@ -128,12 +134,11 @@ runtime package matching their role.
 A remote `valid: true` response cannot establish correctness because it may
 come from the same untrusted service that produced the candidate artifact.
 Clients fail closed if the local verifier cannot load or rejects any root,
-caller-selected operation/query, optional expected target, ordering, or
-cryptographic binding.
+caller-selected request, returned target, ordering, or cryptographic binding.
 
-The local verifier request carries `trusted_root` and an `expected` operation,
-query, and optional target separately from the artifact. It rejects mismatches
-inside the Go/WASM verification boundary, not only in UI or transport code.
+The local verifier receives the caller-constructed resolve/read request
+separately from the untrusted result. It rejects mismatches inside the Go/WASM
+verification boundary, not only in UI or transport code.
 
 Proof verification authenticates the relation to a payload CID. Clients must
 also validate fetched bytes against that CID; measured UnixFS ranges additionally
@@ -142,7 +147,8 @@ multi-writer policy remain application or managed-gateway concerns.
 
 ## Implementation Status
 
-The active implementation branch introduces the package split, local CLI and
-browser/WASM verifier, import-boundary tests, reference-executor terminology,
-and diagnostic remote verification. Move this MIP to Final only after that PR
-is merged and current documentation points at the merged package paths.
+The active implementation branch introduces the package split,
+operation-specific resolve/read profiles, local CLI and browser/WASM verifier,
+import-boundary tests, reference-executor terminology, and diagnostic remote
+verification. Move this MIP to Final only after that PR is merged and current
+documentation points at the merged package paths.

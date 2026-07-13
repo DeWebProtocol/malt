@@ -155,7 +155,16 @@ func browserCORSRouteAllowed(method, rawPath string) bool {
 	case http.MethodGet, http.MethodHead:
 		return browserCORSReadPathAllowed(rawPath)
 	case http.MethodPost:
-		return rawPath == "/verify" || browserCORSArtifactRouteAllowed(rawPath) || browserCORSUnixFSWritePathAllowed(rawPath)
+		return rawPath == "/verify" || browserCORSProtocolRouteAllowed(rawPath) || browserCORSArtifactRouteAllowed(rawPath) || browserCORSUnixFSWritePathAllowed(rawPath)
+	default:
+		return false
+	}
+}
+
+func browserCORSProtocolRouteAllowed(rawPath string) bool {
+	switch rawPath {
+	case "/v1/resolve", "/v1/read", "/v1/verify/resolve", "/v1/verify/read":
+		return true
 	default:
 		return false
 	}

@@ -1,4 +1,4 @@
-// Package verifier verifies ProofList artifacts without graph runtime, ArcTable,
+// Package verifier verifies ProofList evidence without graph runtime, ArcTable,
 // storage, layout, server, or daemon dependencies.
 package verifier
 

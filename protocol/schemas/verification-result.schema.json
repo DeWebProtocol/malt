@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deweb.world/schemas/malt/verification/v0alpha1/result.schema.json",
+  "title": "MALT Diagnostic Verification Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile", "valid"],
+  "properties": {
+    "profile": {"enum": ["malt.resolve/v0alpha1", "malt.read/v0alpha1"]},
+    "valid": {"type": "boolean"},
+    "error": {"type": "string"}
+  }
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/dewebprotocol/malt/api/http"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/config"
+	"github.com/dewebprotocol/malt/protocol"
 )
 
 // Error is a structured reference-executor API error.
@@ -90,8 +91,60 @@ func (c *Client) ResolveRootWithProof(ctx context.Context, root string, p string
 	return c.ResolveWithProof(ctx, root, p, includeProof)
 }
 
-// Resolve resolves a path relative to a root CID and returns ProofList evidence
-// by default.
+// ResolveContract executes the operation-specific MALT resolve contract. The
+// caller must verify the returned result against the original request before
+// accepting its target.
+func (c *Client) ResolveContract(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var result protocol.ResolveResult
+	if err := c.do(ctx, http.MethodPost, "/v1/resolve", nil, request, &result); err != nil {
+		return nil, err
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid resolve result: %w", err)
+	}
+	return &result, nil
+}
+
+// ReadContract executes one primitive map/list read contract.
+func (c *Client) ReadContract(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var result protocol.ReadResult
+	if err := c.do(ctx, http.MethodPost, "/v1/read", nil, request, &result); err != nil {
+		return nil, err
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid read result: %w", err)
+	}
+	return &result, nil
+}
+
+// VerifyResolveContract calls the reference executor's diagnostic verifier.
+// Trust decisions should use sdk/verifier locally instead.
+func (c *Client) VerifyResolveContract(ctx context.Context, value protocol.ResolveVerification) (*protocol.VerificationResult, error) {
+	var result protocol.VerificationResult
+	if err := c.do(ctx, http.MethodPost, "/v1/verify/resolve", nil, value, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// VerifyReadContract calls the reference executor's diagnostic verifier.
+// Trust decisions should use sdk/verifier locally instead.
+func (c *Client) VerifyReadContract(ctx context.Context, value protocol.ReadVerification) (*protocol.VerificationResult, error) {
+	var result protocol.VerificationResult
+	if err := c.do(ctx, http.MethodPost, "/v1/verify/read", nil, value, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Resolve resolves and materializes a path through the legacy UnixFS-oriented
+// GET adapter. Generic callers should use ResolveContract.
 func (c *Client) Resolve(ctx context.Context, root, rawPath string) (*httpapi.ResolveResponse, error) {
 	return c.ResolveWithProof(ctx, root, rawPath, true)
 }

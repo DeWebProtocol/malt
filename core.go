@@ -91,7 +91,7 @@ func (q Query) Validate() error {
 	return nil
 }
 
-// String returns the current v0alpha1 query label used in ProofList artifacts.
+// String returns the current v0alpha1 query label used in ProofList evidence.
 func (q Query) String() string {
 	switch q.Kind {
 	case QueryMapKey:
@@ -124,6 +124,30 @@ type ReadResult struct {
 	ProofList prooflist.ProofList
 }
 
+// ResolveRequest binds one canonical segment path to a caller-supplied trusted
+// root. Applications append reserved coordinates such as @payload explicitly;
+// an empty segment sequence always denotes root identity.
+type ResolveRequest struct {
+	Root     cid.Cid
+	Segments []string
+}
+
+// Validate checks the transport-neutral resolution request.
+func (r ResolveRequest) Validate() error {
+	if !r.Root.Defined() {
+		return fmt.Errorf("trusted root is undefined")
+	}
+	_, err := NewSegmentPath(r.Segments)
+	return err
+}
+
+// ResolveResult is the authenticated target plus the ordered evidence for one
+// complete segment-path derivation.
+type ResolveResult struct {
+	Target    cid.Cid
+	ProofList prooflist.ProofList
+}
+
 // Mutation is the portable semantic mutation contract. Runtime state placement
 // and publication policy are deliberately absent.
 type Mutation = mutation.SemanticMutation
@@ -134,6 +158,13 @@ type WriteResult = mutation.WriteReceipt
 // Reader is the application-neutral root-relative read port.
 type Reader interface {
 	Read(context.Context, ReadRequest) (ReadResult, error)
+}
+
+// Resolver is the application-neutral path-resolution port. Implementations
+// execute against untrusted runtime state; clients call VerifyResolve before
+// accepting the returned target.
+type Resolver interface {
+	Resolve(context.Context, ResolveRequest) (ResolveResult, error)
 }
 
 func cloneUint64(value *uint64) *uint64 {
