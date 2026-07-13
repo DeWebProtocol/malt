@@ -6,10 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-07-13
+
 ### Added
 
+- Operation-specific `malt.resolve/v0alpha1` and `malt.read/v0alpha1`
+  request, result, verification, JSON Schema, and reference HTTP contracts.
 - Portable `mutation` value contracts and a separate untrusted
-  `execution.Executor` facade.
+  `execution.Executor` facade implementing resolve, primitive read, and apply.
 - Client-local `sdk/verifier` plus a reproducible browser/WASM verifier build.
 - Explicit UnixFS `model/unixfs`, `sdk/unixfs`, and `runtime/unixfs` boundaries.
 
@@ -97,6 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - KZG verification rejects out-of-range proof indices and non-canonical proof
   lengths instead of allowing malformed input to panic or reuse a commitment.
 
-[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/DeWebProtocol/malt/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/DeWebProtocol/malt/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/DeWebProtocol/malt/compare/v0.0.2...v0.0.3

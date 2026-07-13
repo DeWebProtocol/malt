@@ -86,7 +86,7 @@ not become the only copy of a schema or specification.
 | [MIP-1010](mip-1010-data-authentication-core-boundary.md) | Final | Standards Track | Core | Record the completed package-ownership split among authentication, graph ports, layouts, runtime, storage, SDK, and transport code. |
 | [MIP-1011](mip-1011-arc-authentication-core-contract.md) | Final | Standards Track | Core | Define the portable arc-level `Read`/`Apply`/`VerifyRead` contract introduced in `v0.0.3`. |
 | [MIP-1012](mip-1012-segment-path-resolution.md) | Final | Standards Track | Core | Define segment arrays, proof-carrying arc composition, and existential resolution. |
-| [MIP-1013](mip-1013-client-gateway-core-boundary.md) | In Progress | Standards Track | Core | Separate client trust, gateway execution, CAS payload, and UnixFS application-model responsibilities. |
+| [MIP-1013](mip-1013-client-gateway-core-boundary.md) | Final | Standards Track | Core | Separate client trust, gateway execution, CAS payload, and UnixFS application-model responsibilities. |
 
 ## Promotion Protocol
 

@@ -20,7 +20,7 @@ managed product gateway lives outside this repository.
 [Threat Model](./docs/policy/threat-model.md) ·
 [Compatibility](./docs/policy/compatibility.md) · [Evaluation](./docs/evaluation.md) ·
 [MIPs](./docs/mips/README.md) ·
-[v0.0.4 Release](./docs/releases/v0.0.4.md) ·
+[v0.0.5 Release](./docs/releases/v0.0.5.md) ·
 [Roadmap](./ROADMAP.md) · [Security](./SECURITY.md) ·
 [Contributing](./CONTRIBUTING.md)
 
@@ -149,23 +149,25 @@ Current experimental boundaries:
 - large-file byte-range response bodies must be bound to authenticated segment
   CIDs with `sdk/unixfs.VerifyRangeBody` after local ProofList verification
 
-The `v0.0.4` source release adds canonical segment paths and the frozen
-`malt.artifact/v0alpha2` resolve/prove/verify compatibility profile with
-embedded JSON Schemas. Integrators should pin the exact release and reject
+The `v0.0.5` source release adds operation-specific
+`malt.resolve/v0alpha1` and `malt.read/v0alpha1` contracts, separates trusted
+client verification from untrusted resolve/read/apply execution, and splits
+the UnixFS application into model, client-SDK, and reference-runtime packages.
+The `malt.artifact/v0alpha2` profile released by v0.0.4 remains frozen
+compatibility behavior. Integrators should pin the exact release and reject
 unknown profiles:
 
 ```bash
-go get github.com/dewebprotocol/malt@v0.0.4
+go get github.com/dewebprotocol/malt@v0.0.5
 ```
 
-See the [release notes](./docs/releases/v0.0.4.md), the
+See the [release notes](./docs/releases/v0.0.5.md), the
 [artifact contract](./docs/spec/artifacts.md), and the
-[GitHub Release](https://github.com/DeWebProtocol/malt/releases/tag/v0.0.4).
+[GitHub Release](https://github.com/DeWebProtocol/malt/releases/tag/v0.0.5).
 
-The active pre-release contract on this branch replaces the generic artifact
-union for new integrations with `malt.resolve/v0alpha1` and
-`malt.read/v0alpha1`. Payload selection is an explicit `@payload` segment. See
-[Resolve and read contracts](./docs/spec/resolve-read-contracts.md).
+New integrations use the operation-specific resolve/read contracts rather than
+extending the generic artifact union. Payload selection is an explicit
+`@payload` segment. See [Resolve and read contracts](./docs/spec/resolve-read-contracts.md).
 
 ## Use Cases
 

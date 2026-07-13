@@ -23,6 +23,9 @@ the separate `DeWebProtocol/gateway` service repository or private deployment
 overlays.
 
 ```text
+execution.Executor.Resolve(ResolveRequest{Root, Segments}) -> ResolveResult{Target, ProofList}
+VerifyResolve(request, result) -> valid / invalid
+
 execution.Executor.Read(ReadRequest{Root, Query}) -> ReadResult{Target, Segments, ProofList}
 VerifyRead(request, result) -> valid / invalid
 
@@ -37,12 +40,13 @@ List and map are semantic abstractions:
   to target CIDs
 
 The module-root `package malt` is the typed, application-neutral verification
-facade. It defines query/result bindings and `VerifyRead`; portable mutation
-values live in `mutation`. The separate `execution.Executor` composes map/list
-provers and mutation appliers while hiding runtime scope from canonical
-requests. Execution is untrusted: clients bind a caller-selected root and typed
-query to the returned target, optional range segments, and ProofList before the
-portable verifier checks the evidence.
+facade. It defines resolve/read request and result bindings plus
+`VerifyResolve`/`VerifyRead`; portable mutation values live in `mutation`. The
+separate `execution.Executor` composes path resolution, map/list proof
+generation, and mutation application while hiding runtime scope from canonical
+requests. Execution is untrusted: clients bind a caller-selected root and
+segments or typed query to the returned target, optional range segments, and
+ProofList before the portable verifier checks the evidence.
 
 `malt.SegmentPath` is the application-neutral composition coordinate. Clients
 send segment arrays; the reference resolver may consume multiple leading
@@ -360,7 +364,7 @@ malt/
 |   |-- resolver/     # resolver read port and explicit proof path
 |   `-- writer/       # reference mutation executor
 |-- mutation/         # portable mutation/delta/receipt contracts
-|-- execution/        # untrusted read/apply composition
+|-- execution/        # untrusted resolve/read/apply composition
 |-- model/unixfs/     # UnixFS application model/profile
 |-- runtime/          # node, graph composition, ArcTable, metrics, and semantic implementations
 |   `-- unixfs/       # optional UnixFS execution/content adapter
