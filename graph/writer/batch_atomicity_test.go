@@ -6,11 +6,10 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	semanticmapping "github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	"github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt/storage/kv/memory"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -23,20 +22,16 @@ func TestBatchUpdateArcs_AllowsPayloadDeletion(t *testing.T) {
 	namespace := "test"
 
 	// Setup
-	kv := memory.New()
+	store := materialmemory.New(true)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme failed: %v", err)
 	}
-	arctable, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("NewArcTable failed: %v", err)
-	}
-	maps, err := radix.NewMap(scheme, arctable)
+	maps, err := radix.NewMap(scheme, store)
 	if err != nil {
 		t.Fatalf("NewMap failed: %v", err)
 	}
-	writer := NewWriter(maps, arctable)
+	writer := NewWriter(maps, store)
 
 	// Test Case 1: Successful batch update
 	valueA := makeCID(t, "value-a")
@@ -111,16 +106,12 @@ func TestSemanticBatchUpdate_MidBatchFailure(t *testing.T) {
 	ctx := context.Background()
 	namespace := "test-mid-batch"
 
-	kv := memory.New()
+	store := materialmemory.New(true)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme: %v", err)
 	}
-	at, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("NewArcTable: %v", err)
-	}
-	maps, err := radix.NewMap(scheme, at)
+	maps, err := radix.NewMap(scheme, store)
 	if err != nil {
 		t.Fatalf("NewMap: %v", err)
 	}

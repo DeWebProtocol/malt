@@ -98,26 +98,23 @@ The result carries `target`, optional ordered `range_segments`, and
 Read is intentionally primitive; multi-root prefix consumption belongs to
 resolve.
 
-## HTTP Projection
+## Transport Projection
 
-The reference executor exposes:
+These contracts are transport-neutral. HTTP gateways commonly expose JSON
+resolve and read endpoints, while RPC and language SDKs may carry segment
+arrays directly. Route naming, authentication, CORS, limits, and service error
+policy are not defined by core. The current managed projection is documented
+in the independent `DeWebProtocol/gateway` repository.
 
-```text
-POST /v1/resolve
-POST /v1/read
-POST /v1/verify/resolve   # diagnostic only
-POST /v1/verify/read      # diagnostic only
-```
-
-HTTP uses `/` only as the canonical textual projection between segments. RPC
-and language SDKs can carry the segment array directly. Application syntaxes
-such as JavaScript `.` and `[]` remain client concerns.
+HTTP may use `/` as an application projection between segments. Application
+syntaxes such as Unix paths or JavaScript `.` and `[]` remain client concerns.
 
 ## Payload Bytes And Mutation
 
 A verified payload resolve authenticates a CID, not arbitrary response bytes.
-Clients must also hash full raw/manifest bytes to the authenticated CID, or use
-the UnixFS range-body verifier for measured-list reads.
+Clients must also hash full raw/manifest bytes to the authenticated CID, or
+validate application-defined ranged segments against authenticated segment
+CIDs.
 
 Semantic mutation inputs and writer receipts remain separate contracts. A
 receipt describes execution and a candidate new root; it is not a delta or

@@ -41,11 +41,10 @@ belong in a phase plan and any affected reference docs.
 
 Current code evidence:
 
-- `cmd/malt/add_workflow.go` routes `malt add` through staged UnixFS
+- `DeWebProtocol/malt-client/cmd/malt` routes `malt add` through staged UnixFS
   ingestion.
-- `cmd/malt/add_staging.go` builds the staged tree.
-- `model/unixfs` defines mutation plans and `runtime/unixfs/mutation.go`
-  exposes root-relative plan construction.
+- `DeWebProtocol/malt-client` builds the staged tree and defines root-relative
+  UnixFS mutation plans.
 - PR #49 completed the current batch/dedup path without making updates
   path-local in the old daemon-write sense.
 

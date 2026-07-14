@@ -45,9 +45,9 @@ Current code evidence:
 
 - `auth/semantic/list` defines list semantics and measured range
   interfaces.
-- `runtime/semantic/list/tree` supports fixed-width measured range
+- `auth/semantic/list/tree` supports fixed-width measured range
   evidence.
-- `runtime/unixfs/prooflist.go` emits `list_range` ProofList steps with
+- `DeWebProtocol/malt-client` composes `list_range` ProofList steps with
   metadata and segment CIDs.
 
 ## Backwards Compatibility

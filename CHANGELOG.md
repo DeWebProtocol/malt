@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-07-14
+
+### Changed
+
+- Recast this module as an SDK-only core: canonical contracts, commitment and
+  semantic algorithms, ProofList verification, portable mutation values, and
+  untrusted execution composition remain in-tree.
+- Move map/list reference implementations to `auth/semantic` and compose graph
+  execution under `graph/runtime` over a caller-injected ArcSet materializer.
+- Define `auth/arcset/materializer.Store` as an implementation-neutral
+  capability; persistent ArcTable/KV implementations now belong to gateways.
+
+### Removed
+
+- CLI/client daemon, HTTP server, CAS/KV backends, concrete ArcTable modes,
+  UnixFS, reference executor, and evaluation application packages.
+- Core documentation for product HTTP routes and evaluator commands.
+
+These are intentional pre-v1 source breaks. Use `DeWebProtocol/malt-client`
+for the trusted CLI/daemon and UnixFS application, and
+`DeWebProtocol/gateway` for ArcTable/KV/CAS-backed execution.
+
 ## [0.0.5] - 2026-07-13
 
 ### Added
@@ -101,7 +123,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - KZG verification rejects out-of-range proof indices and non-canonical proof
   lengths instead of allowing malformed input to panic or reuse a commitment.
 
-[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/DeWebProtocol/malt/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/DeWebProtocol/malt/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/DeWebProtocol/malt/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/DeWebProtocol/malt/compare/v0.0.2...v0.0.3

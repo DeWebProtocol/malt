@@ -1,5 +1,5 @@
 // Package explicit implements the Step interface for MALT explicit arcs.
-// It uses longest-prefix matching in ArcTable and generates cryptographic proof via
+// It uses longest-prefix matching in ArcSet materializer and generates cryptographic proof via
 // keyed-map semantics.
 package explicit
 
@@ -34,24 +34,24 @@ const (
 
 // Resolver resolves explicit MALT arcs using longest-prefix matching.
 type Resolver struct {
-	arctable  ArcLookup
-	semantic  mapping.Semantics
-	namespace string
+	materializer ArcLookup
+	semantic     mapping.Semantics
+	namespace    string
 }
 
 // NewResolver creates a new explicit arc resolver.
 func NewResolver(e ArcLookup, semantic mapping.Semantics, namespace string) *Resolver {
 	return &Resolver{
-		arctable:  e,
-		semantic:  semantic,
-		namespace: namespace,
+		materializer: e,
+		semantic:     semantic,
+		namespace:    namespace,
 	}
 }
 
-// Resolve finds the longest matching prefix in the ArcTable and generates proof.
+// Resolve finds the longest matching prefix in the ArcSet materializer and generates proof.
 // Returns: matchedPath, target, evidence, error
 //
-// Example: if ArcTable contains "a/b/c" → key1 and path is "a/b/c/d/e",
+// Example: if ArcSet materializer contains "a/b/c" → key1 and path is "a/b/c/d/e",
 // it matches "a/b/c" and returns that path with its target and evidence.
 func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) (matchedPath arcset.Path, target cid.Cid, ev evidence.Evidence, err error) {
 	start := time.Now()
@@ -77,7 +77,7 @@ func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) 
 	for i := len(segments); i > 0; i-- {
 		candidatePath := arcset.Path(strings.Join(segments[:i], "/"))
 
-		target, err := r.arctable.Get(ctx, r.namespace, root, candidatePath)
+		target, err := r.materializer.Get(ctx, r.namespace, root, candidatePath)
 		if err == nil {
 			// Found a match, generate proof
 			binding, proof, err := r.semantic.Prove(ctx, r.namespace, root, candidatePath)

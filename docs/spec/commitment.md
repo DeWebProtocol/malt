@@ -49,7 +49,7 @@ value proof as a map binding proof unless the committed cell also encodes the
 expected key.
 
 This model is distinct from the runtime map layout.
-`runtime/semantic/mapping/radix` uses digest-keyed radix traversal and bucket
+`auth/semantic/mapping/radix` uses digest-keyed radix traversal and bucket
 materialization, but composes that runtime traversal from the same single-step
 slot proof primitive.
 

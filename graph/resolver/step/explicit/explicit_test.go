@@ -5,14 +5,12 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/proof/evidence"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/runtime/arctable/bloom"
-	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -26,20 +24,15 @@ func makeCID(n int) cid.Cid {
 	return cid.NewCidV1(cid.Raw, h)
 }
 
-// newTestArcTable creates a fresh ArcTable backed by an in-memory KVStore.
-func newTestArcTable() *overwrite.ArcTable {
-	kv := kvmemory.New()
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		panic(err)
-	}
-	return e
+// newTestMaterializer creates a fresh ArcSet materializer backed by an in-memory KVStore.
+func newTestMaterializer() *materialmemory.Store {
+	return materialmemory.New(true)
 }
 
 // newTestComponents creates a complete set of test components:
-// ArcTable, mapping semantic, and KZG scheme.
-func newTestComponents() (*overwrite.ArcTable, mapping.Semantics, *kzg.Scheme) {
-	e := newTestArcTable()
+// ArcSet materializer, mapping semantic, and KZG scheme.
+func newTestComponents() (*materialmemory.Store, mapping.Semantics, *kzg.Scheme) {
+	e := newTestMaterializer()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		panic(err)
@@ -51,8 +44,8 @@ func newTestComponents() (*overwrite.ArcTable, mapping.Semantics, *kzg.Scheme) {
 	return e, semantic, scheme
 }
 
-// setupArcSet commits arcs to semantic layer and stores them in ArcTable.
-func setupArcSet(t *testing.T, e *overwrite.ArcTable, semantic mapping.Semantics, arcsMap map[string]cid.Cid) cid.Cid {
+// setupArcSet commits arcs to semantic layer and stores them in ArcSet materializer.
+func setupArcSet(t *testing.T, e *materialmemory.Store, semantic mapping.Semantics, arcsMap map[string]cid.Cid) cid.Cid {
 	t.Helper()
 	root, err := semantic.Commit(context.Background(), testNamespace, mapping.NewViewFrom(arcsMap))
 	if err != nil {
@@ -60,7 +53,7 @@ func setupArcSet(t *testing.T, e *overwrite.ArcTable, semantic mapping.Semantics
 	}
 	ctx := context.Background()
 	if err := e.Update(ctx, testNamespace, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
-		t.Fatalf("ArcTable.Update failed: %v", err)
+		t.Fatalf("ArcSet materializer.Update failed: %v", err)
 	}
 	return root
 }
@@ -357,65 +350,5 @@ func TestVerify_WrongEvidenceType(t *testing.T) {
 	// The error message should indicate the wrong type
 	if err.Error() == "" {
 		t.Error("error message should not be empty")
-	}
-}
-
-func TestBloomFilterWithResolver(t *testing.T) {
-	// Test that the resolver works correctly when a bloom filter is configured.
-	kv := kvmemory.New()
-	bloomCache := bloom.NewBloomCache(kv, 100)
-	e, err := overwrite.NewArcTable(
-		overwrite.WithKVStore(kv),
-		overwrite.WithBloomCache(bloomCache),
-	)
-	if err != nil {
-		t.Fatalf("NewArcTable failed: %v", err)
-	}
-
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme failed: %v", err)
-	}
-	semantic, err := mappingradix.NewMap(scheme, e)
-	if err != nil {
-		t.Fatalf("radix.NewMap failed: %v", err)
-	}
-
-	ctx := context.Background()
-	namespace := "bloom-test"
-
-	target := makeCID(42)
-	arcsMap := map[string]cid.Cid{
-		"data/file": target,
-	}
-
-	root, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(arcsMap))
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-	if err := e.Update(ctx, namespace, root, cid.Undef, arcset.NewSetFrom(arcsMap)); err != nil {
-		t.Fatalf("ArcTable.Update failed: %v", err)
-	}
-
-	r := explicit.NewResolver(e, semantic, namespace)
-
-	matchedPath, resolvedTarget, ev, err := r.Resolve(ctx, root, "data/file")
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if matchedPath != "data/file" {
-		t.Errorf("matchedPath = %q, want %q", matchedPath, "data/file")
-	}
-	if !resolvedTarget.Equals(target) {
-		t.Errorf("target = %v, want %v", resolvedTarget, target)
-	}
-
-	// Verify evidence
-	valid, err := r.Verify(ctx, root, matchedPath, resolvedTarget, ev)
-	if err != nil {
-		t.Fatalf("Verify failed: %v", err)
-	}
-	if !valid {
-		t.Error("Verify should return true")
 	}
 }

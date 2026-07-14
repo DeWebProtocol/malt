@@ -14,7 +14,7 @@ does not use the Merkle-DAG object chain as the application proof path.
 | Read shape | Traverse linked objects from a root CID | Query `trusted root + typed arc`; layouts may expose paths |
 | Proof material | Traversal objects and sibling or linked evidence | Dedicated `ProofList` evidence |
 | Trusted components | Traversed content-addressed object chain | Portable auth kernel; indexes and gateways remain untrusted |
-| HTTP content reads | HTTP can transport blocks or gateway responses | Body can be ordinary HTTP content, proof can ride in `X-Malt-ProofList` |
+| Network reads | Transport linked blocks or gateway responses | Carry operation-specific result/ProofList plus separately fetched CID bytes |
 | Update cost | Child-reference changes can propagate rootward | Structure roots advance without rewriting unrelated payload objects |
 
 ## Proof Material
@@ -55,31 +55,26 @@ the result against the trusted root and query. A layout such as UnixFS can
 compose primitive arc reads into a path without making Unix paths part of the
 generic core.
 
-## HTTP Proof Transport
+## Transport And Payload Retrieval
 
 Merkle DAGs can be transported over HTTP. The difference is what the client
 must receive to verify the answer.
 
-MALT content routes can return application data as ordinary HTTP response
-bodies and place verification evidence in headers:
+MALT transports carry operation-specific results and ProofLists. A client may
+then fetch authenticated payload CIDs from an HTTP CAS endpoint:
 
 ```text
-GET /{root}/{path}
-
-200 OK
-X-Malt-ProofList: <base64url-json>
-X-Malt-ProofList-Encoding: base64url-json
-
-<application bytes or directory JSON>
+POST /v1/resolve -> target CID + ProofList
+GET  /v1/cas/{target CID} -> payload bytes
 ```
 
-That means a gateway, CDN, or cache can serve normal content responses while
-the client still verifies `root + path -> result` without trusting that
-intermediary.
+The client verifies the relation ProofList locally and hashes the payload bytes
+against the authenticated CID. A gateway, CDN, or cache can serve either
+response without becoming a correctness authority.
 
-The exact header behavior is implementation-bound and documented in
-[ProofList format](../spec/prooflist-format.md) and
-[HTTP API](../spec/http-api.md).
+The operation contracts are documented in
+[Resolve and read contracts](../spec/resolve-read-contracts.md). HTTP route
+behavior belongs to the gateway repository.
 
 ## Rewrite Amplification
 

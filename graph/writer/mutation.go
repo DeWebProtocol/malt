@@ -132,29 +132,29 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 		if err != nil {
 			return cid.Undef, err
 		}
-		if w.arctable != nil {
+		if w.materializer != nil {
 			snapshot, err := arcset.NewArcSetFromPaths(entries)
 			if err != nil {
 				return cid.Undef, err
 			}
-			retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+			retryBase, err := materializationRetryBase(ctx, w.materializer, namespace)
 			if err != nil {
-				return cid.Undef, &IndexWriteFailedError{
-					NewRoot:    root,
-					Namespace:  namespace,
-					OldRoot:    cid.Undef,
-					IndexDelta: snapshot,
-					Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+				return cid.Undef, &MaterializationWriteFailedError{
+					NewRoot:              root,
+					Namespace:            namespace,
+					OldRoot:              cid.Undef,
+					MaterializationDelta: snapshot,
+					Cause:                fmt.Errorf("Materializer.Snapshot retry base failed: %w", err),
 				}
 			}
-			if err := w.arctable.Update(ctx, namespace, root, cid.Undef, snapshot); err != nil {
-				return cid.Undef, &IndexWriteFailedError{
-					NewRoot:    root,
-					Namespace:  namespace,
-					OldRoot:    cid.Undef,
-					IndexBase:  retryBase,
-					IndexDelta: snapshot,
-					Cause:      err,
+			if err := w.materializer.Update(ctx, namespace, root, cid.Undef, snapshot); err != nil {
+				return cid.Undef, &MaterializationWriteFailedError{
+					NewRoot:              root,
+					Namespace:            namespace,
+					OldRoot:              cid.Undef,
+					MaterializationBase:  retryBase,
+					MaterializationDelta: snapshot,
+					Cause:                err,
 				}
 			}
 		}
@@ -180,29 +180,29 @@ func (w *Writer) commitMapDelta(ctx context.Context, namespace string, delta Arc
 		root = nextRoot
 		logical[key] = newValue
 	}
-	if w.arctable != nil {
+	if w.materializer != nil {
 		deltaSet, err := arcset.NewArcSetFromPaths(logical)
 		if err != nil {
 			return cid.Undef, err
 		}
-		retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+		retryBase, err := materializationRetryBase(ctx, w.materializer, namespace)
 		if err != nil {
-			return cid.Undef, &IndexWriteFailedError{
-				NewRoot:    root,
-				Namespace:  namespace,
-				OldRoot:    delta.Object,
-				IndexDelta: deltaSet,
-				Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+			return cid.Undef, &MaterializationWriteFailedError{
+				NewRoot:              root,
+				Namespace:            namespace,
+				OldRoot:              delta.Object,
+				MaterializationDelta: deltaSet,
+				Cause:                fmt.Errorf("Materializer.Snapshot retry base failed: %w", err),
 			}
 		}
-		if err := w.arctable.Update(ctx, namespace, root, delta.Object, deltaSet); err != nil {
-			return cid.Undef, &IndexWriteFailedError{
-				NewRoot:    root,
-				Namespace:  namespace,
-				OldRoot:    delta.Object,
-				IndexBase:  retryBase,
-				IndexDelta: deltaSet,
-				Cause:      err,
+		if err := w.materializer.Update(ctx, namespace, root, delta.Object, deltaSet); err != nil {
+			return cid.Undef, &MaterializationWriteFailedError{
+				NewRoot:              root,
+				Namespace:            namespace,
+				OldRoot:              delta.Object,
+				MaterializationBase:  retryBase,
+				MaterializationDelta: deltaSet,
+				Cause:                err,
 			}
 		}
 	}

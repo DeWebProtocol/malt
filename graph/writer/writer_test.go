@@ -9,15 +9,13 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materializer "github.com/dewebprotocol/malt/auth/arcset/materializer"
+	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
+	listtree "github.com/dewebprotocol/malt/auth/semantic/list/tree"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/runtime/arctable"
-	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	versionedtable "github.com/dewebprotocol/malt/runtime/arctable/versioned"
-	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
-	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
+	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -25,17 +23,9 @@ import (
 
 // Test helpers.
 
-func newTestWriter(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantics, *kvg) {
+func newTestWriter(t *testing.T) (*Writer, *materialmemory.Store, mapping.Semantics, *materialmemory.Store) {
 	t.Helper()
-
-	// Memory KVStore
-	kv := kvmemory.New()
-
-	// Overwrite ArcTable
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("failed to create ArcTable: %v", err)
-	}
+	e := materialmemory.New(false)
 
 	// KZG commitment scheme
 	scheme, err := kzg.NewScheme()
@@ -50,17 +40,13 @@ func newTestWriter(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantic
 
 	w := NewWriter(semantic, e)
 
-	return w, e, semantic, kv
+	return w, e, semantic, e
 }
 
-func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.Semantics, list.Semantics, *kvg) {
+func newTestWriterWithList(t *testing.T) (*Writer, *materialmemory.Store, mapping.Semantics, list.Semantics, *materialmemory.Store) {
 	t.Helper()
 
-	kv := kvmemory.New()
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("failed to create ArcTable: %v", err)
-	}
+	e := materialmemory.New(false)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("failed to create KZG scheme: %v", err)
@@ -75,10 +61,8 @@ func newTestWriterWithList(t *testing.T) (*Writer, *overwrite.ArcTable, mapping.
 	}
 
 	w := NewWriter(semantic, e, listSemantic)
-	return w, e, semantic, listSemantic, kv
+	return w, e, semantic, listSemantic, e
 }
-
-type kvg = kvmemory.KV
 
 type errArcSet struct {
 	arcs []struct {
@@ -129,73 +113,65 @@ func (it *errArcIterator) Err() error {
 
 func (it *errArcIterator) Close() {}
 
-type nonComparableArcTable struct {
-	arctable arctable.ArcTable
-	tags     []string
+type nonComparableMaterializer struct {
+	materializer materializer.Store
+	tags         []string
 }
 
-func (t nonComparableArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
-	return t.arctable.Get(ctx, namespace, root, path)
+func (t nonComparableMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+	return t.materializer.Get(ctx, namespace, root, path)
 }
 
-func (t nonComparableArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
-	return t.arctable.BatchGet(ctx, namespace, root, paths)
+func (t nonComparableMaterializer) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	return t.materializer.BatchGet(ctx, namespace, root, paths)
 }
 
-func (t nonComparableArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
-	return t.arctable.Update(ctx, namespace, newRoot, oldRoot, arcs)
+func (t nonComparableMaterializer) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	return t.materializer.Update(ctx, namespace, newRoot, oldRoot, arcs)
 }
 
-func (t nonComparableArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
-	return t.arctable.Snapshot(ctx, namespace, root)
+func (t nonComparableMaterializer) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return t.materializer.Snapshot(ctx, namespace, root)
 }
 
-func (t nonComparableArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
-	return t.arctable.Iterate(ctx, namespace, root)
+func (t nonComparableMaterializer) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return t.materializer.Iterate(ctx, namespace, root)
 }
 
-func (t nonComparableArcTable) Close() error {
-	return t.arctable.Close()
-}
-
-type batchGetProbeArcTable struct {
-	arctable      arctable.ArcTable
+type batchGetProbeMaterializer struct {
+	materializer  materializer.Store
 	getErr        error
 	batchGetErr   error
 	getCalls      int
 	batchGetCalls int
 }
 
-func (t *batchGetProbeArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+func (t *batchGetProbeMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	t.getCalls++
 	if t.getErr != nil {
 		return cid.Undef, t.getErr
 	}
-	return t.arctable.Get(ctx, namespace, root, path)
+	return t.materializer.Get(ctx, namespace, root, path)
 }
 
-func (t *batchGetProbeArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (t *batchGetProbeMaterializer) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	t.batchGetCalls++
 	if t.batchGetErr != nil {
 		return nil, t.batchGetErr
 	}
-	return t.arctable.BatchGet(ctx, namespace, root, paths)
+	return t.materializer.BatchGet(ctx, namespace, root, paths)
 }
 
-func (t *batchGetProbeArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
-	return t.arctable.Update(ctx, namespace, newRoot, oldRoot, arcs)
+func (t *batchGetProbeMaterializer) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+	return t.materializer.Update(ctx, namespace, newRoot, oldRoot, arcs)
 }
 
-func (t *batchGetProbeArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
-	return t.arctable.Snapshot(ctx, namespace, root)
+func (t *batchGetProbeMaterializer) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+	return t.materializer.Snapshot(ctx, namespace, root)
 }
 
-func (t *batchGetProbeArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
-	return t.arctable.Iterate(ctx, namespace, root)
-}
-
-func (t *batchGetProbeArcTable) Close() error {
-	return t.arctable.Close()
+func (t *batchGetProbeMaterializer) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+	return t.materializer.Iterate(ctx, namespace, root)
 }
 
 func fakeCID(seed string) cid.Cid {
@@ -785,7 +761,7 @@ func TestWriter_UpdateArc_ConcurrentSameRootReturnsStaleRoot(t *testing.T) {
 	}
 }
 
-func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
+func TestWriter_UpdateArc_SharedMaterializerRejectsConsumedBaseRoot(t *testing.T) {
 	w, at, semantic, _ := newTestWriter(t)
 	w2 := NewWriter(semantic, at)
 	ctx := context.Background()
@@ -807,21 +783,21 @@ func TestWriter_UpdateArc_SharedArcTableRejectsConsumedBaseRoot(t *testing.T) {
 	}
 }
 
-func TestWriter_NonComparableArcTableUsesPerWriterFreshnessGuard(t *testing.T) {
+func TestWriter_NonComparableMaterializerUsesPerWriterFreshnessGuard(t *testing.T) {
 	_, at, semantic, _ := newTestWriter(t)
-	table := arctable.ArcTable(nonComparableArcTable{
-		arctable: at,
-		tags:     []string{"custom"},
+	table := materializer.Store(nonComparableMaterializer{
+		materializer: at,
+		tags:         []string{"custom"},
 	})
 
 	w := NewWriter(semantic, table)
 	w2 := NewWriter(semantic, table)
 
 	if w.freshness == nil || w2.freshness == nil {
-		t.Fatal("non-branching ArcTable should install freshness guards")
+		t.Fatal("non-branching Materializer should install freshness guards")
 	}
 	if w.freshness == w2.freshness {
-		t.Fatal("non-comparable ArcTable value should fall back to per-writer freshness guards")
+		t.Fatal("non-comparable Materializer value should fall back to per-writer freshness guards")
 	}
 }
 
@@ -902,15 +878,11 @@ func TestWriter_CreateStructureRevivesRecreatedRoot(t *testing.T) {
 	}
 }
 
-func TestWriter_UpdateArc_VersionedArcTableAllowsBranching(t *testing.T) {
+func TestWriter_UpdateArc_VersionedMaterializerAllowsBranching(t *testing.T) {
 	ctx := context.Background()
 	namespace := "test-versioned-branch"
 
-	kv := kvmemory.New()
-	at, err := versionedtable.NewArcTable(versionedtable.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("failed to create versioned ArcTable: %v", err)
-	}
+	at := materialmemory.New(true)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("failed to create KZG scheme: %v", err)
@@ -1044,9 +1016,9 @@ func TestWriter_BatchUpdateArcs_UsesBatchGetForClassification(t *testing.T) {
 		t.Fatalf("CreateStructure failed: %v", err)
 	}
 
-	probe := &batchGetProbeArcTable{
-		arctable: e,
-		getErr:   errors.New("unexpected per-path Get"),
+	probe := &batchGetProbeMaterializer{
+		materializer: e,
+		getErr:       errors.New("unexpected per-path Get"),
 	}
 	w := NewWriter(semantic, probe)
 	result, err := w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
@@ -1087,9 +1059,9 @@ func TestWriter_BatchUpdateArcs_PropagatesBatchGetError(t *testing.T) {
 	}
 
 	batchGetErr := errors.New("injected batch get failure")
-	probe := &batchGetProbeArcTable{
-		arctable:    e,
-		batchGetErr: batchGetErr,
+	probe := &batchGetProbeMaterializer{
+		materializer: e,
+		batchGetErr:  batchGetErr,
 	}
 	w := NewWriter(semantic, probe)
 

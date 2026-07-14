@@ -104,33 +104,17 @@ The `v0alpha1` `Query.Kind` values are `map_key`, `list_index`, and
 
 Map query labels are compared using the canonical coordinate rules in
 `auth/arcset`. Portable verification does not trim whitespace or apply
-HTTP/UnixFS path cleaning. Transport and layout adapters may enforce their own
+HTTP/UnixFS path cleaning. Transport and application adapters may enforce their own
 path policy before constructing a typed query.
 
 These encodings remain experimental and consumers must pin a MALT release.
 
-## HTTP Transport
+## Serialization And Transport
 
-`GET /resolve/{root}/{path}` returns JSON:
-
-```json
-{
-  "target": "cid-string",
-  "prooflist": { "root": "cid-string", "steps": [] }
-}
-```
-
-`prooflist` is omitted when the caller uses `?proof=false` or
-`X-Malt-Proof: omit`.
-
-Default content reads, `GET /{root}/{path}`, return body bytes or directory
-JSON and place proof evidence in headers:
-
-- `X-Malt-ProofList: <base64url-json>`
-- `X-Malt-ProofList-Encoding: base64url-json`
-- `Vary: X-Malt-Proof`
-
-`HEAD /{root}/{path}` is stat-only and does not return ProofList headers.
+ProofLists are embedded in the operation-specific `malt.resolve/v0alpha1` and
+`malt.read/v0alpha1` results. Core does not define HTTP headers, omission
+switches, content routes, or cache variance. A transport must preserve the
+serialized request/result fields required by local verification.
 
 ## Range Evidence
 
@@ -149,16 +133,16 @@ requires it and therefore emits the terminal payload-binding step shown above;
 a generic relation-only map ProofList does not need such a step.
 
 The `list_range` step authenticates range metadata and segment CIDs, not raw
-HTTP body bytes by itself. A verifier that accepts returned range body bytes
+payload bytes by itself. A client that accepts returned range bytes
 must:
 
 1. verify the ProofList against the trusted root,
 2. fetch or otherwise resolve each authenticated segment CID, and
-3. call `sdk/unixfs.VerifyRangeBody(pl, body, start, end, fetch)` or an
-   equivalent byte-binding check before trusting the body.
+3. apply its application-specific range composition and CID byte-binding check
+   before trusting the body.
 
-`VerifyRangeBody` rejects shifted ranges, missing range evidence, segment CID
-mismatches, short segment data, and tampered returned bytes.
+The first-party UnixFS implementation of that check lives in
+`DeWebProtocol/malt-client`, not in core.
 
 ## Related Proposals
 

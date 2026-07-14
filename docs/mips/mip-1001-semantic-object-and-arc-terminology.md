@@ -49,8 +49,8 @@ Current code evidence:
 - `auth/semantic/mapping` defines map semantics.
 - `auth/semantic/list` defines indexed child-reference semantics.
 - `graph` composes resolver and writer ports.
-- UnixFS is an application model/profile split across `model/unixfs`,
-  `sdk/unixfs`, and `runtime/unixfs`.
+- UnixFS is an application model/profile implemented by
+  `DeWebProtocol/malt-client` and the browser client.
 
 ## Backwards Compatibility
 

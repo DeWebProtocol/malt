@@ -1,84 +1,48 @@
 # Releasing
 
-MALT uses source tags for experimental releases. This document defines the
-process for selecting and validating the exact commit to tag.
+MALT core uses source tags for experimental releases.
 
-## Versioning
-
-Use semantic version tags and standard prerelease identifiers:
-
-```text
-v0.0.3-rc.1
-v0.0.3
-v0.1.0
-```
-
-Before `v1.0.0`, API and schema compatibility may still change. Release notes
-must call out CLI, reference-executor API, ProofList, client-verifier, and
-evaluator schema changes.
-
-## Pre-Release Checklist
+## Validation
 
 Run from the repository root:
 
 ```bash
+git diff --check
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go test ./...
 go vet ./...
-mkdir -p bin
-go build -buildvcs=false -o bin/cas ./cmd/cas
-go build -buildvcs=false -o bin/malt ./cmd/malt
-go build -buildvcs=false -o bin/malt-eval ./cmd/eval/malt-eval
+go build -buildvcs=false ./...
 scripts/build-verifier-wasm.sh dist/verifier
-bin/malt-eval run --plan examples/eval-smoke-plan.json --run-id release-smoke
 ```
 
-Review:
+Also compile a temporary external Go module against the candidate tag or
+commit. It should import only the intended public packages, at minimum:
 
-- `README.md` quick start still matches the current CLI.
-- `ARCHITECTURE.md` still matches package boundaries.
-- `ROADMAP.md` separates implemented behavior from design work.
-- `SECURITY.md` reporting path is still accurate.
-- `cmd/eval/schemas` match current evaluator outputs.
-- the browser verifier passes its accept/tamper-reject smoke and the published
-  WASM checksum matches the web application asset.
+- module-root `malt`;
+- `protocol`;
+- `sdk/verifier`;
+- `auth/arcset/materializer` when exercising executor composition.
 
-The latest validation record lives in
-[`docs/releases/v0.0.5.md`](../releases/v0.0.5.md). The completed `v0.0.3`
-record in [`docs/releases/v0.0.3.md`](../releases/v0.0.3.md) includes a
-portable-verifier smoke, a relation-only map test, import-boundary checks, an
-external-consumer compile test, evaluator smoke, and isolated CLI proof smoke.
-Future releases should add a new release-note file with equivalent gates rather
-than editing the historical `v0.0.3` record.
+Review README, architecture, roadmap, schemas, compatibility policy, threat
+model, and release notes. If Web publishes the WASM build, its provenance must
+identify the exact MALT commit, Go toolchain, and SHA-256 checksum.
 
-## Tagging
+## Tag and release
 
-For a new release, tag the validated candidate first using a standard
-prerelease suffix:
+Tag only the exact validated commit:
 
 ```bash
-git tag -a vX.Y.Z-rc.1 -m "MALT vX.Y.Z-rc.1"
-git push origin vX.Y.Z-rc.1
+git tag -a vX.Y.Z -m "MALT vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
-After candidate and external-consumer validation, tag the exact same approved
-release commit as `vX.Y.Z`, or rerun validation if the commit changes. The
-`v0.0.3` release followed this process with `v0.0.3-rc.1` and `v0.0.3`; the
-historical `v0.0.3-core-boundary` milestone was not used as a tag.
+The GitHub release must include:
 
-Create GitHub release notes with:
+- user-visible and source-breaking changes;
+- commit SHA;
+- validation commands/results;
+- profile/schema compatibility notes;
+- known experimental limits.
 
-- summary of user-visible changes
-- commit SHA
-- validation commands and results
-- known experimental limits
-- schema or API compatibility notes
-- security fixes, if any
-
-## Artifacts
-
-Source tags remain authoritative. The browser verifier is reproducibly built
-with `scripts/build-verifier-wasm.sh`; when a release or website publishes the
-generated `malt-verifier.wasm` and `wasm_exec.js`, it must publish a SHA-256
-checksum and identify the exact MALT commit used to build them. Other native
-binaries remain build-from-source until a release workflow publishes platform
-artifacts and checksums.
+Source tags are authoritative. Native binaries are build-from-source until a
+separate workflow publishes signed platform artifacts and checksums.

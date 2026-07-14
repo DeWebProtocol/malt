@@ -47,9 +47,8 @@ shapes, and benchmark record rules belong in:
 
 - [`../spec/`](../spec/) for protocol, API, proof, receipt, artifact, and wire
   references
-- [`../evaluation.md`](../evaluation.md) for evaluator artifacts and reporting
-  rules
-- `cmd/eval/schemas` for machine-readable evaluator JSON schemas
+- [`../evaluation.md`](../evaluation.md) for routing historical evaluator work
+  to the research repository
 
 A MIP may link to those reference docs and propose changing them, but it should
 not become the only copy of a schema or specification.
@@ -83,7 +82,7 @@ not become the only copy of a schema or specification.
 | [MIP-1007](mip-1007-incremental-add-root-optimization.md) | Draft | Standards Track | Tooling | Explore path-local incremental add for very large existing roots. |
 | [MIP-1008](mip-1008-semantic-reachability-demo.md) | Draft | Informational | Evaluation | Define a small demo for reverse, cross-object, and multi-view relations. |
 | [MIP-1009](mip-1009-benchmark-proof-reporting.md) | Draft | Standards Track | Evaluation | Define paper-facing proof, receipt, and metrics reporting across benchmark suites. |
-| [MIP-1010](mip-1010-data-authentication-core-boundary.md) | Final | Standards Track | Core | Record the completed package-ownership split among authentication, graph ports, layouts, runtime, storage, SDK, and transport code. |
+| [MIP-1010](mip-1010-data-authentication-core-boundary.md) | Superseded | Standards Track | Core | Historical in-module package split, replaced by MIP-1013 and the v0.0.6 repository boundary. |
 | [MIP-1011](mip-1011-arc-authentication-core-contract.md) | Final | Standards Track | Core | Define the portable arc-level `Read`/`Apply`/`VerifyRead` contract introduced in `v0.0.3`. |
 | [MIP-1012](mip-1012-segment-path-resolution.md) | Final | Standards Track | Core | Define segment arrays, proof-carrying arc composition, and existential resolution. |
 | [MIP-1013](mip-1013-client-gateway-core-boundary.md) | Final | Standards Track | Core | Separate client trust, gateway execution, CAS payload, and UnixFS application-model responsibilities. |
@@ -94,7 +93,7 @@ not become the only copy of a schema or specification.
 2. Keep open design questions in Draft MIPs.
 3. Move a MIP to Review only when its proposal boundary and rationale are
    concrete enough for maintainer judgment. Reference-spec details may live in
-   `../spec/`, `../evaluation.md`, or schema files and be linked from the MIP.
+   `../spec/` or checked-in protocol schema files and be linked from the MIP.
 4. Move a MIP to Accepted only after maintainer approval.
 5. For Accepted MIPs, create a GitHub issue, PR plan, or repository planning
    note that names the implementation owner and review boundary.

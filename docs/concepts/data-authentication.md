@@ -109,15 +109,15 @@ This separation gives MALT four core advantages:
   of the Merkle-DAG traversal object chain.
 - **Direct application-shaped reads:** clients use typed arc queries; layouts
   such as UnixFS may compose them into familiar path operations.
-- **HTTP-native verification:** content reads can return normal HTTP bodies
-  with proof evidence in `X-Malt-ProofList`.
+- **Transport-neutral verification:** operation-specific results carry
+  ProofList evidence while payload bytes can be fetched from ordinary CAS.
 - **Lower rewrite amplification:** relationship updates advance MALT structure
   roots without rewriting unrelated payload objects.
 
 ## Where To Go Next
 
 - For a direct comparison, read [Merkle DAG vs MALT](./merkle-dag-vs-malt.md).
-- For exact proof fields and HTTP transport rules, read
+- For exact proof fields and operation binding rules, read
   [ProofList format](../spec/prooflist-format.md).
 - For the current resolver and writer model, read
   [Semantic model](../spec/semantic.md).
