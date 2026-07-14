@@ -5,21 +5,21 @@ its public APIs, ProofList schemas, wire formats, and deployment policies may
 change. It is not production-ready.
 
 Security reports are still important because the project deals with proof
-verification, authenticated structure, executor APIs, untrusted storage, and local
-persistence.
+verification, authenticated graph structures, commitment backends, and
+untrusted caller-supplied evidence.
 
 ## Supported Versions
 
 | Version | Security support |
 | --- | --- |
 | `main` | Best-effort review of current integration code |
-| `v0.0.5` | Current supported experimental source release |
-| `v0.0.4` | Previous experimental source release |
-| `v0.0.3` and earlier | Not supported |
+| `v0.0.6` | Current supported experimental source release |
+| `v0.0.5` | Previous experimental source release |
+| `v0.0.4` and earlier | Not supported |
 
 MALT remains pre-`v1.0.0` and experimental. Security fixes may require
 breaking API, proof, root, or wire-format changes. Reproducible consumers
-should pin `v0.0.5` rather than depend on `main`.
+should pin `v0.0.6` rather than depend on `main`.
 
 ## Reporting a Vulnerability
 
@@ -45,10 +45,10 @@ reporter updated on triage, fix, and disclosure timing.
 High-value areas include:
 
 - ProofList verification accepting invalid evidence
-- root or target mismatches in read verification
-- daemon routes that expose admin or mutation behavior unintentionally
-- CORS behavior that allows unintended browser access
-- unsafe file handling in `malt add`, evaluator replay, or local state paths
+- root, canonical query, operation, or target mismatches in resolve/read verification
+- payload bytes accepted without binding them to an authenticated CID
+- invalid graph transitions accepted by resolve, read, or mutation algorithms
+- commitment or proof backends accepting malformed or inconsistent inputs
 - dependency vulnerabilities with reachable impact
 
 ## Current Experimental Limits
@@ -58,6 +58,7 @@ The current implementation does not provide production guarantees for:
 - head publication and freshness
 - multi-writer merge or arbitration
 - tenant isolation, quota, pinning, or garbage collection
+- daemon, gateway, CAS, UnixFS, or application-layer policy
 - stable public API compatibility
 
 Reports in those areas are useful, but they may be handled as design issues
