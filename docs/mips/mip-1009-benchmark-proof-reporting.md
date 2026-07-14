@@ -26,8 +26,10 @@ figures.
 
 ## Specification
 
-The current evaluation artifacts live in `DeWebProtocol/documents`. This MIP should decide
-which reporting rules must become stable for paper-facing figures:
+The executable evaluation suites, plans, adapters, and schemas live in
+`DeWebProtocol/malt-evaluation`; generated research artifacts and paper-facing
+interpretation live in `DeWebProtocol/documents`. This MIP should decide which
+reporting rules must become stable for paper-facing figures:
 
 - ProofList bytes and step counts
 - comparable Merkle DAG and HAMT evidence items
@@ -40,9 +42,10 @@ which reporting rules must become stable for paper-facing figures:
 
 ## Rationale
 
-The former in-tree evaluator was removed from SDK-only core in v0.0.6. Core
-benchmark tests may measure commitment/proof behavior; gateway product E2E owns
-CAS/ArcTable operational metrics; paper aggregation belongs in documents.
+The former in-tree evaluator was removed from SDK-only core in v0.0.6 and
+restored as an auditable v0.0.5 baseline in `malt-evaluation`. Core benchmark
+tests may measure commitment/proof behavior; gateway product E2E owns current
+CAS/ArcTable operational validation; paper aggregation belongs in documents.
 
 ## Backwards Compatibility
 
@@ -67,3 +70,6 @@ benchmark protocol docs, and fixture/result validation.
   this MIP now tracks stabilization of paper-facing benchmark reporting.
 - 2026-07-14: Routed evaluator artifacts to documents and operational metrics
   to gateway after the SDK-only core split.
+- 2026-07-14: Restored executable suites, plans, adapters, and schemas in the
+  independent `malt-evaluation` repository; kept paper interpretation in
+  documents.

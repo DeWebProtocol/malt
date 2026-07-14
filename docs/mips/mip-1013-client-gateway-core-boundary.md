@@ -93,13 +93,21 @@ on verification only. Full commitment backends may implement both interfaces.
 ### UnixFS Application Model
 
 UnixFS is called the MALT UnixFS application model/profile. The term `layout`
-is reserved for a narrower materialization choice such as `flat` versus
-`hierarchical`, or raw versus fixed-list payload organization.
+is reserved for a narrower application materialization choice. The current
+native client exposes `hybrid`, combining authenticated directory map roots
+with descendant full-path bindings. Pure `flat` versus `hierarchical`, or raw
+versus fixed-list payload organization, remain possible future choices.
 
 The independent `malt-client` repository owns UnixFS schema, reserved
 coordinates, manifest/chunk formats, staging, upload planning, mutation
-construction, and local payload/range-body verification. The generic gateway
+construction, local payload/range-body verification, and optional
+IPFS-compatible Merkle DAG UnixFS import. A Merkle DAG root is a client
+compatibility output, not MALT authentication evidence. The generic gateway
 does not parse UnixFS paths or expose a UnixFS content adapter.
+
+The frozen v0.0.5 evaluator retains `MALT-flat`/`maltflat` for its full-path
+flat-map baseline. Those historical identifiers do not configure or describe
+the current `malt add --layout hybrid` path.
 
 Future TypeScript object support belongs primarily in a client SDK that maps
 JavaScript object syntax into canonical segments and mutations. Core does not
