@@ -32,16 +32,17 @@ This MIP should choose a demo shape:
 - CLI, eval-suite, or documentation-only delivery
 - whether the result is a paper-facing capability case study
 
-It does not define a protocol schema. If accepted, any reusable benchmark or
-artifact rules should be documented in `docs/evaluation.md`.
+It does not define a protocol schema. If accepted, paper-facing demo artifacts
+should live in `DeWebProtocol/documents`; reusable protocol vectors belong in
+core.
 
 ## Rationale
 
 Current implementation evidence:
 
-- UnixFS demonstrates map/list/CAS composition.
+- `malt-client` demonstrates UnixFS map/list/CAS composition.
 - Resolver and writer ports express root-relative semantic reads and mutations.
-- Current evaluation primarily targets UnixFS and IPLD baselines.
+- Historical evaluation primarily targeted UnixFS and IPLD baselines.
 
 ## Backwards Compatibility
 

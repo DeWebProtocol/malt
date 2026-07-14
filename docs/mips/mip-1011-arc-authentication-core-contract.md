@@ -173,7 +173,7 @@ terminal `payload_binding` semantics and traversal must not continue through it
 as if it were an ordinary relation.
 
 The UnixFS model requires `@payload` for its file and directory objects. That
-requirement belongs to `model/unixfs`, not to generic map semantics. Other
+requirement belongs to the UnixFS client model, not to generic map semantics. Other
 models may require the coordinate, omit it, or define additional reserved
 coordinates while preserving the core rules.
 
@@ -191,10 +191,10 @@ UnixFS-specific behavior includes:
 - byte-range body binding
 - file and directory mutation planning
 
-The model, client, and runtime responsibilities live in `model/unixfs`,
-`sdk/unixfs`, and `runtime/unixfs`. Neither these capabilities nor the UnixFS
-data model become requirements for a future Pod, protocol, agent-memory,
-manifest, or other graph application.
+As of v0.0.6, these responsibilities live in the independent
+`DeWebProtocol/malt-client` repository and the browser client. Neither these
+capabilities nor the UnixFS data model become requirements for a future Pod,
+protocol, agent-memory, manifest, or other graph application.
 
 ### Proof Artifact Profile
 

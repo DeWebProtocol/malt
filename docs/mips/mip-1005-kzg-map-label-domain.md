@@ -37,7 +37,7 @@ CID cells. `ProveSlot(root, slots, slot)` proves one binding slot under a
 committed root, and `VerifySlot(root, slot, value, proof)` verifies one slot
 proof against the root.
 
-This is distinct from the primary runtime map layout. `runtime/semantic/mapping/radix`
+This is distinct from the primary SDK map layout. `auth/semantic/mapping/radix`
 uses digest-keyed radix traversal and bucket materialization, but it composes
 that runtime path from the same single-step slot proof primitive.
 
@@ -51,7 +51,7 @@ Current code evidence:
 - `auth/commitment/kzg` provides the current KZG backend.
 - `auth/semantic/mapping.BindingCID` binds canonical path keys to target CIDs
   for the storage-free map commit path.
-- `runtime/semantic/mapping/radix` is the current runtime map semantic
+- `auth/semantic/mapping/radix` is the current SDK map semantic
   implementation and composes radix/bucket traversal from single-step slot
   proofs.
 - `auth/arcset` canonicalizes map paths and arcsets before

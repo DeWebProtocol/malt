@@ -13,8 +13,8 @@ replaces: none
 
 ## Abstract
 
-This MIP proposes stabilizing the benchmark-facing reporting rules summarized
-in [`docs/evaluation.md`](../evaluation.md), including proof
+This MIP proposes stabilizing paper-facing reporting rules in the research
+workspace, including proof
 bytes, evidence items, writer receipts, CAS counters, ArcTable counters, and
 write-amplification summary CSV fields.
 
@@ -26,8 +26,7 @@ figures.
 
 ## Specification
 
-The current evaluation reference lives in
-[`docs/evaluation.md`](../evaluation.md). This MIP should decide
+The current evaluation artifacts live in `DeWebProtocol/documents`. This MIP should decide
 which reporting rules must become stable for paper-facing figures:
 
 - ProofList bytes and step counts
@@ -41,12 +40,9 @@ which reporting rules must become stable for paper-facing figures:
 
 ## Rationale
 
-Current code evidence:
-
-- `cmd/eval/schemas` contains evaluator schemas.
-- `runtime/metrics` records CAS, ArcTable, and ProofList counters.
-- `server/routes_metrics.go` exposes metrics snapshot and reset routes.
-- `cmd/eval/internal/eval` emits raw result envelopes and summary CSVs.
+The former in-tree evaluator was removed from SDK-only core in v0.0.6. Core
+benchmark tests may measure commitment/proof behavior; gateway product E2E owns
+CAS/ArcTable operational metrics; paper aggregation belongs in documents.
 
 ## Backwards Compatibility
 
@@ -69,3 +65,5 @@ benchmark protocol docs, and fixture/result validation.
 - 2026-05-25: Created from the previous open TODO list.
 - 2026-06-25: Moved current reporting guidance to `docs/evaluation.md`;
   this MIP now tracks stabilization of paper-facing benchmark reporting.
+- 2026-07-14: Routed evaluator artifacts to documents and operational metrics
+  to gateway after the SDK-only core split.

@@ -39,18 +39,6 @@ func TestProductionImportBoundaries(t *testing.T) {
 			forbidden: []string{"runtime", "storage", "layout", "model", "sdk", "execution", "api", "server"},
 		},
 		{
-			name:      "UnixFS model",
-			dir:       filepath.Join(root, "model", "unixfs"),
-			recursive: true,
-			forbidden: []string{"graph", "runtime", "storage", "sdk", "api", "server", "execution"},
-		},
-		{
-			name:      "UnixFS client SDK",
-			dir:       filepath.Join(root, "sdk", "unixfs"),
-			recursive: true,
-			forbidden: []string{"graph", "runtime", "storage", "api", "server", "execution"},
-		},
-		{
 			name:      "portable mutation contract",
 			dir:       filepath.Join(root, "mutation"),
 			recursive: true,
@@ -67,12 +55,6 @@ func TestProductionImportBoundaries(t *testing.T) {
 			dir:       filepath.Join(root, "sdk", "verifier"),
 			recursive: true,
 			forbidden: []string{"graph", "runtime", "storage", "model", "api", "server", "execution"},
-		},
-		{
-			name:      "UnixFS runtime adapter",
-			dir:       filepath.Join(root, "runtime", "unixfs"),
-			recursive: true,
-			forbidden: []string{"api", "server", "sdk"},
 		},
 		{
 			name:      "module facade",
@@ -92,6 +74,35 @@ func TestProductionImportBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			checkProductionImports(t, tc.dir, tc.recursive, tc.forbidden)
 		})
+	}
+}
+
+func TestSDKOnlyRepositoryDoesNotReintroduceProductPackages(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(sourceFile)
+	for _, name := range []string{
+		"api", "config", "daemon", "model", "reference", "runtime", "server", "storage",
+		filepath.Join("cmd", "cas"), filepath.Join("cmd", "eval"), filepath.Join("cmd", "malt"),
+	} {
+		dir := filepath.Join(root, name)
+		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+			if os.IsNotExist(err) {
+				return filepath.SkipDir
+			}
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() && strings.HasSuffix(path, ".go") {
+				t.Errorf("SDK-only core contains product package source %s", path)
+			}
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
 	}
 }
 

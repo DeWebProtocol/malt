@@ -35,31 +35,16 @@ Package `mutation` is the stable portable contract. It defines
 `mutation.WriteReceipt` with the caller-supplied base root and produced result
 root. `graph.MutationWriter` is the reference graph adapter over that contract.
 
-`graph.CompatWriter` groups reference-runtime helper methods such as
+`graph.CompatWriter` groups algorithm compatibility methods such as
 `CreateStructure`, `UpdateArc`, `BatchUpdateArcs`, `GetArc`, and
-`GetSnapshot`. These helpers remain available to the local reference runtime,
-CLI, and tests, but they are not the gateway product API. New integrations
+`GetSnapshot`. These helpers remain available to SDK consumers and tests, but
+they are not the gateway product API. New integrations
 should prefer semantic mutations through `MutationWriter` unless they
 intentionally need reference compatibility helpers.
 
-## HTTP Projection
-
-`api/http.SemanticMutationResponse` exposes:
-
-| JSON field | Meaning |
-| --- | --- |
-| `base_root` | Request base root. |
-| `new_root` | Root produced by writer application. |
-| `result_root` | Optional application-level result root. |
-| `delta_count` | Semantic delta count. |
-| `arc_count` | Canonical arc change count. |
-| `malt_object_count` | Optional application-produced object count. |
-| `map_count` | Optional application-produced map object count. |
-| `list_count` | Optional application-produced list object count. |
-
-Application-level counts are diagnostics and evaluation aids. They should not be
-treated as verifier evidence unless separately tied to a ProofList or
-commitment proof.
+Transport projections and application-level diagnostic counts belong to the
+gateway or client that exposes them. They are not verifier evidence unless
+separately tied to a cryptographic proof.
 
 ## Accounting Boundary
 
@@ -87,5 +72,3 @@ of being placed in a generic artifact union.
 
 - [MIP-1002](../mips/mip-1002-writer-receipt-accounting.md) tracks whether the
   current receipt fields should become a stable API and evaluation contract.
-- [Evaluation](../evaluation.md) describes how receipts and accounting fields
-  are interpreted in evaluator output.

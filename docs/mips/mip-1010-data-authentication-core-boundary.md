@@ -3,7 +3,7 @@ mip: 1010
 title: Data Authentication Core Boundary
 description: Narrow MALT core to data authentication and separate graph ports, layouts, SDKs, APIs, runtime, and storage.
 author: MALT maintainers
-status: Final
+status: Superseded
 type: Standards Track
 category: Core
 created: 2026-05-25
@@ -17,8 +17,10 @@ replaces: none
 > and now use `auth`, `graph`, `runtime`, `storage`, `wire`, `api/http`, and
 > `sdk/client` boundaries.
 >
-> **Historical scope:** this MIP records the completed package-ownership split.
-> It does not define the current public core API. The portable arc-level
+> **Historical scope:** this MIP is superseded by
+> [MIP-1013](./mip-1013-client-gateway-core-boundary.md) and the v0.0.6
+> SDK-only repository split. It does not define the current public core API.
+> The portable arc-level
 > `Read`/`Apply`/`VerifyRead` contract and the `v0.0.3` release boundary are
 > specified by [MIP-1011](./mip-1011-arc-authentication-core-contract.md).
 

@@ -47,7 +47,7 @@ type View interface {
 // Binding is the verifiable result for one keyed binding.
 //
 // Current map semantics emit membership proofs only. Callers should obtain
-// absence through current structure state (for example ArcTable lookup or a
+// absence through current structure state (for example a caller materializer or a
 // supplied materialized view) rather than expecting a dedicated semantic
 // non-membership proof.
 type Binding struct {

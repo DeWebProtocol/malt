@@ -7,18 +7,17 @@ import (
 
 	"github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
+	listtree "github.com/dewebprotocol/malt/auth/semantic/list/tree"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	mapradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 	"github.com/dewebprotocol/malt/execution"
-	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	listtree "github.com/dewebprotocol/malt/runtime/semantic/list/tree"
-	mapradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	kvmemory "github.com/dewebprotocol/malt/storage/kv/memory"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -48,10 +47,7 @@ func TestPortableVerifierAcceptsRuntimeRadixAndTreeProofs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			table, err := overwrite.NewArcTable(overwrite.WithKVStore(kvmemory.New()))
-			if err != nil {
-				t.Fatalf("NewArcTable: %v", err)
-			}
+			table := materialmemory.New(true)
 			scheme := factory(t)
 			maps, err := mapradix.NewMap(scheme, table)
 			if err != nil {

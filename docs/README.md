@@ -4,15 +4,15 @@ This directory is the implementation-bound documentation surface for
 `DeWebProtocol/malt`.
 
 Use these documents as the source of truth for behavior that must stay aligned
-with code, tests, schemas, wire formats, and evaluator artifacts. Public
+with code, tests, schemas, and wire formats. Public
 website pages in `DeWebProtocol/malt-web` may summarize this material, but they
 should link back here for protocol, policy, and compatibility details.
 
 Managed gateway service behavior, including tenancy, identity, authorization,
 root publication, backend orchestration, S3/Filecoin/IPFS deployment policy,
 quota, cache policy, and operations, belongs in `DeWebProtocol/gateway` or
-private deployment overlays. This repository keeps an all-in-one
-reference/evaluation executor only to exercise MALT core end to end.
+private deployment overlays. Client/daemon and UnixFS behavior belongs in
+`DeWebProtocol/malt-client`; this repository contains neither product layer.
 
 ## Concepts
 
@@ -25,12 +25,9 @@ reference/evaluation executor only to exercise MALT core end to end.
 - [Threat model](./policy/threat-model.md)
 - [Compatibility policy](./policy/compatibility.md)
 - [Release process](./policy/releasing.md)
+- [v0.0.6 release notes](./releases/v0.0.6.md)
 - [v0.0.5 release notes](./releases/v0.0.5.md)
 - [v0.0.4 release notes](./releases/v0.0.4.md)
-
-## Evaluation
-
-- [Evaluation guide](./evaluation.md)
 
 ## Specifications
 
@@ -39,13 +36,13 @@ reference/evaluation executor only to exercise MALT core end to end.
 ## MALT Improvement Proposals
 
 MALT Improvement Proposals live in [docs/mips](./mips/). MIPs are the review
-path for semantic, verifier-facing, API, application-model, tooling, and evaluation
+path for semantic, verifier-facing, schema, and core algorithm
 changes before they become implementation work.
 
 MIPs should define the proposal boundary, motivation, decision, alternatives,
 compatibility impact, security impact, and implementation planning state. Long
-field lists, wire formats, JSON schemas, and benchmark record rules belong in
-the reference docs under `spec/` or `evaluation.md`, with MIPs linking to them.
+field lists, wire formats, and JSON schemas belong in the reference docs under
+`spec/`, with MIPs linking to them.
 
 The previous `documents/MIPs` mirror in the research-paper workspace was
 removed after migration. New implementation-bound MIP work should happen here.
@@ -64,6 +61,5 @@ frozen v0.0.4 artifact compatibility profile recorded by
 - `concepts/` for reader-facing background, comparisons, and orientation
 - `policy/` for stability, safety, and release policy
 - `releases/` for source-release notes and validation records
-- `evaluation.md` for benchmark methods, headline results, and artifact rules
 - `spec/` for formal protocol and schema documents
 - `mips/` for design proposals and process records

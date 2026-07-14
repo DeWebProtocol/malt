@@ -38,12 +38,10 @@ source release records this review boundary:
   by later traversal steps;
 - map, list-index, and measured-list `list_range` structure evidence is
   verified through verification-only backends selected from typed roots;
-- proof omission via query/header is a transport option and does not change the
-  verifier contract for artifacts that are returned;
-- `X-Malt-ProofList` carries base64url-encoded ProofList JSON for content reads;
-- returned byte-range body bytes are not authenticated by `/verify` alone and
-  must be bound with `sdk/unixfs.VerifyRangeBody` or an equivalent segment
-  byte check after ProofList verification.
+- transport choices do not change the verifier contract for results that are
+  returned;
+- returned byte-range body bytes are not authenticated by ProofList alone and
+  must be bound to authenticated segment CIDs by the consuming client.
 
 This MIP does not promote ProofList JSON to a stable cross-release schema. It
 records the current verifier contract for review before a stable API line.
@@ -57,13 +55,11 @@ Current code evidence:
   evidence without runtime or storage lookup.
 - `graph/verifier/verifier.go` adapts reference runtime semantics to that
   portable verifier.
-- `server/routes_verify.go` projects the reusable verifier through `/verify`.
-- `server/routes_content.go` sends proof-bearing content responses in
-  `X-Malt-ProofList`.
-- `runtime/unixfs/prooflist.go` emits map, payload, list-index, and
-  `list_range` evidence.
-- `sdk/unixfs/range_body.go` binds returned range bytes to authenticated
-  segment CIDs.
+- `protocol` carries operation-specific ProofLists across transports.
+- `DeWebProtocol/gateway` exposes diagnostic verification and generic
+  resolve/read/CAS transport.
+- `DeWebProtocol/malt-client` and Web compose UnixFS evidence and bind returned
+  range bytes to authenticated segment CIDs.
 
 ## Backwards Compatibility
 
@@ -88,8 +84,8 @@ For the current review pass:
 - keep reusable verifier orchestration and verification-only backends in
   `auth/verifier`;
 - keep `graph/verifier` as a compatibility adapter only;
-- keep range body-byte binding in `sdk/unixfs.VerifyRangeBody`;
-- run verifier, server, UnixFS, CLI, and full Go validation before tagging.
+- keep range body-byte binding in the application client;
+- run core verifier, gateway, client, and Web validation before tagging.
 
 ## History
 
@@ -97,8 +93,10 @@ For the current review pass:
 - 2026-06-25: Moved current ProofList shape and transport rules to
   `docs/spec/prooflist-format.md`; this MIP tracks formal acceptance of the
   verifier contract.
-- 2026-07-06: Updated for `graph/verifier` extraction and
-  `sdk/unixfs.VerifyRangeBody`; moved to Review for maintainer judgment.
+- 2026-07-06: Updated for `graph/verifier` extraction and the UnixFS range-body
+  verifier; moved to Review for maintainer judgment.
 - 2026-07-11: Moved trust-critical orchestration and built-in KZG/IPA proof
   verification to portable `auth/verifier`; retained `graph/verifier` as an
   adapter.
+- 2026-07-14: Routed transport to gateway and UnixFS/body binding to clients
+  for the SDK-only v0.0.6 boundary.

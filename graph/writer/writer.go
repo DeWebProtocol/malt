@@ -1,6 +1,6 @@
 // Package writer implements the write-side API for MALT.
 // It provides the unified arc update procedure (UpdateArc) described in Sec 4.5,
-// coordinating map semantics and ArcTable (index) updates.
+// coordinating map semantics and caller-owned ArcSet materialization.
 package writer
 
 import (
@@ -11,26 +11,18 @@ import (
 	"sync"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materialization "github.com/dewebprotocol/malt/auth/arcset/materializer"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	cid "github.com/ipfs/go-cid"
 )
 
-// ArcTable is the minimal explicit-arc index capability consumed by Writer.
-// Runtime backends satisfy this interface without becoming a dependency of the
-// graph package.
-type ArcTable interface {
-	Get(context.Context, string, cid.Cid, arcset.Path) (cid.Cid, error)
-	BatchGet(context.Context, string, cid.Cid, []arcset.Path) (map[arcset.Path]cid.Cid, error)
-	Update(context.Context, string, cid.Cid, cid.Cid, arcset.ArcSet) error
-	Snapshot(context.Context, string, cid.Cid) (arcset.ArcSet, error)
-}
+// Materializer is the caller-injected ArcSet capability consumed by Writer.
+// It is an alias for the core materializer contract, not a persistence model.
+type Materializer = materialization.Store
 
-// BranchingArcTable is the optional capability exposed by indexes that retain
-// concurrent children of one root.
-type BranchingArcTable interface {
-	SupportsConcurrentBranches() bool
-}
+// BranchingMaterializer optionally reports support for concurrent children.
+type BranchingMaterializer = materialization.BranchingStore
 
 var (
 	// ErrArcNotFound is returned when the target arc does not exist for a replace/delete operation.
@@ -47,89 +39,89 @@ var (
 	// namespace.
 	ErrStaleRoot = errors.New("stale root")
 
-	// ErrIndexWriteFailed is returned when the semantic layer produced a new
-	// root but the ArcTable index write failed. The semantic commitment is
+	// ErrMaterializationWriteFailed is returned when the semantic layer produced a new
+	// root but the ArcSet materialization write failed. The semantic commitment is
 	// content-addressed and cannot be rolled back, so the returned newRoot is a
-	// cryptographically valid root whose ArcTable entries may be missing.
+	// cryptographically valid root whose materialized entries may be missing.
 	//
-	// To recover, use errors.As to recover IndexWriteFailedError and call
-	// Writer.RetryIndexWrite. The error carries the exact old->new ArcTable
+	// To recover, use errors.As to recover MaterializationWriteFailedError and call
+	// Writer.RetryMaterializationWrite. The error carries the exact old->new materialization
 	// transition because retrying the original writer operation is not
 	// guaranteed to work after a non-atomic backend has partially applied the
 	// failed index update (for example, after invalidating the old root mapping).
-	ErrIndexWriteFailed = errors.New("arctable index write failed after semantic commit")
+	ErrMaterializationWriteFailed = errors.New("materializer materialization write failed after semantic commit")
 )
 
-// IndexWriteFailedError carries the newRoot produced by the semantic layer when
-// the ArcTable index write failed. errors.Is(err, ErrIndexWriteFailed) and
+// MaterializationWriteFailedError carries the newRoot produced by the semantic layer when
+// the ArcSet materialization write failed. errors.Is(err, ErrMaterializationWriteFailed) and
 // errors.Is(err, <underlying cause>) both succeed.
 //
-// The fields are exposed for diagnostics, correlation, and index repair.
-// IndexBase and IndexDelta capture the failed publication so callers can retry
-// it with Writer.RetryIndexWrite. For non-branching ArcTable backends, retry
+// The fields are exposed for diagnostics, correlation, and materialization repair.
+// MaterializationBase and MaterializationDelta capture the failed publication so callers can retry
+// it with Writer.RetryMaterializationWrite. For non-branching materializers, retry
 // first verifies that the namespace has not advanced past this failed
 // transition; stale retries fail closed instead of overwriting later writes.
-type IndexWriteFailedError struct {
+type MaterializationWriteFailedError struct {
 	// NewRoot is the content-addressed root the semantic layer committed. It is
-	// valid in the semantic sense, but its ArcTable index entries may not have
+	// valid in the semantic sense, but its ArcSet materialization may not have
 	// been persisted.
 	NewRoot cid.Cid
-	// Namespace is the namespace of the failed index write, for retry context.
+	// Namespace is the namespace of the failed materialization write, for retry context.
 	Namespace string
 	// OldRoot is the base root the write transitioned from (cid.Undef for
 	// CreateStructure).
 	OldRoot cid.Cid
-	// IndexBase is the namespace arc snapshot immediately before the failed
-	// ArcTable publication. It is used to reject stale retries on overwrite-like
+	// MaterializationBase is the namespace arc snapshot immediately before the failed
+	// publication. It is used to reject stale retries on overwrite-like
 	// backends whose physical arc keys are namespace-scoped rather than
 	// root-scoped.
-	IndexBase arcset.ArcSet
-	// IndexDelta is the exact ArcTable update payload for OldRoot -> NewRoot.
+	MaterializationBase arcset.ArcSet
+	// MaterializationDelta is the exact update payload for OldRoot -> NewRoot.
 	// It may be a full snapshot for create-style writes.
-	IndexDelta arcset.ArcSet
-	// Cause is the error returned by ArcTable.Update.
+	MaterializationDelta arcset.ArcSet
+	// Cause is the error returned by the materializer's Update method.
 	Cause error
 }
 
-func (e *IndexWriteFailedError) Error() string {
-	return fmt.Errorf("%w (newRoot=%s): %v", ErrIndexWriteFailed, e.NewRoot, e.Cause).Error()
+func (e *MaterializationWriteFailedError) Error() string {
+	return fmt.Errorf("%w (newRoot=%s): %v", ErrMaterializationWriteFailed, e.NewRoot, e.Cause).Error()
 }
 
-func (e *IndexWriteFailedError) Unwrap() error {
-	return errors.Join(ErrIndexWriteFailed, e.Cause)
+func (e *MaterializationWriteFailedError) Unwrap() error {
+	return errors.Join(ErrMaterializationWriteFailed, e.Cause)
 }
 
-// RetryIndexWrite retries the failed ArcTable publication captured by this
-// error. Prefer Writer.RetryIndexWrite when a writer is available: the writer
+// RetryMaterializationWrite retries the failed ArcSet publication captured by this
+// error. Prefer Writer.RetryMaterializationWrite when a writer is available: the writer
 // method reuses the same freshness guard as normal updates and serializes retry
 // against concurrent root-consuming writes.
-func (e *IndexWriteFailedError) RetryIndexWrite(ctx context.Context, table ArcTable) error {
-	return e.retryIndexWrite(ctx, table)
+func (e *MaterializationWriteFailedError) RetryMaterializationWrite(ctx context.Context, table Materializer) error {
+	return e.retryMaterializationWrite(ctx, table)
 }
 
-func (e *IndexWriteFailedError) retryIndexWrite(ctx context.Context, table ArcTable) error {
+func (e *MaterializationWriteFailedError) retryMaterializationWrite(ctx context.Context, table Materializer) error {
 	if e == nil {
-		return fmt.Errorf("index write failure is nil")
+		return fmt.Errorf("materialization write failure is nil")
 	}
 	if table == nil {
-		return fmt.Errorf("arctable is nil")
+		return fmt.Errorf("materializer is nil")
 	}
-	if e.IndexDelta == nil {
-		return fmt.Errorf("%w: missing index delta", ErrIndexWriteFailed)
+	if e.MaterializationDelta == nil {
+		return fmt.Errorf("%w: missing materialization delta", ErrMaterializationWriteFailed)
 	}
 	if !supportsConcurrentBranches(table) {
-		if e.IndexBase == nil {
-			return fmt.Errorf("%w: missing index retry base", ErrIndexWriteFailed)
+		if e.MaterializationBase == nil {
+			return fmt.Errorf("%w: missing materialization retry base", ErrMaterializationWriteFailed)
 		}
 		current, err := table.Snapshot(ctx, e.Namespace, cid.Undef)
 		if err != nil {
-			return fmt.Errorf("ArcTable.Snapshot failed during index retry: %w", err)
+			return fmt.Errorf("Materializer.Snapshot failed during materialization retry: %w", err)
 		}
-		expectedAfter, err := applyArcSetDelta(e.IndexBase, e.IndexDelta)
+		expectedAfter, err := applyArcSetDelta(e.MaterializationBase, e.MaterializationDelta)
 		if err != nil {
 			return err
 		}
-		matchesBase, err := arcSetsEqual(current, e.IndexBase)
+		matchesBase, err := arcSetsEqual(current, e.MaterializationBase)
 		if err != nil {
 			return err
 		}
@@ -138,28 +130,28 @@ func (e *IndexWriteFailedError) retryIndexWrite(ctx context.Context, table ArcTa
 			return err
 		}
 		if !matchesBase && !matchesAfter {
-			return fmt.Errorf("%w: stale index retry for namespace %q oldRoot=%s newRoot=%s", ErrStaleRoot, e.Namespace, e.OldRoot, e.NewRoot)
+			return fmt.Errorf("%w: stale materialization retry for namespace %q oldRoot=%s newRoot=%s", ErrStaleRoot, e.Namespace, e.OldRoot, e.NewRoot)
 		}
 	}
-	if err := table.Update(ctx, e.Namespace, e.NewRoot, e.OldRoot, e.IndexDelta); err != nil {
-		return &IndexWriteFailedError{
-			NewRoot:    e.NewRoot,
-			Namespace:  e.Namespace,
-			OldRoot:    e.OldRoot,
-			IndexBase:  e.IndexBase,
-			IndexDelta: e.IndexDelta,
-			Cause:      err,
+	if err := table.Update(ctx, e.Namespace, e.NewRoot, e.OldRoot, e.MaterializationDelta); err != nil {
+		return &MaterializationWriteFailedError{
+			NewRoot:              e.NewRoot,
+			Namespace:            e.Namespace,
+			OldRoot:              e.OldRoot,
+			MaterializationBase:  e.MaterializationBase,
+			MaterializationDelta: e.MaterializationDelta,
+			Cause:                err,
 		}
 	}
 	return nil
 }
 
-func indexRetryBase(ctx context.Context, table ArcTable, namespace string) (arcset.ArcSet, error) {
+func materializationRetryBase(ctx context.Context, table Materializer, namespace string) (arcset.ArcSet, error) {
 	if table == nil || supportsConcurrentBranches(table) {
 		return nil, nil
 	}
 	// Overwrite-like backends need a namespace snapshot so retry can reject
-	// stale replays after a non-atomic index write failure.
+	// stale replays after a non-atomic materialization write failure.
 	return table.Snapshot(ctx, namespace, cid.Undef)
 }
 
@@ -262,21 +254,21 @@ type BatchUpdateResult struct {
 }
 
 // Writer implements the write-side API for MALT.
-// It coordinates keyed-map semantics and ArcTable (index) updates to execute
+// It coordinates keyed-map semantics and Materializer (index) updates to execute
 // the unified arc update procedure from Sec 4.5.
 //
 // The legacy UpdateArc/BatchUpdateArcs paths only enforce single-consumer root
-// freshness for non-branching ArcTable backends. MVCC-style backends such as
-// versioned ArcTable remain branchable and may accept multiple children from
+// freshness for non-branching Materializer backends. MVCC-style backends such as
+// versioned Materializer remain branchable and may accept multiple children from
 // the same parent root.
 //
 // Symmetric to Resolver on the read side:
-//   - Resolver: (root, path) -> (target, transcript) via ArcTable lookup + semantic prove
-//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + ArcTable apply
+//   - Resolver: (root, path) -> (target, transcript) via Materializer lookup + semantic prove
+//   - Writer:   (root, path, newTarget) -> newRoot via semantic update + Materializer apply
 type Writer struct {
 	semantic     mapping.Semantics
 	listSemantic list.Semantics
-	arctable     ArcTable
+	materializer Materializer
 	freshness    *rootFreshnessGuard
 }
 
@@ -284,8 +276,8 @@ type Writer struct {
 //
 // Parameters:
 //   - semantic: keyed-map semantic (required)
-//   - arctable: Explicit Arc Table (required)
-func NewWriter(semantic mapping.Semantics, arctable ArcTable, lists ...list.Semantics) *Writer {
+//   - materializer: Explicit Arc Table (required)
+func NewWriter(semantic mapping.Semantics, materializer Materializer, lists ...list.Semantics) *Writer {
 	var listSemantic list.Semantics
 	if len(lists) > 0 {
 		listSemantic = lists[0]
@@ -293,23 +285,23 @@ func NewWriter(semantic mapping.Semantics, arctable ArcTable, lists ...list.Sema
 	return &Writer{
 		semantic:     semantic,
 		listSemantic: listSemantic,
-		arctable:     arctable,
-		freshness:    rootFreshnessGuardFor(arctable),
+		materializer: materializer,
+		freshness:    rootFreshnessGuardFor(materializer),
 	}
 }
 
-// RetryIndexWrite retries a failed writer-level ArcTable publication.
+// RetryMaterializationWrite retries a failed writer-level Materializer publication.
 //
 // The retry is serialized through the same freshness guard as UpdateArc and
-// BatchUpdateArcs for non-branching ArcTable backends. This closes the window
+// BatchUpdateArcs for non-branching Materializer backends. This closes the window
 // where a captured failed retry could race with a later root-consuming write for
 // the same (namespace, oldRoot) and overwrite namespace-scoped arc entries.
-func (w *Writer) RetryIndexWrite(ctx context.Context, err *IndexWriteFailedError) error {
+func (w *Writer) RetryMaterializationWrite(ctx context.Context, err *MaterializationWriteFailedError) error {
 	if w == nil {
 		return fmt.Errorf("writer is nil")
 	}
 	if err == nil {
-		return fmt.Errorf("index write failure is nil")
+		return fmt.Errorf("materialization write failure is nil")
 	}
 	if w.freshness != nil && err.OldRoot.Defined() {
 		unlock, beginErr := w.freshness.beginUpdate(err.Namespace, err.OldRoot)
@@ -318,7 +310,7 @@ func (w *Writer) RetryIndexWrite(ctx context.Context, err *IndexWriteFailedError
 		}
 		defer unlock()
 	}
-	if retryErr := err.retryIndexWrite(ctx, w.arctable); retryErr != nil {
+	if retryErr := err.retryMaterializationWrite(ctx, w.materializer); retryErr != nil {
 		return retryErr
 	}
 	if w.freshness != nil {
@@ -344,8 +336,8 @@ func newRootFreshnessGuard() *rootFreshnessGuard {
 	}
 }
 
-func sharedRootFreshnessGuard(table ArcTable) *rootFreshnessGuard {
-	key, ok := arctableFreshnessIdentity(table)
+func sharedRootFreshnessGuard(table Materializer) *rootFreshnessGuard {
+	key, ok := materializerFreshnessIdentity(table)
 	if !ok {
 		return newRootFreshnessGuard()
 	}
@@ -353,7 +345,7 @@ func sharedRootFreshnessGuard(table ArcTable) *rootFreshnessGuard {
 	return guard.(*rootFreshnessGuard)
 }
 
-func arctableFreshnessIdentity(table ArcTable) (any, bool) {
+func materializerFreshnessIdentity(table Materializer) (any, bool) {
 	if table == nil {
 		return nil, false
 	}
@@ -363,18 +355,18 @@ func arctableFreshnessIdentity(table ArcTable) (any, bool) {
 	return table, true
 }
 
-func rootFreshnessGuardFor(table ArcTable) *rootFreshnessGuard {
+func rootFreshnessGuardFor(table Materializer) *rootFreshnessGuard {
 	if supportsConcurrentBranches(table) {
 		return nil
 	}
 	return sharedRootFreshnessGuard(table)
 }
 
-func supportsConcurrentBranches(table ArcTable) bool {
+func supportsConcurrentBranches(table Materializer) bool {
 	if table == nil {
 		return false
 	}
-	branching, ok := table.(BranchingArcTable)
+	branching, ok := table.(BranchingMaterializer)
 	return ok && branching.SupportsConcurrentBranches()
 }
 
@@ -512,14 +504,14 @@ func filterLogicalArcSet(arcs arcset.ArcSet) (arcset.ArcSet, error) {
 // UpdateArc executes the unified arc update procedure.
 //
 // Given a structure root, path, and new target CID, this method:
-//  1. Looks up the current binding: c = ArcTable.Get(root, path)
+//  1. Looks up the current binding: c = Materializer.Get(root, path)
 //  2. Updates the commitment: newRoot = semantic.Update(root, path, c, newTarget)
-//  3. Applies the update to ArcTable using the full new arc set for newRoot
+//  3. Applies the update to Materializer using the full new arc set for newRoot
 //
 // UpdateArc is a legacy root-consuming API. Within one process, writers that
-// share the same ArcTable instance advance (namespace, root) exactly once for
+// share the same Materializer instance advance (namespace, root) exactly once for
 // successful non-no-op calls; later attempts to update the same base root return
-// ErrStaleRoot instead of silently forking or overwriting ArcTable state.
+// ErrStaleRoot instead of silently forking or overwriting Materializer state.
 //
 // The operation covers three semantic cases:
 //   - Insert (⊥ → c)
@@ -542,19 +534,19 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	}
 
 	// Step 1: Snapshot the current arc set for delta computation, then read the
-	// target path through ArcTable.Get for operation
+	// target path through Materializer.Get for operation
 	// classification. Get must stay in the classification path because some
 	// backends may tolerate corrupt entries while materializing broad snapshots;
 	// a targeted read needs to fail closed instead of turning corruption into a
 	// missing-arc no-op.
-	snapshot, err := w.arctable.Snapshot(ctx, namespace, root)
+	snapshot, err := w.materializer.Snapshot(ctx, namespace, root)
 	if err != nil {
-		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
+		return nil, fmt.Errorf("Materializer.Snapshot failed: %w", err)
 	}
-	oldTarget, err := w.arctable.Get(ctx, namespace, root, canonicalPath)
+	oldTarget, err := w.materializer.Get(ctx, namespace, root, canonicalPath)
 	if err != nil {
 		if !errors.Is(err, arcset.ErrNotFound) {
-			return nil, fmt.Errorf("ArcTable.Get failed: %w", err)
+			return nil, fmt.Errorf("Materializer.Get failed: %w", err)
 		}
 		oldTarget = cid.Undef
 	}
@@ -606,29 +598,29 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if err != nil {
 		return nil, err
 	}
-	retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+	retryBase, err := materializationRetryBase(ctx, w.materializer, namespace)
 	if err != nil {
-		return nil, &IndexWriteFailedError{
-			NewRoot:    newRoot,
-			Namespace:  namespace,
-			OldRoot:    root,
-			IndexDelta: delta,
-			Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+		return nil, &MaterializationWriteFailedError{
+			NewRoot:              newRoot,
+			Namespace:            namespace,
+			OldRoot:              root,
+			MaterializationDelta: delta,
+			Cause:                fmt.Errorf("Materializer.Snapshot retry base failed: %w", err),
 		}
 	}
 
-	// Step 3: Apply update to ArcTable as an old->new delta. This keeps versioned ArcTable
+	// Step 3: Apply update to Materializer as an old->new delta. This keeps versioned Materializer
 	// compact while still emitting tombstones for deletions. If this fails the
 	// newRoot is semantically valid but unreadable via the index; surface it so
-	// the caller can retry the idempotent ArcTable write.
-	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
-		return nil, &IndexWriteFailedError{
-			NewRoot:    newRoot,
-			Namespace:  namespace,
-			OldRoot:    root,
-			IndexBase:  retryBase,
-			IndexDelta: delta,
-			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
+	// the caller can retry the idempotent Materializer write.
+	if err := w.materializer.Update(ctx, namespace, newRoot, root, delta); err != nil {
+		return nil, &MaterializationWriteFailedError{
+			NewRoot:              newRoot,
+			Namespace:            namespace,
+			OldRoot:              root,
+			MaterializationBase:  retryBase,
+			MaterializationDelta: delta,
+			Cause:                fmt.Errorf("Materializer.Update failed: %w", err),
 		}
 	}
 	if w.freshness != nil {
@@ -650,12 +642,12 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 // Given a structure root and a map of path → newTarget, this method:
 //  1. Looks up all current bindings
 //  2. Applies semantic.BatchUpdate atomically over the current keyed view
-//  3. Applies all updates to ArcTable
+//  3. Applies all updates to Materializer
 //
 // BatchUpdateArcs is a legacy root-consuming API. Within one process, writers
-// that share the same ArcTable instance advance (namespace, root) exactly once
+// that share the same Materializer instance advance (namespace, root) exactly once
 // for successful non-no-op calls; later attempts to update the same base root
-// return ErrStaleRoot instead of silently forking or overwriting ArcTable state.
+// return ErrStaleRoot instead of silently forking or overwriting Materializer state.
 //
 // If any update in the batch fails, the entire operation is rejected and
 // no state is modified.
@@ -679,12 +671,12 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	}
 
 	// Step 1: Get current arc set snapshot
-	snapshot, err := w.arctable.Snapshot(ctx, namespace, root)
+	snapshot, err := w.materializer.Snapshot(ctx, namespace, root)
 	if err != nil {
-		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
+		return nil, fmt.Errorf("Materializer.Snapshot failed: %w", err)
 	}
 	// Step 2: Look up current bindings and classify operations. The snapshot is
-	// still used below to build the ArcTable delta, but classification uses
+	// still used below to build the Materializer delta, but classification uses
 	// BatchGet so backend read failures fail closed while missing paths are
 	// represented as cid.Undef.
 	perArc := make(map[arcset.Path]UpdateResult, len(normalizedUpdates))
@@ -694,9 +686,9 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	for path := range normalizedUpdates {
 		paths = append(paths, path)
 	}
-	oldTargets, err := w.arctable.BatchGet(ctx, namespace, root, paths)
+	oldTargets, err := w.materializer.BatchGet(ctx, namespace, root, paths)
 	if err != nil {
-		return nil, fmt.Errorf("ArcTable.BatchGet failed: %w", err)
+		return nil, fmt.Errorf("Materializer.BatchGet failed: %w", err)
 	}
 
 	for path, newTarget := range normalizedUpdates {
@@ -759,28 +751,28 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 	if err != nil {
 		return nil, err
 	}
-	retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+	retryBase, err := materializationRetryBase(ctx, w.materializer, namespace)
 	if err != nil {
-		return nil, &IndexWriteFailedError{
-			NewRoot:    newRoot,
-			Namespace:  namespace,
-			OldRoot:    root,
-			IndexDelta: delta,
-			Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+		return nil, &MaterializationWriteFailedError{
+			NewRoot:              newRoot,
+			Namespace:            namespace,
+			OldRoot:              root,
+			MaterializationDelta: delta,
+			Cause:                fmt.Errorf("Materializer.Snapshot retry base failed: %w", err),
 		}
 	}
 
-	// Step 4: Apply the update delta to ArcTable. On failure the newRoot is
+	// Step 4: Apply the update delta to Materializer. On failure the newRoot is
 	// semantically valid but its index entries are missing; surface it so the
 	// caller can retry the idempotent write.
-	if err := w.arctable.Update(ctx, namespace, newRoot, root, delta); err != nil {
-		return nil, &IndexWriteFailedError{
-			NewRoot:    newRoot,
-			Namespace:  namespace,
-			OldRoot:    root,
-			IndexBase:  retryBase,
-			IndexDelta: delta,
-			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
+	if err := w.materializer.Update(ctx, namespace, newRoot, root, delta); err != nil {
+		return nil, &MaterializationWriteFailedError{
+			NewRoot:              newRoot,
+			Namespace:            namespace,
+			OldRoot:              root,
+			MaterializationBase:  retryBase,
+			MaterializationDelta: delta,
+			Cause:                fmt.Errorf("Materializer.Update failed: %w", err),
 		}
 	}
 	if w.freshness != nil {
@@ -805,7 +797,7 @@ func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid
 //
 // This is the initial commitment operation:
 //  1. Commits the arc set via the semantic layer
-//  2. Stores arcs in ArcTable (first version, no parent)
+//  2. Stores arcs in Materializer (first version, no parent)
 func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arcset.ArcSet) (cid.Cid, error) {
 	if arcs == nil {
 		return cid.Undef, fmt.Errorf("arc set is nil")
@@ -823,27 +815,27 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 	if err != nil {
 		return cid.Undef, fmt.Errorf("semantic.Commit failed: %w", err)
 	}
-	retryBase, err := indexRetryBase(ctx, w.arctable, namespace)
+	retryBase, err := materializationRetryBase(ctx, w.materializer, namespace)
 	if err != nil {
-		return cid.Undef, &IndexWriteFailedError{
-			NewRoot:    root,
-			Namespace:  namespace,
-			OldRoot:    cid.Undef,
-			IndexDelta: normalizedSnapshot,
-			Cause:      fmt.Errorf("ArcTable.Snapshot retry base failed: %w", err),
+		return cid.Undef, &MaterializationWriteFailedError{
+			NewRoot:              root,
+			Namespace:            namespace,
+			OldRoot:              cid.Undef,
+			MaterializationDelta: normalizedSnapshot,
+			Cause:                fmt.Errorf("Materializer.Snapshot retry base failed: %w", err),
 		}
 	}
 
-	// Step 2: Store arcs in ArcTable (first version). On failure root is
+	// Step 2: Store arcs in Materializer (first version). On failure root is
 	// semantically committed but has no index entries; surface it for retry.
-	if err := w.arctable.Update(ctx, namespace, root, cid.Undef, normalizedSnapshot); err != nil {
-		return cid.Undef, &IndexWriteFailedError{
-			NewRoot:    root,
-			Namespace:  namespace,
-			OldRoot:    cid.Undef,
-			IndexBase:  retryBase,
-			IndexDelta: normalizedSnapshot,
-			Cause:      fmt.Errorf("ArcTable.Update failed: %w", err),
+	if err := w.materializer.Update(ctx, namespace, root, cid.Undef, normalizedSnapshot); err != nil {
+		return cid.Undef, &MaterializationWriteFailedError{
+			NewRoot:              root,
+			Namespace:            namespace,
+			OldRoot:              cid.Undef,
+			MaterializationBase:  retryBase,
+			MaterializationDelta: normalizedSnapshot,
+			Cause:                fmt.Errorf("Materializer.Update failed: %w", err),
 		}
 	}
 	if w.freshness != nil {
@@ -855,7 +847,7 @@ func (w *Writer) CreateStructure(ctx context.Context, namespace string, arcs arc
 
 // GetArc retrieves the current target CID for an arc path.
 //
-// This is a read-through operation that delegates to ArcTable.
+// This is a read-through operation that delegates to Materializer.
 // Returns ErrArcNotFound if the path does not exist.
 func (w *Writer) GetArc(ctx context.Context, namespace string, root cid.Cid, path string) (cid.Cid, error) {
 	if !root.Defined() {
@@ -866,12 +858,12 @@ func (w *Writer) GetArc(ctx context.Context, namespace string, root cid.Cid, pat
 		return cid.Undef, ErrEmptyPath
 	}
 
-	target, err := w.arctable.Get(ctx, namespace, root, canonicalPath)
+	target, err := w.materializer.Get(ctx, namespace, root, canonicalPath)
 	if err != nil {
 		if errors.Is(err, arcset.ErrNotFound) {
 			return cid.Undef, fmt.Errorf("%s: %w", canonicalPath.String(), ErrArcNotFound)
 		}
-		return cid.Undef, fmt.Errorf("ArcTable.Get failed: %w", err)
+		return cid.Undef, fmt.Errorf("Materializer.Get failed: %w", err)
 	}
 
 	return target, nil
@@ -883,9 +875,9 @@ func (w *Writer) GetSnapshot(ctx context.Context, namespace string, root cid.Cid
 		return nil, ErrInvalidRoot
 	}
 
-	snapshot, err := w.arctable.Snapshot(ctx, namespace, root)
+	snapshot, err := w.materializer.Snapshot(ctx, namespace, root)
 	if err != nil {
-		return nil, fmt.Errorf("ArcTable.Snapshot failed: %w", err)
+		return nil, fmt.Errorf("Materializer.Snapshot failed: %w", err)
 	}
 
 	return filterLogicalArcSet(snapshot)

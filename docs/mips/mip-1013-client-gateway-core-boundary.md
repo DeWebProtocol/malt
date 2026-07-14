@@ -8,7 +8,7 @@ type: Standards Track
 category: Core
 created: 2026-07-13
 requires: 1010, 1011, 1012
-replaces: none
+replaces: 1010
 ---
 
 ## Abstract
@@ -73,11 +73,10 @@ The target implementation packages are:
 core contracts:       package malt, auth/, protocol/, mutation/, wire/
 legacy compatibility: artifact/
 execution contract:   execution/
-reference backend:    graph/, runtime/, reference/executor/, server/
+execution algorithms: graph/, graph/runtime/
 client verification:  sdk/verifier/, cmd/malt-verifier-wasm/
-UnixFS model:          model/unixfs/
-UnixFS client:         sdk/unixfs/
-UnixFS runtime:        runtime/unixfs/
+client application:    DeWebProtocol/malt-client
+gateway runtime:       DeWebProtocol/gateway
 ```
 
 The root `malt` package must not import graph, runtime, server, storage,
@@ -97,12 +96,10 @@ UnixFS is called the MALT UnixFS application model/profile. The term `layout`
 is reserved for a narrower materialization choice such as `flat` versus
 `hierarchical`, or raw versus fixed-list payload organization.
 
-- `model/unixfs` owns schema, reserved coordinates, manifest/chunk formats,
-  invariants, and model-specific mutation plans.
-- `sdk/unixfs` owns staging, upload planning, portable mutation construction,
-  and local payload/range-body verification.
-- `runtime/unixfs` is an optional in-process reader/writer/proof/content adapter
-  used by the reference executor or a gateway.
+The independent `malt-client` repository owns UnixFS schema, reserved
+coordinates, manifest/chunk formats, staging, upload planning, mutation
+construction, and local payload/range-body verification. The generic gateway
+does not parse UnixFS paths or expose a UnixFS content adapter.
 
 Future TypeScript object support belongs primarily in a client SDK that maps
 JavaScript object syntax into canonical segments and mutations. Core does not
@@ -110,11 +107,10 @@ parse `.` or `[]` syntax.
 
 ### Process Naming
 
-The current process started by `malt start` remains available for development
-compatibility, but documentation defines it as the all-in-one reference
-executor. A future client daemon/agent is a separate process that stores trusted
-roots, verifies locally, and communicates with a gateway without owning the
-server ArcTable.
+`malt-client` supplies the trusted local daemon/agent. It stores accepted and
+candidate roots, verifies locally, and communicates with a gateway without
+owning server ArcTable/KV/CAS state. The gateway is the untrusted execution
+process.
 
 ## Compatibility
 
@@ -125,9 +121,9 @@ v0.0.4 compatibility. New integrations use `malt.resolve/v0alpha1` and
 `graph/writer` mutation names are retained as deprecated aliases while
 integrations move to `mutation`.
 
-The former `layout/unixfs` package path is removed rather than made normative
-through a forwarding package. Integrators should select the model, client, or
-runtime package matching their role.
+v0.0.6 removes the in-module CLI, daemon, server, storage, ArcTable, and UnixFS
+packages without forwarding packages. This is an intentional pre-v1 source
+break; integrations use the separate client and gateway repositories.
 
 ## Security Considerations
 
@@ -147,7 +143,7 @@ multi-writer policy remain application or managed-gateway concerns.
 
 ## Implementation Status
 
-Implemented by PR #163 and released in v0.0.5. The release includes the package
-split, operation-specific resolve/read profiles, local CLI and browser/WASM
-verification, import-boundary tests, reference-executor terminology, and
-diagnostic-only remote verification.
+The operation-specific contracts and trust split were released in v0.0.5.
+v0.0.6 completes the repository split: core is SDK-only, the gateway owns
+ArcTable/KV/CAS execution, and `malt-client` owns the trusted CLI/daemon and
+UnixFS application.

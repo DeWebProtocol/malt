@@ -5,14 +5,13 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/proof/evidence"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
-	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	mappingradix "github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	kvstore_memory "github.com/dewebprotocol/malt/storage/kv/memory"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -27,17 +26,12 @@ func newPayloadCID(data []byte) (cid.Cid, error) {
 	return cid.NewCidV1(cid.Raw, mhash), nil
 }
 
-// newTestArcTable creates a new ArcTable for testing.
-func newTestArcTable() *overwrite.ArcTable {
-	kv := kvstore_memory.New()
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		panic(err)
-	}
-	return e
+// newTestMaterializer creates a new ArcSet materializer for testing.
+func newTestMaterializer() *materialmemory.Store {
+	return materialmemory.New(true)
 }
 
-func newSemantic(t *testing.T, e *overwrite.ArcTable) mapping.Semantics {
+func newSemantic(t *testing.T, e *materialmemory.Store) mapping.Semantics {
 	t.Helper()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
@@ -50,14 +44,14 @@ func newSemantic(t *testing.T, e *overwrite.ArcTable) mapping.Semantics {
 	return semantic
 }
 
-func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *overwrite.ArcTable, namespace string, arcs map[string]cid.Cid) cid.Cid {
+func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semantics, e *materialmemory.Store, namespace string, arcs map[string]cid.Cid) cid.Cid {
 	t.Helper()
 	root, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(arcs))
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
 	if err := e.Update(ctx, namespace, root, cid.Undef, arcset.NewSetFrom(arcs)); err != nil {
-		t.Fatalf("ArcTable.Update failed: %v", err)
+		t.Fatalf("ArcSet materializer.Update failed: %v", err)
 	}
 	return root
 }
@@ -65,7 +59,7 @@ func commitStructure(t *testing.T, ctx context.Context, semantic mapping.Semanti
 const testNamespace = "test-graph"
 
 func TestResolverExplicitOnly(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -116,7 +110,7 @@ func TestResolverExplicitOnly(t *testing.T) {
 }
 
 func TestResolverCanonicalizesResolvePath(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -142,7 +136,7 @@ func TestResolverCanonicalizesResolvePath(t *testing.T) {
 }
 
 func TestResolverExplicitLongestPrefix(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -167,7 +161,7 @@ func TestResolverExplicitLongestPrefix(t *testing.T) {
 }
 
 func TestResolverStopsAtNonMaltPayload(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -191,7 +185,7 @@ func TestResolverStopsAtNonMaltPayload(t *testing.T) {
 }
 
 func TestResolverTranscript(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -228,7 +222,7 @@ func TestResolverTranscript(t *testing.T) {
 }
 
 func TestResolverPayloadRedirect(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -266,7 +260,7 @@ func TestResolverPayloadRedirect(t *testing.T) {
 }
 
 func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -323,7 +317,7 @@ func TestResolveKeyAndResolve_ListTerminalNoPayloadRedirect(t *testing.T) {
 }
 
 func TestResolverMissingPayloadBindingFails(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -341,7 +335,7 @@ func TestResolverMissingPayloadBindingFails(t *testing.T) {
 }
 
 func TestResolverNonMaltEmptyPathIsTerminal(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()
@@ -363,7 +357,7 @@ func TestResolverNonMaltEmptyPathIsTerminal(t *testing.T) {
 }
 
 func TestResolverNonMaltPathReportsRemaining(t *testing.T) {
-	e := newTestArcTable()
+	e := newTestMaterializer()
 	semantic := newSemantic(t, e)
 
 	ctx := context.Background()

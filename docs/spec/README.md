@@ -26,11 +26,9 @@ compatibility. See [MIP-1012](../mips/mip-1012-segment-path-resolution.md) and
 - [Segment paths and resolution](./segment-paths.md)
 - [Commitment model](./commitment.md)
 - [CID and wire format](./cid-and-wire-format.md)
-- [HTTP API](./http-api.md)
 
 ## Notes
 
 - `mips/` remains the proposal, decision, and process bucket. It should link to
   reference specs instead of duplicating long schema definitions.
 - `policy/` holds compatibility, release, and threat-model policy.
-- `evaluation.md` holds evaluator-facing benchmark methods and artifact rules.

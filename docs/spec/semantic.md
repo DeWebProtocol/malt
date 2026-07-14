@@ -30,8 +30,8 @@ internally, but those storage keys are not semantic coordinates.
 ## Map Semantics
 
 Map semantics authenticate key-to-CID relations. The current public abstraction
-lives in `auth/semantic/mapping`, and the primary runtime implementation lives
-under `runtime/semantic/mapping/radix`.
+lives in `auth/semantic/mapping`, and the primary SDK implementation lives
+under `auth/semantic/mapping/radix`.
 
 Native map operations are:
 
@@ -48,8 +48,8 @@ for its file and directory objects.
 ## List Semantics
 
 List semantics authenticate ordered child references. The current public
-abstraction lives in `auth/semantic/list`, and the primary runtime
-implementation lives under `runtime/semantic/list/tree`.
+abstraction lives in `auth/semantic/list`, and the primary SDK implementation
+lives under `auth/semantic/list/tree`.
 
 Native list operations are:
 
@@ -104,24 +104,25 @@ semantic owner.
 
 - resolver is the read/proof port: `(root, query) -> result + ProofList`
 - writer is an execution port: `Apply(baseRoot, semantic mutation) -> newRoot + receipt`
-- `graph.CompatWriter` contains reference-runtime helper methods and is not the gateway product API
+- `graph.CompatWriter` contains algorithm compatibility helpers and is not a gateway product API
 
 Resolver traversal lives under `graph/resolver`. Mutation application lives
-under `graph/writer`. These are reference execution implementations, not core
+under `graph/writer`. These are SDK execution algorithms, not transport
 contracts. Client/application adapters translate source-domain data into
 queries and mutations; they do not redefine map or list semantics.
 
 The portable verification path lives under `auth/verifier` and `sdk/verifier`.
-It does not depend on resolver, writer, runtime, ArcTable, CAS, application
-model, server, gateway, or reference-executor state.
+It does not depend on resolver, writer, materializer, ArcTable, CAS,
+application model, server, or gateway state.
 
-## ArcTable Boundary
+## ArcSet Materialization Boundary
 
-ArcTable is namespace-scoped arcset persistence and materialization in the
-untrusted execution engine. It helps the runtime prove and update structure
-efficiently, but it is not part of the portable authentication kernel or the
-trust root. Incorrect state should either fail proof generation or produce
-evidence that the verifier rejects.
+Core proof-generation algorithms consume the narrow
+`auth/arcset/materializer.Store` capability. The capability loads and stores
+ArcSet views and internal commitment nodes, but does not define persistence or
+ArcTable semantics. ArcTable/KV implementations belong to executors such as
+the managed gateway. Incorrect materialized state should either fail proof
+generation or produce evidence that the portable verifier rejects.
 
 Freshness, head publication, merge policy, CAS availability, pinning, garbage
 collection, tenant isolation, and quotas are deployment or application policy,

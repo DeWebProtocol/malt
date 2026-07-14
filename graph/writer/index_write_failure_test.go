@@ -3,45 +3,43 @@ package writer
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	materializer "github.com/dewebprotocol/malt/auth/arcset/materializer"
+	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	semanticmapping "github.com/dewebprotocol/malt/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt/runtime/arctable"
-	"github.com/dewebprotocol/malt/runtime/arctable/overwrite"
-	"github.com/dewebprotocol/malt/runtime/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt/storage/kv/memory"
+	"github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
-// failingArcTable wraps an ArcTable and fails Update calls while the fail flag
+// failingMaterializer wraps an Materializer and fails Update calls while the fail flag
 // is set. It is the test seam for the cross-layer atomicity gap: the semantic
-// layer commits a valid newRoot, but the index write fails.
+// layer commits a valid newRoot, but the materialization write fails.
 //
 // The semantic runtime (radix) persists its own node/bucket slots through
-// ArcTable.Update using cid.Undef as the newRoot (see radix storeNodeSlots /
+// Materializer.Update using cid.Undef as the newRoot (see radix storeNodeSlots /
 // storeBucketEntries). The writer's logical arc write uses the real newRoot.
-// To inject a failure at exactly the writer-level index write without breaking
+// To inject a failure at exactly the writer-level materialization write without breaking
 // the semantic layer's internal persistence, we only fail updates whose
 // newRoot is defined — i.e. the logical root-publishing writes.
-type failingArcTable struct {
-	inner arctable.ArcTable
+type failingMaterializer struct {
+	inner materializer.Store
 	fail  bool
 	calls int
 }
 
-func (f *failingArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+func (f *failingMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	return f.inner.Get(ctx, namespace, root, path)
 }
 
-func (f *failingArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (f *failingMaterializer) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	return f.inner.BatchGet(ctx, namespace, root, paths)
 }
 
-func (f *failingArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+func (f *failingMaterializer) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
 	f.calls++
 	// Only fail the logical root-publishing write. The semantic runtime's
 	// slot/bucket persistence (newRoot == cid.Undef) must succeed so that the
@@ -52,130 +50,120 @@ func (f *failingArcTable) Update(ctx context.Context, namespace string, newRoot,
 	return f.inner.Update(ctx, namespace, newRoot, oldRoot, arcs)
 }
 
-func (f *failingArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+func (f *failingMaterializer) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
 	return f.inner.Snapshot(ctx, namespace, root)
 }
 
-func (f *failingArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+func (f *failingMaterializer) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
 	return f.inner.Iterate(ctx, namespace, root)
 }
 
-func (f *failingArcTable) Close() error { return f.inner.Close() }
+var errInjectedIndexFailure = errors.New("injected materializer failure")
 
-var errInjectedIndexFailure = errors.New("injected arctable failure")
-
-// rootDeletingFailingArcTable simulates a non-atomic ArcTable backend that has
+// rootDeletingFailingMaterializer simulates a non-atomic Materializer backend that has
 // already invalidated oldRoot before the logical root-publishing write fails.
 // Retrying the original writer operation against oldRoot cannot recover from
-// this state; the captured IndexDelta must be replayed instead.
-type rootDeletingFailingArcTable struct {
-	inner arctable.ArcTable
-	kv    *kvg
+// this state; the captured MaterializationDelta must be replayed instead.
+type rootDeletingFailingMaterializer struct {
+	inner materializer.Store
+	store *materialmemory.Store
 	fail  bool
 }
 
-func (f *rootDeletingFailingArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+func (f *rootDeletingFailingMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	return f.inner.Get(ctx, namespace, root, path)
 }
 
-func (f *rootDeletingFailingArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (f *rootDeletingFailingMaterializer) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	return f.inner.BatchGet(ctx, namespace, root, paths)
 }
 
-func (f *rootDeletingFailingArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+func (f *rootDeletingFailingMaterializer) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
 	if f.fail && newRoot.Defined() && oldRoot.Defined() {
-		if err := f.kv.Delete(ctx, arctable.RootKeyFormat(oldRoot)); err != nil {
-			return err
-		}
+		f.store.DeleteRoot(namespace, oldRoot)
 		return errInjectedIndexFailure
 	}
 	return f.inner.Update(ctx, namespace, newRoot, oldRoot, arcs)
 }
 
-func (f *rootDeletingFailingArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+func (f *rootDeletingFailingMaterializer) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
 	return f.inner.Snapshot(ctx, namespace, root)
 }
 
-func (f *rootDeletingFailingArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+func (f *rootDeletingFailingMaterializer) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
 	return f.inner.Iterate(ctx, namespace, root)
 }
 
-func (f *rootDeletingFailingArcTable) Close() error { return f.inner.Close() }
-
-// partialArcFailingArcTable simulates a non-atomic batch failure after one arc
+// partialArcFailingMaterializer simulates a non-atomic batch failure after one arc
 // from a multi-arc delta has already been applied. That intermediate namespace
-// state is neither IndexBase nor the full expected-after state, so
-// RetryIndexWrite must fail closed: it cannot distinguish this partial write
+// state is neither MaterializationBase nor the full expected-after state, so
+// RetryMaterializationWrite must fail closed: it cannot distinguish this partial write
 // from a later successful subset write.
-type partialArcFailingArcTable struct {
-	inner arctable.ArcTable
-	kv    *kvg
+type partialArcFailingMaterializer struct {
+	inner materializer.Store
+	store *materialmemory.Store
 	fail  bool
 }
 
-func (f *partialArcFailingArcTable) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
+func (f *partialArcFailingMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	return f.inner.Get(ctx, namespace, root, path)
 }
 
-func (f *partialArcFailingArcTable) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+func (f *partialArcFailingMaterializer) BatchGet(ctx context.Context, namespace string, root cid.Cid, paths []arcset.Path) (map[arcset.Path]cid.Cid, error) {
 	return f.inner.BatchGet(ctx, namespace, root, paths)
 }
 
-func (f *partialArcFailingArcTable) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
+func (f *partialArcFailingMaterializer) Update(ctx context.Context, namespace string, newRoot, oldRoot cid.Cid, arcs arcset.ArcSet) error {
 	if f.fail && newRoot.Defined() && oldRoot.Defined() {
 		arcMap, err := arcset.ToPathMap(arcs)
 		if err != nil {
 			return err
 		}
-		if err := f.kv.Delete(ctx, arctable.RootKeyFormat(oldRoot)); err != nil {
+		previous, err := f.inner.Snapshot(ctx, namespace, oldRoot)
+		if err != nil {
 			return err
 		}
-		if err := f.kv.Put(ctx, arctable.RootKeyFormat(newRoot), []byte(namespace)); err != nil {
+		partial, err := arcset.ToPathMap(previous)
+		if err != nil {
 			return err
 		}
+		f.store.DeleteRoot(namespace, oldRoot)
 		path := arcset.CanonicalizePath("a")
 		target, ok := arcMap[path]
 		if !ok || !target.Defined() {
 			return errInjectedIndexFailure
 		}
-		if err := f.kv.Put(ctx, arctable.DefaultArcKey(namespace, path), target.Bytes()); err != nil {
-			return err
-		}
+		partial[path] = target
+		f.store.ReplaceRoot(namespace, newRoot, partial)
 		return errInjectedIndexFailure
 	}
 	return f.inner.Update(ctx, namespace, newRoot, oldRoot, arcs)
 }
 
-func (f *partialArcFailingArcTable) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
+func (f *partialArcFailingMaterializer) Snapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error) {
 	return f.inner.Snapshot(ctx, namespace, root)
 }
 
-func (f *partialArcFailingArcTable) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
+func (f *partialArcFailingMaterializer) Iterate(ctx context.Context, namespace string, root cid.Cid) arcset.Iterator {
 	return f.inner.Iterate(ctx, namespace, root)
 }
 
-func (f *partialArcFailingArcTable) Close() error { return f.inner.Close() }
-
-// newFailingTestWriter builds a writer whose ArcTable Update is controlled by
-// the returned *failingArcTable. The semantic layer is real (radix over
-// overwrite ArcTable), so it commits a cryptographically valid newRoot before
-// the index write is attempted.
-func newFailingTestWriter(t *testing.T) (*Writer, *failingArcTable) {
+// newFailingTestWriter builds a writer whose Materializer Update is controlled by
+// the returned *failingMaterializer. The semantic layer is real (radix over
+// overwrite Materializer), so it commits a cryptographically valid newRoot before
+// the materialization write is attempted.
+func newFailingTestWriter(t *testing.T) (*Writer, *failingMaterializer) {
 	t.Helper()
-	kv := memory.New()
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("NewArcTable: %v", err)
-	}
+	e := materialmemory.New(false)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme: %v", err)
 	}
-	// The semantic layer writes its radix node slots through the same ArcTable
+	// The semantic layer writes its radix node slots through the same Materializer
 	// instance, so wrap once and share it. Node-slot writes go through Update
-	// too; we only fail the *logical* index write by toggling fail at the right
+	// too; we only fail the *logical* materialization write by toggling fail at the right
 	// moment in each test.
-	wrapped := &failingArcTable{inner: e}
+	wrapped := &failingMaterializer{inner: e}
 	maps, err := radix.NewMap(scheme, wrapped)
 	if err != nil {
 		t.Fatalf("NewMap: %v", err)
@@ -183,18 +171,14 @@ func newFailingTestWriter(t *testing.T) (*Writer, *failingArcTable) {
 	return NewWriter(maps, wrapped), wrapped
 }
 
-func newRootDeletingFailureWriter(t *testing.T) (*Writer, *rootDeletingFailingArcTable) {
+func newRootDeletingFailureWriter(t *testing.T) (*Writer, *rootDeletingFailingMaterializer) {
 	t.Helper()
-	kv := memory.New()
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("NewArcTable: %v", err)
-	}
+	e := materialmemory.New(false)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme: %v", err)
 	}
-	wrapped := &rootDeletingFailingArcTable{inner: e, kv: kv}
+	wrapped := &rootDeletingFailingMaterializer{inner: e, store: e}
 	maps, err := radix.NewMap(scheme, wrapped)
 	if err != nil {
 		t.Fatalf("NewMap: %v", err)
@@ -202,18 +186,14 @@ func newRootDeletingFailureWriter(t *testing.T) (*Writer, *rootDeletingFailingAr
 	return NewWriter(maps, wrapped), wrapped
 }
 
-func newPartialArcFailureWriter(t *testing.T) (*Writer, *partialArcFailingArcTable) {
+func newPartialArcFailureWriter(t *testing.T) (*Writer, *partialArcFailingMaterializer) {
 	t.Helper()
-	kv := memory.New()
-	e, err := overwrite.NewArcTable(overwrite.WithKVStore(kv))
-	if err != nil {
-		t.Fatalf("NewArcTable: %v", err)
-	}
+	e := materialmemory.New(false)
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatalf("NewScheme: %v", err)
 	}
-	wrapped := &partialArcFailingArcTable{inner: e, kv: kv}
+	wrapped := &partialArcFailingMaterializer{inner: e, store: e}
 	maps, err := radix.NewMap(scheme, wrapped)
 	if err != nil {
 		t.Fatalf("NewMap: %v", err)
@@ -223,8 +203,8 @@ func newPartialArcFailureWriter(t *testing.T) (*Writer, *partialArcFailingArcTab
 
 // TestUpdateArc_IndexWriteFailureReturnsNewRoot is the core regression guard
 // for review finding #1: when the semantic layer produces a newRoot but the
-// ArcTable index write fails, the returned error must carry newRoot so the
-// caller can retry the idempotent index write. Previously the newRoot was
+// Materializer materialization write fails, the returned error must carry newRoot so the
+// caller can retry the idempotent materialization write. Previously the newRoot was
 // discarded and the root became unreadable via the index.
 func TestUpdateArc_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	ctx := context.Background()
@@ -249,43 +229,43 @@ func TestUpdateArc_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	_, err = w.UpdateArc(ctx, namespace, root, "a", newValueA)
 	failing.fail = false
 	if err == nil {
-		t.Fatal("UpdateArc should have failed when ArcTable.Update failed")
+		t.Fatal("UpdateArc should have failed when Materializer.Update failed")
 	}
 
-	var idxErr *IndexWriteFailedError
+	var idxErr *MaterializationWriteFailedError
 	if !errors.As(err, &idxErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
-	if !errors.Is(err, ErrIndexWriteFailed) {
-		t.Errorf("errors.Is(err, ErrIndexWriteFailed) = false, want true")
+	if !errors.Is(err, ErrMaterializationWriteFailed) {
+		t.Errorf("errors.Is(err, ErrMaterializationWriteFailed) = false, want true")
 	}
 	if !errors.Is(err, errInjectedIndexFailure) {
 		t.Errorf("errors.Is(err, errInjectedIndexFailure) = false; underlying cause lost")
 	}
 	if !idxErr.NewRoot.Defined() {
-		t.Fatal("IndexWriteFailedError.NewRoot is undefined")
+		t.Fatal("MaterializationWriteFailedError.NewRoot is undefined")
 	}
 	if idxErr.NewRoot.Equals(root) {
-		t.Error("IndexWriteFailedError.NewRoot equals old root; semantic layer did not advance")
+		t.Error("MaterializationWriteFailedError.NewRoot equals old root; semantic layer did not advance")
 	}
-	if idxErr.IndexDelta == nil {
-		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	if idxErr.MaterializationDelta == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationDelta is nil")
 	}
-	if idxErr.IndexBase == nil {
-		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	if idxErr.MaterializationBase == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationBase is nil")
 	}
 
 	// The semantic root is valid but unreadable via the index before retry:
-	// GetArc against newRoot must fail because the index write never landed.
+	// GetArc against newRoot must fail because the materialization write never landed.
 	if _, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a"); err == nil {
-		t.Error("GetArc(newRoot, a) succeeded before retry; index write should be missing")
+		t.Error("GetArc(newRoot, a) succeeded before retry; materialization write should be missing")
 	}
 
-	// Recovery replays the captured ArcTable transition. This is stronger than
+	// Recovery replays the captured Materializer transition. This is stronger than
 	// re-running the original writer operation because a non-atomic backend may
 	// have partially invalidated oldRoot before returning the failure.
-	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
-		t.Fatalf("RetryIndexWrite: %v", err)
+	if err := idxErr.RetryMaterializationWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryMaterializationWrite: %v", err)
 	}
 	got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
 	if err != nil {
@@ -326,25 +306,25 @@ func TestBatchUpdateArcs_IndexWriteFailureReturnsNewRoot(t *testing.T) {
 	})
 	failing.fail = false
 	if err == nil {
-		t.Fatal("BatchUpdateArcs should have failed when ArcTable.Update failed")
+		t.Fatal("BatchUpdateArcs should have failed when Materializer.Update failed")
 	}
 
-	var idxErr *IndexWriteFailedError
+	var idxErr *MaterializationWriteFailedError
 	if !errors.As(err, &idxErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
 	if !idxErr.NewRoot.Defined() || idxErr.NewRoot.Equals(root) {
-		t.Fatalf("IndexWriteFailedError.NewRoot not advanced: %s", idxErr.NewRoot)
+		t.Fatalf("MaterializationWriteFailedError.NewRoot not advanced: %s", idxErr.NewRoot)
 	}
-	if idxErr.IndexDelta == nil {
-		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	if idxErr.MaterializationDelta == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationDelta is nil")
 	}
-	if idxErr.IndexBase == nil {
-		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	if idxErr.MaterializationBase == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationBase is nil")
 	}
 
-	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
-		t.Fatalf("RetryIndexWrite: %v", err)
+	if err := idxErr.RetryMaterializationWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryMaterializationWrite: %v", err)
 	}
 	for path, want := range map[string]cid.Cid{"a": newA, "b": newB} {
 		got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, path)
@@ -395,29 +375,29 @@ func TestApply_MapDeltaIndexWriteFailure(t *testing.T) {
 	_, err = w.Apply(ctx, namespace, mut)
 	failing.fail = false
 	if err == nil {
-		t.Fatal("Apply should have failed when ArcTable.Update failed")
+		t.Fatal("Apply should have failed when Materializer.Update failed")
 	}
 
-	var idxErr *IndexWriteFailedError
+	var idxErr *MaterializationWriteFailedError
 	if !errors.As(err, &idxErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
 	if !idxErr.NewRoot.Defined() {
-		t.Fatal("IndexWriteFailedError.NewRoot is undefined")
+		t.Fatal("MaterializationWriteFailedError.NewRoot is undefined")
 	}
-	if idxErr.IndexDelta == nil {
-		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	if idxErr.MaterializationDelta == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationDelta is nil")
 	}
-	if idxErr.IndexBase == nil {
-		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	if idxErr.MaterializationBase == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationBase is nil")
 	}
 }
 
 // TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot covers a non-atomic
 // backend window where the old root mapping has already been removed before
-// ArcTable.Update reports failure. In that state, re-running the original
+// Materializer.Update reports failure. In that state, re-running the original
 // writer operation cannot recover because Snapshot(oldRoot) no longer finds the
-// root; replaying IndexDelta from the error still works.
+// root; replaying MaterializationDelta from the error still works.
 func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 	ctx := context.Background()
 	namespace := "ns-partial-index-fail"
@@ -439,17 +419,17 @@ func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 	_, err = w.UpdateArc(ctx, namespace, root, "a", newA)
 	failing.fail = false
 	if err == nil {
-		t.Fatal("UpdateArc should have failed when ArcTable.Update partially failed")
+		t.Fatal("UpdateArc should have failed when Materializer.Update partially failed")
 	}
-	var idxErr *IndexWriteFailedError
+	var idxErr *MaterializationWriteFailedError
 	if !errors.As(err, &idxErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
-	if idxErr.IndexDelta == nil {
-		t.Fatal("IndexWriteFailedError.IndexDelta is nil")
+	if idxErr.MaterializationDelta == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationDelta is nil")
 	}
-	if idxErr.IndexBase == nil {
-		t.Fatal("IndexWriteFailedError.IndexBase is nil")
+	if idxErr.MaterializationBase == nil {
+		t.Fatal("MaterializationWriteFailedError.MaterializationBase is nil")
 	}
 
 	_, retryErr := w.UpdateArc(ctx, namespace, root, "a", newA)
@@ -457,19 +437,19 @@ func TestUpdateArc_IndexWriteRetrySurvivesMissingBaseRoot(t *testing.T) {
 		t.Fatal("retrying the original UpdateArc unexpectedly succeeded after the base root was removed")
 	}
 
-	if err := idxErr.RetryIndexWrite(ctx, failing); err != nil {
-		t.Fatalf("RetryIndexWrite: %v", err)
+	if err := idxErr.RetryMaterializationWrite(ctx, failing); err != nil {
+		t.Fatalf("RetryMaterializationWrite: %v", err)
 	}
 	got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
 	if err != nil {
-		t.Fatalf("GetArc after RetryIndexWrite: %v", err)
+		t.Fatalf("GetArc after RetryMaterializationWrite: %v", err)
 	}
 	if !got.Equals(newA) {
-		t.Fatalf("a after RetryIndexWrite = %s, want %s", got, newA)
+		t.Fatalf("a after RetryMaterializationWrite = %s, want %s", got, newA)
 	}
 }
 
-// TestUpdateArc_IndexWriteRetryRejectsStaleReplay guards overwrite ArcTable's
+// TestUpdateArc_IndexWriteRetryRejectsStaleReplay guards overwrite Materializer's
 // namespace-scoped physical arc keys. A stale failed delta must not be replayed
 // after a later successful write advances the same namespace, otherwise the
 // later root remains present but resolves to stale arc values.
@@ -495,14 +475,14 @@ func TestUpdateArc_IndexWriteRetryRejectsStaleReplay(t *testing.T) {
 	_, err = w.UpdateArc(ctx, namespace, root, "a", staleA)
 	failing.fail = false
 	if err == nil {
-		t.Fatal("first UpdateArc should have failed when ArcTable.Update failed")
+		t.Fatal("first UpdateArc should have failed when Materializer.Update failed")
 	}
-	var staleErr *IndexWriteFailedError
+	var staleErr *MaterializationWriteFailedError
 	if !errors.As(err, &staleErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
-	if staleErr.IndexBase == nil || staleErr.IndexDelta == nil {
-		t.Fatalf("stale error missing retry material: base=%v delta=%v", staleErr.IndexBase, staleErr.IndexDelta)
+	if staleErr.MaterializationBase == nil || staleErr.MaterializationDelta == nil {
+		t.Fatalf("stale error missing retry material: base=%v delta=%v", staleErr.MaterializationBase, staleErr.MaterializationDelta)
 	}
 
 	later, err := w.UpdateArc(ctx, namespace, root, "a", laterA)
@@ -517,20 +497,20 @@ func TestUpdateArc_IndexWriteRetryRejectsStaleReplay(t *testing.T) {
 		t.Fatalf("laterRoot before stale retry = %s, want %s", got, laterA)
 	}
 
-	err = staleErr.RetryIndexWrite(ctx, failing)
+	err = staleErr.RetryMaterializationWrite(ctx, failing)
 	if !errors.Is(err, ErrStaleRoot) {
-		t.Fatalf("stale RetryIndexWrite error = %v, want ErrStaleRoot", err)
+		t.Fatalf("stale RetryMaterializationWrite error = %v, want ErrStaleRoot", err)
 	}
 	got, err = w.GetArc(ctx, namespace, later.NewRoot, "a")
 	if err != nil {
 		t.Fatalf("GetArc(laterRoot) after stale retry: %v", err)
 	}
 	if !got.Equals(laterA) {
-		t.Fatalf("stale RetryIndexWrite changed laterRoot a = %s, want %s", got, laterA)
+		t.Fatalf("stale RetryMaterializationWrite changed laterRoot a = %s, want %s", got, laterA)
 	}
 }
 
-func TestWriterRetryIndexWriteMarksOldRootStale(t *testing.T) {
+func TestWriterRetryMaterializationWriteMarksOldRootStale(t *testing.T) {
 	ctx := context.Background()
 	namespace := "ns-writer-retry-freshness"
 	w, failing := newFailingTestWriter(t)
@@ -552,22 +532,22 @@ func TestWriterRetryIndexWriteMarksOldRootStale(t *testing.T) {
 	_, err = w.UpdateArc(ctx, namespace, root, "a", retryA)
 	failing.fail = false
 	if err == nil {
-		t.Fatal("UpdateArc should have failed when ArcTable.Update failed")
+		t.Fatal("UpdateArc should have failed when Materializer.Update failed")
 	}
-	var idxErr *IndexWriteFailedError
+	var idxErr *MaterializationWriteFailedError
 	if !errors.As(err, &idxErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
 
-	if err := w.RetryIndexWrite(ctx, idxErr); err != nil {
-		t.Fatalf("Writer.RetryIndexWrite: %v", err)
+	if err := w.RetryMaterializationWrite(ctx, idxErr); err != nil {
+		t.Fatalf("Writer.RetryMaterializationWrite: %v", err)
 	}
 	got, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
 	if err != nil {
-		t.Fatalf("GetArc after Writer.RetryIndexWrite: %v", err)
+		t.Fatalf("GetArc after Writer.RetryMaterializationWrite: %v", err)
 	}
 	if !got.Equals(retryA) {
-		t.Fatalf("a after Writer.RetryIndexWrite = %s, want %s", got, retryA)
+		t.Fatalf("a after Writer.RetryMaterializationWrite = %s, want %s", got, retryA)
 	}
 
 	w2 := NewWriter(w.semantic, failing)
@@ -611,9 +591,9 @@ func TestBatchUpdateArcs_IndexWriteRetryRejectsPartialDelta(t *testing.T) {
 	if err == nil {
 		t.Fatal("BatchUpdateArcs should have failed after partial arc apply")
 	}
-	var idxErr *IndexWriteFailedError
+	var idxErr *MaterializationWriteFailedError
 	if !errors.As(err, &idxErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
 
 	gotA, err := w.GetArc(ctx, namespace, idxErr.NewRoot, "a")
@@ -631,15 +611,15 @@ func TestBatchUpdateArcs_IndexWriteRetryRejectsPartialDelta(t *testing.T) {
 		t.Fatalf("partial failure b = %s, want old value %s", gotB, valueB)
 	}
 
-	if err := idxErr.RetryIndexWrite(ctx, failing); !errors.Is(err, ErrStaleRoot) {
-		t.Fatalf("RetryIndexWrite after partial delta error = %v, want ErrStaleRoot", err)
+	if err := idxErr.RetryMaterializationWrite(ctx, failing); !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("RetryMaterializationWrite after partial delta error = %v, want ErrStaleRoot", err)
 	}
 	gotB, err = w.GetArc(ctx, namespace, idxErr.NewRoot, "b")
 	if err != nil {
-		t.Fatalf("GetArc(b) after rejected RetryIndexWrite: %v", err)
+		t.Fatalf("GetArc(b) after rejected RetryMaterializationWrite: %v", err)
 	}
 	if !gotB.Equals(valueB) {
-		t.Fatalf("rejected RetryIndexWrite changed b = %s, want old value %s", gotB, valueB)
+		t.Fatalf("rejected RetryMaterializationWrite changed b = %s, want old value %s", gotB, valueB)
 	}
 }
 
@@ -675,14 +655,14 @@ func TestBatchUpdateArcs_IndexWriteRetryRejectsSubsetWriteStaleReplay(t *testing
 	})
 	failing.fail = false
 	if err == nil {
-		t.Fatal("BatchUpdateArcs should have failed when ArcTable.Update failed")
+		t.Fatal("BatchUpdateArcs should have failed when Materializer.Update failed")
 	}
-	var staleErr *IndexWriteFailedError
+	var staleErr *MaterializationWriteFailedError
 	if !errors.As(err, &staleErr) {
-		t.Fatalf("expected *IndexWriteFailedError, got %T: %v", err, err)
+		t.Fatalf("expected *MaterializationWriteFailedError, got %T: %v", err, err)
 	}
-	if staleErr.IndexBase == nil || staleErr.IndexDelta == nil {
-		t.Fatalf("stale error missing retry material: base=%v delta=%v", staleErr.IndexBase, staleErr.IndexDelta)
+	if staleErr.MaterializationBase == nil || staleErr.MaterializationDelta == nil {
+		t.Fatalf("stale error missing retry material: base=%v delta=%v", staleErr.MaterializationBase, staleErr.MaterializationDelta)
 	}
 
 	later, err := w.UpdateArc(ctx, namespace, root, "a", batchA)
@@ -701,9 +681,9 @@ func TestBatchUpdateArcs_IndexWriteRetryRejectsSubsetWriteStaleReplay(t *testing
 		t.Fatalf("laterRoot before stale retry = {a:%s b:%s}, want {a:%s b:%s}", gotA, gotB, batchA, valueB)
 	}
 
-	err = staleErr.RetryIndexWrite(ctx, failing)
+	err = staleErr.RetryMaterializationWrite(ctx, failing)
 	if !errors.Is(err, ErrStaleRoot) {
-		t.Fatalf("stale batch RetryIndexWrite error = %v, want ErrStaleRoot", err)
+		t.Fatalf("stale batch RetryMaterializationWrite error = %v, want ErrStaleRoot", err)
 	}
 	gotA, err = w.GetArc(ctx, namespace, later.NewRoot, "a")
 	if err != nil {
@@ -714,7 +694,7 @@ func TestBatchUpdateArcs_IndexWriteRetryRejectsSubsetWriteStaleReplay(t *testing
 		t.Fatalf("GetArc(laterRoot, b) after stale retry: %v", err)
 	}
 	if !gotA.Equals(batchA) || !gotB.Equals(valueB) {
-		t.Fatalf("stale batch RetryIndexWrite changed laterRoot = {a:%s b:%s}, want {a:%s b:%s}", gotA, gotB, batchA, valueB)
+		t.Fatalf("stale batch RetryMaterializationWrite changed laterRoot = {a:%s b:%s}, want {a:%s b:%s}", gotA, gotB, batchA, valueB)
 	}
 }
 
@@ -776,64 +756,6 @@ func TestUpdateArc_ClassificationStillCorrectFromSnapshot(t *testing.T) {
 	}
 }
 
-// TestUpdateArc_CorruptStoredTargetFailsClosed guards the classification path
-// against corrupt overwrite ArcTable entries. overwrite.Snapshot skips values
-// that cannot be cid.Cast; UpdateArc must still use targeted Get for oldTarget
-// classification so deleting a corrupt existing arc does not become a silent
-// "both undefined" no-op.
-func TestUpdateArc_CorruptStoredTargetFailsClosed(t *testing.T) {
-	ctx := context.Background()
-	namespace := "ns-corrupt-update"
-	w, _, _, kv := newTestWriter(t)
-
-	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
-		"a": fakeCID("value-a"),
-	}))
-	if err != nil {
-		t.Fatalf("CreateStructure: %v", err)
-	}
-	corruptStoredArcValue(t, ctx, kv, namespace, "a")
-
-	_, err = w.UpdateArc(ctx, namespace, root, "a", cid.Undef)
-	if err == nil {
-		t.Fatal("UpdateArc deleting corrupt stored target succeeded; want fail-closed error")
-	}
-	if !strings.Contains(err.Error(), "ArcTable.Get failed") {
-		t.Fatalf("UpdateArc error = %v, want targeted ArcTable.Get failure", err)
-	}
-}
-
-// TestBatchUpdateArcs_CorruptStoredTargetFailsClosed guards the batch path
-// against corrupt overwrite ArcTable entries. BatchUpdateArcs classifies through
-// BatchGet, so a corrupt stored CID may be omitted by the index lookup, but the
-// semantic layer must still reject the mismatched old value instead of silently
-// committing a partial view.
-func TestBatchUpdateArcs_CorruptStoredTargetFailsClosed(t *testing.T) {
-	ctx := context.Background()
-	namespace := "ns-corrupt-batch"
-	w, _, _, kv := newTestWriter(t)
-
-	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{
-		"a": fakeCID("value-a"),
-		"b": fakeCID("value-b"),
-	}))
-	if err != nil {
-		t.Fatalf("CreateStructure: %v", err)
-	}
-	corruptStoredArcValue(t, ctx, kv, namespace, "b")
-
-	_, err = w.BatchUpdateArcs(ctx, namespace, root, map[string]cid.Cid{
-		"a": fakeCID("new-a"),
-		"b": cid.Undef,
-	})
-	if err == nil {
-		t.Fatal("BatchUpdateArcs with corrupt stored target succeeded; want fail-closed error")
-	}
-	if !strings.Contains(err.Error(), "semantic.BatchUpdate failed") {
-		t.Fatalf("BatchUpdateArcs error = %v, want semantic old-value mismatch failure", err)
-	}
-}
-
 func makeCIDLocal(t *testing.T, data string) cid.Cid {
 	t.Helper()
 	mhash, err := mh.Sum([]byte(data), mh.SHA2_256, -1)
@@ -841,14 +763,6 @@ func makeCIDLocal(t *testing.T, data string) cid.Cid {
 		t.Fatalf("mh.Sum: %v", err)
 	}
 	return cid.NewCidV1(cid.Raw, mhash)
-}
-
-func corruptStoredArcValue(t *testing.T, ctx context.Context, kv *kvg, namespace, path string) {
-	t.Helper()
-	key := arctable.DefaultArcKey(namespace, arcset.CanonicalizePath(path))
-	if err := kv.Put(ctx, key, []byte("not-a-cid")); err != nil {
-		t.Fatalf("corrupt stored arc value: %v", err)
-	}
 }
 
 // Ensure semanticmapping import is exercised even if future edits remove the

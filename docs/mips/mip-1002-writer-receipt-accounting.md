@@ -43,9 +43,8 @@ Current code evidence:
 
 - `graph/writer` owns semantic mutation execution and receipts.
 - `api/http/types.go` exposes `SemanticMutationResponse`.
-- `server/routes_write.go` maps writer receipts into HTTP responses.
-- `model/unixfs` defines application mutation plans and
-  `runtime/unixfs/mutation.go` projects runtime state into those plans.
+- `DeWebProtocol/gateway` maps writer receipts into managed HTTP responses.
+- `DeWebProtocol/malt-client` defines UnixFS application mutation plans.
 
 ## Backwards Compatibility
 
