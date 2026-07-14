@@ -13,6 +13,9 @@ root publication, backend orchestration, S3/Filecoin/IPFS deployment policy,
 quota, cache policy, and operations, belongs in `DeWebProtocol/gateway` or
 private deployment overlays. Client/daemon and UnixFS behavior belongs in
 `DeWebProtocol/malt-client`; this repository contains neither product layer.
+Executable benchmark suites, evaluator plans, comparison adapters, and result
+schemas live in `DeWebProtocol/malt-evaluation`; paper interpretation and
+research narrative remain in `DeWebProtocol/documents`.
 
 ## Concepts
 
@@ -28,6 +31,10 @@ private deployment overlays. Client/daemon and UnixFS behavior belongs in
 - [v0.0.6 release notes](./releases/v0.0.6.md)
 - [v0.0.5 release notes](./releases/v0.0.5.md)
 - [v0.0.4 release notes](./releases/v0.0.4.md)
+
+## Evaluation
+
+- [Evaluation ownership and migration](./evaluation.md)
 
 ## Specifications
 

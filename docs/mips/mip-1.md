@@ -46,8 +46,10 @@ A MIP is not implementation work by default.
 A MIP is also not the canonical home for long-lived field tables, wire formats,
 JSON schemas, benchmark record rules, or other reference specifications. Those
 belong in `docs/spec/` or implementation-owned protocol schema directories.
-Research evaluation artifacts belong in `DeWebProtocol/documents`. A MIP may
-propose or record changes to those references.
+Executable evaluation suites, plans, adapters, and schemas belong in
+`DeWebProtocol/malt-evaluation`. Research results, paper figures, and narrative
+belong in `DeWebProtocol/documents`. A MIP may propose or record changes to
+those references.
 
 ### MIP Types
 

@@ -47,8 +47,8 @@ shapes, and benchmark record rules belong in:
 
 - [`../spec/`](../spec/) for protocol, API, proof, receipt, artifact, and wire
   references
-- [`../evaluation.md`](../evaluation.md) for routing historical evaluator work
-  to the research repository
+- [`../evaluation.md`](../evaluation.md) for routing executable evaluator work
+  to `malt-evaluation` and paper interpretation to the research repository
 
 A MIP may link to those reference docs and propose changing them, but it should
 not become the only copy of a schema or specification.
