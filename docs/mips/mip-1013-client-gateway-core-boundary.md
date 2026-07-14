@@ -79,6 +79,35 @@ client application:    DeWebProtocol/malt-client
 gateway runtime:       DeWebProtocol/gateway
 ```
 
+The client repository keeps three independently reviewable layers:
+
+```text
+transport/    untrusted native MALT, CAS, and diagnostic HTTP capabilities
+trust/        accepted/candidate root persistence and explicit promotion
+unixfs/       MALT-authenticated UnixFS application and payload binding
+merkledag/    separate CID/link-replay compatibility application
+```
+
+The concrete transport may share one HTTP connection, but callers depend on
+narrow capability interfaces. `transport` must not import application or trust
+packages. Merkle DAG compatibility must not import or manufacture MALT
+ProofList contracts.
+
+The gateway repository likewise separates composition from execution:
+
+```text
+internal/runtime/              per-scope service composition
+internal/profile/malt/         native Resolve/Read/mutation ports
+internal/profile/cas/          immutable byte ports
+internal/profile/merkledag/    CID/link-evidence compatibility ports
+internal/backend/              profile-neutral persistence capabilities
+internal/policy/               scope-adjacent managed-service policy
+```
+
+Named root publication is a gateway policy record, not a MALT head and not a
+client trust decision. It may track revisions or freeze a name, but every core
+resolve/read request still carries its explicit root.
+
 The root `malt` package must not import graph, runtime, server, storage,
 application-model, or SDK packages. `mutation` contains value types and
 validation only. `execution.Executor` may generate candidates but never
@@ -118,7 +147,9 @@ parse `.` or `[]` syntax.
 `malt-client` supplies the trusted local daemon/agent. It stores accepted and
 candidate roots, verifies locally, and communicates with a gateway without
 owning server ArcTable/KV/CAS state. The gateway is the untrusted execution
-process.
+process. A gateway may understand Merkle DAG/IPLD semantics only inside its
+separate compatibility profile; native MALT execution and generic CAS backends
+do not inherit those application semantics.
 
 ## Compatibility
 

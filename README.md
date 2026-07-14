@@ -49,8 +49,8 @@ Those responsibilities are split across independent repositories:
 
 | Repository | Responsibility |
 | --- | --- |
-| [`DeWebProtocol/malt-client`](https://github.com/DeWebProtocol/malt-client) | CLI/client daemon, trusted roots, local verification, UnixFS planning, payload binding, and Merkle DAG import compatibility |
-| [`DeWebProtocol/gateway`](https://github.com/DeWebProtocol/gateway) | Untrusted resolve/read/apply execution, ArcTable/KV/CAS, service and deployment policy |
+| [`DeWebProtocol/malt-client`](https://github.com/DeWebProtocol/malt-client) | CLI/daemon plus separate transport, trusted-root policy, UnixFS, payload binding, and Merkle DAG compatibility layers |
+| [`DeWebProtocol/gateway`](https://github.com/DeWebProtocol/gateway) | Untrusted native/compatibility profiles, runtime composition, ArcTable/KV/CAS backends, scope and publication policy |
 | [`DeWebProtocol/malt-evaluation`](https://github.com/DeWebProtocol/malt-evaluation) | Reproducible evaluator, benchmark suites, comparison adapters, plans, and schemas |
 | [`DeWebProtocol/malt-web`](https://github.com/DeWebProtocol/malt-web) | Browser client, local WASM verification, public website and tutorials |
 
