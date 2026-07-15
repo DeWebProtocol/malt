@@ -34,7 +34,7 @@ const (
 
 type Map struct {
 	commitment   *mapping.Commitment
-	materializer materializer.Store
+	materializer materializer.NodeStore
 }
 
 // ProveTimings separates materialization from commitment-open cost for
@@ -82,7 +82,7 @@ type bucketWitness struct {
 	Proof []byte `json:"proof"`
 }
 
-func NewMap(scheme commitment.IndexCommitment, e materializer.Store) (*Map, error) {
+func NewMap(scheme commitment.IndexCommitment, e materializer.NodeStore) (*Map, error) {
 	if scheme == nil {
 		return nil, fmt.Errorf("scheme is nil")
 	}

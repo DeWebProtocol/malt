@@ -12,9 +12,10 @@ when this checkout is part of the combined MALT workspace.
 - Keep canonical values, segment paths, semantic map/list authentication,
   commitments, ProofLists, resolve/read/mutation contracts, graph algorithms,
   portable verification, and transport-neutral schemas here.
-- Core algorithms may consume `auth/arcset/materializer.Store`, but must not
-  define durable ArcTable, KV, CAS, cache, HTTP, daemon, filesystem, UnixFS,
-  Merkle DAG application, tenant, publication, or trusted-root policy.
+- Core algorithms may consume narrow capabilities under
+  `auth/arcset/materializer`, but must not define durable ArcTable, KV, CAS,
+  cache, HTTP, daemon, filesystem, UnixFS, Merkle DAG application, tenant,
+  publication, or trusted-root policy.
 - Treat every resolver, materializer, cache, and gateway as untrusted execution
   state. Verification is relative to a caller-selected root and query.
 - Mutation receipts contain candidate result roots; they are not portable

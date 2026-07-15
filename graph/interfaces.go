@@ -28,19 +28,30 @@ type MutationWriter interface {
 	Apply(ctx context.Context, namespace string, mut mutation.SemanticMutation) (mutation.WriteReceipt, error)
 }
 
-// CompatWriter exposes reference-runtime helper methods used by the local
-// server, CLI, and tests. These helpers are not the gateway product API.
-type CompatWriter interface {
+// StructureCreator bootstraps a semantic structure without claiming that the
+// operation is an update from an already authenticated base root.
+type StructureCreator interface {
 	CreateStructure(ctx context.Context, namespace string, arcs arcset.ArcSet) (cid.Cid, error)
+}
+
+// ReferenceWriter exposes legacy root-consuming and inspection helpers used by
+// reference executors and conformance tests. New integrations should depend on
+// MutationWriter and, when required, the separate StructureCreator capability.
+type ReferenceWriter interface {
+	StructureCreator
 	UpdateArc(ctx context.Context, namespace string, root cid.Cid, path string, newTarget cid.Cid) (*writer.UpdateResult, error)
 	BatchUpdateArcs(ctx context.Context, namespace string, root cid.Cid, updates map[string]cid.Cid) (*writer.BatchUpdateResult, error)
 	GetArc(ctx context.Context, namespace string, root cid.Cid, path string) (cid.Cid, error)
 	GetSnapshot(ctx context.Context, namespace string, root cid.Cid) (arcset.ArcSet, error)
 }
 
-// Writer is the reference-runtime write surface. New core integrations should
-// prefer MutationWriter unless they intentionally need compatibility helpers.
+// CompatWriter is retained as a source-compatible alias for ReferenceWriter.
+// Deprecated: use ReferenceWriter or a narrower capability.
+type CompatWriter = ReferenceWriter
+
+// Writer is the complete reference-runtime write surface.
+// Deprecated: depend on MutationWriter, StructureCreator, or ReferenceWriter.
 type Writer interface {
 	MutationWriter
-	CompatWriter
+	ReferenceWriter
 }

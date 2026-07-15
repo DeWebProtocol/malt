@@ -106,6 +106,40 @@ func TestSDKOnlyRepositoryDoesNotReintroduceProductPackages(t *testing.T) {
 	}
 }
 
+func TestProductionAlgorithmsUseNarrowMaterializerCapabilities(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(sourceFile)
+	allowed := filepath.Join(root, "auth", "arcset", "materializer", "memory", "store.go")
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".git" || entry.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == allowed || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "materializer.Store") {
+			t.Errorf("production algorithm %s depends on aggregate materializer.Store", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func checkProductionImports(t *testing.T, dir string, recursive bool, forbidden []string) {
 	t.Helper()
 	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {

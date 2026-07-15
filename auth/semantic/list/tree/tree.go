@@ -23,7 +23,7 @@ import (
 
 type TreeList struct {
 	commitment   *list.Commitment
-	materializer materializer.Store
+	materializer materializer.NodeStore
 }
 
 type proofEnvelope struct {
@@ -48,7 +48,7 @@ type rangeIndexProof struct {
 	Proof []byte `json:"proof"`
 }
 
-func NewList(scheme commitment.IndexCommitment, materializer materializer.Store) (*TreeList, error) {
+func NewList(scheme commitment.IndexCommitment, materializer materializer.NodeStore) (*TreeList, error) {
 	if err := layout.ValidateCommitment(scheme); err != nil {
 		return nil, err
 	}

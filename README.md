@@ -74,8 +74,10 @@ longest-prefix discovery. The verifier proves the returned derivation; it does
 not prove that the executor selected the unique or longest possible path. This
 is intentional existential resolution semantics.
 
-The core exposes only the minimal `auth/arcset/materializer.Store` capability
-needed by proof-generation algorithms. Implementations and persistence policy
+The core exposes narrow capabilities under `auth/arcset/materializer`:
+read-only lookup, node update, snapshot, and optional iteration. The full
+`Store` aggregate is retained for adapter compatibility, while each algorithm
+accepts only the capability it uses. Implementations and persistence policy
 remain outside this module. The included memory implementation exists for
 conformance tests and examples, not deployment.
 
@@ -117,7 +119,7 @@ in the application client.
 | `protocol` | Versioned serialized resolve/read profiles and schemas |
 | `mutation` | Portable mutation and receipt values |
 | `execution` | Untrusted resolve/read/apply composition |
-| `graph` | Resolver/writer algorithms over injected capabilities |
+| `graph` | Resolver, semantic mutation, bootstrap, and explicit reference-writer algorithms over injected capabilities |
 | `sdk/verifier` | Client-facing local verification facade |
 | `artifact` | Frozen `malt.artifact/v0alpha2` compatibility decoder/verifier |
 | `cmd/malt-verifier-wasm` | Browser verifier build entry point |

@@ -30,8 +30,9 @@ Run `gofmt` before committing. Prefer behavior-focused and table-driven tests.
   transport, storage, process, and application concerns.
 - Keep portable verification deterministic and free of materializer/CAS/network
   I/O.
-- Use `auth/arcset/materializer.Store` only as an injected algorithmic
-  capability; do not add ArcTable/KV persistence formats here.
+- Use the narrowest injected capability under `auth/arcset/materializer`; do
+  not make production algorithms depend on aggregate `Store`, and do not add
+  ArcTable/KV persistence formats here.
 - Keep HTTP, managed service policy, ArcTable/KV/CAS implementations, and
   product E2E in `DeWebProtocol/gateway`.
 - Keep CLI/daemon, accepted-root policy, UnixFS, and application payload
