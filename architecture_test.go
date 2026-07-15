@@ -2,10 +2,11 @@ package malt_test
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -172,6 +173,24 @@ var _ mat.Store
 			want: true,
 		},
 		{
+			name: "local variable shadowing import alias is not a package reference",
+			src: `package fixture
+
+import mat "github.com/dewebprotocol/malt/auth/arcset/materializer"
+
+var _ mat.Lookup
+
+type localMaterializer struct {
+	Store int
+}
+
+func useLocalMaterializer() {
+	mat := localMaterializer{}
+	_ = mat.Store
+}
+`,
+		},
+		{
 			name: "dot import is rejected",
 			src: `package fixture
 
@@ -230,37 +249,26 @@ var _ materializer.Store
 
 // importsAggregateMaterializerStore reports whether a Go source file imports
 // the canonical materializer package and selects its aggregate Store contract.
-// A dot import is rejected conservatively because it removes the package
-// qualifier needed to distinguish Store from the narrow capabilities.
+// It uses type information so that a local variable which shadows an import
+// alias cannot turn an unrelated Store field selection into a false positive.
 func importsAggregateMaterializerStore(filename string, src any) (bool, error) {
-	file, err := parser.ParseFile(token.NewFileSet(), filename, src, 0)
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, filename, src, 0)
 	if err != nil {
 		return false, err
 	}
 
-	aliases := make(map[string]struct{})
-	for _, spec := range file.Imports {
-		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil {
-			return false, err
-		}
-		if importPath != materializerImportPath {
-			continue
-		}
-
-		alias := pathpkg.Base(importPath)
-		if spec.Name != nil {
-			alias = spec.Name.Name
-		}
-		switch alias {
-		case "_":
-			continue
-		case ".":
-			return true, nil
-		default:
-			aliases[alias] = struct{}{}
-		}
+	info := &types.Info{
+		Uses: make(map[*ast.Ident]types.Object),
 	}
+	config := &types.Config{
+		Importer: newMaterializerGuardImporter(),
+		// Files are checked independently from the rest of their package. Missing
+		// sibling declarations and unrelated imports may therefore produce type
+		// errors, but bindings available in Uses remain valid for this guard.
+		Error: func(error) {},
+	}
+	_, _ = config.Check("architecture/fixture", fileSet, []*ast.File{file}, info)
 
 	usesAggregate := false
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -272,13 +280,57 @@ func importsAggregateMaterializerStore(filename string, src any) (bool, error) {
 		if !ok {
 			return true
 		}
-		if _, ok := aliases[qualifier.Name]; ok {
+		packageName, ok := info.Uses[qualifier].(*types.PkgName)
+		if ok && packageName.Imported().Path() == materializerImportPath {
 			usesAggregate = true
 			return false
 		}
 		return true
 	})
+	if usesAggregate {
+		return true, nil
+	}
+
+	// A dot import has no qualifier. In that case go/types binds an unqualified
+	// Store identifier directly to the target package's exported type object.
+	for identifier, object := range info.Uses {
+		if identifier.Name != "Store" || object.Pkg() == nil {
+			continue
+		}
+		if object.Pkg().Path() == materializerImportPath {
+			return true, nil
+		}
+	}
 	return usesAggregate, nil
+}
+
+type materializerGuardImporter struct {
+	fallback     types.Importer
+	materializer *types.Package
+}
+
+func newMaterializerGuardImporter() types.Importer {
+	materializer := types.NewPackage(materializerImportPath, "materializer")
+	for _, name := range []string{
+		"Lookup", "Updater", "Snapshotter", "Iterator", "NodeStore",
+		"MutableStore", "Store", "BranchingStore",
+	} {
+		typeName := types.NewTypeName(token.NoPos, materializer, name, nil)
+		types.NewNamed(typeName, types.NewInterfaceType(nil, nil).Complete(), nil)
+		materializer.Scope().Insert(typeName)
+	}
+	materializer.MarkComplete()
+	return materializerGuardImporter{
+		fallback:     importer.Default(),
+		materializer: materializer,
+	}
+}
+
+func (i materializerGuardImporter) Import(importPath string) (*types.Package, error) {
+	if importPath == materializerImportPath {
+		return i.materializer, nil
+	}
+	return i.fallback.Import(importPath)
 }
 
 func checkProductionImports(t *testing.T, dir string, recursive bool, forbidden []string) {
