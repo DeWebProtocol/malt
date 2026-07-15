@@ -19,8 +19,8 @@ func TestNewGraphInitializesSDKComposition(t *testing.T) {
 	if g.Namespace() != "ns" {
 		t.Fatalf("Namespace = %q, want ns", g.Namespace())
 	}
-	if g.Resolver() == nil || g.Writer() == nil {
-		t.Fatal("resolver and writer must be initialized")
+	if g.Resolver() == nil || g.Writer() == nil || g.StructureCreator() == nil || g.ReferenceWriter() == nil {
+		t.Fatal("resolver, mutation, bootstrap, and reference capabilities must be initialized")
 	}
 	if g.Semantic() == nil || g.ListSemantic() == nil {
 		t.Fatal("semantic implementations must be initialized")

@@ -35,12 +35,11 @@ Package `mutation` is the stable portable contract. It defines
 `mutation.WriteReceipt` with the caller-supplied base root and produced result
 root. `graph.MutationWriter` is the reference graph adapter over that contract.
 
-`graph.CompatWriter` groups algorithm compatibility methods such as
-`CreateStructure`, `UpdateArc`, `BatchUpdateArcs`, `GetArc`, and
-`GetSnapshot`. These helpers remain available to SDK consumers and tests, but
-they are not the gateway product API. New integrations
-should prefer semantic mutations through `MutationWriter` unless they
-intentionally need reference compatibility helpers.
+`graph.StructureCreator` separately bootstraps a root when no authenticated
+base exists. `graph.ReferenceWriter` groups legacy root-consuming and
+inspection methods such as `UpdateArc`, `BatchUpdateArcs`, `GetArc`, and
+`GetSnapshot`. `RuntimeGraph.Writer()` returns only `MutationWriter`; reference
+helpers require the explicitly named `ReferenceWriter()` accessor.
 
 Transport projections and application-level diagnostic counts belong to the
 gateway or client that exposes them. They are not verifier evidence unless

@@ -104,7 +104,8 @@ semantic owner.
 
 - resolver is the read/proof port: `(root, query) -> result + ProofList`
 - writer is an execution port: `Apply(baseRoot, semantic mutation) -> newRoot + receipt`
-- `graph.CompatWriter` contains algorithm compatibility helpers and is not a gateway product API
+- `graph.StructureCreator` is the separate no-base-root bootstrap capability
+- `graph.ReferenceWriter` contains legacy compatibility helpers and is not a gateway product API
 
 Resolver traversal lives under `graph/resolver`. Mutation application lives
 under `graph/writer`. These are SDK execution algorithms, not transport
@@ -117,12 +118,14 @@ application model, server, or gateway state.
 
 ## ArcSet Materialization Boundary
 
-Core proof-generation algorithms consume the narrow
-`auth/arcset/materializer.Store` capability. The capability loads and stores
-ArcSet views and internal commitment nodes, but does not define persistence or
-ArcTable semantics. ArcTable/KV implementations belong to executors such as
-the managed gateway. Incorrect materialized state should either fail proof
-generation or produce evidence that the portable verifier rejects.
+Core proof-generation algorithms consume the narrowest required capability
+from `auth/arcset/materializer`: `Lookup`, `Updater`, `NodeStore`, or
+`MutableStore`. The full `Store` aggregate is adapter compatibility, not the
+default algorithm dependency. These capabilities load and materialize ArcSet
+views and internal commitment nodes without defining persistence or ArcTable
+semantics. ArcTable/KV implementations belong to executors such as the managed
+gateway. Incorrect materialized state should either fail proof generation or
+produce evidence that the portable verifier rejects.
 
 Freshness, head publication, merge policy, CAS availability, pinning, garbage
 collection, tenant isolation, and quotas are deployment or application policy,

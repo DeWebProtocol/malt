@@ -98,7 +98,7 @@ func NodeSlotPath(root cid.Cid, slot uint64) arcset.Path {
 
 // LoadSlots reconstructs a fixed-width slot vector for a committed node.
 // Missing entries are treated as cid.Undef.
-func LoadSlots(ctx context.Context, e materializer.Store, namespace string, root cid.Cid, width int) ([]cid.Cid, error) {
+func LoadSlots(ctx context.Context, e materializer.Lookup, namespace string, root cid.Cid, width int) ([]cid.Cid, error) {
 	if e == nil {
 		return nil, fmt.Errorf("materializer is nil")
 	}
@@ -129,7 +129,7 @@ func LoadSlots(ctx context.Context, e materializer.Store, namespace string, root
 }
 
 // StoreSlots materializes a committed node in ArcSet materializer under its node-root namespace.
-func StoreSlots(ctx context.Context, e materializer.Store, namespace string, root cid.Cid, slots []cid.Cid) error {
+func StoreSlots(ctx context.Context, e materializer.Updater, namespace string, root cid.Cid, slots []cid.Cid) error {
 	if e == nil {
 		return fmt.Errorf("materializer is nil")
 	}

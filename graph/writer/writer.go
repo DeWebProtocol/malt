@@ -1,14 +1,11 @@
-// Package writer implements the write-side API for MALT.
-// It provides the unified arc update procedure (UpdateArc) described in Sec 4.5,
-// coordinating map semantics and caller-owned ArcSet materialization.
+// Package writer implements semantic mutation and explicitly reference-only
+// arc update algorithms over caller-owned ArcSet materialization.
 package writer
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
-	"sync"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materialization "github.com/dewebprotocol/malt/auth/arcset/materializer"
@@ -19,7 +16,7 @@ import (
 
 // Materializer is the caller-injected ArcSet capability consumed by Writer.
 // It is an alias for the core materializer contract, not a persistence model.
-type Materializer = materialization.Store
+type Materializer = materialization.MutableStore
 
 // BranchingMaterializer optionally reports support for concurrent children.
 type BranchingMaterializer = materialization.BranchingStore
@@ -38,162 +35,7 @@ var (
 	// update a base root that this writer has already advanced in the same
 	// namespace.
 	ErrStaleRoot = errors.New("stale root")
-
-	// ErrMaterializationWriteFailed is returned when the semantic layer produced a new
-	// root but the ArcSet materialization write failed. The semantic commitment is
-	// content-addressed and cannot be rolled back, so the returned newRoot is a
-	// cryptographically valid root whose materialized entries may be missing.
-	//
-	// To recover, use errors.As to recover MaterializationWriteFailedError and call
-	// Writer.RetryMaterializationWrite. The error carries the exact old->new materialization
-	// transition because retrying the original writer operation is not
-	// guaranteed to work after a non-atomic backend has partially applied the
-	// failed index update (for example, after invalidating the old root mapping).
-	ErrMaterializationWriteFailed = errors.New("materializer materialization write failed after semantic commit")
 )
-
-// MaterializationWriteFailedError carries the newRoot produced by the semantic layer when
-// the ArcSet materialization write failed. errors.Is(err, ErrMaterializationWriteFailed) and
-// errors.Is(err, <underlying cause>) both succeed.
-//
-// The fields are exposed for diagnostics, correlation, and materialization repair.
-// MaterializationBase and MaterializationDelta capture the failed publication so callers can retry
-// it with Writer.RetryMaterializationWrite. For non-branching materializers, retry
-// first verifies that the namespace has not advanced past this failed
-// transition; stale retries fail closed instead of overwriting later writes.
-type MaterializationWriteFailedError struct {
-	// NewRoot is the content-addressed root the semantic layer committed. It is
-	// valid in the semantic sense, but its ArcSet materialization may not have
-	// been persisted.
-	NewRoot cid.Cid
-	// Namespace is the namespace of the failed materialization write, for retry context.
-	Namespace string
-	// OldRoot is the base root the write transitioned from (cid.Undef for
-	// CreateStructure).
-	OldRoot cid.Cid
-	// MaterializationBase is the namespace arc snapshot immediately before the failed
-	// publication. It is used to reject stale retries on overwrite-like
-	// backends whose physical arc keys are namespace-scoped rather than
-	// root-scoped.
-	MaterializationBase arcset.ArcSet
-	// MaterializationDelta is the exact update payload for OldRoot -> NewRoot.
-	// It may be a full snapshot for create-style writes.
-	MaterializationDelta arcset.ArcSet
-	// Cause is the error returned by the materializer's Update method.
-	Cause error
-}
-
-func (e *MaterializationWriteFailedError) Error() string {
-	return fmt.Errorf("%w (newRoot=%s): %v", ErrMaterializationWriteFailed, e.NewRoot, e.Cause).Error()
-}
-
-func (e *MaterializationWriteFailedError) Unwrap() error {
-	return errors.Join(ErrMaterializationWriteFailed, e.Cause)
-}
-
-// RetryMaterializationWrite retries the failed ArcSet publication captured by this
-// error. Prefer Writer.RetryMaterializationWrite when a writer is available: the writer
-// method reuses the same freshness guard as normal updates and serializes retry
-// against concurrent root-consuming writes.
-func (e *MaterializationWriteFailedError) RetryMaterializationWrite(ctx context.Context, table Materializer) error {
-	return e.retryMaterializationWrite(ctx, table)
-}
-
-func (e *MaterializationWriteFailedError) retryMaterializationWrite(ctx context.Context, table Materializer) error {
-	if e == nil {
-		return fmt.Errorf("materialization write failure is nil")
-	}
-	if table == nil {
-		return fmt.Errorf("materializer is nil")
-	}
-	if e.MaterializationDelta == nil {
-		return fmt.Errorf("%w: missing materialization delta", ErrMaterializationWriteFailed)
-	}
-	if !supportsConcurrentBranches(table) {
-		if e.MaterializationBase == nil {
-			return fmt.Errorf("%w: missing materialization retry base", ErrMaterializationWriteFailed)
-		}
-		current, err := table.Snapshot(ctx, e.Namespace, cid.Undef)
-		if err != nil {
-			return fmt.Errorf("Materializer.Snapshot failed during materialization retry: %w", err)
-		}
-		expectedAfter, err := applyArcSetDelta(e.MaterializationBase, e.MaterializationDelta)
-		if err != nil {
-			return err
-		}
-		matchesBase, err := arcSetsEqual(current, e.MaterializationBase)
-		if err != nil {
-			return err
-		}
-		matchesAfter, err := arcSetsEqual(current, expectedAfter)
-		if err != nil {
-			return err
-		}
-		if !matchesBase && !matchesAfter {
-			return fmt.Errorf("%w: stale materialization retry for namespace %q oldRoot=%s newRoot=%s", ErrStaleRoot, e.Namespace, e.OldRoot, e.NewRoot)
-		}
-	}
-	if err := table.Update(ctx, e.Namespace, e.NewRoot, e.OldRoot, e.MaterializationDelta); err != nil {
-		return &MaterializationWriteFailedError{
-			NewRoot:              e.NewRoot,
-			Namespace:            e.Namespace,
-			OldRoot:              e.OldRoot,
-			MaterializationBase:  e.MaterializationBase,
-			MaterializationDelta: e.MaterializationDelta,
-			Cause:                err,
-		}
-	}
-	return nil
-}
-
-func materializationRetryBase(ctx context.Context, table Materializer, namespace string) (arcset.ArcSet, error) {
-	if table == nil || supportsConcurrentBranches(table) {
-		return nil, nil
-	}
-	// Overwrite-like backends need a namespace snapshot so retry can reject
-	// stale replays after a non-atomic materialization write failure.
-	return table.Snapshot(ctx, namespace, cid.Undef)
-}
-
-func applyArcSetDelta(base, delta arcset.ArcSet) (arcset.ArcSet, error) {
-	baseMap, err := arcset.ToPathMap(base)
-	if err != nil {
-		return nil, err
-	}
-	deltaMap, err := arcset.ToPathMap(delta)
-	if err != nil {
-		return nil, err
-	}
-	for path, target := range deltaMap {
-		if target.Defined() {
-			baseMap[path] = target
-		} else {
-			delete(baseMap, path)
-		}
-	}
-	return arcset.NewArcSetFromPaths(baseMap)
-}
-
-func arcSetsEqual(a, b arcset.ArcSet) (bool, error) {
-	aMap, err := arcset.ToPathMap(a)
-	if err != nil {
-		return false, err
-	}
-	bMap, err := arcset.ToPathMap(b)
-	if err != nil {
-		return false, err
-	}
-	if len(aMap) != len(bMap) {
-		return false, nil
-	}
-	for path, aTarget := range aMap {
-		bTarget, ok := bMap[path]
-		if !ok || !aTarget.Equals(bTarget) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
 
 // ArcOp describes the type of arc operation performed.
 type ArcOp uint8
@@ -253,9 +95,9 @@ type BatchUpdateResult struct {
 	PerArc map[arcset.Path]UpdateResult
 }
 
-// Writer implements the write-side API for MALT.
-// It coordinates keyed-map semantics and Materializer (index) updates to execute
-// the unified arc update procedure from Sec 4.5.
+// Writer implements semantic mutation plus the legacy reference helpers exposed
+// through graph.ReferenceWriter. Product callers should receive it through a
+// narrow graph.MutationWriter or graph.StructureCreator interface.
 //
 // The legacy UpdateArc/BatchUpdateArcs paths only enforce single-consumer root
 // freshness for non-branching Materializer backends. MVCC-style backends such as
@@ -321,96 +163,6 @@ func (w *Writer) RetryMaterializationWrite(ctx context.Context, err *Materializa
 		}
 	}
 	return nil
-}
-
-var sharedFreshnessGuards sync.Map
-
-type rootFreshnessGuard struct {
-	mu       sync.Mutex
-	consumed map[string]cid.Cid
-}
-
-func newRootFreshnessGuard() *rootFreshnessGuard {
-	return &rootFreshnessGuard{
-		consumed: make(map[string]cid.Cid),
-	}
-}
-
-func sharedRootFreshnessGuard(table Materializer) *rootFreshnessGuard {
-	key, ok := materializerFreshnessIdentity(table)
-	if !ok {
-		return newRootFreshnessGuard()
-	}
-	guard, _ := sharedFreshnessGuards.LoadOrStore(key, newRootFreshnessGuard())
-	return guard.(*rootFreshnessGuard)
-}
-
-func materializerFreshnessIdentity(table Materializer) (any, bool) {
-	if table == nil {
-		return nil, false
-	}
-	if !reflect.TypeOf(table).Comparable() {
-		return nil, false
-	}
-	return table, true
-}
-
-func rootFreshnessGuardFor(table Materializer) *rootFreshnessGuard {
-	if supportsConcurrentBranches(table) {
-		return nil
-	}
-	return sharedRootFreshnessGuard(table)
-}
-
-func supportsConcurrentBranches(table Materializer) bool {
-	if table == nil {
-		return false
-	}
-	branching, ok := table.(BranchingMaterializer)
-	return ok && branching.SupportsConcurrentBranches()
-}
-
-func freshnessKey(namespace string, root cid.Cid) string {
-	return namespace + "\x00" + root.String()
-}
-
-func (g *rootFreshnessGuard) beginUpdate(namespace string, root cid.Cid) (func(), error) {
-	key := freshnessKey(namespace, root)
-	g.mu.Lock()
-	advancedTo, ok := g.consumed[key]
-	if !ok {
-		return g.mu.Unlock, nil
-	}
-	g.mu.Unlock()
-	return nil, fmt.Errorf("%w: root %s in namespace %q already advanced to %s", ErrStaleRoot, root, namespace, advancedTo)
-}
-
-func (g *rootFreshnessGuard) markAdvanced(namespace string, oldRoot, newRoot cid.Cid) {
-	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.markAdvancedLocked(namespace, oldRoot, newRoot)
-}
-
-func (g *rootFreshnessGuard) markAdvancedLocked(namespace string, oldRoot, newRoot cid.Cid) {
-	if !oldRoot.Defined() || !newRoot.Defined() || oldRoot.Equals(newRoot) {
-		return
-	}
-	oldKey := freshnessKey(namespace, oldRoot)
-	newKey := freshnessKey(namespace, newRoot)
-	g.consumed[oldKey] = newRoot
-	delete(g.consumed, newKey)
-}
-
-func (g *rootFreshnessGuard) markCurrent(namespace string, root cid.Cid) {
-	if !root.Defined() {
-		return
-	}
-	g.mu.Lock()
-	delete(g.consumed, freshnessKey(namespace, root))
-	g.mu.Unlock()
 }
 
 func canonicalizeUpdateMap(updates map[string]cid.Cid) (map[arcset.Path]cid.Cid, error) {

@@ -30,7 +30,9 @@ type RuntimeGraph struct {
 	semantic     mapping.Semantics
 	listSemantic list.Semantics
 	resolver     graph.Resolver
-	wr           graph.Writer
+	wr           graph.MutationWriter
+	structures   graph.StructureCreator
+	reference    graph.ReferenceWriter
 }
 
 // NewGraph creates a new per-graph instance with its own semantic layer,
@@ -40,7 +42,7 @@ type RuntimeGraph struct {
 //   - id: unique graph identifier
 //   - materializer: caller-owned ArcSet materializer
 //   - opts: functional options (WithCommitmentScheme, WithNamespace, etc.)
-func NewGraph(id string, materializer materializer.Store, opts ...Option) (*RuntimeGraph, error) {
+func NewGraph(id string, materializer materializer.MutableStore, opts ...Option) (*RuntimeGraph, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(o)
@@ -87,6 +89,8 @@ func NewGraph(id string, materializer materializer.Store, opts ...Option) (*Runt
 		listSemantic: listSemantic,
 		resolver:     res,
 		wr:           wr,
+		structures:   wr,
+		reference:    wr,
 	}, nil
 }
 
@@ -146,7 +150,21 @@ func (g *RuntimeGraph) Resolve(ctx context.Context, req malt.ResolveRequest) (ma
 	return malt.ResolveResult{Target: resolved.Target, ProofList: *pl}, nil
 }
 
-// Writer returns the per-graph writer.
-func (g *RuntimeGraph) Writer() graph.Writer {
+// Writer returns the stable semantic-mutation capability. It intentionally
+// omits legacy root-consuming helpers and reference inspection methods.
+func (g *RuntimeGraph) Writer() graph.MutationWriter {
 	return g.wr
+}
+
+// StructureCreator returns the separate bootstrap capability used to create a
+// structure when there is no authenticated base root to mutate.
+func (g *RuntimeGraph) StructureCreator() graph.StructureCreator {
+	return g.structures
+}
+
+// ReferenceWriter returns legacy helpers for reference executors and
+// conformance tests. Product integrations should not use it as their default
+// mutation surface.
+func (g *RuntimeGraph) ReferenceWriter() graph.ReferenceWriter {
+	return g.reference
 }

@@ -70,20 +70,27 @@ authoritative root.
 
 `auth/arcset` is the canonical in-memory/traversable representation used by
 core algorithms. Proof generation also needs to load internal commitment nodes
-and root-relative ArcSet views. The SDK therefore accepts a narrow injected
-capability:
+and root-relative ArcSet views. The SDK therefore accepts small injected
+capabilities:
 
 ```go
-type Store interface {
+type Lookup interface {
     Get(context.Context, string, cid.Cid, arcset.Path) (cid.Cid, error)
     BatchGet(context.Context, string, cid.Cid, []arcset.Path) (map[arcset.Path]cid.Cid, error)
+}
+
+type Updater interface {
     Update(context.Context, string, cid.Cid, cid.Cid, arcset.ArcSet) error
+}
+
+type Snapshotter interface {
     Snapshot(context.Context, string, cid.Cid) (arcset.ArcSet, error)
-    Iterate(context.Context, string, cid.Cid) arcset.Iterator
 }
 ```
 
-The interface describes algorithmic capability only. It does not define:
+`NodeStore` composes `Lookup + Updater`; `MutableStore` adds `Snapshotter`.
+The full compatibility `Store` additionally supports iteration. These
+interfaces describe algorithmic capability only. They do not define:
 
 - ArcTable key formats or version chains;
 - KV/SQL/object-store persistence;
@@ -120,6 +127,11 @@ can apply them through an injected writer and returns an operational receipt.
 The receipt is not a cryptographic state-transition proof. A returned root is a
 candidate until the client accepts it under its own publication/freshness
 policy.
+
+`RuntimeGraph.Writer()` exposes only `MutationWriter`. Bootstrap creation is a
+separate `StructureCreator` because a new structure has no authenticated base
+root. Legacy `UpdateArc`, `BatchUpdateArcs`, and inspection helpers are exposed
+only through the explicitly named `ReferenceWriter()` capability.
 
 ## Verification boundary
 

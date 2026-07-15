@@ -24,17 +24,52 @@ func IsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
 }
 
-// Store is an injected capability for opening and materializing ArcSet views.
-// Scope is opaque execution context chosen by the caller; MALT does not assign
-// tenant, graph, bucket, or persistence meaning to it.
-type Store interface {
+// Lookup is the read-only coordinate lookup capability used by semantic
+// provers. Scope is opaque execution context chosen by the caller; MALT does
+// not assign tenant, graph, bucket, or persistence meaning to it.
+type Lookup interface {
 	Get(context.Context, string, cid.Cid, arcset.Path) (cid.Cid, error)
 	BatchGet(context.Context, string, cid.Cid, []arcset.Path) (map[arcset.Path]cid.Cid, error)
+}
+
+// Updater materializes an immutable ArcSet root relative to an optional
+// previous root. Transaction and persistence semantics remain caller-owned.
+type Updater interface {
 	// Update materializes a new immutable ArcSet root relative to an optional
 	// previous root. Transaction and persistence semantics remain caller-owned.
 	Update(context.Context, string, cid.Cid, cid.Cid, arcset.ArcSet) error
+}
+
+// Snapshotter opens a complete root-relative ArcSet view.
+type Snapshotter interface {
 	Snapshot(context.Context, string, cid.Cid) (arcset.ArcSet, error)
+}
+
+// Iterator opens a streaming root-relative ArcSet traversal.
+type Iterator interface {
 	Iterate(context.Context, string, cid.Cid) arcset.Iterator
+}
+
+// NodeStore is the minimal mutable capability used by the reference map/list
+// commitment implementations for internal node slots.
+type NodeStore interface {
+	Lookup
+	Updater
+}
+
+// MutableStore is the capability required by graph mutation/reference writer
+// algorithms. It deliberately does not require iteration.
+type MutableStore interface {
+	NodeStore
+	Snapshotter
+}
+
+// Store is the full compatibility aggregate implemented by the in-memory
+// conformance store and current Gateway ArcTable adapters. New algorithms
+// should accept the narrowest capability above instead of Store.
+type Store interface {
+	MutableStore
+	Iterator
 }
 
 // BranchingStore is an optional capability for materializers that preserve
