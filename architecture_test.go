@@ -1,9 +1,11 @@
 package malt_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -11,7 +13,10 @@ import (
 	"testing"
 )
 
-const modulePath = "github.com/dewebprotocol/malt"
+const (
+	modulePath             = "github.com/dewebprotocol/malt"
+	materializerImportPath = modulePath + "/auth/arcset/materializer"
+)
 
 func TestProductionImportBoundaries(t *testing.T) {
 	_, sourceFile, _, ok := runtime.Caller(0)
@@ -126,11 +131,11 @@ func TestProductionAlgorithmsUseNarrowMaterializerCapabilities(t *testing.T) {
 		if path == allowed || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		usesAggregate, err := importsAggregateMaterializerStore(path, nil)
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), "materializer.Store") {
+		if usesAggregate {
 			t.Errorf("production algorithm %s depends on aggregate materializer.Store", path)
 		}
 		return nil
@@ -138,6 +143,142 @@ func TestProductionAlgorithmsUseNarrowMaterializerCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAggregateMaterializerStoreImportDetection(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "default import",
+			src: `package fixture
+
+import "github.com/dewebprotocol/malt/auth/arcset/materializer"
+
+var _ materializer.Store
+`,
+			want: true,
+		},
+		{
+			name: "named import alias cannot bypass guard",
+			src: `package fixture
+
+import mat "github.com/dewebprotocol/malt/auth/arcset/materializer"
+
+var _ mat.Store
+`,
+			want: true,
+		},
+		{
+			name: "dot import is rejected",
+			src: `package fixture
+
+import . "github.com/dewebprotocol/malt/auth/arcset/materializer"
+
+var _ Store
+`,
+			want: true,
+		},
+		{
+			name: "narrow capability through alias",
+			src: `package fixture
+
+import mat "github.com/dewebprotocol/malt/auth/arcset/materializer"
+
+var _ mat.Lookup
+`,
+		},
+		{
+			name: "blank import has no aggregate reference",
+			src: `package fixture
+
+import _ "github.com/dewebprotocol/malt/auth/arcset/materializer"
+`,
+		},
+		{
+			name: "text is not a reference",
+			src: `package fixture
+
+const description = "materializer.Store"
+`,
+		},
+		{
+			name: "unrelated package selector",
+			src: `package fixture
+
+import materializer "example.com/another/materializer"
+
+var _ materializer.Store
+`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := importsAggregateMaterializerStore("fixture.go", tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("importsAggregateMaterializerStore() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// importsAggregateMaterializerStore reports whether a Go source file imports
+// the canonical materializer package and selects its aggregate Store contract.
+// A dot import is rejected conservatively because it removes the package
+// qualifier needed to distinguish Store from the narrow capabilities.
+func importsAggregateMaterializerStore(filename string, src any) (bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), filename, src, 0)
+	if err != nil {
+		return false, err
+	}
+
+	aliases := make(map[string]struct{})
+	for _, spec := range file.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return false, err
+		}
+		if importPath != materializerImportPath {
+			continue
+		}
+
+		alias := pathpkg.Base(importPath)
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		switch alias {
+		case "_":
+			continue
+		case ".":
+			return true, nil
+		default:
+			aliases[alias] = struct{}{}
+		}
+	}
+
+	usesAggregate := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Store" {
+			return true
+		}
+		qualifier, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if _, ok := aliases[qualifier.Name]; ok {
+			usesAggregate = true
+			return false
+		}
+		return true
+	})
+	return usesAggregate, nil
 }
 
 func checkProductionImports(t *testing.T, dir string, recursive bool, forbidden []string) {
