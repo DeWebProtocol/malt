@@ -25,7 +25,9 @@ compatibility. See [MIP-1012](../mips/mip-1012-segment-path-resolution.md) and
 - [Frozen artifact compatibility profile](./artifacts.md)
 - [Segment paths and resolution](./segment-paths.md)
 - [Commitment model](./commitment.md)
+- [Commitment and proof encoding](./commitment-proof-encoding.md)
 - [CID and wire format](./cid-and-wire-format.md)
+- [Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md)
 
 ## Notes
 

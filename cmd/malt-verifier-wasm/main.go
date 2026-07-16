@@ -39,8 +39,8 @@ func main() {
 		if len(args) != 1 || args[0].Type() != js.TypeString {
 			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.ResolveProfile, Error: "maltVerifyResolve expects one JSON string"})
 		}
-		var value protocol.ResolveVerification
-		if err := json.Unmarshal([]byte(args[0].String()), &value); err != nil {
+		value, err := protocol.DecodeResolveVerification([]byte(args[0].String()))
+		if err != nil {
 			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.ResolveProfile, Error: fmt.Sprintf("decode resolve verification: %v", err)})
 		}
 		if err := verifier.VerifyResolve(context.Background(), value); err != nil {
@@ -55,8 +55,8 @@ func main() {
 		if len(args) != 1 || args[0].Type() != js.TypeString {
 			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.ReadProfile, Error: "maltVerifyRead expects one JSON string"})
 		}
-		var value protocol.ReadVerification
-		if err := json.Unmarshal([]byte(args[0].String()), &value); err != nil {
+		value, err := protocol.DecodeReadVerification([]byte(args[0].String()))
+		if err != nil {
 			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.ReadProfile, Error: fmt.Sprintf("decode read verification: %v", err)})
 		}
 		if err := verifier.VerifyRead(context.Background(), value); err != nil {
