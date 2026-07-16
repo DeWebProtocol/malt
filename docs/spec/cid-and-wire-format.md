@@ -5,20 +5,77 @@ objects remain ordinary CAS CIDs.
 
 ## Status
 
-Experimental and implementation-bound. The current codec values are locked for
-the prototype but are not yet a stable release contract.
+Experimental and implementation-bound. The current layout is the only accepted
+typed-root encoding, but it is not yet a stable release contract.
 
-## MALT Root Codecs
+## MALT Root Codec Namespace
 
-MALT uses the multicodec Private Use Area `0x300000-0x3FFFFF` for typed
-structure roots:
+Multicodec reserves `0x300000-0x3FFFFF` as a Private Use Area. MALT typed
+roots use only the `0x300000-0x30FFFF` subrange. Values in
+`0x310000-0x3FFFFF` are not MALT typed-root codecs.
+
+The CIDv1 content-type multicodec remains an unsigned varint. The
+`0x30VSBB` notation below describes fields in the decoded codec integer; it
+does not append two literal bytes to the CID.
+
+## `0x30VSBB` Layout
+
+The low 16 bits of a MALT root codec have three fields:
+
+| Field | Bits | Meaning |
+| --- | ---: | --- |
+| `V` | 4 | MALT typed-root wire-format version |
+| `S` | 4 | semantic kind |
+| `BB` | 8 | commitment backend suite |
+
+The normative construction is:
+
+```text
+codec = 0x300000
+      | (malt_version_id << 12)
+      | (semantic_id << 8)
+      | backend_id
+```
+
+The current `MALTVersionID` is `1`. It identifies this typed-root layout;
+it is not the CID version, a source release, a Resolve/Read profile, or a
+conformance-corpus version. Adding a semantic kind or backend suite does not
+change it. It changes only when the interpretation of the root codec or
+commitment envelope changes incompatibly.
+
+### Semantic Registry
+
+| ID | Kind |
+| ---: | --- |
+| `0x0` | invalid |
+| `0x1` | map |
+| `0x2` | list |
+| `0x3-0xF` | unassigned |
+
+### Commitment Backend Registry
+
+Backend IDs identify complete commitment suites, including parameters,
+commitment encoding, and commitment-size validation. They are not inferred
+from digest length.
+
+| ID | Backend suite | Commitment size |
+| ---: | --- | ---: |
+| `0x00` | invalid | - |
+| `0x01` | current KZG suite | 48 bytes |
+| `0x02` | current IPA suite | 32 bytes |
+| `0x03-0xFF` | unassigned | - |
+
+An incompatible parameter set or commitment encoding receives a new backend
+ID even when it belongs to the same broad cryptographic family.
+
+### Current Codecs
 
 | Name | Value | Semantic kind | Backend |
 | --- | ---: | --- | --- |
-| `malt-map-kzg` | `0x300001` | map | KZG |
-| `malt-list-kzg` | `0x300002` | list | KZG |
-| `malt-map-ipa` | `0x300003` | map | IPA |
-| `malt-list-ipa` | `0x300004` | list | IPA |
+| `malt-map-kzg` | `0x301101` | map | KZG |
+| `malt-list-kzg` | `0x301201` | list | KZG |
+| `malt-map-ipa` | `0x301102` | map | IPA |
+| `malt-list-ipa` | `0x301202` | list | IPA |
 
 The implementation owner is `wire/maltcid`.
 
@@ -34,21 +91,37 @@ Current commitment byte sizes:
 | KZG | 48 bytes |
 | IPA | 32 bytes |
 
-Code that creates or validates typed roots must reject commitment byte lengths
-that do not match the selected backend.
+Code that creates or validates typed roots must select the backend descriptor
+from `BB` and reject commitment byte lengths that do not match it. Length
+alone must never select or override the backend.
 
 ## Root Classification
 
 `wire/maltcid` exposes helpers for:
 
 - detecting whether a CID is a MALT structure root
+- extracting the encoded MALT wire-format version
 - extracting semantic kind: `map`, `list`, or `unknown`
 - extracting backend kind: `kzg`, `ipa`, or `unknown`
 - extracting raw commitment bytes from a typed MALT root CID
 - comparing commitment bytes across typed roots
 
-Verifiers should reject roots or proof steps whose semantic kind, backend kind,
-or expected target type does not match the query and evidence.
+A supported typed root must satisfy all of these checks:
+
+1. its codec is in `0x300000-0x30FFFF`;
+2. `V` equals the current `MALTVersionID`;
+3. `S` and `BB` are nonzero registered IDs and their combination is
+   supported;
+4. the multihash code is identity;
+5. the identity digest length matches the selected backend descriptor.
+
+Unknown versions, semantics, backends, combinations, and codecs outside the
+typed-root subrange fail closed. Classifiers must validate the complete codec
+before returning either semantic or backend; independently masking one field
+is insufficient.
+
+Verifiers must also reject roots or proof steps whose semantic kind, backend
+kind, or expected target type does not match the query and evidence.
 
 ## Payload CIDs
 

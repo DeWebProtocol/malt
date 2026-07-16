@@ -13,11 +13,12 @@ same checked-in bytes; they do not redefine proof semantics or maintain edited
 copies.
 
 The corpus version is `malt.resolve-read.conformance/v1`. It is independent of
-the two enclosed operation profiles. Once released, a vector ID and its input
-and expected verdict are immutable. Additive coverage may be published in the
-same corpus only before release; later behavioral or encoding changes require
-v2. Error strings, timing, and implementation-specific exception types are not
-conformance outputs.
+the two enclosed operation profiles and of the typed-root
+`MALTVersionID=1`. Before the first release, an intentional encoding change
+may regenerate the corpus as part of the same reviewed change. Once released,
+a vector ID and its input and expected verdict are immutable; later behavioral
+or encoding changes require v2. Error strings, timing, and
+implementation-specific exception types are not conformance outputs.
 
 ## File And Envelope
 
@@ -62,7 +63,9 @@ JSON is outside v1.
 Consumers must select the verifier from `operation`; they must not infer the
 operation from fields inside `verification`, and they must not use `backend` to
 override the backend encoded by typed roots. `backend` is test metadata used to
-make coverage visible.
+make coverage visible. Typed-root consumers select the backend from the
+registered `0x30VSBB` backend ID and validate its declared commitment size;
+they must not infer a backend from commitment length.
 
 The current category vocabulary is `identity`, `map_key`, `multihop`,
 `payload`, `list_index`, `list_range`, `tamper`, `cross_root`, `cross_kind`,

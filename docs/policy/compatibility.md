@@ -35,6 +35,11 @@ documentation in the same PR:
 - mutation or receipt value semantics;
 - payload-binding and measured-list evidence.
 
+Typed-root decoders accept only the current registered `MALTVersionID`,
+semantic IDs, backend suite IDs, and combinations. Earlier experimental codec
+allocations are not compatibility inputs and must not be recognized through
+fallback mappings.
+
 v0.0.6 intentionally removes application and deployment packages from this
 module. Consumers of the former CLI/daemon/UnixFS/server/storage packages must
 use `malt-client` or `gateway`; no forwarding packages are provided.

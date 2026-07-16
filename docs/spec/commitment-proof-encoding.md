@@ -7,11 +7,12 @@ Resolve/Read conformance corpus v1. It complements the typed-root rules in
 
 ## Status And Scope
 
-These encodings are experimental, but the checked-in v1 vectors are immutable
-conformance inputs. A byte-level change to an encoding exercised by those
-vectors requires a new corpus version. If the change also makes a
-`malt.resolve/v0alpha1` or `malt.read/v0alpha1` value incompatible, it requires
-a new enclosing protocol profile as well.
+These encodings are experimental. Before the first release, an intentional
+wire change may regenerate the checked-in v1 vectors in the same change. Once
+the corpus is released, its vectors are immutable conformance inputs and a
+byte-level change to an exercised encoding requires a new corpus version. If
+the change also makes a `malt.resolve/v0alpha1` or `malt.read/v0alpha1` value
+incompatible, it requires a new enclosing protocol profile as well.
 
 Resolve/Read evidence uses single-index openings wrapped in the map or list
 semantic envelopes described below. The primitive batch encodings are recorded
@@ -24,13 +25,17 @@ A primitive commitment authenticates an indexed vector of opaque
 `commitment.Cell` byte strings. A CID-valued semantic slot is the binary CID
 bytes, not its text form. An undefined slot is the empty cell.
 
-Typed MALT roots are CIDv1 values whose multicodec selects map/list and KZG/IPA,
-and whose identity multihash digest is the raw commitment:
+Typed MALT roots are CIDv1 values whose `0x30VSBB` multicodec fields select the
+MALT wire version, map/list semantic, and KZG/IPA backend suite. Their identity
+multihash digest is the raw commitment:
 
 | Backend | Commitment bytes | Maximum primitive vector length |
 | --- | ---: | ---: |
 | KZG | 48 | 4096 |
 | IPA | 32 | 256 |
+
+The backend ID determines the commitment encoding and expected byte length.
+Verification must not infer or override the backend from the digest length.
 
 Map radix nodes and list tree nodes use 256 physical slots. Thus IPA's full
 vector and the first 256 positions of KZG's vector carry those node cells; all

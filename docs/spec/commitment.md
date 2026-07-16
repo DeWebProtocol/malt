@@ -56,10 +56,12 @@ slot proof primitive.
 ## Typed Roots
 
 Commitment outputs are carried in typed MALT root CIDs. See
-[CID and wire format](./cid-and-wire-format.md) for codec values and commitment
-byte-size rules. The exact cell transforms, index domains, primitive proof
-bytes, and semantic proof envelopes exercised by portable verification are
-fixed in [Commitment and proof encoding](./commitment-proof-encoding.md).
+[CID and wire format](./cid-and-wire-format.md) for the `0x30VSBB` codec
+layout and commitment backend registry. A backend ID denotes a complete suite
+and determines commitment-size validation; implementations must not infer a
+backend from byte length. The exact cell transforms, index domains, primitive
+proof bytes, and semantic proof envelopes exercised by portable verification
+are fixed in [Commitment and proof encoding](./commitment-proof-encoding.md).
 
 ## Related Proposals
 
