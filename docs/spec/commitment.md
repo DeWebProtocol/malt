@@ -57,7 +57,9 @@ slot proof primitive.
 
 Commitment outputs are carried in typed MALT root CIDs. See
 [CID and wire format](./cid-and-wire-format.md) for codec values and commitment
-byte-size rules.
+byte-size rules. The exact cell transforms, index domains, primitive proof
+bytes, and semantic proof envelopes exercised by portable verification are
+fixed in [Commitment and proof encoding](./commitment-proof-encoding.md).
 
 ## Related Proposals
 

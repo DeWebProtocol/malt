@@ -15,6 +15,10 @@ Serialized values live in `github.com/dewebprotocol/malt/protocol`. Checked-in
 JSON Schemas live in `protocol/schemas/` and are embedded through
 `protocol.Schema` and `protocol.SchemaNames`.
 
+Cross-language accept/reject behavior for these complete request/result pairs
+is locked by the
+[Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md).
+
 ## Resolve
 
 A request carries the caller-selected root and canonical segment array:
