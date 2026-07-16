@@ -123,6 +123,18 @@ is insufficient.
 Verifiers must also reject roots or proof steps whose semantic kind, backend
 kind, or expected target type does not match the query and evidence.
 
+Proof producers follow the same rule. For an operation over an existing root,
+`S` selects the semantic implementation and `BB` selects the commitment
+prover. Runtime configuration may restrict the registered backends, but it
+must not override the backend encoded by the root. Multi-step resolution makes
+this selection independently for every proof step from that step's `from`
+root, so linked structures may use different registered backends.
+
+An operation that creates a structure without an existing root has no codec
+from which to select a backend. Its executor therefore uses an explicit or
+configured default backend; all later operations use the backend encoded in
+the resulting root CID.
+
 ## Payload CIDs
 
 Immutable file bytes, chunks, manifests, and other payload objects keep their

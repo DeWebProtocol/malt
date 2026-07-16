@@ -63,6 +63,12 @@ backend from byte length. The exact cell transforms, index domains, primitive
 proof bytes, and semantic proof envelopes exercised by portable verification
 are fixed in [Commitment and proof encoding](./commitment-proof-encoding.md).
 
+For existing roots, both proof generation and verification select the backend
+from the typed root. A process-level default applies only when creating a new
+root without a base root. A resolver that crosses multiple structure roots
+repeats backend selection for each step rather than pinning the first root's
+backend for the complete traversal.
+
 ## Related Proposals
 
 - [MIP-1005](../mips/mip-1005-kzg-map-label-domain.md) records the accepted

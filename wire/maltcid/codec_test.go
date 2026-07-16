@@ -263,6 +263,24 @@ func TestEqualCommitmentAcrossSemanticCodecs(t *testing.T) {
 	}
 }
 
+func TestEqualCommitmentRejectsDifferentBackends(t *testing.T) {
+	kzgCID, err := maltcid.NewMapKZGCid(make([]byte, maltcid.KZGCommitmentSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ipaCID, err := maltcid.NewMapIPACid(make([]byte, maltcid.IPACommitmentSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := maltcid.EqualCommitment(kzgCID, ipaCID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("EqualCommitment accepted roots from different backend suites")
+	}
+}
+
 func TestCodecName(t *testing.T) {
 	tests := []struct {
 		codec    uint64

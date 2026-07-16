@@ -19,6 +19,7 @@ import (
 	"github.com/dewebprotocol/malt/graph/resolver"
 	"github.com/dewebprotocol/malt/graph/resolver/step/explicit"
 	"github.com/dewebprotocol/malt/graph/writer"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
 // RuntimeGraph is a per-graph runtime composition of semantic implementations,
@@ -54,23 +55,47 @@ func NewGraph(id string, materializer materializer.MutableStore, opts ...Option)
 		namespace = id
 	}
 
-	// Default commitment scheme: KZG
-	scheme := o.Scheme
-	if scheme == nil {
-		s, err := kzg.NewScheme()
+	var semantic mapping.Semantics
+	var listSemantic list.Semantics
+	if len(o.Backends) > 0 || o.DefaultBackend != "" {
+		defaultBackend, err := validateBackendOptions(o)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create default KZG scheme: %w", err)
+			return nil, err
 		}
-		scheme = s
-	}
+		maps := make(map[maltcid.BackendKind]mapping.Semantics, len(o.Backends))
+		lists := make(map[maltcid.BackendKind]list.MeasuredSemantics, len(o.Backends))
+		for kind, scheme := range o.Backends {
+			maps[kind], err = mappingradix.NewMap(scheme, materializer)
+			if err != nil {
+				return nil, fmt.Errorf("create %s mapping semantic: %w", kind, err)
+			}
+			lists[kind], err = listtree.NewList(scheme, materializer)
+			if err != nil {
+				return nil, fmt.Errorf("create %s list semantic: %w", kind, err)
+			}
+		}
+		semantic = &mapBackendDispatcher{defaultBackend: defaultBackend, backends: maps}
+		listSemantic = &listBackendDispatcher{defaultBackend: defaultBackend, backends: lists}
+	} else {
+		// Default commitment scheme: KZG.
+		scheme := o.Scheme
+		if scheme == nil {
+			s, err := kzg.NewScheme()
+			if err != nil {
+				return nil, fmt.Errorf("failed to create default KZG scheme: %w", err)
+			}
+			scheme = s
+		}
 
-	semantic, err := mappingradix.NewMap(scheme, materializer)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
-	}
-	listSemantic, err := listtree.NewList(scheme, materializer)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create list semantic: %w", err)
+		var err error
+		semantic, err = mappingradix.NewMap(scheme, materializer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
+		}
+		listSemantic, err = listtree.NewList(scheme, materializer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create list semantic: %w", err)
+		}
 	}
 
 	// Create per-graph explicit resolver

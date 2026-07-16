@@ -237,9 +237,10 @@ func decodeRoot(c cid.Cid) (codecParts, []byte, error) {
 	return parts, decoded.Digest, nil
 }
 
-// EqualCommitment reports whether a and b carry the same commitment bytes.
-// This is useful when comparing typed roots that differ only by semantic codec
-// (e.g., map vs list) but refer to the same primitive commitment.
+// EqualCommitment reports whether a and b use the same commitment backend and
+// carry the same commitment bytes. This permits semantic rewrapping (for
+// example map to list) without treating equal-length values from different
+// backend suites as interchangeable.
 func EqualCommitment(a, b cid.Cid) (bool, error) {
 	ab, err := ExtractCommitment(a)
 	if err != nil {
@@ -248,6 +249,9 @@ func EqualCommitment(a, b cid.Cid) (bool, error) {
 	bb, err := ExtractCommitment(b)
 	if err != nil {
 		return false, err
+	}
+	if BackendKindOf(a) != BackendKindOf(b) {
+		return false, nil
 	}
 	return bytes.Equal(ab, bb), nil
 }

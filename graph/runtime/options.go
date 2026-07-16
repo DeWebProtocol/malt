@@ -2,6 +2,7 @@ package runtimegraph
 
 import (
 	"github.com/dewebprotocol/malt/auth/commitment"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
 // Option configures a Graph instance.
@@ -9,12 +10,14 @@ type Option func(*Options)
 
 // Options holds configuration for Graph creation.
 type Options struct {
-	Scheme    commitment.IndexCommitment
-	Namespace string
+	Scheme         commitment.IndexCommitment
+	Backends       map[maltcid.BackendKind]commitment.IndexCommitment
+	DefaultBackend maltcid.BackendKind
+	Namespace      string
 }
 
 func defaultOptions() *Options {
-	return &Options{}
+	return &Options{Backends: make(map[maltcid.BackendKind]commitment.IndexCommitment)}
 }
 
 // WithCommitmentScheme sets the commitment scheme for this Graph.
@@ -22,6 +25,28 @@ func defaultOptions() *Options {
 func WithCommitmentScheme(scheme commitment.IndexCommitment) Option {
 	return func(o *Options) {
 		o.Scheme = scheme
+	}
+}
+
+// WithCommitmentBackend registers one execution backend for typed-root
+// dispatch. Existing-root operations select a registered backend from the
+// root CID; use [WithDefaultCommitmentBackend] for operations that create a
+// structure without an existing root.
+func WithCommitmentBackend(kind maltcid.BackendKind, scheme commitment.IndexCommitment) Option {
+	return func(o *Options) {
+		if o.Backends == nil {
+			o.Backends = make(map[maltcid.BackendKind]commitment.IndexCommitment)
+		}
+		o.Backends[kind] = scheme
+	}
+}
+
+// WithDefaultCommitmentBackend selects the registered backend used only when
+// an operation creates a structure without an existing typed root. It never
+// overrides the backend encoded by an existing root CID.
+func WithDefaultCommitmentBackend(kind maltcid.BackendKind) Option {
+	return func(o *Options) {
+		o.DefaultBackend = kind
 	}
 }
 
