@@ -14,9 +14,12 @@ import (
 // multi-writer policy remain outside MALT core.
 var sharedFreshnessGuards sync.Map
 
-type materializerFreshnessKey struct {
-	typeOf   reflect.Type
+type explicitMaterializerFreshnessKey struct {
 	identity string
+}
+
+type comparableMaterializerFreshnessKey struct {
+	materializer Materializer
 }
 
 type rootFreshnessGuard struct {
@@ -46,12 +49,12 @@ func materializerFreshnessIdentity(table Materializer) (any, bool) {
 		if identity == "" {
 			return nil, false
 		}
-		return materializerFreshnessKey{typeOf: reflect.TypeOf(table), identity: identity}, true
+		return explicitMaterializerFreshnessKey{identity: identity}, true
 	}
-	if !reflect.TypeOf(table).Comparable() {
+	if !reflect.ValueOf(table).Comparable() {
 		return nil, false
 	}
-	return table, true
+	return comparableMaterializerFreshnessKey{materializer: table}, true
 }
 
 func rootFreshnessGuardFor(table Materializer) (*rootFreshnessGuard, error) {

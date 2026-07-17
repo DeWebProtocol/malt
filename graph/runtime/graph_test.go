@@ -16,6 +16,24 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+type fixedWidthCommitOnlyMeasuredSemantics struct {
+	list.MeasuredSemantics
+	committer list.FixedWidthCommitter
+}
+
+func (s fixedWidthCommitOnlyMeasuredSemantics) CommitFixed(ctx context.Context, namespace string, chunks []cid.Cid, chunkSize, totalSize uint64) (cid.Cid, error) {
+	return s.committer.CommitFixed(ctx, namespace, chunks, chunkSize, totalSize)
+}
+
+type fixedWidthAppendOnlyMeasuredSemantics struct {
+	list.MeasuredSemantics
+	appender list.FixedWidthAppender
+}
+
+func (s fixedWidthAppendOnlyMeasuredSemantics) AppendFixed(ctx context.Context, namespace string, root cid.Cid, key cid.Cid, totalSize uint64) (cid.Cid, uint64, error) {
+	return s.appender.AppendFixed(ctx, namespace, root, key, totalSize)
+}
+
 func TestNewGraphInitializesSDKComposition(t *testing.T) {
 	store := materialmemory.New(true)
 	g, err := NewGraph("composition", store, WithNamespace("ns"))
@@ -167,6 +185,67 @@ func TestRuntimeGraphDispatchesListProofsAndKeepsCreateDefault(t *testing.T) {
 	}
 	if index != 1 || maltcid.BackendKindOf(appendedRoot) != maltcid.BackendKindIPA {
 		t.Fatalf("fixed append root=%s index=%d", maltcid.BackendKindOf(appendedRoot), index)
+	}
+}
+
+func TestListBackendDispatcherSupportsNarrowFixedWidthCapabilities(t *testing.T) {
+	ctx := context.Background()
+	store := materialmemory.New(true)
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewGraph("narrow-fixed", store, WithNamespace("narrow-fixed"), WithCommitmentScheme(scheme))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	measured := g.ListSemantic().(list.MeasuredSemantics)
+	fixed := measured.(list.FixedWidthSemantics)
+	values := []cid.Cid{cid.MustParse("bafkqaaa"), cid.MustParse("bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")}
+	baseRoot, err := fixed.CommitFixed(ctx, "narrow-fixed", values[:1], 4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedRoot, err := fixed.CommitFixed(ctx, "narrow-fixed", values, 4, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	commitBackend := fixedWidthCommitOnlyMeasuredSemantics{MeasuredSemantics: measured, committer: fixed}
+	if _, ok := any(commitBackend).(list.FixedWidthAppender); ok {
+		t.Fatal("commit-only runtime fixture unexpectedly implements FixedWidthAppender")
+	}
+	commitDispatcher := &listBackendDispatcher{
+		defaultBackend: maltcid.BackendKindKZG,
+		backends: map[maltcid.BackendKind]list.MeasuredSemantics{
+			maltcid.BackendKindKZG: commitBackend,
+		},
+	}
+	committedRoot, err := commitDispatcher.CommitFixed(ctx, "narrow-fixed", values, 4, 8)
+	if err != nil {
+		t.Fatalf("CommitFixed through commit-only backend failed: %v", err)
+	}
+	if !committedRoot.Equals(expectedRoot) {
+		t.Fatalf("committed root = %s, want %s", committedRoot, expectedRoot)
+	}
+
+	appendBackend := fixedWidthAppendOnlyMeasuredSemantics{MeasuredSemantics: measured, appender: fixed}
+	if _, ok := any(appendBackend).(list.FixedWidthCommitter); ok {
+		t.Fatal("append-only runtime fixture unexpectedly implements FixedWidthCommitter")
+	}
+	appendDispatcher := &listBackendDispatcher{
+		defaultBackend: maltcid.BackendKindKZG,
+		backends: map[maltcid.BackendKind]list.MeasuredSemantics{
+			maltcid.BackendKindKZG: appendBackend,
+		},
+	}
+	appendedRoot, index, err := appendDispatcher.AppendFixed(ctx, "narrow-fixed", baseRoot, values[1], 8)
+	if err != nil {
+		t.Fatalf("AppendFixed through append-only backend failed: %v", err)
+	}
+	if index != 1 || !appendedRoot.Equals(expectedRoot) {
+		t.Fatalf("append result root=%s index=%d, want root=%s index=1", appendedRoot, index, expectedRoot)
 	}
 }
 

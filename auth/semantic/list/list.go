@@ -196,12 +196,25 @@ type MeasuredSemantics interface {
 	VerifyRange(root cid.Cid, start uint64, end *uint64, expected RangeResult, proof structure.Proof) (bool, error)
 }
 
-// FixedWidthSemantics is the explicit write-side extension for measured lists
-// whose entries are fixed-width byte chunks. Generic list implementations do
-// not need to implement this capability.
-type FixedWidthSemantics interface {
+// FixedWidthCommitter is the narrow write-side capability for creating a
+// measured list whose entries are fixed-width byte chunks.
+type FixedWidthCommitter interface {
 	Semantics
 
 	CommitFixed(ctx context.Context, namespace string, chunks []cid.Cid, chunkSize, totalSize uint64) (cid.Cid, error)
+}
+
+// FixedWidthAppender is the narrow write-side capability for extending a
+// measured list whose entries are fixed-width byte chunks.
+type FixedWidthAppender interface {
+	Semantics
+
 	AppendFixed(ctx context.Context, namespace string, root cid.Cid, key cid.Cid, totalSize uint64) (newRoot cid.Cid, newIndex uint64, err error)
+}
+
+// FixedWidthSemantics combines the fixed-width create and append capabilities.
+// Implementations may expose either narrow capability independently.
+type FixedWidthSemantics interface {
+	FixedWidthCommitter
+	FixedWidthAppender
 }

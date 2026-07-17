@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"sync"
 	"testing"
@@ -124,6 +125,42 @@ type identifiedNonComparableMaterializer struct {
 }
 
 func (t identifiedNonComparableMaterializer) FreshnessIdentity() string { return t.identity }
+
+type interfaceWrappedMaterializer struct {
+	materializer.Store
+}
+
+type firstIdentifiedMaterializer struct {
+	materializer.Store
+	identity string
+}
+
+func (t firstIdentifiedMaterializer) FreshnessIdentity() string { return t.identity }
+
+type secondIdentifiedMaterializer struct {
+	materializer.Store
+	identity string
+}
+
+func (t secondIdentifiedMaterializer) FreshnessIdentity() string { return t.identity }
+
+type fixedWidthCommitOnlySemantics struct {
+	list.Semantics
+	committer list.FixedWidthCommitter
+}
+
+func (s fixedWidthCommitOnlySemantics) CommitFixed(ctx context.Context, namespace string, chunks []cid.Cid, chunkSize, totalSize uint64) (cid.Cid, error) {
+	return s.committer.CommitFixed(ctx, namespace, chunks, chunkSize, totalSize)
+}
+
+type fixedWidthAppendOnlySemantics struct {
+	list.Semantics
+	appender list.FixedWidthAppender
+}
+
+func (s fixedWidthAppendOnlySemantics) AppendFixed(ctx context.Context, namespace string, root cid.Cid, key cid.Cid, totalSize uint64) (cid.Cid, uint64, error) {
+	return s.appender.AppendFixed(ctx, namespace, root, key, totalSize)
+}
 
 func (t nonComparableMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	return t.materializer.Get(ctx, namespace, root, path)
@@ -508,8 +545,51 @@ func TestWriterApplySemanticListAppendMutation(t *testing.T) {
 	}
 }
 
+func TestWriterApplyFixedMeasuredListCreateWithCommitOnlySemantics(t *testing.T) {
+	_, table, semantic, lists, _ := newTestWriterWithList(t)
+	ctx := context.Background()
+	namespace := "fixed-commit-only"
+	chunkSize := uint64(4)
+	chunks := []cid.Cid{fakeCID("fixed-commit-only-0"), fakeCID("fixed-commit-only-1")}
+	fixed := lists.(list.FixedWidthSemantics)
+	commitOnly := fixedWidthCommitOnlySemantics{
+		Semantics: lists,
+		committer: fixed,
+	}
+	if _, ok := any(commitOnly).(list.FixedWidthAppender); ok {
+		t.Fatal("commit-only fixture unexpectedly implements FixedWidthAppender")
+	}
+	w := NewWriter(semantic, table, commitOnly)
+
+	expectedRoot, err := fixed.CommitFixed(ctx, namespace, chunks, chunkSize, uint64(len(chunks))*chunkSize)
+	if err != nil {
+		t.Fatalf("CommitFixed expected failed: %v", err)
+	}
+	receipt, err := w.Apply(ctx, namespace, SemanticMutation{
+		BaseRoot: fakeCID("fixed-commit-only-base"),
+		Deltas: []ArcSetDelta{{
+			ExpectedRoot: expectedRoot,
+			Kind:         arcset.KindList,
+			Changes: mustWriterDelta(t, arcset.KindList, []arcset.ArcChange{
+				{Coordinate: mustListCoordinate(t, 0), After: targetRefPtr(arcset.NewCASTarget(chunks[0]))},
+				{Coordinate: mustListCoordinate(t, 1), After: targetRefPtr(arcset.NewCASTarget(chunks[1]))},
+			}),
+			Commit: CommitDescriptor{FixedList: &FixedListCommit{
+				ChunkSize: chunkSize,
+				TotalSize: uint64(len(chunks)) * chunkSize,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Apply with CommitFixed-only semantics failed: %v", err)
+	}
+	if !receipt.NewRoot.Equals(expectedRoot) {
+		t.Fatalf("new root = %s, want %s", receipt.NewRoot, expectedRoot)
+	}
+}
+
 func TestWriterApplyFixedMeasuredListAppendMutation(t *testing.T) {
-	w, _, _, lists, _ := newTestWriterWithList(t)
+	_, table, semantic, lists, _ := newTestWriterWithList(t)
 	ctx := context.Background()
 	namespace := "test"
 	chunkSize := uint64(4)
@@ -518,6 +598,14 @@ func TestWriterApplyFixedMeasuredListAppendMutation(t *testing.T) {
 		chunks[i] = fakeCID("fixed-chunk-" + strconv.Itoa(i))
 	}
 	fixed := lists.(list.FixedWidthSemantics)
+	appendOnly := fixedWidthAppendOnlySemantics{
+		Semantics: lists,
+		appender:  fixed,
+	}
+	if _, ok := any(appendOnly).(list.FixedWidthCommitter); ok {
+		t.Fatal("append-only fixture unexpectedly implements FixedWidthCommitter")
+	}
+	w := NewWriter(semantic, table, appendOnly)
 	baseRoot, err := fixed.CommitFixed(ctx, namespace, chunks[:255], chunkSize, uint64(255)*chunkSize)
 	if err != nil {
 		t.Fatalf("CommitFixed base failed: %v", err)
@@ -806,6 +894,64 @@ func TestWriter_NonComparableMaterializerFailsClosedWithoutIdentity(t *testing.T
 	}
 	if _, err := w.UpdateArc(context.Background(), "non-comparable", root, "child", fakeCID("child")); !errors.Is(err, ErrFreshnessIdentityUnavailable) {
 		t.Fatalf("UpdateArc error = %v, want ErrFreshnessIdentityUnavailable", err)
+	}
+}
+
+func TestWriter_InterfaceWrappedUnhashableMaterializerFailsClosedWithoutPanic(t *testing.T) {
+	_, at, semantic, _ := newTestWriter(t)
+	inner := materializer.Store(nonComparableMaterializer{
+		materializer: at,
+		tags:         []string{"custom"},
+	})
+	table := materializer.Store(interfaceWrappedMaterializer{Store: inner})
+	if !reflect.TypeOf(table).Comparable() {
+		t.Fatal("test fixture type must be comparable")
+	}
+	if reflect.ValueOf(table).Comparable() {
+		t.Fatal("test fixture value must be unhashable through its interface field")
+	}
+
+	w := NewWriter(semantic, table)
+	if w.freshness != nil || !errors.Is(w.freshnessErr, ErrFreshnessIdentityUnavailable) {
+		t.Fatalf("freshness state = (%p, %v), want unavailable identity", w.freshness, w.freshnessErr)
+	}
+
+	ctx := context.Background()
+	namespace := "interface-wrapped-unhashable"
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{"base": fakeCID("base")}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+	if _, err := w.UpdateArc(ctx, namespace, root, "child", fakeCID("child")); !errors.Is(err, ErrFreshnessIdentityUnavailable) {
+		t.Fatalf("UpdateArc error = %v, want ErrFreshnessIdentityUnavailable", err)
+	}
+}
+
+func TestWriter_ExplicitIdentitySharesAcrossWrapperTypesAndPointerForms(t *testing.T) {
+	_, at, semantic, _ := newTestWriter(t)
+	const identity = "shared-cross-wrapper-test-backend"
+	first := firstIdentifiedMaterializer{Store: at, identity: identity}
+	second := secondIdentifiedMaterializer{Store: at, identity: identity}
+	pointer := &firstIdentifiedMaterializer{Store: at, identity: identity}
+
+	w := NewWriter(semantic, first)
+	w2 := NewWriter(semantic, second)
+	w3 := NewWriter(semantic, pointer)
+	if w.freshness == nil || w.freshness != w2.freshness || w.freshness != w3.freshness {
+		t.Fatal("canonical explicit identity did not share one guard across wrapper types and pointer forms")
+	}
+
+	ctx := context.Background()
+	namespace := "identified-cross-wrapper"
+	root, err := w.CreateStructure(ctx, namespace, makeArcSet(map[string]cid.Cid{"base": fakeCID("base")}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+	if _, err := w.UpdateArc(ctx, namespace, root, "first", fakeCID("first")); err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	if _, err := w2.UpdateArc(ctx, namespace, root, "second", fakeCID("second")); !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second wrapper UpdateArc error = %v, want ErrStaleRoot", err)
 	}
 }
 
