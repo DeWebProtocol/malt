@@ -21,6 +21,14 @@ type Materializer = materialization.MutableStore
 // BranchingMaterializer optionally reports support for concurrent children.
 type BranchingMaterializer = materialization.BranchingStore
 
+// FreshnessIdentityProvider gives legacy root-consuming writer helpers a stable
+// process-local identity for one non-branching Materializer backend. Wrappers
+// that are not comparable, or multiple wrapper instances over the same
+// backend, must return the same non-empty identity so Writers share one guard.
+type FreshnessIdentityProvider interface {
+	FreshnessIdentity() string
+}
+
 var (
 	// ErrArcNotFound is returned when the target arc does not exist for a replace/delete operation.
 	ErrArcNotFound = errors.New("arc not found")
@@ -35,6 +43,10 @@ var (
 	// update a base root that this writer has already advanced in the same
 	// namespace.
 	ErrStaleRoot = errors.New("stale root")
+
+	// ErrFreshnessIdentityUnavailable reports that a non-branching Materializer
+	// cannot safely share legacy root-consumption state across Writer instances.
+	ErrFreshnessIdentityUnavailable = errors.New("materializer freshness identity is unavailable")
 )
 
 // ArcOp describes the type of arc operation performed.
@@ -112,6 +124,7 @@ type Writer struct {
 	listSemantic list.Semantics
 	materializer Materializer
 	freshness    *rootFreshnessGuard
+	freshnessErr error
 }
 
 // NewWriter creates a new Writer.
@@ -124,11 +137,13 @@ func NewWriter(semantic mapping.Semantics, materializer Materializer, lists ...l
 	if len(lists) > 0 {
 		listSemantic = lists[0]
 	}
+	freshness, freshnessErr := rootFreshnessGuardFor(materializer)
 	return &Writer{
 		semantic:     semantic,
 		listSemantic: listSemantic,
 		materializer: materializer,
-		freshness:    rootFreshnessGuardFor(materializer),
+		freshness:    freshness,
+		freshnessErr: freshnessErr,
 	}
 }
 
@@ -144,6 +159,9 @@ func (w *Writer) RetryMaterializationWrite(ctx context.Context, err *Materializa
 	}
 	if err == nil {
 		return fmt.Errorf("materialization write failure is nil")
+	}
+	if err.OldRoot.Defined() && w.freshnessErr != nil {
+		return w.freshnessErr
 	}
 	if w.freshness != nil && err.OldRoot.Defined() {
 		unlock, beginErr := w.freshness.beginUpdate(err.Namespace, err.OldRoot)
@@ -277,6 +295,9 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 	if canonicalPath.IsEmpty() {
 		return nil, ErrEmptyPath
 	}
+	if w.freshnessErr != nil {
+		return nil, w.freshnessErr
+	}
 	if w.freshness != nil {
 		unlock, err := w.freshness.beginUpdate(namespace, root)
 		if err != nil {
@@ -406,6 +427,9 @@ func (w *Writer) UpdateArc(ctx context.Context, namespace string, root cid.Cid, 
 func (w *Writer) BatchUpdateArcs(ctx context.Context, namespace string, root cid.Cid, updates map[string]cid.Cid) (*BatchUpdateResult, error) {
 	if !root.Defined() {
 		return nil, ErrInvalidRoot
+	}
+	if w.freshnessErr != nil {
+		return nil, w.freshnessErr
 	}
 	if len(updates) == 0 {
 		return nil, fmt.Errorf("updates must not be empty")

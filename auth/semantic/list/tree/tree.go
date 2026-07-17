@@ -1277,6 +1277,7 @@ func cloneSlotsForMetadataMutation(slots []cid.Cid) []cid.Cid {
 
 var _ list.Semantics = (*TreeList)(nil)
 var _ list.MeasuredSemantics = (*TreeList)(nil)
+var _ list.FixedWidthSemantics = (*TreeList)(nil)
 
 // cellsFromCIDs converts a CID slice to commitment cells.
 func cellsFromCIDs(values []cid.Cid) []commitment.Cell {

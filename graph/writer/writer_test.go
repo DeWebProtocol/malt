@@ -118,6 +118,13 @@ type nonComparableMaterializer struct {
 	tags         []string
 }
 
+type identifiedNonComparableMaterializer struct {
+	nonComparableMaterializer
+	identity string
+}
+
+func (t identifiedNonComparableMaterializer) FreshnessIdentity() string { return t.identity }
+
 func (t nonComparableMaterializer) Get(ctx context.Context, namespace string, root cid.Cid, path arcset.Path) (cid.Cid, error) {
 	return t.materializer.Get(ctx, namespace, root, path)
 }
@@ -510,9 +517,7 @@ func TestWriterApplyFixedMeasuredListAppendMutation(t *testing.T) {
 	for i := range chunks {
 		chunks[i] = fakeCID("fixed-chunk-" + strconv.Itoa(i))
 	}
-	fixed := lists.(interface {
-		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
-	})
+	fixed := lists.(list.FixedWidthSemantics)
 	baseRoot, err := fixed.CommitFixed(ctx, namespace, chunks[:255], chunkSize, uint64(255)*chunkSize)
 	if err != nil {
 		t.Fatalf("CommitFixed base failed: %v", err)
@@ -783,7 +788,7 @@ func TestWriter_UpdateArc_SharedMaterializerRejectsConsumedBaseRoot(t *testing.T
 	}
 }
 
-func TestWriter_NonComparableMaterializerUsesPerWriterFreshnessGuard(t *testing.T) {
+func TestWriter_NonComparableMaterializerFailsClosedWithoutIdentity(t *testing.T) {
 	_, at, semantic, _ := newTestWriter(t)
 	table := materializer.Store(nonComparableMaterializer{
 		materializer: at,
@@ -791,13 +796,42 @@ func TestWriter_NonComparableMaterializerUsesPerWriterFreshnessGuard(t *testing.
 	})
 
 	w := NewWriter(semantic, table)
-	w2 := NewWriter(semantic, table)
-
-	if w.freshness == nil || w2.freshness == nil {
-		t.Fatal("non-branching Materializer should install freshness guards")
+	if w.freshness != nil || !errors.Is(w.freshnessErr, ErrFreshnessIdentityUnavailable) {
+		t.Fatalf("freshness state = (%p, %v), want unavailable identity", w.freshness, w.freshnessErr)
 	}
-	if w.freshness == w2.freshness {
-		t.Fatal("non-comparable Materializer value should fall back to per-writer freshness guards")
+
+	root, err := w.CreateStructure(context.Background(), "non-comparable", makeArcSet(map[string]cid.Cid{"base": fakeCID("base")}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+	if _, err := w.UpdateArc(context.Background(), "non-comparable", root, "child", fakeCID("child")); !errors.Is(err, ErrFreshnessIdentityUnavailable) {
+		t.Fatalf("UpdateArc error = %v, want ErrFreshnessIdentityUnavailable", err)
+	}
+}
+
+func TestWriter_NonComparableMaterializerSharesExplicitIdentity(t *testing.T) {
+	_, at, semantic, _ := newTestWriter(t)
+	table := materializer.Store(identifiedNonComparableMaterializer{
+		nonComparableMaterializer: nonComparableMaterializer{materializer: at, tags: []string{"custom"}},
+		identity:                  "shared-test-backend",
+	})
+
+	w := NewWriter(semantic, table)
+	w2 := NewWriter(semantic, table)
+	if w.freshness == nil || w2.freshness == nil || w.freshness != w2.freshness {
+		t.Fatal("explicit freshness identity did not share one guard")
+	}
+
+	ctx := context.Background()
+	root, err := w.CreateStructure(ctx, "identified-non-comparable", makeArcSet(map[string]cid.Cid{"base": fakeCID("base")}))
+	if err != nil {
+		t.Fatalf("CreateStructure failed: %v", err)
+	}
+	if _, err := w.UpdateArc(ctx, "identified-non-comparable", root, "first", fakeCID("first")); err != nil {
+		t.Fatalf("first UpdateArc failed: %v", err)
+	}
+	if _, err := w2.UpdateArc(ctx, "identified-non-comparable", root, "second", fakeCID("second")); !errors.Is(err, ErrStaleRoot) {
+		t.Fatalf("second UpdateArc error = %v, want ErrStaleRoot", err)
 	}
 }
 

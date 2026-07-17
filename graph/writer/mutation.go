@@ -285,9 +285,7 @@ func (w *Writer) commitListDelta(ctx context.Context, namespace string, delta Ar
 			root, err = w.listSemantic.Replace(ctx, namespace, root, index, change.Before.CID(), change.After.CID())
 		case index == length:
 			if delta.Commit.FixedList != nil {
-				appender, ok := w.listSemantic.(interface {
-					AppendFixed(context.Context, string, cid.Cid, cid.Cid, uint64) (cid.Cid, uint64, error)
-				})
+				appender, ok := w.listSemantic.(list.FixedWidthSemantics)
 				if !ok {
 					return cid.Undef, errors.New("list semantics does not support fixed list append")
 				}
@@ -329,9 +327,7 @@ func (w *Writer) commitList(ctx context.Context, namespace string, values []cid.
 	if descriptor.FixedList == nil {
 		return w.listSemantic.Commit(ctx, namespace, list.NewViewFromSlice(values))
 	}
-	measured, ok := w.listSemantic.(interface {
-		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
-	})
+	measured, ok := w.listSemantic.(list.FixedWidthSemantics)
 	if !ok {
 		return cid.Undef, errors.New("list semantics does not support fixed list commits")
 	}

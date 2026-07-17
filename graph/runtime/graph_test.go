@@ -155,16 +155,12 @@ func TestRuntimeGraphDispatchesListProofsAndKeepsCreateDefault(t *testing.T) {
 		t.Fatalf("map prover accepted list root: %v", err)
 	}
 
-	fixedCommitter := ipaGraph.ListSemantic().(interface {
-		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
-	})
+	fixedCommitter := ipaGraph.ListSemantic().(list.FixedWidthSemantics)
 	fixedRoot, err := fixedCommitter.CommitFixed(ctx, "mixed-list", values[:1], 4, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixedAppender := dynamic.ListSemantic().(interface {
-		AppendFixed(context.Context, string, cid.Cid, cid.Cid, uint64) (cid.Cid, uint64, error)
-	})
+	fixedAppender := dynamic.ListSemantic().(list.FixedWidthSemantics)
 	appendedRoot, index, err := fixedAppender.AppendFixed(ctx, "mixed-list", fixedRoot, values[1], 8)
 	if err != nil {
 		t.Fatalf("append IPA fixed list with KZG default: %v", err)
