@@ -3,6 +3,7 @@ package writer
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	cid "github.com/ipfs/go-cid"
@@ -13,6 +14,14 @@ import (
 // multi-writer policy remain outside MALT core.
 var sharedFreshnessGuards sync.Map
 
+type explicitMaterializerFreshnessKey struct {
+	identity string
+}
+
+type comparableMaterializerFreshnessKey struct {
+	materializer Materializer
+}
+
 type rootFreshnessGuard struct {
 	mu       sync.Mutex
 	consumed map[string]cid.Cid
@@ -22,25 +31,35 @@ func newRootFreshnessGuard() *rootFreshnessGuard {
 	return &rootFreshnessGuard{consumed: make(map[string]cid.Cid)}
 }
 
-func sharedRootFreshnessGuard(table Materializer) *rootFreshnessGuard {
+func sharedRootFreshnessGuard(table Materializer) (*rootFreshnessGuard, error) {
 	key, ok := materializerFreshnessIdentity(table)
 	if !ok {
-		return newRootFreshnessGuard()
+		return nil, fmt.Errorf("%w: non-branching materializer %T must implement FreshnessIdentityProvider", ErrFreshnessIdentityUnavailable, table)
 	}
 	guard, _ := sharedFreshnessGuards.LoadOrStore(key, newRootFreshnessGuard())
-	return guard.(*rootFreshnessGuard)
+	return guard.(*rootFreshnessGuard), nil
 }
 
 func materializerFreshnessIdentity(table Materializer) (any, bool) {
-	if table == nil || !reflect.TypeOf(table).Comparable() {
+	if table == nil {
 		return nil, false
 	}
-	return table, true
+	if identified, ok := table.(FreshnessIdentityProvider); ok {
+		identity := strings.TrimSpace(identified.FreshnessIdentity())
+		if identity == "" {
+			return nil, false
+		}
+		return explicitMaterializerFreshnessKey{identity: identity}, true
+	}
+	if !reflect.ValueOf(table).Comparable() {
+		return nil, false
+	}
+	return comparableMaterializerFreshnessKey{materializer: table}, true
 }
 
-func rootFreshnessGuardFor(table Materializer) *rootFreshnessGuard {
+func rootFreshnessGuardFor(table Materializer) (*rootFreshnessGuard, error) {
 	if supportsConcurrentBranches(table) {
-		return nil
+		return nil, nil
 	}
 	return sharedRootFreshnessGuard(table)
 }

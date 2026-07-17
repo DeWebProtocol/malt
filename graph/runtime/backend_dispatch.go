@@ -109,9 +109,7 @@ func (d *listBackendDispatcher) CommitFixed(ctx context.Context, namespace strin
 	if err != nil {
 		return cid.Undef, err
 	}
-	fixed, ok := backend.(interface {
-		CommitFixed(context.Context, string, []cid.Cid, uint64, uint64) (cid.Cid, error)
-	})
+	fixed, ok := backend.(list.FixedWidthCommitter)
 	if !ok {
 		return cid.Undef, fmt.Errorf("default list backend %q does not support fixed measured commits", d.defaultBackend)
 	}
@@ -155,9 +153,7 @@ func (d *listBackendDispatcher) AppendFixed(ctx context.Context, namespace strin
 	if err != nil {
 		return cid.Undef, 0, err
 	}
-	appender, ok := backend.(interface {
-		AppendFixed(context.Context, string, cid.Cid, cid.Cid, uint64) (cid.Cid, uint64, error)
-	})
+	appender, ok := backend.(list.FixedWidthAppender)
 	if !ok {
 		return cid.Undef, 0, fmt.Errorf("list backend %q does not support fixed measured append", maltcid.BackendKindOf(root))
 	}
@@ -245,6 +241,7 @@ func validateBackendOptions(options *Options) (maltcid.BackendKind, error) {
 }
 
 var (
-	_ mapping.Semantics      = (*mapBackendDispatcher)(nil)
-	_ list.MeasuredSemantics = (*listBackendDispatcher)(nil)
+	_ mapping.Semantics        = (*mapBackendDispatcher)(nil)
+	_ list.MeasuredSemantics   = (*listBackendDispatcher)(nil)
+	_ list.FixedWidthSemantics = (*listBackendDispatcher)(nil)
 )
