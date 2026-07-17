@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Align the default Make target and CI build gate with the SDK-only package
+  tree.
+
+### Removed
+
+- Remove the unused process-global logger, the former HTTP stat/content query
+  path helper, and the stale daemon configuration example. These are
+  intentional pre-v1 Go source removals after the Gateway/client split.
+
 ## [0.0.6] - 2026-07-14
 
 ### Changed

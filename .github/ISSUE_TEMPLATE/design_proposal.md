@@ -1,6 +1,6 @@
 ---
 name: Design proposal
-about: Propose a semantic, proof, evaluator, or runtime design change
+about: Propose a core semantic, proof, protocol, or runtime design change
 title: "design: "
 labels: design
 assignees: ""
@@ -16,11 +16,13 @@ assignees: ""
 
 - [ ] list/map semantics
 - [ ] ProofList or verification
-- [ ] ArcTable or commitment backend
+- [ ] commitment backend
+- [ ] resolve/read/mutation contract or schema
 - [ ] graph resolver/writer ports
-- [ ] UnixFS-style layout
-- [ ] evaluator schema or benchmark
-- [ ] daemon/API/CLI
+- [ ] conformance vectors
+
+Gateway service, native client, UnixFS, and evaluator proposals belong in their
+respective repositories.
 
 ## Alternatives considered
 
