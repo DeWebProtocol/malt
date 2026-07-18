@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- Remove `radix.ProveTimings` and `(*radix.Map).ProveWithTimings`; evaluator
+  timing no longer runs inside the SDK proof path. This is an intentional
+  pre-v1 Go source break.
 - Remove the unused process-global logger, the former HTTP stat/content query
   path helper, and the stale daemon configuration example. These are
   intentional pre-v1 Go source removals after the Gateway/client split.
