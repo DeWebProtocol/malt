@@ -112,6 +112,26 @@ func TestSDKOnlyRepositoryDoesNotReintroduceProductPackages(t *testing.T) {
 	}
 }
 
+func TestSDKOnlyRepositoryDoesNotRetainProductResidue(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(sourceFile)
+	for _, name := range []string{
+		"config.example.json",
+		"logger",
+		filepath.Join("graph", "querypath"),
+	} {
+		path := filepath.Join(root, name)
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("SDK-only core contains product residue %s", path)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("inspect forbidden product path %s: %v", path, err)
+		}
+	}
+}
+
 func TestProductionAlgorithmsUseNarrowMaterializerCapabilities(t *testing.T) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
