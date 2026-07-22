@@ -251,6 +251,35 @@ func TestTreeListReportsIncompleteMaterialization(t *testing.T) {
 	}
 }
 
+func TestTreeListRejectsAuthenticatedLengthWithMissingLeaf(t *testing.T) {
+	ctx := context.Background()
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			scheme := factory(t)
+			store := materialmemory.New(true)
+			semantic, _, err := newListWithMaterializer(scheme, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			slots := layout.EmptyRootSlots()
+			slots[0], err = layout.EncodeNodeMetadata(layout.NodeMetadata{ChildCount: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := layout.CommitSlots(scheme, slots)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := layout.StoreSlots(ctx, store, "missing-leaf-"+name, root, slots); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := semantic.Prove(ctx, "missing-leaf-"+name, root, 0); !errors.Is(err, materializer.ErrIncomplete) {
+				t.Fatalf("Prove error = %v, want ErrIncomplete", err)
+			}
+		})
+	}
+}
+
 func TestTreeListPreservesMaterializerFailure(t *testing.T) {
 	ctx := context.Background()
 	storeErr := errors.New("materializer unavailable")
