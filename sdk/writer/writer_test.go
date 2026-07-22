@@ -50,6 +50,9 @@ func TestComputeBundleMatchesIndependentFullRebuildAndRetainsNextView(t *testing
 	if !result.NextView.BaseRoot.Equals(result.Bundle.Candidate) {
 		t.Fatalf("next view base = %s, candidate = %s", result.NextView.BaseRoot, result.Bundle.Candidate)
 	}
+	if result.Metrics.TotalNS < result.Metrics.RootComputationNS || result.Metrics.TotalNS == 0 {
+		t.Fatalf("compute metrics = %#v", result.Metrics)
+	}
 
 	// A fresh runtime must independently accept the retained complete vectors;
 	// this prevents a session-only materialization cache from hiding bad roots.

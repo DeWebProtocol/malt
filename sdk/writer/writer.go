@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materializer "github.com/dewebprotocol/malt/auth/arcset/materializer"
@@ -41,6 +42,20 @@ type VerifiedUpdateView struct {
 type ComputeResult struct {
 	Bundle   mutation.ClientRootBundle
 	NextView mutation.UpdateView
+	Metrics  ComputeMetrics
+}
+
+// ComputeMetrics separates the client-local phases required by writer
+// evaluation. Durations cover only local SDK work; payload hashing/upload,
+// network submission, Gateway replay, and persistence stay caller-owned.
+type ComputeMetrics struct {
+	ViewNormalizationNS   uint64 `json:"view_normalization_ns"`
+	IntentNormalizationNS uint64 `json:"intent_normalization_ns"`
+	DigestNS              uint64 `json:"digest_ns"`
+	RootComputationNS     uint64 `json:"root_computation_ns"`
+	BundleValidationNS    uint64 `json:"bundle_validation_ns"`
+	NextViewNS            uint64 `json:"next_view_ns"`
+	TotalNS               uint64 `json:"total_ns"`
 }
 
 // NewRuntime creates a client writer over the narrow materializer capability.
@@ -120,17 +135,24 @@ func (r *Runtime) VerifyUpdateView(ctx context.Context, view mutation.UpdateView
 // candidate plus every intermediate output. Literal CAS post-images are
 // collected into PayloadCIDs for service-side existence checks.
 func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verified VerifiedUpdateView, intent mutation.SemanticIntent) (ComputeResult, error) {
+	totalStart := time.Now()
 	if r == nil {
 		return ComputeResult{}, fmt.Errorf("client writer runtime is nil")
 	}
+	metrics := ComputeMetrics{}
+	phaseStart := time.Now()
 	view, err := mutation.NormalizeUpdateView(verified.View)
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	metrics.ViewNormalizationNS = writerDurationNS(time.Since(phaseStart))
+	phaseStart = time.Now()
 	normalized, err := mutation.NormalizeSemanticIntent(view, intent)
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	metrics.IntentNormalizationNS = writerDurationNS(time.Since(phaseStart))
+	phaseStart = time.Now()
 	viewDigest, err := view.Digest()
 	if err != nil {
 		return ComputeResult{}, err
@@ -139,7 +161,9 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	metrics.DigestNS = writerDurationNS(time.Since(phaseStart))
 
+	phaseStart = time.Now()
 	objects := make(map[string]mutation.UpdateObject, len(view.Objects)+len(normalized.Transitions))
 	for _, object := range view.Objects {
 		objects[object.ObjectID] = object
@@ -198,6 +222,8 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 		payloads = append(payloads, payload)
 	}
 	slices.SortFunc(payloads, func(a, b cid.Cid) int { return stringCompareBytes(a.Bytes(), b.Bytes()) })
+	metrics.RootComputationNS = writerDurationNS(time.Since(phaseStart))
+	phaseStart = time.Now()
 	bundle, err := mutation.NewClientRootBundle(mutation.ClientRootBundle{
 		Profile:      mutation.ClientRootBundleProfile,
 		OperationID:  operationID,
@@ -212,11 +238,15 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	metrics.BundleValidationNS = writerDurationNS(time.Since(phaseStart))
+	phaseStart = time.Now()
 	next, err := nextReachableView(view, candidate, objects)
 	if err != nil {
 		return ComputeResult{}, err
 	}
-	return ComputeResult{Bundle: bundle, NextView: next}, nil
+	metrics.NextViewNS = writerDurationNS(time.Since(phaseStart))
+	metrics.TotalNS = writerDurationNS(time.Since(totalStart))
+	return ComputeResult{Bundle: bundle, NextView: next, Metrics: metrics}, nil
 }
 
 func commitCompleteObject(ctx context.Context, graph *runtimegraph.RuntimeGraph, scope string, object mutation.UpdateObject) (cid.Cid, error) {
@@ -395,4 +425,11 @@ func stringCompareBytes(a, b []byte) int {
 	default:
 		return 0
 	}
+}
+
+func writerDurationNS(value time.Duration) uint64 {
+	if value <= 0 {
+		return 0
+	}
+	return uint64(value)
 }
