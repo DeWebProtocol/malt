@@ -84,17 +84,57 @@ func (s *Session) AcceptReceipt(receipt mutation.MaterializationReceipt, prepare
 	if !s.loaded {
 		return fmt.Errorf("client writer session has no update view")
 	}
-	if !prepared.Bundle.View.BaseRoot.Equals(s.current.View.BaseRoot) {
+	current, currentDigest, err := validateVerifiedUpdateView(s.runtime, s.current)
+	if err != nil {
+		return fmt.Errorf("retained update view: %w", err)
+	}
+	if prepared.seal.runtime != s.runtime {
+		return fmt.Errorf("prepared result does not belong to this client writer runtime")
+	}
+	bundleDigest, err := prepared.Bundle.Digest()
+	if err != nil || bundleDigest != prepared.seal.bundleDigest {
+		return fmt.Errorf("prepared client-root bundle seal mismatch")
+	}
+	next, err := mutation.NormalizeUpdateView(prepared.NextView)
+	if err != nil {
+		return fmt.Errorf("prepared next view is invalid: %w", err)
+	}
+	nextDigest, err := next.Digest()
+	if err != nil || nextDigest != prepared.seal.nextViewDigest {
+		return fmt.Errorf("prepared next-view seal mismatch")
+	}
+	if !prepared.Bundle.View.BaseRoot.Equals(current.BaseRoot) {
 		return fmt.Errorf("prepared bundle base is stale")
+	}
+	if prepared.Bundle.ViewDigest != currentDigest {
+		return fmt.Errorf("prepared bundle update view is stale")
 	}
 	if err := receipt.Validate(prepared.Bundle); err != nil {
 		return err
 	}
-	if !prepared.NextView.BaseRoot.Equals(prepared.Bundle.Candidate) {
+	if !next.BaseRoot.Equals(prepared.Bundle.Candidate) {
 		return fmt.Errorf("prepared next view does not match candidate")
 	}
-	s.current = VerifiedUpdateView{View: prepared.NextView}
+	s.current = VerifiedUpdateView{View: next, runtime: s.runtime, digest: nextDigest}
 	return nil
+}
+
+func validateVerifiedUpdateView(runtime *Runtime, verified VerifiedUpdateView) (mutation.UpdateView, [32]byte, error) {
+	if runtime == nil || verified.runtime != runtime {
+		return mutation.UpdateView{}, [32]byte{}, fmt.Errorf("verified update view belongs to a different runtime")
+	}
+	canonical, err := mutation.NormalizeUpdateView(verified.View)
+	if err != nil {
+		return mutation.UpdateView{}, [32]byte{}, err
+	}
+	digest, err := canonical.Digest()
+	if err != nil {
+		return mutation.UpdateView{}, [32]byte{}, err
+	}
+	if digest != verified.digest {
+		return mutation.UpdateView{}, [32]byte{}, fmt.Errorf("verified update view seal mismatch")
+	}
+	return canonical, digest, nil
 }
 
 // Audit recomputes the retained complete vectors. Evaluators use this after a

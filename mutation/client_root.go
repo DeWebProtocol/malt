@@ -2,13 +2,13 @@ package mutation
 
 import (
 	"bytes"
+	"container/heap"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -185,6 +185,9 @@ func NormalizeUpdateView(view UpdateView) (UpdateView, error) {
 		if object.Commit.FixedList != nil && object.Kind != arcset.KindList {
 			return UpdateView{}, fmt.Errorf("%w: object %q has map fixed-list descriptor", ErrInvalidUpdateView, object.ObjectID)
 		}
+		if err := validateFixedListDescriptor(object.Commit, object.Kind, uint64(object.Entries.Len())); err != nil {
+			return UpdateView{}, fmt.Errorf("%w: object %q: %v", ErrInvalidUpdateView, object.ObjectID, err)
+		}
 		totalEntries += uint64(object.Entries.Len())
 		if totalEntries > view.Bounds.MaxTotalEntries {
 			return UpdateView{}, fmt.Errorf("%w: total entries exceed bound %d", ErrInvalidUpdateView, view.Bounds.MaxTotalEntries)
@@ -218,45 +221,77 @@ func NormalizeUpdateView(view UpdateView) (UpdateView, error) {
 		return UpdateView{}, fmt.Errorf("%w: base root object is missing", ErrIncompleteUpdateView)
 	}
 
-	state := make([]uint8, len(normalized.Objects))
-	visited := 0
-	var visit func(int, uint32) error
-	visit = func(index int, depth uint32) error {
-		if depth > view.Bounds.MaxDepth {
-			return fmt.Errorf("%w: depth exceeds bound %d", ErrInvalidUpdateView, view.Bounds.MaxDepth)
-		}
-		switch state[index] {
-		case 1:
-			return ErrUpdateViewCycle
-		case 2:
-			return nil
-		}
-		state[index] = 1
-		visited++
-		for _, entry := range normalized.Objects[index].Entries.Entries() {
+	// Build the semantic DAG once. Reachability, cycle detection, and longest
+	// root-to-leaf depth are then all checked in O(V+E); recursively revisiting
+	// a shared subgraph for every deeper incoming path would make this untrusted
+	// download contract vulnerable to CPU amplification.
+	children := make([][]int, len(normalized.Objects))
+	indegree := make([]uint32, len(normalized.Objects))
+	for index, object := range normalized.Objects {
+		for _, entry := range object.Entries.Entries() {
 			childKind, semantic := semanticTargetKind(entry.Target)
 			if !semantic {
 				continue
 			}
 			childIndex, ok := byRoot[entry.Target.CID().KeyString()]
 			if !ok {
-				return fmt.Errorf("%w: object %q references missing %s child %s", ErrIncompleteUpdateView, normalized.Objects[index].ObjectID, childKind, entry.Target.CID())
+				return UpdateView{}, fmt.Errorf("%w: object %q references missing %s child %s", ErrIncompleteUpdateView, object.ObjectID, childKind, entry.Target.CID())
 			}
 			if normalized.Objects[childIndex].Kind != childKind {
-				return fmt.Errorf("%w: child %s kind mismatch", ErrInvalidUpdateView, entry.Target.CID())
+				return UpdateView{}, fmt.Errorf("%w: child %s kind mismatch", ErrInvalidUpdateView, entry.Target.CID())
 			}
-			if err := visit(childIndex, depth+1); err != nil {
-				return err
+			children[index] = append(children[index], childIndex)
+			indegree[childIndex]++
+		}
+	}
+
+	reachable := make([]bool, len(normalized.Objects))
+	stack := []int{baseIndex}
+	reachable[baseIndex] = true
+	visited := 0
+	for len(stack) > 0 {
+		index := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		visited++
+		for _, childIndex := range children[index] {
+			if !reachable[childIndex] {
+				reachable[childIndex] = true
+				stack = append(stack, childIndex)
 			}
 		}
-		state[index] = 2
-		return nil
-	}
-	if err := visit(baseIndex, 1); err != nil {
-		return UpdateView{}, err
 	}
 	if visited != len(normalized.Objects) {
 		return UpdateView{}, fmt.Errorf("%w: view contains %d unreachable objects", ErrIncompleteUpdateView, len(normalized.Objects)-visited)
+	}
+
+	queue := make([]int, 0, len(normalized.Objects))
+	for index, count := range indegree {
+		if count == 0 {
+			queue = append(queue, index)
+		}
+	}
+	depth := make([]uint32, len(normalized.Objects))
+	depth[baseIndex] = 1
+	processed := 0
+	for head := 0; head < len(queue); head++ {
+		index := queue[head]
+		processed++
+		for _, childIndex := range children[index] {
+			candidateDepth := uint64(depth[index]) + 1
+			if candidateDepth > uint64(view.Bounds.MaxDepth) {
+				return UpdateView{}, fmt.Errorf("%w: depth exceeds bound %d", ErrInvalidUpdateView, view.Bounds.MaxDepth)
+			}
+			if uint32(candidateDepth) > depth[childIndex] {
+				depth[childIndex] = uint32(candidateDepth)
+			}
+			indegree[childIndex]--
+			if indegree[childIndex] == 0 {
+				queue = append(queue, childIndex)
+			}
+		}
+	}
+	if processed != len(normalized.Objects) {
+		return UpdateView{}, ErrUpdateViewCycle
 	}
 	return normalized, nil
 }
@@ -319,6 +354,9 @@ func NormalizeSemanticIntent(view UpdateView, intent SemanticIntent) (SemanticIn
 		if err != nil {
 			return SemanticIntent{}, err
 		}
+		if err := validateTransitionCommit(object, normalizedTransition); err != nil {
+			return SemanticIntent{}, fmt.Errorf("%w: transition %q: %v", ErrInvalidSemanticIntent, transition.ID, err)
+		}
 		transitions[transition.ID] = normalizedTransition
 	}
 	top, exists := transitions[intent.TopOutputID]
@@ -358,23 +396,21 @@ func NormalizeSemanticIntent(view UpdateView, intent SemanticIntent) (SemanticIn
 		}
 	}
 
-	ready := make([]string, 0)
+	ready := make(stringMinHeap, 0)
 	for id, degree := range indegree {
 		if degree == 0 {
 			ready = append(ready, id)
 		}
 	}
-	sort.Strings(ready)
+	heap.Init(&ready)
 	ordered := make([]IntentTransition, 0, len(transitions))
 	for len(ready) > 0 {
-		id := ready[0]
-		ready = ready[1:]
+		id := heap.Pop(&ready).(string)
 		ordered = append(ordered, transitions[id])
 		for _, parentID := range parents[id] {
 			indegree[parentID]--
 			if indegree[parentID] == 0 {
-				ready = append(ready, parentID)
-				sort.Strings(ready)
+				heap.Push(&ready, parentID)
 			}
 		}
 	}
@@ -385,6 +421,25 @@ func NormalizeSemanticIntent(view UpdateView, intent SemanticIntent) (SemanticIn
 		return SemanticIntent{}, fmt.Errorf("%w: dependency graph does not close at top output", ErrInvalidSemanticIntent)
 	}
 	return SemanticIntent{Profile: intent.Profile, BaseRoot: intent.BaseRoot, Transitions: ordered, TopOutputID: intent.TopOutputID}, nil
+}
+
+type stringMinHeap []string
+
+func (values stringMinHeap) Len() int           { return len(values) }
+func (values stringMinHeap) Less(i, j int) bool { return values[i] < values[j] }
+func (values stringMinHeap) Swap(i, j int)      { values[i], values[j] = values[j], values[i] }
+
+func (values *stringMinHeap) Push(value any) {
+	*values = append(*values, value.(string))
+}
+
+func (values *stringMinHeap) Pop() any {
+	old := *values
+	last := len(old) - 1
+	value := old[last]
+	old[last] = ""
+	*values = old[:last]
+	return value
 }
 
 func normalizeIntentTransition(transition IntentTransition, object UpdateObject) (IntentTransition, error) {
@@ -444,6 +499,104 @@ func normalizeIntentTransition(transition IntentTransition, object UpdateObject)
 		}
 	}
 	return normalized, nil
+}
+
+func validateTransitionCommit(object UpdateObject, transition IntentTransition) error {
+	if transition.Kind != arcset.KindList {
+		if transition.Commit.FixedList != nil {
+			return errors.New("map transition has a fixed-list descriptor")
+		}
+		return nil
+	}
+	postCount, err := postTransitionListCount(object, transition)
+	if err != nil {
+		return err
+	}
+	if err := validateFixedListDescriptor(transition.Commit, transition.Kind, postCount); err != nil {
+		return err
+	}
+	if !transition.OldRoot.Defined() {
+		return nil
+	}
+	oldFixed, newFixed := object.Commit.FixedList, transition.Commit.FixedList
+	if (oldFixed == nil) != (newFixed == nil) {
+		return errors.New("list transition changes its plain/fixed representation")
+	}
+	if oldFixed == nil {
+		return nil
+	}
+	if oldFixed.ChunkSize != newFixed.ChunkSize {
+		return errors.New("fixed-list transition changes chunk size")
+	}
+	oldCount := uint64(object.Entries.Len())
+	switch {
+	case postCount < oldCount:
+		return errors.New("fixed-list truncate is unsupported")
+	case postCount == oldCount && oldFixed.TotalSize != newFixed.TotalSize:
+		return errors.New("fixed-list replacement changes total size")
+	case postCount > oldCount && oldFixed.TotalSize%oldFixed.ChunkSize != 0:
+		return errors.New("fixed-list append requires a chunk-aligned old total size")
+	case postCount > oldCount && newFixed.TotalSize <= oldFixed.TotalSize:
+		return errors.New("fixed-list append does not increase total size")
+	}
+	return nil
+}
+
+func postTransitionListCount(object UpdateObject, transition IntentTransition) (uint64, error) {
+	oldEntries := 0
+	if object.Entries != nil {
+		oldEntries = object.Entries.Len()
+	}
+	present := make(map[uint64]struct{}, oldEntries+len(transition.Changes))
+	if object.Entries != nil {
+		for _, entry := range object.Entries.Entries() {
+			raw := entry.Coordinate.Bytes()
+			if len(raw) != 8 {
+				return 0, errors.New("list object contains a non-index coordinate")
+			}
+			present[binary.BigEndian.Uint64(raw)] = struct{}{}
+		}
+	}
+	for _, change := range transition.Changes {
+		raw := change.Coordinate.Bytes()
+		if len(raw) != 8 {
+			return 0, errors.New("list transition contains a non-index coordinate")
+		}
+		index := binary.BigEndian.Uint64(raw)
+		if change.After == nil && change.OutputID == "" {
+			delete(present, index)
+		} else {
+			present[index] = struct{}{}
+		}
+	}
+	count := uint64(len(present))
+	for index := uint64(0); index < count; index++ {
+		if _, ok := present[index]; !ok {
+			return 0, errors.New("list transition creates a sparse post-image")
+		}
+	}
+	return count, nil
+}
+
+func validateFixedListDescriptor(descriptor CommitDescriptor, kind arcset.Kind, count uint64) error {
+	if descriptor.FixedList == nil {
+		return nil
+	}
+	if kind != arcset.KindList {
+		return errors.New("fixed-list descriptor belongs to a non-list object")
+	}
+	fixed := descriptor.FixedList
+	if fixed.ChunkSize == 0 {
+		return errors.New("fixed-list chunk size is zero")
+	}
+	wantCount := fixed.TotalSize / fixed.ChunkSize
+	if fixed.TotalSize%fixed.ChunkSize != 0 {
+		wantCount++
+	}
+	if wantCount != count {
+		return fmt.Errorf("fixed-list descriptor implies %d chunks, vector has %d", wantCount, count)
+	}
+	return nil
 }
 
 // NewClientRootBundle validates and canonicalizes one exact-root submission.

@@ -2,6 +2,7 @@ package arcset
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"testing"
 
@@ -78,6 +79,25 @@ func TestCanonicalArcDeltaBinaryRejectsTampering(t *testing.T) {
 	badMarker[marker] = 2
 	if _, err := UnmarshalCanonicalArcDelta(badMarker); err == nil || errors.Is(err, nil) {
 		t.Fatal("invalid optional target marker was accepted")
+	}
+}
+
+func TestCanonicalDecodersRejectImpossibleCountsBeforeAllocation(t *testing.T) {
+	encodeHeader := func(magic string, version byte, kind Kind) []byte {
+		var buffer bytes.Buffer
+		buffer.WriteString(magic)
+		buffer.WriteByte(version)
+		writeBytes(&buffer, []byte(kind))
+		var count [4]byte
+		binary.BigEndian.PutUint32(count[:], ^uint32(0))
+		buffer.Write(count[:])
+		return buffer.Bytes()
+	}
+	if _, err := UnmarshalCanonicalArcDelta(encodeHeader(canonicalDeltaMagic, canonicalDeltaVersion, KindMap)); err == nil {
+		t.Fatal("delta decoder accepted an impossible collection count")
+	}
+	if _, err := UnmarshalCanonicalArcSet(encodeHeader(canonicalEncodingMagic, canonicalEncodingVersion, KindMap)); err == nil {
+		t.Fatal("arc-set decoder accepted an impossible collection count")
 	}
 }
 

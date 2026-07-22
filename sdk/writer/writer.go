@@ -34,7 +34,9 @@ type Runtime struct {
 // VerifiedUpdateView is a normalized view whose complete logical vectors have
 // independently recomputed every declared old root in this runtime.
 type VerifiedUpdateView struct {
-	View mutation.UpdateView
+	View    mutation.UpdateView
+	runtime *Runtime
+	digest  [32]byte
 }
 
 // ComputeResult carries both the exact submission bundle and the complete next
@@ -43,19 +45,30 @@ type ComputeResult struct {
 	Bundle   mutation.ClientRootBundle
 	NextView mutation.UpdateView
 	Metrics  ComputeMetrics
+	seal     computeResultSeal
+}
+
+type computeResultSeal struct {
+	runtime        *Runtime
+	bundleDigest   [32]byte
+	nextViewDigest [32]byte
 }
 
 // ComputeMetrics separates the client-local phases required by writer
 // evaluation. Durations cover only local SDK work; payload hashing/upload,
 // network submission, Gateway replay, and persistence stay caller-owned.
+// CommitmentUpdateNS is a nested subphase of RootComputationNS and must not be
+// added to it in a stacked breakdown. All other fields are disjoint phases.
 type ComputeMetrics struct {
-	ViewNormalizationNS   uint64 `json:"view_normalization_ns"`
-	IntentNormalizationNS uint64 `json:"intent_normalization_ns"`
-	DigestNS              uint64 `json:"digest_ns"`
-	RootComputationNS     uint64 `json:"root_computation_ns"`
-	BundleValidationNS    uint64 `json:"bundle_validation_ns"`
-	NextViewNS            uint64 `json:"next_view_ns"`
-	TotalNS               uint64 `json:"total_ns"`
+	ViewNormalizationNS    uint64 `json:"view_normalization_ns"`
+	IntentNormalizationNS  uint64 `json:"intent_normalization_ns"`
+	DigestNS               uint64 `json:"digest_ns"`
+	CommitmentUpdateNS     uint64 `json:"commitment_update_ns"`
+	RootComputationNS      uint64 `json:"root_computation_ns"`
+	ExpectedRootEncodingNS uint64 `json:"expected_root_encoding_ns"`
+	BundleValidationNS     uint64 `json:"bundle_validation_ns"`
+	NextViewNS             uint64 `json:"next_view_ns"`
+	TotalNS                uint64 `json:"total_ns"`
 }
 
 // NewRuntime creates a client writer over the narrow materializer capability.
@@ -64,6 +77,10 @@ type ComputeMetrics struct {
 func NewRuntime(store materializer.MutableStore, schemes map[maltcid.BackendKind]commitment.IndexCommitment) (*Runtime, error) {
 	if store == nil {
 		return nil, fmt.Errorf("client writer materializer is nil")
+	}
+	branching, ok := store.(materializer.BranchingStore)
+	if !ok || !branching.SupportsConcurrentBranches() {
+		return nil, fmt.Errorf("client writer requires a branching materializer for speculative candidates")
 	}
 	if len(schemes) == 0 {
 		return nil, fmt.Errorf("client writer has no commitment backends")
@@ -128,7 +145,11 @@ func (r *Runtime) VerifyUpdateView(ctx context.Context, view mutation.UpdateView
 			return VerifiedUpdateView{}, fmt.Errorf("seed update object %q: %w", object.ObjectID, err)
 		}
 	}
-	return VerifiedUpdateView{View: canonical}, nil
+	digest, err := canonical.Digest()
+	if err != nil {
+		return VerifiedUpdateView{}, fmt.Errorf("digest verified update view: %w", err)
+	}
+	return VerifiedUpdateView{View: canonical, runtime: r, digest: digest}, nil
 }
 
 // ComputeBundle applies a normalized intent bottom-up and returns the exact
@@ -156,6 +177,9 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	viewDigest, err := view.Digest()
 	if err != nil {
 		return ComputeResult{}, err
+	}
+	if verified.runtime != r || verified.digest != viewDigest {
+		return ComputeResult{}, fmt.Errorf("verified update view seal does not match this runtime or its canonical contents")
 	}
 	intentDigest, err := normalized.Digest()
 	if err != nil {
@@ -187,6 +211,7 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 		if err != nil {
 			return ComputeResult{}, fmt.Errorf("transition %q delta: %w", transition.ID, err)
 		}
+		commitmentStarted := time.Now()
 		receipt, err := graph.Writer().Apply(ctx, objectScope(transition.ObjectID), mutation.SemanticMutation{
 			BaseRoot: view.BaseRoot,
 			Deltas: []mutation.ArcSetDelta{{
@@ -199,6 +224,11 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 		if err != nil {
 			return ComputeResult{}, fmt.Errorf("compute transition %q: %w", transition.ID, err)
 		}
+		commitmentDuration := writerDurationNS(time.Since(commitmentStarted))
+		if ^uint64(0)-metrics.CommitmentUpdateNS < commitmentDuration {
+			return ComputeResult{}, fmt.Errorf("client writer commitment timing overflow")
+		}
+		metrics.CommitmentUpdateNS += commitmentDuration
 		if maltcid.BackendKindOf(receipt.NewRoot) != transition.Backend {
 			return ComputeResult{}, fmt.Errorf("compute transition %q returned backend %q, want %q", transition.ID, maltcid.BackendKindOf(receipt.NewRoot), transition.Backend)
 		}
@@ -224,6 +254,12 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	slices.SortFunc(payloads, func(a, b cid.Cid) int { return stringCompareBytes(a.Bytes(), b.Bytes()) })
 	metrics.RootComputationNS = writerDurationNS(time.Since(phaseStart))
 	phaseStart = time.Now()
+	expectedRoot := candidate.String()
+	if expectedRoot == "" {
+		return ComputeResult{}, fmt.Errorf("client writer candidate root encoding is empty")
+	}
+	metrics.ExpectedRootEncodingNS = writerDurationNS(time.Since(phaseStart))
+	phaseStart = time.Now()
 	bundle, err := mutation.NewClientRootBundle(mutation.ClientRootBundle{
 		Profile:      mutation.ClientRootBundleProfile,
 		OperationID:  operationID,
@@ -238,15 +274,26 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	bundleDigest, err := bundle.Digest()
+	if err != nil {
+		return ComputeResult{}, fmt.Errorf("seal client-root bundle: %w", err)
+	}
 	metrics.BundleValidationNS = writerDurationNS(time.Since(phaseStart))
 	phaseStart = time.Now()
 	next, err := nextReachableView(view, candidate, objects)
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	nextViewDigest, err := next.Digest()
+	if err != nil {
+		return ComputeResult{}, fmt.Errorf("seal retained next view: %w", err)
+	}
 	metrics.NextViewNS = writerDurationNS(time.Since(phaseStart))
 	metrics.TotalNS = writerDurationNS(time.Since(totalStart))
-	return ComputeResult{Bundle: bundle, NextView: next, Metrics: metrics}, nil
+	return ComputeResult{
+		Bundle: bundle, NextView: next, Metrics: metrics,
+		seal: computeResultSeal{runtime: r, bundleDigest: bundleDigest, nextViewDigest: nextViewDigest},
+	}, nil
 }
 
 func commitCompleteObject(ctx context.Context, graph *runtimegraph.RuntimeGraph, scope string, object mutation.UpdateObject) (cid.Cid, error) {
@@ -342,9 +389,27 @@ func applyCompleteVector(current *arcset.CanonicalArcSet, kind arcset.Kind, chan
 }
 
 func nextReachableView(previous mutation.UpdateView, candidate cid.Cid, objects map[string]mutation.UpdateObject) (mutation.UpdateView, error) {
-	byRoot := make(map[string]mutation.UpdateObject, len(objects))
+	ordered := make([]mutation.UpdateObject, 0, len(objects))
 	for _, object := range objects {
-		byRoot[object.Root.KeyString()] = object
+		ordered = append(ordered, object)
+	}
+	slices.SortFunc(ordered, func(a, b mutation.UpdateObject) int {
+		switch {
+		case a.ObjectID < b.ObjectID:
+			return -1
+		case a.ObjectID > b.ObjectID:
+			return 1
+		default:
+			return 0
+		}
+	})
+	byRoot := make(map[string]mutation.UpdateObject, len(objects))
+	for _, object := range ordered {
+		rootKey := object.Root.KeyString()
+		if existing, ok := byRoot[rootKey]; ok {
+			return mutation.UpdateView{}, fmt.Errorf("retained objects %q and %q converge to root %s", existing.ObjectID, object.ObjectID, object.Root)
+		}
+		byRoot[rootKey] = object
 	}
 	rootObject, ok := byRoot[candidate.KeyString()]
 	if !ok {

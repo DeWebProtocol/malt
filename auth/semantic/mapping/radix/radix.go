@@ -120,7 +120,11 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 	for depth := 0; depth < len(digest); depth++ {
 		finishMaterialization := observation.Start(ctx, observation.PhaseMaterialization)
 		slots, err := s.loadValidatedNode(ctx, namespace, currentRoot)
-		finishMaterialization(1, uint64(len(slots)), cidVectorBytes(slots))
+		var materializedBytes uint64
+		if observation.Enabled(ctx) {
+			materializedBytes = cidVectorBytes(slots)
+		}
+		finishMaterialization(1, uint64(len(slots)), materializedBytes)
 		if err != nil {
 			return mapping.Binding{}, nil, err
 		}
@@ -166,7 +170,11 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		} else if ok {
 			finishMaterialization := observation.Start(ctx, observation.PhaseMaterialization)
 			markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
-			finishMaterialization(1, uint64(len(markers)), cidVectorBytes(markers))
+			var materializedBytes uint64
+			if observation.Enabled(ctx) {
+				materializedBytes = cidVectorBytes(markers)
+			}
+			finishMaterialization(1, uint64(len(markers)), materializedBytes)
 			if err != nil {
 				return mapping.Binding{}, nil, err
 			}
@@ -1162,7 +1170,7 @@ func cidVectorBytes(values []cid.Cid) uint64 {
 	var total uint64
 	for _, value := range values {
 		if value.Defined() {
-			total += uint64(len(value.Bytes()))
+			total += uint64(value.ByteLen())
 		}
 	}
 	return total

@@ -12,6 +12,9 @@ func (c *collector) ObservePhase(sample Sample) { c.samples = append(c.samples, 
 func TestRequestScopedObservation(t *testing.T) {
 	value := new(collector)
 	ctx := WithObserver(context.Background(), value)
+	if !Enabled(ctx) || Enabled(context.Background()) {
+		t.Fatal("observer enabled state does not follow request context")
+	}
 	done := Start(ctx, PhaseOpen)
 	done(2, 3, 4)
 	Record(ctx, Sample{Phase: PhaseSerialization, DurationNS: 5, Operations: 1, Bytes: 6})

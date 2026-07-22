@@ -88,6 +88,50 @@ func TestNormalizeUpdateViewRequiresExactReachabilityClosure(t *testing.T) {
 	}
 }
 
+func TestNormalizeUpdateViewEnforcesMaxDepthAcrossSharedSubgraphs(t *testing.T) {
+	root := typedRoot(t, arcset.KindMap, 10)
+	shared := typedRoot(t, arcset.KindMap, 11)
+	branch := typedRoot(t, arcset.KindMap, 12)
+	leaf := typedRoot(t, arcset.KindMap, 13)
+
+	entries := func(values ...arcset.ArcEntry) *arcset.CanonicalArcSet {
+		t.Helper()
+		set, err := arcset.NewCanonicalArcSet(arcset.KindMap, values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return set
+	}
+	view := UpdateView{
+		Profile: UpdateViewProfile, StateProfile: StatefulCompleteVectorsProfile,
+		BaseRoot: root,
+		Bounds:   UpdateViewBounds{MaxObjects: 8, MaxTotalEntries: 16, MaxDepth: 3},
+		Objects: []UpdateObject{
+			{ObjectID: "root", Root: root, Kind: arcset.KindMap, Entries: entries(
+				arcset.ArcEntry{Coordinate: mapCoordinate(t, "a-direct"), Target: arcset.NewMapTarget(shared)},
+				arcset.ArcEntry{Coordinate: mapCoordinate(t, "z-branch"), Target: arcset.NewMapTarget(branch)},
+			)},
+			{ObjectID: "shared", Root: shared, Kind: arcset.KindMap, Entries: entries(
+				arcset.ArcEntry{Coordinate: mapCoordinate(t, "leaf"), Target: arcset.NewMapTarget(leaf)},
+			)},
+			{ObjectID: "branch", Root: branch, Kind: arcset.KindMap, Entries: entries(
+				arcset.ArcEntry{Coordinate: mapCoordinate(t, "shared"), Target: arcset.NewMapTarget(shared)},
+			)},
+			{ObjectID: "leaf", Root: leaf, Kind: arcset.KindMap, Entries: entries(
+				arcset.ArcEntry{Coordinate: mapCoordinate(t, "payload"), Target: arcset.NewCASTarget(rawCID(t, "leaf-payload"))},
+			)},
+		},
+	}
+	if _, err := NormalizeUpdateView(view); !errors.Is(err, ErrInvalidUpdateView) {
+		t.Fatalf("shared-subgraph depth error = %v, want ErrInvalidUpdateView", err)
+	}
+
+	view.Bounds.MaxDepth = 4
+	if _, err := NormalizeUpdateView(view); err != nil {
+		t.Fatalf("valid depth-four shared subgraph: %v", err)
+	}
+}
+
 func TestClientRootRejectsTargetKindRelabelingAcrossSemanticBoundary(t *testing.T) {
 	view, intent, _, _, _ := clientRootFixture(t)
 	for index := range view.Objects {
@@ -144,6 +188,81 @@ func TestNormalizeSemanticIntentRejectsMultiplicityBeforeImageAndLastDeltaPatter
 	duplicateObject.Transitions[2].ID = "second-child-delta"
 	if _, err := NormalizeSemanticIntent(view, duplicateObject); !errors.Is(err, ErrInvalidSemanticIntent) {
 		t.Fatalf("duplicate object error = %v, want ErrInvalidSemanticIntent", err)
+	}
+}
+
+func TestNormalizeSemanticIntentPreservesFixedListRepresentationAndMetadata(t *testing.T) {
+	root := typedRoot(t, arcset.KindList, 70)
+	oldPayload := arcset.NewCASTarget(rawCID(t, "old-fixed-chunk"))
+	newPayload := arcset.NewCASTarget(rawCID(t, "new-fixed-chunk"))
+	entries, err := arcset.NewCanonicalArcSet(arcset.KindList, []arcset.ArcEntry{{
+		Coordinate: listCoordinate(0), Target: oldPayload,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := UpdateView{
+		Profile: UpdateViewProfile, StateProfile: StatefulCompleteVectorsProfile, BaseRoot: root,
+		Bounds: UpdateViewBounds{MaxObjects: 2, MaxTotalEntries: 8, MaxDepth: 2},
+		Objects: []UpdateObject{{
+			ObjectID: "fixed-file", Root: root, Kind: arcset.KindList, Entries: entries,
+			Commit: CommitDescriptor{FixedList: &FixedListCommit{ChunkSize: 4, TotalSize: 4}},
+		}},
+	}
+	base := SemanticIntent{
+		Profile: SemanticIntentProfile, BaseRoot: root, TopOutputID: "fixed-output",
+		Transitions: []IntentTransition{{
+			ID: "fixed-output", ObjectID: "fixed-file", OldRoot: root, Kind: arcset.KindList,
+			Backend: maltcid.BackendKindKZG,
+			Commit:  CommitDescriptor{FixedList: &FixedListCommit{ChunkSize: 4, TotalSize: 4}},
+			Changes: []IntentChange{{Coordinate: listCoordinate(0), Before: &oldPayload, After: &newPayload}},
+		}},
+	}
+	if _, err := NormalizeSemanticIntent(view, base); err != nil {
+		t.Fatalf("valid fixed replacement: %v", err)
+	}
+	for name, mutate := range map[string]func(*SemanticIntent){
+		"missing descriptor": func(value *SemanticIntent) { value.Transitions[0].Commit = CommitDescriptor{} },
+		"changed chunk size": func(value *SemanticIntent) { value.Transitions[0].Commit.FixedList.ChunkSize = 8 },
+		"changed total size": func(value *SemanticIntent) { value.Transitions[0].Commit.FixedList.TotalSize = 3 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			candidate.Transitions = cloneIntentTransitions(base.Transitions)
+			fixed := *base.Transitions[0].Commit.FixedList
+			candidate.Transitions[0].Commit.FixedList = &fixed
+			mutate(&candidate)
+			if _, err := NormalizeSemanticIntent(view, candidate); !errors.Is(err, ErrInvalidSemanticIntent) {
+				t.Fatalf("error = %v, want ErrInvalidSemanticIntent", err)
+			}
+		})
+	}
+
+	appendIntent := base
+	appendIntent.Transitions = cloneIntentTransitions(base.Transitions)
+	appendFixed := *base.Transitions[0].Commit.FixedList
+	appendFixed.TotalSize = 8
+	appendIntent.Transitions[0].Commit.FixedList = &appendFixed
+	appendIntent.Transitions[0].Changes = []IntentChange{{Coordinate: listCoordinate(1), After: &newPayload}}
+	if _, err := NormalizeSemanticIntent(view, appendIntent); err != nil {
+		t.Fatalf("valid fixed append: %v", err)
+	}
+	appendIntent.Transitions[0].Commit.FixedList.TotalSize = 4
+	if _, err := NormalizeSemanticIntent(view, appendIntent); !errors.Is(err, ErrInvalidSemanticIntent) {
+		t.Fatalf("non-growing append error = %v", err)
+	}
+
+	partialView := view
+	partialView.Objects = append([]UpdateObject(nil), view.Objects...)
+	partialFixed := *view.Objects[0].Commit.FixedList
+	partialFixed.TotalSize = 3
+	partialView.Objects[0].Commit.FixedList = &partialFixed
+	partialAppend := appendIntent
+	partialAppend.Transitions = cloneIntentTransitions(appendIntent.Transitions)
+	partialAppend.Transitions[0].OldRoot = partialView.BaseRoot
+	partialAppend.Transitions[0].Commit.FixedList.TotalSize = 5
+	if _, err := NormalizeSemanticIntent(partialView, partialAppend); !errors.Is(err, ErrInvalidSemanticIntent) {
+		t.Fatalf("partial-old append error = %v, want ErrInvalidSemanticIntent", err)
 	}
 }
 
@@ -306,6 +425,10 @@ func mapCoordinate(t *testing.T, value string) arcset.CanonicalCoordinate {
 		t.Fatal(err)
 	}
 	return coordinate
+}
+
+func listCoordinate(index uint64) arcset.CanonicalCoordinate {
+	return arcset.NewListCoordinateUint64(index)
 }
 
 func typedRoot(t *testing.T, kind arcset.Kind, seed byte) cid.Cid {

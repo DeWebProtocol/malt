@@ -44,6 +44,13 @@ func WithObserver(ctx context.Context, observer Observer) context.Context {
 	return context.WithValue(ctx, contextKey{}, observer)
 }
 
+// Enabled reports whether ctx carries a phase observer. Hot paths use this to
+// avoid computing optional volume diagnostics when observations are disabled.
+func Enabled(ctx context.Context) bool {
+	observer, _ := ctx.Value(contextKey{}).(Observer)
+	return observer != nil
+}
+
 // Start begins a phase span. The returned closure is allocation-free when no
 // observer is attached and may be called exactly once with observed volume.
 func Start(ctx context.Context, phase Phase) func(operations, items, bytes uint64) {

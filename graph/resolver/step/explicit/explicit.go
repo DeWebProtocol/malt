@@ -70,8 +70,8 @@ func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) 
 		finishLookup := observation.Start(ctx, observation.PhaseArcTable)
 		target, err := r.materializer.Get(ctx, r.namespace, root, candidatePath)
 		var targetBytes uint64
-		if target.Defined() {
-			targetBytes = uint64(len(target.Bytes()))
+		if observation.Enabled(ctx) && target.Defined() {
+			targetBytes = uint64(target.ByteLen())
 		}
 		finishLookup(1, 1, targetBytes)
 		if err == nil {

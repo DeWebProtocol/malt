@@ -8,7 +8,9 @@ import (
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materializermemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment"
+	"github.com/dewebprotocol/malt/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
+	listtree "github.com/dewebprotocol/malt/auth/semantic/list/tree"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
 	"github.com/dewebprotocol/malt/mutation"
@@ -50,7 +52,9 @@ func TestComputeBundleMatchesIndependentFullRebuildAndRetainsNextView(t *testing
 	if !result.NextView.BaseRoot.Equals(result.Bundle.Candidate) {
 		t.Fatalf("next view base = %s, candidate = %s", result.NextView.BaseRoot, result.Bundle.Candidate)
 	}
-	if result.Metrics.TotalNS < result.Metrics.RootComputationNS || result.Metrics.TotalNS == 0 {
+	if result.Metrics.TotalNS < result.Metrics.RootComputationNS || result.Metrics.TotalNS == 0 ||
+		result.Metrics.CommitmentUpdateNS == 0 || result.Metrics.CommitmentUpdateNS > result.Metrics.RootComputationNS ||
+		result.Metrics.ExpectedRootEncodingNS == 0 {
 		t.Fatalf("compute metrics = %#v", result.Metrics)
 	}
 
@@ -64,6 +68,137 @@ func TestComputeBundleMatchesIndependentFullRebuildAndRetainsNextView(t *testing
 	}
 	if _, err := fresh.VerifyUpdateView(ctx, result.NextView); err != nil {
 		t.Fatalf("verify retained next view: %v", err)
+	}
+}
+
+func TestNewRuntimeRequiresBranchingMaterializer(t *testing.T) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRuntime(materializermemory.New(false), map[maltcid.BackendKind]commitment.IndexCommitment{
+		maltcid.BackendKindKZG: scheme,
+	}); err == nil {
+		t.Fatal("non-branching speculative client writer was accepted")
+	}
+}
+
+func TestNextReachableViewRejectsDistinctObjectsConvergingToOneRoot(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, _, _, _ := mapWriterFixture(t, ctx, scheme)
+	objects := make(map[string]mutation.UpdateObject, len(view.Objects))
+	for _, object := range view.Objects {
+		objects[object.ObjectID] = object
+	}
+	child := objects["child"]
+	child.Root = view.BaseRoot
+	objects[child.ObjectID] = child
+
+	if _, err := nextReachableView(view, view.BaseRoot, objects); err == nil {
+		t.Fatal("distinct retained objects converging to one root were accepted")
+	}
+}
+
+func TestFixedListReplaceAndAppendRetainVerifiableMetadataAcrossBackends(t *testing.T) {
+	for _, backend := range []maltcid.BackendKind{maltcid.BackendKindKZG, maltcid.BackendKindIPA} {
+		t.Run(string(backend), func(t *testing.T) {
+			var (
+				scheme commitment.IndexCommitment
+				err    error
+			)
+			if backend == maltcid.BackendKindKZG {
+				scheme, err = kzg.NewScheme()
+			} else {
+				scheme, err = ipa.NewScheme()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, operation := range []string{"replace", "append"} {
+				t.Run(operation, func(t *testing.T) {
+					ctx := context.Background()
+					oldValues := []cid.Cid{writerRawCID(t, "fixed-a"), writerRawCID(t, "fixed-b")}
+					oldStore := materializermemory.New(true)
+					semantic, err := listtree.NewList(scheme, oldStore)
+					if err != nil {
+						t.Fatal(err)
+					}
+					root, err := semantic.CommitFixed(ctx, "fixed-file", oldValues, 4, 8)
+					if err != nil {
+						t.Fatal(err)
+					}
+					entries, err := arcset.NewCanonicalArcSet(arcset.KindList, []arcset.ArcEntry{
+						{Coordinate: arcset.NewListCoordinateUint64(0), Target: arcset.NewCASTarget(oldValues[0])},
+						{Coordinate: arcset.NewListCoordinateUint64(1), Target: arcset.NewCASTarget(oldValues[1])},
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					view := mutation.UpdateView{
+						Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
+						BaseRoot: root, Bounds: mutation.UpdateViewBounds{MaxObjects: 2, MaxTotalEntries: 8, MaxDepth: 2},
+						Objects: []mutation.UpdateObject{{ObjectID: "fixed-file", Root: root, Kind: arcset.KindList, Entries: entries,
+							Commit: mutation.CommitDescriptor{FixedList: &mutation.FixedListCommit{ChunkSize: 4, TotalSize: 8}}}},
+					}
+					newValue := writerRawCID(t, "fixed-"+operation)
+					intent := mutation.SemanticIntent{
+						Profile: mutation.SemanticIntentProfile, BaseRoot: root, TopOutputID: "fixed-output",
+						Transitions: []mutation.IntentTransition{{
+							ID: "fixed-output", ObjectID: "fixed-file", OldRoot: root, Kind: arcset.KindList, Backend: backend,
+							Commit: mutation.CommitDescriptor{FixedList: &mutation.FixedListCommit{ChunkSize: 4, TotalSize: 8}},
+						}},
+					}
+					nextValues := append([]cid.Cid(nil), oldValues...)
+					if operation == "replace" {
+						before, after := arcset.NewCASTarget(oldValues[0]), arcset.NewCASTarget(newValue)
+						intent.Transitions[0].Changes = []mutation.IntentChange{{Coordinate: arcset.NewListCoordinateUint64(0), Before: &before, After: &after}}
+						nextValues[0] = newValue
+					} else {
+						after := arcset.NewCASTarget(newValue)
+						intent.Transitions[0].Commit.FixedList.TotalSize = 12
+						intent.Transitions[0].Changes = []mutation.IntentChange{{Coordinate: arcset.NewListCoordinateUint64(2), After: &after}}
+						nextValues = append(nextValues, newValue)
+					}
+
+					runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{backend: scheme})
+					if err != nil {
+						t.Fatal(err)
+					}
+					verified, err := runtime.VerifyUpdateView(ctx, view)
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, err := runtime.ComputeBundle(ctx, "fixed-"+operation, verified, intent)
+					if err != nil {
+						t.Fatal(err)
+					}
+					expectedStore := materializermemory.New(true)
+					expectedSemantic, err := listtree.NewList(scheme, expectedStore)
+					if err != nil {
+						t.Fatal(err)
+					}
+					expectedTotal := uint64(len(nextValues) * 4)
+					expected, err := expectedSemantic.CommitFixed(ctx, "fixed-file", nextValues, 4, expectedTotal)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !result.Bundle.Candidate.Equals(expected) {
+						t.Fatalf("candidate = %s, want %s", result.Bundle.Candidate, expected)
+					}
+					fresh, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{backend: scheme})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := fresh.VerifyUpdateView(ctx, result.NextView); err != nil {
+						t.Fatalf("verify retained fixed-list view: %v", err)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -94,6 +229,44 @@ func TestVerifyUpdateViewRejectsUntrustedVectorForDeclaredRoot(t *testing.T) {
 	}
 	if _, err := runtime.VerifyUpdateView(ctx, view); err == nil {
 		t.Fatal("tampered complete vector was accepted")
+	}
+}
+
+func TestComputeBundleRejectsMutationOfVerifiedUpdateView(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, intent, _, _ := mapWriterFixture(t, ctx, scheme)
+	runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{
+		maltcid.BackendKindKZG: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := runtime.VerifyUpdateView(ctx, view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range verified.View.Objects {
+		if verified.View.Objects[index].ObjectID != "child" {
+			continue
+		}
+		entries := verified.View.Objects[index].Entries.Entries()
+		for entryIndex := range entries {
+			if entries[entryIndex].Coordinate.String() == "untouched" {
+				entries[entryIndex].Target = arcset.NewCASTarget(writerRawCID(t, "forged-unmeasured-binding"))
+			}
+		}
+		tampered, err := arcset.NewCanonicalArcSet(arcset.KindMap, entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verified.View.Objects[index].Entries = tampered
+	}
+	if _, err := runtime.ComputeBundle(ctx, "mutated-verified-view", verified, intent); err == nil {
+		t.Fatal("mutation of a verified update view bypassed its runtime seal")
 	}
 }
 
@@ -166,6 +339,13 @@ func TestSessionAdvancesOnlyAfterExactDurableReceipt(t *testing.T) {
 	if !session.BaseRoot().Equals(view.BaseRoot) {
 		t.Fatal("rejected receipt advanced the accepted session base")
 	}
+	reprepared, err := session.Prepare(ctx, "session-map-replace-retry", intent)
+	if err != nil {
+		t.Fatalf("prepare after rejected receipt: %v", err)
+	}
+	if !reprepared.Bundle.Candidate.Equals(prepared.Bundle.Candidate) {
+		t.Fatalf("retry candidate = %s, want %s", reprepared.Bundle.Candidate, prepared.Bundle.Candidate)
+	}
 	correct := wrong
 	correct.Candidate = prepared.Bundle.Candidate
 	if err := session.AcceptReceipt(correct, prepared); err != nil {
@@ -179,6 +359,99 @@ func TestSessionAdvancesOnlyAfterExactDurableReceipt(t *testing.T) {
 	}
 }
 
+func TestSessionRejectsMutationOfPreparedNextView(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, intent, _, _ := mapWriterFixture(t, ctx, scheme)
+	runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{
+		maltcid.BackendKindKZG: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := NewSession(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Load(ctx, view); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := session.Prepare(ctx, "session-seal", intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleDigest, err := prepared.Bundle.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := mutation.MaterializationReceipt{
+		Profile: mutation.MaterializationReceiptProfile, OperationID: prepared.Bundle.OperationID,
+		BaseRoot: prepared.Bundle.View.BaseRoot, Candidate: prepared.Bundle.Candidate,
+		BundleDigest: bundleDigest, DurableBoundary: "embedded-transaction-commit-v1",
+	}
+	for index := range prepared.NextView.Objects {
+		if prepared.NextView.Objects[index].ObjectID == "child" {
+			prepared.NextView.Objects[index].Root = writerRawCID(t, "forged-next-root")
+		}
+	}
+	if err := session.AcceptReceipt(receipt, prepared); err == nil {
+		t.Fatal("session accepted a mutated prepared next view")
+	}
+	if !session.BaseRoot().Equals(view.BaseRoot) {
+		t.Fatal("rejected prepared result advanced the session")
+	}
+}
+
+func TestSessionRejectsPreparedResultAfterSameRootViewReload(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, intent, _, _ := mapWriterFixture(t, ctx, scheme)
+	runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{
+		maltcid.BackendKindKZG: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := NewSession(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Load(ctx, view); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := session.Prepare(ctx, "session-stale-view", intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleDigest, err := prepared.Bundle.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := mutation.MaterializationReceipt{
+		Profile: mutation.MaterializationReceiptProfile, OperationID: prepared.Bundle.OperationID,
+		BaseRoot: prepared.Bundle.View.BaseRoot, Candidate: prepared.Bundle.Candidate,
+		BundleDigest: bundleDigest, DurableBoundary: "embedded-transaction-commit-v1",
+	}
+
+	reloaded := view
+	reloaded.Bounds.MaxObjects++
+	if err := session.Load(ctx, reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AcceptReceipt(receipt, prepared); err == nil {
+		t.Fatal("session accepted a result prepared against a different same-root view")
+	}
+	if !session.BaseRoot().Equals(view.BaseRoot) {
+		t.Fatal("rejected stale prepared result advanced the session")
+	}
+}
+
 func mapWriterFixture(t *testing.T, ctx context.Context, scheme *kzg.Scheme) (mutation.UpdateView, mutation.SemanticIntent, cid.Cid, cid.Cid) {
 	t.Helper()
 	oldPayload := writerRawCID(t, "old-payload")
@@ -188,7 +461,8 @@ func mapWriterFixture(t *testing.T, ctx context.Context, scheme *kzg.Scheme) (mu
 	if err != nil {
 		t.Fatal(err)
 	}
-	childRoot, err := oldMap.Commit(ctx, "child", mapping.NewViewFrom(map[string]cid.Cid{"payload": oldPayload}))
+	untouchedPayload := writerRawCID(t, "untouched-payload")
+	childRoot, err := oldMap.Commit(ctx, "child", mapping.NewViewFrom(map[string]cid.Cid{"payload": oldPayload, "untouched": untouchedPayload}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +476,7 @@ func mapWriterFixture(t *testing.T, ctx context.Context, scheme *kzg.Scheme) (mu
 	if err != nil {
 		t.Fatal(err)
 	}
-	newChildRoot, err := newMap.Commit(ctx, "child", mapping.NewViewFrom(map[string]cid.Cid{"payload": newPayload}))
+	newChildRoot, err := newMap.Commit(ctx, "child", mapping.NewViewFrom(map[string]cid.Cid{"payload": newPayload, "untouched": untouchedPayload}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,9 +485,10 @@ func mapWriterFixture(t *testing.T, ctx context.Context, scheme *kzg.Scheme) (mu
 		t.Fatal(err)
 	}
 
-	childEntries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{{
-		Coordinate: writerMapCoordinate(t, "payload"), Target: arcset.NewCASTarget(oldPayload),
-	}})
+	childEntries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{
+		{Coordinate: writerMapCoordinate(t, "payload"), Target: arcset.NewCASTarget(oldPayload)},
+		{Coordinate: writerMapCoordinate(t, "untouched"), Target: arcset.NewCASTarget(untouchedPayload)},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

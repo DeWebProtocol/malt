@@ -441,6 +441,9 @@ func UnmarshalCanonicalArcDelta(data []byte) (*CanonicalArcDelta, error) {
 
 	kind := Kind(decoder.readBytesAsString())
 	count := decoder.readUint32()
+	if !decoder.requireCollectionBytes(count, 6, "canonical arc delta changes") {
+		return nil, decoder.err
+	}
 	changes := make([]ArcChange, 0, count)
 	for i := uint32(0); i < count; i++ {
 		coordBytes := decoder.readBytes()
@@ -484,6 +487,9 @@ func UnmarshalCanonicalArcSet(data []byte) (*CanonicalArcSet, error) {
 
 	kind := Kind(decoder.readBytesAsString())
 	count := decoder.readUint32()
+	if !decoder.requireCollectionBytes(count, 12, "canonical arc set entries") {
+		return nil, decoder.err
+	}
 	entries := make([]ArcEntry, 0, count)
 	for i := uint32(0); i < count; i++ {
 		coordBytes := decoder.readBytes()
@@ -732,6 +738,18 @@ func (d *canonicalDecoder) readOptionalTarget() *TargetRef {
 		d.err = fmt.Errorf("invalid optional target marker %d", present)
 		return nil
 	}
+}
+
+func (d *canonicalDecoder) requireCollectionBytes(count uint32, minimumBytesPerItem uint64, label string) bool {
+	if d.err != nil {
+		return false
+	}
+	remaining := len(d.data) - d.pos
+	if uint64(count)*minimumBytesPerItem > uint64(remaining) {
+		d.err = fmt.Errorf("%s count %d exceeds remaining encoded bytes", label, count)
+		return false
+	}
+	return true
 }
 
 func (d *canonicalDecoder) readFixed(n int) []byte {

@@ -43,6 +43,22 @@ type IndexProver interface {
 	Replace(values []Cell, index uint64, oldValue, newValue Cell) (cid.Cid, error)
 }
 
+// IndexOpening is an opaque, prepared witness for one committed vector. Root
+// returns the commitment computed while the witness was prepared. Open
+// generates an index proof without recomputing that commitment.
+type IndexOpening interface {
+	Root() cid.Cid
+	Open(index uint64) (value Cell, proof []byte, err error)
+}
+
+// IndexOpener is the optional execution capability for separating commitment
+// preparation from proof generation. Preparing an opening computes and binds
+// the root once; callers must keep PrepareOpening outside an independently
+// measured Open interval.
+type IndexOpener interface {
+	PrepareOpening(values []Cell) (IndexOpening, error)
+}
+
 // IndexCommitment is the full execution backend. Client verification code
 // should depend on IndexVerifier instead.
 type IndexCommitment interface {
