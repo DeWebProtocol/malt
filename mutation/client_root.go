@@ -177,6 +177,11 @@ func NormalizeUpdateView(view UpdateView) (UpdateView, error) {
 		if object.Entries == nil || object.Entries.Kind() != object.Kind {
 			return UpdateView{}, fmt.Errorf("%w: object %q vector/kind mismatch", ErrInvalidUpdateView, object.ObjectID)
 		}
+		for _, entry := range object.Entries.Entries() {
+			if !clientRootTargetKindMatchesCID(entry.Target) {
+				return UpdateView{}, fmt.Errorf("%w: object %q target kind does not match CID semantics at %q", ErrInvalidUpdateView, object.ObjectID, entry.Coordinate.String())
+			}
+		}
 		if object.Commit.FixedList != nil && object.Kind != arcset.KindList {
 			return UpdateView{}, fmt.Errorf("%w: object %q has map fixed-list descriptor", ErrInvalidUpdateView, object.ObjectID)
 		}
@@ -409,6 +414,12 @@ func normalizeIntentTransition(transition IntentTransition, object UpdateObject)
 		}
 		if change.After != nil && change.OutputID != "" {
 			return IntentTransition{}, fmt.Errorf("%w: transition %q coordinate %q has both literal and output post-image", ErrInvalidSemanticIntent, transition.ID, change.Coordinate.String())
+		}
+		if change.Before != nil && !clientRootTargetKindMatchesCID(*change.Before) {
+			return IntentTransition{}, fmt.Errorf("%w: transition %q before target kind/CID mismatch at %q", ErrInvalidSemanticIntent, transition.ID, change.Coordinate.String())
+		}
+		if change.After != nil && !clientRootTargetKindMatchesCID(*change.After) {
+			return IntentTransition{}, fmt.Errorf("%w: transition %q after target kind/CID mismatch at %q", ErrInvalidSemanticIntent, transition.ID, change.Coordinate.String())
 		}
 		if change.OutputID != "" {
 			if !validClientRootID(change.OutputID) || change.OutputKind != arcset.TargetKindMap && change.OutputKind != arcset.TargetKindList {
@@ -664,6 +675,24 @@ func semanticTargetKind(target arcset.TargetRef) (arcset.Kind, bool) {
 		return arcset.KindList, true
 	default:
 		return "", false
+	}
+}
+
+// clientRootTargetKindMatchesCID prevents an untrusted update view from
+// relabeling a typed semantic child as opaque CAS data (and thereby escaping
+// closure validation), or from relabeling an ordinary payload as a semantic
+// child. Unknown/CAS remain valid spellings only for non-MALT payload CIDs.
+func clientRootTargetKindMatchesCID(target arcset.TargetRef) bool {
+	semantic := maltcid.SemanticKindOf(target.CID())
+	switch target.Kind() {
+	case arcset.TargetKindMap:
+		return semantic == maltcid.SemanticKindMap
+	case arcset.TargetKindList:
+		return semantic == maltcid.SemanticKindList
+	case arcset.TargetKindCAS, arcset.TargetKindUnknown:
+		return semantic == maltcid.SemanticKindUnknown
+	default:
+		return false
 	}
 }
 

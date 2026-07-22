@@ -88,6 +88,39 @@ func TestNormalizeUpdateViewRequiresExactReachabilityClosure(t *testing.T) {
 	}
 }
 
+func TestClientRootRejectsTargetKindRelabelingAcrossSemanticBoundary(t *testing.T) {
+	view, intent, _, _, _ := clientRootFixture(t)
+	for index := range view.Objects {
+		if view.Objects[index].ObjectID != "parent" {
+			continue
+		}
+		entries := view.Objects[index].Entries.Entries()
+		entries[0].Target = arcset.NewCASTarget(entries[0].Target.CID())
+		relabeled, err := arcset.NewCanonicalArcSet(arcset.KindMap, entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.Objects[index].Entries = relabeled
+	}
+	if _, err := NormalizeUpdateView(view); !errors.Is(err, ErrInvalidUpdateView) {
+		t.Fatalf("semantic child relabel error = %v, want ErrInvalidUpdateView", err)
+	}
+
+	view, intent, _, _, _ = clientRootFixture(t)
+	intent.Transitions = cloneIntentTransitions(intent.Transitions)
+	for transitionIndex := range intent.Transitions {
+		if intent.Transitions[transitionIndex].ID != "child-output" {
+			continue
+		}
+		payload := intent.Transitions[transitionIndex].Changes[0].After.CID()
+		wrong := arcset.NewMapTarget(payload)
+		intent.Transitions[transitionIndex].Changes[0].After = &wrong
+	}
+	if _, err := NormalizeSemanticIntent(view, intent); !errors.Is(err, ErrInvalidSemanticIntent) {
+		t.Fatalf("payload relabel error = %v, want ErrInvalidSemanticIntent", err)
+	}
+}
+
 func TestNormalizeSemanticIntentRejectsMultiplicityBeforeImageAndLastDeltaPatterns(t *testing.T) {
 	view, intent, _, _, _ := clientRootFixture(t)
 
