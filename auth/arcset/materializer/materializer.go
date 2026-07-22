@@ -19,10 +19,10 @@ import (
 // ArcSet materialization.
 var ErrNotFound = arcset.ErrNotFound
 
-// ErrIncomplete reports that physical materialization was found for an
-// authenticated object, but it is not sufficient to reconstruct the object
-// named by its root. It is distinct from backend I/O failures so callers can
-// classify absent/incomplete state without hiding retryable storage errors.
+// ErrIncomplete reports that physical materialization for an authenticated
+// object is absent, incomplete, or inconsistent with the object named by its
+// root. It is distinct from backend I/O failures so callers can classify
+// unavailable object state without hiding retryable storage errors.
 var ErrIncomplete = errors.New("materialized state is incomplete")
 
 // IsNotFound reports whether err represents an absent materialized arc.
