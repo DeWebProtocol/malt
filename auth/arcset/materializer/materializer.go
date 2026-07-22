@@ -19,9 +19,21 @@ import (
 // ArcSet materialization.
 var ErrNotFound = arcset.ErrNotFound
 
+// ErrIncomplete reports that physical materialization was found for an
+// authenticated object, but it is not sufficient to reconstruct the object
+// named by its root. It is distinct from backend I/O failures so callers can
+// classify absent/incomplete state without hiding retryable storage errors.
+var ErrIncomplete = errors.New("materialized state is incomplete")
+
 // IsNotFound reports whether err represents an absent materialized arc.
 func IsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
+}
+
+// IsIncomplete reports whether err represents incomplete physical state for
+// an authenticated object.
+func IsIncomplete(err error) bool {
+	return errors.Is(err, ErrIncomplete)
 }
 
 // Lookup is the read-only coordinate lookup capability used by semantic

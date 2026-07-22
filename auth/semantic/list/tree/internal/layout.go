@@ -179,7 +179,7 @@ func ValidateSlots(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("materialized node state does not match root %s", root.String())
+		return fmt.Errorf("%w: node state does not match root %s", materializer.ErrIncomplete, root.String())
 	}
 	return nil
 }
@@ -195,7 +195,7 @@ func ProveSlot(scheme commitment.IndexCommitment, root cid.Cid, slots []cid.Cid,
 		return nil, nil, err
 	}
 	if !ok {
-		return nil, nil, fmt.Errorf("recomputed node root does not match requested root")
+		return nil, nil, fmt.Errorf("%w: recomputed node root does not match requested root", materializer.ErrIncomplete)
 	}
 	return value, proof, nil
 }

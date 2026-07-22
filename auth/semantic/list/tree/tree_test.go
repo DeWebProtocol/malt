@@ -3,6 +3,7 @@ package tree_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -219,11 +220,77 @@ func TestTreeListRejectsLegacyWidthMaterialization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewList after restart failed: %v", err)
 			}
-			if _, _, err := restarted.Prove(ctx, namespace, root, 0); err == nil {
-				t.Fatal("Prove should reject legacy-width materialization")
+			if _, _, err := restarted.Prove(ctx, namespace, root, 0); !errors.Is(err, materializer.ErrIncomplete) {
+				t.Fatalf("Prove error = %v, want ErrIncomplete", err)
 			}
 		})
 	}
+}
+
+func TestTreeListReportsIncompleteMaterialization(t *testing.T) {
+	ctx := context.Background()
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			scheme := factory(t)
+			source, _, err := newListWithMaterializer(scheme, materialmemory.New(true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := source.Commit(ctx, "source-"+name, list.NewViewFromSlice(makeValues(2)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			missing, _, err := newListWithMaterializer(scheme, materialmemory.New(true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := missing.Prove(ctx, "missing-"+name, root, 0); !errors.Is(err, materializer.ErrIncomplete) {
+				t.Fatalf("Prove error = %v, want ErrIncomplete", err)
+			}
+		})
+	}
+}
+
+func TestTreeListPreservesMaterializerFailure(t *testing.T) {
+	ctx := context.Background()
+	storeErr := errors.New("materializer unavailable")
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			scheme := factory(t)
+			source, _, err := newListWithMaterializer(scheme, materialmemory.New(true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := source.Commit(ctx, "source-"+name, list.NewViewFromSlice(makeValues(2)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			failing, err := tree.NewList(scheme, failingNodeStore{err: storeErr})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = failing.Prove(ctx, "failing-"+name, root, 0)
+			if !errors.Is(err, storeErr) || errors.Is(err, materializer.ErrIncomplete) {
+				t.Fatalf("Prove error = %v, want original materializer failure only", err)
+			}
+		})
+	}
+}
+
+type failingNodeStore struct {
+	err error
+}
+
+func (s failingNodeStore) Get(context.Context, string, cid.Cid, arcset.Path) (cid.Cid, error) {
+	return cid.Undef, s.err
+}
+
+func (s failingNodeStore) BatchGet(context.Context, string, cid.Cid, []arcset.Path) (map[arcset.Path]cid.Cid, error) {
+	return nil, s.err
+}
+
+func (s failingNodeStore) Update(context.Context, string, cid.Cid, cid.Cid, arcset.ArcSet) error {
+	return s.err
 }
 
 func TestTreeListVerifiesProofWithoutStepSlots(t *testing.T) {
