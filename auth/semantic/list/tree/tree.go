@@ -141,6 +141,9 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 			return list.Query{}, nil, err
 		}
 		envelope.Steps = append(envelope.Steps, newProofStep(target, proof, slot))
+		if !target.Defined() {
+			return list.Query{}, nil, fmt.Errorf("%w: missing child at level %d digit %d", materializer.ErrIncomplete, level, digit)
+		}
 
 		if level == len(digits)-1 {
 			query.Key, err = target.AsCID()
@@ -149,10 +152,6 @@ func (s *TreeList) Prove(ctx context.Context, namespace string, root cid.Cid, in
 			}
 			return encodeProof(query, envelope)
 		}
-		if !target.Defined() {
-			return list.Query{}, nil, fmt.Errorf("missing child at level %d digit %d", level, digit)
-		}
-
 		currentRoot, err = target.AsCID()
 		if err != nil {
 			return list.Query{}, nil, err
@@ -997,7 +996,7 @@ func (s *TreeList) validateSlots(root cid.Cid, slots []cid.Cid) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("materialized node state does not match root %s", root.String())
+		return fmt.Errorf("%w: node state does not match root %s", materializer.ErrIncomplete, root.String())
 	}
 	return nil
 }
