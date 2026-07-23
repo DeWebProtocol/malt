@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt/auth/observation"
 	"github.com/dewebprotocol/malt/auth/proof/evidence"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/graph/resolver/step"
@@ -66,7 +67,13 @@ func (r *Resolver) Resolve(ctx context.Context, root cid.Cid, path arcset.Path) 
 	for i := len(segments); i > 0; i-- {
 		candidatePath := arcset.Path(strings.Join(segments[:i], "/"))
 
+		finishLookup := observation.Start(ctx, observation.PhaseArcTable)
 		target, err := r.materializer.Get(ctx, r.namespace, root, candidatePath)
+		var targetBytes uint64
+		if observation.Enabled(ctx) && target.Defined() {
+			targetBytes = uint64(target.ByteLen())
+		}
+		finishLookup(1, 1, targetBytes)
 		if err == nil {
 			// Found a match, generate proof
 			binding, proof, err := r.semantic.Prove(ctx, r.namespace, root, candidatePath)

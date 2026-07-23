@@ -13,6 +13,8 @@ import (
 const (
 	canonicalEncodingMagic   = "MARC"
 	canonicalEncodingVersion = byte(1)
+	canonicalDeltaMagic      = "MDLT"
+	canonicalDeltaVersion    = byte(1)
 )
 
 var (
@@ -120,6 +122,13 @@ func NewListCoordinate(index int64) (CanonicalCoordinate, error) {
 		return CanonicalCoordinate{}, ErrInvalidListCoordinate
 	}
 	return newListCoordinate(uint64(index)), nil
+}
+
+// NewListCoordinateUint64 encodes the full non-negative list-index domain.
+// It complements NewListCoordinate for wire decoders and APIs whose index is
+// already represented as uint64.
+func NewListCoordinateUint64(index uint64) CanonicalCoordinate {
+	return newListCoordinate(index)
 }
 
 func newListCoordinate(index uint64) CanonicalCoordinate {
@@ -393,6 +402,78 @@ func (s *CanonicalArcSet) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// MarshalBinary encodes a canonical arc delta deterministically. The encoding
+// is suitable for digest inputs and portable writer contracts; callers must
+// still validate the surrounding base object and dependency graph.
+func (d *CanonicalArcDelta) MarshalBinary() ([]byte, error) {
+	if d == nil {
+		return nil, errors.New("canonical arc delta is nil")
+	}
+	if err := validateKind(d.kind); err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(canonicalDeltaMagic)
+	buf.WriteByte(canonicalDeltaVersion)
+	writeBytes(&buf, []byte(d.kind))
+	writeUint32(&buf, uint32(len(d.changes)))
+	for _, change := range d.changes {
+		writeBytes(&buf, change.Coordinate.bytes)
+		writeOptionalTarget(&buf, change.Before)
+		writeOptionalTarget(&buf, change.After)
+	}
+	return buf.Bytes(), nil
+}
+
+// UnmarshalCanonicalArcDelta decodes the deterministic canonical delta
+// encoding and re-runs all canonical ordering, coordinate, target, duplicate,
+// and no-op validation.
+func UnmarshalCanonicalArcDelta(data []byte) (*CanonicalArcDelta, error) {
+	decoder := canonicalDecoder{data: data}
+	if string(decoder.readFixed(len(canonicalDeltaMagic))) != canonicalDeltaMagic {
+		return nil, errors.New("invalid canonical arc delta encoding")
+	}
+	version := decoder.readByte()
+	if version != canonicalDeltaVersion {
+		return nil, fmt.Errorf("unsupported canonical arc delta encoding version %d", version)
+	}
+
+	kind := Kind(decoder.readBytesAsString())
+	count := decoder.readUint32()
+	if !decoder.requireCollectionBytes(count, 6, "canonical arc delta changes") {
+		return nil, decoder.err
+	}
+	changes := make([]ArcChange, 0, count)
+	for i := uint32(0); i < count; i++ {
+		coordBytes := decoder.readBytes()
+		before := decoder.readOptionalTarget()
+		after := decoder.readOptionalTarget()
+		changes = append(changes, ArcChange{
+			Coordinate: coordinateFromEncodedBytes(kind, coordBytes),
+			Before:     before,
+			After:      after,
+		})
+	}
+	if decoder.err != nil {
+		return nil, decoder.err
+	}
+	if decoder.pos != len(decoder.data) {
+		return nil, errors.New("canonical arc delta encoding has trailing bytes")
+	}
+	return NewCanonicalArcDelta(kind, changes)
+}
+
+func writeOptionalTarget(buf *bytes.Buffer, target *TargetRef) {
+	if target == nil {
+		buf.WriteByte(0)
+		return
+	}
+	buf.WriteByte(1)
+	writeBytes(buf, []byte(target.kind))
+	writeBytes(buf, target.target.Bytes())
+}
+
 // UnmarshalCanonicalArcSet decodes a deterministic canonical arc set encoding.
 func UnmarshalCanonicalArcSet(data []byte) (*CanonicalArcSet, error) {
 	decoder := canonicalDecoder{data: data}
@@ -406,6 +487,9 @@ func UnmarshalCanonicalArcSet(data []byte) (*CanonicalArcSet, error) {
 
 	kind := Kind(decoder.readBytesAsString())
 	count := decoder.readUint32()
+	if !decoder.requireCollectionBytes(count, 12, "canonical arc set entries") {
+		return nil, decoder.err
+	}
 	entries := make([]ArcEntry, 0, count)
 	for i := uint32(0); i < count; i++ {
 		coordBytes := decoder.readBytes()
@@ -627,6 +711,45 @@ type canonicalDecoder struct {
 	data []byte
 	pos  int
 	err  error
+}
+
+func (d *canonicalDecoder) readOptionalTarget() *TargetRef {
+	present := d.readByte()
+	if d.err != nil {
+		return nil
+	}
+	switch present {
+	case 0:
+		return nil
+	case 1:
+		kind := TargetKind(d.readBytesAsString())
+		cidBytes := d.readBytes()
+		if d.err != nil {
+			return nil
+		}
+		target, err := cid.Cast(cidBytes)
+		if err != nil {
+			d.err = err
+			return nil
+		}
+		value := NewTargetRef(kind, target)
+		return &value
+	default:
+		d.err = fmt.Errorf("invalid optional target marker %d", present)
+		return nil
+	}
+}
+
+func (d *canonicalDecoder) requireCollectionBytes(count uint32, minimumBytesPerItem uint64, label string) bool {
+	if d.err != nil {
+		return false
+	}
+	remaining := len(d.data) - d.pos
+	if uint64(count)*minimumBytesPerItem > uint64(remaining) {
+		d.err = fmt.Errorf("%s count %d exceeds remaining encoded bytes", label, count)
+		return false
+	}
+	return true
 }
 
 func (d *canonicalDecoder) readFixed(n int) []byte {

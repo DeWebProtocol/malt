@@ -38,6 +38,8 @@ type Scheme struct {
 	ipaConfig *ipa.IPAConfig
 }
 
+var _ commitment.IndexOpener = (*Scheme)(nil)
+
 // NewScheme creates a new IPA commitment scheme.
 func NewScheme() (*Scheme, error) {
 	ipaConfig, err := ipa.NewIPASettings()
@@ -71,6 +73,31 @@ func (s *Scheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitm
 	}
 	value, proof, err := s.proveValuesIndex(comm, values, index)
 	return comm, value, proof, err
+}
+
+type opening struct {
+	scheme *Scheme
+	root   cid.Cid
+	values []commitment.Cell
+}
+
+// PrepareOpening computes a commitment once and returns an opaque witness
+// whose Open method reuses that commitment in the IPA transcript.
+func (s *Scheme) PrepareOpening(values []commitment.Cell) (commitment.IndexOpening, error) {
+	root, err := s.commitValues(values)
+	if err != nil {
+		return nil, err
+	}
+	return &opening{scheme: s, root: root, values: commitment.CloneCells(values)}, nil
+}
+
+func (o *opening) Root() cid.Cid { return o.root }
+
+func (o *opening) Open(index uint64) (commitment.Cell, []byte, error) {
+	if index >= uint64(len(o.values)) {
+		return nil, nil, fmt.Errorf("index %d out of range", index)
+	}
+	return o.scheme.proveValuesIndex(o.root, o.values, index)
 }
 
 // BatchProve proves multiple stable indices with one batch proof payload.

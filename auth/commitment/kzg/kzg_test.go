@@ -52,6 +52,49 @@ func TestKZGProveIsStateless(t *testing.T) {
 	}
 }
 
+func TestKZGPreparedOpeningBindsRootAndClonesWitness(t *testing.T) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{
+		commitment.NewCell([]byte("slot0")),
+		commitment.NewCell([]byte("slot1")),
+	}
+	wantRoot, err := scheme.Commit(values)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	prepared, err := scheme.PrepareOpening(values)
+	if err != nil {
+		t.Fatalf("PrepareOpening failed: %v", err)
+	}
+	if !prepared.Root().Equals(wantRoot) {
+		t.Fatalf("prepared root %s, want %s", prepared.Root(), wantRoot)
+	}
+
+	// Mutating the caller-owned witness cannot relabel the prepared root.
+	values[1] = commitment.NewCell([]byte("attacker replacement"))
+	value, proof, err := prepared.Open(1)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	if value.Equal(values[1]) {
+		t.Fatal("prepared opening retained caller-owned mutable witness")
+	}
+	ok, err := scheme.VerifyIndex(prepared.Root(), 1, value, proof)
+	if err != nil || !ok {
+		t.Fatalf("VerifyIndex = %v, %v; want true, nil", ok, err)
+	}
+	otherRoot, err := scheme.Commit(values)
+	if err != nil {
+		t.Fatalf("Commit(other) failed: %v", err)
+	}
+	if ok, err := scheme.VerifyIndex(otherRoot, 1, value, proof); err == nil && ok {
+		t.Fatal("prepared proof verified against a mismatched root")
+	}
+}
+
 func TestKZGBatchProveIsStateless(t *testing.T) {
 	scheme, err := kzg.NewScheme()
 	if err != nil {
