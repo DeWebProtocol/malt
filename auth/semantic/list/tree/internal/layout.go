@@ -4,37 +4,17 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materializer "github.com/dewebprotocol/malt/auth/arcset/materializer"
 	"github.com/dewebprotocol/malt/auth/commitment"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
 const (
-	// DefaultFanout is the default commitment width for list nodes.
-	// The current KZG backend supports 256 slots per commitment, so this
-	// value is fixed to 256.
-	DefaultFanout = 256
-
-	// BranchingFactor is the number of content slots per committed list node.
-	//
-	// Slot 0 in every list node is reserved for authenticated node metadata, so
-	// all nodes expose (DefaultFanout-1) content slots.
-	//
-	// Root and non-root nodes share the same branching factor.
-	BranchingFactor = DefaultFanout - 1
-
-	// RootWidth is the fixed slot width for the committed root node.
-	// Slot 0 is the authenticated node metadata marker.
-	RootWidth = DefaultFanout
-
-	// NodeWidth is the fixed slot width for all committed non-root nodes.
-	NodeWidth = DefaultFanout
-
 	nodeMetaPrefix = "malt:list:node-meta:"
 )
 
@@ -49,26 +29,27 @@ type NodeMetadata struct {
 	ChunkSize  uint64
 }
 
-// ValidateCommitment checks whether the supplied index commitment can support
-// the list layout.
-func ValidateCommitment(scheme commitment.IndexCommitment) error {
+// ValidateCommitment returns the list geometry selected by the supplied
+// commitment suite.
+func ValidateCommitment(scheme commitment.IndexCommitment) (nodegeometry.Geometry, error) {
 	if scheme == nil {
-		return fmt.Errorf("index commitment is nil")
+		return nodegeometry.Geometry{}, fmt.Errorf("index commitment is nil")
 	}
-	if scheme.MaxValues() < RootWidth {
-		return fmt.Errorf("index commitment capacity %d is smaller than required root width %d", scheme.MaxValues(), RootWidth)
+	geometry, err := nodegeometry.ForCapacity(scheme.MaxValues())
+	if err != nil {
+		return nodegeometry.Geometry{}, fmt.Errorf("selecting list node geometry: %w", err)
 	}
-	return nil
+	return geometry, nil
 }
 
 // EmptyRootSlots allocates a zero-initialized root slot vector.
-func EmptyRootSlots() []cid.Cid {
-	return make([]cid.Cid, RootWidth)
+func EmptyRootSlots(geometry nodegeometry.Geometry) []cid.Cid {
+	return make([]cid.Cid, geometry.NodeWidth())
 }
 
 // EmptyNodeSlots allocates a zero-initialized non-root slot vector.
-func EmptyNodeSlots() []cid.Cid {
-	return make([]cid.Cid, NodeWidth)
+func EmptyNodeSlots(geometry nodegeometry.Geometry) []cid.Cid {
+	return make([]cid.Cid, geometry.NodeWidth())
 }
 
 // ContentSlots returns the data-bearing portion of a slot vector.
@@ -263,59 +244,16 @@ func DecodeNodeMetadata(marker cid.Cid) (NodeMetadata, error) {
 }
 
 // RequiredHeight returns the minimal non-root height required for length values.
-func RequiredHeight(length uint64) int {
-	if length <= uint64(BranchingFactor) {
-		return 0
-	}
-
-	capacity := uint64(BranchingFactor)
-	height := 0
-	for capacity < length {
-		height++
-		if capacity > math.MaxUint64/uint64(BranchingFactor) {
-			return height
-		}
-		capacity *= uint64(BranchingFactor)
-	}
-	return height
+func RequiredHeight(geometry nodegeometry.Geometry, length uint64) int {
+	return geometry.RequiredListHeight(length)
 }
 
 // SubtreeCapacity returns how many values fit under a node of the given height.
-func SubtreeCapacity(height int) (uint64, error) {
-	if height < 0 {
-		return 0, fmt.Errorf("height must be non-negative")
-	}
-
-	capacity := uint64(BranchingFactor)
-	for i := 0; i < height; i++ {
-		if capacity > math.MaxUint64/uint64(BranchingFactor) {
-			return 0, fmt.Errorf("list capacity overflow at height %d", height)
-		}
-		capacity *= uint64(BranchingFactor)
-	}
-	return capacity, nil
+func SubtreeCapacity(geometry nodegeometry.Geometry, height int) (uint64, error) {
+	return geometry.ListSubtreeCapacity(height)
 }
 
-// IndexDigits decomposes an index into base-BranchingFactor digits for the target height.
-func IndexDigits(index uint64, height int) ([]int, error) {
-	if height < 0 {
-		return nil, fmt.Errorf("height must be non-negative")
-	}
-
-	digits := make([]int, height+1)
-	remaining := index
-	for level := 0; level <= height; level++ {
-		exp := height - level
-		if exp == 0 {
-			digits[level] = int(remaining)
-			continue
-		}
-		chunk, err := SubtreeCapacity(exp - 1)
-		if err != nil {
-			return nil, err
-		}
-		digits[level] = int(remaining / chunk)
-		remaining %= chunk
-	}
-	return digits, nil
+// IndexDigits decomposes an index into base-branching-factor digits for the target height.
+func IndexDigits(geometry nodegeometry.Geometry, index uint64, height int) ([]int, error) {
+	return geometry.ListIndexDigits(index, height)
 }

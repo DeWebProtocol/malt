@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Align the default Make target and CI build gate with the SDK-only package
   tree.
+- Use all 4096 KZG positions for semantic map and list nodes. KZG maps now
+  consume SHA-256 keys in 12-bit radix digits and KZG lists branch over 4095
+  content slots; the fixed 256-position IPA suite retains 8-bit map digits and
+  255 list content slots.
+- Advance typed MALT roots to `MALTVersionID=2`. Experimental version-1 roots
+  and their materialized node state must be rebuilt; current decoders reject
+  them rather than interpreting them with the new geometry.
 
 ### Removed
 

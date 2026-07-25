@@ -15,6 +15,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	"github.com/dewebprotocol/malt/auth/semantic/list/tree"
 	"github.com/dewebprotocol/malt/auth/semantic/list/tree/internal"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -80,6 +81,54 @@ func newListWithMaterializer(scheme commitment.IndexCommitment, store *materialm
 	return semantic, store, nil
 }
 
+func geometryForScheme(t *testing.T, scheme commitment.IndexVerifier) nodegeometry.Geometry {
+	t.Helper()
+	geometry, err := nodegeometry.ForCapacity(scheme.MaxValues())
+	if err != nil {
+		t.Fatalf("nodegeometry.ForCapacity(%d): %v", scheme.MaxValues(), err)
+	}
+	return geometry
+}
+
+func TestTreeListBackendGeometryBoundaries(t *testing.T) {
+	wantGeometry := map[string]struct {
+		nodeWidth int
+		branching int
+	}{
+		"ipa": {nodeWidth: 256, branching: 255},
+		"kzg": {nodeWidth: 4096, branching: 4095},
+	}
+
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			geometry := geometryForScheme(t, factory(t))
+			want := wantGeometry[name]
+			if got := geometry.NodeWidth(); got != want.nodeWidth {
+				t.Fatalf("node width = %d, want %d", got, want.nodeWidth)
+			}
+			if got := geometry.ListBranchingFactor(); got != want.branching {
+				t.Fatalf("branching factor = %d, want %d", got, want.branching)
+			}
+			if got := len(layout.EmptyRootSlots(geometry)); got != want.nodeWidth {
+				t.Fatalf("root slots = %d, want %d", got, want.nodeWidth)
+			}
+			if got := layout.RequiredHeight(geometry, uint64(want.branching)); got != 0 {
+				t.Fatalf("height at %d values = %d, want 0", want.branching, got)
+			}
+			if got := layout.RequiredHeight(geometry, uint64(want.branching+1)); got != 1 {
+				t.Fatalf("height at %d values = %d, want 1", want.branching+1, got)
+			}
+			digits, err := layout.IndexDigits(geometry, uint64(want.branching), 1)
+			if err != nil {
+				t.Fatalf("IndexDigits at boundary: %v", err)
+			}
+			if len(digits) != 2 || digits[0] != 1 || digits[1] != 0 {
+				t.Fatalf("digits at index %d = %v, want [1 0]", want.branching, digits)
+			}
+		})
+	}
+}
+
 func assertVerifiedQuery(t *testing.T, semantic *tree.TreeList, namespace string, root cid.Cid, index uint64, expected list.Query) {
 	t.Helper()
 
@@ -127,10 +176,11 @@ func stripProofStepSlots(t *testing.T, proof []byte) []byte {
 func commitLegacyWidthNode(t *testing.T, ctx context.Context, scheme commitment.IndexCommitment, e materializer.Store, namespace string, values []cid.Cid) cid.Cid {
 	t.Helper()
 
-	if len(values) > layout.BranchingFactor {
-		t.Fatalf("legacy width helper supports at most %d values", layout.BranchingFactor)
+	geometry := geometryForScheme(t, scheme)
+	if len(values) > geometry.ListBranchingFactor() {
+		t.Fatalf("legacy width helper supports at most %d values", geometry.ListBranchingFactor())
 	}
-	slots := make([]cid.Cid, layout.BranchingFactor)
+	slots := make([]cid.Cid, geometry.ListBranchingFactor())
 	copy(slots, values)
 	return commitTestSlots(t, ctx, scheme, e, namespace, slots)
 }
@@ -203,7 +253,7 @@ func TestTreeListSemanticProofsAndRestart(t *testing.T) {
 
 func TestTreeListRejectsLegacyWidthMaterialization(t *testing.T) {
 	ctx := context.Background()
-	values := makeValues(layout.BranchingFactor)
+	values := makeValues(2)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
@@ -261,7 +311,8 @@ func TestTreeListRejectsAuthenticatedLengthWithMissingLeaf(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			slots := layout.EmptyRootSlots()
+			geometry := geometryForScheme(t, scheme)
+			slots := layout.EmptyRootSlots(geometry)
 			slots[0], err = layout.EncodeNodeMetadata(layout.NodeMetadata{ChildCount: 1})
 			if err != nil {
 				t.Fatal(err)
@@ -325,7 +376,7 @@ func (s failingNodeStore) Update(context.Context, string, cid.Cid, cid.Cid, arcs
 func TestTreeListVerifiesProofWithoutStepSlots(t *testing.T) {
 	ctx := context.Background()
 	values := makeValues(300)
-	index := uint64(layout.BranchingFactor)
+	index := uint64(1)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
@@ -356,13 +407,15 @@ func TestTreeListVerifiesProofWithoutStepSlots(t *testing.T) {
 
 func TestTreeListAppendIntoChildUpdatesSlotZeroMetadata(t *testing.T) {
 	ctx := context.Background()
-	values := makeValues(300)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := materialmemory.New(true)
 			namespace := "tree-child-append-" + name
 			scheme := factory(t)
+			geometry := geometryForScheme(t, scheme)
+			branching := geometry.ListBranchingFactor()
+			values := makeValues(branching + 1)
 			restarted, e, err := newListWithMaterializer(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithMaterializer failed: %v", err)
@@ -384,8 +437,8 @@ func TestTreeListAppendIntoChildUpdatesSlotZeroMetadata(t *testing.T) {
 				Key:    values[0],
 				Length: uint64(len(values) + 1),
 			})
-			assertVerifiedQuery(t, restarted, namespace, appendedRoot, uint64(layout.BranchingFactor), list.Query{
-				Key:    values[layout.BranchingFactor],
+			assertVerifiedQuery(t, restarted, namespace, appendedRoot, uint64(branching), list.Query{
+				Key:    values[branching],
 				Length: uint64(len(values) + 1),
 			})
 			assertVerifiedQuery(t, restarted, namespace, appendedRoot, appendedIndex, list.Query{
@@ -397,7 +450,7 @@ func TestTreeListAppendIntoChildUpdatesSlotZeroMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("fetch second child root: %v", err)
 			}
-			secondChildSlots, err := layout.LoadSlots(ctx, e, namespace, secondChildRoot, layout.NodeWidth)
+			secondChildSlots, err := layout.LoadSlots(ctx, e, namespace, secondChildRoot, geometry.NodeWidth())
 			if err != nil {
 				t.Fatalf("load second child slots: %v", err)
 			}
@@ -405,8 +458,8 @@ func TestTreeListAppendIntoChildUpdatesSlotZeroMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode second child metadata: %v", err)
 			}
-			if meta.ChildCount != uint64(len(values)+1-layout.BranchingFactor) {
-				t.Fatalf("second child count = %d, want %d", meta.ChildCount, len(values)+1-layout.BranchingFactor)
+			if meta.ChildCount != uint64(len(values)+1-branching) {
+				t.Fatalf("second child count = %d, want %d", meta.ChildCount, len(values)+1-branching)
 			}
 		})
 	}
@@ -414,13 +467,15 @@ func TestTreeListAppendIntoChildUpdatesSlotZeroMetadata(t *testing.T) {
 
 func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
 	ctx := context.Background()
-	values := makeValues(300)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := materialmemory.New(true)
 			namespace := "tree-child-meta-" + name
 			scheme := factory(t)
+			geometry := geometryForScheme(t, scheme)
+			branching := geometry.ListBranchingFactor()
+			values := makeValues(branching + 1)
 			semantic, e, err := newListWithMaterializer(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithMaterializer failed: %v", err)
@@ -435,7 +490,7 @@ func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("fetch first child root: %v", err)
 			}
-			childSlots, err := layout.LoadSlots(ctx, e, namespace, childRoot, layout.NodeWidth)
+			childSlots, err := layout.LoadSlots(ctx, e, namespace, childRoot, geometry.NodeWidth())
 			if err != nil {
 				t.Fatalf("load child slots: %v", err)
 			}
@@ -443,8 +498,8 @@ func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode child metadata: %v", err)
 			}
-			if childMeta.ChildCount != uint64(layout.BranchingFactor) {
-				t.Fatalf("child length = %d, want %d", childMeta.ChildCount, layout.BranchingFactor)
+			if childMeta.ChildCount != uint64(branching) {
+				t.Fatalf("child length = %d, want %d", childMeta.ChildCount, branching)
 			}
 			if !childSlots[1].Equals(values[0]) {
 				t.Fatalf("child logical index 0 stored at slot 1 = %s, want %s", childSlots[1], values[0])
@@ -455,15 +510,17 @@ func TestTreeListChildNodesCarryAuthenticatedMetadata(t *testing.T) {
 
 func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 	ctx := context.Background()
-	chunks := makeValues(300)
 	chunkSize := uint64(4)
-	totalSize := uint64(len(chunks)-1)*chunkSize + 3
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := materialmemory.New(true)
 			namespace := "tree-child-range-meta-" + name
 			scheme := factory(t)
+			geometry := geometryForScheme(t, scheme)
+			branching := geometry.ListBranchingFactor()
+			chunks := makeValues(branching + 1)
+			totalSize := uint64(len(chunks)-1)*chunkSize + 3
 			semantic, e, err := newListWithMaterializer(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithMaterializer failed: %v", err)
@@ -478,7 +535,7 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("fetch first child root: %v", err)
 			}
-			firstChildSlots, err := layout.LoadSlots(ctx, e, namespace, firstChildRoot, layout.NodeWidth)
+			firstChildSlots, err := layout.LoadSlots(ctx, e, namespace, firstChildRoot, geometry.NodeWidth())
 			if err != nil {
 				t.Fatalf("load first child slots: %v", err)
 			}
@@ -486,15 +543,15 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode first child fixed metadata: %v", err)
 			}
-			if firstMeta.ChildCount != uint64(layout.BranchingFactor) || firstMeta.TotalSize != uint64(layout.BranchingFactor)*chunkSize || firstMeta.ChunkSize != chunkSize {
-				t.Fatalf("first child metadata = %+v, want count=%d total=%d chunk=%d", firstMeta, layout.BranchingFactor, uint64(layout.BranchingFactor)*chunkSize, chunkSize)
+			if firstMeta.ChildCount != uint64(branching) || firstMeta.TotalSize != uint64(branching)*chunkSize || firstMeta.ChunkSize != chunkSize {
+				t.Fatalf("first child metadata = %+v, want count=%d total=%d chunk=%d", firstMeta, branching, uint64(branching)*chunkSize, chunkSize)
 			}
 
 			secondChildRoot, err := e.Get(ctx, namespace, cid.Undef, layout.NodeSlotPath(root, 2))
 			if err != nil {
 				t.Fatalf("fetch second child root: %v", err)
 			}
-			secondChildSlots, err := layout.LoadSlots(ctx, e, namespace, secondChildRoot, layout.NodeWidth)
+			secondChildSlots, err := layout.LoadSlots(ctx, e, namespace, secondChildRoot, geometry.NodeWidth())
 			if err != nil {
 				t.Fatalf("load second child slots: %v", err)
 			}
@@ -502,12 +559,12 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode second child fixed metadata: %v", err)
 			}
-			wantSecondSize := totalSize - uint64(layout.BranchingFactor)*chunkSize
-			if secondMeta.ChildCount != uint64(len(chunks)-layout.BranchingFactor) || secondMeta.TotalSize != wantSecondSize || secondMeta.ChunkSize != chunkSize {
-				t.Fatalf("second child metadata = %+v, want count=%d total=%d chunk=%d", secondMeta, len(chunks)-layout.BranchingFactor, wantSecondSize, chunkSize)
+			wantSecondSize := totalSize - uint64(branching)*chunkSize
+			if secondMeta.ChildCount != uint64(len(chunks)-branching) || secondMeta.TotalSize != wantSecondSize || secondMeta.ChunkSize != chunkSize {
+				t.Fatalf("second child metadata = %+v, want count=%d total=%d chunk=%d", secondMeta, len(chunks)-branching, wantSecondSize, chunkSize)
 			}
-			if !secondChildSlots[1].Equals(chunks[layout.BranchingFactor]) {
-				t.Fatalf("second child logical index 0 stored at slot 1 = %s, want %s", secondChildSlots[1], chunks[layout.BranchingFactor])
+			if !secondChildSlots[1].Equals(chunks[branching]) {
+				t.Fatalf("second child logical index 0 stored at slot 1 = %s, want %s", secondChildSlots[1], chunks[branching])
 			}
 		})
 	}
@@ -751,13 +808,15 @@ func TestTreeListRejectsUndefinedCommittedKeys(t *testing.T) {
 
 func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 	ctx := context.Background()
-	values := makeValues(300)
 
 	for name, factory := range listSchemes() {
 		t.Run(name, func(t *testing.T) {
 			kv := materialmemory.New(true)
 			namespace := "tree-corrupt-" + name
 			scheme := factory(t)
+			geometry := geometryForScheme(t, scheme)
+			branching := geometry.ListBranchingFactor()
+			values := makeValues(branching + 1)
 			semantic, e, err := newListWithMaterializer(scheme, kv)
 			if err != nil {
 				t.Fatalf("newListWithMaterializer failed: %v", err)
@@ -780,7 +839,7 @@ func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 				t.Fatalf("failed to corrupt child materialization: %v", err)
 			}
 
-			if _, err := semantic.Replace(ctx, namespace, root, 256, values[256], newPayloadCID([]byte("replacement"))); err == nil {
+			if _, err := semantic.Replace(ctx, namespace, root, uint64(branching), values[branching], newPayloadCID([]byte("replacement"))); err == nil {
 				t.Fatal("Replace should reject corrupted child materialization")
 			}
 		})

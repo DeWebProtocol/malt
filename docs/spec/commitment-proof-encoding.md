@@ -37,9 +37,17 @@ multihash digest is the raw commitment:
 The backend ID determines the commitment encoding and expected byte length.
 Verification must not infer or override the backend from the digest length.
 
-Map radix nodes and list tree nodes use 256 physical slots. Thus IPA's full
-vector and the first 256 positions of KZG's vector carry those node cells; all
-remaining primitive positions are zero.
+Semantic node geometry is locked to the selected backend suite:
+
+| Backend | Physical node slots | Map radix bits | List content slots |
+| --- | ---: | ---: | ---: |
+| KZG | 4096 | 12 | 4095 |
+| IPA | 256 | 8 | 255 |
+
+Slot zero is an ordinary radix-map slot. List nodes reserve slot zero for
+authenticated metadata, leaving the listed number of content slots. KZG
+semantic nodes supply all 4096 cells to the primitive commitment; IPA semantic
+nodes supply all 256.
 
 ## KZG
 
@@ -155,8 +163,21 @@ envelope itself is JSON-encoded:
 }
 ```
 
-`bucket` is optional. Each radix step uses the next byte of
-`SHA-256(canonical_key_utf8)` as its primitive slot index. A `slot` is either an
+`bucket` is optional. The map treats
+`SHA-256(canonical_key_utf8)` as one MSB-first bit string. KZG consumes
+successive 12-bit digits, so a digest has 22 radix digits:
+
+```text
+d0  = b0 << 4 | b1 >> 4
+d1  = (b1 & 0x0f) << 8 | b2
+...
+d20 = b30 << 4 | b31 >> 4
+d21 = (b31 & 0x0f) << 8
+```
+
+The final four digest bits occupy the high four bits of the final digit and
+the remaining eight low bits are zero-filled. IPA consumes successive 8-bit
+digits and therefore retains 32 radix levels. A `slot` is either an
 intermediate root marker, a terminal leaf marker, or a bucket-reference marker.
 The marker encodings are raw CIDv1 values with identity multihashes over:
 
@@ -175,9 +196,10 @@ In a resolve ProofList this envelope is stored in `step.evidence` with
 
 ## Tree List Semantic Proofs
 
-Every committed list node has 256 slots. Slot 0 authenticates node metadata and
-slots 1 through 255 authenticate content. Metadata is a raw CIDv1 identity
-marker over:
+Every committed KZG list node has 4096 slots: slot 0 authenticates node
+metadata and slots 1 through 4095 authenticate content. IPA list nodes retain
+256 slots with content in slots 1 through 255. Metadata is a raw CIDv1
+identity marker over:
 
 ```text
 "malt:list:node-meta:"

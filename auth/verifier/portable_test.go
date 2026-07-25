@@ -2,6 +2,7 @@ package verifier_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"testing"
 
@@ -132,6 +133,35 @@ func TestPortableVerifierAcceptsRuntimeRadixAndTreeProofs(t *testing.T) {
 				}
 			})
 
+			if name == "kzg" {
+				t.Run("map_twelve_bit_second_level", func(t *testing.T) {
+					first, second := portableSharedFirstKZGDigitPaths(t)
+					firstTarget := portableTestCID(t, "twelve-bit-first")
+					secondTarget := portableTestCID(t, "twelve-bit-second")
+					scope := "portable-map-kzg-twelve-bit"
+					root, err := maps.Commit(ctx, scope, mapping.NewViewFrom(map[string]cid.Cid{
+						first:  firstTarget,
+						second: secondTarget,
+					}))
+					if err != nil {
+						t.Fatalf("Commit: %v", err)
+					}
+					binding, proof, err := maps.Prove(ctx, scope, root, arcset.CanonicalizePath(first))
+					if err != nil {
+						t.Fatalf("Prove: %v", err)
+					}
+					pl := prooflist.ProofList{Root: root, Query: first, Steps: []prooflist.Step{{
+						Kind: prooflist.KindMapStep, From: root, Path: first, Target: binding.Value,
+						EvidenceKind: "structure", EvidenceBackend: "map", Proof: proof,
+					}}}
+					assertPortableValid(t, portable, pl)
+
+					pl.Query = second
+					pl.Steps[0].Path = second
+					assertPortableRejected(t, portable, pl)
+				})
+			}
+
 			t.Run("list_index", func(t *testing.T) {
 				values := []cid.Cid{portableTestCID(t, "list-0"), portableTestCID(t, "list-1")}
 				root, err := lists.Commit(ctx, "portable-list-"+name, list.NewViewFromSlice(values))
@@ -222,4 +252,36 @@ func portableMalformedRoot(t *testing.T, root cid.Cid) cid.Cid {
 		t.Fatalf("encode malformed root: %v", err)
 	}
 	return cid.NewCidV1(root.Prefix().Codec, hash)
+}
+
+func portableSharedFirstKZGDigitPaths(t *testing.T) (string, string) {
+	t.Helper()
+	type digits struct {
+		first  uint16
+		second uint16
+	}
+	pathDigits := func(path string) digits {
+		digest := sha256.Sum256([]byte(arcset.CanonicalizePath(path).String()))
+		return digits{
+			first:  uint16(digest[0])<<4 | uint16(digest[1]>>4),
+			second: uint16(digest[1]&0x0f)<<8 | uint16(digest[2]),
+		}
+	}
+	seen := make(map[uint16]struct {
+		path   string
+		second uint16
+	})
+	for i := 0; i < 1<<16; i++ {
+		path := fmt.Sprintf("portable-shared-prefix-%d", i)
+		digits := pathDigits(path)
+		if previous, ok := seen[digits.first]; ok && previous.second != digits.second {
+			return previous.path, path
+		}
+		seen[digits.first] = struct {
+			path   string
+			second uint16
+		}{path: path, second: digits.second}
+	}
+	t.Fatal("could not find portable KZG paths with a shared first digit")
+	return "", ""
 }

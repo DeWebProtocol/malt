@@ -4,24 +4,22 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
 	structure "github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	cid "github.com/ipfs/go-cid"
 )
 
-const (
-	treeBranchingFactor = portableNodeWidth - 1
-	treeNodeMetaPrefix  = "malt:list:node-meta:"
-)
+const treeNodeMetaPrefix = "malt:list:node-meta:"
 
 // treeListVerifier is the storage-free half of the runtime tree-list
 // semantic. It authenticates both index and measured-range results using only
 // proof envelopes and the primitive commitment scheme.
 type treeListVerifier struct {
-	scheme commitment.IndexVerifier
+	scheme   commitment.IndexVerifier
+	geometry nodegeometry.Geometry
 }
 
 type treeProofEnvelope struct {
@@ -53,8 +51,11 @@ type treeNodeMetadata struct {
 	ChunkSize  uint64
 }
 
-func newTreeListVerifier(scheme commitment.IndexVerifier) ListVerifier {
-	return &treeListVerifier{scheme: scheme}
+func newTreeListVerifier(scheme commitment.IndexVerifier, geometry nodegeometry.Geometry) ListVerifier {
+	return &treeListVerifier{
+		scheme:   scheme,
+		geometry: geometry,
+	}
 }
 
 func (v *treeListVerifier) Verify(root cid.Cid, index uint64, expected list.Query, proof structure.Proof) (bool, error) {
@@ -73,7 +74,7 @@ func (v *treeListVerifier) Verify(root cid.Cid, index uint64, expected list.Quer
 		return false, fmt.Errorf("missing metadata proof")
 	}
 
-	metadataTarget, err := treeMetadataTargetForVerify(expected.Length, envelope.MetadataTarget)
+	metadataTarget, err := v.treeMetadataTargetForVerify(expected.Length, envelope.MetadataTarget)
 	if err != nil {
 		return false, err
 	}
@@ -92,11 +93,11 @@ func (v *treeListVerifier) Verify(root cid.Cid, index uint64, expected list.Quer
 		return false, nil
 	}
 
-	height := treeRequiredHeight(expected.Length)
+	height := v.geometry.RequiredListHeight(expected.Length)
 	if len(envelope.Steps) != height+1 {
 		return false, nil
 	}
-	digits, err := treeIndexDigits(index, height)
+	digits, err := v.geometry.ListIndexDigits(index, height)
 	if err != nil {
 		return false, err
 	}
@@ -143,7 +144,7 @@ func (v *treeListVerifier) VerifyRange(root cid.Cid, start uint64, end *uint64, 
 		return false, fmt.Errorf("missing metadata proof")
 	}
 	meta := treeNodeMetadata{
-		Height:     uint64(treeRequiredHeight(expected.Metadata.ChildCount)),
+		Height:     uint64(v.geometry.RequiredListHeight(expected.Metadata.ChildCount)),
 		ChildCount: expected.Metadata.ChildCount,
 		TotalSize:  expected.Metadata.TotalSize,
 		ChunkSize:  expected.Metadata.ChunkSize,
@@ -194,10 +195,10 @@ func (v *treeListVerifier) VerifyRange(root cid.Cid, start uint64, end *uint64, 
 	return true, nil
 }
 
-func treeMetadataTargetForVerify(expectedLength uint64, explicit []byte) (commitment.Cell, error) {
+func (v *treeListVerifier) treeMetadataTargetForVerify(expectedLength uint64, explicit []byte) (commitment.Cell, error) {
 	if len(explicit) == 0 {
 		return treeNodeMetadataCell(treeNodeMetadata{
-			Height:     uint64(treeRequiredHeight(expectedLength)),
+			Height:     uint64(v.geometry.RequiredListHeight(expectedLength)),
 			ChildCount: expectedLength,
 		})
 	}
@@ -274,65 +275,6 @@ func validateTreeFixedMetadata(meta treeNodeMetadata) error {
 		return fmt.Errorf("child count %d does not match total size %d and chunk size %d", meta.ChildCount, meta.TotalSize, meta.ChunkSize)
 	}
 	return nil
-}
-
-func treeRequiredHeight(length uint64) int {
-	if length <= uint64(treeBranchingFactor) {
-		return 0
-	}
-	capacity := uint64(treeBranchingFactor)
-	height := 0
-	for capacity < length {
-		height++
-		if capacity > math.MaxUint64/uint64(treeBranchingFactor) {
-			return height
-		}
-		capacity *= uint64(treeBranchingFactor)
-	}
-	return height
-}
-
-func treeIndexDigits(index uint64, height int) ([]int, error) {
-	if height < 0 {
-		return nil, fmt.Errorf("height must be non-negative")
-	}
-	digits := make([]int, height+1)
-	remaining := index
-	for level := 0; level <= height; level++ {
-		exp := height - level
-		if exp == 0 {
-			if remaining >= uint64(treeBranchingFactor) {
-				return nil, fmt.Errorf("index digit %d exceeds branching factor %d", remaining, treeBranchingFactor)
-			}
-			digits[level] = int(remaining)
-			continue
-		}
-		chunk, err := treeSubtreeCapacity(exp - 1)
-		if err != nil {
-			return nil, err
-		}
-		digit := remaining / chunk
-		if digit >= uint64(treeBranchingFactor) {
-			return nil, fmt.Errorf("index digit %d exceeds branching factor %d", digit, treeBranchingFactor)
-		}
-		digits[level] = int(digit)
-		remaining %= chunk
-	}
-	return digits, nil
-}
-
-func treeSubtreeCapacity(height int) (uint64, error) {
-	if height < 0 {
-		return 0, fmt.Errorf("height must be non-negative")
-	}
-	capacity := uint64(treeBranchingFactor)
-	for i := 0; i < height; i++ {
-		if capacity > math.MaxUint64/uint64(treeBranchingFactor) {
-			return 0, fmt.Errorf("list capacity overflow at height %d", height)
-		}
-		capacity *= uint64(treeBranchingFactor)
-	}
-	return capacity, nil
 }
 
 func normalizeTreeRange(start uint64, end *uint64, totalSize uint64) (uint64, bool, error) {
