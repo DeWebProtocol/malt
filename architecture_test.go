@@ -63,6 +63,12 @@ func TestProductionImportBoundaries(t *testing.T) {
 			forbidden: []string{"graph", "runtime", "storage", "model", "api", "server", "execution", "logger"},
 		},
 		{
+			name:      "client writer",
+			dir:       filepath.Join(root, "sdk", "writer"),
+			recursive: true,
+			forbidden: []string{"artifact", "execution", "storage", "layout", "model", "api", "server", "logger", "sdk/verifier"},
+		},
+		{
 			name:      "module facade",
 			dir:       root,
 			recursive: false,

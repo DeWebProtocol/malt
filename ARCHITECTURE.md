@@ -14,9 +14,9 @@ application state are outside the trust boundary.
 
 | Layer | Owns | Explicitly excludes |
 | --- | --- | --- |
-| MALT core | arcs/segments, typed roots, commitments, resolve/read/mutation values, ProofList, verification | HTTP, CAS I/O, ArcTable implementation, application syntax, trusted-root policy |
-| Client | application syntax, accepted roots, request construction, local proof and payload-byte verification | proof generation, ArcTable, server policy |
-| Gateway/executor | candidate selection, proof generation, mutation execution, ArcTable/KV/CAS, service policy | the final trust decision |
+| MALT core | arcs/segments, typed roots, commitments, resolve/read/mutation and client-root values, ProofList, verification | HTTP, CAS I/O, ArcTable implementation, application syntax, trusted-root policy |
+| Client | application syntax, accepted roots, request construction, local proof and payload-byte verification, optional client-root computation | proof generation, persistent ArcTable, server policy |
+| Gateway/executor | candidate selection for server-executed mutations, exact client-root replay/materialization, proof generation, ArcTable/KV/CAS, service policy | the final trust decision or substitution of a client-computed root |
 | CAS | immutable CID-addressed bytes | graph semantics and ProofLists |
 
 ## Data flow
@@ -45,12 +45,13 @@ selection. Application policy may impose additional constraints.
 
 ```text
 malt (module facade)
-├── protocol                 serialized resolve/read profiles and schemas
-├── mutation                 portable mutation/receipt values
+├── protocol                 serialized resolve/read and client-root profiles
+├── mutation                 portable mutation/client-root/receipt values
 ├── auth
 │   ├── arcset               canonical arcs and ArcSet views
 │   │   └── materializer     caller-injected load/store capability
 │   ├── commitment           KZG/IPA commitment primitives
+│   ├── observation          optional request-scoped diagnostics
 │   ├── semantic             map/list contracts and algorithms
 │   ├── proof                ProofList and evidence
 │   └── verifier             storage-free portable verifier
@@ -58,6 +59,7 @@ malt (module facade)
 ├── graph                    resolver/writer algorithms
 │   └── runtime              composition over an injected materializer
 ├── sdk/verifier             trusted client facade
+├── sdk/writer               complete-view client-root computation
 ├── wire/maltcid             typed CID rules
 └── artifact                 frozen compatibility profile
 ```
@@ -133,6 +135,23 @@ separate `StructureCreator` because a new structure has no authenticated base
 root. Legacy `UpdateArc`, `BatchUpdateArcs`, and inspection helpers are exposed
 only through the explicitly named `ReferenceWriter()` capability.
 
+### Client-root computation
+
+The post-release client-root contract lets a trusted writer validate a bounded
+complete `UpdateView`, normalize an output-free `SemanticIntent`, and compute
+one exact `ClientRootBundle` locally. `sdk/writer` owns that
+application-neutral computation. It uses caller-supplied branching
+materialization only for speculative local state and defines no durable
+ArcTable or publication policy.
+
+A service may independently replay and materialize the exact bundle at its
+declared durability boundary, then acknowledge it with a
+`MaterializationReceipt`. That receipt can advance a writer session's retained
+vectors, but it is not a portable state-transition, freshness, publication, or
+trust proof. Initial structure creation remains a separate bootstrap boundary
+because it has no authenticated base root. See the
+[client-root contract](./docs/spec/client-root-contract.md).
+
 ## Verification boundary
 
 Trusted verification packages must remain deterministic and storage-free:
@@ -153,8 +172,13 @@ application-defined ranged segment, against authenticated CIDs.
 
 UnixFS is not a core layout or package. It is a client application profile that
 maps filesystem paths/manifests/chunks into core segment, mutation, resolve,
-and read contracts. Its current implementation lives in `malt-client` and the
-browser client.
+and read contracts. Its native implementation lives in `malt-client`; the
+managed browser application lives in `gateway/console`.
+
+`auth/observation` is an application-neutral, request-scoped diagnostic hook
+used by outer runtimes and evaluators. Observations cannot affect protocol
+results and are never proof evidence. Its current phase vocabulary describes
+SDK execution stages, not a paper result schema or persistence contract.
 
 A future TypeScript SDK may map `.` or `[]` object syntax into the same segment
 arrays. Core does not parse those syntaxes. HTTP may naturally use `/`, while

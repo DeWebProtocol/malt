@@ -24,8 +24,8 @@ mechanics:
 - [Semantic model](../spec/semantic.md) for map/list semantics, roots, payloads,
   resolver, writer, and ArcTable boundaries.
 - [ProofList format](../spec/prooflist-format.md) for proof steps, ordering,
-  HTTP proof headers, and range evidence.
-- [HTTP API](../spec/http-api.md) for resolve, content, verify, and mutation
-  routes.
+  serialized evidence, and range evidence.
+- [HTTP routing ownership](../spec/http-api.md) for why service routes,
+  authentication, CORS, and daemon APIs remain outside MALT core.
 - [Commitment model](../spec/commitment.md) for backend proof assumptions.
 - [CID and wire format](../spec/cid-and-wire-format.md) for root encoding.

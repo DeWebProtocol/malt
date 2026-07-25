@@ -13,9 +13,12 @@ schema and verifiers. Any incompatible extension would require a new profile.
 ## Status
 
 The Go package `github.com/dewebprotocol/malt/artifact`, its schemas under
-`artifact/schemas/`, fixtures under `artifact/testdata/v0alpha2/`, and the
-reference `/v1/artifacts/*` routes remain available for v0.0.4 compatibility.
-They are not the primary contract for new integrations.
+`artifact/schemas/`, and fixtures under `artifact/testdata/v0alpha2/` remain
+available for v0.0.4 compatibility. Core is transport-neutral and no longer
+ships the historical `/v1/artifacts/*` HTTP projection. A gateway that
+deliberately reintroduces those routes owns their registration, access policy,
+and compatibility testing. The artifact profile is not the primary contract
+for new integrations.
 
 The `prove` name in this legacy profile means “execute one primitive typed
 map/list read and return its evidence.” It is not a general semantic operation
@@ -28,7 +31,7 @@ and it does not prove arbitrary resolve or mutation operations.
 | `resolve` | root plus canonical segment path | Return one authenticated path-to-target derivation. An empty path is strict zero-step root identity. |
 | `prove` | root plus `map_key`, `list_index`, or `list_range` query | Return one primitive read result and its evidence. |
 
-The compatibility HTTP projection is:
+The historical compatibility HTTP projection was:
 
 ```text
 POST /v1/artifacts/resolve
@@ -38,6 +41,22 @@ POST /v1/artifacts/verify
 
 Remote verification is diagnostic. A client must bind its independently
 selected trusted root and expected request before accepting the result.
+These route names are historical documentation, not routes provided by this
+module or promised by the current Gateway.
+
+## Embedded Schema Index
+
+Every filename returned by `artifact.SchemaNames()` is indexed here:
+
+<!-- schema-catalog:artifact:start -->
+- [`artifact.schema.json`](../../artifact/schemas/artifact.schema.json)
+- [`local-verify-request.schema.json`](../../artifact/schemas/local-verify-request.schema.json)
+- [`local-verify-result.schema.json`](../../artifact/schemas/local-verify-result.schema.json)
+- [`prove-request.schema.json`](../../artifact/schemas/prove-request.schema.json)
+- [`resolve-request.schema.json`](../../artifact/schemas/resolve-request.schema.json)
+- [`verify-request.schema.json`](../../artifact/schemas/verify-request.schema.json)
+- [`verify-result.schema.json`](../../artifact/schemas/verify-result.schema.json)
+<!-- schema-catalog:artifact:end -->
 
 ## Root Identity Compatibility
 

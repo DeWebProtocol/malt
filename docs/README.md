@@ -8,7 +8,7 @@ with code, tests, schemas, and wire formats. Public
 website pages in `DeWebProtocol/malt-web` may summarize this material, but they
 should link back here for protocol, policy, and compatibility details.
 
-Managed gateway service behavior, including future tenancy, identity, authorization,
+Managed gateway service behavior, including tenancy, identity, authorization,
 root publication, backend orchestration, S3/Filecoin/IPFS deployment policy,
 quota, cache policy, and operations, belongs in `DeWebProtocol/gateway` or
 private deployment overlays. Client/daemon and UnixFS behavior belongs in
@@ -39,6 +39,8 @@ research narrative remain in `DeWebProtocol/documents`.
 ## Specifications
 
 - [Specification index](./spec/README.md)
+- [Resolve and read contracts](./spec/resolve-read-contracts.md)
+- [Client-root contract](./spec/client-root-contract.md)
 
 ## MALT Improvement Proposals
 
@@ -59,8 +61,10 @@ The current public-core contracts are
 [MIP-1012: Segment Path Resolution](./mips/mip-1012-segment-path-resolution.md),
 the final
 [MIP-1013: Client, Gateway, And Core Responsibility Boundary](./mips/mip-1013-client-gateway-core-boundary.md),
-the operation-specific resolve/read profiles introduced by that MIP, and the
-frozen v0.0.4 artifact compatibility profile recorded by
+the operation-specific resolve/read profiles introduced by that MIP, the
+experimental post-v0.0.6
+[client-root contract](./spec/client-root-contract.md), and the frozen v0.0.4
+artifact compatibility profile recorded by
 [MIP-1004](./mips/mip-1004-resolve-prooflist-artifact-schema.md).
 
 ## What Goes Where

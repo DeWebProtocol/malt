@@ -8,10 +8,14 @@ import (
 	"time"
 )
 
-// Phase names the stable server-side phases used by the paper evaluator.
+// Phase names application-neutral SDK execution stages exposed to optional
+// diagnostics. Evaluators may consume them, but they are not wire profiles,
+// proof evidence, paper result schemas, or persistence contracts.
 type Phase string
 
 const (
+	// PhaseArcTable measures an injected materializer lookup. The diagnostic
+	// label does not define or require a persistent ArcTable implementation.
 	PhaseArcTable        Phase = "arc-table"
 	PhaseMaterialization Phase = "materialization"
 	PhaseOpen            Phase = "open"
