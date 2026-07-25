@@ -20,13 +20,12 @@ import (
 	"github.com/dewebprotocol/malt/auth/observation"
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
 const (
-	fanout = 256
-
 	leafPrefix        = "malt:map:radix:leaf:v1:"
 	bucketRefPrefix   = "malt:map:radix:bucket:v1:"
 	bucketCountPrefix = "malt:map:radix:bucket-count:v1:"
@@ -35,6 +34,7 @@ const (
 type Map struct {
 	commitment   *mapping.Commitment
 	materializer materializer.NodeStore
+	geometry     nodegeometry.Geometry
 }
 
 // ErrPathNotFound is retained as a compatibility alias for the semantic-level
@@ -80,8 +80,9 @@ func NewMap(scheme commitment.IndexCommitment, e materializer.NodeStore) (*Map, 
 	if e == nil {
 		return nil, fmt.Errorf("materializer is nil")
 	}
-	if scheme.MaxValues() < fanout {
-		return nil, fmt.Errorf("index commitment capacity %d is smaller than radix fanout %d", scheme.MaxValues(), fanout)
+	geometry, err := nodegeometry.ForCapacity(scheme.MaxValues())
+	if err != nil {
+		return nil, fmt.Errorf("selecting radix geometry: %w", err)
 	}
 
 	commitmentHandler, err := mapping.NewCommitment(scheme)
@@ -89,7 +90,7 @@ func NewMap(scheme commitment.IndexCommitment, e materializer.NodeStore) (*Map, 
 		return nil, fmt.Errorf("failed to create map commitment: %w", err)
 	}
 
-	return &Map{commitment: commitmentHandler, materializer: e}, nil
+	return &Map{commitment: commitmentHandler, materializer: e, geometry: geometry}, nil
 }
 
 // Commitment returns the underlying commitment primitives.
@@ -117,7 +118,7 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 	currentRoot := root
 	envelope := proofEnvelope{}
 
-	for depth := 0; depth < len(digest); depth++ {
+	for depth := 0; depth < s.geometry.MapDepth(len(digest)); depth++ {
 		finishMaterialization := observation.Start(ctx, observation.PhaseMaterialization)
 		slots, err := s.loadValidatedNode(ctx, namespace, currentRoot)
 		var materializedBytes uint64
@@ -129,9 +130,12 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 			return mapping.Binding{}, nil, err
 		}
 
-		slotIndex := digest[depth]
+		slotIndex, ok := s.geometry.MapDigit(digest[:], depth)
+		if !ok {
+			return mapping.Binding{}, nil, fmt.Errorf("invalid radix depth %d", depth)
+		}
 		finishOpen := observation.Start(ctx, observation.PhaseOpen)
-		value, proof, err := s.commitment.ProveSlot(currentRoot, slots, uint64(slotIndex))
+		value, proof, err := s.commitment.ProveSlot(currentRoot, slots, slotIndex)
 		finishOpen(1, 1, uint64(len(proof)))
 		if err != nil {
 			return mapping.Binding{}, nil, err
@@ -239,7 +243,7 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 	}
 
 	digest := hashPath(key)
-	if len(envelope.Steps) > len(digest) {
+	if len(envelope.Steps) > s.geometry.MapDepth(len(digest)) {
 		return false, fmt.Errorf("proof has too many radix steps")
 	}
 	currentRoot := root
@@ -257,7 +261,11 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 			}
 		}
 
-		ok, err := s.commitment.VerifySlot(currentRoot, uint64(digest[depth]), commitment.CellFromCID(slotCID), step.Proof)
+		slotIndex, ok := s.geometry.MapDigit(digest[:], depth)
+		if !ok {
+			return false, fmt.Errorf("invalid radix depth %d", depth)
+		}
+		ok, err = s.commitment.VerifySlot(currentRoot, slotIndex, commitment.CellFromCID(slotCID), step.Proof)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -332,7 +340,10 @@ func (s *Map) updateWithoutPersist(ctx context.Context, namespace string, root c
 	}
 
 	digest := hashPath(key)
-	slotIndex := digest[0]
+	slotIndex, ok := s.geometry.MapDigit(digest[:], 0)
+	if !ok {
+		return cid.Undef, nil, nil, fmt.Errorf("missing root radix digit")
+	}
 	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersist(ctx, namespace, rootSlots[slotIndex], digest, 1, key, oldValue, newValue)
 	if err != nil {
 		return cid.Undef, nil, nil, err
@@ -369,7 +380,10 @@ func (s *Map) updateWithoutPersistCached(ctx context.Context, namespace string, 
 	}
 
 	digest := hashPath(key)
-	slotIndex := digest[0]
+	slotIndex, ok := s.geometry.MapDigit(digest[:], 0)
+	if !ok {
+		return cid.Undef, nil, nil, fmt.Errorf("missing root radix digit")
+	}
 	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersistCached(ctx, namespace, rootSlots[slotIndex], digest, 1, key, oldValue, newValue, nodeCache)
 	if err != nil {
 		return cid.Undef, nil, nil, err
@@ -447,7 +461,7 @@ func (s *Map) updateSubtreeWithoutPersistCached(
 		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, key, oldValue, newValue)
 	}
 
-	if depth >= len(digest) {
+	if depth >= s.geometry.MapDepth(len(digest)) {
 		return cid.Undef, nil, nil, fmt.Errorf("unexpected radix depth overflow")
 	}
 
@@ -464,7 +478,10 @@ func (s *Map) updateSubtreeWithoutPersistCached(
 		}
 	}
 
-	slotIndex := digest[depth]
+	slotIndex, ok := s.geometry.MapDigit(digest[:], depth)
+	if !ok {
+		return cid.Undef, nil, nil, fmt.Errorf("invalid radix depth %d", depth)
+	}
 	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersistCached(ctx, namespace, slots[slotIndex], digest, depth+1, key, oldValue, newValue, nodeCache)
 	if err != nil {
 		return cid.Undef, nil, nil, err
@@ -600,7 +617,7 @@ func (s *Map) updateSubtreeWithoutPersist(
 		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, key, oldValue, newValue)
 	}
 
-	if depth >= len(digest) {
+	if depth >= s.geometry.MapDepth(len(digest)) {
 		return cid.Undef, nil, nil, fmt.Errorf("unexpected radix depth overflow")
 	}
 
@@ -609,7 +626,10 @@ func (s *Map) updateSubtreeWithoutPersist(
 		return cid.Undef, nil, nil, err
 	}
 
-	slotIndex := digest[depth]
+	slotIndex, ok := s.geometry.MapDigit(digest[:], depth)
+	if !ok {
+		return cid.Undef, nil, nil, fmt.Errorf("invalid radix depth %d", depth)
+	}
 	nextSlot, nodes, buckets, err := s.updateSubtreeWithoutPersist(ctx, namespace, slots[slotIndex], digest, depth+1, key, oldValue, newValue)
 	if err != nil {
 		return cid.Undef, nil, nil, err
@@ -780,8 +800,12 @@ func (s *Map) updateBucket(ctx context.Context, namespace string, bucketRoot cid
 }
 
 func (s *Map) commitRoot(ctx context.Context, namespace string, bindings []leafBinding) (cid.Cid, error) {
-	slots := make([]cid.Cid, fanout)
-	for slotIndex, group := range groupBindings(bindings, 0) {
+	slots := make([]cid.Cid, s.geometry.NodeWidth())
+	grouped, err := s.groupBindings(bindings, 0)
+	if err != nil {
+		return cid.Undef, err
+	}
+	for slotIndex, group := range grouped {
 		child, err := s.buildSubtree(ctx, namespace, group, 1)
 		if err != nil {
 			return cid.Undef, err
@@ -801,7 +825,7 @@ func (s *Map) buildSubtreeWithoutPersist(ctx context.Context, namespace string, 
 		return leafCID, nil, nil, err
 	}
 
-	if depth >= sha256.Size || allSameDigest(bindings) {
+	if depth >= s.geometry.MapDepth(sha256.Size) || allSameDigest(bindings) {
 		markers := make([]cid.Cid, len(bindings))
 		for i, binding := range bindings {
 			marker, err := encodeLeafMarker(binding.path, binding.value)
@@ -813,11 +837,15 @@ func (s *Map) buildSubtreeWithoutPersist(ctx context.Context, namespace string, 
 		return s.commitBucketMarkersWithoutPersist(ctx, namespace, markers)
 	}
 
-	slots := make([]cid.Cid, fanout)
+	slots := make([]cid.Cid, s.geometry.NodeWidth())
 	var allNodes []pendingNode
 	var allBuckets []pendingBucket
 
-	for slotIndex, group := range groupBindings(bindings, depth) {
+	grouped, err := s.groupBindings(bindings, depth)
+	if err != nil {
+		return cid.Undef, nil, nil, err
+	}
+	for slotIndex, group := range grouped {
 		child, nodes, buckets, err := s.buildSubtreeWithoutPersist(ctx, namespace, group, depth+1)
 		if err != nil {
 			return cid.Undef, nil, nil, err
@@ -844,7 +872,7 @@ func (s *Map) buildSubtree(ctx context.Context, namespace string, bindings []lea
 		return encodeLeafMarker(bindings[0].path, bindings[0].value)
 	}
 
-	if depth >= sha256.Size || allSameDigest(bindings) {
+	if depth >= s.geometry.MapDepth(sha256.Size) || allSameDigest(bindings) {
 		markers := make([]cid.Cid, len(bindings))
 		for i, binding := range bindings {
 			marker, err := encodeLeafMarker(binding.path, binding.value)
@@ -856,8 +884,12 @@ func (s *Map) buildSubtree(ctx context.Context, namespace string, bindings []lea
 		return s.commitBucketMarkers(ctx, namespace, markers)
 	}
 
-	slots := make([]cid.Cid, fanout)
-	for slotIndex, group := range groupBindings(bindings, depth) {
+	slots := make([]cid.Cid, s.geometry.NodeWidth())
+	grouped, err := s.groupBindings(bindings, depth)
+	if err != nil {
+		return cid.Undef, err
+	}
+	for slotIndex, group := range grouped {
 		child, err := s.buildSubtree(ctx, namespace, group, depth+1)
 		if err != nil {
 			return cid.Undef, err
@@ -1026,12 +1058,16 @@ func extractBindings(view mapping.View) ([]leafBinding, error) {
 	return bindings, nil
 }
 
-func groupBindings(bindings []leafBinding, depth int) map[byte][]leafBinding {
-	grouped := make(map[byte][]leafBinding)
+func (s *Map) groupBindings(bindings []leafBinding, depth int) (map[uint64][]leafBinding, error) {
+	grouped := make(map[uint64][]leafBinding)
 	for _, binding := range bindings {
-		grouped[binding.digest[depth]] = append(grouped[binding.digest[depth]], binding)
+		digit, ok := s.geometry.MapDigit(binding.digest[:], depth)
+		if !ok {
+			return nil, fmt.Errorf("invalid radix depth %d", depth)
+		}
+		grouped[digit] = append(grouped[digit], binding)
 	}
-	return grouped
+	return grouped, nil
 }
 
 func allSameDigest(bindings []leafBinding) bool {
@@ -1071,16 +1107,16 @@ func (s *Map) loadValidatedNode(ctx context.Context, namespace string, root cid.
 }
 
 func (s *Map) loadNodeSlots(ctx context.Context, namespace string, root cid.Cid) ([]cid.Cid, error) {
-	paths := make([]arcset.Path, fanout)
-	for i := 0; i < fanout; i++ {
-		paths[i] = nodeSlotPath(root, byte(i))
+	paths := make([]arcset.Path, s.geometry.NodeWidth())
+	for i := range paths {
+		paths[i] = nodeSlotPath(root, uint64(i))
 	}
 	found, err := s.materializer.BatchGet(ctx, namespace, cid.Undef, paths)
 	if err != nil {
 		return nil, err
 	}
 
-	slots := make([]cid.Cid, fanout)
+	slots := make([]cid.Cid, s.geometry.NodeWidth())
 	for i, path := range paths {
 		if target, ok := found[path]; ok {
 			slots[i] = target
@@ -1095,7 +1131,7 @@ func (s *Map) storeNodeSlots(ctx context.Context, namespace string, root cid.Cid
 		if !slot.Defined() {
 			continue
 		}
-		arcs[nodeSlotPath(root, byte(i))] = slot
+		arcs[nodeSlotPath(root, uint64(i))] = slot
 	}
 	if len(arcs) == 0 {
 		return nil
@@ -1190,7 +1226,7 @@ func cidBytes(value cid.Cid) []byte {
 	return value.Bytes()
 }
 
-func nodeSlotPath(root cid.Cid, slot byte) arcset.Path {
+func nodeSlotPath(root cid.Cid, slot uint64) arcset.Path {
 	return arcset.CanonicalizePath(fmt.Sprintf("runtime/map/radix/nodes/%s/slots/%d", root.String(), slot))
 }
 

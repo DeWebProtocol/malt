@@ -16,19 +16,19 @@ func TestCodecLayout(t *testing.T) {
 		semantic maltcid.SemanticKind
 		backend  maltcid.BackendKind
 	}{
-		{name: "map_kzg", codec: maltcid.CodecMaltMapKZG, version: 1, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindKZG},
-		{name: "list_kzg", codec: maltcid.CodecMaltListKZG, version: 1, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindKZG},
-		{name: "map_ipa", codec: maltcid.CodecMaltMapIPA, version: 1, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindIPA},
-		{name: "list_ipa", codec: maltcid.CodecMaltListIPA, version: 1, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindIPA},
+		{name: "map_kzg", codec: maltcid.CodecMaltMapKZG, version: 2, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindKZG},
+		{name: "list_kzg", codec: maltcid.CodecMaltListKZG, version: 2, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindKZG},
+		{name: "map_ipa", codec: maltcid.CodecMaltMapIPA, version: 2, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindIPA},
+		{name: "list_ipa", codec: maltcid.CodecMaltListIPA, version: 2, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindIPA},
 	}
 	wantCodecs := map[string]uint64{
-		"map_kzg":  0x301101,
-		"list_kzg": 0x301201,
-		"map_ipa":  0x301102,
-		"list_ipa": 0x301202,
+		"map_kzg":  0x302101,
+		"list_kzg": 0x302201,
+		"map_ipa":  0x302102,
+		"list_ipa": 0x302202,
 	}
-	if maltcid.MALTVersionID != 1 {
-		t.Fatalf("MALTVersionID = %d, want 1", maltcid.MALTVersionID)
+	if maltcid.MALTVersionID != 2 {
+		t.Fatalf("MALTVersionID = %d, want 2", maltcid.MALTVersionID)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -63,16 +63,17 @@ func TestCodecClassificationRejectsUnsupportedFields(t *testing.T) {
 		{name: "old_flat_map_ipa", codec: 0x300003},
 		{name: "old_flat_list_ipa", codec: 0x300004},
 		{name: "version_zero", codec: 0x300101},
-		{name: "version_two", codec: 0x302101, versionHint: 2},
+		{name: "version_one", codec: 0x301101, versionHint: 1},
+		{name: "version_three", codec: 0x303101, versionHint: 3},
 		{name: "version_fifteen", codec: 0x30F101, versionHint: 15},
-		{name: "semantic_zero", codec: 0x301001, versionHint: 1},
-		{name: "semantic_unknown", codec: 0x301301, versionHint: 1},
-		{name: "semantic_fifteen", codec: 0x301F01, versionHint: 1},
-		{name: "backend_zero", codec: 0x301100, versionHint: 1},
-		{name: "backend_unknown", codec: 0x301103, versionHint: 1},
-		{name: "backend_255", codec: 0x3011FF, versionHint: 1},
+		{name: "semantic_zero", codec: 0x302001, versionHint: 2},
+		{name: "semantic_unknown", codec: 0x302301, versionHint: 2},
+		{name: "semantic_fifteen", codec: 0x302F01, versionHint: 2},
+		{name: "backend_zero", codec: 0x302100, versionHint: 2},
+		{name: "backend_unknown", codec: 0x302103, versionHint: 2},
+		{name: "backend_255", codec: 0x3021FF, versionHint: 2},
 		{name: "outside_root_subrange", codec: 0x311101},
-		{name: "high_bit_alias", codec: 0x100301101},
+		{name: "high_bit_alias", codec: 0x100302101},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -2,6 +2,9 @@ package radix_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -60,6 +63,56 @@ func fakeCID(seed string) cid.Cid {
 	return cid.NewCidV1(cid.Raw, sum)
 }
 
+func firstKZGDigit(path string) uint16 {
+	digest := sha256.Sum256([]byte(arcset.CanonicalizePath(path).String()))
+	return uint16(digest[0])<<4 | uint16(digest[1]>>4)
+}
+
+func secondKZGDigit(path string) uint16 {
+	digest := sha256.Sum256([]byte(arcset.CanonicalizePath(path).String()))
+	return uint16(digest[1]&0x0f)<<8 | uint16(digest[2])
+}
+
+func findPathsWithAliasedLowByte(t *testing.T) (string, string) {
+	t.Helper()
+	seen := make(map[byte]struct {
+		path  string
+		digit uint16
+	})
+	for i := 0; i < 1<<16; i++ {
+		path := fmt.Sprintf("high-slot-%d", i)
+		digit := firstKZGDigit(path)
+		if digit <= 255 {
+			continue
+		}
+		key := byte(digit)
+		if previous, ok := seen[key]; ok && previous.digit != digit {
+			return previous.path, path
+		}
+		seen[key] = struct {
+			path  string
+			digit uint16
+		}{path: path, digit: digit}
+	}
+	t.Fatal("could not find high-slot paths with aliased low bytes")
+	return "", ""
+}
+
+func findPathsWithSharedFirstKZGDigit(t *testing.T) (string, string) {
+	t.Helper()
+	seen := make(map[uint16]string)
+	for i := 0; i < 1<<16; i++ {
+		path := fmt.Sprintf("shared-prefix-%d", i)
+		first := firstKZGDigit(path)
+		if previous, ok := seen[first]; ok && secondKZGDigit(previous) != secondKZGDigit(path) {
+			return previous, path
+		}
+		seen[first] = path
+	}
+	t.Fatal("could not find paths with a shared first KZG digit")
+	return "", ""
+}
+
 func TestMapCommitProveVerify(t *testing.T) {
 	ctx := context.Background()
 	view := mapping.NewViewFrom(map[string]cid.Cid{
@@ -102,6 +155,156 @@ func TestMapCommitProveVerify(t *testing.T) {
 				t.Fatal("expected proof to be path-bound")
 			}
 		})
+	}
+}
+
+func TestKZGMapUsesFullTwelveBitSlots(t *testing.T) {
+	ctx := context.Background()
+	namespace := "map-radix-kzg-high-slots"
+	store := materialmemory.New(true)
+	semantic := newMap(t, mappingSchemes()["kzg"], store)
+
+	first, second := findPathsWithAliasedLowByte(t)
+	firstDigit := firstKZGDigit(first)
+	secondDigit := firstKZGDigit(second)
+	if firstDigit <= 255 || secondDigit <= 255 {
+		t.Fatalf("test paths do not use high slots: %d, %d", firstDigit, secondDigit)
+	}
+	if firstDigit == secondDigit || byte(firstDigit) != byte(secondDigit) {
+		t.Fatalf("test paths do not exercise byte aliasing: %d, %d", firstDigit, secondDigit)
+	}
+
+	values := map[string]cid.Cid{
+		first:  fakeCID("high-slot-first"),
+		second: fakeCID("high-slot-second"),
+	}
+	root, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(values))
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	for path, want := range values {
+		digit := firstKZGDigit(path)
+		materializedPath := arcset.CanonicalizePath(fmt.Sprintf(
+			"runtime/map/radix/nodes/%s/slots/%d", root.String(), digit,
+		))
+		if _, err := store.Get(ctx, namespace, cid.Undef, materializedPath); err != nil {
+			t.Fatalf("slot %d was not materialized at its full-width path: %v", digit, err)
+		}
+		binding, proof, err := semantic.Prove(ctx, namespace, root, arcset.CanonicalizePath(path))
+		if err != nil {
+			t.Fatalf("Prove(%q) failed: %v", path, err)
+		}
+		if !binding.Value.Equals(want) {
+			t.Fatalf("Prove(%q) value = %s, want %s", path, binding.Value, want)
+		}
+		ok, err := semantic.Verify(root, arcset.CanonicalizePath(path), binding, proof)
+		if err != nil || !ok {
+			t.Fatalf("Verify(%q) = %v, %v", path, ok, err)
+		}
+	}
+
+	replacement := fakeCID("high-slot-first-replaced")
+	updatedRoot, err := semantic.Update(
+		ctx,
+		namespace,
+		root,
+		arcset.CanonicalizePath(first),
+		values[first],
+		replacement,
+	)
+	if err != nil {
+		t.Fatalf("Update high-slot key failed: %v", err)
+	}
+	values[first] = replacement
+	expectedRoot, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(values))
+	if err != nil {
+		t.Fatalf("Commit updated view failed: %v", err)
+	}
+	if !updatedRoot.Equals(expectedRoot) {
+		t.Fatalf("updated root = %s, want fresh root %s", updatedRoot, expectedRoot)
+	}
+}
+
+func TestKZGMapConsumesSecondTwelveBitDigit(t *testing.T) {
+	ctx := context.Background()
+	namespace := "map-radix-kzg-two-level"
+	semantic := newMap(t, mappingSchemes()["kzg"], nil)
+	first, second := findPathsWithSharedFirstKZGDigit(t)
+
+	values := map[string]cid.Cid{
+		first:  fakeCID("shared-prefix-first"),
+		second: fakeCID("shared-prefix-second"),
+	}
+	root, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(values))
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	for path, want := range values {
+		binding, proof, err := semantic.Prove(ctx, namespace, root, arcset.CanonicalizePath(path))
+		if err != nil {
+			t.Fatalf("Prove(%q) failed: %v", path, err)
+		}
+		var envelope struct {
+			Steps []json.RawMessage `json:"steps"`
+		}
+		if err := json.Unmarshal(proof, &envelope); err != nil {
+			t.Fatalf("decode proof: %v", err)
+		}
+		if len(envelope.Steps) != 2 {
+			t.Fatalf("proof for %q has %d steps, want 2", path, len(envelope.Steps))
+		}
+		if !binding.Value.Equals(want) {
+			t.Fatalf("Prove(%q) value = %s, want %s", path, binding.Value, want)
+		}
+		ok, err := semantic.Verify(root, arcset.CanonicalizePath(path), binding, proof)
+		if err != nil || !ok {
+			t.Fatalf("Verify(%q) = %v, %v", path, ok, err)
+		}
+	}
+
+	binding, proof, err := semantic.Prove(ctx, namespace, root, arcset.CanonicalizePath(first))
+	if err != nil {
+		t.Fatalf("Prove for depth-bound test failed: %v", err)
+	}
+	var oversized struct {
+		Steps  []json.RawMessage `json:"steps"`
+		Bucket json.RawMessage   `json:"bucket,omitempty"`
+	}
+	if err := json.Unmarshal(proof, &oversized); err != nil {
+		t.Fatalf("decode proof for depth-bound test: %v", err)
+	}
+	for len(oversized.Steps) < 23 {
+		oversized.Steps = append(oversized.Steps, oversized.Steps[0])
+	}
+	oversizedProof, err := json.Marshal(oversized)
+	if err != nil {
+		t.Fatalf("encode oversized proof: %v", err)
+	}
+	if ok, err := semantic.Verify(root, arcset.CanonicalizePath(first), binding, oversizedProof); err == nil || ok {
+		t.Fatalf("Verify accepted 23-step KZG radix proof: ok=%v err=%v", ok, err)
+	}
+
+	replacement := fakeCID("shared-prefix-first-replaced")
+	updatedRoot, err := semantic.Update(
+		ctx,
+		namespace,
+		root,
+		arcset.CanonicalizePath(first),
+		values[first],
+		replacement,
+	)
+	if err != nil {
+		t.Fatalf("Update shared-prefix key failed: %v", err)
+	}
+	values[first] = replacement
+	expectedRoot, err := semantic.Commit(ctx, namespace, mapping.NewViewFrom(values))
+	if err != nil {
+		t.Fatalf("Commit updated shared-prefix view failed: %v", err)
+	}
+	if !updatedRoot.Equals(expectedRoot) {
+		t.Fatalf("updated shared-prefix root = %s, want fresh root %s", updatedRoot, expectedRoot)
 	}
 }
 

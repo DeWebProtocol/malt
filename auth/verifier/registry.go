@@ -6,6 +6,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -53,10 +54,17 @@ func (r *BackendRegistry) RegisterScheme(kind maltcid.BackendKind, scheme commit
 	if scheme == nil {
 		return fmt.Errorf("commitment scheme for backend %q is nil", kind)
 	}
-	if scheme.MaxValues() < portableNodeWidth {
-		return fmt.Errorf("commitment backend %q capacity %d is smaller than required width %d", kind, scheme.MaxValues(), portableNodeWidth)
+	geometry, err := nodegeometry.ForBackend(kind)
+	if err != nil {
+		return fmt.Errorf("commitment backend %q geometry: %w", kind, err)
 	}
-	return r.Register(kind, newRadixMapVerifier(scheme), newTreeListVerifier(scheme))
+	if scheme.MaxValues() != geometry.NodeWidth() {
+		return fmt.Errorf(
+			"commitment backend %q capacity %d does not match required node width %d",
+			kind, scheme.MaxValues(), geometry.NodeWidth(),
+		)
+	}
+	return r.Register(kind, newRadixMapVerifier(scheme, geometry), newTreeListVerifier(scheme, geometry))
 }
 
 func (r *BackendRegistry) mapVerifier(root cid.Cid) (MapVerifier, error) {

@@ -12,10 +12,10 @@
 //
 // Current allocations:
 //
-//	malt-map-kzg  = 0x301101
-//	malt-list-kzg = 0x301201
-//	malt-map-ipa  = 0x301102
-//	malt-list-ipa = 0x301202
+//	malt-map-kzg  = 0x302101
+//	malt-list-kzg = 0x302201
+//	malt-map-ipa  = 0x302102
+//	malt-list-ipa = 0x302202
 package maltcid
 
 import (
@@ -28,7 +28,7 @@ import (
 
 // MALTVersionID identifies the current typed-root wire layout. It is not a
 // source release or protocol-profile version.
-const MALTVersionID uint8 = 1
+const MALTVersionID uint8 = 2
 
 const (
 	codecMaltRootBase = 0x300000

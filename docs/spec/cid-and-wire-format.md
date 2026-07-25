@@ -37,7 +37,7 @@ codec = 0x300000
       | backend_id
 ```
 
-The current `MALTVersionID` is `1`. It identifies this typed-root layout;
+The current `MALTVersionID` is `2`. It identifies this typed-root layout;
 it is not the CID version, a source release, a Resolve/Read profile, or a
 conformance-corpus version. Adding a semantic kind or backend suite does not
 change it. It changes only when the interpretation of the root codec or
@@ -72,10 +72,10 @@ ID even when it belongs to the same broad cryptographic family.
 
 | Name | Value | Semantic kind | Backend |
 | --- | ---: | --- | --- |
-| `malt-map-kzg` | `0x301101` | map | KZG |
-| `malt-list-kzg` | `0x301201` | list | KZG |
-| `malt-map-ipa` | `0x301102` | map | IPA |
-| `malt-list-ipa` | `0x301202` | list | IPA |
+| `malt-map-kzg` | `0x302101` | map | KZG |
+| `malt-list-kzg` | `0x302201` | list | KZG |
+| `malt-map-ipa` | `0x302102` | map | IPA |
+| `malt-list-ipa` | `0x302202` | list | IPA |
 
 The implementation owner is `wire/maltcid`.
 
@@ -119,6 +119,13 @@ Unknown versions, semantics, backends, combinations, and codecs outside the
 typed-root subrange fail closed. Classifiers must validate the complete codec
 before returning either semantic or backend; independently masking one field
 is insufficient.
+
+Version 2 makes semantic node geometry backend-sized: KZG map and list nodes
+use all 4096 positions in the current KZG suite, while IPA nodes retain the
+current suite's 256 positions. Map radix digits and list branching therefore
+also depend on the backend suite. Version-1 experimental roots are not
+recognized by version-2 decoders and must be rebuilt together with their
+materialized node state.
 
 Verifiers must also reject roots or proof steps whose semantic kind, backend
 kind, or expected target type does not match the query and evidence.

@@ -10,12 +10,12 @@ import (
 	"github.com/dewebprotocol/malt/auth/commitment"
 	structure "github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
 const (
-	portableNodeWidth = 256
 	radixLeafPrefix   = "malt:map:radix:leaf:v1:"
 	radixBucketPrefix = "malt:map:radix:bucket:v1:"
 )
@@ -25,7 +25,8 @@ const (
 // locked runtime wire format, but verification requires only the primitive
 // commitment scheme.
 type radixMapVerifier struct {
-	scheme commitment.IndexVerifier
+	scheme   commitment.IndexVerifier
+	geometry nodegeometry.Geometry
 }
 
 type radixProofEnvelope struct {
@@ -42,8 +43,8 @@ type radixBucketWitness struct {
 	Proof []byte `json:"proof"`
 }
 
-func newRadixMapVerifier(scheme commitment.IndexVerifier) MapVerifier {
-	return &radixMapVerifier{scheme: scheme}
+func newRadixMapVerifier(scheme commitment.IndexVerifier, geometry nodegeometry.Geometry) MapVerifier {
+	return &radixMapVerifier{scheme: scheme, geometry: geometry}
 }
 
 func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, proof structure.Proof) (bool, error) {
@@ -72,7 +73,7 @@ func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mappin
 	}
 
 	digest := sha256.Sum256([]byte(key.String()))
-	if len(envelope.Steps) > len(digest) {
+	if len(envelope.Steps) > v.geometry.MapDepth(len(digest)) {
 		return false, fmt.Errorf("proof has too many radix steps")
 	}
 	currentRoot := root
@@ -90,7 +91,11 @@ func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mappin
 			}
 		}
 
-		ok, err := v.scheme.VerifyIndex(currentRoot, uint64(digest[depth]), commitment.CellFromCID(slotCID), cloneProofBytes(step.Proof))
+		slotIndex, ok := v.geometry.MapDigit(digest[:], depth)
+		if !ok {
+			return false, fmt.Errorf("invalid radix depth %d", depth)
+		}
+		ok, err = v.scheme.VerifyIndex(currentRoot, slotIndex, commitment.CellFromCID(slotCID), cloneProofBytes(step.Proof))
 		if err != nil || !ok {
 			return ok, err
 		}

@@ -14,7 +14,7 @@ copies.
 
 The corpus version is `malt.resolve-read.conformance/v1`. It is independent of
 the two enclosed operation profiles and of the typed-root
-`MALTVersionID=1`. Before the first release, an intentional encoding change
+`MALTVersionID=2`. Before the first release, an intentional encoding change
 may regenerate the corpus as part of the same reviewed change. Once released,
 a vector ID and its input and expected verdict are immutable; later behavioral
 or encoding changes require v2. Error strings, timing, and
