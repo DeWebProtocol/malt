@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -42,7 +43,6 @@ import (
 
 const (
 	requestTimeout = 30 * time.Minute
-	instanceHeader = "X-Malt-Evaluation-Instance-Token"
 	maxSourceBytes = 96 << 20
 )
 
@@ -56,7 +56,7 @@ type gatewayRegistration struct {
 type builtObject struct {
 	kind    arcset.Kind
 	root    cid.Cid
-	entries []transport.EvaluationBootstrapEntry
+	entries []gatewaytransport.BootstrapEntry
 	commit  mutation.CommitDescriptor
 }
 
@@ -73,18 +73,6 @@ type artifactDescriptor struct {
 	SHA256        string                   `json:"sha256"`
 	Bytes         int64                    `json:"bytes"`
 	InitialRoots  []rq2fixture.RootBinding `json:"initial_roots"`
-}
-
-type tokenTransport struct {
-	base  http.RoundTripper
-	token string
-}
-
-func (t tokenTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	copyRequest := request.Clone(request.Context())
-	copyRequest.Header = request.Header.Clone()
-	copyRequest.Header.Set(instanceHeader, t.token)
-	return t.base.RoundTrip(copyRequest)
 }
 
 func main() {
@@ -257,7 +245,7 @@ func buildBackend(ctx context.Context, backend string, source *rq2fixture.Source
 	objects := make([]builtObject, 0, len(source.ListFiles)+1)
 	for index, file := range source.ListFiles {
 		chunks := make([]cid.Cid, len(file.Chunks))
-		entries := make([]transport.EvaluationBootstrapEntry, len(file.Chunks))
+		entries := make([]gatewaytransport.BootstrapEntry, len(file.Chunks))
 		for chunkIndex, chunk := range file.Chunks {
 			key, err := rawCID(chunk.Bytes)
 			if err != nil {
@@ -265,7 +253,7 @@ func buildBackend(ctx context.Context, backend string, source *rq2fixture.Source
 			}
 			chunks[chunkIndex] = key
 			coordinate := chunk.Index
-			entries[chunkIndex] = transport.EvaluationBootstrapEntry{Index: &coordinate, Target: key}
+			entries[chunkIndex] = gatewaytransport.BootstrapEntry{Index: &coordinate, Target: key}
 		}
 		root, err := lister.CommitFixed(ctx, fmt.Sprintf("rq2-list-%03d", index), chunks, file.ChunkSize, file.TotalSize)
 		if err != nil {
@@ -286,10 +274,10 @@ func buildBackend(ctx context.Context, backend string, source *rq2fixture.Source
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	rootEntries := make([]transport.EvaluationBootstrapEntry, len(paths))
+	rootEntries := make([]gatewaytransport.BootstrapEntry, len(paths))
 	for index, pathValue := range paths {
 		path := pathValue
-		rootEntries[index] = transport.EvaluationBootstrapEntry{Path: &path, Target: bindings[pathValue]}
+		rootEntries[index] = gatewaytransport.BootstrapEntry{Path: &path, Target: bindings[pathValue]}
 	}
 	objects = append(objects, builtObject{kind: arcset.KindMap, root: root, entries: rootEntries})
 	return &builtBackend{backend: backend, root: root, scheme: scheme, objects: objects}, nil
@@ -330,20 +318,22 @@ func sourceBlocks(source *rq2fixture.SourceDefinition) ([]transport.Block, error
 }
 
 func initializeGateway(ctx context.Context, registration gatewayRegistration, build *builtBackend, fixture *rq2fixture.Fixture, blocks []transport.Block) error {
-	httpClient := &http.Client{
-		Timeout: requestTimeout, Transport: tokenTransport{base: http.DefaultTransport, token: registration.instanceToken},
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	remote, err := transport.New(transport.Options{BaseURL: registration.baseURL, HTTPClient: httpClient})
+	evaluation, err := gatewaytransport.New(gatewaytransport.Options{
+		BaseURL: registration.baseURL, InstanceToken: registration.instanceToken, HTTPClient: &http.Client{Timeout: requestTimeout},
+	})
 	if err != nil {
 		return err
 	}
-	health, err := remote.Health(ctx)
+	remote, err := transport.New(transport.Options{BaseURL: registration.baseURL, HTTPClient: evaluation.InstanceHTTPClient()})
+	if err != nil {
+		return err
+	}
+	health, err := evaluation.Health(ctx)
 	if err != nil {
 		return err
 	}
 	if health.Status != "ok" || health.EvaluationInstanceToken != registration.instanceToken || health.BlobBackend != "embedded" || health.ArcTableMode != "versioned" ||
-		health.CommitmentBackends != "ipa,kzg" || health.ClientRootExactAcceptance != "true" || health.EvaluationClientRootBootstrap != transport.EvaluationClientRootBootstrapProfile {
+		health.CommitmentBackends != "ipa,kzg" || health.ClientRootExactAcceptance != "true" || health.EvaluationClientRootBootstrap != gatewaytransport.BootstrapProfile {
 		return fmt.Errorf("Gateway health does not expose the exact clean RQ2 bootstrap boundary")
 	}
 	results, err := remote.PutBatch(ctx, blocks)
@@ -361,7 +351,7 @@ func initializeGateway(ctx context.Context, registration gatewayRegistration, bu
 	}
 	backendKind := maltcid.BackendKind(build.backend)
 	for index, object := range build.objects {
-		result, err := remote.BootstrapEvaluationObject(ctx, registration.bootstrapToken, transport.EvaluationBootstrapObject{
+		result, err := evaluation.BootstrapEvaluationObject(ctx, registration.bootstrapToken, gatewaytransport.BootstrapObject{
 			OperationID: fmt.Sprintf("rq2-%s-bootstrap-%03d", build.backend, index), Kind: object.kind,
 			Backend: backendKind, ExpectedRoot: object.root, Entries: object.entries, Commit: object.commit,
 		})

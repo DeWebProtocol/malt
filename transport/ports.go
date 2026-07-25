@@ -44,7 +44,6 @@ type Diagnostics interface {
 type MerkleDAGProfile interface {
 	PostMerkleDAGResolve(context.Context, []byte) ([]byte, error)
 	PostMerkleDAGRead(context.Context, []byte) ([]byte, error)
-	PostMerkleDAGCARRead(context.Context, []byte) ([]byte, error)
 }
 
 // ClientRoot is the untrusted stateful-writer transport. Implementations

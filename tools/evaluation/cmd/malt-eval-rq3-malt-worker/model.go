@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	"github.com/dewebprotocol/malt-client/merkledag/rq3baseline"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	"github.com/dewebprotocol/malt-client/transport"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt/auth/arcset"

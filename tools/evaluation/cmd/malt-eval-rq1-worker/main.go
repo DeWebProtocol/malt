@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/merkledag"
 	"github.com/dewebprotocol/malt-client/transport"
 	cid "github.com/ipfs/go-cid"
@@ -35,7 +36,7 @@ const (
 	routeCAR            = "trustless-car"
 	routeDirectCAS      = "direct-cas"
 
-	evaluationInstanceTokenHeader = "X-Malt-Evaluation-Instance-Token"
+	evaluationInstanceTokenHeader = gatewaytransport.InstanceTokenHeader
 	evaluationOperationHeader     = "X-Malt-Evaluation-RQ1-Operation"
 	evaluationRouteHeader         = "X-Malt-Evaluation-RQ1-Route"
 	evaluationLeaseHeader         = "X-Malt-Evaluation-RQ1-Lease"
@@ -101,15 +102,6 @@ type workerMetrics struct {
 	ProcessPeakRSSBytes         uint64           `json:"process_peak_rss_bytes"`
 }
 
-// directCASRawGetter deliberately bypasses transport-level CID hashing so the
-// Direct-CAS replay verifier is the sole owner of one hash and its timing.
-// The transport method remains bounded; no other worker route uses it.
-type directCASRawGetter struct{ client *transport.Client }
-
-func (g directCASRawGetter) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
-	return g.client.GetRawForLocalCIDVerification(ctx, key)
-}
-
 type serverPhaseTotal struct {
 	Operations uint64 `json:"operations"`
 	Items      uint64 `json:"items"`
@@ -152,6 +144,7 @@ type workerConfig struct {
 	requestTimeout time.Duration
 	cacheClient    *http.Client
 	routeHeaders   *evaluationHeaderTransport
+	evaluation     *gatewaytransport.Client
 }
 
 func main() {
@@ -194,19 +187,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := config.validate(); err != nil {
 		return err
 	}
-	config.routeHeaders = &evaluationHeaderTransport{base: http.DefaultTransport, instanceToken: config.instanceToken}
-	config.cacheClient = &http.Client{Timeout: config.requestTimeout}
-	remote, err := transport.New(transport.Options{
-		BaseURL:    config.baseURL,
+	config.routeHeaders = &evaluationHeaderTransport{base: http.DefaultTransport}
+	evaluation, err := gatewaytransport.New(gatewaytransport.Options{
+		BaseURL: config.baseURL, InstanceToken: config.instanceToken,
 		HTTPClient: &http.Client{Timeout: config.requestTimeout, Transport: config.routeHeaders},
 	})
 	if err != nil {
 		return err
 	}
-	profile, err := merkledag.New(remote)
-	if err != nil {
-		return err
-	}
+	config.evaluation = evaluation
+	config.cacheClient = evaluation.InstanceHTTPClient()
 	encoder := json.NewEncoder(stdout)
 	encoder.SetEscapeHTML(false)
 	scanner := bufio.NewScanner(stdin)
@@ -260,9 +250,31 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if cacheErr == nil && usageErr == nil {
 			switch config.route {
 			case routeCAR:
-				result, err = profile.ReadMerkleDAGCARVerified(operationCtx, config.root, request.Segments)
+				carRequest := merkledag.MerkleDAGReadRequest{
+					Profile: merkledag.MerkleDAGReadProfile, Root: config.root.String(),
+					Segments: append([]string(nil), request.Segments...),
+				}
+				encodedRequest, encodeErr := json.Marshal(carRequest)
+				if encodeErr != nil {
+					err = encodeErr
+					break
+				}
+				networkStarted := time.Now()
+				encodedCAR, readErr := config.evaluation.ReadCAR(operationCtx, encodedRequest)
+				networkDuration := time.Since(networkStarted)
+				if readErr != nil {
+					err = readErr
+					break
+				}
+				result, err = merkledag.VerifyMerkleDAGCARRead(operationCtx, carRequest, encodedCAR)
+				if err == nil {
+					result.Metrics.NetworkRequests = 1
+					result.Metrics.NetworkDurationNS = durationNS(networkDuration)
+				}
 			case routeDirectCAS:
-				result, err = merkledag.ReadMerkleDAGDirectCASVerified(operationCtx, directCASRawGetter{client: remote}, config.root, request.Segments, nil, nil)
+				result, err = merkledag.ReadMerkleDAGDirectCASVerified(
+					operationCtx, gatewaytransport.RawCASGetter{Client: config.evaluation}, config.root, request.Segments, nil, nil,
+				)
 			}
 		}
 		config.routeHeaders.Clear()
@@ -435,7 +447,6 @@ func (config workerConfig) exchangeCacheObservation(ctx context.Context, action 
 		return cacheObservation{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(evaluationInstanceTokenHeader, config.instanceToken)
 	response, err := config.cacheClient.Do(request)
 	if err != nil {
 		return cacheObservation{}, err
@@ -531,8 +542,7 @@ func (config workerConfig) observeGatewayHealth(ctx context.Context) (gatewayHea
 }
 
 type evaluationHeaderTransport struct {
-	base          http.RoundTripper
-	instanceToken string
+	base http.RoundTripper
 
 	mu          sync.RWMutex
 	operationID string
@@ -561,7 +571,6 @@ func (transport *evaluationHeaderTransport) RoundTrip(request *http.Request) (*h
 	}
 	copy := request.Clone(request.Context())
 	copy.Header = request.Header.Clone()
-	copy.Header.Set(evaluationInstanceTokenHeader, transport.instanceToken)
 	copy.Header.Set(evaluationOperationHeader, operationID)
 	copy.Header.Set(evaluationRouteHeader, route)
 	copy.Header.Set(evaluationLeaseHeader, lease)

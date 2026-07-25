@@ -22,6 +22,7 @@ import (
 	"time"
 
 	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2metrics"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2wire"
@@ -208,14 +209,20 @@ func (w *browserWriter) initialize(request initializeRequest) (initializeRespons
 	if !ok {
 		return initializeResponse{}, fmt.Errorf("commitment parameter provenance is unavailable")
 	}
-	remote, err := transport.New(transport.Options{
-		BaseURL:    request.GatewayBaseURL,
+	evaluation, err := gatewaytransport.New(gatewaytransport.Options{
+		BaseURL: request.GatewayBaseURL, InstanceToken: request.GatewayInstanceToken,
 		HTTPClient: &http.Client{Timeout: 24 * time.Hour},
 	})
 	if err != nil {
 		return initializeResponse{}, err
 	}
-	health, err := remote.Health(context.Background())
+	remote, err := transport.New(transport.Options{
+		BaseURL: request.GatewayBaseURL, HTTPClient: evaluation.InstanceHTTPClient(),
+	})
+	if err != nil {
+		return initializeResponse{}, err
+	}
+	health, err := evaluation.Health(context.Background())
 	if err != nil || health.Status != "ok" || health.EvaluationInstanceToken != request.GatewayInstanceToken {
 		return initializeResponse{}, fmt.Errorf("browser Gateway health did not echo the exact disposable instance token")
 	}

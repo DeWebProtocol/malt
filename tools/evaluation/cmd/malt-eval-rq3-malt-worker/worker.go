@@ -13,7 +13,8 @@ import (
 	"time"
 
 	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
-	"github.com/dewebprotocol/malt-client/merkledag/rq3baseline"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materializermemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
@@ -40,8 +41,9 @@ type workerConfig struct {
 }
 
 type campaignWorker struct {
-	config workerConfig
-	remote *transport.Client
+	config     workerConfig
+	remote     *transport.Client
+	evaluation *gatewaytransport.Client
 }
 
 type clientRootRemote struct{ client *transport.Client }
@@ -92,20 +94,27 @@ func (r clientRootRemote) SubmitClientRoot(ctx context.Context, bundle mutation.
 }
 
 func newCampaignWorker(config workerConfig) (*campaignWorker, error) {
-	client, err := transport.New(transport.Options{
-		BaseURL:    config.gatewayBaseURL,
+	evaluation, err := gatewaytransport.New(gatewaytransport.Options{
+		BaseURL: config.gatewayBaseURL, InstanceToken: config.instanceToken,
 		HTTPClient: &http.Client{Timeout: config.requestTimeout},
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &campaignWorker{config: config, remote: client}, nil
+	client, err := transport.New(transport.Options{
+		BaseURL:    config.gatewayBaseURL,
+		HTTPClient: evaluation.InstanceHTTPClient(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &campaignWorker{config: config, remote: client, evaluation: evaluation}, nil
 }
 
 func (w *campaignWorker) validateHealth(ctx context.Context) error {
 	checkCtx, cancel := context.WithTimeout(ctx, w.config.requestTimeout)
 	defer cancel()
-	health, err := w.remote.Health(checkCtx)
+	health, err := w.evaluation.Health(checkCtx)
 	if err != nil {
 		return fmt.Errorf("Gateway health: %w", err)
 	}
@@ -114,7 +123,7 @@ func (w *campaignWorker) validateHealth(ctx context.Context) error {
 		health.CommitmentProfile != "kzg" || health.CommitmentBackends != "ipa,kzg" ||
 		health.EvaluationCASWriteAccounting != healthCASAccounting || health.EvaluationCASWriteIsolation != healthCASIsolation ||
 		health.ClientRootWriteAccounting != gatewayAccountingProfile || health.ClientRootExactAcceptance != "true" ||
-		health.EvaluationClientRootBootstrap != transport.EvaluationClientRootBootstrapProfile {
+		health.EvaluationClientRootBootstrap != gatewaytransport.BootstrapProfile {
 		return fmt.Errorf("Gateway health does not expose the exact disposable embedded/versioned/KZG evaluation boundary")
 	}
 	return nil
@@ -429,7 +438,7 @@ func (w *campaignWorker) bootstrapGraph(ctx context.Context, commitID string, gr
 			continue
 		}
 		seenRoots[object.root.KeyString()] = struct{}{}
-		entries := make([]transport.EvaluationBootstrapEntry, object.entries.Len())
+		entries := make([]gatewaytransport.BootstrapEntry, object.entries.Len())
 		for index, entry := range object.entries.Entries() {
 			entries[index].Target = entry.Target.CID()
 			if object.kind == arcset.KindMap {
@@ -443,7 +452,7 @@ func (w *campaignWorker) bootstrapGraph(ctx context.Context, commitID string, gr
 				entries[index].Index = &coordinate
 			}
 		}
-		bootstrap, err := w.remote.BootstrapEvaluationObject(ctx, w.config.bootstrapAuthorizationToken, transport.EvaluationBootstrapObject{
+		bootstrap, err := w.evaluation.BootstrapEvaluationObject(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.BootstrapObject{
 			OperationID: operationID(commitID+"-bootstrap-"+strconv.Itoa(order), uint32(order)),
 			Kind:        object.kind, Backend: maltcid.BackendKindKZG, ExpectedRoot: object.root,
 			Entries: entries, Commit: object.commit,

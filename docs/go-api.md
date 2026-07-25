@@ -58,6 +58,11 @@ method. Transport methods validate wire shape and CAS bytes, but generic
 resolve/read results remain untrusted until locally verified against caller
 inputs.
 
+The public transport does not expose evaluation instance tokens, bootstrap
+control, unchecked raw-CAS reads, or the selective-CAR route. Those
+capabilities are private to the pinned process adapters under
+`tools/evaluation`; they are not a supported integration surface.
+
 `Metrics` returns inexpensive monotonic counters. `MetricsWithStorage` also
 requests Gateway's O(live KV entries) logical scan and should be used only by
 controlled evaluation or operator tooling. Construct the transport with
@@ -224,6 +229,9 @@ at most 4,096 evidence blocks, 32 MiB of raw evidence bytes, and 16 MiB of file
 data per read response.
 
 Merkle DAG evidence is intentionally not converted into a MALT ProofList.
+`VerifyMerkleDAGCARRead` remains a pure local verifier for already obtained
+CARv1 evidence, but public transport does not provide the evaluator-only route
+that obtains such a bundle.
 
 For compatibility tools that need to inspect blocks outside UnixFS, import
 `github.com/dewebprotocol/malt-client/merkledag/ipld`. Its parser verifies
