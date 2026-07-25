@@ -9,9 +9,13 @@ import (
 
 	malt "github.com/dewebprotocol/malt"
 	"github.com/dewebprotocol/malt/artifact"
+	"github.com/dewebprotocol/malt/auth/commitment"
+	"github.com/dewebprotocol/malt/auth/commitment/ipa"
+	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 	"github.com/dewebprotocol/malt/protocol"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
 type Verifier struct {
@@ -52,6 +56,33 @@ func NewDefault() (*Verifier, error) {
 		return nil, err
 	}
 	return &Verifier{proofs: proofs}, nil
+}
+
+// NewForBackend creates a portable verifier with only one built-in commitment
+// backend. It is intended for clients that isolate backend initialization while
+// retaining backend selection from typed roots inside the verifier.
+func NewForBackend(kind maltcid.BackendKind) (*Verifier, error) {
+	var (
+		scheme commitment.IndexVerifier
+		err    error
+	)
+	switch kind {
+	case maltcid.BackendKindKZG:
+		scheme, err = kzg.NewScheme()
+	case maltcid.BackendKindIPA:
+		scheme, err = ipa.NewScheme()
+	default:
+		return nil, fmt.Errorf("unsupported verifier backend %q", kind)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("creating %s verifier backend: %w", kind, err)
+	}
+
+	registry := authverifier.NewBackendRegistry()
+	if err := registry.RegisterScheme(kind, scheme); err != nil {
+		return nil, err
+	}
+	return &Verifier{proofs: authverifier.NewWithRegistry(registry)}, nil
 }
 
 // Verify verifies the frozen malt.artifact/v0alpha2 compatibility envelope.

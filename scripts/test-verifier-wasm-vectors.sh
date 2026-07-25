@@ -10,3 +10,13 @@ node "$repo_root/scripts/run-verifier-wasm-vectors.mjs" \
   "$work_dir/verifier/malt-verifier.wasm" \
   "$work_dir/verifier/wasm_exec.js" \
   "$repo_root/conformance/resolve-read/v1/vectors.json"
+node "$repo_root/scripts/run-verifier-wasm-vectors.mjs" \
+  "$work_dir/verifier/malt-verifier.wasm" \
+  "$work_dir/verifier/wasm_exec.js" \
+  "$repo_root/conformance/resolve-read/v1/vectors.json" \
+  kzg
+node "$repo_root/scripts/run-verifier-wasm-vectors.mjs" \
+  "$work_dir/verifier/malt-verifier.wasm" \
+  "$work_dir/verifier/wasm_exec.js" \
+  "$repo_root/conformance/resolve-read/v1/vectors.json" \
+  ipa

@@ -15,6 +15,21 @@ globalThis.maltVerifyRead(verificationJSON) -> resultJSON
 globalThis.maltVerifyArtifact(requestJSON) -> resultJSON  # v0.0.4 compatibility
 ```
 
+The default module initializes both built-in commitment backends. Browser
+clients that isolate initialization may set one of the following values before
+calling `go.run`:
+
+```js
+globalThis.maltVerifierBackend = 'kzg' // KZG-only verifier
+globalThis.maltVerifierBackend = 'ipa' // IPA-only verifier
+globalThis.maltVerifierBackend = 'all' // default portable verifier
+```
+
+Backend selection still comes from each typed MALT root during verification.
+A backend-specific instance fails closed when evidence requires a backend that
+is not registered. Clients that need cross-backend ProofLists must use the
+default `all` instance.
+
 `maltVerifyResolve` accepts one `malt.resolve/v0alpha1` request/result pair;
 `maltVerifyRead` accepts one `malt.read/v0alpha1` request/result pair. The
 caller constructs the request from its trusted root and intended query before

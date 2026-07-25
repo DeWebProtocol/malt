@@ -12,10 +12,16 @@ import (
 	"github.com/dewebprotocol/malt/artifact"
 	"github.com/dewebprotocol/malt/protocol"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
 func main() {
-	verifier, initErr := clientverifier.NewDefault()
+	backend := requestedBackend()
+	verifier, initErr := newVerifier(backend)
+	if initErr != nil {
+		js.Global().Set("maltVerifierInitError", initErr.Error())
+	}
+	js.Global().Set("maltVerifierLoadedBackend", backend)
 	artifactFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if initErr != nil {
 			return encodeResponse(clientverifier.Result{Profile: artifact.Profile, Error: fmt.Sprintf("initialize verifier: %v", initErr)})
@@ -68,6 +74,27 @@ func main() {
 	js.Global().Set("maltVerifyResolve", resolveFunction)
 	js.Global().Set("maltVerifyRead", readFunction)
 	select {}
+}
+
+func requestedBackend() string {
+	value := js.Global().Get("maltVerifierBackend")
+	if value.Type() != js.TypeString || value.String() == "" {
+		return "all"
+	}
+	return value.String()
+}
+
+func newVerifier(backend string) (*clientverifier.Verifier, error) {
+	switch backend {
+	case "all":
+		return clientverifier.NewDefault()
+	case string(maltcid.BackendKindKZG):
+		return clientverifier.NewForBackend(maltcid.BackendKindKZG)
+	case string(maltcid.BackendKindIPA):
+		return clientverifier.NewForBackend(maltcid.BackendKindIPA)
+	default:
+		return nil, fmt.Errorf("unsupported verifier backend %q", backend)
+	}
 }
 
 func encodeResponse(response clientverifier.Result) string {

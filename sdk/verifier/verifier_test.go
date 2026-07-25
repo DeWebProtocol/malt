@@ -8,6 +8,7 @@ import (
 
 	"github.com/dewebprotocol/malt/artifact"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
 func TestDefaultVerifierAcceptsRootIdentityArtifact(t *testing.T) {
@@ -130,5 +131,19 @@ func TestLocalRequestRejectsArtifactSelectedQuery(t *testing.T) {
 		Artifact: request.Artifact,
 	}); err == nil {
 		t.Fatal("accepted an artifact for a different client-selected query")
+	}
+}
+
+func TestBackendSpecificVerifierRejectsUnsupportedBackend(t *testing.T) {
+	for _, kind := range []maltcid.BackendKind{
+		maltcid.BackendKindKZG,
+		maltcid.BackendKindIPA,
+	} {
+		if _, err := clientverifier.NewForBackend(kind); err != nil {
+			t.Fatalf("NewForBackend(%q): %v", kind, err)
+		}
+	}
+	if _, err := clientverifier.NewForBackend(maltcid.BackendKindUnknown); err == nil {
+		t.Fatal("NewForBackend accepted an unknown backend")
 	}
 }
