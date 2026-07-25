@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/merkledag"
 	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
 	"github.com/dewebprotocol/malt-client/transport"
@@ -39,8 +40,6 @@ import (
 const (
 	fixtureSchema     = "malt-rq1-shared-fixture/v1"
 	descriptorSchema  = "malt-rq1-shared-fixture-descriptor/v1"
-	bootstrapProfile  = "gateway.evaluation-client-root-bootstrap-object/v1"
-	instanceHeader    = "X-Malt-Evaluation-Instance-Token"
 	payloadBytes      = 4096
 	unixFSChunkBytes  = 262144
 	maximumResponse   = 8 << 20
@@ -108,18 +107,6 @@ type trieEdge struct {
 	payload bool
 }
 
-type tokenTransport struct {
-	base  http.RoundTripper
-	token string
-}
-
-func (transportWithToken tokenTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	copyRequest := request.Clone(request.Context())
-	copyRequest.Header = request.Header.Clone()
-	copyRequest.Header.Set(instanceHeader, transportWithToken.token)
-	return transportWithToken.base.RoundTrip(copyRequest)
-}
-
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "malt-eval-rq1-fixture-build:", err)
@@ -152,18 +139,20 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	httpClient := &http.Client{
-		Timeout:       requestTimeout,
-		Transport:     tokenTransport{base: http.DefaultTransport, token: *instanceToken},
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	evaluation, err := gatewaytransport.New(gatewaytransport.Options{
+		BaseURL: parsed.String(), InstanceToken: *instanceToken, HTTPClient: &http.Client{Timeout: requestTimeout},
+	})
+	if err != nil {
+		return err
 	}
+	httpClient := evaluation.InstanceHTTPClient()
 	remote, err := transport.New(transport.Options{BaseURL: parsed.String(), HTTPClient: httpClient})
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	if err := verifyGatewayHealth(ctx, remote, *instanceToken); err != nil {
+	if err := verifyGatewayHealth(ctx, evaluation, *instanceToken); err != nil {
 		return err
 	}
 	payload := deterministicPayload()
@@ -179,10 +168,10 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := bootstrapMALT(ctx, remote, *bootstrapAuthorizationToken, objects); err != nil {
+	if err := bootstrapMALT(ctx, evaluation, *bootstrapAuthorizationToken, objects); err != nil {
 		return err
 	}
-	if err := verifyFixture(ctx, httpClient, parsed.String(), remote, unixRoot, maltRoot, payloadCID, payload); err != nil {
+	if err := verifyFixture(ctx, httpClient, parsed.String(), evaluation, remote, unixRoot, maltRoot, payloadCID, payload); err != nil {
 		return err
 	}
 	digest := sha256.Sum256(payload)
@@ -216,13 +205,13 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	return encoder.Encode(descriptor{SchemaVersion: descriptorSchema, Path: output, SHA256: hex.EncodeToString(artifactDigest[:]), Bytes: int64(len(raw))})
 }
 
-func verifyGatewayHealth(ctx context.Context, remote *transport.Client, token string) error {
-	health, err := remote.Health(ctx)
+func verifyGatewayHealth(ctx context.Context, evaluation *gatewaytransport.Client, token string) error {
+	health, err := evaluation.Health(ctx)
 	if err != nil {
 		return fmt.Errorf("read Gateway health: %w", err)
 	}
 	if health.Status != "ok" || health.EvaluationInstanceToken != token || health.KVBackend != "badger" || health.BlobBackend != "embedded" ||
-		health.ArcTableMode != "versioned" || health.CommitmentProfile != "kzg" || health.EvaluationClientRootBootstrap != bootstrapProfile {
+		health.ArcTableMode != "versioned" || health.CommitmentProfile != "kzg" || health.EvaluationClientRootBootstrap != gatewaytransport.BootstrapProfile {
 		return errors.New("Gateway does not expose the exact empty RQ1 fixture-build capability")
 	}
 	return nil
@@ -340,19 +329,19 @@ func commitTrie(ctx context.Context, mapper *radix.Map, node *trieNode, payload 
 	return root, objects, nil
 }
 
-func bootstrapMALT(ctx context.Context, remote *transport.Client, bootstrapAuthorizationToken string, objects []mapObject) error {
+func bootstrapMALT(ctx context.Context, evaluation *gatewaytransport.Client, bootstrapAuthorizationToken string, objects []mapObject) error {
 	for index, object := range objects {
 		keys := make([]string, 0, len(object.entries))
 		for key := range object.entries {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		entries := make([]transport.EvaluationBootstrapEntry, len(keys))
+		entries := make([]gatewaytransport.BootstrapEntry, len(keys))
 		for entryIndex, key := range keys {
 			path := key
-			entries[entryIndex] = transport.EvaluationBootstrapEntry{Path: &path, Target: object.entries[key]}
+			entries[entryIndex] = gatewaytransport.BootstrapEntry{Path: &path, Target: object.entries[key]}
 		}
-		response, err := remote.BootstrapEvaluationObject(ctx, bootstrapAuthorizationToken, transport.EvaluationBootstrapObject{
+		response, err := evaluation.BootstrapEvaluationObject(ctx, bootstrapAuthorizationToken, gatewaytransport.BootstrapObject{
 			OperationID: fmt.Sprintf("rq1-fixture-map-%03d", index+1), Kind: arcset.KindMap,
 			Backend: maltcid.BackendKindKZG, ExpectedRoot: object.root, Entries: entries,
 		})
@@ -366,21 +355,30 @@ func bootstrapMALT(ctx context.Context, remote *transport.Client, bootstrapAutho
 	return nil
 }
 
-func verifyFixture(ctx context.Context, client *http.Client, baseURL string, remote *transport.Client, unixRoot, maltRoot, payloadCID cid.Cid, payload []byte) error {
-	compatibility, err := merkledag.New(remote)
-	if err != nil {
-		return err
-	}
+func verifyFixture(ctx context.Context, client *http.Client, baseURL string, evaluation *gatewaytransport.Client, remote *transport.Client, unixRoot, maltRoot, payloadCID cid.Cid, payload []byte) error {
 	verifier, err := clientverifier.NewDefault()
 	if err != nil {
 		return err
 	}
 	for _, depth := range exactDepths {
-		carResult, err := compatibility.ReadMerkleDAGCARVerified(ctx, unixRoot, depth.Segments)
+		carRequest := merkledag.MerkleDAGReadRequest{
+			Profile: merkledag.MerkleDAGReadProfile, Root: unixRoot.String(), Segments: append([]string(nil), depth.Segments...),
+		}
+		encodedCARRequest, err := json.Marshal(carRequest)
+		if err != nil {
+			return err
+		}
+		encodedCAR, err := evaluation.ReadCAR(ctx, encodedCARRequest)
+		if err != nil {
+			return fmt.Errorf("read CAR depth %d: %w", depth.Depth, err)
+		}
+		carResult, err := merkledag.VerifyMerkleDAGCARRead(ctx, carRequest, encodedCAR)
 		if err != nil {
 			return fmt.Errorf("verify CAR depth %d: %w", depth.Depth, err)
 		}
-		directResult, err := merkledag.ReadMerkleDAGDirectCASVerified(ctx, remote, unixRoot, depth.Segments, nil, nil)
+		directResult, err := merkledag.ReadMerkleDAGDirectCASVerified(
+			ctx, gatewaytransport.RawCASGetter{Client: evaluation}, unixRoot, depth.Segments, nil, nil,
+		)
 		if err != nil {
 			return fmt.Errorf("verify Direct CAS depth %d: %w", depth.Depth, err)
 		}
@@ -402,9 +400,13 @@ func verifyFixture(ctx context.Context, client *http.Client, baseURL string, rem
 		if err != nil || !target.Equals(payloadCID) {
 			return fmt.Errorf("MALT depth %d returned a different target", depth.Depth)
 		}
-		bound, err := remote.Get(ctx, target)
+		bound, err := evaluation.GetRawCAS(ctx, target)
 		if err != nil {
 			return fmt.Errorf("MALT depth %d payload fetch failed: %w", depth.Depth, err)
+		}
+		boundCID, err := target.Prefix().Sum(bound)
+		if err != nil || !boundCID.Equals(target) {
+			return fmt.Errorf("MALT depth %d payload bytes do not match target CID %s", depth.Depth, target)
 		}
 		if !bytes.Equal(bound, payload) {
 			return fmt.Errorf("MALT depth %d payload binding returned different bytes", depth.Depth)

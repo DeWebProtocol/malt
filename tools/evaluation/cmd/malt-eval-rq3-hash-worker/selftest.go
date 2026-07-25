@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/e0selftest"
-	"github.com/dewebprotocol/malt-client/merkledag/rq3baseline"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 )
 
 const hashAdapterSelfTestCorpusSchema = "malt-eval-rq3-hash-adapter-self-test/v1"

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/dewebprotocol/malt-client/merkledag/rq3baseline"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 )
 
 const (

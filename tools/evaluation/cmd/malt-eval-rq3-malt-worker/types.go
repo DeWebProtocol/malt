@@ -1,6 +1,6 @@
 package main
 
-import "github.com/dewebprotocol/malt-client/merkledag/rq3baseline"
+import "github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 
 const (
 	workerRequestSchema  = "malt-rq3-malt-worker-request/v1"

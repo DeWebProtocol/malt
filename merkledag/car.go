@@ -3,7 +3,6 @@ package merkledag
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -22,41 +21,6 @@ const (
 	maxMerkleDAGCARCIDBytes   = 256
 	MerkleDAGCARReadMediaType = "application/vnd.ipld.car; version=1"
 )
-
-// ReadMerkleDAGCARVerified requests one selective CARv1 bundle and reconstructs
-// the complete payload locally. The CAR header, block CIDs, codecs, path, and
-// payload are all checked against the caller-selected root. The Gateway does
-// not provide a trusted target or payload assertion on this route.
-func (c *Client) ReadMerkleDAGCARVerified(ctx context.Context, root cid.Cid, segments []string) (*VerifiedReadResult, error) {
-	if segments == nil {
-		return nil, fmt.Errorf("Merkle-DAG segments field is required")
-	}
-	request := MerkleDAGReadRequest{
-		Profile:  MerkleDAGReadProfile,
-		Root:     root.String(),
-		Segments: cloneSegments(segments),
-	}
-	if err := validateMerkleDAGReadRequest(request); err != nil {
-		return nil, err
-	}
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("encode Gateway Merkle-DAG CAR request: %w", err)
-	}
-	networkStarted := time.Now()
-	encoded, err := c.transport.PostMerkleDAGCARRead(ctx, body)
-	if err != nil {
-		return nil, err
-	}
-	networkDuration := time.Since(networkStarted)
-	result, err := VerifyMerkleDAGCARRead(ctx, request, encoded)
-	if err != nil {
-		return nil, err
-	}
-	result.Metrics.NetworkRequests = 1
-	result.Metrics.NetworkDurationNS = durationNanoseconds(networkDuration)
-	return result, nil
-}
 
 // VerifyMerkleDAGCARRead validates a raw CARv1 response and performs local
 // path/payload replay. Duplicate blocks are rejected rather than deduplicated,

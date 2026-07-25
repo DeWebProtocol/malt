@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/machine"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/transport"
@@ -84,12 +85,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	remote, err := transport.New(transport.Options{BaseURL: config.gatewayBaseURL, HTTPClient: &http.Client{Timeout: config.requestTimeout}})
+	evaluation, err := gatewaytransport.New(gatewaytransport.Options{
+		BaseURL: config.gatewayBaseURL, InstanceToken: config.gatewayToken, HTTPClient: &http.Client{Timeout: config.requestTimeout},
+	})
+	if err != nil {
+		return err
+	}
+	remote, err := transport.New(transport.Options{BaseURL: config.gatewayBaseURL, HTTPClient: evaluation.InstanceHTTPClient()})
 	if err != nil {
 		return err
 	}
 	healthContext, cancelHealth := context.WithTimeout(context.Background(), config.requestTimeout)
-	health, err := remote.Health(healthContext)
+	health, err := evaluation.Health(healthContext)
 	cancelHealth()
 	if err != nil {
 		return fmt.Errorf("verify disposable Gateway instance health: %w", err)

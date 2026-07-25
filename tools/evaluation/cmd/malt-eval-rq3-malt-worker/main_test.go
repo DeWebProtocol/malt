@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dewebprotocol/malt-client/merkledag/rq3baseline"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	materializermemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"

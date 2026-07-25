@@ -16,6 +16,11 @@ It owns:
 - local replay verification for gateway Merkle DAG compatibility reads;
 - application-level payload-byte verification.
 
+Client-specific benchmark process adapters also live in this repository under
+`tools/evaluation`. They exercise this implementation at a pinned commit, but
+do not own benchmark plans, suites, comparison policy, result schemas, or
+result provenance; those belong in `malt-evaluation`.
+
 It depends on `github.com/dewebprotocol/malt` for canonical graph types,
 resolve/read/mutation protocols, ProofList verification, CID rules, and
 commitment implementations. It must not copy or redefine those contracts.
@@ -83,6 +88,7 @@ merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
 transport  -> HTTP only; never imports unixfs, merkledag, or trust
 bucketsync -> transport + independent durable synchronization metadata
+tools/evaluation/cmd -> internal/evaluation + public client capabilities
 ```
 
 `transport.Client` is one reusable HTTP connection, but consumers depend on
@@ -90,6 +96,10 @@ the narrow `Native`, `Mutations`, `CAS`, or `Diagnostics` interfaces rather
 than a single mega-interface. Merkle DAG compatibility is exposed only through
 the fixed `PostMerkleDAGResolve` and `PostMerkleDAGRead` capabilities; there is
 no arbitrary profile-route escape hatch. Transport results remain untrusted.
+The public transport also does not expose evaluation instance credentials,
+bootstrap control, unchecked raw-CAS reads, or the selective-CAR route. Those
+disposable-Gateway capabilities live under `internal/evaluation` and can only
+be composed by evaluator adapters.
 The `application` layer supplies the caller-selected root, composes verified
 UnixFS or Merkle DAG reads, records mutation results as candidates, and exposes
 explicit candidate acceptance for both CLI and daemon adapters. The `trust`
@@ -147,6 +157,8 @@ the operation fails as stale instead of applying a sibling transition.
 ## Packages
 
 - `cmd/malt`: CLI and daemon process lifecycle.
+- `tools/evaluation/cmd`: evaluator-launched process adapters. Their executable
+  names and wire contracts are campaign inputs, not supported user CLI.
 - `application`: reusable trusted-root, UnixFS, and Merkle DAG use cases shared
   by command and daemon adapters.
 - `application/add`: reusable ignore-aware local-input staging, symlink policy,
@@ -161,13 +173,17 @@ the operation fails as stale instead of applying a sibling transition.
   Merkle-DAG compatibility applications.
 - `internal/daemon`: local Unix-socket/Windows-pipe root-control API.
 - `internal/cas`: client-side CAS helpers and byte verification.
+- `internal/evaluation`: private adapter support, including evaluation Gateway
+  authentication/control transport and shared workload machinery.
 - `unixfs/model`: UnixFS application values and path rules.
 - `unixfs`: verified UnixFS reader/writer facade, staging, materialization,
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`application`, `bucketsync`, `transport`, `trust`, `unixfs`, and `merkledag` packages are the
-intended pre-release integration surface; their profiles remain experimental
-until a release policy is published. Architecture tests fail if transport
-begins to import application or trust packages, or if Merkle DAG compatibility
-begins to depend on transport implementation types or MALT ProofList contracts.
+`application`, `bucketsync`, `transport`, `trust`, `unixfs`, and `merkledag`
+packages are the intended pre-release integration surface; their profiles
+remain experimental until a release policy is published. Architecture tests
+fail if production packages import evaluation support, if `cmd/` gains a
+non-product binary, if public transport regains an evaluation control-plane
+escape hatch, or if Merkle DAG compatibility begins to depend on transport
+implementation types or MALT ProofList contracts.

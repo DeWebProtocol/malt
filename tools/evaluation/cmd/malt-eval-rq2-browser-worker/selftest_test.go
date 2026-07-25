@@ -142,8 +142,8 @@ func TestBrowserFormalE0ExecutesPinnedChromiumAndWASM(t *testing.T) {
 		t.Skipf("matching wasm_exec.js is unavailable: %v", err)
 	}
 	wasmPath := filepath.Join(directory, "writer.wasm")
-	moduleRoot := filepath.Clean(filepath.Join("..", ".."))
-	build := exec.Command("go", "build", "-buildvcs=false", "-o", wasmPath, "./cmd/malt-eval-rq2-browser-wasm")
+	moduleRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", wasmPath, "./tools/evaluation/cmd/malt-eval-rq2-browser-wasm")
 	build.Dir = moduleRoot
 	build.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", "CGO_ENABLED=0")
 	if output, err := build.CombinedOutput(); err != nil {

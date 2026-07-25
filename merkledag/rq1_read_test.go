@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +13,6 @@ import (
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	"github.com/dewebprotocol/malt-client/merkledag"
 	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
-	client "github.com/dewebprotocol/malt-client/transport"
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
 	cid "github.com/ipfs/go-cid"
 	car "github.com/ipld/go-car/v2"
@@ -114,39 +111,6 @@ func TestMerkleDAGCARReadLocallyVerifiesPathAndPayload(t *testing.T) {
 	if result.Metrics.CIDVerifyDurationNS == 0 || result.Metrics.PayloadBindingDurationNS == 0 ||
 		result.Metrics.PayloadBindingDurationNS > result.Metrics.CIDVerifyDurationNS {
 		t.Fatalf("CAR verification phase accounting = %+v", result.Metrics)
-	}
-}
-
-func TestMerkleDAGCARClientUsesFixedRouteAndCountsOneNetworkRound(t *testing.T) {
-	fixture := newRQ1MerkleDAGFixture(t)
-	encoded := writeCARv1(t, []cid.Cid{fixture.root}, fixture.evidence)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/compat/merkledag/car/read" {
-			http.NotFound(w, r)
-			return
-		}
-		if got := r.Header.Get("Content-Type"); got != "application/json" {
-			t.Errorf("request content type = %q", got)
-		}
-		w.Header().Set("Content-Type", merkledag.MerkleDAGCARReadMediaType)
-		_, _ = w.Write(encoded)
-	}))
-	defer server.Close()
-
-	remote, err := client.NewWithBaseURL(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compatibility, err := merkledag.New(remote)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := compatibility.ReadMerkleDAGCARVerified(t.Context(), fixture.root, fixture.segments)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(result.Data, fixture.payload) || result.Metrics.NetworkRequests != 1 {
-		t.Fatalf("CAR result = data %q metrics %+v", result.Data, result.Metrics)
 	}
 }
 
@@ -340,22 +304,6 @@ func TestDirectCASReadRejectsHostileSourcesAndPaths(t *testing.T) {
 			t.Fatalf("unsupported root triggered %d CAS GETs", len(getter.requests))
 		}
 	})
-}
-
-func TestMerkleDAGCARTransportRejectsWrongMediaType(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write([]byte("not a CAR"))
-	}))
-	defer server.Close()
-	remote, err := client.NewWithBaseURL(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = remote.PostMerkleDAGCARRead(t.Context(), []byte(`{}`))
-	if err == nil || !strings.Contains(err.Error(), "content type") {
-		t.Fatalf("wrong media type error = %v", err)
-	}
 }
 
 var _ merkledag.BlockGetter = (*hostileBlockGetter)(nil)

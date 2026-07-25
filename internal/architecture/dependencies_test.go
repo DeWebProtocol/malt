@@ -31,9 +31,94 @@ func TestPackageBoundaries(t *testing.T) {
 	}
 }
 
+func TestProductionPackagesDoNotImportEvaluation(t *testing.T) {
+	root := moduleRoot(t)
+	set := token.NewFileSet()
+	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if relative == filepath.Join("internal", "evaluation") ||
+				relative == filepath.Join("tools", "evaluation") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(filePath) != ".go" || strings.HasSuffix(filePath, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(set, filePath, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, spec := range file.Imports {
+			value, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return err
+			}
+			if value == "github.com/dewebprotocol/malt-client/internal/evaluation" ||
+				strings.HasPrefix(value, "github.com/dewebprotocol/malt-client/internal/evaluation/") {
+				t.Errorf("%s imports forbidden production dependency %s", filePath, value)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommandNamespacesSeparateProductAndEvaluationBinaries(t *testing.T) {
+	root := moduleRoot(t)
+	productEntries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	productCommands := make([]string, 0)
+	for _, entry := range productEntries {
+		if entry.IsDir() {
+			productCommands = append(productCommands, entry.Name())
+		}
+	}
+	if len(productCommands) != 1 || productCommands[0] != "malt" {
+		t.Fatalf("cmd must contain only the production malt command, got %v", productCommands)
+	}
+
+	evaluationEntries, err := os.ReadDir(filepath.Join(root, "tools", "evaluation", "cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evaluationEntries) == 0 {
+		t.Fatal("evaluation command namespace is empty")
+	}
+	for _, entry := range evaluationEntries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "malt-eval-") {
+			t.Errorf("tools/evaluation/cmd contains non-evaluation entry %q", entry.Name())
+		}
+	}
+}
+
+func TestPublicTransportContainsNoEvaluationControlPlane(t *testing.T) {
+	checkSourceTokens(t, filepath.Join(moduleRoot(t), "transport"), []string{
+		"/v1/evaluation/",
+		"X-Malt-Evaluation-",
+		"GetRawForLocalCIDVerification",
+		"PostMerkleDAGCARRead",
+		"BootstrapEvaluationObject",
+	})
+}
+
 func TestGenericTransportContainsNoUnixFSPayloadBinding(t *testing.T) {
-	root := filepath.Join(moduleRoot(t), "transport")
-	forbidden := []string{"CreatePayloadRoot", "@payload", "bafkqaaa"}
+	checkSourceTokens(t, filepath.Join(moduleRoot(t), "transport"), []string{"CreatePayloadRoot", "@payload", "bafkqaaa"})
+}
+
+func checkSourceTokens(t *testing.T, root string, forbidden []string) {
+	t.Helper()
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -47,7 +132,7 @@ func TestGenericTransportContainsNoUnixFSPayloadBinding(t *testing.T) {
 		}
 		for _, token := range forbidden {
 			if strings.Contains(string(data), token) {
-				t.Errorf("%s contains UnixFS payload-binding token %q", path, token)
+				t.Errorf("%s contains forbidden architecture token %q", path, token)
 			}
 		}
 		return nil
