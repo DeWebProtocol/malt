@@ -2,12 +2,15 @@ import { webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const [wasmPath, wasmExecPath, corpusPath] = process.argv.slice(2);
+const [wasmPath, wasmExecPath, corpusPath, selectedBackend = "all"] = process.argv.slice(2);
 if (!wasmPath || !wasmExecPath || !corpusPath) {
   console.error(
-    "usage: node run-verifier-wasm-vectors.mjs <verifier.wasm> <wasm_exec.js> <vectors.json>",
+    "usage: node run-verifier-wasm-vectors.mjs <verifier.wasm> <wasm_exec.js> <vectors.json> [all|kzg|ipa]",
   );
   process.exit(2);
+}
+if (!["all", "kzg", "ipa"].includes(selectedBackend)) {
+  throw new Error(`unsupported verifier backend ${JSON.stringify(selectedBackend)}`);
 }
 
 if (!globalThis.crypto) {
@@ -24,6 +27,7 @@ if (!Array.isArray(corpus.vectors) || corpus.vectors.length === 0) {
   throw new Error(`${corpusPath} does not contain a non-empty vectors array`);
 }
 
+globalThis.maltVerifierBackend = selectedBackend;
 const go = new globalThis.Go();
 const wasm = await readFile(wasmPath);
 const { instance } = await WebAssembly.instantiate(wasm, go.importObject);
@@ -34,9 +38,15 @@ void go.run(instance).catch((error) => {
 
 await waitForVerifierGlobals();
 
+const vectors =
+  selectedBackend === "all"
+    ? corpus.vectors
+    : corpus.vectors.filter(
+        (vector) => vector.backend === selectedBackend || vector.backend === "none",
+      );
 const seen = new Set();
 const failures = [];
-for (const vector of corpus.vectors) {
+for (const vector of vectors) {
   const label = typeof vector.id === "string" ? vector.id : "<missing-id>";
   try {
     validateEnvelope(vector, seen);
@@ -57,14 +67,14 @@ for (const vector of corpus.vectors) {
 }
 
 if (failures.length > 0) {
-  console.error(`WASM conformance failed (${failures.length}/${corpus.vectors.length}):`);
+  console.error(`WASM ${selectedBackend} conformance failed (${failures.length}/${vectors.length}):`);
   for (const failure of failures) {
     console.error(`- ${failure}`);
   }
   process.exit(1);
 }
 
-console.log(`WASM conformance passed (${corpus.vectors.length} vectors)`);
+console.log(`WASM ${selectedBackend} conformance passed (${vectors.length} vectors)`);
 process.exit(0);
 
 function selectVerifier(operation) {
@@ -98,7 +108,7 @@ function validateEnvelope(vector, ids) {
 }
 
 async function waitForVerifierGlobals() {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     if (runtimeFailure) {
       throw new Error(`Go WASM runtime failed: ${runtimeFailure}`);
@@ -107,6 +117,14 @@ async function waitForVerifierGlobals() {
       typeof globalThis.maltVerifyResolve === "function" &&
       typeof globalThis.maltVerifyRead === "function"
     ) {
+      if (globalThis.maltVerifierInitError) {
+        throw new Error(`MALT verifier initialization failed: ${globalThis.maltVerifierInitError}`);
+      }
+      if (globalThis.maltVerifierLoadedBackend !== selectedBackend) {
+        throw new Error(
+          `MALT verifier loaded backend ${JSON.stringify(globalThis.maltVerifierLoadedBackend)}, expected ${JSON.stringify(selectedBackend)}`,
+        );
+      }
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
