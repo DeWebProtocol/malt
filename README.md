@@ -19,9 +19,14 @@ line client, daemon, UnixFS model, or website.
 
 [Documentation](./docs/README.md) · [Architecture](./ARCHITECTURE.md) ·
 [Resolve/read contracts](./docs/spec/resolve-read-contracts.md) ·
+[Client-root contract](./docs/spec/client-root-contract.md) ·
 [ProofList](./docs/spec/prooflist-format.md) ·
 [Compatibility](./docs/policy/compatibility.md) ·
 [v0.0.6 release](./docs/releases/v0.0.6.md) · [Roadmap](./ROADMAP.md)
+
+`v0.0.6` is the current tagged release. The client-root profiles and
+`sdk/writer` are experimental post-release contracts on `main`; their `/v1`
+profile suffixes do not declare the Go module or project stable at v1.
 
 ## Boundary
 
@@ -31,6 +36,7 @@ MALT core owns:
 - typed map/list roots and CID rules;
 - map/list commitment, proof, and verification algorithms;
 - `malt.resolve/v0alpha1` and `malt.read/v0alpha1` values and JSON Schemas;
+- complete-view client-root values, schemas, and local candidate computation;
 - ProofList generation/verification semantics;
 - portable mutation and receipt values;
 - untrusted resolve/read/apply composition over caller-injected capabilities;
@@ -52,7 +58,7 @@ Those responsibilities are split across independent repositories:
 | [`DeWebProtocol/malt-client`](https://github.com/DeWebProtocol/malt-client) | CLI/daemon plus separate transport, trusted-root policy, UnixFS, payload binding, and Merkle DAG compatibility layers |
 | [`DeWebProtocol/gateway`](https://github.com/DeWebProtocol/gateway) | Untrusted native/compatibility profiles, runtime composition, ArcTable/KV/CAS backends, scope and publication policy |
 | [`DeWebProtocol/malt-evaluation`](https://github.com/DeWebProtocol/malt-evaluation) | Reproducible evaluator, benchmark suites, comparison adapters, plans, and schemas |
-| [`DeWebProtocol/malt-web`](https://github.com/DeWebProtocol/malt-web) | Browser client, local WASM verification, public website and tutorials |
+| [`DeWebProtocol/malt-web`](https://github.com/DeWebProtocol/malt-web) | Public website, tutorials, and browser-local verification tools |
 
 ## Core composition
 
@@ -116,11 +122,13 @@ in the application client.
 | `auth/semantic` | Map/list semantic contracts and reference algorithms |
 | `auth/proof` | ProofList/evidence formats |
 | `auth/verifier` | Storage-free ProofList verification |
-| `protocol` | Versioned serialized resolve/read profiles and schemas |
-| `mutation` | Portable mutation and receipt values |
+| `protocol` | Versioned serialized resolve/read and client-root profiles and schemas |
+| `mutation` | Portable mutation, client-root, and receipt values |
 | `execution` | Untrusted resolve/read/apply composition |
 | `graph` | Resolver, semantic mutation, bootstrap, and explicit reference-writer algorithms over injected capabilities |
 | `sdk/verifier` | Client-facing local verification facade |
+| `sdk/writer` | Complete-view verification and exact client-root computation |
+| `auth/observation` | Optional request-scoped execution diagnostics; never proof evidence |
 | `artifact` | Frozen `malt.artifact/v0alpha2` compatibility decoder/verifier |
 | `cmd/malt-verifier-wasm` | Browser verifier build entry point |
 

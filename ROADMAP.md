@@ -11,8 +11,17 @@ v0.0.6 turns this repository into an SDK-only core:
   materializer capability;
 - keep portable Go/WASM verification independent of execution state;
 - move ArcTable/KV/CAS execution to `gateway`;
-- move trusted roots, CLI/daemon, UnixFS, and payload-byte binding to
-  `malt-client` and Web.
+- move native trusted roots, CLI/daemon, UnixFS, and payload-byte binding to
+  `malt-client`; managed browser application behavior lives in
+  `gateway/console`.
+
+## Post-v0.0.6 main
+
+Current `main` additionally contains the experimental complete-view
+client-root profiles, `sdk/writer` local candidate computation, and optional
+request-scoped phase observations. These contracts are not part of the
+immutable v0.0.6 tag. Before a later release, they need a language-neutral
+accept/reject conformance corpus as well as the checked-in schemas and Go tests.
 
 ## Next core work
 
@@ -33,8 +42,9 @@ v0.0.6 turns this repository into an SDK-only core:
   publication, cache/quota policy, backend availability, and product E2E.
 - `malt-client`: UnixFS CLI/daemon, accepted roots, candidate acceptance,
   local proof verification, and payload-byte validation.
-- `web`: browser application, local WASM verification, and generic
-  resolve/read/CAS composition.
+- `gateway/console`: managed browser account/Bucket application and
+  client-side UnixFS composition.
+- `web`: public explanation, tutorials, and browser-local verification tools.
 - future `malt-ts`: TypeScript object syntax and client ergonomics after core
   conformance is stable.
 

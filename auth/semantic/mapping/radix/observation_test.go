@@ -1,6 +1,7 @@
 package radix
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -33,6 +34,10 @@ func TestProveReportsMaterializationOpenAndSerialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	baselineBinding, baselineProof, err := semanticMap.Prove(context.Background(), "observation", root, arcset.Path("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	collector := new(phaseCollector)
 	ctx := observation.WithObserver(context.Background(), collector)
 	binding, proof, err := semanticMap.Prove(ctx, "observation", root, arcset.Path("payload"))
@@ -41,6 +46,9 @@ func TestProveReportsMaterializationOpenAndSerialization(t *testing.T) {
 	}
 	if !binding.Value.Equals(target) || len(proof) == 0 {
 		t.Fatalf("binding=%#v proof=%d", binding, len(proof))
+	}
+	if binding.Present != baselineBinding.Present || !binding.Value.Equals(baselineBinding.Value) || !bytes.Equal(proof, baselineProof) {
+		t.Fatalf("observation changed result: baseline=%#v/%x observed=%#v/%x", baselineBinding, baselineProof, binding, proof)
 	}
 	seen := map[observation.Phase]bool{}
 	for _, sample := range collector.samples {
