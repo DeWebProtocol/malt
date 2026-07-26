@@ -45,6 +45,14 @@ Start a compatible gateway, then initialize the local client:
 ./bin/malt daemon status
 ```
 
+`malt init` also creates a client-owned `0600` backup keyring. Existing
+installations can initialize only that missing keyring without replacing their
+configuration:
+
+```bash
+./bin/malt backup key-init
+```
+
 For a managed Gateway, set `gateway.api_key` and `gateway.bucket` in the
 generated `0600` config, then observe the initial head before producing or
 pushing local work:
@@ -68,6 +76,99 @@ with the base captured before materialization. The Gateway may fast-forward,
 auto-merge independent map changes, or return a preserved conflict branch.
 Bucket heads remain untrusted observations and are never promoted in
 `roots.json` by this workflow.
+
+## Encrypted backup and restore
+
+With a managed Bucket configured, the daemon is the primary backup adapter:
+
+```bash
+./bin/malt daemon start
+./bin/malt backup ~/Documents
+```
+
+The command snapshots the local tree before observing a newer remote head,
+creates a gzip-compressed tar archive, encrypts it with XChaCha20, materializes
+it at the fixed UnixFS path `malt-backup/snapshot`, stages its candidate root,
+and pushes it through the existing Bucket conflict workflow. Original file and
+directory names exist only inside the encrypted archive. The Gateway can still
+observe the fixed application path, ciphertext sizes, timing, and access
+patterns.
+
+The initial archive profile preserves regular files, directories, permission
+bits, modification times, and safe relative symlinks. It does not yet preserve
+xattrs, ACLs, hard-link identity, sparse-file layout, or device nodes.
+
+This encryption profile applies to `malt backup`; the general-purpose
+`malt add` command retains its existing plaintext UnixFS semantics.
+
+The archive intentionally has no AEAD authentication tag. Restore first
+verifies the caller-selected MALT root and path ProofList, then verifies every
+returned ciphertext block against its authenticated CID, and only then
+decrypts. The CID is calculated normally over the encrypted bytes. Archive
+decoding failure under a wrong key or epoch is an operational validity check,
+not a replacement for MALT/CID integrity.
+
+Backup roots remain candidates. A Gateway Bucket head is never trusted
+automatically. Restore therefore requires an explicit CID selected by the
+caller or a locally accepted alias:
+
+```bash
+./bin/malt restore <candidate-root-from-backup> ./restored
+# or, after an independent/explicit acceptance decision:
+./bin/malt root trust archive-2026-07 <root-cid>
+./bin/malt restore archive-2026-07 ./restored
+```
+
+`malt backup --foreground <path>` is the embedded bypass when the daemon is
+not running. Daemon and foreground operations share a cross-process lock, so
+they cannot race against the same Bucket workspace. Automatic jobs are
+configured without a GUI and reloaded by the daemon without restart:
+
+```bash
+./bin/malt backup schedule set documents ~/Documents --every 6h
+./bin/malt backup schedule list
+./bin/malt backup schedule remove documents
+```
+
+Automatic jobs compute a local plaintext SHA-256 tree fingerprint and skip
+unchanged sources. That fingerprint and source path remain only in the local
+`0600` backup history; they are not sent to the Gateway. If a push response is
+lost, the history also journals the exact candidate, original base, and
+message so the next matching manual or automatic run retries that push instead
+of encrypting a second snapshot. Other failures use a persisted exponential
+retry delay starting at one minute and capped by one hour or the configured
+backup interval, whichever is shorter. `schedule list` reports both job errors
+and scheduler-level configuration errors.
+
+The keyring keeps one random master key per epoch and derives per-Bucket keys
+in memory, so many Buckets do not require many persisted keys. Copy the
+keyring through a separate secure device-enrollment/recovery channel before
+restoring on another device. Losing the keyring makes the encrypted backups
+unrecoverable. `malt backup key-rotate` activates a new epoch for future
+snapshots while retaining old restore keys; it does not re-encrypt existing
+archives. The Gateway never receives these keys.
+
+Client state files use owner-only Unix permissions or a protected
+owner-and-SYSTEM Windows DACL. Custom config, keyring, workspace, trust, and
+backup-history paths must still live in an owner-only directory: protecting a
+file cannot prevent another principal with parent-directory replacement rights
+from deleting and replacing it. Do not place these paths in a shared
+directory.
+
+If the configured staging directory is inside the selected backup source, the
+client uses the system temporary directory instead. It rejects the operation
+when no staging root exists outside the source, and the archive writer
+independently refuses to archive its own output, including through a symlinked
+staging path. Backup sources containing the configured MALT keyring, config,
+workspace, trust store, backup history, or daemon endpoint are rejected rather
+than silently omitted or self-encrypted. Keep device enrollment/recovery
+copies through the separate secure channel described above.
+
+The daemon exposes HTTP semantics over a private user-owned Unix socket or
+Windows named pipe. It does not open a loopback TCP configuration website. A
+future Web or native GUI should be a thin client of that private management
+API; backup, scheduling, trust, and key policy remain reusable application
+services rather than UI logic.
 
 Trust an independently obtained root, resolve a UnixFS path, and add a local
 tree:

@@ -126,6 +126,28 @@ Merkle DAG import, accepted-alias selection, and unaccepted candidate
 recording. The caller injects a narrow graph/fixed-list Gateway and CAS; Cobra
 is not part of this package.
 
+`application/backup` composes encrypted snapshot creation with those add and
+Bucket synchronization ports. `Service.Run` snapshots before remote
+observation, stages before push, and returns the candidate plus the exact push
+outcome when it observes one; crash reconciliation instead marks the result
+and returns the durable workspace state. Neither path promotes the candidate.
+`Restore` accepts only a caller-selected root,
+constructs the standard locally verified UnixFS reader over caller-supplied
+untrusted transport/CAS capabilities, verifies the fixed
+`malt-backup/snapshot` path and every ciphertext range, and decrypts only
+after those checks.
+
+The archive uses XChaCha20 without an AEAD tag because authenticated
+MALT/CID commitments are the integrity layer for this profile. The direct
+archive-decryption helper is package-private, so the exported restore path
+accepts only untrusted transport/CAS capabilities and constructs the standard
+local verifier internally; callers cannot inject a pretrusted reader or a
+permissive verifier to bypass trusted-root and verified-range checks.
+`FingerprintSource`
+provides local-only plaintext change detection, while `Scheduler` and
+`History` implement daemon interval jobs and durable exact-candidate push
+retries without importing configuration or transport implementations.
+
 ## Verified native UnixFS
 
 Construct a reader using narrow ports:

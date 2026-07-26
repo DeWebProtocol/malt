@@ -15,8 +15,10 @@ import (
 	"path/filepath"
 	"time"
 
+	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	clientdaemon "github.com/dewebprotocol/malt-client/internal/daemon"
+	"github.com/dewebprotocol/malt-client/internal/securefile"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/spf13/cobra"
 )
@@ -125,7 +127,16 @@ func runDaemonServe(*cobra.Command, []string) error {
 			return err
 		}
 	}
-	server, err := clientdaemon.NewWithInstance(store, instance)
+	backupRunner := &configuredBackupRunner{}
+	server, err := clientdaemon.NewWithOptions(store, clientdaemon.Options{Instance: instance, Backups: backupRunner})
+	if err != nil {
+		return err
+	}
+	history, err := clientbackup.NewHistory(cfg.Backup.StatePath)
+	if err != nil {
+		return err
+	}
+	scheduler, err := clientbackup.NewScheduler(backupRunner, configuredBackupJobs{}, history, 5*time.Second)
 	if err != nil {
 		return err
 	}
@@ -145,6 +156,7 @@ func runDaemonServe(*cobra.Command, []string) error {
 	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), daemonSignals()...)
 	defer stop()
+	go scheduler.Run(ctx)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -363,7 +375,7 @@ func writeDaemonState(path string, state daemonState) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write daemon state: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := securefile.Secure(path); err != nil {
 		return fmt.Errorf("protect daemon state: %w", err)
 	}
 	return nil

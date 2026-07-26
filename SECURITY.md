@@ -14,3 +14,15 @@ local file traversal, Unix-socket permission issues, and trusted-root state
 corruption. Merkle DAG import reports should also cover malformed dag-pb
 construction, unsafe local traversal, ignore-policy bypass, or a gateway CAS
 response accepted without binding it to the uploaded block bytes.
+
+Encrypted-backup reports should include decryption before root/ProofList/CID
+verification, nonce reuse, keyring permission or replacement failures,
+plaintext path/fingerprint disclosure to the Gateway, unsafe tar extraction,
+symlink traversal, or automatic trust of a pushed Bucket head. The backup
+profile intentionally uses XChaCha20 without an AEAD tag; its remote integrity
+claim is valid only through the documented authenticated-root restore path.
+
+Configurable local state and key paths must be placed in a dedicated
+owner-only directory. MALT applies owner-only file protection, including a
+protected Windows DACL, but cannot prevent replacement by another principal
+that already controls the parent directory.

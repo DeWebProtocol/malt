@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/securefile"
 	"github.com/dewebprotocol/malt-client/transport"
 	cid "github.com/ipfs/go-cid"
 )
@@ -209,6 +210,69 @@ func (s *Service) Stage(candidateRoot cid.Cid, base Head, changeSet cid.Cid, mes
 	return stash, nil
 }
 
+// RestorePending reinstates an exact frozen stash from a separate durable
+// journal. It never generates a new stash or push ID and is intended only for
+// crash recovery before retrying Push.
+func (s *Service) RestorePending(stash Stash) (Stash, error) {
+	if stash.ID == "" || stash.PushID == "" || stash.Status != "pending" || !stash.RequestFrozen {
+		return Stash{}, fmt.Errorf("restored Bucket stash identity is incomplete")
+	}
+	if _, err := cid.Parse(stash.CandidateRoot); err != nil {
+		return Stash{}, fmt.Errorf("restored Bucket stash candidate: %w", err)
+	}
+	if err := validateHead(stash.Base); err != nil {
+		return Stash{}, fmt.Errorf("restored Bucket stash base: %w", err)
+	}
+	if stash.ChangeSetCID != "" {
+		if _, err := cid.Parse(stash.ChangeSetCID); err != nil {
+			return Stash{}, fmt.Errorf("restored Bucket stash change set: %w", err)
+		}
+	}
+	stash.Message = strings.TrimSpace(stash.Message)
+	if stash.CreatedAt.IsZero() {
+		return Stash{}, fmt.Errorf("restored Bucket stash creation time is missing")
+	}
+	var result Stash
+	if err := s.withState(true, func() error {
+		workspace := s.workspace()
+		if !workspace.Initialized {
+			return ErrNotInitialized
+		}
+		for _, existing := range workspace.Stashes {
+			if existing.ID == stash.ID {
+				if !sameFrozenStash(existing, stash) {
+					return fmt.Errorf("restored Bucket stash conflicts with local stash %s", stash.ID)
+				}
+				result = existing
+				return nil
+			}
+			if existing.Status == "pending" && existing.CandidateRoot == stash.CandidateRoot {
+				return fmt.Errorf("restored Bucket stash candidate already has a different pending identity")
+			}
+		}
+		stash.UpdatedAt = time.Now().UTC()
+		workspace.Stashes = append(workspace.Stashes, stash)
+		workspace.UpdatedAt = stash.UpdatedAt
+		s.state.Workspaces[s.bucketID] = workspace
+		result = stash
+		return nil
+	}); err != nil {
+		return Stash{}, err
+	}
+	return result, nil
+}
+
+func sameFrozenStash(existing, restored Stash) bool {
+	return existing.ID == restored.ID &&
+		existing.PushID == restored.PushID &&
+		existing.CandidateRoot == restored.CandidateRoot &&
+		existing.Base == restored.Base &&
+		existing.ChangeSetCID == restored.ChangeSetCID &&
+		existing.Message == restored.Message &&
+		existing.RequestFrozen &&
+		existing.Status == "pending"
+}
+
 // Push submits a previously staged candidate. It never infers a base from the
 // workspace at push time. A failed fetch or push leaves the stash pending for
 // a later retry with the same push ID.
@@ -382,6 +446,9 @@ func (s *Service) reload() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if err := securefile.Secure(s.path); err != nil {
+		return false, fmt.Errorf("protect Bucket workspace: %w", err)
+	}
 	var state persistedState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return false, fmt.Errorf("decode Bucket workspace: %w", err)
@@ -477,7 +544,7 @@ func (s *Service) write() error {
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := securefile.Secure(name); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -494,6 +561,9 @@ func (s *Service) write() error {
 	}
 	if err := os.Rename(name, s.path); err != nil {
 		return err
+	}
+	if err := securefile.Secure(s.path); err != nil {
+		return fmt.Errorf("protect Bucket workspace: %w", err)
 	}
 	// The rename is already committed from the caller's perspective. Directory
 	// sync is best-effort because some supported filesystems reject it, and an

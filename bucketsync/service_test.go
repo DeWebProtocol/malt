@@ -131,6 +131,57 @@ func TestFailedFetchLeavesPendingStash(t *testing.T) {
 	}
 }
 
+func TestRestorePendingReinstatesExactFrozenPushIdentity(t *testing.T) {
+	baseRoot := testCID(t, "base")
+	candidateRoot := testCID(t, "candidate")
+	now := time.Now().UTC()
+	gateway := &fakeGateway{head: testHead("cmt_base", baseRoot, 1, now)}
+	path := filepath.Join(t.TempDir(), "buckets.json")
+	service, err := Open(path, gateway, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	base, err := service.CurrentBase(baseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stash := Stash{
+		ID: "stash-recovered", PushID: "push-recovered",
+		CandidateRoot: candidateRoot.String(), Base: base, Message: "snapshot",
+		RequestFrozen: true, Status: "pending", CreatedAt: now,
+	}
+	restored, err := service.RestorePending(stash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != stash.ID || restored.PushID != stash.PushID || !restored.RequestFrozen {
+		t.Fatalf("restored stash = %#v", restored)
+	}
+	reopened, err := Open(path, gateway, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := reopened.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workspace.Stashes) != 1 || workspace.Stashes[0].ID != stash.ID ||
+		workspace.Stashes[0].PushID != stash.PushID {
+		t.Fatalf("persisted restored stash = %#v", workspace.Stashes)
+	}
+	if _, err := reopened.RestorePending(stash); err != nil {
+		t.Fatalf("exact restore was not idempotent: %v", err)
+	}
+	conflict := stash
+	conflict.PushID = "different"
+	if _, err := reopened.RestorePending(conflict); err == nil {
+		t.Fatal("conflicting restored stash identity was accepted")
+	}
+}
+
 func TestPushRequiresAnObservedBase(t *testing.T) {
 	gateway := &fakeGateway{}
 	service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")

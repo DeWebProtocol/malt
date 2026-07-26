@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/durablefile"
+	"github.com/dewebprotocol/malt-client/internal/securefile"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -249,6 +251,9 @@ func (s *Store) reloadLocked() error {
 	if err != nil {
 		return fmt.Errorf("read trust store: %w", err)
 	}
+	if err := securefile.Secure(s.path); err != nil {
+		return fmt.Errorf("protect trust store: %w", err)
+	}
 	var next state
 	if err := json.Unmarshal(data, &next); err != nil {
 		return fmt.Errorf("decode trust store: %w", err)
@@ -306,7 +311,7 @@ func (s *Store) writeLocked() error {
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := securefile.Secure(tmpName); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -323,6 +328,12 @@ func (s *Store) writeLocked() error {
 	}
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("replace trust store: %w", err)
+	}
+	if err := durablefile.SyncParent(s.path); err != nil {
+		return fmt.Errorf("sync trust-store directory: %w", err)
+	}
+	if err := securefile.Secure(s.path); err != nil {
+		return fmt.Errorf("protect trust store: %w", err)
 	}
 	return nil
 }

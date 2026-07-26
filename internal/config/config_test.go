@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %#o, want 0600", info.Mode().Perm())
 	}
 	loaded, err := Load(path)
@@ -35,6 +36,9 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.Gateway.APIKey != "secret" || loaded.Gateway.Bucket != "bkt_one" || loaded.Workspace.StatePath == "" {
 		t.Fatalf("managed Gateway config = %#v, workspace = %#v", loaded.Gateway, loaded.Workspace)
 	}
+	if loaded.Backup.KeyringPath == "" || loaded.Backup.StatePath == "" || loaded.Backup.TempDir == "" {
+		t.Fatalf("backup defaults missing: %#v", loaded.Backup)
+	}
 }
 
 func TestLoadAppliesMissingDefaults(t *testing.T) {
@@ -46,8 +50,23 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" {
+	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" || loaded.Backup.KeyringPath == "" {
 		t.Fatalf("daemon defaults missing: %#v", loaded.Daemon)
+	}
+}
+
+func TestValidateBackupJobs(t *testing.T) {
+	cfg, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Backup.Jobs = []BackupJobConfig{{Name: "docs", Source: "/data/docs", Every: "1h", Enabled: true}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Backup.Jobs = append(cfg.Backup.Jobs, cfg.Backup.Jobs[0])
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("duplicate backup job was accepted")
 	}
 }
 
@@ -68,7 +87,7 @@ func TestWriteTightensExistingConfigPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %#o, want 0600", info.Mode().Perm())
 	}
 }
