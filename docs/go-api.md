@@ -201,6 +201,15 @@ directory-manifest bytes are rehashed against authenticated CIDs. Measured-list
 reads locally verify the exact list-range ProofList, every segment CID, the
 resolve-to-read root transition, and the assembled byte body.
 
+`Stat.Entries` contains the parent-authenticated `name` and `type` (`dir` or
+`file`) for immediate children. `Stat.StorageKind` continues to describe the
+resolved node's MALT/CAS kind for compatibility, while `Stat.PayloadKind`
+describes the actual raw or measured-list payload. These fields are
+independent: in particular, a manifest may project a Map-backed node as a file.
+`Resolve`, `Stat`, and file reads validate every UnixFS path segment against
+the relevant parent manifest and refuse to traverse through an entry projected
+as a file.
+
 `RemovePath` rematerializes immutable changed directories and verifies the new
 root for internal consistency. Its result always contains `accepted: false`.
 Only an explicit trust-store action or independent publication policy can

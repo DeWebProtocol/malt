@@ -62,11 +62,12 @@ func loadStagedCurrentDirRecursive(ctx context.Context, statter StagedPathStatte
 	if err != nil {
 		return nil, fmt.Errorf("read directory manifest %s: %w", stat.Payload, err)
 	}
-	entries, err := unixfsmodel.ParseDirectoryManifest(payload)
+	manifest, err := unixfsmodel.ParseDirectoryManifest(payloadCID, payload)
 	if err != nil {
 		return nil, fmt.Errorf("parse directory manifest %s: %w", stat.Payload, err)
 	}
-	for _, childName := range entries {
+	for _, entry := range manifest.Entries {
+		childName := entry.Name
 		childPath := childName
 		if currentPath != "" {
 			childPath = path.Join(currentPath, childName)
@@ -75,7 +76,19 @@ func loadStagedCurrentDirRecursive(ctx context.Context, statter StagedPathStatte
 		if err != nil {
 			return nil, err
 		}
-		switch childStat.Kind {
+		projectedKind := childStat.Kind
+		if entry.Type != unixfsmodel.DirectoryEntryTypeUnknown {
+			projectedKind = string(entry.Type)
+			if childStat.Kind != projectedKind {
+				return nil, fmt.Errorf(
+					"authenticated directory manifest declares %q as %q, stat returned %q",
+					childPath,
+					projectedKind,
+					childStat.Kind,
+				)
+			}
+		}
+		switch projectedKind {
 		case StagedKindDirectory:
 			childDir, err := loadStagedCurrentDirRecursive(ctx, statter, blocks, root, childPath, childStat)
 			if err != nil {

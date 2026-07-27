@@ -278,6 +278,15 @@ ancestor maps retain descendant root-relative path bindings. Pure `flat` and
 pure `hierarchical` strategies remain design and evaluation counterfactuals;
 they are not accepted CLI values.
 
+UnixFS file/directory projection is authenticated by each parent directory's
+typed V2 manifest rather than inferred from a child's MALT semantic kind. A
+Map-backed object can therefore be a UnixFS file with an `@payload` arc and
+other application arcs such as `@comments`; UnixFS path traversal still stops
+at that file. Historical V1 manifests remain readable with their locked
+Map-to-directory and List/CAS-to-file fallback. See
+[the UnixFS manifest format](./docs/unixfs-manifest.md) for the wire and
+compatibility rules.
+
 The same client can materialize one local file or directory as an
 IPFS-compatible Merkle DAG while reusing the gateway CAS:
 

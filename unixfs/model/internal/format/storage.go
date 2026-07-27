@@ -12,7 +12,7 @@ func StorageKindFromCID(c cid.Cid) string {
 		return ""
 	}
 	switch c.Prefix().Codec {
-	case 0x55:
+	case cid.Raw, CodecMaltManifestV1, CodecMaltManifestV2:
 		return "raw"
 	}
 	switch maltcid.SemanticKindOf(c) {

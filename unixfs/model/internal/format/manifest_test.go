@@ -5,59 +5,47 @@ import (
 
 	unixfsformat "github.com/dewebprotocol/malt-client/unixfs/model/internal/format"
 	"github.com/dewebprotocol/malt/wire/maltcid"
+	cid "github.com/ipfs/go-cid"
 )
 
-func TestNewManifestCID(t *testing.T) {
-	payload := []byte(`{"entries":["docs","readme.md"]}`)
-	c, err := unixfsformat.NewManifestCID(payload)
+func TestNewManifestCIDUsesV2Codec(t *testing.T) {
+	value, err := unixfsformat.NewManifestCID([]byte(`{"entries":[]}`))
 	if err != nil {
 		t.Fatalf("NewManifestCID: %v", err)
 	}
-	if c.Prefix().Codec != unixfsformat.CodecMaltManifest {
-		t.Fatalf("codec %x, want %x", c.Prefix().Codec, unixfsformat.CodecMaltManifest)
+	if value.Prefix().Codec != unixfsformat.CodecMaltManifestV2 {
+		t.Fatalf("codec %x, want %x", value.Prefix().Codec, unixfsformat.CodecMaltManifestV2)
 	}
-	if !unixfsformat.IsManifestCID(c) {
-		t.Fatal("manifest CID should be recognized")
-	}
-}
-
-func TestCodecName(t *testing.T) {
-	if got := unixfsformat.CodecName(unixfsformat.CodecMaltManifest); got != "malt-manifest" {
-		t.Fatalf("CodecName = %q, want malt-manifest", got)
+	if !unixfsformat.IsManifestCID(value) {
+		t.Fatal("V2 manifest CID should be recognized")
 	}
 }
 
-func TestManifestCIDDoesNotOverlapMaltStructureCID(t *testing.T) {
-	manifestCID, err := unixfsformat.NewManifestCID([]byte(`{"entries":["a.txt"]}`))
+func TestManifestCodecVersionsAreDistinctAndOutsideCore(t *testing.T) {
+	payload := []byte(`{"entries":[]}`)
+	v1, err := unixfsformat.NewManifestCIDWithCodec(payload, unixfsformat.CodecMaltManifestV1)
 	if err != nil {
-		t.Fatalf("NewManifestCID: %v", err)
+		t.Fatal(err)
 	}
-	if codec := manifestCID.Prefix().Codec; codec >= 0x300000 && codec <= 0x30ffff {
-		t.Fatalf("manifest codec %x occupies the reserved 0x30VSBB typed-root namespace", codec)
-	}
-	if maltcid.IsMaltCid(manifestCID) {
-		t.Fatal("manifest CID should not be recognized as a MALT map/list root")
-	}
-	if got := maltcid.SemanticKindOf(manifestCID); got != maltcid.SemanticKindUnknown {
-		t.Fatalf("manifest semantic kind = %q, want %q", got, maltcid.SemanticKindUnknown)
-	}
-	if got := maltcid.GetMaltCodec(manifestCID); got != 0 {
-		t.Fatalf("manifest malt codec = %x, want 0", got)
-	}
-
-	mapCID, err := maltcid.NewMapKZGCid(make([]byte, maltcid.KZGCommitmentSize))
+	v2, err := unixfsformat.NewManifestCIDWithCodec(payload, unixfsformat.CodecMaltManifestV2)
 	if err != nil {
-		t.Fatalf("NewMapKZGCid: %v", err)
+		t.Fatal(err)
 	}
-	if unixfsformat.IsManifestCID(mapCID) {
-		t.Fatal("MALT map root should not be recognized as a UnixFS manifest")
+	if v1.Equals(v2) {
+		t.Fatal("manifest versions must have distinct CIDs")
 	}
-
-	listCID, err := maltcid.NewListKZGCid(make([]byte, maltcid.KZGCommitmentSize))
-	if err != nil {
-		t.Fatalf("NewListKZGCid: %v", err)
+	for _, value := range []cid.Cid{v1, v2} {
+		if codec := value.Prefix().Codec; codec >= 0x300000 && codec <= 0x30ffff {
+			t.Fatalf("manifest codec %x occupies the MALT typed-root namespace", codec)
+		}
+		if maltcid.IsMaltCid(value) {
+			t.Fatal("manifest should not be recognized as a MALT root")
+		}
 	}
-	if unixfsformat.IsManifestCID(listCID) {
-		t.Fatal("MALT list root should not be recognized as a UnixFS manifest")
+	if got := unixfsformat.CodecName(unixfsformat.CodecMaltManifestV1); got != "malt-unixfs-directory-manifest-json-v1" {
+		t.Fatalf("V1 name = %q", got)
+	}
+	if got := unixfsformat.CodecName(unixfsformat.CodecMaltManifestV2); got != "malt-unixfs-directory-manifest-json-v2" {
+		t.Fatalf("V2 name = %q", got)
 	}
 }

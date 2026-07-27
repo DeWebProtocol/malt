@@ -285,7 +285,7 @@ func buildDirectoryBlueprint(directoryPath string, index *directoryIndex, files 
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	manifestRaw, err := unixfsmodel.DirectoryManifestPayload(names)
+	manifestRaw, err := unixfsmodel.DirectoryManifestPayload(directoryManifestEntries(names, index))
 	if err != nil {
 		return nil, classifiedBlock{}, fmt.Errorf("encode directory blueprint manifest %q: %w", directoryPath, err)
 	}

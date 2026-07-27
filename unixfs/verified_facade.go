@@ -58,16 +58,19 @@ type Resolution struct {
 
 // Stat is the verified UnixFS projection of one path.
 type Stat struct {
-	Kind           string               `json:"kind"`
-	NodeRoot       cid.Cid              `json:"node_root"`
-	Payload        cid.Cid              `json:"payload"`
-	StorageKind    string               `json:"storage_kind"`
-	Size           uint64               `json:"size,omitempty"`
-	ChunkSize      uint64               `json:"chunk_size,omitempty"`
-	Entries        []string             `json:"entries,omitempty"`
-	Resolution     Resolution           `json:"resolution"`
-	PayloadBinding *Resolution          `json:"payload_binding,omitempty"`
-	MetadataRead   *protocol.ReadResult `json:"metadata_read,omitempty"`
+	Kind           string                       `json:"kind"`
+	NodeRoot       cid.Cid                      `json:"node_root"`
+	Payload        cid.Cid                      `json:"payload"`
+	StorageKind    string                       `json:"storage_kind"`
+	PayloadKind    string                       `json:"payload_kind"`
+	Size           uint64                       `json:"size,omitempty"`
+	ChunkSize      uint64                       `json:"chunk_size,omitempty"`
+	Entries        []unixfsmodel.DirectoryEntry `json:"entries,omitempty"`
+	Resolution     Resolution                   `json:"resolution"`
+	PayloadBinding *Resolution                  `json:"payload_binding,omitempty"`
+	MetadataRead   *protocol.ReadResult         `json:"metadata_read,omitempty"`
+	rawBody        []byte
+	rawBodyLoaded  bool
 }
 
 // ReadResult contains only bytes that have been bound to locally verified
@@ -218,7 +221,8 @@ func (r *verifiedReader) Resolve(ctx context.Context, trustedRoot cid.Cid, rawPa
 	if err != nil {
 		return nil, err
 	}
-	return r.resolveSegments(ctx, trustedRoot, segments)
+	resolution, _, err := r.resolveUnixFSPath(ctx, trustedRoot, segments)
+	return resolution, err
 }
 
 func (r *verifiedReader) resolveSegments(ctx context.Context, trustedRoot cid.Cid, segments []string) (*Resolution, error) {
@@ -243,81 +247,223 @@ func (r *verifiedReader) resolveSegments(ctx context.Context, trustedRoot cid.Ci
 	return &Resolution{Request: request, Result: *result, Target: target}, nil
 }
 
+// resolveUnixFSPath verifies both the Core arc path and the UnixFS projection
+// declared by each parent manifest. Core permits traversal through any
+// explicit arc; UnixFS permits path traversal only through entries declared as
+// directories.
+func (r *verifiedReader) resolveUnixFSPath(
+	ctx context.Context,
+	trustedRoot cid.Cid,
+	segments []string,
+) (*Resolution, unixfsmodel.DirectoryEntryType, error) {
+	if len(segments) == 0 {
+		resolution, err := r.resolveSegments(ctx, trustedRoot, nil)
+		return resolution, unixfsmodel.DirectoryEntryTypeDir, err
+	}
+
+	var terminal *Resolution
+	entryType := unixfsmodel.DirectoryEntryTypeUnknown
+	for index, segment := range segments {
+		parentSegments := segments[:index]
+		manifest, _, _, err := r.readDirectoryManifest(ctx, trustedRoot, parentSegments)
+		if err != nil {
+			return nil, "", err
+		}
+		entry, ok := directoryManifestEntry(manifest, segment)
+		if !ok {
+			return nil, "", fmt.Errorf("%w: %s", ErrNotFound, path.Join(segments[:index+1]...))
+		}
+		terminal, err = r.resolveSegments(ctx, trustedRoot, segments[:index+1])
+		if err != nil {
+			return nil, "", err
+		}
+		entryType = entry.Type
+		if entryType == unixfsmodel.DirectoryEntryTypeUnknown {
+			entryType, err = legacyV1EntryType(terminal.Target)
+			if err != nil {
+				return nil, "", err
+			}
+		}
+		if index < len(segments)-1 && entryType != unixfsmodel.DirectoryEntryTypeDir {
+			return nil, "", fmt.Errorf("%w: %s", ErrNotDirectory, path.Join(segments[:index+1]...))
+		}
+	}
+	return terminal, entryType, nil
+}
+
+func (r *verifiedReader) readDirectoryManifest(
+	ctx context.Context,
+	trustedRoot cid.Cid,
+	segments []string,
+) (*unixfsmodel.DirectoryManifest, cid.Cid, *Resolution, error) {
+	node, err := r.resolveSegments(ctx, trustedRoot, segments)
+	if err != nil {
+		return nil, cid.Undef, nil, err
+	}
+	payloadTarget := node.Target
+	var payloadBinding *Resolution
+	switch unixfsmodel.StorageKindFromCID(node.Target) {
+	case "map":
+		payloadSegments := append(append([]string(nil), segments...), "@payload")
+		payloadBinding, err = r.resolveSegments(ctx, trustedRoot, payloadSegments)
+		if err != nil {
+			return nil, cid.Undef, nil, fmt.Errorf("resolve directory manifest: %w", err)
+		}
+		payloadTarget = payloadBinding.Target
+	case "raw":
+		// A parent-authenticated directory projection may point directly to
+		// manifest bytes. Descendant path arcs can remain authenticated by an
+		// ancestor Map, so directory projection does not require this node to
+		// be a Map with an @payload arc.
+	default:
+		return nil, cid.Undef, nil, fmt.Errorf("%w: %s", ErrNotDirectory, path.Join(segments...))
+	}
+	payload, err := r.getBoundBlock(ctx, payloadTarget)
+	if err != nil {
+		return nil, cid.Undef, nil, fmt.Errorf("fetch directory manifest: %w", err)
+	}
+	decoded, err := unixfsmodel.ParseDirectoryManifest(payloadTarget, payload)
+	if err != nil {
+		return nil, cid.Undef, nil, fmt.Errorf("parse authenticated directory manifest: %w", err)
+	}
+	return decoded, payloadTarget, payloadBinding, nil
+}
+
+func directoryManifestEntry(
+	manifest *unixfsmodel.DirectoryManifest,
+	name string,
+) (unixfsmodel.DirectoryEntry, bool) {
+	if manifest == nil {
+		return unixfsmodel.DirectoryEntry{}, false
+	}
+	index, found := slices.BinarySearchFunc(manifest.Entries, name, func(entry unixfsmodel.DirectoryEntry, target string) int {
+		switch {
+		case entry.Name < target:
+			return -1
+		case entry.Name > target:
+			return 1
+		default:
+			return 0
+		}
+	})
+	if !found {
+		return unixfsmodel.DirectoryEntry{}, false
+	}
+	return manifest.Entries[index], true
+}
+
+func legacyV1EntryType(target cid.Cid) (unixfsmodel.DirectoryEntryType, error) {
+	switch unixfsmodel.StorageKindFromCID(target) {
+	case "map":
+		return unixfsmodel.DirectoryEntryTypeDir, nil
+	case "list", "raw":
+		return unixfsmodel.DirectoryEntryTypeFile, nil
+	default:
+		return "", fmt.Errorf("unsupported legacy UnixFS target CID %s", target)
+	}
+}
+
 func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*Stat, error) {
-	resolution, err := r.Resolve(ctx, trustedRoot, rawPath)
+	segments, err := unixfsmodel.ParsePath(rawPath)
 	if err != nil {
 		return nil, err
 	}
-	stat := &Stat{NodeRoot: resolution.Target, Payload: resolution.Target, StorageKind: unixfsmodel.StorageKindFromCID(resolution.Target), Resolution: *resolution}
-	switch stat.StorageKind {
-	case "map":
-		segments := append([]string(nil), resolution.Request.Segments...)
-		segments = append(segments, "@payload")
-		payloadBinding, err := r.resolveSegments(ctx, trustedRoot, segments)
-		if err != nil {
-			return nil, fmt.Errorf("resolve directory manifest: %w", err)
-		}
-		manifest, err := r.getBoundBlock(ctx, payloadBinding.Target)
-		if err != nil {
-			return nil, fmt.Errorf("fetch directory manifest: %w", err)
-		}
-		entries, err := unixfsmodel.ParseDirectoryManifest(manifest)
-		if err != nil {
-			return nil, fmt.Errorf("parse authenticated directory manifest: %w", err)
-		}
-		stat.Kind = StagedKindDirectory
-		stat.Payload = payloadBinding.Target
-		stat.StorageKind = "map"
-		stat.Entries = entries
-		stat.PayloadBinding = payloadBinding
-		return stat, nil
-	case "list":
-		metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, resolution.Target)
+	resolution, entryType, err := r.resolveUnixFSPath(ctx, trustedRoot, segments)
+	if err != nil {
+		return nil, err
+	}
+	targetKind := unixfsmodel.StorageKindFromCID(resolution.Target)
+	stat := &Stat{
+		NodeRoot: resolution.Target, Payload: resolution.Target,
+		StorageKind: targetKind, PayloadKind: targetKind, Resolution: *resolution,
+	}
+	switch entryType {
+	case unixfsmodel.DirectoryEntryTypeDir:
+		manifest, payloadTarget, payloadBinding, err := r.readDirectoryManifest(ctx, trustedRoot, segments)
 		if err != nil {
 			return nil, err
 		}
-		stat.Kind = StagedKindFile
-		stat.StorageKind = "list"
-		stat.Size = totalSize
-		stat.ChunkSize = chunkSize
-		stat.MetadataRead = metadata
+		stat.Kind = StagedKindDirectory
+		stat.Payload = payloadTarget
+		stat.PayloadKind = unixfsmodel.StorageKindFromCID(payloadTarget)
+		stat.Entries = append([]unixfsmodel.DirectoryEntry(nil), manifest.Entries...)
+		stat.PayloadBinding = payloadBinding
 		return stat, nil
-	case "raw":
-		body, err := r.getBoundBlock(ctx, resolution.Target)
-		if err != nil {
-			return nil, fmt.Errorf("fetch raw file payload: %w", err)
-		}
+	case unixfsmodel.DirectoryEntryTypeFile:
 		stat.Kind = StagedKindFile
-		stat.StorageKind = "raw"
-		stat.Size = uint64(len(body))
+		payloadTarget := resolution.Target
+		if targetKind == "map" {
+			payloadSegments := append(append([]string(nil), segments...), "@payload")
+			payloadBinding, err := r.resolveSegments(ctx, trustedRoot, payloadSegments)
+			if err != nil {
+				return nil, fmt.Errorf("resolve file payload: %w", err)
+			}
+			stat.Payload = payloadBinding.Target
+			stat.PayloadBinding = payloadBinding
+			payloadTarget = payloadBinding.Target
+		}
+		stat.PayloadKind = unixfsmodel.StorageKindFromCID(payloadTarget)
+		switch stat.PayloadKind {
+		case "list":
+			metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, payloadTarget)
+			if err != nil {
+				return nil, err
+			}
+			stat.Size = totalSize
+			stat.ChunkSize = chunkSize
+			stat.MetadataRead = metadata
+		case "raw":
+			body, err := r.getBoundBlock(ctx, payloadTarget)
+			if err != nil {
+				return nil, fmt.Errorf("fetch raw file payload: %w", err)
+			}
+			stat.Size = uint64(len(body))
+			stat.rawBody = body
+			stat.rawBodyLoaded = true
+		default:
+			return nil, fmt.Errorf("unsupported UnixFS file payload CID %s", payloadTarget)
+		}
 		return stat, nil
 	default:
-		return nil, fmt.Errorf("unsupported UnixFS target CID %s", resolution.Target)
+		return nil, fmt.Errorf("unsupported UnixFS entry type %q", entryType)
 	}
 }
 
 func (r *verifiedReader) ReadFile(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*ReadResult, error) {
-	resolution, err := r.Resolve(ctx, trustedRoot, rawPath)
+	stat, err := r.Stat(ctx, trustedRoot, rawPath)
 	if err != nil {
 		return nil, err
 	}
-	return r.readResolvedFile(ctx, resolution, 0, nil)
+	return r.readStatFile(ctx, stat, 0, nil)
 }
 
 func (r *verifiedReader) ReadFileRange(ctx context.Context, trustedRoot cid.Cid, rawPath string, offset, length uint64) (*ReadResult, error) {
-	resolution, err := r.Resolve(ctx, trustedRoot, rawPath)
+	stat, err := r.Stat(ctx, trustedRoot, rawPath)
 	if err != nil {
 		return nil, err
 	}
-	return r.readResolvedFile(ctx, resolution, offset, &length)
+	return r.readStatFile(ctx, stat, offset, &length)
 }
 
-func (r *verifiedReader) readResolvedFile(ctx context.Context, resolution *Resolution, offset uint64, length *uint64) (*ReadResult, error) {
-	switch unixfsmodel.StorageKindFromCID(resolution.Target) {
-	case "map":
+func (r *verifiedReader) readStatFile(ctx context.Context, stat *Stat, offset uint64, length *uint64) (*ReadResult, error) {
+	if stat == nil || stat.Kind != StagedKindFile {
 		return nil, ErrNotFile
+	}
+	resolution := &stat.Resolution
+	if stat.PayloadBinding != nil {
+		resolution = stat.PayloadBinding
+	}
+	switch stat.PayloadKind {
 	case "list":
-		result, err := r.readListPayload(ctx, resolution.Target, offset, length)
+		result, err := r.readListPayloadWithMetadata(
+			ctx,
+			stat.Payload,
+			offset,
+			length,
+			stat.MetadataRead,
+			stat.Size,
+			stat.ChunkSize,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -326,11 +472,15 @@ func (r *verifiedReader) readResolvedFile(ctx context.Context, resolution *Resol
 	case "raw":
 		// Continue below and bind the returned bytes to the raw CID.
 	default:
-		return nil, fmt.Errorf("unsupported UnixFS target CID %s", resolution.Target)
+		return nil, fmt.Errorf("unsupported UnixFS file payload CID %s", stat.Payload)
 	}
-	body, err := r.getBoundBlock(ctx, resolution.Target)
-	if err != nil {
-		return nil, fmt.Errorf("fetch raw file payload: %w", err)
+	body := stat.rawBody
+	if !stat.rawBodyLoaded {
+		var err error
+		body, err = r.getBoundBlock(ctx, stat.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("fetch raw file payload: %w", err)
+		}
 	}
 	total := uint64(len(body))
 	end := total
@@ -353,7 +503,7 @@ func (r *verifiedReader) readResolvedFile(ctx context.Context, resolution *Resol
 			body = append([]byte(nil), body[offset:]...)
 		}
 	}
-	return &ReadResult{Body: body, Target: resolution.Target, Offset: offset, End: end, TotalSize: total, Resolution: resolution}, nil
+	return &ReadResult{Body: body, Target: stat.Payload, Offset: offset, End: end, TotalSize: total, Resolution: resolution}, nil
 }
 
 func (r *verifiedReader) ReadListPayloadRange(ctx context.Context, trustedListRoot cid.Cid, offset, length uint64) (*ReadResult, error) {
@@ -368,11 +518,27 @@ func (r *verifiedReader) readListPayload(ctx context.Context, root cid.Cid, offs
 	if err != nil {
 		return nil, err
 	}
+	return r.readListPayloadWithMetadata(ctx, root, offset, length, metadata, totalSize, chunkSize)
+}
+
+func (r *verifiedReader) readListPayloadWithMetadata(
+	ctx context.Context,
+	root cid.Cid,
+	offset uint64,
+	length *uint64,
+	metadata *protocol.ReadResult,
+	totalSize uint64,
+	chunkSize uint64,
+) (*ReadResult, error) {
+	if metadata == nil || chunkSize == 0 {
+		return nil, fmt.Errorf("verified list metadata is incomplete")
+	}
 	if offset >= totalSize || (length != nil && *length == 0) {
 		return &ReadResult{Target: root, Offset: offset, End: offset, TotalSize: totalSize, ChunkSize: chunkSize, Read: metadata}, nil
 	}
 	end := totalSize
 	var read *protocol.ReadResult
+	var err error
 	if length != nil {
 		end = saturatingAdd(offset, *length)
 		if end > totalSize {
@@ -707,26 +873,46 @@ func (w *verifiedWriter) verifyStagedCandidate(ctx context.Context, candidate ci
 	if err != nil {
 		return err
 	}
-	if expected == nil || stat.Kind != expected.Kind || !stat.NodeRoot.Equals(expected.Key) {
+	expectedKind := ""
+	if expected != nil {
+		expectedKind = expected.Kind
+		if expectedKind == StagedKindMapDirectory {
+			expectedKind = StagedKindDirectory
+		}
+	}
+	if expected == nil || stat.Kind != expectedKind || !stat.NodeRoot.Equals(expected.Key) {
 		return fmt.Errorf("candidate path %q does not match materialized node", currentPath)
 	}
 	if expected.Kind != StagedKindDirectory {
 		return nil
 	}
-	names := make([]string, 0, len(expected.Children))
-	for name := range expected.Children {
-		names = append(names, name)
+	expectedEntries := make([]unixfsmodel.DirectoryEntry, 0, len(expected.Children))
+	for name, child := range expected.Children {
+		entryType := unixfsmodel.DirectoryEntryTypeFile
+		if child != nil && (child.Kind == StagedKindDirectory || child.Kind == StagedKindMapDirectory) {
+			entryType = unixfsmodel.DirectoryEntryTypeDir
+		}
+		expectedEntries = append(expectedEntries, unixfsmodel.DirectoryEntry{Name: name, Type: entryType})
 	}
-	slices.Sort(names)
-	if !slices.Equal(stat.Entries, names) {
+	slices.SortFunc(expectedEntries, func(left, right unixfsmodel.DirectoryEntry) int {
+		switch {
+		case left.Name < right.Name:
+			return -1
+		case left.Name > right.Name:
+			return 1
+		default:
+			return 0
+		}
+	})
+	if !slices.Equal(stat.Entries, expectedEntries) {
 		return fmt.Errorf("candidate directory %q entries do not match materialized manifest", currentPath)
 	}
-	for _, name := range names {
-		childPath := name
+	for _, entry := range expectedEntries {
+		childPath := entry.Name
 		if currentPath != "" {
-			childPath = path.Join(currentPath, name)
+			childPath = path.Join(currentPath, entry.Name)
 		}
-		if err := w.verifyStagedCandidate(ctx, candidate, childPath, expected.Children[name]); err != nil {
+		if err := w.verifyStagedCandidate(ctx, candidate, childPath, expected.Children[entry.Name]); err != nil {
 			return err
 		}
 	}

@@ -31,6 +31,7 @@ type StagedRootCreator interface {
 // StagedBlockStore is the block subset needed by staged materialization.
 type StagedBlockStore interface {
 	Put(ctx context.Context, data []byte) (cid.Cid, error)
+	PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error)
 }
 
 type stagedBlockFlusher interface {
@@ -113,11 +114,29 @@ func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, bl
 		}, nil
 	}
 
-	payloadBytes, err := unixfsmodel.DirectoryManifestPayload(names)
+	manifestEntries := make([]unixfsmodel.DirectoryEntry, 0, len(names))
+	for _, name := range names {
+		child := node.Children[name]
+		if child == nil {
+			continue
+		}
+		entryType := unixfsmodel.DirectoryEntryTypeFile
+		switch child.Kind {
+		case StagedKindDirectory, StagedKindMapDirectory:
+			entryType = unixfsmodel.DirectoryEntryTypeDir
+		case StagedKindFile:
+			// Keep file projection independent of whether the target is CAS,
+			// List, or a Map-backed application object.
+		default:
+			return nil, fmt.Errorf("unsupported staged child kind %q at %q", child.Kind, name)
+		}
+		manifestEntries = append(manifestEntries, unixfsmodel.DirectoryEntry{Name: name, Type: entryType})
+	}
+	manifestBlock, err := unixfsmodel.EncodeDirectoryManifest(manifestEntries)
 	if err != nil {
 		return nil, fmt.Errorf("marshal directory manifest: %w", err)
 	}
-	payloadCID, err := blocks.Put(ctx, payloadBytes)
+	payloadCID, err := blocks.PutWithCodec(ctx, manifestBlock.Data, manifestBlock.Codec)
 	if err != nil {
 		return nil, fmt.Errorf("upload directory manifest: %w", err)
 	}
