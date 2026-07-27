@@ -3,10 +3,12 @@ package unixfs_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/execution"
@@ -52,6 +54,11 @@ func (r *countingWriterRemote) Get(ctx context.Context, key cid.Cid) ([]byte, er
 func (r *countingWriterRemote) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	r.blockCalls++
 	return r.inner.Put(ctx, data)
+}
+
+func (r *countingWriterRemote) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	r.blockCalls++
+	return r.inner.PutWithCodec(ctx, data, codec)
 }
 
 func (r *countingWriterRemote) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
@@ -129,6 +136,10 @@ func (r *realRemote) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	return r.blocks.Put(ctx, data)
 }
 
+func (r *realRemote) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	return r.blocks.PutWithCodec(ctx, data, codec)
+}
+
 func (r *realRemote) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
 	values := make(map[string]cid.Cid, len(bindings))
 	for path, raw := range bindings {
@@ -196,16 +207,25 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir.Kind != unixfs.StagedKindDirectory || len(dir.Entries) != 2 || dir.PayloadBinding == nil {
+	if dir.Kind != unixfs.StagedKindDirectory || dir.PayloadKind != "raw" ||
+		len(dir.Entries) != 2 || dir.PayloadBinding == nil {
 		t.Fatalf("directory stat = %#v", dir)
 	}
 
-	small, err := reader.ReadFile(t.Context(), root, "docs/small.txt")
+	countedBlocks := &countingBlocks{inner: remote, gets: make(map[string]int)}
+	countedReader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: countedBlocks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	small, err := countedReader.ReadFile(t.Context(), root, "docs/small.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(small.Body) != "small payload" || small.Resolution == nil || small.Read != nil {
 		t.Fatalf("raw read = %#v body=%q", small, small.Body)
+	}
+	if got := countedBlocks.gets[small.Target.KeyString()]; got != 1 {
+		t.Fatalf("raw payload fetches = %d, want 1", got)
 	}
 
 	remote.reads = nil
@@ -243,6 +263,183 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	}
 	if !bytes.Equal(full.Body, large) {
 		t.Fatal("full list-backed body differs")
+	}
+}
+
+func TestVerifiedReaderUsesManifestTypeForMapBackedFile(t *testing.T) {
+	remote := newRealRemote(t)
+	payload := []byte("map-backed document")
+	payloadCID, err := remote.Put(t.Context(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commentCID, err := remote.Put(t.Context(), []byte("comment"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileRoot, err := remote.CreateStagedRoot(t.Context(), map[string]string{
+		"@payload":  payloadCID.String(),
+		"@comments": commentCID.String(),
+		"nested":    commentCID.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := unixfs.NewStagedDirectory()
+	if err := unixfs.SetStagedFile(staged, "report.docx", fileRoot); err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := unixfs.MaterializeStagedDirectory(t.Context(), remote, remote, staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := materialized.Key
+
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := reader.Stat(t.Context(), root, "report.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != unixfs.StagedKindFile || stat.StorageKind != "map" || stat.PayloadKind != "raw" {
+		t.Fatalf("map-backed file stat = %#v", stat)
+	}
+	if !stat.NodeRoot.Equals(fileRoot) || !stat.Payload.Equals(payloadCID) || stat.PayloadBinding == nil {
+		t.Fatalf("map-backed file binding = %#v", stat)
+	}
+	read, err := reader.ReadFile(t.Context(), root, "report.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(read.Body) != string(payload) || !read.Target.Equals(payloadCID) {
+		t.Fatalf("map-backed file read = %#v body=%q", read, read.Body)
+	}
+	if _, err := reader.Resolve(t.Context(), root, "report.docx/nested"); !errors.Is(err, unixfs.ErrNotDirectory) {
+		t.Fatalf("traversal through file error = %v", err)
+	}
+}
+
+func TestVerifiedReaderUsesDirectManifestCIDAsDirectory(t *testing.T) {
+	remote := newRealRemote(t)
+	fileCID, err := remote.Put(t.Context(), []byte("direct child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directBlock, err := unixfsmodel.EncodeDirectoryManifest([]unixfsmodel.DirectoryEntry{
+		{Name: "readme.txt", Type: unixfsmodel.DirectoryEntryTypeFile},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directCID, err := remote.PutWithCodec(t.Context(), directBlock.Data, directBlock.Codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBlock, err := unixfsmodel.EncodeDirectoryManifest([]unixfsmodel.DirectoryEntry{
+		{Name: "direct", Type: unixfsmodel.DirectoryEntryTypeDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootManifestCID, err := remote.PutWithCodec(t.Context(), rootBlock.Data, rootBlock.Codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{
+		"@payload":          rootManifestCID.String(),
+		"direct":            directCID.String(),
+		"direct/readme.txt": fileCID.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := reader.Stat(t.Context(), root, "direct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != unixfs.StagedKindDirectory ||
+		stat.StorageKind != "raw" ||
+		stat.PayloadKind != "raw" ||
+		!stat.NodeRoot.Equals(directCID) ||
+		!stat.Payload.Equals(directCID) ||
+		stat.PayloadBinding != nil ||
+		len(stat.Entries) != 1 ||
+		stat.Entries[0].Name != "readme.txt" ||
+		stat.Entries[0].Type != unixfsmodel.DirectoryEntryTypeFile {
+		t.Fatalf("direct manifest directory stat = %#v", stat)
+	}
+	read, err := reader.ReadFile(t.Context(), root, "direct/readme.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(read.Body) != "direct child" || !read.Target.Equals(fileCID) {
+		t.Fatalf("direct manifest descendant read = %#v body=%q", read, read.Body)
+	}
+}
+
+func TestVerifiedReaderAppliesMapDirectoryInferenceOnlyToV1(t *testing.T) {
+	remote := newRealRemote(t)
+	emptyBlock, err := unixfsmodel.EncodeDirectoryManifest(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyCID, err := remote.PutWithCodec(t.Context(), emptyBlock.Data, emptyBlock.Codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRoot, err := remote.CreateStagedRoot(t.Context(), map[string]string{"@payload": emptyCID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1Bytes := []byte(`{"entries":["legacy"]}`)
+	v1CID, err := remote.PutWithCodec(t.Context(), v1Bytes, unixfsmodel.DirectoryManifestCodecV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{
+		"@payload": v1CID.String(),
+		"legacy":   childRoot.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := reader.Stat(t.Context(), root, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != unixfs.StagedKindDirectory || stat.PayloadKind != "raw" || len(stat.Entries) != 0 {
+		t.Fatalf("legacy directory stat = %#v", stat)
+	}
+
+	rawV1CID, err := remote.Put(t.Context(), v1Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRoot, err := remote.CreateStagedRoot(t.Context(), map[string]string{
+		"@payload": rawV1CID.String(),
+		"legacy":   childRoot.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawStat, err := reader.Stat(t.Context(), rawRoot, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rawStat.Kind != unixfs.StagedKindDirectory || rawStat.PayloadKind != "raw" {
+		t.Fatalf("historical raw V1 directory stat = %#v", rawStat)
 	}
 }
 
