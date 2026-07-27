@@ -2,71 +2,137 @@ package manifest_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/unixfs/model/internal/manifest"
 )
 
-func TestParseDirectoryJSON_valid(t *testing.T) {
-	data := []byte(`{"entries":["a","b","docs"]}`)
-	m, err := manifest.ParseDirectoryJSON(data)
+func TestParseV1DirectoryJSON(t *testing.T) {
+	value, err := manifest.ParseV1DirectoryJSON([]byte(`{"entries":["a","b","docs"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Entries) != 3 || m.Entries[0] != "a" {
-		t.Fatalf("entries = %#v", m.Entries)
+	if value.Version != manifest.VersionV1 || len(value.Entries) != 3 {
+		t.Fatalf("manifest = %#v", value)
+	}
+	if value.Entries[0].Name != "a" || value.Entries[0].Type != manifest.EntryTypeUnknown {
+		t.Fatalf("entry = %#v", value.Entries[0])
 	}
 }
 
-func TestParseDirectoryJSON_empty(t *testing.T) {
-	m, err := manifest.ParseDirectoryJSON([]byte(`{"entries":[]}`))
+func TestV2CanonicalRoundTrip(t *testing.T) {
+	entries := []manifest.DirectoryEntry{
+		{Name: "readme.md", Type: manifest.EntryTypeFile},
+		{Name: "docs", Type: manifest.EntryTypeDir},
+		{Name: "a<&\u2028.txt", Type: manifest.EntryTypeFile},
+	}
+	data, err := manifest.MarshalV2DirectoryEntries(entries)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Entries == nil || len(m.Entries) != 0 {
-		t.Fatalf("want empty entries, got %#v", m.Entries)
+	want := "{\"entries\":[{\"name\":\"a<&\u2028.txt\",\"type\":\"file\"},{\"name\":\"docs\",\"type\":\"dir\"},{\"name\":\"readme.md\",\"type\":\"file\"}]}"
+	if string(data) != want {
+		t.Fatalf("payload = %q, want %q", data, want)
 	}
-}
-
-func TestParseDirectoryJSON_unknownField(t *testing.T) {
-	_, err := manifest.ParseDirectoryJSON([]byte(`{"entries":["a"],"extra":1}`))
-	if err == nil {
-		t.Fatal("expected error for unknown field")
-	}
-}
-
-func TestParseDirectoryJSON_unsorted(t *testing.T) {
-	_, err := manifest.ParseDirectoryJSON([]byte(`{"entries":["b","a"]}`))
-	if err == nil {
-		t.Fatal("expected error for unsorted entries")
-	}
-}
-
-func TestParseDirectoryJSON_flatPathRejected(t *testing.T) {
-	_, err := manifest.ParseDirectoryJSON([]byte(`{"entries":["a/b"]}`))
-	if err == nil {
-		t.Fatal("expected error for non-immediate name")
-	}
-}
-
-func TestNormalize(t *testing.T) {
-	n := manifest.Normalize(&manifest.DirectoryManifest{Entries: []string{"b", "a", "a"}})
-	if len(n.Entries) != 2 || n.Entries[0] != "a" || n.Entries[1] != "b" {
-		t.Fatalf("got %#v", n.Entries)
-	}
-}
-
-func TestMarshalRoundTrip(t *testing.T) {
-	m := &manifest.DirectoryManifest{Entries: []string{"docs", "readme.md"}}
-	data, err := json.Marshal(m)
+	parsed, err := manifest.ParseV2DirectoryJSON(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := manifest.ParseDirectoryJSON(data)
+	if parsed.Version != manifest.VersionV2 || len(parsed.Entries) != 3 {
+		t.Fatalf("manifest = %#v", parsed)
+	}
+}
+
+func TestV2EmptyIsCanonical(t *testing.T) {
+	data, err := manifest.MarshalV2DirectoryEntries(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Entries[0] != "docs" || parsed.Entries[1] != "readme.md" {
-		t.Fatalf("got %#v", parsed.Entries)
+	if string(data) != `{"entries":[]}` {
+		t.Fatalf("payload = %q", data)
+	}
+	value, err := manifest.ParseV2DirectoryJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Entries == nil || len(value.Entries) != 0 {
+		t.Fatalf("entries = %#v", value.Entries)
+	}
+}
+
+func TestV2RejectsNonCanonicalAndInvalidEntries(t *testing.T) {
+	tests := []string{
+		`{"entries": [ ]}`,
+		`{"entries":[{"type":"dir","name":"docs"}]}`,
+		`{"entries":[{"name":"docs","type":"directory"}]}`,
+		`{"entries":[{"name":"b","type":"dir"},{"name":"a","type":"file"}]}`,
+		`{"entries":[{"name":"a","type":"dir"},{"name":"a","type":"file"}]}`,
+		`{"entries":[{"name":"a/b","type":"file"}]}`,
+		`{"entries":[{"name":"docs","type":"dir","extra":true}]}`,
+		`{"entries":[],"extra":true}`,
+	}
+	for _, raw := range tests {
+		t.Run(raw, func(t *testing.T) {
+			_, err := manifest.ParseV2DirectoryJSON([]byte(raw))
+			if !errors.Is(err, manifest.ErrInvalidManifest) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestV2WriterRejectsDuplicateNames(t *testing.T) {
+	_, err := manifest.MarshalV2DirectoryEntries([]manifest.DirectoryEntry{
+		{Name: "same", Type: manifest.EntryTypeDir},
+		{Name: "same", Type: manifest.EntryTypeFile},
+	})
+	if !errors.Is(err, manifest.ErrInvalidManifest) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestManifestReadersAndV2WriterRejectUnsupportedChildNames(t *testing.T) {
+	for _, name := range []string{
+		".", "..", "@payload", "\x00", " file", "file ", "\tfile", "file\n",
+		"\u0085file", "file\ufeff",
+	} {
+		t.Run(name, func(t *testing.T) {
+			encodedName, err := json.Marshal(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for version, raw := range map[string][]byte{
+				"V1": []byte(`{"entries":[` + string(encodedName) + `]}`),
+				"V2": []byte(`{"entries":[{"name":` + string(encodedName) + `,"type":"file"}]}`),
+			} {
+				t.Run(version, func(t *testing.T) {
+					parse := manifest.ParseV1DirectoryJSON
+					if version == "V2" {
+						parse = manifest.ParseV2DirectoryJSON
+					}
+					if _, err := parse(raw); !errors.Is(err, manifest.ErrInvalidManifest) {
+						t.Fatalf("reader accepted child name %q: %v", name, err)
+					}
+				})
+			}
+			if _, err := manifest.MarshalV2DirectoryEntries([]manifest.DirectoryEntry{{
+				Name: name, Type: manifest.EntryTypeFile,
+			}}); !errors.Is(err, manifest.ErrInvalidManifest) {
+				t.Fatalf("writer accepted child name %q: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestManifestReadersRejectInvalidUTF8(t *testing.T) {
+	invalid := []byte{'{', '"', 'e', 'n', 't', 'r', 'i', 'e', 's', '"', ':', '[', '"', 0xff, '"', ']', '}'}
+	for _, parse := range []func([]byte) (*manifest.DirectoryManifest, error){
+		manifest.ParseV1DirectoryJSON,
+		manifest.ParseV2DirectoryJSON,
+	} {
+		if _, err := parse(invalid); !errors.Is(err, manifest.ErrInvalidManifest) {
+			t.Fatalf("error = %v, want invalid manifest", err)
+		}
 	}
 }

@@ -80,6 +80,18 @@ type directoryIndex struct {
 	children map[string]directoryChild
 }
 
+func directoryManifestEntries(names []string, index *directoryIndex) []unixfsmodel.DirectoryEntry {
+	entries := make([]unixfsmodel.DirectoryEntry, 0, len(names))
+	for _, name := range names {
+		entryType := unixfsmodel.DirectoryEntryTypeFile
+		if index != nil && index.children[name].kind == arcset.TargetKindMap {
+			entryType = unixfsmodel.DirectoryEntryTypeDir
+		}
+		entries = append(entries, unixfsmodel.DirectoryEntry{Name: name, Type: entryType})
+	}
+	return entries
+}
+
 type directoryChild struct {
 	logicalID string
 	kind      arcset.TargetKind
@@ -386,7 +398,7 @@ func (b graphBuilder) build(ctx context.Context, files map[string]logicalFile) (
 		}
 		result.directories[directory.path] = index
 
-		manifestRaw, err := unixfsmodel.DirectoryManifestPayload(names)
+		manifestRaw, err := unixfsmodel.DirectoryManifestPayload(directoryManifestEntries(names, index))
 		if err != nil {
 			return cid.Undef, fmt.Errorf("encode directory manifest %q: %w", directory.path, err)
 		}
@@ -643,7 +655,7 @@ func (b graphBuilder) buildDirectoryObject(ctx context.Context, semantics *mappi
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	manifestRaw, err := unixfsmodel.DirectoryManifestPayload(names)
+	manifestRaw, err := unixfsmodel.DirectoryManifestPayload(directoryManifestEntries(names, index))
 	if err != nil {
 		return nil, classifiedBlock{}, fmt.Errorf("encode directory manifest %q: %w", directoryPath, err)
 	}
