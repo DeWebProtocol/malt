@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/dewebprotocol/malt-client/application"
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
@@ -25,7 +24,7 @@ type Server struct {
 	roots    *application.Roots
 	mux      *http.ServeMux
 	instance string
-	backups  clientbackup.Runner
+	plans    clientbackup.PlanRunner
 }
 
 func New(store *truststore.Store) (*Server, error) {
@@ -41,7 +40,7 @@ func NewWithInstance(store *truststore.Store, instance string) (*Server, error) 
 
 type Options struct {
 	Instance string
-	Backups  clientbackup.Runner
+	Plans    clientbackup.PlanRunner
 }
 
 func NewWithOptions(store *truststore.Store, opts Options) (*Server, error) {
@@ -52,7 +51,7 @@ func NewWithOptions(store *truststore.Store, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{roots: roots, mux: http.NewServeMux(), instance: opts.Instance, backups: opts.Backups}
+	s := &Server{roots: roots, mux: http.NewServeMux(), instance: opts.Instance, plans: opts.Plans}
 	s.routes()
 	return s, nil
 }
@@ -145,31 +144,43 @@ func (s *Server) routes() {
 		}
 		writeJSON(w, http.StatusOK, record)
 	})
-	s.mux.HandleFunc("POST /v1/backups", func(w http.ResponseWriter, r *http.Request) {
-		if s.backups == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "encrypted backup service is not configured"})
-			return
-		}
-		var body clientbackup.Request
-		if err := decodeJSON(r, &body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if strings.TrimSpace(body.Source) == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup source is required"})
-			return
-		}
-		result, err := s.backups.Run(r.Context(), body)
-		if err != nil {
-			status := http.StatusBadGateway
-			if errors.Is(err, clientbackup.ErrPendingWorkspace) {
-				status = http.StatusConflict
-			}
-			writeJSON(w, status, map[string]any{"error": err.Error(), "result": result})
-			return
-		}
-		writeJSON(w, http.StatusOK, result)
+	s.mux.HandleFunc("POST /v1/plan-backups", func(w http.ResponseWriter, r *http.Request) {
+		s.runPlanOperation(w, r, "backup")
 	})
+	s.mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
+		s.runPlanOperation(w, r, "sync")
+	})
+}
+
+func (s *Server) runPlanOperation(w http.ResponseWriter, r *http.Request, operation string) {
+	if s.plans == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "backup plan service is not configured"})
+		return
+	}
+	var body clientbackup.PlanRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	var (
+		result *clientbackup.BatchResult
+		err    error
+	)
+	if operation == "sync" {
+		result, err = s.plans.SyncPlans(r.Context(), body)
+	} else {
+		result, err = s.plans.BackupPlans(r.Context(), body)
+	}
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, clientbackup.ErrBackupConflict) || errors.Is(err, clientbackup.ErrPendingWorkspace) ||
+			errors.Is(err, clientbackup.ErrUnacceptedRoot) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error(), "result": result})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func decodeJSON(r *http.Request, target any) error {

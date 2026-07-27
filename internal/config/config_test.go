@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.Gateway.APIKey != "secret" || loaded.Gateway.Bucket != "bkt_one" || loaded.Workspace.StatePath == "" {
 		t.Fatalf("managed Gateway config = %#v, workspace = %#v", loaded.Gateway, loaded.Workspace)
 	}
-	if loaded.Backup.KeyringPath == "" || loaded.Backup.StatePath == "" || loaded.Backup.TempDir == "" {
+	if loaded.Backup.KeyringPath == "" || loaded.Backup.HistoryDir == "" || loaded.Backup.TempDir == "" {
 		t.Fatalf("backup defaults missing: %#v", loaded.Backup)
 	}
 }
@@ -55,18 +56,31 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 	}
 }
 
-func TestValidateBackupJobs(t *testing.T) {
-	cfg, err := Default()
-	if err != nil {
-		t.Fatal(err)
+func TestLoadRejectsLegacyBackupJobs(t *testing.T) {
+	for _, raw := range []string{
+		`[{"name":"docs","source":"/data/docs","every":"1h"}]`,
+		`[]`,
+		`null`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"backup":{"jobs":`+raw+`}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "backup.jobs") {
+			t.Fatalf("legacy backup.jobs=%s error = %v", raw, err)
+		}
 	}
-	cfg.Backup.Jobs = []BackupJobConfig{{Name: "docs", Source: "/data/docs", Every: "1h", Enabled: true}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Backup.Jobs = append(cfg.Backup.Jobs, cfg.Backup.Jobs[0])
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("duplicate backup job was accepted")
+}
+
+func TestLoadRejectsLegacyBackupStatePath(t *testing.T) {
+	for _, raw := range []string{`"/tmp/legacy-backups.json"`, `""`, `null`} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"backup":{"state_path":`+raw+`}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "backup.state_path") {
+			t.Fatalf("legacy backup.state_path=%s error = %v", raw, err)
+		}
 	}
 }
 

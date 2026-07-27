@@ -141,6 +141,63 @@ func TestBucketHeadRejectsNonMainRef(t *testing.T) {
 	}
 }
 
+func TestBucketClientBindsHeadAndPushToExplicitBranch(t *testing.T) {
+	candidateRoot := mustBlockCID(t, []byte("candidate"))
+	now := time.Now().UTC()
+	var request client.BucketPushRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/buckets/bkt_one/head":
+			if r.URL.Query().Get("branch") != "photos" {
+				t.Fatalf("branch query = %q", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(client.BucketRef{
+				BucketID: "bkt_one", Name: "heads/photos", Kind: "explicit", State: "open",
+				Revision: 0, CreatedAt: now, UpdatedAt: now,
+			})
+		case "/v1/buckets/bkt_one/push":
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			candidate := client.BucketCommit{
+				ID: "opaque-candidate", BucketID: "bkt_one", Root: candidateRoot.String(),
+				Author: "alice", CreatedAt: now,
+			}
+			_ = json.NewEncoder(w).Encode(client.BucketPushResult{
+				Status: "fast_forward",
+				Head: client.BucketRef{
+					BucketID: "bkt_one", Name: "heads/photos", Kind: "explicit", State: "open",
+					CommitID: candidate.ID, Root: candidate.Root, Revision: 1, CreatedAt: now, UpdatedAt: now,
+				},
+				Candidate: candidate, Commit: candidate,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	transport, err := client.New(client.Options{
+		BaseURL: server.URL, TenantBearerToken: "tenant-secret",
+		BucketID: "bkt_one", BucketBranch: "photos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, err := transport.BucketHead(t.Context()); err != nil || head.Name != "heads/photos" {
+		t.Fatalf("branch head=%#v err=%v", head, err)
+	}
+	result, err := transport.PushBucket(t.Context(), client.BucketPushRequest{
+		PushID: "branch-push", CandidateRoot: candidateRoot.String(),
+	})
+	if err != nil || result.Head.Name != "heads/photos" {
+		t.Fatalf("branch push=%#v err=%v", result, err)
+	}
+	if request.Branch != "photos" {
+		t.Fatalf("push branch = %q", request.Branch)
+	}
+}
+
 func TestBucketPushRejectsUnboundGatewayResults(t *testing.T) {
 	baseRoot := mustBlockCID(t, []byte("base"))
 	candidateRoot := mustBlockCID(t, []byte("candidate"))

@@ -39,6 +39,17 @@ type ArchiveInfo struct {
 // The cleartext header and ciphertext are later committed by the authenticated
 // UnixFS target CID. Nonce uniqueness is provided by crypto/rand.
 func CreateArchive(ctx context.Context, source, target string, epoch uint32, key [32]byte) (ArchiveInfo, error) {
+	return createArchive(ctx, source, target, epoch, key, false)
+}
+
+// CreateBindingArchive stores the contents of one bound directory at the
+// archive root. Sync can therefore restore it directly into the configured
+// local binding without introducing another basename directory.
+func CreateBindingArchive(ctx context.Context, source, target string, epoch uint32, key [32]byte) (ArchiveInfo, error) {
+	return createArchive(ctx, source, target, epoch, key, true)
+}
+
+func createArchive(ctx context.Context, source, target string, epoch uint32, key [32]byte, contentsOnly bool) (ArchiveInfo, error) {
 	if epoch == 0 {
 		return ArchiveInfo{}, fmt.Errorf("backup key epoch must be positive")
 	}
@@ -59,6 +70,9 @@ func CreateArchive(ctx context.Context, source, target string, epoch uint32, key
 	}
 	if !rootInfo.IsDir() && !rootInfo.Mode().IsRegular() && rootInfo.Mode()&os.ModeSymlink == 0 {
 		return ArchiveInfo{}, fmt.Errorf("backup source must be a directory, regular file, or symlink")
+	}
+	if contentsOnly && !rootInfo.IsDir() {
+		return ArchiveInfo{}, fmt.Errorf("backup binding source must be a directory")
 	}
 	inside, err := pathWithin(absSource, absTarget)
 	if err != nil {
@@ -108,10 +122,16 @@ func CreateArchive(ctx context.Context, source, target string, epoch uint32, key
 	encrypted := &cipher.StreamWriter{S: stream, W: out}
 	compressed := gzip.NewWriter(encrypted)
 	tarWriter := tar.NewWriter(compressed)
-	if err := writeTarTree(ctx, tarWriter, absSource); err != nil {
+	var archiveErr error
+	if contentsOnly {
+		archiveErr = writeTarContents(ctx, tarWriter, absSource)
+	} else {
+		archiveErr = writeTarTree(ctx, tarWriter, absSource)
+	}
+	if archiveErr != nil {
 		_ = tarWriter.Close()
 		_ = compressed.Close()
-		return ArchiveInfo{}, err
+		return ArchiveInfo{}, archiveErr
 	}
 	if err := tarWriter.Close(); err != nil {
 		return ArchiveInfo{}, fmt.Errorf("finalize backup tar stream: %w", err)
@@ -135,6 +155,23 @@ func CreateArchive(ctx context.Context, source, target string, epoch uint32, key
 
 func writeTarTree(ctx context.Context, writer *tar.Writer, source string) error {
 	parent := filepath.Dir(source)
+	return writeTarTreeFrom(ctx, writer, source, parent)
+}
+
+func writeTarContents(ctx context.Context, writer *tar.Writer, source string) error {
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return fmt.Errorf("read backup binding source: %w", err)
+	}
+	for _, entry := range entries {
+		if err := writeTarTreeFrom(ctx, writer, filepath.Join(source, entry.Name()), source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeTarTreeFrom(ctx context.Context, writer *tar.Writer, source, parent string) error {
 	return filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

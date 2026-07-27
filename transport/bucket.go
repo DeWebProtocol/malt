@@ -65,6 +65,7 @@ type BucketConflict struct {
 
 type BucketPushRequest struct {
 	PushID        string `json:"push_id"`
+	Branch        string `json:"branch,omitempty"`
 	BaseCommit    string `json:"base_commit,omitempty"`
 	BaseRoot      string `json:"base_root,omitempty"`
 	CandidateRoot string `json:"candidate_root"`
@@ -88,6 +89,13 @@ func (c *Client) SelectedBucket() string {
 		return ""
 	}
 	return c.bucketID
+}
+
+func (c *Client) SelectedBucketBranch() string {
+	if c == nil || c.bucketBranch == "" {
+		return "main"
+	}
+	return c.bucketBranch
 }
 
 func (c *Client) Me(ctx context.Context) (*Identity, error) {
@@ -132,10 +140,14 @@ func (c *Client) BucketHead(ctx context.Context) (*BucketRef, error) {
 		return nil, err
 	}
 	var result BucketRef
-	if err := c.doTenant(ctx, http.MethodGet, c.bucketRoute("/head"), nil, &result); err != nil {
+	route := c.bucketRoute("/head")
+	if c.SelectedBucketBranch() != "main" {
+		route += "?branch=" + url.QueryEscape(c.SelectedBucketBranch())
+	}
+	if err := c.doTenant(ctx, http.MethodGet, route, nil, &result); err != nil {
 		return nil, err
 	}
-	if err := ValidateBucketHead(c.bucketID, result); err != nil {
+	if err := ValidateBucketHeadForBranch(c.bucketID, c.SelectedBucketBranch(), result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -182,6 +194,18 @@ func (c *Client) PushBucket(ctx context.Context, request BucketPushRequest) (*Bu
 		return nil, err
 	}
 	request.PushID = strings.TrimSpace(request.PushID)
+	requestBranch, err := normalizeBucketBranch(request.Branch)
+	if err != nil {
+		return nil, err
+	}
+	selectedBranch := c.SelectedBucketBranch()
+	if request.Branch != "" && requestBranch != selectedBranch {
+		return nil, fmt.Errorf("Bucket push branch %q does not match selected branch %q", requestBranch, selectedBranch)
+	}
+	request.Branch = ""
+	if selectedBranch != "main" {
+		request.Branch = selectedBranch
+	}
 	request.BaseCommit = strings.TrimSpace(request.BaseCommit)
 	request.BaseRoot = strings.TrimSpace(request.BaseRoot)
 	request.CandidateRoot = strings.TrimSpace(request.CandidateRoot)
@@ -261,8 +285,8 @@ func (c *Client) requireSelectedBucket() error {
 	if c == nil || c.bucketID == "" {
 		return fmt.Errorf("managed Bucket is not configured")
 	}
-	if c.tenantBearerToken == "" {
-		return fmt.Errorf("tenant bearer token is not configured")
+	if c.tenantBearerToken == "" && c.deviceAuthorizer == nil {
+		return fmt.Errorf("tenant authentication is not configured")
 	}
 	return nil
 }
@@ -290,8 +314,22 @@ func (c *Client) validateRef(value BucketRef) error {
 // IDs are intentionally opaque; only their binding to a root and ref
 // generation is interpreted here.
 func ValidateBucketHead(bucketID string, value BucketRef) error {
-	if strings.TrimSpace(bucketID) == "" || value.BucketID != bucketID || value.Name != "main" || value.Kind != "main" || value.State != "open" {
-		return fmt.Errorf("gateway returned an invalid Bucket main head")
+	return ValidateBucketHeadForBranch(bucketID, "main", value)
+}
+
+// ValidateBucketHeadForBranch verifies the selected writable ref. Explicit
+// branches are represented by the Gateway as heads/<name>.
+func ValidateBucketHeadForBranch(bucketID, branch string, value BucketRef) error {
+	branch, err := normalizeBucketBranch(branch)
+	if err != nil {
+		return err
+	}
+	wantName, wantKind := "main", "main"
+	if branch != "main" {
+		wantName, wantKind = "heads/"+branch, "explicit"
+	}
+	if strings.TrimSpace(bucketID) == "" || value.BucketID != bucketID || value.Name != wantName || value.Kind != wantKind || value.State != "open" {
+		return fmt.Errorf("gateway returned an invalid Bucket %s head", branch)
 	}
 	if value.CommitID == "" {
 		if value.Root != "" || value.Revision != 0 {
@@ -332,7 +370,7 @@ func (c *Client) validatePushResult(request BucketPushRequest, value BucketPushR
 // cannot accidentally clear durable work when supplied another Gateway
 // implementation that bypasses Client's HTTP validation.
 func ValidateBucketPushResult(bucketID string, request BucketPushRequest, value BucketPushResult) error {
-	if err := ValidateBucketHead(bucketID, value.Head); err != nil {
+	if err := ValidateBucketHeadForBranch(bucketID, request.Branch, value.Head); err != nil {
 		return err
 	}
 	if err := validateBucketCommit(bucketID, value.Candidate); err != nil {
@@ -395,6 +433,22 @@ func ValidateBucketPushResult(bucketID string, request BucketPushRequest, value 
 		return fmt.Errorf("gateway returned unsupported Bucket push status %q", value.Status)
 	}
 	return nil
+}
+
+func normalizeBucketBranch(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "main" {
+		return "main", nil
+	}
+	if strings.HasPrefix(raw, "heads/") {
+		raw = strings.TrimPrefix(raw, "heads/")
+	}
+	if raw == "" || raw == "main" || strings.HasPrefix(raw, "conflicts/") ||
+		strings.Contains(raw, "/") || strings.Contains(raw, "\\") ||
+		strings.ContainsAny(raw, " \t\r\n") {
+		return "", fmt.Errorf("invalid Bucket branch %q", raw)
+	}
+	return raw, nil
 }
 
 func validateBucketCommit(bucketID string, value BucketCommit) error {

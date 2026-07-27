@@ -99,6 +99,43 @@ func TestPushStashesBeforeFetchAndKeepsOriginalBase(t *testing.T) {
 	}
 }
 
+func TestBranchWorkspacesArePersistedIndependently(t *testing.T) {
+	now := time.Now().UTC()
+	mainHead := testHead("cmt_main", testCID(t, "main"), 1, now)
+	branchHead := testHead("cmt_photos", testCID(t, "photos"), 1, now)
+	branchHead.Name = "heads/photos"
+	branchHead.Kind = "explicit"
+	path := filepath.Join(t.TempDir(), "buckets.json")
+	mainService, err := OpenBranch(path, &fakeGateway{head: mainHead}, "bkt_one", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchService, err := OpenBranch(path, &fakeGateway{head: branchHead}, "bkt_one", "photos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mainService.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := branchService.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	mainWorkspace, err := mainService.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchWorkspace, err := branchService.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mainWorkspace.Branch != "main" || mainWorkspace.Base.CommitID != "cmt_main" {
+		t.Fatalf("main workspace = %#v", mainWorkspace)
+	}
+	if branchWorkspace.Branch != "photos" || branchWorkspace.Base.CommitID != "cmt_photos" {
+		t.Fatalf("branch workspace = %#v", branchWorkspace)
+	}
+}
+
 func TestFailedFetchLeavesPendingStash(t *testing.T) {
 	baseRoot := testCID(t, "base")
 	candidateRoot := testCID(t, "candidate")
@@ -648,7 +685,7 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	}
 
 	migrated := readPersistedState(t, path)
-	legacy := migrated.Workspaces["bkt_one"].Stashes[0]
+	legacy := migrated.Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
 	if migrated.Version != bucketWorkspaceVersion || !legacy.RequestFrozen || legacy.Message != "message A" || legacy.ChangeSetCID != changeSet.String() || legacy.PushID != "push-original" || legacy.Base != base {
 		t.Fatalf("migrated workspace did not preserve frozen request: %#v", migrated)
 	}
@@ -658,7 +695,7 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	if gateway.lastPush.PushID != "" {
 		t.Fatal("changed migrated retry reached Gateway")
 	}
-	afterRejected := readPersistedState(t, path).Workspaces["bkt_one"].Stashes[0]
+	afterRejected := readPersistedState(t, path).Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
 	if afterRejected.Message != "message A" || afterRejected.ChangeSetCID != changeSet.String() || afterRejected.PushID != "push-original" || !afterRejected.RequestFrozen {
 		t.Fatalf("rejected retry altered migrated request: %#v", afterRejected)
 	}
@@ -698,7 +735,7 @@ func TestVersionOneNeverSentPendingStashIsConservativelyFrozen(t *testing.T) {
 		t.Fatalf("never-sent version 1 stash was not conservatively frozen: %#v", workspace.Stashes)
 	}
 	persisted := readPersistedState(t, path)
-	if persisted.Version != bucketWorkspaceVersion || !persisted.Workspaces["bkt_one"].Stashes[0].RequestFrozen {
+	if persisted.Version != bucketWorkspaceVersion || !persisted.Workspaces[workspaceKey("bkt_one", "main")].Stashes[0].RequestFrozen {
 		t.Fatalf("version 1 migration was not durable before retry: %#v", persisted)
 	}
 }
@@ -709,7 +746,7 @@ func TestVersionTwoMissingRequestFrozenIsRejected(t *testing.T) {
 	now := time.Now().UTC()
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	base := Head{CommitID: "opaque-base", Root: baseRoot.String(), Revision: 1}
-	writeWorkspaceWithoutRequestFrozen(t, path, bucketWorkspaceVersion, Workspace{
+	writeWorkspaceWithoutRequestFrozen(t, path, 2, Workspace{
 		BucketID: "bkt_one", Initialized: true, Base: base, Remote: base,
 		Stashes: []Stash{{
 			ID: "incomplete-v2", PushID: "push-incomplete", CandidateRoot: candidateRoot.String(), Base: base,

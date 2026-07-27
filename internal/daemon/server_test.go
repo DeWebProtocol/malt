@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -12,18 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 )
-
-type backupRunnerStub struct {
-	request clientbackup.Request
-}
-
-func (r *backupRunnerStub) Run(_ context.Context, request clientbackup.Request) (*clientbackup.Result, error) {
-	r.request = request
-	return &clientbackup.Result{CandidateRoot: "candidate", RemotePath: clientbackup.RemotePath}, nil
-}
 
 func TestLifecycleIdentityIsAuthenticatedAndNotExposedByHealth(t *testing.T) {
 	store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
@@ -88,27 +77,6 @@ func TestLocalAPIKeepsCandidateSeparate(t *testing.T) {
 	record, err := store.Get("docs")
 	if err != nil || record.AcceptedRoot != root {
 		t.Fatalf("record=%#v err=%v", record, err)
-	}
-}
-
-func TestLocalBackupAPIUsesConfiguredRunner(t *testing.T) {
-	store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := &backupRunnerStub{}
-	server, err := NewWithOptions(store, Options{Backups: runner})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/backups", strings.NewReader(`{"source":"/data/docs","message":"scheduled"}`))
-	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("backup status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if runner.request.Source != "/data/docs" || runner.request.Message != "scheduled" {
-		t.Fatalf("backup request = %#v", runner.request)
 	}
 }
 

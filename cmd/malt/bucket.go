@@ -218,9 +218,11 @@ func bucketSyncService() (*bucketsync.Service, error) {
 	if strings.TrimSpace(cfg.Gateway.Bucket) == "" {
 		return nil, fmt.Errorf("gateway.bucket is not configured")
 	}
-	gateway, err := client.New(client.Options{
-		BaseURL: cfg.GatewayBaseURL(), TenantBearerToken: cfg.Gateway.APIKey, BucketID: cfg.Gateway.Bucket,
-	})
+	options, err := requiredGatewayOptions(cfg, cfg.Gateway.Bucket, "")
+	if err != nil {
+		return nil, err
+	}
+	gateway, err := client.New(options)
 	if err != nil {
 		return nil, err
 	}
@@ -237,9 +239,11 @@ func prepareBucketCandidate(baseRoot cid.Cid) (*bucketsync.Service, bucketsync.H
 	if strings.TrimSpace(cfg.Gateway.Bucket) == "" {
 		return nil, bucketsync.Head{}, nil
 	}
-	remote, err := client.New(client.Options{
-		BaseURL: cfg.GatewayBaseURL(), TenantBearerToken: cfg.Gateway.APIKey, BucketID: cfg.Gateway.Bucket,
-	})
+	options, err := requiredGatewayOptions(cfg, cfg.Gateway.Bucket, "")
+	if err != nil {
+		return nil, bucketsync.Head{}, err
+	}
+	remote, err := client.New(options)
 	if err != nil {
 		return nil, bucketsync.Head{}, err
 	}

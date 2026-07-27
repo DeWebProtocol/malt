@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 )
@@ -26,9 +25,10 @@ type Config struct {
 }
 
 type GatewayConfig struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key,omitempty"`
-	Bucket  string `json:"bucket,omitempty"`
+	BaseURL        string `json:"base_url"`
+	CredentialPath string `json:"credential_path"`
+	APIKey         string `json:"api_key,omitempty"`
+	Bucket         string `json:"bucket,omitempty"`
 }
 
 type WorkspaceConfig struct {
@@ -43,18 +43,10 @@ type DaemonConfig struct {
 // BackupConfig owns local encrypted-backup state. Keys remain client-side and
 // are never sent to the Gateway.
 type BackupConfig struct {
-	KeyringPath string            `json:"keyring_path"`
-	StatePath   string            `json:"state_path"`
-	TempDir     string            `json:"temp_dir,omitempty"`
-	Jobs        []BackupJobConfig `json:"jobs,omitempty"`
-}
-
-type BackupJobConfig struct {
-	Name    string `json:"name"`
-	Source  string `json:"source"`
-	Every   string `json:"every"`
-	Enabled bool   `json:"enabled"`
-	Message string `json:"message,omitempty"`
+	KeyringPath string `json:"keyring_path"`
+	HistoryDir  string `json:"history_dir"`
+	PlansPath   string `json:"plans_path"`
+	TempDir     string `json:"temp_dir,omitempty"`
 }
 
 func Default() (*Config, error) {
@@ -64,7 +56,9 @@ func Default() (*Config, error) {
 	}
 	root := filepath.Join(home, ".malt-client")
 	return &Config{
-		Gateway: GatewayConfig{BaseURL: defaultGatewayURL},
+		Gateway: GatewayConfig{
+			BaseURL: defaultGatewayURL, CredentialPath: filepath.Join(root, "device-credential.json"),
+		},
 		Daemon: DaemonConfig{
 			SocketPath: filepath.Join(root, "client.sock"),
 			StatePath:  filepath.Join(root, "roots.json"),
@@ -72,7 +66,8 @@ func Default() (*Config, error) {
 		Workspace: WorkspaceConfig{StatePath: filepath.Join(root, "buckets.json")},
 		Backup: BackupConfig{
 			KeyringPath: filepath.Join(root, "backup-keys.json"),
-			StatePath:   filepath.Join(root, "backups.json"),
+			HistoryDir:  filepath.Join(root, "backup-history"),
+			PlansPath:   filepath.Join(root, "backup-plans.json"),
 			TempDir:     filepath.Join(root, "staging"),
 		},
 	}, nil
@@ -107,6 +102,21 @@ func Load(path string) (*Config, error) {
 	}
 	if err := securefile.Secure(path); err != nil {
 		return nil, fmt.Errorf("protect client config: %w", err)
+	}
+	var legacy struct {
+		Backup struct {
+			Jobs      json.RawMessage `json:"jobs"`
+			StatePath json.RawMessage `json:"state_path"`
+		} `json:"backup"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return nil, fmt.Errorf("decode client config: %w", err)
+	}
+	if len(legacy.Backup.Jobs) != 0 {
+		return nil, fmt.Errorf("legacy backup.jobs is no longer supported; create Plan bindings with `malt backup bind` and schedules with `malt backup schedule set`")
+	}
+	if len(legacy.Backup.StatePath) != 0 {
+		return nil, fmt.Errorf("legacy backup.state_path is no longer supported; remove it and use the Plan-only backup.history_dir")
 	}
 	if err := json.Unmarshal(data, defaults); err != nil {
 		return nil, fmt.Errorf("decode client config: %w", err)
@@ -176,6 +186,9 @@ func (c *Config) applyDefaults() {
 	if c.Gateway.BaseURL == "" {
 		c.Gateway.BaseURL = defaults.Gateway.BaseURL
 	}
+	if c.Gateway.CredentialPath == "" {
+		c.Gateway.CredentialPath = defaults.Gateway.CredentialPath
+	}
 	if c.Daemon.SocketPath == "" {
 		c.Daemon.SocketPath = defaults.Daemon.SocketPath
 	}
@@ -188,8 +201,11 @@ func (c *Config) applyDefaults() {
 	if c.Backup.KeyringPath == "" {
 		c.Backup.KeyringPath = defaults.Backup.KeyringPath
 	}
-	if c.Backup.StatePath == "" {
-		c.Backup.StatePath = defaults.Backup.StatePath
+	if c.Backup.HistoryDir == "" {
+		c.Backup.HistoryDir = defaults.Backup.HistoryDir
+	}
+	if c.Backup.PlansPath == "" {
+		c.Backup.PlansPath = defaults.Backup.PlansPath
 	}
 	if c.Backup.TempDir == "" {
 		c.Backup.TempDir = defaults.Backup.TempDir
@@ -197,8 +213,8 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if strings.TrimSpace(c.Gateway.BaseURL) == "" {
-		return fmt.Errorf("gateway base URL is empty")
+	if strings.TrimSpace(c.Gateway.BaseURL) == "" || strings.TrimSpace(c.Gateway.CredentialPath) == "" {
+		return fmt.Errorf("gateway base URL and device credential path are required")
 	}
 	if c.Daemon.SocketPath == "" || c.Daemon.StatePath == "" {
 		return fmt.Errorf("daemon socket and state paths are required")
@@ -206,30 +222,8 @@ func (c *Config) Validate() error {
 	if c.Workspace.StatePath == "" {
 		return fmt.Errorf("Bucket workspace state path is required")
 	}
-	if c.Backup.KeyringPath == "" || c.Backup.StatePath == "" || c.Backup.TempDir == "" {
-		return fmt.Errorf("backup keyring, state, and staging paths are required")
-	}
-	if strings.TrimSpace(c.Gateway.Bucket) != "" && strings.TrimSpace(c.Gateway.APIKey) == "" {
-		return fmt.Errorf("gateway Bucket requires an API key")
-	}
-	seenJobs := make(map[string]struct{}, len(c.Backup.Jobs))
-	for i := range c.Backup.Jobs {
-		job := &c.Backup.Jobs[i]
-		job.Name = strings.TrimSpace(job.Name)
-		job.Source = strings.TrimSpace(job.Source)
-		job.Every = strings.TrimSpace(job.Every)
-		job.Message = strings.TrimSpace(job.Message)
-		if job.Name == "" || job.Source == "" || job.Every == "" {
-			return fmt.Errorf("backup job %d requires name, source, and every", i)
-		}
-		if _, ok := seenJobs[job.Name]; ok {
-			return fmt.Errorf("duplicate backup job %q", job.Name)
-		}
-		seenJobs[job.Name] = struct{}{}
-		every, err := time.ParseDuration(job.Every)
-		if err != nil || every <= 0 {
-			return fmt.Errorf("backup job %q has invalid interval %q", job.Name, job.Every)
-		}
+	if c.Backup.KeyringPath == "" || c.Backup.HistoryDir == "" || c.Backup.PlansPath == "" || c.Backup.TempDir == "" {
+		return fmt.Errorf("backup keyring, history directory, plans, and staging paths are required")
 	}
 	return nil
 }

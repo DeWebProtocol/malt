@@ -173,6 +173,38 @@ func TestClientRejectsOversizedJSONBeforeDecode(t *testing.T) {
 	}
 }
 
+func TestDeviceAuthorizerAuthenticatesTenantRequestsAndRequiresSecureTransport(t *testing.T) {
+	authorizer := &recordingAuthorizer{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "MaltDevice key_test" {
+			t.Fatalf("device Authorization = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"buckets": []any{}})
+	}))
+	defer server.Close()
+	transport, err := client.New(client.Options{BaseURL: server.URL, DeviceAuthorizer: authorizer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.ListBuckets(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if authorizer.calls != 1 {
+		t.Fatalf("device authorizer calls = %d", authorizer.calls)
+	}
+	if _, err := client.New(client.Options{
+		BaseURL: "http://gateway.example", DeviceAuthorizer: &recordingAuthorizer{},
+	}); err == nil || !strings.Contains(err.Error(), "requires HTTPS") {
+		t.Fatalf("non-loopback device transport error = %v", err)
+	}
+	if _, err := client.New(client.Options{
+		BaseURL: "https://gateway.example", TenantBearerToken: "token",
+		DeviceAuthorizer: &recordingAuthorizer{},
+	}); err == nil {
+		t.Fatal("client accepted both bearer and device authentication")
+	}
+}
+
 func TestGetClassifiesOnlyHTTPNotFoundAsCASNotFound(t *testing.T) {
 	payloadCID := mustBlockCID(t, []byte("missing"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -248,4 +280,14 @@ func mustBlockCID(t *testing.T, data []byte) cid.Cid {
 		t.Fatal(err)
 	}
 	return key
+}
+
+type recordingAuthorizer struct {
+	calls int
+}
+
+func (a *recordingAuthorizer) Authorize(request *http.Request) error {
+	a.calls++
+	request.Header.Set("Authorization", "MaltDevice key_test")
+	return nil
 }

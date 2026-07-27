@@ -127,16 +127,13 @@ func runDaemonServe(*cobra.Command, []string) error {
 			return err
 		}
 	}
-	backupRunner := &configuredBackupRunner{}
-	server, err := clientdaemon.NewWithOptions(store, clientdaemon.Options{Instance: instance, Backups: backupRunner})
-	if err != nil {
-		return err
+	planRunner := &configuredPlanRunner{}
+	if err := recoverConfiguredPlanTransactions(cfg); err != nil {
+		return fmt.Errorf("recover interrupted backup plan transaction: %w", err)
 	}
-	history, err := clientbackup.NewHistory(cfg.Backup.StatePath)
-	if err != nil {
-		return err
-	}
-	scheduler, err := clientbackup.NewScheduler(backupRunner, configuredBackupJobs{}, history, 5*time.Second)
+	server, err := clientdaemon.NewWithOptions(store, clientdaemon.Options{
+		Instance: instance, Plans: planRunner,
+	})
 	if err != nil {
 		return err
 	}
@@ -156,7 +153,7 @@ func runDaemonServe(*cobra.Command, []string) error {
 	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), daemonSignals()...)
 	defer stop()
-	go scheduler.Run(ctx)
+	go runConfiguredPlanScheduler(ctx, planRunner)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -167,6 +164,10 @@ func runDaemonServe(*cobra.Command, []string) error {
 		return err
 	}
 	return nil
+}
+
+func recoverConfiguredPlanTransactions(cfg *clientconfig.Config) error {
+	return clientbackup.RecoverTransactionJournals(cfg.Backup.HistoryDir)
 }
 
 func runDaemonStart(*cobra.Command, []string) error {

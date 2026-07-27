@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/dewebprotocol/malt-client/application"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
+	"github.com/dewebprotocol/malt-client/internal/deviceauth"
 	client "github.com/dewebprotocol/malt-client/transport"
 )
 
@@ -20,9 +22,52 @@ func gatewayClient() (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(client.Options{
-		BaseURL: cfg.GatewayBaseURL(), TenantBearerToken: cfg.Gateway.APIKey, BucketID: cfg.Gateway.Bucket,
-	})
+	opts, err := gatewayOptions(cfg, cfg.Gateway.Bucket, "")
+	if err != nil {
+		return nil, err
+	}
+	return client.New(opts)
+}
+
+func gatewayOptions(cfg *clientconfig.Config, bucketID, branch string) (client.Options, error) {
+	if cfg == nil {
+		return client.Options{}, fmt.Errorf("client config is nil")
+	}
+	opts := client.Options{
+		BaseURL: cfg.GatewayBaseURL(), BucketID: strings.TrimSpace(bucketID),
+		BucketBranch: strings.TrimSpace(branch),
+	}
+	if token := strings.TrimSpace(cfg.Gateway.APIKey); token != "" {
+		opts.TenantBearerToken = token
+		return opts, nil
+	}
+	provider := deviceauth.FileProvider{Path: cfg.Gateway.CredentialPath}
+	value, err := provider.Load()
+	if errors.Is(err, deviceauth.ErrNotFound) {
+		if opts.BucketID == "" {
+			return opts, nil
+		}
+		return client.Options{}, fmt.Errorf("Gateway account is not authenticated; run `malt login`")
+	}
+	if err != nil {
+		return client.Options{}, err
+	}
+	if strings.TrimRight(value.Gateway, "/") != strings.TrimRight(cfg.GatewayBaseURL(), "/") {
+		return client.Options{}, fmt.Errorf("stored device credential belongs to %s; run `malt login` for %s", value.Gateway, cfg.GatewayBaseURL())
+	}
+	opts.DeviceAuthorizer = provider
+	return opts, nil
+}
+
+func requiredGatewayOptions(cfg *clientconfig.Config, bucketID, branch string) (client.Options, error) {
+	opts, err := gatewayOptions(cfg, bucketID, branch)
+	if err != nil {
+		return client.Options{}, err
+	}
+	if opts.TenantBearerToken == "" && opts.DeviceAuthorizer == nil {
+		return client.Options{}, fmt.Errorf("Gateway account is not authenticated; run `malt login`")
+	}
+	return opts, nil
 }
 
 func daemonCommandError(err error) error {

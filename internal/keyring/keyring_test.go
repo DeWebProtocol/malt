@@ -1,6 +1,8 @@
 package keyring
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -58,6 +60,137 @@ func TestCreateOpenAndDeriveBucketKeys(t *testing.T) {
 	}
 	if rotated == first {
 		t.Fatal("rotated epoch reused the old derived key")
+	}
+}
+
+func TestRecoveryExportImportRoundTripRejectsWrongPassphraseAndMergesIdempotently(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source-keys.json")
+	source, err := Create(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochOne, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Rotate(); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(root, "recovery.json")
+	passphrase := []byte("correct horse battery staple")
+	if err := source.ExportRecovery(bundle, passphrase); err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	data, err := os.ReadFile(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := envelope["ciphertext"]; !ok || string(data) == "" {
+		t.Fatalf("invalid recovery envelope: %s", data)
+	}
+	if _, err := ImportRecovery(bundle, filepath.Join(root, "wrong.json"), []byte("wrong passphrase long enough")); err == nil {
+		t.Fatal("wrong recovery passphrase was accepted")
+	}
+	targetPath := filepath.Join(root, "restored-keys.json")
+	if err := os.WriteFile(targetPath, epochOne, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ImportRecovery(bundle, targetPath, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, epoch := range []uint32{1, 2} {
+		want, err := source.BucketKey(epoch, "bucket-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := restored.BucketKey(epoch, "bucket-a")
+		if err != nil || got != want {
+			t.Fatalf("restored epoch %d key mismatch: %v", epoch, err)
+		}
+	}
+	if restored.ActiveEpoch() != 2 {
+		t.Fatalf("merged active epoch = %d, want 2", restored.ActiveEpoch())
+	}
+	reimported, err := ImportRecovery(bundle, targetPath, passphrase)
+	if err != nil {
+		t.Fatalf("idempotent recovery import failed: %v", err)
+	}
+	if reimported.ActiveEpoch() != 2 {
+		t.Fatalf("reimported active epoch = %d, want 2", reimported.ActiveEpoch())
+	}
+}
+
+func TestRecoveryImportRejectsConflictingEpochWithoutChangingKeyring(t *testing.T) {
+	root := t.TempDir()
+	source, err := Create(filepath.Join(root, "source-keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(root, "recovery.json")
+	passphrase := []byte("correct horse battery staple")
+	if err := source.ExportRecovery(bundle, passphrase); err != nil {
+		t.Fatal(err)
+	}
+	targetPath := filepath.Join(root, "target-keys.json")
+	if _, err := Create(targetPath); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportRecovery(bundle, targetPath, passphrase); err == nil {
+		t.Fatal("conflicting recovery epoch was accepted")
+	}
+	after, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("conflicting recovery import changed the existing keyring")
+	}
+}
+
+func TestRecoveryBundleTamperingFailsAuthentication(t *testing.T) {
+	root := t.TempDir()
+	source, err := Create(filepath.Join(root, "source-keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(root, "recovery.json")
+	passphrase := []byte("correct horse battery staple")
+	if err := source.ExportRecovery(bundle, passphrase); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := base64.RawStdEncoding.DecodeString(envelope["ciphertext"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext[0] ^= 0x01
+	envelope["ciphertext"] = base64.RawStdEncoding.EncodeToString(ciphertext)
+	data, err = json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bundle, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportRecovery(bundle, filepath.Join(root, "restored.json"), passphrase); err == nil {
+		t.Fatal("tampered recovery bundle was accepted")
 	}
 }
 
