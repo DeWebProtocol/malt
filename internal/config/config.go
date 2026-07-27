@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 )
 
@@ -177,6 +178,9 @@ func Write(path string, cfg *Config) error {
 	}
 	if err := securefile.Secure(path); err != nil {
 		return fmt.Errorf("secure client config permissions: %w", err)
+	}
+	if err := durablefile.SyncParent(path); err != nil {
+		return fmt.Errorf("sync client config directory: %w", err)
 	}
 	return nil
 }
