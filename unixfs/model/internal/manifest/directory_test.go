@@ -1,6 +1,7 @@
 package manifest_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -88,6 +89,39 @@ func TestV2WriterRejectsDuplicateNames(t *testing.T) {
 	})
 	if !errors.Is(err, manifest.ErrInvalidManifest) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestManifestReadersAndV2WriterRejectUnsupportedChildNames(t *testing.T) {
+	for _, name := range []string{
+		".", "..", "@payload", "\x00", " file", "file ", "\tfile", "file\n",
+		"\u0085file", "file\ufeff",
+	} {
+		t.Run(name, func(t *testing.T) {
+			encodedName, err := json.Marshal(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for version, raw := range map[string][]byte{
+				"V1": []byte(`{"entries":[` + string(encodedName) + `]}`),
+				"V2": []byte(`{"entries":[{"name":` + string(encodedName) + `,"type":"file"}]}`),
+			} {
+				t.Run(version, func(t *testing.T) {
+					parse := manifest.ParseV1DirectoryJSON
+					if version == "V2" {
+						parse = manifest.ParseV2DirectoryJSON
+					}
+					if _, err := parse(raw); !errors.Is(err, manifest.ErrInvalidManifest) {
+						t.Fatalf("reader accepted child name %q: %v", name, err)
+					}
+				})
+			}
+			if _, err := manifest.MarshalV2DirectoryEntries([]manifest.DirectoryEntry{{
+				Name: name, Type: manifest.EntryTypeFile,
+			}}); !errors.Is(err, manifest.ErrInvalidManifest) {
+				t.Fatalf("writer accepted child name %q: %v", name, err)
+			}
+		})
 	}
 }
 

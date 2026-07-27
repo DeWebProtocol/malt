@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -191,6 +192,18 @@ func validateImmediateChildName(name string) error {
 	if !utf8.ValidString(name) {
 		return fmt.Errorf("child name is not valid UTF-8")
 	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("child name must not be a dot segment: %q", name)
+	}
+	if strings.HasPrefix(name, "@") {
+		return fmt.Errorf("child name uses the reserved '@' prefix: %q", name)
+	}
+	if strings.IndexByte(name, 0) >= 0 {
+		return fmt.Errorf("child name must not contain NUL")
+	}
+	if hasBoundaryWhitespace(name) {
+		return fmt.Errorf("child name must not have boundary whitespace: %q", name)
+	}
 	if strings.Contains(name, "/") {
 		return fmt.Errorf("immediate child name must not contain '/': %q", name)
 	}
@@ -198,6 +211,12 @@ func validateImmediateChildName(name string) error {
 		return fmt.Errorf("immediate child name must not contain '\\': %q", name)
 	}
 	return nil
+}
+
+func hasBoundaryWhitespace(name string) bool {
+	first, _ := utf8.DecodeRuneInString(name)
+	last, _ := utf8.DecodeLastRuneInString(name)
+	return unicode.IsSpace(first) || unicode.IsSpace(last) || first == '\ufeff' || last == '\ufeff'
 }
 
 // NormalizeV2 returns a sorted copy of entries. Duplicate names are rejected

@@ -487,7 +487,9 @@ func TestMaterializeStagedDirectoryRejectsNonCanonicalChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"@payload", " @payload", " file", "file ", "   "} {
+	for _, name := range []string{
+		".", "..", "@payload", "\x00", " @payload", " file", "file ", "   ", "\u0085file", "file\ufeff",
+	} {
 		t.Run(name, func(t *testing.T) {
 			remote := newRealRemote(t)
 			root := unixfs.NewStagedDirectory()

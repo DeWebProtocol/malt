@@ -30,7 +30,9 @@ V2 uses these canonical encoding rules:
 - the document is UTF-8 JSON with exactly one top-level `entries` field;
 - every entry has exactly `name` followed by `type`;
 - `type` is exactly `dir` or `file`;
-- `name` is one non-empty immediate path segment, with neither `/` nor `\`;
+- `name` is one lossless UnixFS path segment: it is non-empty, is neither `.`
+  nor `..`, does not start with the reserved `@` prefix, contains no NUL, `/`,
+  or `\`, and has no leading or trailing Unicode whitespace or U+FEFF;
 - entries are unique and sorted by their names' UTF-8 bytes;
 - no insignificant whitespace is emitted;
 - printable Unicode is emitted directly, the short JSON escapes are used for
@@ -67,4 +69,6 @@ readers accept raw-CID manifests as V1. V1 has no authenticated projection
 field; only while reading V1 does the UnixFS client apply its historical rule:
 a Map target is a directory, while a List or CAS target is a file.
 
+Readers apply the same lossless UnixFS segment rules to V1 names so historical
+bytes cannot collapse into aliases such as `.` or `..` during traversal.
 Writers always emit V2. V1 is a read-only compatibility format.
