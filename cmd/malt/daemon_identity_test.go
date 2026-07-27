@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -121,7 +122,7 @@ func TestDaemonStateIsPrivateJSONAndEnvironmentIsReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("state mode = %#o, want 0600", info.Mode().Perm())
 	}
 	env := withDaemonInstanceEnv([]string{"PATH=/bin", daemonInstanceEnv + "=old"}, "new")

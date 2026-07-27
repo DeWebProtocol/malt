@@ -8,7 +8,7 @@ import (
 )
 
 func TestRootCommandExposesClientApplicationsOnly(t *testing.T) {
-	want := []string{"add", "bucket", "cat", "daemon", "init", "merkledag", "resolve", "rm", "root", "stat", "verify"}
+	want := []string{"add", "backup", "bucket", "cat", "conflict", "daemon", "init", "login", "merkledag", "recovery", "resolve", "restore", "rm", "root", "stat", "sync", "verify"}
 	var got []string
 	for _, command := range rootCmd.Commands() {
 		if !command.Hidden {

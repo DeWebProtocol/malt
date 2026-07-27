@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -80,6 +81,9 @@ func TestLocalAPIKeepsCandidateSeparate(t *testing.T) {
 }
 
 func TestListenCreatesPrivateUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows named-pipe DACL is configured by the platform listener")
+	}
 	store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
 	if err != nil {
 		t.Fatal(err)

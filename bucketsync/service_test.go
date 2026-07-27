@@ -99,6 +99,43 @@ func TestPushStashesBeforeFetchAndKeepsOriginalBase(t *testing.T) {
 	}
 }
 
+func TestBranchWorkspacesArePersistedIndependently(t *testing.T) {
+	now := time.Now().UTC()
+	mainHead := testHead("cmt_main", testCID(t, "main"), 1, now)
+	branchHead := testHead("cmt_photos", testCID(t, "photos"), 1, now)
+	branchHead.Name = "heads/team/photos"
+	branchHead.Kind = "explicit"
+	path := filepath.Join(t.TempDir(), "buckets.json")
+	mainService, err := OpenBranch(path, &fakeGateway{head: mainHead}, "bkt_one", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchService, err := OpenBranch(path, &fakeGateway{head: branchHead}, "bkt_one", "heads/team/photos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mainService.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := branchService.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	mainWorkspace, err := mainService.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchWorkspace, err := branchService.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mainWorkspace.Branch != "main" || mainWorkspace.Base.CommitID != "cmt_main" {
+		t.Fatalf("main workspace = %#v", mainWorkspace)
+	}
+	if branchWorkspace.Branch != "team/photos" || branchWorkspace.Base.CommitID != "cmt_photos" {
+		t.Fatalf("branch workspace = %#v", branchWorkspace)
+	}
+}
+
 func TestFailedFetchLeavesPendingStash(t *testing.T) {
 	baseRoot := testCID(t, "base")
 	candidateRoot := testCID(t, "candidate")
@@ -128,6 +165,57 @@ func TestFailedFetchLeavesPendingStash(t *testing.T) {
 	}
 	if len(workspace.Stashes) != 1 || workspace.Stashes[0].CandidateRoot != candidateRoot.String() || workspace.Stashes[0].Status != "pending" {
 		t.Fatalf("pending stash = %#v", workspace.Stashes)
+	}
+}
+
+func TestRestorePendingReinstatesExactFrozenPushIdentity(t *testing.T) {
+	baseRoot := testCID(t, "base")
+	candidateRoot := testCID(t, "candidate")
+	now := time.Now().UTC()
+	gateway := &fakeGateway{head: testHead("cmt_base", baseRoot, 1, now)}
+	path := filepath.Join(t.TempDir(), "buckets.json")
+	service, err := Open(path, gateway, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	base, err := service.CurrentBase(baseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stash := Stash{
+		ID: "stash-recovered", PushID: "push-recovered",
+		CandidateRoot: candidateRoot.String(), Base: base, Message: "snapshot",
+		RequestFrozen: true, Status: "pending", CreatedAt: now,
+	}
+	restored, err := service.RestorePending(stash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != stash.ID || restored.PushID != stash.PushID || !restored.RequestFrozen {
+		t.Fatalf("restored stash = %#v", restored)
+	}
+	reopened, err := Open(path, gateway, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := reopened.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workspace.Stashes) != 1 || workspace.Stashes[0].ID != stash.ID ||
+		workspace.Stashes[0].PushID != stash.PushID {
+		t.Fatalf("persisted restored stash = %#v", workspace.Stashes)
+	}
+	if _, err := reopened.RestorePending(stash); err != nil {
+		t.Fatalf("exact restore was not idempotent: %v", err)
+	}
+	conflict := stash
+	conflict.PushID = "different"
+	if _, err := reopened.RestorePending(conflict); err == nil {
+		t.Fatal("conflicting restored stash identity was accepted")
 	}
 }
 
@@ -597,7 +685,7 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	}
 
 	migrated := readPersistedState(t, path)
-	legacy := migrated.Workspaces["bkt_one"].Stashes[0]
+	legacy := migrated.Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
 	if migrated.Version != bucketWorkspaceVersion || !legacy.RequestFrozen || legacy.Message != "message A" || legacy.ChangeSetCID != changeSet.String() || legacy.PushID != "push-original" || legacy.Base != base {
 		t.Fatalf("migrated workspace did not preserve frozen request: %#v", migrated)
 	}
@@ -607,7 +695,7 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	if gateway.lastPush.PushID != "" {
 		t.Fatal("changed migrated retry reached Gateway")
 	}
-	afterRejected := readPersistedState(t, path).Workspaces["bkt_one"].Stashes[0]
+	afterRejected := readPersistedState(t, path).Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
 	if afterRejected.Message != "message A" || afterRejected.ChangeSetCID != changeSet.String() || afterRejected.PushID != "push-original" || !afterRejected.RequestFrozen {
 		t.Fatalf("rejected retry altered migrated request: %#v", afterRejected)
 	}
@@ -647,7 +735,7 @@ func TestVersionOneNeverSentPendingStashIsConservativelyFrozen(t *testing.T) {
 		t.Fatalf("never-sent version 1 stash was not conservatively frozen: %#v", workspace.Stashes)
 	}
 	persisted := readPersistedState(t, path)
-	if persisted.Version != bucketWorkspaceVersion || !persisted.Workspaces["bkt_one"].Stashes[0].RequestFrozen {
+	if persisted.Version != bucketWorkspaceVersion || !persisted.Workspaces[workspaceKey("bkt_one", "main")].Stashes[0].RequestFrozen {
 		t.Fatalf("version 1 migration was not durable before retry: %#v", persisted)
 	}
 }
@@ -658,7 +746,7 @@ func TestVersionTwoMissingRequestFrozenIsRejected(t *testing.T) {
 	now := time.Now().UTC()
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	base := Head{CommitID: "opaque-base", Root: baseRoot.String(), Revision: 1}
-	writeWorkspaceWithoutRequestFrozen(t, path, bucketWorkspaceVersion, Workspace{
+	writeWorkspaceWithoutRequestFrozen(t, path, 2, Workspace{
 		BucketID: "bkt_one", Initialized: true, Base: base, Remote: base,
 		Stashes: []Stash{{
 			ID: "incomplete-v2", PushID: "push-incomplete", CandidateRoot: candidateRoot.String(), Base: base,

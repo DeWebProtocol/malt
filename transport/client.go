@@ -34,9 +34,14 @@ type Options struct {
 	BaseURL    string
 	HTTPClient *http.Client
 	// TenantBearerToken authenticates managed Bucket routes. BucketID selects
-	// the Bucket-scoped native MALT and CAS endpoints.
+	// the Bucket-scoped native MALT and CAS endpoints. DeviceAuthorizer is the
+	// preferred proof-of-possession alternative for an interactive login.
 	TenantBearerToken string
+	DeviceAuthorizer  DeviceAuthorizer
 	BucketID          string
+	// BucketBranch selects the writable Bucket ref used by head and push
+	// operations. Empty means main. Explicit names never include heads/.
+	BucketBranch string
 	// OperatorBearerToken is sent only by MetricsWithStorage. Non-loopback HTTP
 	// base URLs are rejected when it is configured, and credentialed redirects
 	// are never followed.
@@ -44,6 +49,12 @@ type Options struct {
 	MaxJSONResponseBytes  int64
 	MaxBlobResponseBytes  int64
 	MaxErrorResponseBytes int64
+}
+
+// DeviceAuthorizer adds a fresh proof-of-possession signature to one outgoing
+// request. Implementations own their private-key and replay-counter storage.
+type DeviceAuthorizer interface {
+	Authorize(*http.Request) error
 }
 
 const (
@@ -59,7 +70,9 @@ type Client struct {
 	http                  *http.Client
 	operatorBearerToken   string
 	tenantBearerToken     string
+	deviceAuthorizer      DeviceAuthorizer
 	bucketID              string
+	bucketBranch          string
 	maxJSONResponseBytes  int64
 	maxBlobResponseBytes  int64
 	maxErrorResponseBytes int64
@@ -83,12 +96,20 @@ func New(opts Options) (*Client, error) {
 		return nil, fmt.Errorf("operator bearer token requires HTTPS or a loopback HTTP gateway base URL")
 	}
 	tenantToken := strings.TrimSpace(opts.TenantBearerToken)
+	deviceAuthorizer := opts.DeviceAuthorizer
 	bucketID := strings.TrimSpace(opts.BucketID)
-	if bucketID != "" && tenantToken == "" {
-		return nil, fmt.Errorf("managed Bucket ID requires a tenant bearer token")
+	bucketBranch, err := normalizeBucketBranch(opts.BucketBranch)
+	if err != nil {
+		return nil, err
 	}
-	if tenantToken != "" && parsed.Scheme != "https" && !isLoopbackGatewayHost(parsed.Hostname()) {
-		return nil, fmt.Errorf("tenant bearer token requires HTTPS or a loopback HTTP gateway base URL")
+	if tenantToken != "" && deviceAuthorizer != nil {
+		return nil, fmt.Errorf("configure either a tenant bearer token or a device authorizer, not both")
+	}
+	if bucketID != "" && tenantToken == "" && deviceAuthorizer == nil {
+		return nil, fmt.Errorf("managed Bucket ID requires tenant authentication")
+	}
+	if (tenantToken != "" || deviceAuthorizer != nil) && parsed.Scheme != "https" && !isLoopbackGatewayHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("tenant authentication requires HTTPS or a loopback HTTP gateway base URL")
 	}
 	maxJSON, err := responseLimit(opts.MaxJSONResponseBytes, DefaultMaxJSONResponseBytes, "JSON")
 	if err != nil {
@@ -108,7 +129,8 @@ func New(opts Options) (*Client, error) {
 	}
 	return &Client{
 		baseURL: baseURL, http: httpClient, operatorBearerToken: operatorToken,
-		tenantBearerToken: tenantToken, bucketID: bucketID,
+		tenantBearerToken: tenantToken, deviceAuthorizer: deviceAuthorizer,
+		bucketID: bucketID, bucketBranch: bucketBranch,
 		maxJSONResponseBytes: maxJSON, maxBlobResponseBytes: maxBlob, maxErrorResponseBytes: maxError,
 	}, nil
 }
@@ -480,10 +502,9 @@ func (c *Client) execute(req *http.Request, out any) error {
 }
 
 func (c *Client) executeTenant(req *http.Request, out any) error {
-	if c.tenantBearerToken == "" {
-		return fmt.Errorf("tenant bearer token is not configured")
+	if err := c.authorizeTenant(req); err != nil {
+		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.tenantBearerToken)
 	return c.executeCredentialed(req, out)
 }
 
@@ -491,15 +512,28 @@ func (c *Client) send(req *http.Request, tenantAuth bool) (*http.Response, error
 	if !tenantAuth {
 		return c.http.Do(req)
 	}
-	if c.tenantBearerToken == "" {
-		return nil, fmt.Errorf("tenant bearer token is not configured")
+	if err := c.authorizeTenant(req); err != nil {
+		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.tenantBearerToken)
 	httpClient := *c.http
 	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
 		return fmt.Errorf("refusing credentialed gateway redirect to %s", next.URL.Redacted())
 	}
 	return httpClient.Do(req)
+}
+
+func (c *Client) authorizeTenant(req *http.Request) error {
+	if c == nil {
+		return fmt.Errorf("tenant authentication is not configured")
+	}
+	if c.deviceAuthorizer != nil {
+		return c.deviceAuthorizer.Authorize(req)
+	}
+	if c.tenantBearerToken == "" {
+		return fmt.Errorf("tenant authentication is not configured")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.tenantBearerToken)
+	return nil
 }
 
 func (c *Client) executeCredentialed(req *http.Request, out any) error {

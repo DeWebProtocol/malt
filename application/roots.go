@@ -79,6 +79,17 @@ func (r *Roots) LookupAlias(alias string) (RootSelection, error) {
 	return RootSelection{Root: root, Alias: record.Alias}, nil
 }
 
+// AcceptedRoot resolves an alias to its locally accepted root. It exists as a
+// narrow capability for application services, such as encrypted backup sync,
+// that must never select a root observed from an untrusted transport.
+func (r *Roots) AcceptedRoot(alias string) (cid.Cid, error) {
+	selected, err := r.LookupAlias(alias)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return selected.Root, nil
+}
+
 func (r *Roots) List() ([]trust.Record, error) {
 	if r == nil || r.policy == nil {
 		return nil, fmt.Errorf("trusted-root application is nil")
@@ -113,6 +124,13 @@ func (r *Roots) RecordCandidate(alias string, candidateRoot, baseRoot cid.Cid, s
 		return trust.Record{}, fmt.Errorf("candidate and base roots must be defined")
 	}
 	return r.policy.AddCandidate(alias, candidateRoot.String(), baseRoot.String(), source)
+}
+
+// ObserveCandidate records an untrusted root while exposing only an error
+// result to services that do not otherwise need trust-store record details.
+func (r *Roots) ObserveCandidate(alias string, candidateRoot, baseRoot cid.Cid, source string) error {
+	_, err := r.RecordCandidate(alias, candidateRoot, baseRoot, source)
+	return err
 }
 
 // AcceptCandidate is the only application use case that promotes a recorded

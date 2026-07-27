@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/dewebprotocol/malt-client/application"
+	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	cid "github.com/ipfs/go-cid"
 )
@@ -23,6 +24,7 @@ type Server struct {
 	roots    *application.Roots
 	mux      *http.ServeMux
 	instance string
+	plans    clientbackup.PlanRunner
 }
 
 func New(store *truststore.Store) (*Server, error) {
@@ -33,6 +35,15 @@ func New(store *truststore.Store) (*Server, error) {
 // a process-launch token. The CLI uses this identity to avoid signaling a
 // recycled PID from stale metadata.
 func NewWithInstance(store *truststore.Store, instance string) (*Server, error) {
+	return NewWithOptions(store, Options{Instance: instance})
+}
+
+type Options struct {
+	Instance string
+	Plans    clientbackup.PlanRunner
+}
+
+func NewWithOptions(store *truststore.Store, opts Options) (*Server, error) {
 	if store == nil {
 		return nil, fmt.Errorf("trust store is nil")
 	}
@@ -40,7 +51,7 @@ func NewWithInstance(store *truststore.Store, instance string) (*Server, error) 
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{roots: roots, mux: http.NewServeMux(), instance: instance}
+	s := &Server{roots: roots, mux: http.NewServeMux(), instance: opts.Instance, plans: opts.Plans}
 	s.routes()
 	return s, nil
 }
@@ -133,6 +144,43 @@ func (s *Server) routes() {
 		}
 		writeJSON(w, http.StatusOK, record)
 	})
+	s.mux.HandleFunc("POST /v1/plan-backups", func(w http.ResponseWriter, r *http.Request) {
+		s.runPlanOperation(w, r, "backup")
+	})
+	s.mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
+		s.runPlanOperation(w, r, "sync")
+	})
+}
+
+func (s *Server) runPlanOperation(w http.ResponseWriter, r *http.Request, operation string) {
+	if s.plans == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "backup plan service is not configured"})
+		return
+	}
+	var body clientbackup.PlanRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	var (
+		result *clientbackup.BatchResult
+		err    error
+	)
+	if operation == "sync" {
+		result, err = s.plans.SyncPlans(r.Context(), body)
+	} else {
+		result, err = s.plans.BackupPlans(r.Context(), body)
+	}
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, clientbackup.ErrBackupConflict) || errors.Is(err, clientbackup.ErrPendingWorkspace) ||
+			errors.Is(err, clientbackup.ErrUnacceptedRoot) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error(), "result": result})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func decodeJSON(r *http.Request, target any) error {

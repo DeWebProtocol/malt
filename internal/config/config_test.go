@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -22,7 +24,7 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %#o, want 0600", info.Mode().Perm())
 	}
 	loaded, err := Load(path)
@@ -35,6 +37,9 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.Gateway.APIKey != "secret" || loaded.Gateway.Bucket != "bkt_one" || loaded.Workspace.StatePath == "" {
 		t.Fatalf("managed Gateway config = %#v, workspace = %#v", loaded.Gateway, loaded.Workspace)
 	}
+	if loaded.Backup.KeyringPath == "" || loaded.Backup.HistoryDir == "" || loaded.Backup.TempDir == "" {
+		t.Fatalf("backup defaults missing: %#v", loaded.Backup)
+	}
 }
 
 func TestLoadAppliesMissingDefaults(t *testing.T) {
@@ -46,8 +51,36 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" {
+	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" || loaded.Backup.KeyringPath == "" {
 		t.Fatalf("daemon defaults missing: %#v", loaded.Daemon)
+	}
+}
+
+func TestLoadRejectsLegacyBackupJobs(t *testing.T) {
+	for _, raw := range []string{
+		`[{"name":"docs","source":"/data/docs","every":"1h"}]`,
+		`[]`,
+		`null`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"backup":{"jobs":`+raw+`}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "backup.jobs") {
+			t.Fatalf("legacy backup.jobs=%s error = %v", raw, err)
+		}
+	}
+}
+
+func TestLoadRejectsLegacyBackupStatePath(t *testing.T) {
+	for _, raw := range []string{`"/tmp/legacy-backups.json"`, `""`, `null`} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"backup":{"state_path":`+raw+`}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "backup.state_path") {
+			t.Fatalf("legacy backup.state_path=%s error = %v", raw, err)
+		}
 	}
 }
 
@@ -68,7 +101,7 @@ func TestWriteTightensExistingConfigPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %#o, want 0600", info.Mode().Perm())
 	}
 }

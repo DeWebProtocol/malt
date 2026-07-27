@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
+	"github.com/dewebprotocol/malt-client/internal/keyring"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +27,11 @@ var initCmd = &cobra.Command{
 		if err := clientconfig.Write(path, cfg); err != nil {
 			return err
 		}
+		if _, err := keyring.Create(cfg.Backup.KeyringPath); err != nil {
+			return err
+		}
 		fmt.Printf("Initialized MALT client config: %s\n", path)
+		fmt.Printf("Initialized encrypted backup keyring: %s\n", cfg.Backup.KeyringPath)
 		return nil
 	},
 }

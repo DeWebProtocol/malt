@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
+	"github.com/dewebprotocol/malt-client/internal/securefile"
 	"github.com/dewebprotocol/malt-client/transport"
 	cid "github.com/ipfs/go-cid"
 )
@@ -26,7 +28,7 @@ var (
 	ErrNotStaged      = errors.New("Bucket candidate is not staged with its original base")
 )
 
-const bucketWorkspaceVersion = 2
+const bucketWorkspaceVersion = 3
 
 type Gateway interface {
 	BucketHead(context.Context) (*transport.BucketRef, error)
@@ -63,6 +65,7 @@ type Stash struct {
 
 type Workspace struct {
 	BucketID    string    `json:"bucket_id"`
+	Branch      string    `json:"branch"`
 	Initialized bool      `json:"initialized"`
 	Base        Head      `json:"base"`
 	Remote      Head      `json:"remote"`
@@ -85,16 +88,30 @@ type Service struct {
 	path     string
 	gateway  Gateway
 	bucketID string
+	branch   string
+	stateKey string
 	state    persistedState
 }
 
 func Open(path string, gateway Gateway, bucketID string) (*Service, error) {
+	return OpenBranch(path, gateway, bucketID, "main")
+}
+
+// OpenBranch opens synchronization state for one writable Bucket branch.
+func OpenBranch(path string, gateway Gateway, bucketID, branch string) (*Service, error) {
 	path = strings.TrimSpace(path)
 	bucketID = strings.TrimSpace(bucketID)
-	if path == "" || gateway == nil || bucketID == "" {
-		return nil, fmt.Errorf("Bucket sync path, Gateway, and Bucket ID are required")
+	branch, err := normalizeBranch(branch)
+	if err != nil {
+		return nil, err
 	}
-	service := &Service{path: path, gateway: gateway, bucketID: bucketID}
+	if path == "" || gateway == nil || bucketID == "" {
+		return nil, fmt.Errorf("Bucket sync path, Gateway, Bucket ID, and branch are required")
+	}
+	service := &Service{
+		path: path, gateway: gateway, bucketID: bucketID, branch: branch,
+		stateKey: workspaceKey(bucketID, branch),
+	}
 	if err := service.withState(false, func() error { return nil }); err != nil {
 		return nil, err
 	}
@@ -111,7 +128,7 @@ func (s *Service) Pull(ctx context.Context) (Workspace, error) {
 	if head == nil {
 		return Workspace{}, fmt.Errorf("gateway returned an empty Bucket head response")
 	}
-	if err := transport.ValidateBucketHead(s.bucketID, *head); err != nil {
+	if err := transport.ValidateBucketHeadForBranch(s.bucketID, s.branch, *head); err != nil {
 		return Workspace{}, err
 	}
 	remote, err := headFromRef(*head)
@@ -134,7 +151,7 @@ func (s *Service) Pull(ctx context.Context) (Workspace, error) {
 			}
 		}
 		workspace.UpdatedAt = time.Now().UTC()
-		s.state.Workspaces[s.bucketID] = workspace
+		s.state.Workspaces[s.stateKey] = workspace
 		result = cloneWorkspace(workspace)
 		return nil
 	})
@@ -201,12 +218,75 @@ func (s *Service) Stage(candidateRoot cid.Cid, base Head, changeSet cid.Cid, mes
 		}
 		workspace.Stashes = append(workspace.Stashes, stash)
 		workspace.UpdatedAt = now
-		s.state.Workspaces[s.bucketID] = workspace
+		s.state.Workspaces[s.stateKey] = workspace
 		return nil
 	}); err != nil {
 		return Stash{}, err
 	}
 	return stash, nil
+}
+
+// RestorePending reinstates an exact frozen stash from a separate durable
+// journal. It never generates a new stash or push ID and is intended only for
+// crash recovery before retrying Push.
+func (s *Service) RestorePending(stash Stash) (Stash, error) {
+	if stash.ID == "" || stash.PushID == "" || stash.Status != "pending" || !stash.RequestFrozen {
+		return Stash{}, fmt.Errorf("restored Bucket stash identity is incomplete")
+	}
+	if _, err := cid.Parse(stash.CandidateRoot); err != nil {
+		return Stash{}, fmt.Errorf("restored Bucket stash candidate: %w", err)
+	}
+	if err := validateHead(stash.Base); err != nil {
+		return Stash{}, fmt.Errorf("restored Bucket stash base: %w", err)
+	}
+	if stash.ChangeSetCID != "" {
+		if _, err := cid.Parse(stash.ChangeSetCID); err != nil {
+			return Stash{}, fmt.Errorf("restored Bucket stash change set: %w", err)
+		}
+	}
+	stash.Message = strings.TrimSpace(stash.Message)
+	if stash.CreatedAt.IsZero() {
+		return Stash{}, fmt.Errorf("restored Bucket stash creation time is missing")
+	}
+	var result Stash
+	if err := s.withState(true, func() error {
+		workspace := s.workspace()
+		if !workspace.Initialized {
+			return ErrNotInitialized
+		}
+		for _, existing := range workspace.Stashes {
+			if existing.ID == stash.ID {
+				if !sameFrozenStash(existing, stash) {
+					return fmt.Errorf("restored Bucket stash conflicts with local stash %s", stash.ID)
+				}
+				result = existing
+				return nil
+			}
+			if existing.Status == "pending" && existing.CandidateRoot == stash.CandidateRoot {
+				return fmt.Errorf("restored Bucket stash candidate already has a different pending identity")
+			}
+		}
+		stash.UpdatedAt = time.Now().UTC()
+		workspace.Stashes = append(workspace.Stashes, stash)
+		workspace.UpdatedAt = stash.UpdatedAt
+		s.state.Workspaces[s.stateKey] = workspace
+		result = stash
+		return nil
+	}); err != nil {
+		return Stash{}, err
+	}
+	return result, nil
+}
+
+func sameFrozenStash(existing, restored Stash) bool {
+	return existing.ID == restored.ID &&
+		existing.PushID == restored.PushID &&
+		existing.CandidateRoot == restored.CandidateRoot &&
+		existing.Base == restored.Base &&
+		existing.ChangeSetCID == restored.ChangeSetCID &&
+		existing.Message == restored.Message &&
+		existing.RequestFrozen &&
+		existing.Status == "pending"
 }
 
 // Push submits a previously staged candidate. It never infers a base from the
@@ -257,7 +337,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 			return ErrNotStaged
 		}
 		workspace.UpdatedAt = time.Now().UTC()
-		s.state.Workspaces[s.bucketID] = workspace
+		s.state.Workspaces[s.stateKey] = workspace
 		return nil
 	}); err != nil {
 		return PushOutcome{}, err
@@ -269,7 +349,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 		return PushOutcome{}, err
 	}
 	request := transport.BucketPushRequest{
-		PushID: stash.PushID, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
+		PushID: stash.PushID, Branch: s.branch, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
 		CandidateRoot: stash.CandidateRoot, BaseRevision: stash.Base.Revision,
 		ChangeSetCID: stash.ChangeSetCID, Message: stash.Message,
 	}
@@ -317,7 +397,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 			}
 		}
 		current.UpdatedAt = time.Now().UTC()
-		s.state.Workspaces[s.bucketID] = current
+		s.state.Workspaces[s.stateKey] = current
 		workspace = cloneWorkspace(current)
 		return nil
 	}); err != nil {
@@ -335,9 +415,56 @@ func (s *Service) Status() (Workspace, error) {
 	return result, err
 }
 
+// ResolveBranched removes one exact conflict stash after the trusted client has
+// preserved or explicitly resolved its local candidate. The conflict branch
+// remains on the Gateway; this only unlocks the local workspace and advances
+// its materialization base to the latest observed target head.
+func (s *Service) ResolveBranched(stashID, candidateRoot string) (Workspace, error) {
+	stashID = strings.TrimSpace(stashID)
+	candidateRoot = strings.TrimSpace(candidateRoot)
+	if stashID == "" {
+		return Workspace{}, fmt.Errorf("branched stash ID is empty")
+	}
+	if _, err := cid.Parse(candidateRoot); err != nil {
+		return Workspace{}, fmt.Errorf("branched stash candidate: %w", err)
+	}
+	var result Workspace
+	err := s.withState(true, func() error {
+		workspace := s.workspace()
+		found := false
+		for i, stash := range workspace.Stashes {
+			if stash.ID != stashID {
+				continue
+			}
+			if stash.Status != "branched" || stash.CandidateRoot != candidateRoot {
+				return fmt.Errorf("Bucket stash %s is not the selected branched candidate", stashID)
+			}
+			workspace.Stashes = append(workspace.Stashes[:i], workspace.Stashes[i+1:]...)
+			found = true
+			break
+		}
+		if !found {
+			return fmt.Errorf("branched Bucket stash %s was not found", stashID)
+		}
+		if !hasPending(workspace.Stashes) {
+			var err error
+			workspace.Base, err = monotonicHead(workspace.Base, workspace.Remote)
+			if err != nil {
+				return fmt.Errorf("advance resolved Bucket base: %w", err)
+			}
+		}
+		workspace.UpdatedAt = time.Now().UTC()
+		s.state.Workspaces[s.stateKey] = workspace
+		result = cloneWorkspace(workspace)
+		return nil
+	})
+	return result, err
+}
+
 func (s *Service) workspace() Workspace {
-	value := s.state.Workspaces[s.bucketID]
+	value := s.state.Workspaces[s.stateKey]
 	value.BucketID = s.bucketID
+	value.Branch = s.branch
 	return value
 }
 
@@ -382,6 +509,9 @@ func (s *Service) reload() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if err := securefile.Secure(s.path); err != nil {
+		return false, fmt.Errorf("protect Bucket workspace: %w", err)
+	}
 	var state persistedState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return false, fmt.Errorf("decode Bucket workspace: %w", err)
@@ -402,19 +532,26 @@ func (s *Service) reload() (bool, error) {
 			}
 			state.Workspaces[id] = workspace
 		}
+		state.Workspaces = migrateMainWorkspaces(state.Workspaces)
 		state.Version = bucketWorkspaceVersion
 		migrated = true
-	case bucketWorkspaceVersion:
+	case 2:
 		if err := validateVersionTwoFreezeFields(data); err != nil {
 			return false, err
 		}
+		state.Workspaces = migrateMainWorkspaces(state.Workspaces)
+		state.Version = bucketWorkspaceVersion
+		migrated = true
+	case bucketWorkspaceVersion:
 	default:
 		return false, fmt.Errorf("unsupported Bucket workspace version %d", state.Version)
 	}
 	for id, workspace := range state.Workspaces {
-		if workspace.BucketID != id {
+		branch, err := normalizeBranch(workspace.Branch)
+		if err != nil || workspaceKey(workspace.BucketID, branch) != id {
 			return false, fmt.Errorf("Bucket workspace key does not match record")
 		}
+		workspace.Branch = branch
 		if err := validateHead(workspace.Base); err != nil {
 			return false, fmt.Errorf("Bucket %s base: %w", id, err)
 		}
@@ -435,6 +572,23 @@ func (s *Service) reload() (bool, error) {
 	}
 	s.state = state
 	return migrated, nil
+}
+
+func workspaceKey(bucketID, branch string) string {
+	return bucketID + "@" + base64.RawURLEncoding.EncodeToString([]byte(branch))
+}
+
+func migrateMainWorkspaces(values map[string]Workspace) map[string]Workspace {
+	next := make(map[string]Workspace, len(values))
+	for _, workspace := range values {
+		workspace.Branch = "main"
+		next[workspaceKey(workspace.BucketID, workspace.Branch)] = workspace
+	}
+	return next
+}
+
+func normalizeBranch(raw string) (string, error) {
+	return bucketbranch.NormalizeSelector(raw)
 }
 
 func validateVersionTwoFreezeFields(data []byte) error {
@@ -477,7 +631,7 @@ func (s *Service) write() error {
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := securefile.Secure(name); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -494,6 +648,9 @@ func (s *Service) write() error {
 	}
 	if err := os.Rename(name, s.path); err != nil {
 		return err
+	}
+	if err := securefile.Secure(s.path); err != nil {
+		return fmt.Errorf("protect Bucket workspace: %w", err)
 	}
 	// The rename is already committed from the caller's perspective. Directory
 	// sync is best-effort because some supported filesystems reject it, and an
@@ -538,7 +695,7 @@ func monotonicHead(current, incoming Head) (Head, error) {
 
 func hasPending(values []Stash) bool {
 	for _, value := range values {
-		if value.Status == "pending" {
+		if value.Status == "pending" || value.Status == "branched" {
 			return true
 		}
 	}

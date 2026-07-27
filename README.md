@@ -41,16 +41,45 @@ Start a compatible gateway, then initialize the local client:
 
 ```bash
 ./bin/malt init
+./bin/malt login
 ./bin/malt daemon start
 ./bin/malt daemon status
 ```
 
-For a managed Gateway, set `gateway.api_key` and `gateway.bucket` in the
-generated `0600` config, then observe the initial head before producing or
-pushing local work:
+`malt init` also creates a client-owned `0600` backup keyring. Existing
+installations can initialize only that missing keyring without replacing their
+configuration:
+
+```bash
+./bin/malt backup key-init
+```
+
+`malt login` generates a dedicated Ed25519 device key locally and opens the
+Gateway's browser approval page. The browser session may be established with a
+Passkey. Approval registers only the public key; the Gateway never returns a
+long-lived device bearer secret. Every later account request proves possession
+by signing its method, host, URI, body digest, timestamp, and a durable replay
+counter. Login authorizes the account only; it does not select a Bucket.
+
+The current portable signer stores its private key in the owner-only device
+credential file and identifies itself as `software-file`. The transport uses a
+signer interface so TPM, Secure Enclave, and Windows CNG providers can replace
+that fallback without changing the request protocol, but those hardware
+providers are not implemented in this version. Passkeys remain the interactive
+browser account login; they are not exported as an unattended daemon signing
+key.
+
+Create and inspect Buckets through the authenticated account:
 
 ```bash
 ./bin/malt bucket list
+./bin/malt bucket create documents
+```
+
+The lower-level staged-root workflow remains available when `gateway.bucket`
+is configured explicitly:
+
+```bash
 ./bin/malt bucket pull
 ./bin/malt bucket status
 ./bin/malt add ./local-change --root <observed-head-root>
@@ -68,6 +97,154 @@ with the base captured before materialization. The Gateway may fast-forward,
 auto-merge independent map changes, or return a preserved conflict branch.
 Bucket heads remain untrusted observations and are never promoted in
 `roots.json` by this workflow.
+
+## Encrypted backup and restore
+
+A backup plan is one complete Bucket branch restore unit. Bind a local
+directory by Bucket name or ID; a second binding on the same branch requires
+the explicit `--merge` choice, while another branch creates an independent
+plan:
+
+```bash
+./bin/malt backup bind ~/Documents --bucket documents
+./bin/malt backup bind ~/Pictures --bucket documents --branch photos --create-branch
+./bin/malt backup bind ~/Projects --bucket documents --merge
+./bin/malt backup list
+./bin/malt daemon start
+./bin/malt backup
+./bin/malt backup documents
+./bin/malt sync
+```
+
+`malt backup` snapshots every changed binding before observing a newer remote
+head and then pushes all selected plans. Each binding is a separate encrypted
+object under an opaque random ID. The encrypted manifest and binding layout
+let the Gateway auto-merge changes to different bindings; concurrent changes
+to the same binding produce a preserved conflict branch and an actionable
+error. One failed plan does not prevent other selected plans from completing.
+
+`malt sync` first performs that same local snapshot and push workflow, then
+pulls the final latest branch and atomically installs every binding in the
+plan. A fast-forward or Gateway merge still requires exact local acceptance of
+the observed final root. In an interactive CLI, `sync` displays the exact CID
+and asks before recording it; the daemon only records the candidate and
+returns an actionable conflict.
+
+When the Gateway preserves a same-binding conflict, interactive `sync` asks
+whether to attempt a conservative plaintext three-way merge. Independent files
+and one-sided changes merge automatically. Concurrent edits to the same path
+produce an owner-only conflict workspace with complete `base`, `local`,
+`remote`, and editable `merged` trees for each binding. The workspace is
+separate from every binding, so filenames and suffixes are never rewritten:
+
+```bash
+./bin/malt conflict list
+# edit the reported .../<binding-id>/merged trees
+./bin/malt conflict resolve documents --manual
+# or choose --keep-local / --keep-remote
+```
+
+There is no `bucket/path` restore selector. `malt restore <plan> <destination>`
+restores the entire branch plan under its manifest archive names. On a new
+device, the encrypted manifest can reconstruct the Plan without a local plan
+record:
+
+```bash
+./bin/malt restore documents ./restored-documents
+./bin/malt restore --bucket documents --branch main ./restored-documents
+```
+
+Original file and directory names, binding display names, and Plan display name
+exist only inside encrypted archives. The Gateway necessarily sees the account
+and Bucket display name, Bucket ID, selected branch, ACL and membership
+metadata, fixed application prefixes, opaque binding IDs, ciphertext sizes,
+timing, and access patterns. It cannot read archive plaintext without the local
+keyring.
+
+The initial archive profile preserves regular files, directories, permission
+bits, modification times, and safe relative symlinks. It does not yet preserve
+xattrs, ACLs, hard-link identity, sparse-file layout, or device nodes.
+
+This encryption profile applies to `malt backup`; the general-purpose
+`malt add` command retains its existing plaintext UnixFS semantics.
+
+The archive intentionally has no AEAD authentication tag. Restore first
+verifies the caller-selected MALT root and path ProofList, then verifies every
+returned ciphertext block against its authenticated CID, and only then
+decrypts. The CID is calculated normally over the encrypted bytes. Archive
+decoding failure under a wrong key or epoch is an operational validity check,
+not a replacement for MALT/CID integrity.
+
+`malt backup --foreground [plan...]` and `malt sync --foreground [plan...]`
+are embedded bypasses when the daemon is
+not running. Daemon and foreground operations share a cross-process lock, so
+they cannot race against the same plan workspace. Automatic plans are
+configured without a GUI and reloaded by the daemon without restart:
+
+```bash
+./bin/malt backup schedule set documents --every 6h
+./bin/malt backup schedule list
+./bin/malt backup schedule remove documents
+```
+
+Automatic plans compute local plaintext SHA-256 tree fingerprints and skip
+unchanged bindings. Fingerprints and source paths stay in local owner-only
+state. The history journals the exact candidate, original base, and frozen
+push identity so a lost response is retried without encrypting another
+snapshot.
+
+The keyring keeps one random master key per epoch and derives per-Bucket keys
+in memory, so many Buckets do not require many persisted keys. Export an
+XChaCha20-Poly1305 recovery bundle protected by scrypt and a strong passphrase,
+store it separately from the remote ciphertext, and import it before a
+cross-device branch restore:
+
+```bash
+./bin/malt recovery export ./malt-recovery.json
+./bin/malt recovery import ./malt-recovery.json
+```
+
+Use `--passphrase-file` for unattended recovery tooling; passphrases are never
+accepted as command-line arguments. A recovery bundle contains all retained
+epochs and therefore grants decryption of every Bucket owned by this keyring.
+Import adds missing epochs to an existing keyring only when every overlapping
+epoch contains byte-identical key material; it never replaces conflicting
+keys. This permits another device to import later rotations safely. Losing both
+the keyring and recovery bundle makes the encrypted backups unrecoverable.
+`malt backup key-rotate`
+activates a new epoch for future snapshots while retaining old restore keys; it
+does not re-encrypt existing archives. The Gateway never receives these keys.
+
+This version supports one account across multiple authorized devices, but does
+not implement cryptographic sharing of a Bucket with another user. A Gateway
+ACL grant alone does not grant decryption, and proxy re-encryption, per-member
+key envelopes, and shared-Bucket revocation are intentionally out of scope.
+
+Client state and portable credential-provider files use owner-only Unix permissions or a protected
+owner-and-SYSTEM Windows DACL. Custom config, keyring, workspace, trust, and
+Plan-history paths must still live in an owner-only directory: protecting a
+file cannot prevent another principal with parent-directory replacement rights
+from deleting and replacing it. Do not place these paths in a shared
+directory.
+
+If the configured staging directory is inside the selected backup source, the
+client uses the system temporary directory instead. It rejects the operation
+when no staging root exists outside the source, and the archive writer
+independently refuses to archive its own output, including through a symlinked
+staging path. Backup sources containing the configured MALT keyring, config,
+workspace, trust store, backup history, or daemon endpoint are rejected rather
+than silently omitted or self-encrypted. Keep device enrollment/recovery
+copies through the separate secure channel described above.
+
+The old single-directory `backup.jobs` model and its history schema are not
+migrated. This Plan-only implementation rejects that configuration explicitly
+instead of silently preserving two backup models.
+
+The daemon exposes HTTP semantics over a private user-owned Unix socket or
+Windows named pipe. It does not open a loopback TCP configuration website. A
+future Web or native GUI should be a thin client of that private management
+API; backup, scheduling, trust, and key policy remain reusable application
+services rather than UI logic.
 
 Trust an independently obtained root, resolve a UnixFS path, and add a local
 tree:
@@ -211,7 +388,8 @@ Run `malt <command> --help` for the exact flags and output contract.
 
 Default state lives under `~/.malt-client/`. The generated configuration points
 to `http://127.0.0.1:8080`; edit `gateway.base_url` to select another gateway.
-Tenant bearer credentials require HTTPS except for loopback development.
+Tenant bearer credentials and device proof-of-possession authentication require
+HTTPS except for loopback development.
 
 ## Trust model
 

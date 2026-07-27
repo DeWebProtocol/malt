@@ -29,6 +29,14 @@ result, err := remote.PushBucket(ctx, transport.BucketPushRequest{
 })
 ```
 
+Interactive device login uses `Options.DeviceAuthorizer` instead. The
+authorizer adds a fresh proof-of-possession signature after the request body
+and URI are final; `TenantBearerToken` and `DeviceAuthorizer` are mutually
+exclusive. `internal/deviceauth.FileProvider` is the current CLI-owned
+owner-only software fallback. The exported interface allows a hardware-backed
+signer to be composed later without exposing private-key storage through
+transport.
+
 `BaseRevision` records the main-ref generation observed alongside the captured
 base. It is descriptive synchronization metadata, not a client-supplied CAS
 token and not an ordering constraint on a replayed push result. Gateway performs
@@ -69,8 +77,8 @@ controlled evaluation or operator tooling. Construct the transport with
 `Options.OperatorBearerToken`; the token is attached only to the logical
 storage-metrics request. A credentialed transport requires HTTPS unless its
 Gateway host is loopback (localhost, 127.0.0.0/8, or ::1). Credentialed
-requests reject redirects instead of forwarding the bearer token to another
-URL.
+requests reject redirects instead of forwarding bearer credentials or signed
+requests to another URL.
 
 No exported signature contains a type from `internal/`.
 
@@ -125,6 +133,28 @@ option normalization, ignore and symlink policy, native hybrid staging,
 Merkle DAG import, accepted-alias selection, and unaccepted candidate
 recording. The caller injects a narrow graph/fixed-list Gateway and CAS; Cobra
 is not part of this package.
+
+`application/backup` composes encrypted snapshot creation with those add and
+Bucket synchronization ports. `PlanStore` persists complete Branch plans and
+their disjoint local bindings. `PlanService.Backup` snapshots every changed
+binding before remote observation, stages before push, and returns the exact
+fast-forward, merge, or conflict-branch outcome. `PlanService.Sync` then
+verifies and atomically installs every binding from the final remote root.
+`PlanService.RestoreTo` restores the complete encrypted manifest; it does not
+accept a remote subpath selector. `RestoreBranchTo` reconstructs a Plan from
+that encrypted manifest for a new device. The old single-snapshot Service,
+Restore, Job, and Scheduler model has been removed rather than retained as a
+second compatibility path.
+
+The archive uses XChaCha20 without an AEAD tag because authenticated
+MALT/CID commitments are the integrity layer for this profile. The direct
+archive-decryption helper is package-private, so the exported restore path
+accepts only untrusted transport/CAS capabilities and constructs the standard
+local verifier internally; callers cannot inject a pretrusted reader or a
+permissive verifier to bypass trusted-root and verified-range checks.
+`FingerprintSource` provides local-only plaintext change detection, while
+`History` implements durable exact-candidate push retries without importing
+configuration or transport implementations.
 
 ## Verified native UnixFS
 

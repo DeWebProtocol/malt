@@ -15,6 +15,7 @@ It owns:
 - IPFS-compatible Merkle DAG UnixFS import as an alternative client target;
 - local replay verification for gateway Merkle DAG compatibility reads;
 - application-level payload-byte verification.
+- client-side encrypted snapshot creation, restore, and automatic scheduling.
 
 Client-specific benchmark process adapters also live in this repository under
 `tools/evaluation`. They exercise this implementation at a pinned commit, but
@@ -83,6 +84,7 @@ The dependency direction is deliberate:
 ```text
 cmd/malt and internal/daemon -> application use cases
 application -> unixfs / merkledag / trust narrow ports
+application/backup -> add / bucketsync / unixfs narrow ports
 unixfs     -> MALT core verifier + narrow transport ports
 merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
@@ -154,6 +156,55 @@ explicit trust decision with a stale in-memory snapshot. Candidate creation
 and acceptance also carry the accepted base root: if that root has advanced,
 the operation fails as stale instead of applying a sibling transition.
 
+The same private HTTP-over-socket control plane accepts manual encrypted backup
+requests and runs configured interval jobs. Manual and scheduled executions
+share one serialized runner. The scheduler reloads configuration and persists
+its last check, attempt, success, error, and candidate result in a `0600` local
+history file. A cross-process operation lock also excludes the advanced
+foreground bypass from a concurrent daemon backup. CLI restore remains a
+foreground operation because the caller must explicitly select a trusted root
+and a destination filesystem path.
+
+Before staging, backup persists a local publication journal containing the
+candidate, original base, message, source, and scheduled-job identity. A
+timeout or lost Gateway response therefore restages idempotently and retries
+the frozen Bucket push rather than producing another encrypted snapshot.
+
+No browser-facing loopback TCP service is opened. A future Web or native GUI
+may use the private management API, but it must not own backup, trust, or key
+policy.
+
+## Encrypted backup boundary
+
+The backup application stores one opaque snapshot at
+`malt-backup/snapshot`. It tar/gzip encodes the source tree before applying
+XChaCha20 with a fresh 192-bit nonce. The format contains a small cleartext
+version/epoch/nonce header and no AEAD tag.
+
+This construction is valid only under the enforced restore sequence:
+
+```text
+caller-selected accepted/explicit root
+    -> locally verified path ProofList
+    -> authenticated target/list and chunk CIDs
+    -> CID-verified encrypted archive bytes
+    -> XChaCha20 decryption
+    -> safe archive extraction
+```
+
+Consequently the stream cipher does not claim to authenticate remote bytes:
+MALT proofs and CIDs do that. Archive decoding detects an unavailable/wrong
+epoch as an operational error. An untrusted Gateway head, unchecked raw-CAS
+read, or decryption before CID verification must never enter this path.
+
+The local keyring stores one master key per epoch with mode `0600`. A
+domain-separated HMAC-SHA-256 derivation produces a per-Bucket key in memory.
+Plaintext tree fingerprints used for automatic change detection remain in
+local history and are never uploaded. Original source names are inside the
+encrypted archive, although ciphertext size, update timing, the fixed remote
+path, and access patterns remain visible. This is a backup application profile;
+it does not silently change the existing plaintext semantics of `malt add`.
+
 ## Packages
 
 - `cmd/malt`: CLI and daemon process lifecycle.
@@ -161,6 +212,8 @@ the operation fails as stale instead of applying a sibling transition.
   names and wire contracts are campaign inputs, not supported user CLI.
 - `application`: reusable trusted-root, UnixFS, and Merkle DAG use cases shared
   by command and daemon adapters.
+- `application/backup`: encrypted archive, local fingerprint, Bucket
+  publication, verified restore, history, and automatic scheduling use cases.
 - `application/add`: reusable ignore-aware local-input staging, symlink policy,
   hybrid MALT materialization, Merkle DAG import, and candidate recording.
 - `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
@@ -172,6 +225,13 @@ the operation fails as stale instead of applying a sibling transition.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
   Merkle-DAG compatibility applications.
 - `internal/daemon`: local Unix-socket/Windows-pipe root-control API.
+- `internal/keyring`: client-owned backup epoch keys and per-Bucket derivation.
+- `internal/durablefile`: platform-specific parent-directory synchronization
+  after security-sensitive atomic state replacement.
+- `internal/filelock`: bounded cross-process locks for client-owned state
+  transitions.
+- `internal/securefile`: owner-only Unix file modes and protected
+  owner-and-SYSTEM Windows file DACLs.
 - `internal/cas`: client-side CAS helpers and byte verification.
 - `internal/evaluation`: private adapter support, including evaluation Gateway
   authentication/control transport and shared workload machinery.
