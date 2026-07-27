@@ -103,14 +103,14 @@ func TestBranchWorkspacesArePersistedIndependently(t *testing.T) {
 	now := time.Now().UTC()
 	mainHead := testHead("cmt_main", testCID(t, "main"), 1, now)
 	branchHead := testHead("cmt_photos", testCID(t, "photos"), 1, now)
-	branchHead.Name = "heads/photos"
+	branchHead.Name = "heads/team/photos"
 	branchHead.Kind = "explicit"
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	mainService, err := OpenBranch(path, &fakeGateway{head: mainHead}, "bkt_one", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	branchService, err := OpenBranch(path, &fakeGateway{head: branchHead}, "bkt_one", "photos")
+	branchService, err := OpenBranch(path, &fakeGateway{head: branchHead}, "bkt_one", "heads/team/photos")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestBranchWorkspacesArePersistedIndependently(t *testing.T) {
 	if mainWorkspace.Branch != "main" || mainWorkspace.Base.CommitID != "cmt_main" {
 		t.Fatalf("main workspace = %#v", mainWorkspace)
 	}
-	if branchWorkspace.Branch != "photos" || branchWorkspace.Base.CommitID != "cmt_photos" {
+	if branchWorkspace.Branch != "team/photos" || branchWorkspace.Base.CommitID != "cmt_photos" {
 		t.Fatalf("branch workspace = %#v", branchWorkspace)
 	}
 }

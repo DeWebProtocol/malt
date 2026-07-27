@@ -19,6 +19,7 @@ import (
 	clientadd "github.com/dewebprotocol/malt-client/application/add"
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	"github.com/dewebprotocol/malt-client/bucketsync"
+	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	"github.com/dewebprotocol/malt-client/internal/keyring"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
@@ -657,15 +658,7 @@ func planHistoryPath(cfg *clientconfig.Config, planID string) string {
 }
 
 func normalizeCLIPlanBranch(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" || value == "main" {
-		return "main", nil
-	}
-	value = strings.TrimPrefix(value, "heads/")
-	if value == "" || value == "main" || strings.ContainsAny(value, `/\`) || strings.ContainsAny(value, " \t\r\n") {
-		return "", fmt.Errorf("invalid Bucket branch %q", value)
-	}
-	return value, nil
+	return bucketbranch.NormalizeSelector(value)
 }
 
 func runConfiguredPlanScheduler(ctx context.Context, runner *configuredPlanRunner) {

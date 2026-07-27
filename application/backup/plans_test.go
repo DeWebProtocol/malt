@@ -89,12 +89,15 @@ func TestPlanStoreUsesBranchesAsIndependentRestoreUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	branchPlan, _, err := store.Bind(BindRequest{BucketID: "bucket-a", BucketName: "docs", Branch: "photos", Source: second})
+	branchPlan, _, err := store.Bind(BindRequest{BucketID: "bucket-a", BucketName: "docs", Branch: "heads/team/photos", Source: second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mainPlan.ID == branchPlan.ID {
 		t.Fatal("different branches were collapsed into one backup plan")
+	}
+	if branchPlan.Branch != "team/photos" {
+		t.Fatalf("canonical branch = %q", branchPlan.Branch)
 	}
 	nested := filepath.Join(first, "nested")
 	if err := os.MkdirAll(nested, 0o700); err != nil {

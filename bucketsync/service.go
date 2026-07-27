@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 	"github.com/dewebprotocol/malt-client/transport"
 	cid "github.com/ipfs/go-cid"
@@ -587,17 +588,7 @@ func migrateMainWorkspaces(values map[string]Workspace) map[string]Workspace {
 }
 
 func normalizeBranch(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "main" {
-		return "main", nil
-	}
-	raw = strings.TrimPrefix(raw, "heads/")
-	if raw == "" || raw == "main" || strings.HasPrefix(raw, "conflicts/") ||
-		strings.Contains(raw, "/") || strings.Contains(raw, "\\") ||
-		strings.ContainsAny(raw, " \t\r\n") {
-		return "", fmt.Errorf("invalid Bucket branch %q", raw)
-	}
-	return raw, nil
+	return bucketbranch.NormalizeSelector(raw)
 }
 
 func validateVersionTwoFreezeFields(data []byte) error {

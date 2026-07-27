@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
@@ -565,17 +566,7 @@ func validateOpaqueID(value, kind string) error {
 }
 
 func normalizePlanBranch(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "main" {
-		return "main", nil
-	}
-	raw = strings.TrimPrefix(raw, "heads/")
-	if raw == "" || raw == "main" || strings.HasPrefix(raw, "conflicts/") ||
-		strings.Contains(raw, "/") || strings.Contains(raw, "\\") ||
-		strings.ContainsAny(raw, " \t\r\n") {
-		return "", fmt.Errorf("invalid Bucket branch %q", raw)
-	}
-	return raw, nil
+	return bucketbranch.NormalizeSelector(raw)
 }
 
 func validateDisplayName(value, kind string) error {

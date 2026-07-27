@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -173,6 +174,10 @@ func (c *Client) BucketBranches(ctx context.Context) ([]BucketRef, error) {
 
 func (c *Client) CreateBucketBranch(ctx context.Context, name, fromCommit string) (*BucketRef, error) {
 	if err := c.requireSelectedBucket(); err != nil {
+		return nil, err
+	}
+	name, err := bucketbranch.NormalizeExplicit(name)
+	if err != nil {
 		return nil, err
 	}
 	var result BucketRef
@@ -436,19 +441,7 @@ func ValidateBucketPushResult(bucketID string, request BucketPushRequest, value 
 }
 
 func normalizeBucketBranch(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "main" {
-		return "main", nil
-	}
-	if strings.HasPrefix(raw, "heads/") {
-		raw = strings.TrimPrefix(raw, "heads/")
-	}
-	if raw == "" || raw == "main" || strings.HasPrefix(raw, "conflicts/") ||
-		strings.Contains(raw, "/") || strings.Contains(raw, "\\") ||
-		strings.ContainsAny(raw, " \t\r\n") {
-		return "", fmt.Errorf("invalid Bucket branch %q", raw)
-	}
-	return raw, nil
+	return bucketbranch.NormalizeSelector(raw)
 }
 
 func validateBucketCommit(bucketID string, value BucketCommit) error {
