@@ -14,6 +14,7 @@ profiles rejected.
 | `stateful-complete-vectors-v1` | Experimental state profile required by the current update-view contract |
 | `malt.semantic-intent/v1` | Experimental post-v0.0.6 output-free update intent |
 | `malt.client-root-bundle/v1` | Experimental post-v0.0.6 exact-root submission; not a transition proof |
+| `malt.writer-compute-result/v1` | Experimental post-v0.0.6 browser-local bundle and next-view result |
 | `malt.materialization-receipt/v1` | Experimental post-v0.0.6 exact-bundle durability acknowledgement |
 | ProofList JSON and proof semantics | Experimental, verifier-facing |
 | Typed MALT root CIDs/codecs | Experimental, verifier-facing |

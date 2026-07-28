@@ -1,6 +1,7 @@
 package ipa_test
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
@@ -89,6 +90,40 @@ func TestIPAProveIsStateless(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("expected VerifyProof to verify")
+	}
+}
+
+func TestIPAProveAtRootRejectsInconsistentMaterialization(t *testing.T) {
+	scheme, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{
+		commitment.NewCell([]byte("slot0")),
+		commitment.NewCell([]byte("slot1")),
+	}
+	root, err := scheme.Commit(values)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	value, proof, err := scheme.ProveAtRoot(root, values, 1)
+	if err != nil {
+		t.Fatalf("ProveAtRoot failed: %v", err)
+	}
+	if !value.Equal(values[1]) {
+		t.Fatalf("unexpected value %x", value)
+	}
+	if ok, err := scheme.VerifyIndex(root, 1, value, proof); err != nil || !ok {
+		t.Fatalf("VerifyIndex = %v, %v; want true, nil", ok, err)
+	}
+
+	inconsistent := commitment.CloneCells(values)
+	inconsistent[0] = commitment.NewCell([]byte("different slot0"))
+	if _, _, err := scheme.ProveAtRoot(root, inconsistent, 1); err == nil {
+		t.Fatal("ProveAtRoot accepted materialization inconsistent with root")
+	}
+	if _, _, err := scheme.ProveAtRoot(root, make([]commitment.Cell, ipa.MaxValues+1), 0); err == nil {
+		t.Fatal("ProveAtRoot accepted an oversized materialization")
 	}
 }
 
@@ -232,5 +267,87 @@ func TestIPABatchProveIsStateless(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected wrong batch value verification to fail")
+	}
+
+	rootBoundValues, rootBoundProof, err := scheme.BatchProveAtRoot(root, values, indices)
+	if err != nil {
+		t.Fatalf("BatchProveAtRoot failed: %v", err)
+	}
+	if ok, err := scheme.BatchVerify(root, indices, rootBoundValues, rootBoundProof); err != nil || !ok {
+		t.Fatalf("root-bound BatchVerify = %v, %v; want true, nil", ok, err)
+	}
+	inconsistent := commitment.CloneCells(values)
+	inconsistent[1] = commitment.NewCell([]byte("different slot1"))
+	if _, _, err := scheme.BatchProveAtRoot(root, inconsistent, indices); err == nil {
+		t.Fatal("BatchProveAtRoot accepted materialization inconsistent with root")
+	}
+}
+
+func TestIPABatchOperationsRejectOversizedRequests(t *testing.T) {
+	scheme, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{commitment.NewCell([]byte("slot0"))}
+	root, err := scheme.Commit(values)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	indices := make([]uint64, ipa.MaxValues+1)
+	proved := make([]commitment.Cell, len(indices))
+	for i := range proved {
+		proved[i] = values[0]
+	}
+
+	if _, _, _, err := scheme.BatchProve(values, indices); err == nil {
+		t.Fatal("BatchProve accepted too many indices")
+	}
+	if _, _, err := scheme.BatchProveAtRoot(root, values, indices); err == nil {
+		t.Fatal("BatchProveAtRoot accepted too many indices")
+	}
+	if ok, err := scheme.BatchVerify(root, indices, proved, nil); err == nil || ok {
+		t.Fatalf("BatchVerify(too many indices) = %v, %v; want false, error", ok, err)
+	}
+}
+
+func TestIPAVerifyRejectsOverflowingRoundCount(t *testing.T) {
+	scheme, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{commitment.NewCell([]byte("slot0"))}
+	root, err := scheme.Commit(values)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	proof := make([]byte, ipa.ProofSize)
+	binary.BigEndian.PutUint32(proof[:4], uint32(1)<<31)
+	if ok, err := scheme.VerifyIndex(root, 0, values[0], proof); err == nil || ok {
+		t.Fatalf("VerifyIndex(overflowing round count) = %v, %v; want false, error", ok, err)
+	}
+	if ok, err := scheme.VerifyProof(root, values[0], proof); err == nil || ok {
+		t.Fatalf("VerifyProof(overflowing round count) = %v, %v; want false, error", ok, err)
+	}
+}
+
+func TestIPAVerifyRejectsOutOfRangeStableIndex(t *testing.T) {
+	scheme, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatalf("NewScheme failed: %v", err)
+	}
+	values := []commitment.Cell{commitment.NewCell([]byte("slot0"))}
+	root, value, proof, err := scheme.Prove(values, 0)
+	if err != nil {
+		t.Fatalf("Prove failed: %v", err)
+	}
+	const hostileIndex = uint64(1) << 31
+	if ok, err := scheme.VerifyIndex(root, hostileIndex, value, proof); err == nil || ok {
+		t.Fatalf("VerifyIndex(out-of-range index) = %v, %v; want false, error", ok, err)
+	}
+
+	hostileProof := append([]byte(nil), proof...)
+	binary.BigEndian.PutUint32(hostileProof[len(hostileProof)-4:], uint32(hostileIndex))
+	if ok, err := scheme.VerifyProof(root, value, hostileProof); err == nil || ok {
+		t.Fatalf("VerifyProof(out-of-range index) = %v, %v; want false, error", ok, err)
 	}
 }

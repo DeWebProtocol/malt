@@ -130,6 +130,9 @@ func (c *Commitment) ProveSlot(root cid.Cid, slots []cid.Cid, slot uint64) (comm
 	}
 
 	cells := cellsFromCIDs(slots)
+	if rootProver, ok := c.scheme.(commitment.IndexRootProver); ok {
+		return rootProver.ProveAtRoot(root, cells, slot)
+	}
 	provedRoot, value, proof, err := c.scheme.Prove(cells, slot)
 	if err != nil {
 		return nil, nil, err

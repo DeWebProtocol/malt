@@ -60,6 +60,7 @@ malt (module facade)
 │   └── runtime              composition over an injected materializer
 ├── sdk/verifier             trusted client facade
 ├── sdk/writer               complete-view client-root computation
+├── cmd/malt-writer-wasm     browser client-root adapter
 ├── wire/maltcid             typed CID rules
 └── artifact                 frozen compatibility profile
 ```
@@ -143,6 +144,11 @@ one exact `ClientRootBundle` locally. `sdk/writer` owns that
 application-neutral computation. It uses caller-supplied branching
 materialization only for speculative local state and defines no durable
 ArcTable or publication policy.
+
+`cmd/malt-writer-wasm` exposes the same exact computation to browsers through
+`maltComputeClientRootV1`. It accepts the existing checked client-root wire
+profiles as bounded UTF-8 JSON `Uint8Array` values and performs no network,
+publication, persistence, or trust action.
 
 A service may independently replay and materialize the exact bundle at its
 declared durability boundary, then acknowledge it with a

@@ -43,6 +43,20 @@ type IndexProver interface {
 	Replace(values []Cell, index uint64, oldValue, newValue Cell) (cid.Cid, error)
 }
 
+// IndexRootProver generates proofs against a caller-supplied root without
+// first recomputing that commitment. Implementations must fail unless the
+// generated proof verifies against root. This lets an untrusted proof service
+// open client-materialized vectors while keeping commitment computation on the
+// client.
+type IndexRootProver interface {
+	// ProveAtRoot opens one index against root. It must not call Commit.
+	ProveAtRoot(root cid.Cid, values []Cell, index uint64) (value Cell, proof []byte, err error)
+
+	// BatchProveAtRoot opens an ordered index list against root. It must not
+	// call Commit.
+	BatchProveAtRoot(root cid.Cid, values []Cell, indices []uint64) (proved []Cell, proof []byte, err error)
+}
+
 // IndexOpening is an opaque, prepared witness for one committed vector. Root
 // returns the commitment computed while the witness was prepared. Open
 // generates an index proof without recomputing that commitment.

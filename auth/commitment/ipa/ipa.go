@@ -19,7 +19,8 @@ import (
 
 const (
 	// MaxValues is the maximum number of values per commitment.
-	MaxValues = 256
+	MaxValues   = 256
+	proofRounds = 8
 	// ProofSize is the size of a primitive IPA index proof in bytes.
 	// For 256 elements: numRounds=8, size=4 + 8*32(L) + 8*32(R) + 32(A_scalar) + 4(index) = 552
 	ProofSize = 552
@@ -75,6 +76,36 @@ func (s *Scheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitm
 	return comm, value, proof, err
 }
 
+// ProveAtRoot opens values against a caller-supplied root without recomputing
+// the IPA commitment. The generated proof is verified before it is returned so
+// inconsistent client materialization fails closed.
+func (s *Scheme) ProveAtRoot(root cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	if _, err := maltcid.ExtractCommitment(root); err != nil {
+		return nil, nil, fmt.Errorf("invalid proof root: %w", err)
+	}
+	if maltcid.BackendKindOf(root) != maltcid.BackendKindIPA {
+		return nil, nil, fmt.Errorf("proof root does not use the IPA backend")
+	}
+	if len(values) > MaxValues {
+		return nil, nil, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
+	}
+	if index >= uint64(len(values)) {
+		return nil, nil, fmt.Errorf("index %d out of range", index)
+	}
+	value, proof, err := s.proveValuesIndex(root, values, index)
+	if err != nil {
+		return nil, nil, err
+	}
+	ok, err := s.VerifyIndex(root, index, value, append([]byte(nil), proof...))
+	if err != nil {
+		return nil, nil, fmt.Errorf("verify root-bound IPA proof: %w", err)
+	}
+	if !ok {
+		return nil, nil, commitment.ErrInvalidCommitment
+	}
+	return value, proof, nil
+}
+
 type opening struct {
 	scheme *Scheme
 	root   cid.Cid
@@ -102,12 +133,12 @@ func (o *opening) Open(index uint64) (commitment.Cell, []byte, error) {
 
 // BatchProve proves multiple stable indices with one batch proof payload.
 func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid, []commitment.Cell, []byte, error) {
+	if err := validateBatchOpening(values, indices); err != nil {
+		return cid.Undef, nil, nil, err
+	}
 	comm, err := s.commitValues(values)
 	if err != nil {
 		return cid.Undef, nil, nil, err
-	}
-	if len(indices) == 0 {
-		return cid.Undef, nil, nil, fmt.Errorf("indices must not be empty")
 	}
 
 	commBytes, err := maltcid.ExtractCommitment(comm)
@@ -127,13 +158,6 @@ func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid
 	zs := make([]uint8, len(indices))
 	proved := make([]commitment.Cell, len(indices))
 	for i, index := range indices {
-		if index >= uint64(len(values)) {
-			return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
-		}
-		if index >= MaxValues {
-			return cid.Undef, nil, nil, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
-		}
-
 		commitments[i] = c
 		cs[i] = &commitments[i]
 		fs[i] = vector
@@ -152,6 +176,61 @@ func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid
 		return cid.Undef, nil, nil, fmt.Errorf("failed to serialize IPA batch proof: %w", err)
 	}
 	return comm, proved, proofBytes, nil
+}
+
+// BatchProveAtRoot opens values against a caller-supplied root without
+// recomputing the IPA commitment.
+func (s *Scheme) BatchProveAtRoot(root cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
+	if _, err := maltcid.ExtractCommitment(root); err != nil {
+		return nil, nil, fmt.Errorf("invalid proof root: %w", err)
+	}
+	if maltcid.BackendKindOf(root) != maltcid.BackendKindIPA {
+		return nil, nil, fmt.Errorf("proof root does not use the IPA backend")
+	}
+	if err := validateBatchOpening(values, indices); err != nil {
+		return nil, nil, err
+	}
+
+	commBytes, err := maltcid.ExtractCommitment(root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to extract commitment: %w", err)
+	}
+	var c banderwagon.Element
+	if err := c.SetBytes(commBytes); err != nil {
+		return nil, nil, fmt.Errorf("failed to reconstruct commitment: %w", err)
+	}
+
+	vector := valuesToVector(values)
+	commitments := make([]banderwagon.Element, len(indices))
+	cs := make([]*banderwagon.Element, len(indices))
+	fs := make([][]fr.Element, len(indices))
+	zs := make([]uint8, len(indices))
+	proved := make([]commitment.Cell, len(indices))
+	for i, index := range indices {
+		commitments[i] = c
+		cs[i] = &commitments[i]
+		fs[i] = vector
+		zs[i] = uint8(index)
+		proved[i] = commitment.NewCell(values[int(index)])
+	}
+
+	transcript := common.NewTranscript(batchTranscriptLabel)
+	batchProof, err := multiproof.CreateMultiProof(transcript, s.ipaConfig, cs, fs, zs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create IPA batch proof: %w", err)
+	}
+	proof, err := serializeMultiProof(batchProof)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to serialize IPA batch proof: %w", err)
+	}
+	ok, err := s.BatchVerify(root, indices, proved, append([]byte(nil), proof...))
+	if err != nil {
+		return nil, nil, fmt.Errorf("verify root-bound IPA batch proof: %w", err)
+	}
+	if !ok {
+		return nil, nil, commitment.ErrInvalidCommitment
+	}
+	return proved, proof, nil
 }
 
 func (s *Scheme) proveValuesIndex(comm cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
@@ -190,6 +269,9 @@ func (s *Scheme) proveValuesIndex(comm cid.Cid, values []commitment.Cell, index 
 
 // VerifyIndex verifies a proof for a stable index without requiring cache state.
 func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, proof []byte) (bool, error) {
+	if index >= MaxValues {
+		return false, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
+	}
 	commBytes, err := maltcid.ExtractCommitment(comm)
 	if err != nil {
 		return false, fmt.Errorf("failed to extract commitment: %w", err)
@@ -223,11 +305,8 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, 
 
 // BatchVerify verifies a batch proof for an ordered index list.
 func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment.Cell, proof []byte) (bool, error) {
-	if len(indices) == 0 {
-		return false, fmt.Errorf("indices must not be empty")
-	}
-	if len(indices) != len(values) {
-		return false, fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	if err := validateBatchVerification(indices, values); err != nil {
+		return false, err
 	}
 
 	commBytes, err := maltcid.ExtractCommitment(comm)
@@ -251,10 +330,6 @@ func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment
 	ys := make([]*fr.Element, len(indices))
 	zs := make([]uint8, len(indices))
 	for i, index := range indices {
-		if index >= MaxValues {
-			return false, fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
-		}
-
 		commitments[i] = c
 		cs[i] = &commitments[i]
 		outputs[i] = cellToFieldElement(values[i])
@@ -270,6 +345,42 @@ func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment
 	return ok, nil
 }
 
+func validateBatchOpening(values []commitment.Cell, indices []uint64) error {
+	if len(values) > MaxValues {
+		return fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
+	}
+	if len(indices) == 0 {
+		return fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) > MaxValues {
+		return fmt.Errorf("too many indices: %d > %d", len(indices), MaxValues)
+	}
+	for _, index := range indices {
+		if index >= uint64(len(values)) {
+			return fmt.Errorf("index %d out of range", index)
+		}
+	}
+	return nil
+}
+
+func validateBatchVerification(indices []uint64, values []commitment.Cell) error {
+	if len(indices) == 0 {
+		return fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) > MaxValues {
+		return fmt.Errorf("too many indices: %d > %d", len(indices), MaxValues)
+	}
+	if len(indices) != len(values) {
+		return fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	}
+	for _, index := range indices {
+		if index >= MaxValues {
+			return fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
+		}
+	}
+	return nil
+}
+
 // VerifyProof verifies a proof carrying its own index metadata.
 func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) (bool, error) {
 	commBytes, err := maltcid.ExtractCommitment(comm)
@@ -280,6 +391,9 @@ func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) 
 	ipaProof, index, err := s.deserializeProof(proof)
 	if err != nil {
 		return false, fmt.Errorf("failed to deserialize proof: %w", err)
+	}
+	if index >= MaxValues {
+		return false, fmt.Errorf("proof index %d exceeds max %d", index, MaxValues-1)
 	}
 
 	transcript := common.NewTranscript(singleTranscriptLabel)
@@ -316,10 +430,12 @@ func (s *Scheme) Replace(values []commitment.Cell, index uint64, oldValue, newVa
 
 // serializeProof serializes an IPA proof with index information.
 func (s *Scheme) serializeProof(proof *ipa.IPAProof, index int) ([]byte, error) {
-	numRounds := len(proof.L)
-	totalSize := 4 + (numRounds*2+1)*32 + 4
+	if len(proof.L) != proofRounds || len(proof.R) != proofRounds {
+		return nil, fmt.Errorf("IPA proof has %d L and %d R rounds, want %d each", len(proof.L), len(proof.R), proofRounds)
+	}
+	numRounds := proofRounds
 
-	result := make([]byte, totalSize)
+	result := make([]byte, ProofSize)
 	binary.BigEndian.PutUint32(result[0:4], uint32(numRounds))
 
 	offset := 4
@@ -344,15 +460,15 @@ func (s *Scheme) serializeProof(proof *ipa.IPAProof, index int) ([]byte, error) 
 
 // deserializeProof deserializes an IPA proof and returns the proof and index.
 func (s *Scheme) deserializeProof(data []byte) (*ipa.IPAProof, uint64, error) {
-	if len(data) < 40 {
-		return nil, 0, fmt.Errorf("proof data too short")
+	if len(data) != ProofSize {
+		return nil, 0, fmt.Errorf("proof data has wrong size: expected %d, got %d", ProofSize, len(data))
 	}
 
-	numRounds := int(binary.BigEndian.Uint32(data[0:4]))
-	expectedSize := 4 + (numRounds*2+1)*32 + 4
-	if len(data) != expectedSize {
-		return nil, 0, fmt.Errorf("proof data has wrong size: expected %d, got %d", expectedSize, len(data))
+	rawRounds := binary.BigEndian.Uint32(data[0:4])
+	if rawRounds != uint32(proofRounds) {
+		return nil, 0, fmt.Errorf("proof has %d rounds, want %d", rawRounds, proofRounds)
 	}
+	numRounds := proofRounds
 
 	proof := &ipa.IPAProof{
 		L: make([]banderwagon.Element, numRounds),
@@ -433,3 +549,4 @@ func valuesToVector(values []commitment.Cell) []fr.Element {
 var _ commitment.IndexCommitment = (*Scheme)(nil)
 var _ commitment.IndexVerifier = (*Scheme)(nil)
 var _ commitment.IndexProver = (*Scheme)(nil)
+var _ commitment.IndexRootProver = (*Scheme)(nil)

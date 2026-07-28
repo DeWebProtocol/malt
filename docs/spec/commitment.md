@@ -69,6 +69,21 @@ root without a base root. A resolver that crosses multiple structure roots
 repeats backend selection for each step rather than pinning the first root's
 backend for the complete traversal.
 
+## Root-Bound Proof Generation
+
+The built-in KZG and IPA backends implement the optional
+`commitment.IndexRootProver` capability. It opens a caller-supplied materialized
+vector against an already selected typed root without first calling `Commit`.
+Each generated proof is verified against that root before it is returned, so a
+vector inconsistent with the selected root fails closed.
+
+Semantic map and list proving prefer this capability and retain the older
+commit-and-compare path only for compatible external backends that do not
+implement it. Root-bound proving does not itself define a materialization
+upload, persistence, authorization, publication, or receipt protocol. It is
+the primitive needed by an untrusted proof service that receives commitment
+roots from a client instead of creating them.
+
 ## Related Proposals
 
 - [MIP-1005](../mips/mip-1005-kzg-map-label-domain.md) records the accepted

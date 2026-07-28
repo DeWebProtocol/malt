@@ -280,12 +280,51 @@ func TestMaterializationReceiptWireRejectsWrongDigest(t *testing.T) {
 	}
 }
 
+func TestWriterComputeResultRoundTripsAndBindsNextView(t *testing.T) {
+	bundle, _ := protocolClientRootFixture(t)
+	nextView, err := mutation.NormalizeUpdateView(bundle.View)
+	if err != nil {
+		t.Fatalf("NormalizeUpdateView failed: %v", err)
+	}
+	nextView.BaseRoot = bundle.Candidate
+	for index := range nextView.Objects {
+		if nextView.Objects[index].Root.Equals(bundle.View.BaseRoot) {
+			nextView.Objects[index].Root = bundle.Candidate
+		}
+	}
+	metrics := protocol.WriterComputeMetrics{CommitmentUpdateNS: 7, TotalNS: 11}
+	wire, err := protocol.NewWriterComputeResult(bundle, nextView, metrics)
+	if err != nil {
+		t.Fatalf("NewWriterComputeResult failed: %v", err)
+	}
+	data, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("marshal writer compute result: %v", err)
+	}
+	decoded, err := protocol.DecodeWriterComputeResult(data)
+	if err != nil {
+		t.Fatalf("DecodeWriterComputeResult failed: %v", err)
+	}
+	if decoded.Profile != protocol.WriterComputeResultProfile ||
+		decoded.Bundle.Candidate != bundle.Candidate.String() ||
+		decoded.NextView.BaseRoot != bundle.Candidate.String() ||
+		decoded.Metrics != metrics {
+		t.Fatalf("unexpected writer compute result: %+v", decoded)
+	}
+
+	wire.NextView.BaseRoot = bundle.View.BaseRoot.String()
+	if err := wire.Validate(); err == nil {
+		t.Fatal("writer compute result accepted a next view at the wrong root")
+	}
+}
+
 func TestClientRootSchemasAreEmbedded(t *testing.T) {
 	want := map[string]bool{
 		"update-view.schema.json":             false,
 		"semantic-intent.schema.json":         false,
 		"client-root-bundle.schema.json":      false,
 		"materialization-receipt.schema.json": false,
+		"writer-compute-result.schema.json":   false,
 	}
 	for _, name := range protocol.SchemaNames() {
 		if _, ok := want[name]; ok {

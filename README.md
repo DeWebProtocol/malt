@@ -40,7 +40,7 @@ MALT core owns:
 - ProofList generation/verification semantics;
 - portable mutation and receipt values;
 - untrusted resolve/read/apply composition over caller-injected capabilities;
-- native Go and browser/WASM verification.
+- native Go and browser/WASM verification and exact client-root computation.
 
 MALT core does not own:
 
@@ -128,6 +128,7 @@ in the application client.
 | `graph` | Resolver, semantic mutation, bootstrap, and explicit reference-writer algorithms over injected capabilities |
 | `sdk/verifier` | Client-facing local verification facade |
 | `sdk/writer` | Complete-view verification and exact client-root computation |
+| `cmd/malt-writer-wasm` | Browser exact client-root computation entry point |
 | `auth/observation` | Optional request-scoped execution diagnostics; never proof evidence |
 | `artifact` | Frozen `malt.artifact/v0alpha2` compatibility decoder/verifier |
 | `cmd/malt-verifier-wasm` | Browser verifier build entry point |

@@ -19,6 +19,7 @@ Go source APIs stable at v1.
 | complete old-state closure | `malt.update-view/v1` | `update-view.schema.json` |
 | output-free requested change | `malt.semantic-intent/v1` | `semantic-intent.schema.json` |
 | exact locally computed submission | `malt.client-root-bundle/v1` | `client-root-bundle.schema.json` |
+| browser-local computation result | `malt.writer-compute-result/v1` | `writer-compute-result.schema.json` |
 | durable exact-bundle acknowledgement | `malt.materialization-receipt/v1` | `materialization-receipt.schema.json` |
 
 Canonical in-process values live in `mutation`. Their JSON projections and
@@ -170,6 +171,14 @@ with a different root while claiming to accept that bundle.
 Payload CIDs in the bundle support service-side availability checks. Their
 presence does not prove that payload bytes are durable, published, fresh, or
 authorized for another reader.
+
+Browser clients may invoke the same computation through
+`cmd/malt-writer-wasm`. Its `maltComputeClientRootV1` entry point strictly
+decodes bounded UTF-8 JSON `Uint8Array` values for an `UpdateView` and
+`SemanticIntent`, runs `sdk/writer`, and returns a strictly validated
+`malt.writer-compute-result/v1` carrying the canonical bundle, complete next
+view, and diagnostic local timings. The WASM adapter does not contact a service
+or change publication or trusted-root state.
 
 ## Strict JSON Decoding And Limits
 
