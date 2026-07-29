@@ -37,8 +37,14 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-      - name: Run WASM conformance vectors
+      - name: Run 32-bit commitment tests
+        run: GOARCH=386 go test ./auth/commitment/kzg ./auth/commitment/ipa
+
+      - name: Run verifier WASM conformance vectors
         run: sh scripts/test-verifier-wasm-vectors.sh
+
+      - name: Run writer WASM smoke
+        run: sh scripts/test-writer-wasm.sh
 
       - name: Run vet
         run: go vet ./...

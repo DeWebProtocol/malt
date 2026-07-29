@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dewebprotocol/malt/mutation"
 )
@@ -66,12 +67,28 @@ func DecodeMaterializationReceipt(data []byte, bundle mutation.ClientRootBundle)
 	return value, nil
 }
 
+// DecodeWriterComputeResult strictly decodes and validates one browser writer
+// result.
+func DecodeWriterComputeResult(data []byte) (WriterComputeResult, error) {
+	var value WriterComputeResult
+	if err := decodeClientRootJSON(data, &value); err != nil {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: %w", err)
+	}
+	if err := value.Validate(); err != nil {
+		return WriterComputeResult{}, err
+	}
+	return value, nil
+}
+
 func decodeClientRootJSON(data []byte, target any) error {
 	if len(data) == 0 {
 		return fmt.Errorf("client-root JSON is empty")
 	}
 	if len(data) > MaxClientRootJSONBytes {
 		return fmt.Errorf("client-root JSON exceeds %d bytes", MaxClientRootJSONBytes)
+	}
+	if !utf8.Valid(data) {
+		return fmt.Errorf("client-root JSON is not valid UTF-8")
 	}
 	targetType := reflect.TypeOf(target)
 	if targetType.Kind() != reflect.Pointer || targetType.Elem().Kind() != reflect.Struct {

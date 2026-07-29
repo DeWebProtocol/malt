@@ -76,6 +76,36 @@ func (s *Scheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitm
 	return comm, value, proof, err
 }
 
+// ProveAtRoot opens values against a caller-supplied root without recomputing
+// the KZG commitment. The generated proof is verified before it is returned so
+// inconsistent client materialization fails closed.
+func (s *Scheme) ProveAtRoot(root cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	if _, err := maltcid.ExtractCommitment(root); err != nil {
+		return nil, nil, fmt.Errorf("invalid proof root: %w", err)
+	}
+	if maltcid.BackendKindOf(root) != maltcid.BackendKindKZG {
+		return nil, nil, fmt.Errorf("proof root does not use the KZG backend")
+	}
+	if len(values) > MaxValues {
+		return nil, nil, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
+	}
+	if index >= uint64(len(values)) {
+		return nil, nil, fmt.Errorf("index %d out of range", index)
+	}
+	value, proof, err := s.proveValuesIndex(values, index)
+	if err != nil {
+		return nil, nil, err
+	}
+	ok, err := s.VerifyIndex(root, index, value, append([]byte(nil), proof...))
+	if err != nil {
+		return nil, nil, fmt.Errorf("verify root-bound KZG proof: %w", err)
+	}
+	if !ok {
+		return nil, nil, commitment.ErrInvalidCommitment
+	}
+	return value, proof, nil
+}
+
 type opening struct {
 	scheme *Scheme
 	root   cid.Cid
@@ -116,21 +146,17 @@ func (s *Scheme) proveValuesIndex(values []commitment.Cell, index uint64) (commi
 // TODO: replace this looped encoding with a real KZG multiproof when the
 // backend supports batch opening generation for our index-commitment setting.
 func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid, []commitment.Cell, []byte, error) {
+	if err := validateBatchOpening(values, indices); err != nil {
+		return cid.Undef, nil, nil, err
+	}
 	comm, err := s.commitValues(values)
 	if err != nil {
 		return cid.Undef, nil, nil, err
-	}
-	if len(indices) == 0 {
-		return cid.Undef, nil, nil, fmt.Errorf("indices must not be empty")
 	}
 
 	proved := make([]commitment.Cell, len(indices))
 	proofs := make([][]byte, len(indices))
 	for i, index := range indices {
-		if index >= uint64(len(values)) {
-			return cid.Undef, nil, nil, fmt.Errorf("index %d out of range", index)
-		}
-
 		value, proof, err := s.proveValuesIndex(values, index)
 		if err != nil {
 			return cid.Undef, nil, nil, err
@@ -139,6 +165,40 @@ func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid
 		proofs[i] = proof
 	}
 	return comm, proved, serializeBatchProof(proofs), nil
+}
+
+// BatchProveAtRoot opens values against a caller-supplied root without
+// recomputing the KZG commitment.
+func (s *Scheme) BatchProveAtRoot(root cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
+	if _, err := maltcid.ExtractCommitment(root); err != nil {
+		return nil, nil, fmt.Errorf("invalid proof root: %w", err)
+	}
+	if maltcid.BackendKindOf(root) != maltcid.BackendKindKZG {
+		return nil, nil, fmt.Errorf("proof root does not use the KZG backend")
+	}
+	if err := validateBatchOpening(values, indices); err != nil {
+		return nil, nil, err
+	}
+
+	proved := make([]commitment.Cell, len(indices))
+	proofs := make([][]byte, len(indices))
+	for i, index := range indices {
+		value, proof, err := s.proveValuesIndex(values, index)
+		if err != nil {
+			return nil, nil, err
+		}
+		proved[i] = value
+		proofs[i] = proof
+	}
+	proof := serializeBatchProof(proofs)
+	ok, err := s.BatchVerify(root, indices, proved, append([]byte(nil), proof...))
+	if err != nil {
+		return nil, nil, fmt.Errorf("verify root-bound KZG batch proof: %w", err)
+	}
+	if !ok {
+		return nil, nil, commitment.ErrInvalidCommitment
+	}
+	return proved, proof, nil
 }
 
 // VerifyIndex verifies a proof for a stable index without cache state.
@@ -180,11 +240,8 @@ func (s *Scheme) VerifyIndex(comm cid.Cid, index uint64, value commitment.Cell, 
 // TODO: replace this looped verification path once BatchProve emits a real
 // KZG multiproof for our index-commitment setting.
 func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment.Cell, proof []byte) (bool, error) {
-	if len(indices) == 0 {
-		return false, fmt.Errorf("indices must not be empty")
-	}
-	if len(indices) != len(values) {
-		return false, fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	if err := validateBatchVerification(indices, values); err != nil {
+		return false, err
 	}
 
 	proofs, err := deserializeBatchProof(proof)
@@ -205,6 +262,42 @@ func (s *Scheme) BatchVerify(comm cid.Cid, indices []uint64, values []commitment
 		}
 	}
 	return true, nil
+}
+
+func validateBatchOpening(values []commitment.Cell, indices []uint64) error {
+	if len(values) > MaxValues {
+		return fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
+	}
+	if len(indices) == 0 {
+		return fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) > MaxValues {
+		return fmt.Errorf("too many indices: %d > %d", len(indices), MaxValues)
+	}
+	for _, index := range indices {
+		if index >= uint64(len(values)) {
+			return fmt.Errorf("index %d out of range", index)
+		}
+	}
+	return nil
+}
+
+func validateBatchVerification(indices []uint64, values []commitment.Cell) error {
+	if len(indices) == 0 {
+		return fmt.Errorf("indices must not be empty")
+	}
+	if len(indices) > MaxValues {
+		return fmt.Errorf("too many indices: %d > %d", len(indices), MaxValues)
+	}
+	if len(indices) != len(values) {
+		return fmt.Errorf("indices/value length mismatch: %d != %d", len(indices), len(values))
+	}
+	for _, index := range indices {
+		if index >= MaxValues {
+			return fmt.Errorf("index %d exceeds max %d", index, MaxValues-1)
+		}
+	}
+	return nil
 }
 
 // VerifyProof verifies a proof carrying its own index metadata.
@@ -308,7 +401,11 @@ func deserializeBatchProof(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("batch proof too short: %d", len(data))
 	}
 
-	count := int(binary.BigEndian.Uint32(data[:4]))
+	rawCount := binary.BigEndian.Uint32(data[:4])
+	if rawCount > uint32(MaxValues) {
+		return nil, fmt.Errorf("batch proof count exceeds max: %d > %d", rawCount, MaxValues)
+	}
+	count := int(rawCount)
 	expectedSize := 4 + count*ProofSize
 	if len(data) != expectedSize {
 		return nil, fmt.Errorf("batch proof has wrong size: expected %d, got %d", expectedSize, len(data))
@@ -373,3 +470,4 @@ func bitReverseRoots(roots []blsfr.Element) {
 var _ commitment.IndexCommitment = (*Scheme)(nil)
 var _ commitment.IndexVerifier = (*Scheme)(nil)
 var _ commitment.IndexProver = (*Scheme)(nil)
+var _ commitment.IndexRootProver = (*Scheme)(nil)

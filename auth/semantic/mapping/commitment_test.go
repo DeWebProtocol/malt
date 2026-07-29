@@ -83,6 +83,26 @@ func TestCommitmentCommitProveSlotRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCommitmentProveSlotUsesCallerSuppliedRoot(t *testing.T) {
+	scheme := &rootBoundScheme{}
+	handler, err := NewCommitment(scheme)
+	if err != nil {
+		t.Fatalf("NewCommitment failed: %v", err)
+	}
+	root := testCID(t, "caller-root")
+	slot := testCID(t, "slot")
+	value, proof, err := handler.ProveSlot(root, []cid.Cid{slot}, 0)
+	if err != nil {
+		t.Fatalf("ProveSlot failed: %v", err)
+	}
+	if !scheme.rootBoundCalled || scheme.fallbackCalled {
+		t.Fatalf("root-bound=%v fallback=%v; want true, false", scheme.rootBoundCalled, scheme.fallbackCalled)
+	}
+	if !value.Equal(commitment.CellFromCID(slot)) || len(proof) != 8 {
+		t.Fatal("ProveSlot returned an unexpected root-bound opening")
+	}
+}
+
 func TestCommitmentCommitRejectsInvalidBindings(t *testing.T) {
 	handler, err := NewCommitment(testScheme{})
 	if err != nil {
@@ -207,6 +227,31 @@ func (testScheme) VerifyProof(cid.Cid, commitment.Cell, []byte) (bool, error) {
 
 func (testScheme) Replace([]commitment.Cell, uint64, commitment.Cell, commitment.Cell) (cid.Cid, error) {
 	return cid.Undef, fmt.Errorf("not implemented")
+}
+
+type rootBoundScheme struct {
+	testScheme
+	rootBoundCalled bool
+	fallbackCalled  bool
+}
+
+func (s *rootBoundScheme) Prove([]commitment.Cell, uint64) (cid.Cid, commitment.Cell, []byte, error) {
+	s.fallbackCalled = true
+	return cid.Undef, nil, nil, fmt.Errorf("fallback Prove must not be called")
+}
+
+func (s *rootBoundScheme) ProveAtRoot(_ cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	s.rootBoundCalled = true
+	if index >= uint64(len(values)) {
+		return nil, nil, fmt.Errorf("index %d out of range", index)
+	}
+	proof := make([]byte, 8)
+	binary.BigEndian.PutUint64(proof, index)
+	return commitment.NewCell(values[index]), proof, nil
+}
+
+func (*rootBoundScheme) BatchProveAtRoot(cid.Cid, []commitment.Cell, []uint64) ([]commitment.Cell, []byte, error) {
+	return nil, nil, fmt.Errorf("not implemented")
 }
 
 func testCID(t *testing.T, payload string) cid.Cid {

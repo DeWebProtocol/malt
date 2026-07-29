@@ -1,6 +1,7 @@
 package protocol_test
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"math"
@@ -171,6 +172,32 @@ func TestClientRootDecodeRejectsUnknownDuplicateMissingNullTrailingAndOversized(
 	}
 }
 
+func TestClientRootDecodeRejectsInvalidUTF8WithoutRejectingReplacementRune(t *testing.T) {
+	bundle, _ := protocolClientRootFixture(t)
+	wire, err := protocol.NewClientRootBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childIndex := wireObjectIndex(t, &wire, "child")
+	wire.View.Objects[childIndex].Entries[0].Coordinate.MapPath = "\uFFFD"
+	validRaw, err := json.Marshal(wire.View)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementRune := []byte("\uFFFD")
+	if count := bytes.Count(validRaw, replacementRune); count != 1 {
+		t.Fatalf("valid JSON contains %d replacement rune encodings, want 1: %q", count, validRaw)
+	}
+	if _, err := protocol.DecodeUpdateView(validRaw); err != nil {
+		t.Fatalf("DecodeUpdateView rejected valid U+FFFD: %v", err)
+	}
+
+	invalidRaw := bytes.Replace(validRaw, replacementRune, []byte{0xff}, 1)
+	if _, err := protocol.DecodeUpdateView(invalidRaw); err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("invalid UTF-8 error = %v", err)
+	}
+}
+
 func TestClientRootWireRejectsHostileDigestRootKindCoordinateDuplicateAndDependency(t *testing.T) {
 	bundle, _ := protocolClientRootFixture(t)
 	base, err := protocol.NewClientRootBundle(bundle)
@@ -280,12 +307,51 @@ func TestMaterializationReceiptWireRejectsWrongDigest(t *testing.T) {
 	}
 }
 
+func TestWriterComputeResultRoundTripsAndBindsNextView(t *testing.T) {
+	bundle, _ := protocolClientRootFixture(t)
+	nextView, err := mutation.NormalizeUpdateView(bundle.View)
+	if err != nil {
+		t.Fatalf("NormalizeUpdateView failed: %v", err)
+	}
+	nextView.BaseRoot = bundle.Candidate
+	for index := range nextView.Objects {
+		if nextView.Objects[index].Root.Equals(bundle.View.BaseRoot) {
+			nextView.Objects[index].Root = bundle.Candidate
+		}
+	}
+	metrics := protocol.WriterComputeMetrics{CommitmentUpdateNS: 7, TotalNS: 11}
+	wire, err := protocol.NewWriterComputeResult(bundle, nextView, metrics)
+	if err != nil {
+		t.Fatalf("NewWriterComputeResult failed: %v", err)
+	}
+	data, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("marshal writer compute result: %v", err)
+	}
+	decoded, err := protocol.DecodeWriterComputeResult(data)
+	if err != nil {
+		t.Fatalf("DecodeWriterComputeResult failed: %v", err)
+	}
+	if decoded.Profile != protocol.WriterComputeResultProfile ||
+		decoded.Bundle.Candidate != bundle.Candidate.String() ||
+		decoded.NextView.BaseRoot != bundle.Candidate.String() ||
+		decoded.Metrics != metrics {
+		t.Fatalf("unexpected writer compute result: %+v", decoded)
+	}
+
+	wire.NextView.BaseRoot = bundle.View.BaseRoot.String()
+	if err := wire.Validate(); err == nil {
+		t.Fatal("writer compute result accepted a next view at the wrong root")
+	}
+}
+
 func TestClientRootSchemasAreEmbedded(t *testing.T) {
 	want := map[string]bool{
 		"update-view.schema.json":             false,
 		"semantic-intent.schema.json":         false,
 		"client-root-bundle.schema.json":      false,
 		"materialization-receipt.schema.json": false,
+		"writer-compute-result.schema.json":   false,
 	}
 	for _, name := range protocol.SchemaNames() {
 		if _, ok := want[name]; ok {
