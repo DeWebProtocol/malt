@@ -66,6 +66,8 @@ mirror the stateful Go/WASM experiment:
 ```text
 load(updateView)
 prepare(operationID, semanticIntent)
+prepareCompact(operationID, semanticIntent)
+prepareCompactJSON(operationIDUTF8, semanticIntentJSONUTF8)
 acceptReceipt(operationID, materializationReceipt)
 discard(operationID)
 close()
@@ -73,6 +75,11 @@ diagnostics()
 ```
 
 `prepare` returns the canonical `malt.writer-compute-result/v1` JSON string.
+Both compact methods perform and retain that same full computation but return a
+`malt.writer-prepare-summary/v1` JSON string containing the candidate, every
+transition root, and every payload CID. `prepareCompactJSON` accepts the same
+two strict, bounded `Uint8Array` inputs as the stateful Go/WASM compact API so
+the comparison runner can use identical raw input and output bytes.
 Only an exact durable receipt advances the retained view; accepting one
 candidate invalidates all other speculative candidates. A session retains at
 most 64 candidates and 64 MiB of encoded prepared responses.

@@ -4,6 +4,7 @@ const INTENT_PROFILE = "malt.semantic-intent/v1";
 const BUNDLE_PROFILE = "malt.client-root-bundle/v1";
 const RECEIPT_PROFILE = "malt.materialization-receipt/v1";
 const RESULT_PROFILE = "malt.writer-compute-result/v1";
+const PREPARE_SUMMARY_PROFILE = "malt.writer-prepare-summary/v1";
 const OBJECTS_PROFILE = "malt.commitment-objects/v1";
 const DELTA_PROFILE = "malt.commitment-delta/v1";
 const RETAIN_PROFILE = "malt.commitment-retain/v1";
@@ -15,8 +16,11 @@ const MAX_TRANSITIONS = 1 << 16;
 const MAX_CHANGES = 1 << 20;
 const MAX_PREPARED = 64;
 const MAX_PREPARED_RESPONSE_BYTES = 64 << 20;
+const MAX_OPERATION_ID_BYTES = 128;
+const MAX_CLIENT_ROOT_JSON_BYTES = 64 << 20;
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const encoder = new TextEncoder();
+const decoder = new TextDecoder("utf-8", { fatal: true });
 
 type Backend = "kzg" | "ipa";
 type Kind = "map" | "list";
@@ -133,6 +137,14 @@ interface WriterResult {
   metrics: Record<string, number>;
 }
 
+interface WriterPrepareSummary {
+  profile: string;
+  operation_id: string;
+  candidate: string;
+  outputs: Array<{ transition_id: string; root: string }>;
+  payload_cids: string[];
+}
+
 interface ParsedCID {
   raw: Uint8Array;
   key: string;
@@ -221,6 +233,41 @@ export class MaltWriterTSSession {
   }
 
   prepare(operationID: string, semanticIntent: unknown): Promise<string> {
+    return this.#prepare(operationID, semanticIntent, false);
+  }
+
+  prepareCompact(operationID: string, semanticIntent: unknown): Promise<string> {
+    return this.#prepare(operationID, semanticIntent, true);
+  }
+
+  prepareCompactJSON(
+    operationIDUTF8: Uint8Array,
+    semanticIntentJSONUTF8: Uint8Array,
+  ): Promise<string> {
+    const operationID = decoder.decode(
+      copyBoundedBytes(operationIDUTF8, "operation ID", MAX_OPERATION_ID_BYTES),
+    );
+    const semanticIntentJSON = decoder.decode(
+      copyBoundedBytes(
+        semanticIntentJSONUTF8,
+        "semantic-intent JSON",
+        MAX_CLIENT_ROOT_JSON_BYTES,
+      ),
+    );
+    let semanticIntent: unknown;
+    try {
+      semanticIntent = JSON.parse(semanticIntentJSON);
+    } catch (error) {
+      throw new Error("semantic-intent JSON is invalid", { cause: error });
+    }
+    return this.#prepare(operationID, semanticIntent, true);
+  }
+
+  #prepare(
+    operationID: string,
+    semanticIntent: unknown,
+    compact: boolean,
+  ): Promise<string> {
     return this.#exclusive(async () => {
       let candidateStored = false;
       try {
@@ -380,7 +427,7 @@ export class MaltWriterTSSession {
       this.#preparedResponseBytes += responseBytes;
       candidateStored = true;
       await this.#retainMaterializedState();
-      return resultJSON;
+      return compact ? wireJSONStringify(prepareSummary(result)) : resultJSON;
       } catch (error) {
         if (candidateStored) {
           const candidate = this.#prepared.get(operationID);
@@ -1571,10 +1618,59 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function prepareSummary(result: WriterResult): WriterPrepareSummary {
+  return {
+    profile: PREPARE_SUMMARY_PROFILE,
+    operation_id: result.bundle.operation_id,
+    candidate: result.bundle.candidate,
+    outputs: result.bundle.outputs,
+    payload_cids: result.bundle.payload_cids,
+  };
+}
+
 function newSessionID(): string {
   const random = new Uint8Array(16);
   crypto.getRandomValues(random);
   return `ts-${bytesKey(random)}`;
+}
+
+function copyBoundedBytes(
+  value: Uint8Array,
+  label: string,
+  maxBytes: number,
+): Uint8Array {
+  if (!ArrayBuffer.isView(value) || !(value instanceof Uint8Array)) {
+    throw new Error(`${label} must be a Uint8Array`);
+  }
+  const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+  const byteLengthGetter = Object.getOwnPropertyDescriptor(
+    typedArrayPrototype,
+    "byteLength",
+  )?.get;
+  const byteOffsetGetter = Object.getOwnPropertyDescriptor(
+    typedArrayPrototype,
+    "byteOffset",
+  )?.get;
+  const bufferGetter = Object.getOwnPropertyDescriptor(
+    typedArrayPrototype,
+    "buffer",
+  )?.get;
+  if (!byteLengthGetter || !byteOffsetGetter || !bufferGetter) {
+    throw new Error("Uint8Array intrinsic accessors are unavailable");
+  }
+  const byteLength = Reflect.apply(byteLengthGetter, value, []) as number;
+  if (!Number.isSafeInteger(byteLength) || byteLength < 1) {
+    throw new Error(`${label} has an invalid byte length`);
+  }
+  if (byteLength > maxBytes) {
+    throw new Error(`${label} exceeds ${maxBytes} bytes`);
+  }
+  const byteOffset = Reflect.apply(byteOffsetGetter, value, []) as number;
+  if (!Number.isSafeInteger(byteOffset) || byteOffset < 0) {
+    throw new Error(`${label} has an invalid byte offset`);
+  }
+  const buffer = Reflect.apply(bufferGetter, value, []) as ArrayBufferLike;
+  return new Uint8Array(buffer, byteOffset, byteLength).slice();
 }
 
 function wireJSONStringify(value: unknown): string {

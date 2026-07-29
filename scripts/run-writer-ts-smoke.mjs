@@ -115,6 +115,29 @@ for (const fixture of selectedFixtures) {
   if (fixture.case === "list-replace-append") {
     inputIntent.transitions[0].changes.reverse();
   }
+  if (fixture.case !== "fixed-list-u64") {
+    const compactOperationID = new TextEncoder().encode(fixture.operation_id);
+    const compactIntentJSON = new TextEncoder().encode(
+      JSON.stringify(fixture.semantic_intent),
+    );
+    const compactJSON = await session.prepareCompactJSON(
+      compactOperationID,
+      compactIntentJSON,
+    );
+    assert.deepStrictEqual(
+      JSON.parse(compactJSON),
+      {
+        profile: "malt.writer-prepare-summary/v1",
+        operation_id: fixture.expected_bundle.operation_id,
+        candidate: fixture.expected_bundle.candidate,
+        outputs: fixture.expected_bundle.outputs,
+        payload_cids: fixture.expected_bundle.payload_cids,
+      },
+      `${selectedBackend}/${fixture.case} compact summary differs from the canonical bundle`,
+    );
+    await session.discard(fixture.operation_id);
+  }
+
   const preparedJSON = await session.prepare(fixture.operation_id, inputIntent);
   const prepared = JSON.parse(preparedJSON);
   assert.deepStrictEqual(
