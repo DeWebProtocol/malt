@@ -15,8 +15,11 @@ import (
 const maxOperationIDBytes = 128
 
 func main() {
-	backend := compiledBackend()
-	writer, initErr := newComputer(backend)
+	backend, initErr := startupBackend()
+	var writer *computer
+	if initErr == nil {
+		writer, initErr = newComputer(backend)
+	}
 	sessionWriter, sessionInitErr := newSessionComputer(writer)
 	if initErr == nil && sessionInitErr != nil {
 		initErr = sessionInitErr

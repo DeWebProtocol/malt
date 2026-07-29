@@ -10,7 +10,9 @@ import (
 	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
-func compiledBackend() string { return string(maltcid.BackendKindKZG) }
+func startupBackend() (string, error) {
+	return string(maltcid.BackendKindKZG), nil
+}
 
 func newComputer(backend string) (*computer, error) {
 	if backend != string(maltcid.BackendKindKZG) {

@@ -6,63 +6,95 @@ Build the browser writer artifacts from the repository root:
 scripts/build-writer-wasm.sh dist/writer
 ```
 
-The build emits separate `malt-writer-kzg.wasm` and
-`malt-writer-ipa.wasm` artifacts plus one `wasm_exec.js`. Each artifact links
-exactly one commitment backend; the backend cannot be selected through a
-mutable JavaScript global.
+The build emits one `malt-writer.wasm`, one `wasm_exec.js`, and the
+`malt-writer-workers.mjs` controller plus its `malt-writer-worker.mjs` Worker.
+The unified WASM file contains both commitment backends. The controller
+downloads and compiles it once, then transfers the compiled
+`WebAssembly.Module` to two independent Workers. One instance initializes only
+KZG and the other initializes only IPA.
 
-After the Go runtime starts, the module registers the backward-compatible
-stateless entry point:
+```js
+import { createMaltWriterWorkers } from "./malt-writer-workers.mjs";
+
+const writers = await createMaltWriterWorkers();
+
+// KZG normally becomes usable while IPA is still initializing.
+await writers.kzgReady;
+console.log(writers.status("ipa")); // { backend: "ipa", state: "initializing" }
+
+const baseRoot = await writers.load("kzg", updateViewJSONUTF8);
+const summaryJSON = await writers.prepareCompact(
+  "kzg",
+  operationIDUTF8,
+  semanticIntentJSONUTF8,
+);
+
+// Await IPA only when an IPA view needs it.
+await writers.ipaReady;
+```
+
+`kzgReady`, `ipaReady`, `whenReady(backend)`, and `status(backend)` are
+independent. IPA initialization cannot block the KZG Worker event loop, RPC
+queue, session, or WASM memory. Call `terminate()` when both instances are no
+longer needed.
+
+The controller exposes the following backend-routed methods:
 
 ```text
-globalThis.maltComputeClientRootV1(
+compute(
+  backend,
   operationIDUTF8,
   updateViewJSONUTF8,
   semanticIntentJSONUTF8
 ) -> Promise<resultJSON>
-```
 
-Long-lived clients should load one verified session and retain its semantic
-materialization between writes:
+load(backend, updateViewJSONUTF8) -> Promise<baseRoot>
 
-```text
-globalThis.maltWriterLoadSessionV1(
-  updateViewJSONUTF8
-) -> Promise<baseRoot>
-
-globalThis.maltWriterPrepareSessionV1(
+prepare(
+  backend,
   operationIDUTF8,
   semanticIntentJSONUTF8
 ) -> Promise<resultJSON>
 
-globalThis.maltWriterPrepareSessionCompactV1(
+prepareCompact(
+  backend,
   operationIDUTF8,
   semanticIntentJSONUTF8
 ) -> Promise<summaryJSON>
 
-globalThis.maltWriterAcceptSessionReceiptV1(
+acceptReceipt(
+  backend,
   operationIDUTF8,
   materializationReceiptJSONUTF8
 ) -> Promise<newBaseRoot>
 
-globalThis.maltWriterDiscardSessionCandidateV1(
-  operationIDUTF8
-) -> Promise<operationID>
+discard(backend, operationIDUTF8) -> Promise<operationID>
 ```
 
-All arguments are strict `Uint8Array` values. The operation ID contains up to
-128 ASCII bytes; JSON arguments use the checked-in client-root wire profiles
+All byte arguments are strict `Uint8Array` values. The operation ID contains up
+to 128 ASCII bytes; JSON arguments use the checked-in client-root wire profiles
 and are bounded by the protocol's 64 MiB document limit.
+
+Each Worker supplies exactly one immutable startup argument to its Go instance:
+`--backend=kzg` or `--backend=ipa`. The runtime rejects missing, invalid, or
+multiple backend arguments. There is no mutable JavaScript backend selector,
+and a single instance never initializes both schemes.
+
+## Session behavior
 
 Loading recomputes and verifies the complete update view once. Preparing a
 mutation uses the retained logical vectors and semantic materialization, but
 does not advance the session. Only an exact
-`malt.materialization-receipt/v1` for the prepared bundle advances the
-retained base. Accepting one candidate invalidates every other speculative
-candidate; at most 64 candidates and 64 MiB of encoded prepared responses may
-be retained at once. Only one prepare is admitted across the JS/WASM boundary
-at a time. Discard and accept prune every materialized snapshot that is no
-longer reachable from the accepted view or a remaining prepared candidate.
+`malt.materialization-receipt/v1` for the prepared bundle advances the retained
+base.
+
+Accepting one candidate invalidates every other speculative candidate; at most
+64 candidates and 64 MiB of encoded prepared responses may be retained at once.
+Only one prepare is admitted in each backend instance across the JS/WASM
+boundary at a time. Discard and accept prune every materialized snapshot that
+is no longer reachable from the accepted view or a remaining prepared
+candidate. KZG and IPA sessions are unrelated because they live in different
+Workers.
 
 The stateless and full session compute paths return
 `malt.writer-compute-result/v1`:
@@ -77,7 +109,7 @@ The stateless and full session compute paths return
 ```
 
 The compact session path performs and retains the same full computation, but
-only crosses the JS/WASM boundary with the complete root summary used by the
+only crosses the Worker boundary with the complete root summary used by the
 comparison runner:
 
 ```json
@@ -93,8 +125,26 @@ comparison runner:
 The writer computes locally and does not contact a Gateway, publish a root, or
 promote a candidate to trusted state.
 
-Run the native tests, dependency-isolation checks, and both real WASM smoke
-suites with:
+## Direct runtime API
+
+The Worker wraps these globals registered inside one backend-specific WASM
+instance:
+
+```text
+globalThis.maltComputeClientRootV1(...)
+globalThis.maltWriterLoadSessionV1(...)
+globalThis.maltWriterPrepareSessionV1(...)
+globalThis.maltWriterPrepareSessionCompactV1(...)
+globalThis.maltWriterAcceptSessionReceiptV1(...)
+globalThis.maltWriterDiscardSessionCandidateV1(...)
+```
+
+Code that starts the Go runtime directly must set
+`go.argv = ["malt-writer.wasm", "--backend=kzg"]` (or `ipa`) before
+`go.run(instance)`. Browser applications should normally use the controller.
+
+Run the native tests, compile-time dependency-isolation checks, direct real-WASM
+smokes for both backends, and the dual-Worker independence smoke with:
 
 ```bash
 scripts/test-writer-wasm.sh

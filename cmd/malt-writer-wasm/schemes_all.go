@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
@@ -11,26 +12,33 @@ import (
 	"github.com/dewebprotocol/malt/wire/maltcid"
 )
 
-func compiledBackend() string { return "all" }
+func startupBackend() (string, error) {
+	return parseStartupBackend(os.Args[1:])
+}
 
 func newComputer(backend string) (*computer, error) {
-	schemes := make(map[maltcid.BackendKind]commitment.IndexCommitment)
-	if backend == "all" || backend == string(maltcid.BackendKindKZG) {
-		scheme, err := kzg.NewScheme()
+	var (
+		kind   maltcid.BackendKind
+		scheme commitment.IndexCommitment
+		err    error
+	)
+	switch backend {
+	case string(maltcid.BackendKindKZG):
+		kind = maltcid.BackendKindKZG
+		scheme, err = kzg.NewScheme()
 		if err != nil {
 			return nil, fmt.Errorf("initialize KZG writer: %w", err)
 		}
-		schemes[maltcid.BackendKindKZG] = scheme
-	}
-	if backend == "all" || backend == string(maltcid.BackendKindIPA) {
-		scheme, err := ipa.NewScheme()
+	case string(maltcid.BackendKindIPA):
+		kind = maltcid.BackendKindIPA
+		scheme, err = ipa.NewScheme()
 		if err != nil {
 			return nil, fmt.Errorf("initialize IPA writer: %w", err)
 		}
-		schemes[maltcid.BackendKindIPA] = scheme
-	}
-	if len(schemes) == 0 {
+	default:
 		return nil, fmt.Errorf("unsupported writer backend %q", backend)
 	}
-	return &computer{schemes: schemes}, nil
+	return &computer{schemes: map[maltcid.BackendKind]commitment.IndexCommitment{
+		kind: scheme,
+	}}, nil
 }

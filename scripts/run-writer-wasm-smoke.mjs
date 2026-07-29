@@ -25,6 +25,7 @@ if (typeof globalThis.Go !== "function") {
 }
 
 const go = new globalThis.Go();
+go.argv = ["malt-writer.wasm", `--backend=${selectedBackend}`];
 const wasm = await readFile(wasmPath);
 const { instance } = await WebAssembly.instantiate(wasm, go.importObject);
 let runtimeFailure;
