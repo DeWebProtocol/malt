@@ -104,13 +104,148 @@ func TestComputerRejectsUnavailableBackendAndInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
+	view, intent := computeFixture(t, maltcid.BackendKindKZG)
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatalf("NewUpdateView failed: %v", err)
+	}
+	wireIntent, err := protocol.NewSemanticIntent(view, intent)
+	if err != nil {
+		t.Fatalf("NewSemanticIntent failed: %v", err)
+	}
+	viewJSON, _ := json.Marshal(wireView)
+	intentJSON, _ := json.Marshal(wireIntent)
+	computer, err := newComputer("kzg")
+	if err != nil {
+		t.Fatalf("newComputer failed: %v", err)
+	}
+	session, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatalf("newSessionComputer failed: %v", err)
+	}
+	loadedRoot, err := session.load(t.Context(), viewJSON)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if loadedRoot != view.BaseRoot.String() {
+		t.Fatalf("loaded root = %s, want %s", loadedRoot, view.BaseRoot)
+	}
+
+	const operationID = "session-operation-1"
+	raw, err := session.prepare(t.Context(), operationID, intentJSON)
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err == nil {
+		t.Fatal("session accepted a duplicate prepared operation")
+	}
+	response, err := protocol.DecodeWriterComputeResult(raw)
+	if err != nil {
+		t.Fatalf("DecodeWriterComputeResult failed: %v", err)
+	}
+	bundle, err := response.Bundle.Core()
+	if err != nil {
+		t.Fatalf("bundle Core failed: %v", err)
+	}
+	bundleDigest, err := bundle.Digest()
+	if err != nil {
+		t.Fatalf("bundle Digest failed: %v", err)
+	}
+	receipt, err := protocol.NewMaterializationReceipt(mutation.MaterializationReceipt{
+		Profile: mutation.MaterializationReceiptProfile, OperationID: operationID,
+		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate,
+		BundleDigest: bundleDigest, DurableBoundary: "unit-memory-v1",
+	}, bundle)
+	if err != nil {
+		t.Fatalf("NewMaterializationReceipt failed: %v", err)
+	}
+	badReceipt := receipt
+	badReceipt.Candidate = view.BaseRoot.String()
+	badReceiptJSON, _ := json.Marshal(badReceipt)
+	if _, err := session.acceptReceipt(operationID, badReceiptJSON); err == nil {
+		t.Fatal("session accepted a mismatched receipt")
+	}
+	if got := session.session.BaseRoot(); !got.Equals(view.BaseRoot) {
+		t.Fatalf("base advanced after bad receipt: %s", got)
+	}
+
+	receiptJSON, _ := json.Marshal(receipt)
+	acceptedRoot, err := session.acceptReceipt(operationID, receiptJSON)
+	if err != nil {
+		t.Fatalf("acceptReceipt failed: %v", err)
+	}
+	if acceptedRoot != bundle.Candidate.String() {
+		t.Fatalf("accepted root = %s, want %s", acceptedRoot, bundle.Candidate)
+	}
+	if got := session.session.BaseRoot(); !got.Equals(bundle.Candidate) {
+		t.Fatalf("retained base = %s, want %s", got, bundle.Candidate)
+	}
+	fresh, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextViewJSON, err := json.Marshal(response.NextView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fresh.load(t.Context(), nextViewJSON); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.store.EntryCount(), fresh.store.EntryCount(); got != want {
+		t.Fatalf("accepted session retained %d entries, fresh accepted view retains %d", got, want)
+	}
+	if _, err := session.prepare(t.Context(), "stale-operation", intentJSON); err == nil {
+		t.Fatal("session accepted an intent at the stale base")
+	}
+}
+
+func TestSessionComputerDiscardReclaimsCandidateSnapshots(t *testing.T) {
+	view, intent := computeFixture(t, maltcid.BackendKindIPA)
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireIntent, err := protocol.NewSemanticIntent(view, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewJSON, _ := json.Marshal(wireView)
+	intentJSON, _ := json.Marshal(wireIntent)
+	computer, err := newComputer("ipa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatal(err)
+	}
+	baseline := session.store.EntryCount()
+	if _, err := session.prepare(t.Context(), "discard-operation", intentJSON); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.store.EntryCount(); got <= baseline {
+		t.Fatalf("prepare retained %d entries, want more than loaded baseline %d", got, baseline)
+	}
+	if err := session.discard("discard-operation"); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.store.EntryCount(); got != baseline {
+		t.Fatalf("discard retained %d entries, want loaded baseline %d", got, baseline)
+	}
+}
+
 type wasmComputeFixture struct {
-	Backend          maltcid.BackendKind       `json:"backend"`
-	OperationID      string                    `json:"operation_id"`
-	UpdateView       protocol.UpdateView       `json:"update_view"`
-	SemanticIntent   protocol.SemanticIntent   `json:"semantic_intent"`
-	ExpectedBundle   protocol.ClientRootBundle `json:"expected_bundle"`
-	ExpectedNextView protocol.UpdateView       `json:"expected_next_view"`
+	Backend          maltcid.BackendKind             `json:"backend"`
+	OperationID      string                          `json:"operation_id"`
+	UpdateView       protocol.UpdateView             `json:"update_view"`
+	SemanticIntent   protocol.SemanticIntent         `json:"semantic_intent"`
+	ExpectedBundle   protocol.ClientRootBundle       `json:"expected_bundle"`
+	ExpectedNextView protocol.UpdateView             `json:"expected_next_view"`
+	ExpectedReceipt  protocol.MaterializationReceipt `json:"expected_receipt"`
 }
 
 func TestGenerateWASMFixtures(t *testing.T) {
@@ -151,10 +286,27 @@ func TestGenerateWASMFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode fixture response (%s): %v", backend, err)
 		}
+		bundle, err := response.Bundle.Core()
+		if err != nil {
+			t.Fatalf("decode fixture bundle (%s): %v", backend, err)
+		}
+		bundleDigest, err := bundle.Digest()
+		if err != nil {
+			t.Fatalf("digest fixture bundle (%s): %v", backend, err)
+		}
+		receipt, err := protocol.NewMaterializationReceipt(mutation.MaterializationReceipt{
+			Profile: mutation.MaterializationReceiptProfile, OperationID: operationID,
+			BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate,
+			BundleDigest: bundleDigest, DurableBoundary: "wasm-smoke-memory-v1",
+		}, bundle)
+		if err != nil {
+			t.Fatalf("encode fixture receipt (%s): %v", backend, err)
+		}
 		fixtures = append(fixtures, wasmComputeFixture{
 			Backend: backend, OperationID: operationID,
 			UpdateView: wireView, SemanticIntent: wireIntent,
 			ExpectedBundle: response.Bundle, ExpectedNextView: response.NextView,
+			ExpectedReceipt: receipt,
 		})
 	}
 
@@ -170,21 +322,7 @@ func TestGenerateWASMFixtures(t *testing.T) {
 func computeFixture(t *testing.T, backend maltcid.BackendKind) (mutation.UpdateView, mutation.SemanticIntent) {
 	t.Helper()
 	ctx := context.Background()
-	var (
-		scheme commitment.IndexCommitment
-		err    error
-	)
-	switch backend {
-	case maltcid.BackendKindKZG:
-		scheme, err = kzg.NewScheme()
-	case maltcid.BackendKindIPA:
-		scheme, err = ipa.NewScheme()
-	default:
-		t.Fatalf("unsupported fixture backend %q", backend)
-	}
-	if err != nil {
-		t.Fatalf("NewScheme(%s) failed: %v", backend, err)
-	}
+	scheme := fixtureScheme(t, backend)
 	semantic, err := mappingradix.NewMap(scheme, materializermemory.New(true))
 	if err != nil {
 		t.Fatalf("NewMap failed: %v", err)
@@ -233,6 +371,26 @@ func computeFixture(t *testing.T, backend maltcid.BackendKind) (mutation.UpdateV
 		t.Fatalf("NormalizeSemanticIntent failed: %v", err)
 	}
 	return view, intent
+}
+
+func fixtureScheme(t *testing.T, backend maltcid.BackendKind) commitment.IndexCommitment {
+	t.Helper()
+	var (
+		scheme commitment.IndexCommitment
+		err    error
+	)
+	switch backend {
+	case maltcid.BackendKindKZG:
+		scheme, err = kzg.NewScheme()
+	case maltcid.BackendKindIPA:
+		scheme, err = ipa.NewScheme()
+	default:
+		t.Fatalf("unsupported fixture backend %q", backend)
+	}
+	if err != nil {
+		t.Fatalf("NewScheme(%s) failed: %v", backend, err)
+	}
+	return scheme
 }
 
 func payloadCID(t *testing.T, value string) cid.Cid {

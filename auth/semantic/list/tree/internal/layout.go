@@ -132,6 +132,9 @@ func StoreSlots(ctx context.Context, e materializer.Updater, namespace string, r
 	if err != nil {
 		return err
 	}
+	if rooted, ok := e.(materializer.RootedNodeUpdater); ok {
+		return rooted.UpdateNode(ctx, namespace, root, snapshot)
+	}
 	return e.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 

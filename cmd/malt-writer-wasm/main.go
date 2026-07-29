@@ -15,12 +15,23 @@ import (
 const maxOperationIDBytes = 128
 
 func main() {
-	backend := requestedBackend()
+	backend := compiledBackend()
 	writer, initErr := newComputer(backend)
+	sessionWriter, sessionInitErr := newSessionComputer(writer)
+	if initErr == nil && sessionInitErr != nil {
+		initErr = sessionInitErr
+	}
 	if initErr != nil {
 		js.Global().Set("maltWriterInitError", initErr.Error())
 	}
 	js.Global().Set("maltWriterLoadedBackend", backend)
+	registerStatelessCompute(writer, initErr)
+	registerSessionFunctions(sessionWriter, initErr)
+	js.Global().Set("maltWriterReady", true)
+	select {}
+}
+
+func registerStatelessCompute(writer *computer, initErr error) {
 	computeFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		promise := js.Global().Get("Promise")
 		if initErr != nil {
@@ -42,26 +53,135 @@ func main() {
 		if err != nil {
 			return promise.Call("reject", err.Error())
 		}
-		var executor js.Func
-		executor = js.FuncOf(func(_ js.Value, callbacks []js.Value) any {
-			resolve, reject := callbacks[0], callbacks[1]
-			go func() {
-				result, err := writer.compute(context.Background(), operationID, updateViewJSON, semanticIntentJSON)
-				if err != nil {
-					reject.Invoke(err.Error())
-					return
-				}
-				resolve.Invoke(string(result))
-			}()
-			return nil
+		return promiseString(func() (string, error) {
+			result, err := writer.compute(context.Background(), operationID, updateViewJSON, semanticIntentJSON)
+			return string(result), err
 		})
-		value := promise.New(executor)
-		executor.Release()
-		return value
 	})
 	js.Global().Set("maltComputeClientRootV1", computeFunction)
-	js.Global().Set("maltWriterReady", true)
-	select {}
+}
+
+func registerSessionFunctions(writer *sessionComputer, initErr error) {
+	prepareGate := make(chan struct{}, 1)
+	loadFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
+		}
+		if len(args) != 1 {
+			return promise.Call("reject", "maltWriterLoadSessionV1 expects update-view JSON Uint8Array")
+		}
+		updateViewJSON, err := copyBoundedBytes(args[0], "update-view JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		return promiseString(func() (string, error) {
+			return writer.load(context.Background(), updateViewJSON)
+		})
+	})
+	js.Global().Set("maltWriterLoadSessionV1", loadFunction)
+
+	prepareFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
+		}
+		if len(args) != 2 {
+			return promise.Call("reject", "maltWriterPrepareSessionV1 expects operation ID and semantic-intent JSON Uint8Arrays")
+		}
+		select {
+		case prepareGate <- struct{}{}:
+		default:
+			return promise.Call("reject", "a client writer session prepare is already in flight")
+		}
+		releasePrepare := func() { <-prepareGate }
+		operationIDBytes, err := copyBoundedBytes(args[0], "operation ID", maxOperationIDBytes)
+		if err != nil {
+			releasePrepare()
+			return promise.Call("reject", err.Error())
+		}
+		intentJSON, err := copyBoundedBytes(args[1], "semantic-intent JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			releasePrepare()
+			return promise.Call("reject", err.Error())
+		}
+		operationID := string(operationIDBytes)
+		return promiseStringFinally(func() (string, error) {
+			result, err := writer.prepare(context.Background(), operationID, intentJSON)
+			return string(result), err
+		}, releasePrepare)
+	})
+	js.Global().Set("maltWriterPrepareSessionV1", prepareFunction)
+
+	acceptFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
+		}
+		if len(args) != 2 {
+			return promise.Call("reject", "maltWriterAcceptSessionReceiptV1 expects operation ID and materialization-receipt JSON Uint8Arrays")
+		}
+		operationIDBytes, err := copyBoundedBytes(args[0], "operation ID", maxOperationIDBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		receiptJSON, err := copyBoundedBytes(args[1], "materialization-receipt JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		operationID := string(operationIDBytes)
+		return promiseString(func() (string, error) {
+			return writer.acceptReceipt(operationID, receiptJSON)
+		})
+	})
+	js.Global().Set("maltWriterAcceptSessionReceiptV1", acceptFunction)
+
+	discardFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
+		}
+		if len(args) != 1 {
+			return promise.Call("reject", "maltWriterDiscardSessionCandidateV1 expects an operation ID Uint8Array")
+		}
+		operationIDBytes, err := copyBoundedBytes(args[0], "operation ID", maxOperationIDBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		operationID := string(operationIDBytes)
+		return promiseString(func() (string, error) {
+			if err := writer.discard(operationID); err != nil {
+				return "", err
+			}
+			return operationID, nil
+		})
+	})
+	js.Global().Set("maltWriterDiscardSessionCandidateV1", discardFunction)
+}
+
+func promiseString(task func() (string, error)) any {
+	return promiseStringFinally(task, func() {})
+}
+
+func promiseStringFinally(task func() (string, error), finally func()) any {
+	promise := js.Global().Get("Promise")
+	var executor js.Func
+	executor = js.FuncOf(func(_ js.Value, callbacks []js.Value) any {
+		resolve, reject := callbacks[0], callbacks[1]
+		go func() {
+			defer finally()
+			result, err := task()
+			if err != nil {
+				reject.Invoke(err.Error())
+				return
+			}
+			resolve.Invoke(result)
+		}()
+		return nil
+	})
+	value := promise.New(executor)
+	executor.Release()
+	return value
 }
 
 func copyBoundedBytes(value js.Value, label string, maxBytes int) ([]byte, error) {
@@ -103,12 +223,4 @@ func copyBoundedBytes(value js.Value, label string, maxBytes int) ([]byte, error
 		return nil, fmt.Errorf("copy %s: copied %d of %d bytes", label, copied, size)
 	}
 	return data, nil
-}
-
-func requestedBackend() string {
-	value := js.Global().Get("maltWriterBackend")
-	if value.Type() != js.TypeString || value.String() == "" {
-		return "all"
-	}
-	return value.String()
 }
