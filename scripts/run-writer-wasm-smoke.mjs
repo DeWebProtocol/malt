@@ -42,6 +42,7 @@ while (Date.now() < deadline) {
     typeof globalThis.maltComputeClientRootV1 === "function" &&
     typeof globalThis.maltWriterLoadSessionV1 === "function" &&
     typeof globalThis.maltWriterPrepareSessionV1 === "function" &&
+    typeof globalThis.maltWriterPrepareSessionCompactV1 === "function" &&
     typeof globalThis.maltWriterAcceptSessionReceiptV1 === "function" &&
     typeof globalThis.maltWriterDiscardSessionCandidateV1 === "function"
   ) {
@@ -54,6 +55,7 @@ if (
   typeof globalThis.maltComputeClientRootV1 !== "function" ||
   typeof globalThis.maltWriterLoadSessionV1 !== "function" ||
   typeof globalThis.maltWriterPrepareSessionV1 !== "function" ||
+  typeof globalThis.maltWriterPrepareSessionCompactV1 !== "function" ||
   typeof globalThis.maltWriterAcceptSessionReceiptV1 !== "function" ||
   typeof globalThis.maltWriterDiscardSessionCandidateV1 !== "function"
 ) {
@@ -227,14 +229,21 @@ for (const fixture of selectedFixtures) {
   if (discarded !== fixture.operation_id) {
     throw new Error(`${fixture.backend} session discarded the wrong operation`);
   }
-  const preparedAfterDiscardJSON = await globalThis.maltWriterPrepareSessionV1(
+  const preparedAfterDiscardJSON = await globalThis.maltWriterPrepareSessionCompactV1(
     sessionOperationID,
     sessionIntent,
   );
+  const preparedAfterDiscard = JSON.parse(preparedAfterDiscardJSON);
   assert.deepStrictEqual(
-    JSON.parse(preparedAfterDiscardJSON).bundle,
-    fixture.expected_bundle,
-    `${fixture.backend} session changed after discard and re-prepare`,
+    preparedAfterDiscard,
+    {
+      profile: "malt.writer-prepare-summary/v1",
+      operation_id: fixture.expected_bundle.operation_id,
+      candidate: fixture.expected_bundle.candidate,
+      outputs: fixture.expected_bundle.outputs,
+      payload_cids: fixture.expected_bundle.payload_cids,
+    },
+    `${fixture.backend} compact session result differs from the full result`,
   );
   const acceptedRoot = await globalThis.maltWriterAcceptSessionReceiptV1(
     sessionOperationID,

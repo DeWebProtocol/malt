@@ -35,6 +35,11 @@ globalThis.maltWriterPrepareSessionV1(
   semanticIntentJSONUTF8
 ) -> Promise<resultJSON>
 
+globalThis.maltWriterPrepareSessionCompactV1(
+  operationIDUTF8,
+  semanticIntentJSONUTF8
+) -> Promise<summaryJSON>
+
 globalThis.maltWriterAcceptSessionReceiptV1(
   operationIDUTF8,
   materializationReceiptJSONUTF8
@@ -59,7 +64,8 @@ be retained at once. Only one prepare is admitted across the JS/WASM boundary
 at a time. Discard and accept prune every materialized snapshot that is no
 longer reachable from the accepted view or a remaining prepared candidate.
 
-Both compute paths return `malt.writer-compute-result/v1`:
+The stateless and full session compute paths return
+`malt.writer-compute-result/v1`:
 
 ```json
 {
@@ -67,6 +73,20 @@ Both compute paths return `malt.writer-compute-result/v1`:
   "bundle": {},
   "next_view": {},
   "metrics": {}
+}
+```
+
+The compact session path performs and retains the same full computation, but
+only crosses the JS/WASM boundary with the complete root summary used by the
+comparison runner:
+
+```json
+{
+  "profile": "malt.writer-prepare-summary/v1",
+  "operation_id": "write-1",
+  "candidate": "bag...",
+  "outputs": [{"transition_id": "root", "root": "bag..."}],
+  "payload_cids": ["baf..."]
 }
 ```
 

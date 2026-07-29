@@ -238,6 +238,73 @@ func TestSessionComputerDiscardReclaimsCandidateSnapshots(t *testing.T) {
 	}
 }
 
+func TestSessionComputerPrepareCompactReturnsCompleteRootSummary(t *testing.T) {
+	view, intent := computeFixture(t, maltcid.BackendKindKZG)
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireIntent, err := protocol.NewSemanticIntent(view, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewJSON, _ := json.Marshal(wireView)
+	intentJSON, _ := json.Marshal(wireIntent)
+	computer, err := newComputer("kzg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatal(err)
+	}
+
+	const operationID = "compact-operation"
+	raw, err := session.prepareCompact(t.Context(), operationID, intentJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary writerPrepareSummary
+	if err := json.Unmarshal(raw, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Profile != writerPrepareSummaryV1 {
+		t.Fatalf("profile = %q, want %q", summary.Profile, writerPrepareSummaryV1)
+	}
+	if summary.OperationID != operationID {
+		t.Fatalf("operation ID = %q, want %q", summary.OperationID, operationID)
+	}
+	candidate := session.prepared[operationID]
+	if summary.Candidate != candidate.result.Bundle.Candidate.String() {
+		t.Fatalf("candidate = %q, want %q", summary.Candidate, candidate.result.Bundle.Candidate)
+	}
+	if got, want := len(summary.Outputs), len(candidate.result.Bundle.Outputs); got != want {
+		t.Fatalf("outputs = %d, want %d", got, want)
+	}
+	for index, output := range candidate.result.Bundle.Outputs {
+		if got := summary.Outputs[index]; got.TransitionID != output.TransitionID || got.Root != output.Root.String() {
+			t.Fatalf("output %d = %+v, want %s/%s", index, got, output.TransitionID, output.Root)
+		}
+	}
+	if got, want := len(summary.PayloadCIDs), len(candidate.result.Bundle.PayloadCIDs); got != want {
+		t.Fatalf("payload CIDs = %d, want %d", got, want)
+	}
+	for index, payload := range candidate.result.Bundle.PayloadCIDs {
+		if summary.PayloadCIDs[index] != payload.String() {
+			t.Fatalf("payload CID %d = %q, want %q", index, summary.PayloadCIDs[index], payload)
+		}
+	}
+	if candidate.responseBytes <= len(raw) {
+		t.Fatalf("retained full response = %d bytes, compact response = %d bytes", candidate.responseBytes, len(raw))
+	}
+	if err := session.discard(operationID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type wasmComputeFixture struct {
 	Backend          maltcid.BackendKind             `json:"backend"`
 	OperationID      string                          `json:"operation_id"`

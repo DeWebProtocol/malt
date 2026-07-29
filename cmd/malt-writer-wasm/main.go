@@ -81,37 +81,47 @@ func registerSessionFunctions(writer *sessionComputer, initErr error) {
 	})
 	js.Global().Set("maltWriterLoadSessionV1", loadFunction)
 
-	prepareFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
-		promise := js.Global().Get("Promise")
-		if initErr != nil {
-			return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
-		}
-		if len(args) != 2 {
-			return promise.Call("reject", "maltWriterPrepareSessionV1 expects operation ID and semantic-intent JSON Uint8Arrays")
-		}
-		select {
-		case prepareGate <- struct{}{}:
-		default:
-			return promise.Call("reject", "a client writer session prepare is already in flight")
-		}
-		releasePrepare := func() { <-prepareGate }
-		operationIDBytes, err := copyBoundedBytes(args[0], "operation ID", maxOperationIDBytes)
-		if err != nil {
-			releasePrepare()
-			return promise.Call("reject", err.Error())
-		}
-		intentJSON, err := copyBoundedBytes(args[1], "semantic-intent JSON", protocol.MaxClientRootJSONBytes)
-		if err != nil {
-			releasePrepare()
-			return promise.Call("reject", err.Error())
-		}
-		operationID := string(operationIDBytes)
-		return promiseStringFinally(func() (string, error) {
-			result, err := writer.prepare(context.Background(), operationID, intentJSON)
-			return string(result), err
-		}, releasePrepare)
-	})
+	newPrepareFunction := func(name string, compact bool) js.Func {
+		return js.FuncOf(func(_ js.Value, args []js.Value) any {
+			promise := js.Global().Get("Promise")
+			if initErr != nil {
+				return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
+			}
+			if len(args) != 2 {
+				return promise.Call("reject", fmt.Sprintf("%s expects operation ID and semantic-intent JSON Uint8Arrays", name))
+			}
+			select {
+			case prepareGate <- struct{}{}:
+			default:
+				return promise.Call("reject", "a client writer session prepare is already in flight")
+			}
+			releasePrepare := func() { <-prepareGate }
+			operationIDBytes, err := copyBoundedBytes(args[0], "operation ID", maxOperationIDBytes)
+			if err != nil {
+				releasePrepare()
+				return promise.Call("reject", err.Error())
+			}
+			intentJSON, err := copyBoundedBytes(args[1], "semantic-intent JSON", protocol.MaxClientRootJSONBytes)
+			if err != nil {
+				releasePrepare()
+				return promise.Call("reject", err.Error())
+			}
+			operationID := string(operationIDBytes)
+			return promiseStringFinally(func() (string, error) {
+				var result []byte
+				if compact {
+					result, err = writer.prepareCompact(context.Background(), operationID, intentJSON)
+				} else {
+					result, err = writer.prepare(context.Background(), operationID, intentJSON)
+				}
+				return string(result), err
+			}, releasePrepare)
+		})
+	}
+	prepareFunction := newPrepareFunction("maltWriterPrepareSessionV1", false)
 	js.Global().Set("maltWriterPrepareSessionV1", prepareFunction)
+	prepareCompactFunction := newPrepareFunction("maltWriterPrepareSessionCompactV1", true)
+	js.Global().Set("maltWriterPrepareSessionCompactV1", prepareCompactFunction)
 
 	acceptFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		promise := js.Global().Get("Promise")

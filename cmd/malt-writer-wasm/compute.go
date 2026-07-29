@@ -37,7 +37,21 @@ type preparedCandidate struct {
 const (
 	maxPreparedCandidates    = 64
 	maxPreparedResponseBytes = 64 << 20
+	writerPrepareSummaryV1   = "malt.writer-prepare-summary/v1"
 )
+
+type writerPrepareSummary struct {
+	Profile     string                       `json:"profile"`
+	OperationID string                       `json:"operation_id"`
+	Candidate   string                       `json:"candidate"`
+	Outputs     []writerPrepareSummaryOutput `json:"outputs"`
+	PayloadCIDs []string                     `json:"payload_cids"`
+}
+
+type writerPrepareSummaryOutput struct {
+	TransitionID string `json:"transition_id"`
+	Root         string `json:"root"`
+}
 
 func newSessionComputer(computer *computer) (*sessionComputer, error) {
 	if computer == nil || len(computer.schemes) == 0 {
@@ -136,6 +150,19 @@ func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (stri
 }
 
 func (s *sessionComputer) prepare(ctx context.Context, operationID string, semanticIntentJSON []byte) ([]byte, error) {
+	return s.prepareResponse(ctx, operationID, semanticIntentJSON, false)
+}
+
+func (s *sessionComputer) prepareCompact(ctx context.Context, operationID string, semanticIntentJSON []byte) ([]byte, error) {
+	return s.prepareResponse(ctx, operationID, semanticIntentJSON, true)
+}
+
+func (s *sessionComputer) prepareResponse(
+	ctx context.Context,
+	operationID string,
+	semanticIntentJSON []byte,
+	compact bool,
+) ([]byte, error) {
 	if s == nil {
 		return nil, fmt.Errorf("client writer session is not initialized")
 	}
@@ -163,21 +190,29 @@ func (s *sessionComputer) prepare(ctx context.Context, operationID string, seman
 		s.retainMaterializedRoots()
 		return nil, fmt.Errorf("prepare client writer session: %w", err)
 	}
-	encoded, err := encodeComputeResult(result)
+	fullResponse, err := encodeComputeResult(result)
 	if err != nil {
 		s.retainMaterializedRoots()
 		return nil, err
 	}
-	if len(encoded) > maxPreparedResponseBytes-s.preparedResponseBytes {
+	response := fullResponse
+	if compact {
+		response, err = encodePrepareSummary(result)
+		if err != nil {
+			s.retainMaterializedRoots()
+			return nil, err
+		}
+	}
+	if len(fullResponse) > maxPreparedResponseBytes-s.preparedResponseBytes {
 		s.retainMaterializedRoots()
 		return nil, fmt.Errorf(
 			"prepared client writer responses exceed %d retained bytes",
 			maxPreparedResponseBytes,
 		)
 	}
-	s.prepared[operationID] = preparedCandidate{result: result, responseBytes: len(encoded)}
-	s.preparedResponseBytes += len(encoded)
-	return encoded, nil
+	s.prepared[operationID] = preparedCandidate{result: result, responseBytes: len(fullResponse)}
+	s.preparedResponseBytes += len(fullResponse)
+	return response, nil
 }
 
 func (s *sessionComputer) acceptReceipt(operationID string, receiptJSON []byte) (string, error) {
@@ -270,4 +305,25 @@ func encodeComputeResult(result clientwriter.ComputeResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode writer compute result: %w", err)
 	}
 	return json.Marshal(response)
+}
+
+func encodePrepareSummary(result clientwriter.ComputeResult) ([]byte, error) {
+	outputs := make([]writerPrepareSummaryOutput, len(result.Bundle.Outputs))
+	for index, output := range result.Bundle.Outputs {
+		outputs[index] = writerPrepareSummaryOutput{
+			TransitionID: output.TransitionID,
+			Root:         output.Root.String(),
+		}
+	}
+	payloadCIDs := make([]string, len(result.Bundle.PayloadCIDs))
+	for index, payload := range result.Bundle.PayloadCIDs {
+		payloadCIDs[index] = payload.String()
+	}
+	return json.Marshal(writerPrepareSummary{
+		Profile:     writerPrepareSummaryV1,
+		OperationID: result.Bundle.OperationID,
+		Candidate:   result.Bundle.Candidate.String(),
+		Outputs:     outputs,
+		PayloadCIDs: payloadCIDs,
+	})
 }
