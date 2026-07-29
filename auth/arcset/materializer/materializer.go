@@ -69,6 +69,14 @@ type NodeStore interface {
 	Updater
 }
 
+// RootedNodeUpdater optionally records which semantic node root owns an
+// unversioned node-cache ArcSet. Reference semantic implementations use it
+// when available so bounded in-memory sessions can reclaim unreachable node
+// caches without changing the portable Lookup/Updater contract.
+type RootedNodeUpdater interface {
+	UpdateNode(context.Context, string, cid.Cid, arcset.ArcSet) error
+}
+
 // MutableStore is the capability required by graph mutation/reference writer
 // algorithms. It deliberately does not require iteration.
 type MutableStore interface {

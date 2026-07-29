@@ -1140,6 +1140,9 @@ func (s *Map) storeNodeSlots(ctx context.Context, namespace string, root cid.Cid
 	if err != nil {
 		return err
 	}
+	if rooted, ok := s.materializer.(materializer.RootedNodeUpdater); ok {
+		return rooted.UpdateNode(ctx, namespace, root, snapshot)
+	}
 	return s.materializer.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 
@@ -1186,6 +1189,9 @@ func (s *Map) storeBucketEntries(ctx context.Context, namespace string, root cid
 	snapshot, err := arcset.NewArcSetFromPaths(arcs)
 	if err != nil {
 		return err
+	}
+	if rooted, ok := s.materializer.(materializer.RootedNodeUpdater); ok {
+		return rooted.UpdateNode(ctx, namespace, root, snapshot)
 	}
 	return s.materializer.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }

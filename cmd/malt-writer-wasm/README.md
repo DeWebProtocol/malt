@@ -1,42 +1,93 @@
-# Browser Client-Root Writer
+# TypeScript Writer with Commitment-Only WASM
 
-Build the browser writer bundle from the repository root:
+This branch is the independent comparison implementation of the browser
+client-root writer. TypeScript owns:
+
+- strict update-view normalization and semantic-closure checks;
+- before-image validation and deterministic dependency ordering;
+- retained logical vectors and receipt-gated session advancement;
+- canonical view, intent, bundle, and next-view construction and SHA-256
+  digests.
+
+Go/WASM owns only backend-specific semantic commitment materialization and
+incremental commitment updates. It does not decode an update view or semantic
+intent and cannot construct or accept a client-root bundle.
+
+Build the separate artifacts with:
 
 ```bash
 scripts/build-writer-wasm.sh dist/writer
 ```
 
-Before starting the Go runtime, a browser may select `kzg`, `ipa`, or `all`
-through `globalThis.maltWriterBackend`. The default is `all`. After the runtime
-starts, the module registers:
+This emits:
 
 ```text
-globalThis.maltComputeClientRootV1(
-  operationIDUTF8,
-  updateViewJSONUTF8,
-  semanticIntentJSONUTF8
-) -> Promise<resultJSON>
+dist/writer/malt-commitment-kzg.wasm
+dist/writer/malt-commitment-ipa.wasm
+dist/writer/wasm_exec.js
 ```
 
-All three arguments are `Uint8Array` values. The operation ID contains up to
-128 ASCII bytes; the update view and semantic intent use the checked-in
-`malt.update-view/v1` and `malt.semantic-intent/v1` schemas. The writer strictly
-decodes them from `Uint8Array` values containing UTF-8 JSON. Inputs are rejected
-before copying if the operation ID exceeds 128 bytes or either JSON byte array
-exceeds the protocol's 64 MiB document limit. The writer independently
-recomputes every old root, computes all changed commitments locally, and
-returns:
+Each WASM artifact links exactly one backend. The IPA build also excludes
+`graph/runtime`'s default KZG fallback.
 
-```json
-{
-  "profile": "malt.writer-compute-result/v1",
-  "bundle": {},
-  "next_view": {},
-  "metrics": {}
-}
+The backend registers four transport-local, versioned bridge functions:
+
+```text
+globalThis.maltCommitmentLoadObjectsV1(
+  commitmentObjectsJSONUTF8
+) -> Promise<loadResultJSON>
+
+globalThis.maltCommitmentApplyDeltaV1(
+  commitmentDeltaJSONUTF8
+) -> Promise<commitmentResultJSON>
+
+globalThis.maltCommitmentRetainRootsV1(
+  retainedRootsJSONUTF8
+) -> Promise<retainedRootsResultJSON>
+
+globalThis.maltCommitmentDropSessionV1(
+  sessionIDUTF8
+) -> Promise<sessionID>
 ```
 
-`bundle` is a canonical `malt.client-root-bundle/v1` value. `next_view` is the
-complete candidate view that a long-lived client may retain only after the
-service returns an exact durable receipt. The operation does not publish or
-trust the candidate and does not contact a Gateway.
+All accept strict `Uint8Array` values. Each TypeScript session owns an isolated
+WASM engine identified by a random handle; at most 64 engines are retained.
+`loadObjects` atomically creates or replaces that engine, recomputes every
+declared object root, and seeds branch-preserving materialization. `applyDelta`
+receives one already-normalized, dependency-resolved object delta and returns
+only its new typed root plus commitment timing. `retainRoots` removes snapshots
+that are no longer reachable from the accepted or prepared views, and
+`dropSession` releases the engine.
+
+The TypeScript adapter is
+[`ts/writer-session.ts`](./ts/writer-session.ts). Its public session methods
+mirror the stateful Go/WASM experiment:
+
+```text
+load(updateView)
+prepare(operationID, semanticIntent)
+acceptReceipt(operationID, materializationReceipt)
+discard(operationID)
+close()
+diagnostics()
+```
+
+`prepare` returns the canonical `malt.writer-compute-result/v1` JSON string.
+Only an exact durable receipt advances the retained view; accepting one
+candidate invalidates all other speculative candidates. A session retains at
+most 64 candidates and 64 MiB of encoded prepared responses.
+
+Fixed-list `uint64` fields are retained internally as `bigint`. Callers may
+supply those fields as an exact safe `number`, a `bigint`, or a canonical
+decimal string; results and WASM bridge requests emit the canonical unquoted
+JSON integer required by the existing Go v1 wire profile.
+
+Run canonical Go parity plus real KZG/IPA WASM smoke tests with:
+
+```bash
+scripts/test-writer-wasm.sh
+```
+
+Executable performance runners and result schemas remain owned by
+`malt-evaluation`; this Core branch keeps only the canonical Go parity smoke
+fixtures needed to validate the adapter.

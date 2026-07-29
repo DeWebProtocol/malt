@@ -1,6 +1,7 @@
 //go:build js && wasm
 
-// malt-writer-wasm exposes exact client-root computation to browser clients.
+// malt-writer-wasm exposes only the stateful commitment/materialization
+// backend. TypeScript owns update-view and semantic-intent processing.
 package main
 
 import (
@@ -12,56 +13,116 @@ import (
 	"github.com/dewebprotocol/malt/protocol"
 )
 
-const maxOperationIDBytes = 128
+const maxSessionIDBytes = 128
 
 func main() {
-	backend := requestedBackend()
-	writer, initErr := newComputer(backend)
+	backend := compiledBackend()
+	computer, initErr := newCompiledCommitmentComputer(backend)
 	if initErr != nil {
-		js.Global().Set("maltWriterInitError", initErr.Error())
+		js.Global().Set("maltCommitmentInitError", initErr.Error())
 	}
-	js.Global().Set("maltWriterLoadedBackend", backend)
-	computeFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+	js.Global().Set("maltCommitmentLoadedBackend", string(backend))
+
+	loadFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		promise := js.Global().Get("Promise")
 		if initErr != nil {
-			return promise.Call("reject", fmt.Sprintf("initialize MALT writer: %v", initErr))
+			return promise.Call("reject", fmt.Sprintf("initialize MALT commitment backend: %v", initErr))
 		}
-		if len(args) != 3 {
-			return promise.Call("reject", "maltComputeClientRootV1 expects operation ID, update-view JSON, and semantic-intent JSON Uint8Arrays")
+		if len(args) != 1 {
+			return promise.Call("reject", "maltCommitmentLoadObjectsV1 expects commitment-object JSON as a Uint8Array")
 		}
-		operationIDBytes, err := copyBoundedBytes(args[0], "operation ID", maxOperationIDBytes)
+		raw, err := copyBoundedBytes(args[0], "commitment-object JSON", protocol.MaxClientRootJSONBytes)
 		if err != nil {
 			return promise.Call("reject", err.Error())
 		}
-		operationID := string(operationIDBytes)
-		updateViewJSON, err := copyBoundedBytes(args[1], "update-view JSON", protocol.MaxClientRootJSONBytes)
-		if err != nil {
-			return promise.Call("reject", err.Error())
-		}
-		semanticIntentJSON, err := copyBoundedBytes(args[2], "semantic-intent JSON", protocol.MaxClientRootJSONBytes)
-		if err != nil {
-			return promise.Call("reject", err.Error())
-		}
-		var executor js.Func
-		executor = js.FuncOf(func(_ js.Value, callbacks []js.Value) any {
-			resolve, reject := callbacks[0], callbacks[1]
-			go func() {
-				result, err := writer.compute(context.Background(), operationID, updateViewJSON, semanticIntentJSON)
-				if err != nil {
-					reject.Invoke(err.Error())
-					return
-				}
-				resolve.Invoke(string(result))
-			}()
-			return nil
+		return promiseString(func() (string, error) {
+			result, err := computer.loadObjects(context.Background(), raw)
+			return string(result), err
 		})
-		value := promise.New(executor)
-		executor.Release()
-		return value
 	})
-	js.Global().Set("maltComputeClientRootV1", computeFunction)
-	js.Global().Set("maltWriterReady", true)
+	js.Global().Set("maltCommitmentLoadObjectsV1", loadFunction)
+
+	applyFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT commitment backend: %v", initErr))
+		}
+		if len(args) != 1 {
+			return promise.Call("reject", "maltCommitmentApplyDeltaV1 expects commitment-delta JSON as a Uint8Array")
+		}
+		raw, err := copyBoundedBytes(args[0], "commitment-delta JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		return promiseString(func() (string, error) {
+			result, err := computer.applyDelta(context.Background(), raw)
+			return string(result), err
+		})
+	})
+	js.Global().Set("maltCommitmentApplyDeltaV1", applyFunction)
+
+	retainFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT commitment backend: %v", initErr))
+		}
+		if len(args) != 1 {
+			return promise.Call("reject", "maltCommitmentRetainRootsV1 expects retained-root JSON as a Uint8Array")
+		}
+		raw, err := copyBoundedBytes(args[0], "retained-root JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		return promiseString(func() (string, error) {
+			result, err := computer.retainRoots(raw)
+			return string(result), err
+		})
+	})
+	js.Global().Set("maltCommitmentRetainRootsV1", retainFunction)
+
+	dropFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT commitment backend: %v", initErr))
+		}
+		if len(args) != 1 {
+			return promise.Call("reject", "maltCommitmentDropSessionV1 expects a session ID Uint8Array")
+		}
+		raw, err := copyBoundedBytes(args[0], "commitment session ID", maxSessionIDBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		return promiseString(func() (string, error) {
+			sessionID := string(raw)
+			if err := computer.dropSession(sessionID); err != nil {
+				return "", err
+			}
+			return sessionID, nil
+		})
+	})
+	js.Global().Set("maltCommitmentDropSessionV1", dropFunction)
+	js.Global().Set("maltCommitmentReady", true)
 	select {}
+}
+
+func promiseString(task func() (string, error)) any {
+	promise := js.Global().Get("Promise")
+	var executor js.Func
+	executor = js.FuncOf(func(_ js.Value, callbacks []js.Value) any {
+		resolve, reject := callbacks[0], callbacks[1]
+		go func() {
+			result, err := task()
+			if err != nil {
+				reject.Invoke(err.Error())
+				return
+			}
+			resolve.Invoke(result)
+		}()
+		return nil
+	})
+	value := promise.New(executor)
+	executor.Release()
+	return value
 }
 
 func copyBoundedBytes(value js.Value, label string, maxBytes int) ([]byte, error) {
@@ -103,12 +164,4 @@ func copyBoundedBytes(value js.Value, label string, maxBytes int) ([]byte, error
 		return nil, fmt.Errorf("copy %s: copied %d of %d bytes", label, copied, size)
 	}
 	return data, nil
-}
-
-func requestedBackend() string {
-	value := js.Global().Get("maltWriterBackend")
-	if value.Type() != js.TypeString || value.String() == "" {
-		return "all"
-	}
-	return value.String()
 }
