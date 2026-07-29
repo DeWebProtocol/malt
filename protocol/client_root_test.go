@@ -1,6 +1,7 @@
 package protocol_test
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"math"
@@ -168,6 +169,32 @@ func TestClientRootDecodeRejectsUnknownDuplicateMissingNullTrailingAndOversized(
 	oversized := make([]byte, protocol.MaxClientRootJSONBytes+1)
 	if _, err := protocol.DecodeUpdateView(oversized); err == nil {
 		t.Fatal("DecodeUpdateView accepted oversized JSON")
+	}
+}
+
+func TestClientRootDecodeRejectsInvalidUTF8WithoutRejectingReplacementRune(t *testing.T) {
+	bundle, _ := protocolClientRootFixture(t)
+	wire, err := protocol.NewClientRootBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childIndex := wireObjectIndex(t, &wire, "child")
+	wire.View.Objects[childIndex].Entries[0].Coordinate.MapPath = "\uFFFD"
+	validRaw, err := json.Marshal(wire.View)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementRune := []byte("\uFFFD")
+	if count := bytes.Count(validRaw, replacementRune); count != 1 {
+		t.Fatalf("valid JSON contains %d replacement rune encodings, want 1: %q", count, validRaw)
+	}
+	if _, err := protocol.DecodeUpdateView(validRaw); err != nil {
+		t.Fatalf("DecodeUpdateView rejected valid U+FFFD: %v", err)
+	}
+
+	invalidRaw := bytes.Replace(validRaw, replacementRune, []byte{0xff}, 1)
+	if _, err := protocol.DecodeUpdateView(invalidRaw); err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("invalid UTF-8 error = %v", err)
 	}
 }
 

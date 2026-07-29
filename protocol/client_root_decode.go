@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dewebprotocol/malt/mutation"
 )
@@ -85,6 +86,9 @@ func decodeClientRootJSON(data []byte, target any) error {
 	}
 	if len(data) > MaxClientRootJSONBytes {
 		return fmt.Errorf("client-root JSON exceeds %d bytes", MaxClientRootJSONBytes)
+	}
+	if !utf8.Valid(data) {
+		return fmt.Errorf("client-root JSON is not valid UTF-8")
 	}
 	targetType := reflect.TypeOf(target)
 	if targetType.Kind() != reflect.Pointer || targetType.Elem().Kind() != reflect.Struct {
