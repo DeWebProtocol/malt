@@ -37,6 +37,7 @@ incompatible wire revision requires a new profile identifier.
 caller-selected accepted base root
   -> caller-bounded, untrusted complete UpdateView
   -> locally verified complete semantic vectors
+  -> for a new state only: client-computed canonical empty-map base witness
   -> application-produced SemanticIntent
   -> locally computed transition outputs and candidate root
   -> root-bound map materialization for every map transition output
@@ -181,8 +182,10 @@ decodes bounded UTF-8 JSON `Uint8Array` values for an `UpdateView` and
 `malt.writer-compute-result/v2` carrying the canonical bundle, root-bound map
 materialization, complete next view, and diagnostic local timings. The
 materialization contains backend-owned radix cache coordinates for every map
-transition output; it is untrusted until validated against the declared output
-root and complete logical post-view. The WASM adapter does not contact a
+transition output. The first result after `Session.BootstrapMap` additionally
+contains `materialization.base`, a witness for the canonical empty-map base.
+Both are untrusted until validated against their declared roots and complete
+logical views. The WASM adapter does not contact a
 service or change publication or trusted-root state. The v1 result schema is
 retained for decode compatibility but is no longer emitted.
 
@@ -197,9 +200,10 @@ The client-root JSON decoders reject:
 - semantic values that satisfy JSON Schema shape but violate the Core
   invariants above.
 
-All JSON DTO fields are required. Optional semantic values use explicit
-`present` or `absent` state objects rather than omitted properties or JSON
-`null`.
+Fields are required unless their schema explicitly marks them optional.
+Existing semantic before/after values use explicit `present` or `absent` state
+objects. The sole optional client-root materialization member is `base`; it is
+omitted outside bootstrap and explicit JSON `null` is rejected.
 
 Before structural validation, every client-root document is limited to 64 MiB.
 The wire contract additionally caps:
@@ -231,12 +235,15 @@ A service importing client-computed map roots must independently:
 3. require exactly one materialization witness for every map output and call
    `radix.ValidateMaterialization` against that declared output root and logical
    post-view;
-4. reject unsupported output kinds unless it has an equivalent root-bound
+4. when `materialization.base` is present, require a single-object canonical
+   empty-map bootstrap view and validate that base witness at the declared base
+   root without calling `Commit`;
+5. reject unsupported output kinds unless it has an equivalent root-bound
    importer for them;
-5. check the required payload CIDs at its declared durability boundary;
-6. atomically persist every accepted proof-serving witness entry and the
+6. check the required payload CIDs at its declared durability boundary;
+7. atomically persist every accepted proof-serving witness entry and the
    service head/publication state named by its durability boundary; and
-7. return a `MaterializationReceipt` only after that boundary succeeds.
+8. return a `MaterializationReceipt` only after that boundary succeeds.
 
 `radix.ValidateMaterialization` depends on `IndexVerifier` and
 `IndexRootProver`; it opens caller-supplied vectors through `ProveAtRoot` and
@@ -279,10 +286,18 @@ MALT core.
 
 ## Creation Boundary
 
-The client-root contract updates an existing accepted top root. Creating an
-initial semantic structure has no authenticated base root and therefore uses a
-separate application or service bootstrap capability. Such a capability must
-not be exposed as part of the portable client-root profiles.
+A browser writer may create the canonical empty-map base through
+`sdk/writer.Session.BootstrapMap` (or `maltWriterBootstrapSessionV1`). The
+commitment is computed in the selected client backend. The returned update view
+is retained in the same stateful session, and its first prepared
+`malt.writer-compute-result/v2` carries `materialization.base`.
+
+Core accepts that optional witness only when the bundle view contains exactly
+one object named `root`, its kind is map, its logical vector is empty, and its
+root equals the bundle base. A service validates and atomically imports the
+base and first candidate witnesses through root-bound proof operations; it does
+not call `Commit` or substitute another bootstrap root. Whether a Bucket is
+still eligible for first-root creation remains service concurrency policy.
 
 ## Related Documents
 

@@ -11,7 +11,8 @@ positioning, start with [Concepts](../concepts/README.md). Keep normative
 behavior, wire formats, and proof semantics in this folder.
 
 The current transport-neutral proof-bearing contracts are
-`malt.resolve/v0alpha1` and `malt.read/v0alpha1`. The post-release client-root
+`malt.resolve/v0alpha1`, `malt.read/v0alpha1`, and
+`malt.map-proof/v0alpha1`. The post-release client-root
 contracts are `malt.update-view/v1`, `malt.semantic-intent/v1`,
 `malt.client-root-bundle/v1`, `malt.client-root-materialization/v1`,
 `malt.writer-compute-result/v2`, and `malt.materialization-receipt/v1`. The
@@ -41,6 +42,9 @@ Every filename returned by `protocol.SchemaNames()` is indexed here:
 <!-- schema-catalog:protocol:start -->
 - [`client-root-bundle.schema.json`](../../protocol/schemas/client-root-bundle.schema.json)
 - [`client-root-materialization.schema.json`](../../protocol/schemas/client-root-materialization.schema.json)
+- [`map-proof-request.schema.json`](../../protocol/schemas/map-proof-request.schema.json)
+- [`map-proof-result.schema.json`](../../protocol/schemas/map-proof-result.schema.json)
+- [`map-proof-verification.schema.json`](../../protocol/schemas/map-proof-verification.schema.json)
 - [`materialization-receipt.schema.json`](../../protocol/schemas/materialization-receipt.schema.json)
 - [`prooflist.schema.json`](../../protocol/schemas/prooflist.schema.json)
 - [`read-request.schema.json`](../../protocol/schemas/read-request.schema.json)

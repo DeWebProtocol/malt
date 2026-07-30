@@ -12,6 +12,7 @@ module registers:
 ```text
 globalThis.maltVerifyResolve(verificationJSON) -> resultJSON
 globalThis.maltVerifyRead(verificationJSON) -> resultJSON
+globalThis.maltVerifyMapProof(verificationJSON) -> resultJSON
 globalThis.maltVerifyArtifact(requestJSON) -> resultJSON  # v0.0.4 compatibility
 ```
 
@@ -31,8 +32,9 @@ is not registered. Clients that need cross-backend ProofLists must use the
 default `all` instance.
 
 `maltVerifyResolve` accepts one `malt.resolve/v0alpha1` request/result pair;
-`maltVerifyRead` accepts one `malt.read/v0alpha1` request/result pair. The
-caller constructs the request from its trusted root and intended query before
+`maltVerifyRead` accepts one `malt.read/v0alpha1` request/result pair;
+`maltVerifyMapProof` accepts one `malt.map-proof/v0alpha1` membership or
+non-membership pair. The caller constructs the request from its trusted root and intended query before
 passing the untrusted result to WASM. Schemas live in `protocol/schemas/`.
 
 For example:

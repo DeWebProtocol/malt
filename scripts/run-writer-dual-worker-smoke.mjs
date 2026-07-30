@@ -76,6 +76,12 @@ try {
   );
 
   const encoder = new TextEncoder();
+  const kzgBootstrap = JSON.parse(await writers.bootstrap("kzg"));
+  assert.equal(kzgBootstrap.profile, "malt.update-view/v1");
+  assert.equal(kzgBootstrap.objects.length, 1);
+  assert.equal(kzgBootstrap.objects[0].object_id, "root");
+  assert.equal(kzgBootstrap.objects[0].entries.length, 0);
+
   const kzgFixture = fixtures.find(({ backend }) => backend === "kzg");
   assert.ok(kzgFixture, "missing KZG fixture");
   const loadedRoot = await writers.load(
@@ -106,6 +112,12 @@ try {
 
   await writers.ipaReady;
   const ipaReadyAt = performance.now();
+  const ipaBootstrap = JSON.parse(await writers.bootstrap("ipa"));
+  assert.equal(ipaBootstrap.profile, "malt.update-view/v1");
+  assert.equal(ipaBootstrap.objects.length, 1);
+  assert.equal(ipaBootstrap.objects[0].object_id, "root");
+  assert.equal(ipaBootstrap.objects[0].entries.length, 0);
+
   const ipaFixture = fixtures.find(({ backend }) => backend === "ipa");
   assert.ok(ipaFixture, "missing IPA fixture");
   const ipaLoadedRoot = await writers.load(

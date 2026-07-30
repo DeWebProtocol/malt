@@ -133,6 +133,84 @@ func TestComputerRejectsUnavailableBackendAndInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestSessionComputerBootstrapCarriesBaseMaterialization(t *testing.T) {
+	for _, backend := range []maltcid.BackendKind{maltcid.BackendKindKZG, maltcid.BackendKindIPA} {
+		t.Run(string(backend), func(t *testing.T) {
+			computer, err := newComputer(string(backend))
+			if err != nil {
+				t.Fatalf("newComputer: %v", err)
+			}
+			session, err := newSessionComputer(computer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			viewJSON, err := session.bootstrap(t.Context())
+			if err != nil {
+				t.Fatalf("bootstrap: %v", err)
+			}
+			wireView, err := protocol.DecodeUpdateView(viewJSON)
+			if err != nil {
+				t.Fatalf("DecodeUpdateView: %v", err)
+			}
+			view, err := wireView.Core()
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := payloadCID(t, "bootstrap-payload-"+string(backend))
+			after := arcset.NewCASTarget(payload)
+			coordinate, err := arcset.NewMapCoordinate("first")
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := mutation.SemanticIntent{
+				Profile: mutation.SemanticIntentProfile, BaseRoot: view.BaseRoot, TopOutputID: "root-output",
+				Transitions: []mutation.IntentTransition{{
+					ID: "root-output", ObjectID: "root", OldRoot: view.BaseRoot, Kind: arcset.KindMap, Backend: backend,
+					Changes: []mutation.IntentChange{{Coordinate: coordinate, After: &after}},
+				}},
+			}
+			wireIntent, err := protocol.NewSemanticIntent(view, intent)
+			if err != nil {
+				t.Fatalf("NewSemanticIntent: %v", err)
+			}
+			intentJSON, err := json.Marshal(wireIntent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const operationID = "bootstrap-first-write"
+			if _, err := session.prepare(t.Context(), operationID, intentJSON); err != nil {
+				t.Fatalf("prepare: %v", err)
+			}
+			resultJSON, err := session.getPreparedResult(operationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := protocol.DecodeWriterComputeResult(resultJSON)
+			if err != nil {
+				t.Fatalf("DecodeWriterComputeResult: %v", err)
+			}
+			if result.Materialization.Base == nil || result.Materialization.Base.Root != view.BaseRoot.String() {
+				t.Fatalf("base materialization = %+v", result.Materialization.Base)
+			}
+			bundle, err := result.Bundle.Core()
+			if err != nil {
+				t.Fatal(err)
+			}
+			materialization, err := result.Materialization.Core(bundle)
+			if err != nil {
+				t.Fatalf("materialization Core: %v", err)
+			}
+			rootBound, ok := computer.schemes[backend].(mappingradix.RootBoundVerifier)
+			if !ok {
+				t.Fatal("writer backend does not support root-bound validation")
+			}
+			if err := mappingradix.ValidateMaterialization(t.Context(), rootBound, view.BaseRoot, mapping.NewViewFromPaths(nil), materialization.Base.Entries); err != nil {
+				t.Fatalf("ValidateMaterialization: %v", err)
+			}
+		})
+	}
+}
+
 func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
 	view, intent := computeFixture(t, maltcid.BackendKindKZG)
 	wireView, err := protocol.NewUpdateView(view)

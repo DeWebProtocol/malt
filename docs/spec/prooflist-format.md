@@ -7,7 +7,8 @@ relations from a trusted root.
 ## Status
 
 ProofList has no standalone operation discriminator. It is embedded in the
-profiled `malt.resolve/v0alpha1` and `malt.read/v0alpha1` results. Its named JSON
+profiled `malt.resolve/v0alpha1`, `malt.read/v0alpha1`, and
+`malt.map-proof/v0alpha1` results. Its named JSON
 Schema is checked in at `protocol/schemas/prooflist.schema.json`; incompatible
 result-contract revisions require a new enclosing profile.
 
@@ -25,14 +26,17 @@ The current Go shape is `auth/proof/prooflist.ProofList`:
 | `Steps` | `steps` | Ordered proof steps. |
 
 `ValidateShape(RequireSteps())` rejects an undefined root, an empty step list,
-unknown step kinds, undefined `from` or `target` CIDs, and any step whose
-`from` CID does not continue from the current target.
+unknown step kinds, undefined `from` CIDs, undefined `target` CIDs on
+traversal steps, and any step whose `from` CID does not continue from the
+current target. The sole exception is a terminal `map_absence` step, whose
+target must be undefined and serializes as JSON `null`.
 
 ## Step Kinds
 
 | Kind | Role |
 | --- | --- |
 | `map_step` | Authenticates a keyed map relation. |
+| `map_absence` | Terminal proof that an exact keyed map relation is absent; requires `structure/map` evidence and an undefined target. |
 | `payload_binding` | Authenticates the optional reserved terminal `@payload` map binding when a layout uses it. |
 | `list_index` | Authenticates one list index binding. |
 | `list_range` | Authenticates measured-list byte range metadata and covered segments. |
@@ -67,8 +71,10 @@ Steps form a linear chain unless they are terminal list evidence:
 
 1. The first step starts at `root`.
 2. Non-list traversal steps advance the current target to `step.target`.
-3. List index or list range evidence may appear at the terminal phase.
-4. No later traversal step may appear after list index or list range evidence.
+3. A `map_absence` step is terminal, does not advance to a target, and must use
+   `structure/map` evidence.
+4. List index or list range evidence may appear at the terminal phase.
+5. No later traversal step may appear after terminal map or list evidence.
 
 This shape validation is structural. `auth/verifier` then selects a
 verification-only backend from the typed root and checks the map/list evidence.
@@ -115,8 +121,8 @@ accept/reject behavior is locked by the
 
 ## Serialization And Transport
 
-ProofLists are embedded in the operation-specific `malt.resolve/v0alpha1` and
-`malt.read/v0alpha1` results. Core does not define HTTP headers, omission
+ProofLists are embedded in the operation-specific `malt.resolve/v0alpha1`,
+`malt.read/v0alpha1`, and `malt.map-proof/v0alpha1` results. Core does not define HTTP headers, omission
 switches, content routes, or cache variance. A transport must preserve the
 serialized request/result fields required by local verification.
 

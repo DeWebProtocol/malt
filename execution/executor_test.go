@@ -59,6 +59,43 @@ func TestExecutorReadMapAndVerifyBindsRequest(t *testing.T) {
 	}
 }
 
+func TestExecutorProveMapReturnsAndBindsAbsence(t *testing.T) {
+	root := testCID(t, "absence-root")
+	key := arcset.CanonicalizePath("profile/missing")
+	maps := &fakeAbsentMaps{root: root, key: key, proof: []byte("absence-proof")}
+	engine, err := execution.NewExecutor(execution.Options{Scope: "absence-scope", Maps: maps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := malt.MapProofRequest{Root: root, Key: key}
+	result, err := engine.ProveMap(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Present || result.Target.Defined() || maps.scope != "absence-scope" {
+		t.Fatalf("absence result/scope = %+v/%q", result, maps.scope)
+	}
+	step := result.ProofList.Steps[0]
+	if step.Kind != prooflist.KindMapAbsence || step.Target.Defined() {
+		t.Fatalf("absence step = %+v", step)
+	}
+	if err := malt.VerifyMapProof(context.Background(), request, result, acceptingVerifier{}); err != nil {
+		t.Fatalf("VerifyMapProof: %v", err)
+	}
+
+	tampered := result
+	tampered.Present = true
+	tampered.Target = testCID(t, "forged")
+	if err := malt.VerifyMapProof(context.Background(), request, tampered, acceptingVerifier{}); err == nil {
+		t.Fatal("VerifyMapProof accepted an absent proof as membership")
+	}
+	wrongKey := request
+	wrongKey.Key = arcset.CanonicalizePath("profile/other")
+	if err := malt.VerifyMapProof(context.Background(), wrongKey, result, acceptingVerifier{}); err == nil {
+		t.Fatal("VerifyMapProof accepted an absence proof for another key")
+	}
+}
+
 func TestExecutorResolveAndVerifyBindsRequest(t *testing.T) {
 	root := testCID(t, "resolve-root")
 	target := testCID(t, "resolve-target")
@@ -360,6 +397,21 @@ type fakeMaps struct {
 	target cid.Cid
 	proof  structure.Proof
 	scope  string
+}
+
+type fakeAbsentMaps struct {
+	root  cid.Cid
+	key   arcset.Path
+	proof structure.Proof
+	scope string
+}
+
+func (m *fakeAbsentMaps) Prove(_ context.Context, scope string, root cid.Cid, key arcset.Path) (mapping.Binding, structure.Proof, error) {
+	m.scope = scope
+	if !root.Equals(m.root) || key != m.key {
+		return mapping.Binding{}, nil, arcset.ErrNotFound
+	}
+	return mapping.Binding{Present: false}, append(structure.Proof(nil), m.proof...), nil
 }
 
 type errorMaps struct {

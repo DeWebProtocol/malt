@@ -100,7 +100,7 @@ func (r WriterComputeResult) Validate() error {
 		if _, err := r.Materialization.Core(bundle); err != nil {
 			return fmt.Errorf("writer compute result materialization: %w", err)
 		}
-	} else if r.Materialization.Profile != "" || len(r.Materialization.Maps) != 0 {
+	} else if r.Materialization.Profile != "" || r.Materialization.Base != nil || len(r.Materialization.Maps) != 0 {
 		return fmt.Errorf("writer compute result v1 must not carry materialization")
 	}
 	nextView, err := r.NextView.Core()

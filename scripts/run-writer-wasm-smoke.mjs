@@ -41,6 +41,7 @@ while (Date.now() < deadline) {
   if (
     globalThis.maltWriterReady &&
     typeof globalThis.maltComputeClientRootV1 === "function" &&
+    typeof globalThis.maltWriterBootstrapSessionV1 === "function" &&
     typeof globalThis.maltWriterLoadSessionV1 === "function" &&
     typeof globalThis.maltWriterPrepareSessionV1 === "function" &&
     typeof globalThis.maltWriterGetPreparedResultV1 === "function" &&
@@ -55,6 +56,7 @@ while (Date.now() < deadline) {
 if (
   !globalThis.maltWriterReady ||
   typeof globalThis.maltComputeClientRootV1 !== "function" ||
+  typeof globalThis.maltWriterBootstrapSessionV1 !== "function" ||
   typeof globalThis.maltWriterLoadSessionV1 !== "function" ||
   typeof globalThis.maltWriterPrepareSessionV1 !== "function" ||
   typeof globalThis.maltWriterGetPreparedResultV1 !== "function" ||
@@ -136,6 +138,18 @@ try {
 if (!rejectedInvalidJSON) {
   throw new Error("writer accepted invalid update-view and semantic-intent JSON");
 }
+
+const bootstrapView = JSON.parse(await globalThis.maltWriterBootstrapSessionV1());
+if (
+  bootstrapView.profile !== "malt.update-view/v1" ||
+  bootstrapView.objects?.length !== 1 ||
+  bootstrapView.objects[0]?.object_id !== "root" ||
+  bootstrapView.objects[0]?.kind !== "map" ||
+  bootstrapView.objects[0]?.entries?.length !== 0
+) {
+  throw new Error(`${selectedBackend} bootstrap did not return the canonical empty-map view`);
+}
+await globalThis.maltWriterCloseSessionV1();
 
 const selectedFixtures = fixtures.filter(
   ({ backend }) => backend === selectedBackend,

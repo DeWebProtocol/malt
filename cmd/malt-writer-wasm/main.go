@@ -66,6 +66,21 @@ func registerStatelessCompute(writer *computer, initErr error) {
 
 func registerSessionFunctions(writer *sessionComputer, initErr error) {
 	prepareGate := make(chan struct{}, 1)
+	bootstrapFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if initErr != nil {
+			return promise.Call("reject", fmt.Sprintf("initialize MALT writer session: %v", initErr))
+		}
+		if len(args) != 0 {
+			return promise.Call("reject", "maltWriterBootstrapSessionV1 expects no arguments")
+		}
+		return promiseString(func() (string, error) {
+			result, err := writer.bootstrap(context.Background())
+			return string(result), err
+		})
+	})
+	js.Global().Set("maltWriterBootstrapSessionV1", bootstrapFunction)
+
 	loadFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		promise := js.Global().Get("Promise")
 		if initErr != nil {

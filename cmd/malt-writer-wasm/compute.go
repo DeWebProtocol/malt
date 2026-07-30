@@ -25,6 +25,7 @@ type sessionComputer struct {
 	session               *clientwriter.Session
 	store                 *materializermemory.Store
 	view                  mutation.UpdateView
+	bootstrapBase         *mutation.MapStateMaterialization
 	prepared              map[string]preparedCandidate
 	preparedResponseBytes int
 }
@@ -100,6 +101,47 @@ func (c *computer) compute(ctx context.Context, operationID string, updateViewJS
 	return encodeComputeResult(result)
 }
 
+func (s *sessionComputer) bootstrap(ctx context.Context) ([]byte, error) {
+	if s == nil || s.computer == nil {
+		return nil, fmt.Errorf("client writer session is not initialized")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime, store, err := s.computer.newSessionRuntime()
+	if err != nil {
+		return nil, err
+	}
+	session, err := clientwriter.NewSession(runtime)
+	if err != nil {
+		return nil, err
+	}
+	backend := maltcid.BackendKind("")
+	for candidate := range s.computer.schemes {
+		if backend != "" {
+			return nil, fmt.Errorf("bootstrap writer must load exactly one backend")
+		}
+		backend = candidate
+	}
+	view, base, err := session.BootstrapMap(ctx, backend)
+	if err != nil {
+		return nil, err
+	}
+	if s.store != nil {
+		s.store.RetainRoots(nil)
+	}
+	s.session = session
+	s.store = store
+	s.view = view
+	s.bootstrapBase = &base
+	s.prepared = make(map[string]preparedCandidate)
+	s.preparedResponseBytes = 0
+	wire, err := protocol.NewUpdateView(view)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(wire)
+}
+
 func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (string, error) {
 	if s == nil || s.computer == nil {
 		return "", fmt.Errorf("client writer session is not initialized")
@@ -133,6 +175,7 @@ func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (stri
 	s.session = session
 	s.store = store
 	s.view = view
+	s.bootstrapBase = nil
 	s.prepared = make(map[string]preparedCandidate)
 	s.preparedResponseBytes = 0
 	return view.BaseRoot.String(), nil
@@ -165,6 +208,10 @@ func (s *sessionComputer) prepare(ctx context.Context, operationID string, seman
 	if err != nil {
 		s.retainMaterializedRoots()
 		return "", fmt.Errorf("prepare client writer session: %w", err)
+	}
+	if s.bootstrapBase != nil {
+		base := *s.bootstrapBase
+		result.Materialization.Base = &base
 	}
 	fullResponse, err := encodeComputeResult(result)
 	if err != nil {
@@ -211,6 +258,7 @@ func (s *sessionComputer) closeSession() {
 	s.session = nil
 	s.store = nil
 	s.view = mutation.UpdateView{}
+	s.bootstrapBase = nil
 	s.prepared = nil
 	s.preparedResponseBytes = 0
 }
@@ -245,6 +293,7 @@ func (s *sessionComputer) acceptReceipt(operationID string, receiptJSON []byte) 
 		return "", fmt.Errorf("retain client writer next view: %w", err)
 	}
 	s.view = next
+	s.bootstrapBase = nil
 	s.prepared = make(map[string]preparedCandidate)
 	s.preparedResponseBytes = 0
 	s.retainMaterializedRoots()

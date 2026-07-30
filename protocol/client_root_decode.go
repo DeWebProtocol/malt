@@ -171,10 +171,7 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 		targetType = targetType.Elem()
 	}
 	if token == nil {
-		if required {
-			return fmt.Errorf("%s must not be null", path)
-		}
-		return nil
+		return fmt.Errorf("%s must not be null", path)
 	}
 	switch targetType.Kind() {
 	case reflect.Struct:

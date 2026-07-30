@@ -12,6 +12,9 @@
     "profile": {
       "const": "malt.client-root-materialization/v1"
     },
+    "base": {
+      "$ref": "#/$defs/state"
+    },
     "maps": {
       "type": "array",
       "maxItems": 65536,
@@ -21,6 +24,26 @@
     }
   },
   "$defs": {
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "entries"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/cid"
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 4194304,
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        }
+      }
+    },
     "map": {
       "type": "object",
       "additionalProperties": false,

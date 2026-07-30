@@ -68,3 +68,41 @@ func TestDecodeVerificationRejectsEmptyAndOversizedInputs(t *testing.T) {
 		t.Fatal("DecodeReadVerification accepted an oversized input")
 	}
 }
+
+func TestDecodeMapProofVerificationStrictAndTargetConditional(t *testing.T) {
+	root := protocolTestCID(t, "strict-map-proof-root")
+	value := protocol.MapProofVerification{
+		Request: protocol.MapProofRequest{Profile: protocol.MapProofProfile, Root: root.String(), Key: []string{"missing"}},
+		Result: protocol.MapProofResult{
+			Profile: protocol.MapProofProfile,
+			Present: false,
+			ProofList: prooflist.ProofList{Root: root, Query: "missing", Steps: []prooflist.Step{{
+				Kind: prooflist.KindMapAbsence, From: root, Path: "missing",
+				EvidenceKind: "structure", EvidenceBackend: "map", Proof: []byte("absence"),
+			}}},
+		},
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"present":false,"target":`) {
+		t.Fatalf("absent map-proof result serialized a result target: %s", raw)
+	}
+	decoded, err := protocol.DecodeMapProofVerification(raw)
+	if err != nil {
+		t.Fatalf("DecodeMapProofVerification: %v", err)
+	}
+	if decoded.Result.Present || decoded.Result.Target != "" || decoded.Result.ProofList.Steps[0].Target.Defined() {
+		t.Fatalf("decoded absence = %+v", decoded.Result)
+	}
+
+	withUnknown := strings.Replace(string(raw), `"present":false`, `"present":false,"unexpected":true`, 1)
+	if _, err := protocol.DecodeMapProofVerification([]byte(withUnknown)); err == nil {
+		t.Fatal("DecodeMapProofVerification accepted an unknown result field")
+	}
+	presentWithoutTarget := strings.Replace(string(raw), `"present":false`, `"present":true`, 1)
+	if _, err := protocol.DecodeMapProofVerification([]byte(presentWithoutTarget)); err == nil {
+		t.Fatal("DecodeMapProofVerification accepted a present result without target")
+	}
+}

@@ -244,6 +244,10 @@ export class MaltWriterWorkers {
     ]);
   }
 
+  bootstrap(backend) {
+    return this.#request(backend, "bootstrap", []);
+  }
+
   load(backend, updateViewJSON) {
     return this.#request(backend, "load", [updateViewJSON]);
   }

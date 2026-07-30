@@ -70,7 +70,24 @@ func main() {
 		}
 		return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.ReadProfile, Valid: true})
 	})
+	mapProofFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if initErr != nil {
+			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.MapProofProfile, Error: fmt.Sprintf("initialize verifier: %v", initErr)})
+		}
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.MapProofProfile, Error: "maltVerifyMapProof expects one JSON string"})
+		}
+		value, err := protocol.DecodeMapProofVerification([]byte(args[0].String()))
+		if err != nil {
+			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.MapProofProfile, Error: fmt.Sprintf("decode map-proof verification: %v", err)})
+		}
+		if err := verifier.VerifyMapProof(context.Background(), value); err != nil {
+			return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.MapProofProfile, Error: err.Error()})
+		}
+		return encodeProtocolResponse(protocol.VerificationResult{Profile: protocol.MapProofProfile, Valid: true})
+	})
 	js.Global().Set("maltVerifyArtifact", artifactFunction)
+	js.Global().Set("maltVerifyMapProof", mapProofFunction)
 	js.Global().Set("maltVerifyResolve", resolveFunction)
 	js.Global().Set("maltVerifyRead", readFunction)
 	select {}

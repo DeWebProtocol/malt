@@ -27,6 +27,27 @@ func TestPublishedProtocolSchemasAreJSONObjects(t *testing.T) {
 	}
 }
 
+func TestMapProofSchemasArePublished(t *testing.T) {
+	want := []string{
+		"map-proof-request.schema.json",
+		"map-proof-result.schema.json",
+		"map-proof-verification.schema.json",
+	}
+	names := protocol.SchemaNames()
+	for _, name := range want {
+		found := false
+		for _, candidate := range names {
+			if candidate == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("SchemaNames does not include %s", name)
+		}
+	}
+}
+
 func TestResolveContractRoundTripsCoreValues(t *testing.T) {
 	root := protocolTestCID(t, "root")
 	target := protocolTestCID(t, "target")

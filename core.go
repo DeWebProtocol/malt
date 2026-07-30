@@ -124,6 +124,36 @@ type ReadResult struct {
 	ProofList prooflist.ProofList
 }
 
+// MapProofRequest binds one keyed-map membership or non-membership proof to a
+// caller-supplied trusted root.
+type MapProofRequest struct {
+	Root cid.Cid
+	Key  arcset.Path
+}
+
+// Validate checks the transport-neutral map-proof request.
+func (r MapProofRequest) Validate() error {
+	if !r.Root.Defined() {
+		return fmt.Errorf("trusted root is undefined")
+	}
+	key, err := arcset.NewPath(r.Key.String())
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidQuery, err)
+	}
+	if key != r.Key {
+		return fmt.Errorf("%w: map key %q is not canonical", ErrInvalidQuery, r.Key)
+	}
+	return nil
+}
+
+// MapProofResult carries either a present target or an authenticated absence.
+// Target is defined if and only if Present is true.
+type MapProofResult struct {
+	Present   bool
+	Target    cid.Cid
+	ProofList prooflist.ProofList
+}
+
 // ResolveRequest binds one canonical segment path to a caller-supplied trusted
 // root. Applications append reserved coordinates such as @payload explicitly;
 // an empty segment sequence always denotes root identity.
@@ -158,6 +188,11 @@ type WriteResult = mutation.WriteReceipt
 // Reader is the application-neutral root-relative read port.
 type Reader interface {
 	Read(context.Context, ReadRequest) (ReadResult, error)
+}
+
+// MapProver is the application-neutral membership/non-membership proof port.
+type MapProver interface {
+	ProveMap(context.Context, MapProofRequest) (MapProofResult, error)
 }
 
 // Resolver is the application-neutral path-resolution port. Implementations

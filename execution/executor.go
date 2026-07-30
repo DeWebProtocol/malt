@@ -110,6 +110,44 @@ func (e *Executor) Read(ctx context.Context, req malt.ReadRequest) (malt.ReadRes
 	}
 }
 
+// ProveMap returns either a membership proof or an authenticated
+// non-membership proof without changing Read's not-found behavior.
+func (e *Executor) ProveMap(ctx context.Context, req malt.MapProofRequest) (malt.MapProofResult, error) {
+	if e == nil {
+		return malt.MapProofResult{}, fmt.Errorf("MALT executor is nil")
+	}
+	if err := req.Validate(); err != nil {
+		return malt.MapProofResult{}, err
+	}
+	if e.maps == nil {
+		return malt.MapProofResult{}, fmt.Errorf("%w: map reader", ErrCapabilityUnavailable)
+	}
+	binding, proof, err := e.maps.Prove(ctx, e.scope, req.Root, req.Key)
+	if err != nil {
+		return malt.MapProofResult{}, err
+	}
+	kind := prooflist.KindMapAbsence
+	if binding.Present {
+		if !binding.Value.Defined() {
+			return malt.MapProofResult{}, fmt.Errorf("map proof returned a present binding with an undefined target")
+		}
+		kind = prooflist.KindMapStep
+		if req.Key == arcset.PayloadPath {
+			kind = prooflist.KindPayloadBinding
+		}
+	} else if binding.Value.Defined() {
+		return malt.MapProofResult{}, fmt.Errorf("map proof returned an absent binding with a defined target")
+	}
+	step := prooflist.Step{
+		Kind: kind, From: req.Root, Query: req.Key.String(), Coordinate: req.Key.String(), Path: req.Key.String(),
+		Target: binding.Value, EvidenceKind: "structure", EvidenceBackend: "map", Proof: cloneProof(proof),
+	}
+	return malt.MapProofResult{
+		Present: binding.Present, Target: binding.Value,
+		ProofList: prooflist.ProofList{Root: req.Root, Query: req.Key.String(), Steps: []prooflist.Step{step}},
+	}, nil
+}
+
 func (e *Executor) Apply(ctx context.Context, mut mutation.SemanticMutation) (mutation.WriteReceipt, error) {
 	if e == nil {
 		return mutation.WriteReceipt{}, fmt.Errorf("MALT executor is nil")

@@ -12,6 +12,7 @@ type StepKind string
 
 const (
 	KindMapStep        StepKind = "map_step"
+	KindMapAbsence     StepKind = "map_absence"
 	KindPayloadBinding StepKind = "payload_binding"
 	KindListIndex      StepKind = "list_index"
 	KindListRange      StepKind = "list_range"
@@ -92,8 +93,15 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 		if !step.From.Defined() {
 			return fmt.Errorf("prooflist step %d from CID is undefined", i)
 		}
-		if !step.Target.Defined() {
+		terminalAbsence := step.Kind == KindMapAbsence && i == len(p.Steps)-1
+		if step.Kind == KindMapAbsence && !terminalAbsence {
+			return fmt.Errorf("prooflist step %d map_absence must be terminal", i)
+		}
+		if !step.Target.Defined() && !terminalAbsence {
 			return fmt.Errorf("prooflist step %d target CID is undefined", i)
+		}
+		if terminalAbsence && step.Target.Defined() {
+			return fmt.Errorf("prooflist step %d map_absence target CID must be undefined", i)
 		}
 		if !step.From.Equals(current) {
 			return fmt.Errorf("prooflist step %d from CID %s does not continue from current target %s", i, step.From.String(), current.String())
@@ -116,6 +124,12 @@ func (p ProofList) ValidateShape(opts ...ValidateOption) error {
 			listIndexPhase = true
 			continue
 		}
+		if terminalAbsence {
+			if step.EvidenceKind != "structure" || step.EvidenceBackend != "map" {
+				return fmt.Errorf("prooflist step %d map_absence kind does not match structure/map evidence", i)
+			}
+			continue
+		}
 		if listIndexPhase {
 			return fmt.Errorf("prooflist step %d traversal step appears after list index evidence", i)
 		}
@@ -135,7 +149,7 @@ func (p ProofList) LastStepTarget() (cid.Cid, error) {
 // Known reports whether k is part of the current ProofList schema.
 func (k StepKind) Known() bool {
 	switch k {
-	case KindMapStep, KindPayloadBinding, KindListIndex, KindListRange, KindBlobBinding, KindImplicitBlock, KindLegacyUnknown:
+	case KindMapStep, KindMapAbsence, KindPayloadBinding, KindListIndex, KindListRange, KindBlobBinding, KindImplicitBlock, KindLegacyUnknown:
 		return true
 	default:
 		return false

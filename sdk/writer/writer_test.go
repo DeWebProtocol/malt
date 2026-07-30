@@ -101,6 +101,40 @@ func TestComputeBundleMatchesIndependentFullRebuildAndRetainsNextView(t *testing
 	}
 }
 
+func TestBootstrapMapCreatesClientOwnedEmptyBase(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{
+		maltcid.BackendKindKZG: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := NewSession(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, base, err := session.BootstrapMap(ctx, maltcid.BackendKindKZG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !session.BaseRoot().Equals(view.BaseRoot) || !base.Root.Equals(view.BaseRoot) {
+		t.Fatalf("bootstrap roots = session %s, view %s, witness %s", session.BaseRoot(), view.BaseRoot, base.Root)
+	}
+	if len(view.Objects) != 1 || view.Objects[0].ObjectID != "root" || view.Objects[0].Kind != arcset.KindMap || view.Objects[0].Entries.Len() != 0 {
+		t.Fatalf("bootstrap view = %+v", view)
+	}
+	if maltcid.BackendKindOf(view.BaseRoot) != maltcid.BackendKindKZG {
+		t.Fatalf("bootstrap backend = %q", maltcid.BackendKindOf(view.BaseRoot))
+	}
+	if err := mappingradix.ValidateMaterialization(ctx, scheme, view.BaseRoot, mapping.NewViewFromPaths(nil), base.Entries); err != nil {
+		t.Fatalf("ValidateMaterialization: %v", err)
+	}
+}
+
 func TestNewRuntimeRequiresBranchingMaterializer(t *testing.T) {
 	scheme, err := kzg.NewScheme()
 	if err != nil {

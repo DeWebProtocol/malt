@@ -419,6 +419,18 @@ func TestWriterComputeResultV2RequiresMaterializationAndV1StillDecodes(t *testin
 	if _, err := protocol.DecodeWriterComputeResult([]byte(`{"profile":"malt.writer-compute-result/v2"}`)); err == nil {
 		t.Fatal("v2 result without materialization was accepted")
 	}
+	legacyWithBase := legacy
+	legacyWithBase.Materialization.Base = &protocol.MapStateMaterializationWire{Root: bundle.View.BaseRoot.String(), Entries: []protocol.MaterializationEntryWire{}}
+	if err := legacyWithBase.Validate(); err == nil {
+		t.Fatal("v1 writer result accepted a bootstrap base materialization")
+	}
+}
+
+func TestWriterComputeResultRejectsExplicitNullBootstrapBase(t *testing.T) {
+	raw := []byte(`{"profile":"malt.writer-compute-result/v2","materialization":{"profile":"malt.client-root-materialization/v1","base":null,"maps":[]},"bundle":{},"next_view":{},"metrics":{}}`)
+	if _, err := protocol.DecodeWriterComputeResult(raw); err == nil || !strings.Contains(err.Error(), "materialization.base must not be null") {
+		t.Fatalf("explicit null base error = %v", err)
+	}
 }
 
 func TestWriterComputeResultRejectsOversizedMaterializationBeforeDecode(t *testing.T) {

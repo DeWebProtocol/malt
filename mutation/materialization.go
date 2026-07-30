@@ -20,11 +20,19 @@ type MapMaterialization struct {
 	Entries      *arcset.CanonicalArcSet
 }
 
+// MapStateMaterialization carries root-bound proof-serving state for the
+// complete map base included in a bootstrap writer result.
+type MapStateMaterialization struct {
+	Root    cid.Cid
+	Entries *arcset.CanonicalArcSet
+}
+
 // ClientRootMaterialization carries root-bound proof-serving witnesses for
 // every map output in one exact client-root bundle. List outputs are omitted
 // until their tree materialization receives an equivalent witness profile.
 type ClientRootMaterialization struct {
 	Profile string
+	Base    *MapStateMaterialization
 	Maps    []MapMaterialization
 }
 
@@ -37,6 +45,27 @@ func NewClientRootMaterialization(bundle ClientRootBundle, value ClientRootMater
 	}
 	if value.Profile != ClientRootMaterializationProfile {
 		return ClientRootMaterialization{}, fmt.Errorf("client-root materialization profile must be %q", ClientRootMaterializationProfile)
+	}
+	var base *MapStateMaterialization
+	if value.Base != nil {
+		if !value.Base.Root.Defined() || !value.Base.Root.Equals(canonicalBundle.View.BaseRoot) {
+			return ClientRootMaterialization{}, fmt.Errorf("base materialization root mismatch")
+		}
+		if len(canonicalBundle.View.Objects) != 1 {
+			return ClientRootMaterialization{}, fmt.Errorf("base materialization requires a single-object bootstrap view")
+		}
+		object := canonicalBundle.View.Objects[0]
+		if object.ObjectID != "root" || !object.Root.Equals(value.Base.Root) || object.Kind != arcset.KindMap || object.Entries == nil || object.Entries.Len() != 0 || object.Commit.FixedList != nil {
+			return ClientRootMaterialization{}, fmt.Errorf("base materialization requires the canonical empty-map bootstrap object")
+		}
+		if value.Base.Entries == nil || value.Base.Entries.Kind() != arcset.KindMap {
+			return ClientRootMaterialization{}, fmt.Errorf("base materialization entries must be a canonical map")
+		}
+		entries, err := arcset.NewCanonicalArcSet(arcset.KindMap, value.Base.Entries.Entries())
+		if err != nil {
+			return ClientRootMaterialization{}, fmt.Errorf("base materialization entries: %w", err)
+		}
+		base = &MapStateMaterialization{Root: value.Base.Root, Entries: entries}
 	}
 	outputByID := make(map[string]cid.Cid, len(canonicalBundle.Outputs))
 	for _, output := range canonicalBundle.Outputs {
@@ -78,5 +107,5 @@ func NewClientRootMaterialization(bundle ClientRootBundle, value ClientRootMater
 		maps[index] = MapMaterialization{TransitionID: materialization.TransitionID, Root: materialization.Root, Entries: entries}
 	}
 	slices.SortFunc(maps, func(a, b MapMaterialization) int { return strings.Compare(a.TransitionID, b.TransitionID) })
-	return ClientRootMaterialization{Profile: ClientRootMaterializationProfile, Maps: maps}, nil
+	return ClientRootMaterialization{Profile: ClientRootMaterializationProfile, Base: base, Maps: maps}, nil
 }

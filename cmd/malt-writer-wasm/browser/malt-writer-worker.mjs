@@ -1,6 +1,7 @@
 const SUPPORTED_BACKENDS = new Set(["kzg", "ipa"]);
 const RPC_FUNCTIONS = Object.freeze({
   compute: "maltComputeClientRootV1",
+  bootstrap: "maltWriterBootstrapSessionV1",
   load: "maltWriterLoadSessionV1",
   prepare: "maltWriterPrepareSessionV1",
   getPreparedResult: "maltWriterGetPreparedResultV1",
@@ -9,6 +10,7 @@ const RPC_FUNCTIONS = Object.freeze({
   closeSession: "maltWriterCloseSessionV1",
 });
 const STATEFUL_RPC_METHODS = new Set([
+  "bootstrap",
   "load",
   "prepare",
   "getPreparedResult",

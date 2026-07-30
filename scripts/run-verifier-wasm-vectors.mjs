@@ -37,6 +37,10 @@ void go.run(instance).catch((error) => {
 });
 
 await waitForVerifierGlobals();
+const invalidMapProof = JSON.parse(globalThis.maltVerifyMapProof("{}"));
+if (invalidMapProof.valid !== false || invalidMapProof.profile !== "malt.map-proof/v0alpha1") {
+  throw new Error("maltVerifyMapProof did not fail closed on an invalid verification envelope");
+}
 
 const vectors =
   selectedBackend === "all"
@@ -115,7 +119,8 @@ async function waitForVerifierGlobals() {
     }
     if (
       typeof globalThis.maltVerifyResolve === "function" &&
-      typeof globalThis.maltVerifyRead === "function"
+      typeof globalThis.maltVerifyRead === "function" &&
+      typeof globalThis.maltVerifyMapProof === "function"
     ) {
       if (globalThis.maltVerifierInitError) {
         throw new Error(`MALT verifier initialization failed: ${globalThis.maltVerifierInitError}`);

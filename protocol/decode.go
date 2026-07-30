@@ -39,6 +39,42 @@ func DecodeReadVerification(data []byte) (ReadVerification, error) {
 	return value, nil
 }
 
+// DecodeMapProofRequest strictly decodes one caller-selected map-proof request.
+func DecodeMapProofRequest(data []byte) (MapProofRequest, error) {
+	var value MapProofRequest
+	if err := decodeVerificationJSON(data, &value); err != nil {
+		return MapProofRequest{}, fmt.Errorf("decode map-proof request: %w", err)
+	}
+	if err := value.Validate(); err != nil {
+		return MapProofRequest{}, err
+	}
+	return value, nil
+}
+
+// DecodeMapProofResult strictly decodes one untrusted map-proof result.
+func DecodeMapProofResult(data []byte) (MapProofResult, error) {
+	var value MapProofResult
+	if err := decodeVerificationJSON(data, &value); err != nil {
+		return MapProofResult{}, fmt.Errorf("decode map-proof result: %w", err)
+	}
+	if err := value.Validate(); err != nil {
+		return MapProofResult{}, err
+	}
+	return value, nil
+}
+
+// DecodeMapProofVerification strictly decodes one map-proof request/result pair.
+func DecodeMapProofVerification(data []byte) (MapProofVerification, error) {
+	var value MapProofVerification
+	if err := decodeVerificationJSON(data, &value); err != nil {
+		return MapProofVerification{}, fmt.Errorf("decode map-proof verification: %w", err)
+	}
+	if err := value.Validate(); err != nil {
+		return MapProofVerification{}, err
+	}
+	return value, nil
+}
+
 func decodeVerificationJSON(data []byte, target any) error {
 	if len(data) == 0 {
 		return fmt.Errorf("verification JSON is empty")
