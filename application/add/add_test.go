@@ -47,7 +47,7 @@ func TestClassifyStagedTargetFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknownBackend := cid.NewCidV1(0x3011ff, identityCommitment)
+	unknownBackend := cid.NewCidV1(0x3031ff, identityCommitment)
 	unknownVersion := cid.NewCidV1(0x30f101, identityCommitment)
 
 	for name, test := range map[string]struct {

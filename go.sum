@@ -26,8 +26,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 h1:5RVFMOWjMyRy8cARdy79nAmgYw3hK/4HUq48LQ6Wwqo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1/go.mod h1:ZXNYxsqcloTdSy/rNShjYzMhyjf0LaoftYK0p+A3h40=
-github.com/dewebprotocol/malt v0.0.7-0.20260730170320-f37be178b11a h1:QPJJckfAWRlLhl0N9MK+aFyJQrlaFCnfqIuhrS2cZF8=
-github.com/dewebprotocol/malt v0.0.7-0.20260730170320-f37be178b11a/go.mod h1:gAHleD6Lw+x8Ink2KJgiJf3yr+gX6JucMIUKpV66n04=
+github.com/dewebprotocol/malt v0.0.7-0.20260730173543-ad6f8b7272cd h1:0D4co7brzjdLBmX/T7hs86tdqq+URI6oX4bbPBDf1Vs=
+github.com/dewebprotocol/malt v0.0.7-0.20260730173543-ad6f8b7272cd/go.mod h1:gAHleD6Lw+x8Ink2KJgiJf3yr+gX6JucMIUKpV66n04=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=
 github.com/dlclark/regexp2 v1.11.0/go.mod h1:DHkYz0B9wPfa6wondMfaivmHpzrQ3v9q8cnmRbL6yW8=
 github.com/filecoin-project/go-clock v0.1.0 h1:SFbYIM75M8NnFm1yMHhN9Ahy3W5bEZV9gd6MPfXbKVU=
