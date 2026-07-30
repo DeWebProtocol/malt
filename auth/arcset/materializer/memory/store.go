@@ -19,8 +19,10 @@ type Store struct {
 }
 
 type scopeState struct {
-	current map[arcset.Path]cid.Cid
-	roots   map[string]map[arcset.Path]cid.Cid
+	current   map[arcset.Path]cid.Cid
+	nodes     map[arcset.Path]cid.Cid
+	nodeRoots map[string]map[arcset.Path]struct{}
+	roots     map[string]map[arcset.Path]cid.Cid
 }
 
 // New creates an in-memory materializer. branching controls whether snapshots
@@ -51,6 +53,9 @@ func (s *Store) Get(_ context.Context, scope string, root cid.Cid, path arcset.P
 		}
 	}
 	if target, ok := state.current[path]; ok {
+		return target, nil
+	}
+	if target, ok := state.nodes[path]; ok {
 		return target, nil
 	}
 	return cid.Undef, materializer.ErrNotFound
@@ -114,6 +119,39 @@ func (s *Store) Update(_ context.Context, scope string, newRoot, oldRoot cid.Cid
 	return nil
 }
 
+// UpdateNode installs unversioned node-cache entries and records their owning
+// semantic node root for reachability-based reclamation.
+func (s *Store) UpdateNode(_ context.Context, scope string, root cid.Cid, values arcset.ArcSet) error {
+	if !root.Defined() {
+		return materializer.ErrNotFound
+	}
+	delta, err := arcset.ToPathMap(values)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.ensureScope(scope)
+	paths := state.nodeRoots[root.KeyString()]
+	if paths == nil {
+		paths = make(map[arcset.Path]struct{}, len(delta))
+		state.nodeRoots[root.KeyString()] = paths
+	}
+	for path, target := range delta {
+		if target.Defined() {
+			state.nodes[path] = target
+			paths[path] = struct{}{}
+		} else {
+			delete(state.nodes, path)
+			delete(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		delete(state.nodeRoots, root.KeyString())
+	}
+	return nil
+}
+
 func (s *Store) Snapshot(_ context.Context, scope string, root cid.Cid) (arcset.ArcSet, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -144,6 +182,114 @@ func (s *Store) Iterate(ctx context.Context, scope string, root cid.Cid) arcset.
 }
 
 func (s *Store) Close() error { return nil }
+
+// RetainRoots removes versioned snapshots that are not reachable from the
+// supplied roots. Reachability follows CID targets within each scope. Scopes
+// absent from retain are removed entirely. The helper is intentionally
+// specific to this in-memory implementation; long-lived speculative SDK
+// sessions use it to release abandoned branches without adding lifecycle
+// policy to the portable materializer interfaces.
+func (s *Store) RetainRoots(retain map[string][]cid.Cid) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := 0
+	for scope, state := range s.scopes {
+		roots, keepScope := retain[scope]
+		if !keepScope {
+			removed += len(state.roots)
+			delete(s.scopes, scope)
+			continue
+		}
+
+		reachable := make(map[string]struct{}, len(roots))
+		pending := make([]string, 0, len(roots))
+		for _, root := range roots {
+			if root.Defined() {
+				pending = append(pending, root.KeyString())
+			}
+		}
+		for len(pending) > 0 {
+			last := len(pending) - 1
+			key := pending[last]
+			pending = pending[:last]
+			if _, seen := reachable[key]; seen {
+				continue
+			}
+			snapshot, exists := state.roots[key]
+			nodePaths, nodeExists := state.nodeRoots[key]
+			if !exists && !nodeExists {
+				continue
+			}
+			reachable[key] = struct{}{}
+			for _, target := range snapshot {
+				if target.Defined() {
+					targetKey := target.KeyString()
+					if _, rootExists := state.roots[targetKey]; rootExists {
+						pending = append(pending, targetKey)
+					} else if _, nodeRootExists := state.nodeRoots[targetKey]; nodeRootExists {
+						pending = append(pending, targetKey)
+					}
+				}
+			}
+			for path := range nodePaths {
+				target := state.nodes[path]
+				if target.Defined() {
+					targetKey := target.KeyString()
+					if _, rootExists := state.roots[targetKey]; rootExists {
+						pending = append(pending, targetKey)
+					} else if _, nodeRootExists := state.nodeRoots[targetKey]; nodeRootExists {
+						pending = append(pending, targetKey)
+					}
+				}
+			}
+		}
+		for key := range state.roots {
+			if _, keep := reachable[key]; !keep {
+				delete(state.roots, key)
+				removed++
+			}
+		}
+		for key, paths := range state.nodeRoots {
+			if _, keep := reachable[key]; keep {
+				continue
+			}
+			for path := range paths {
+				delete(state.nodes, path)
+			}
+			delete(state.nodeRoots, key)
+			removed++
+		}
+	}
+	return removed
+}
+
+// RootCount reports the number of retained versioned snapshots. It is useful
+// for bounded-lifecycle tests and diagnostics of this in-memory store.
+func (s *Store) RootCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, state := range s.scopes {
+		count += len(state.roots)
+	}
+	return count
+}
+
+// EntryCount reports all retained current-cache entries plus versioned
+// snapshot entries. It is intended for bounded-lifecycle regression tests.
+func (s *Store) EntryCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, state := range s.scopes {
+		count += len(state.current) + len(state.nodes)
+		for _, snapshot := range state.roots {
+			count += len(snapshot)
+		}
+	}
+	return count
+}
 
 // DeleteRoot removes one materialized root. It exists for conformance and
 // failure-injection tests; production persistence belongs to the caller.
@@ -183,7 +329,12 @@ func (s *Store) SetCurrent(scope string, path arcset.Path, target cid.Cid) {
 func (s *Store) ensureScope(scope string) *scopeState {
 	state := s.scopes[scope]
 	if state == nil {
-		state = &scopeState{current: map[arcset.Path]cid.Cid{}, roots: map[string]map[arcset.Path]cid.Cid{}}
+		state = &scopeState{
+			current:   map[arcset.Path]cid.Cid{},
+			nodes:     map[arcset.Path]cid.Cid{},
+			nodeRoots: map[string]map[arcset.Path]struct{}{},
+			roots:     map[string]map[arcset.Path]cid.Cid{},
+		}
 		s.scopes[scope] = state
 	}
 	return state

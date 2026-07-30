@@ -9,7 +9,6 @@ import (
 
 	malt "github.com/dewebprotocol/malt"
 	materializer "github.com/dewebprotocol/malt/auth/arcset/materializer"
-	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/auth/semantic/list"
 	listtree "github.com/dewebprotocol/malt/auth/semantic/list/tree"
@@ -80,7 +79,7 @@ func NewGraph(id string, materializer materializer.MutableStore, opts ...Option)
 		// Default commitment scheme: KZG.
 		scheme := o.Scheme
 		if scheme == nil {
-			s, err := kzg.NewScheme()
+			s, err := newDefaultCommitmentScheme()
 			if err != nil {
 				return nil, fmt.Errorf("failed to create default KZG scheme: %w", err)
 			}

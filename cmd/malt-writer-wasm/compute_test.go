@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -19,6 +21,33 @@ import (
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
+
+func TestParseStartupBackend(t *testing.T) {
+	for _, backend := range []string{"kzg", "ipa"} {
+		t.Run(backend, func(t *testing.T) {
+			got, err := parseStartupBackend([]string{backendArgumentPrefix + backend})
+			if err != nil {
+				t.Fatalf("parseStartupBackend failed: %v", err)
+			}
+			if got != backend {
+				t.Fatalf("backend = %q, want %q", got, backend)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		nil,
+		{"kzg"},
+		{backendArgumentPrefix},
+		{backendArgumentPrefix + "all"},
+		{backendArgumentPrefix + "kzg", backendArgumentPrefix + "ipa"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			if backend, err := parseStartupBackend(args); err == nil {
+				t.Fatalf("parseStartupBackend(%q) = %q, want error", args, backend)
+			}
+		})
+	}
+}
 
 func TestComputerComputesCanonicalClientRootBundle(t *testing.T) {
 	view, intent := computeFixture(t, maltcid.BackendKindKZG)
@@ -104,13 +133,269 @@ func TestComputerRejectsUnavailableBackendAndInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
+	view, intent := computeFixture(t, maltcid.BackendKindKZG)
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatalf("NewUpdateView failed: %v", err)
+	}
+	wireIntent, err := protocol.NewSemanticIntent(view, intent)
+	if err != nil {
+		t.Fatalf("NewSemanticIntent failed: %v", err)
+	}
+	viewJSON, _ := json.Marshal(wireView)
+	intentJSON, _ := json.Marshal(wireIntent)
+	computer, err := newComputer("kzg")
+	if err != nil {
+		t.Fatalf("newComputer failed: %v", err)
+	}
+	session, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatalf("newSessionComputer failed: %v", err)
+	}
+	loadedRoot, err := session.load(t.Context(), viewJSON)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if loadedRoot != view.BaseRoot.String() {
+		t.Fatalf("loaded root = %s, want %s", loadedRoot, view.BaseRoot)
+	}
+
+	const operationID = "session-operation-1"
+	preparedRoot, err := session.prepare(t.Context(), operationID, intentJSON)
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err == nil {
+		t.Fatal("session accepted a duplicate prepared operation")
+	}
+	raw, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatalf("getPreparedResult failed: %v", err)
+	}
+	response, err := protocol.DecodeWriterComputeResult(raw)
+	if err != nil {
+		t.Fatalf("DecodeWriterComputeResult failed: %v", err)
+	}
+	if preparedRoot != response.Bundle.Candidate {
+		t.Fatalf("prepared root = %s, result candidate = %s", preparedRoot, response.Bundle.Candidate)
+	}
+	bundle, err := response.Bundle.Core()
+	if err != nil {
+		t.Fatalf("bundle Core failed: %v", err)
+	}
+	bundleDigest, err := bundle.Digest()
+	if err != nil {
+		t.Fatalf("bundle Digest failed: %v", err)
+	}
+	receipt, err := protocol.NewMaterializationReceipt(mutation.MaterializationReceipt{
+		Profile: mutation.MaterializationReceiptProfile, OperationID: operationID,
+		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate,
+		BundleDigest: bundleDigest, DurableBoundary: "unit-memory-v1",
+	}, bundle)
+	if err != nil {
+		t.Fatalf("NewMaterializationReceipt failed: %v", err)
+	}
+	badReceipt := receipt
+	badReceipt.Candidate = view.BaseRoot.String()
+	badReceiptJSON, _ := json.Marshal(badReceipt)
+	if _, err := session.acceptReceipt(operationID, badReceiptJSON); err == nil {
+		t.Fatal("session accepted a mismatched receipt")
+	}
+	if got := session.session.BaseRoot(); !got.Equals(view.BaseRoot) {
+		t.Fatalf("base advanced after bad receipt: %s", got)
+	}
+	stillPrepared, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatalf("getPreparedResult after rejected receipt failed: %v", err)
+	}
+	if !bytes.Equal(stillPrepared, raw) {
+		t.Fatal("rejected receipt changed the prepared result")
+	}
+	stillPrepared[0] ^= 0xff
+	unmodified, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatalf("getPreparedResult after caller mutation failed: %v", err)
+	}
+	if !bytes.Equal(unmodified, raw) {
+		t.Fatal("caller mutation changed the retained prepared result")
+	}
+
+	receiptJSON, _ := json.Marshal(receipt)
+	acceptedRoot, err := session.acceptReceipt(operationID, receiptJSON)
+	if err != nil {
+		t.Fatalf("acceptReceipt failed: %v", err)
+	}
+	if acceptedRoot != bundle.Candidate.String() {
+		t.Fatalf("accepted root = %s, want %s", acceptedRoot, bundle.Candidate)
+	}
+	if got := session.session.BaseRoot(); !got.Equals(bundle.Candidate) {
+		t.Fatalf("retained base = %s, want %s", got, bundle.Candidate)
+	}
+	if _, err := session.getPreparedResult(operationID); err == nil {
+		t.Fatal("accepted operation remained available as a prepared result")
+	}
+	fresh, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextViewJSON, err := json.Marshal(response.NextView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fresh.load(t.Context(), nextViewJSON); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.store.EntryCount(), fresh.store.EntryCount(); got != want {
+		t.Fatalf("accepted session retained %d entries, fresh accepted view retains %d", got, want)
+	}
+	if _, err := session.prepare(t.Context(), "stale-operation", intentJSON); err == nil {
+		t.Fatal("session accepted an intent at the stale base")
+	}
+}
+
+func TestSessionComputerDiscardReclaimsCandidateSnapshots(t *testing.T) {
+	view, intent := computeFixture(t, maltcid.BackendKindIPA)
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireIntent, err := protocol.NewSemanticIntent(view, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewJSON, _ := json.Marshal(wireView)
+	intentJSON, _ := json.Marshal(wireIntent)
+	computer, err := newComputer("ipa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatal(err)
+	}
+	baseline := session.store.EntryCount()
+	if _, err := session.prepare(t.Context(), "discard-operation", intentJSON); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.store.EntryCount(); got <= baseline {
+		t.Fatalf("prepare retained %d entries, want more than loaded baseline %d", got, baseline)
+	}
+	if err := session.discard("discard-operation"); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.store.EntryCount(); got != baseline {
+		t.Fatalf("discard retained %d entries, want loaded baseline %d", got, baseline)
+	}
+	if _, err := session.getPreparedResult("discard-operation"); err == nil {
+		t.Fatal("discarded operation remained available as a prepared result")
+	}
+}
+
+func TestSessionComputerCloseReleasesStateAndAllowsReload(t *testing.T) {
+	view, intent := computeFixture(t, maltcid.BackendKindKZG)
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireIntent, err := protocol.NewSemanticIntent(view, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewJSON, _ := json.Marshal(wireView)
+	intentJSON, _ := json.Marshal(wireIntent)
+	computer, err := newComputer("kzg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSessionComputer(computer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session.closeSession()
+	session.closeSession()
+	if _, err := session.prepare(t.Context(), "before-load", intentJSON); err == nil {
+		t.Fatal("closed session prepared without a loaded update view")
+	}
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatal(err)
+	}
+	const operationID = "close-operation"
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err != nil {
+		t.Fatal(err)
+	}
+	firstStore := session.store
+	firstSession := session.session
+	if firstStore.EntryCount() == 0 {
+		t.Fatal("loaded and prepared session retained no materialized state")
+	}
+	if _, err := session.load(t.Context(), []byte(`{}`)); err == nil {
+		t.Fatal("session accepted an invalid replacement update view")
+	}
+	if session.store != firstStore || session.session != firstSession {
+		t.Fatal("failed load replaced the current session")
+	}
+	if _, err := session.getPreparedResult(operationID); err != nil {
+		t.Fatalf("failed load discarded the prepared result: %v", err)
+	}
+
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstStore.EntryCount(); got != 0 {
+		t.Fatalf("successful replacement retained %d entries in the old store", got)
+	}
+	if session.store == firstStore {
+		t.Fatal("successful replacement reused the old store")
+	}
+	if _, err := session.getPreparedResult(operationID); err == nil {
+		t.Fatal("successful replacement retained an old prepared result")
+	}
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err != nil {
+		t.Fatalf("prepare after successful replacement failed: %v", err)
+	}
+	secondStore := session.store
+	session.closeSession()
+	session.closeSession()
+	if got := secondStore.EntryCount(); got != 0 {
+		t.Fatalf("closed session retained %d materialized entries", got)
+	}
+	if session.session != nil || session.store != nil || session.view.BaseRoot.Defined() || session.prepared != nil || session.preparedResponseBytes != 0 {
+		t.Fatal("close did not clear all retained session state")
+	}
+	if _, err := session.getPreparedResult(operationID); err == nil {
+		t.Fatal("closed session returned a prepared result")
+	}
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err == nil {
+		t.Fatal("closed session prepared without reload")
+	}
+	if _, err := session.acceptReceipt(operationID, []byte(`{}`)); err == nil {
+		t.Fatal("closed session accepted a receipt")
+	}
+	if err := session.discard(operationID); err == nil {
+		t.Fatal("closed session discarded a candidate")
+	}
+
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatalf("reload after close failed: %v", err)
+	}
+	if _, err := session.prepare(t.Context(), "after-close", intentJSON); err != nil {
+		t.Fatalf("prepare after reload failed: %v", err)
+	}
+}
+
 type wasmComputeFixture struct {
-	Backend          maltcid.BackendKind       `json:"backend"`
-	OperationID      string                    `json:"operation_id"`
-	UpdateView       protocol.UpdateView       `json:"update_view"`
-	SemanticIntent   protocol.SemanticIntent   `json:"semantic_intent"`
-	ExpectedBundle   protocol.ClientRootBundle `json:"expected_bundle"`
-	ExpectedNextView protocol.UpdateView       `json:"expected_next_view"`
+	Backend          maltcid.BackendKind             `json:"backend"`
+	OperationID      string                          `json:"operation_id"`
+	UpdateView       protocol.UpdateView             `json:"update_view"`
+	SemanticIntent   protocol.SemanticIntent         `json:"semantic_intent"`
+	ExpectedBundle   protocol.ClientRootBundle       `json:"expected_bundle"`
+	ExpectedNextView protocol.UpdateView             `json:"expected_next_view"`
+	ExpectedReceipt  protocol.MaterializationReceipt `json:"expected_receipt"`
 }
 
 func TestGenerateWASMFixtures(t *testing.T) {
@@ -151,10 +436,27 @@ func TestGenerateWASMFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode fixture response (%s): %v", backend, err)
 		}
+		bundle, err := response.Bundle.Core()
+		if err != nil {
+			t.Fatalf("decode fixture bundle (%s): %v", backend, err)
+		}
+		bundleDigest, err := bundle.Digest()
+		if err != nil {
+			t.Fatalf("digest fixture bundle (%s): %v", backend, err)
+		}
+		receipt, err := protocol.NewMaterializationReceipt(mutation.MaterializationReceipt{
+			Profile: mutation.MaterializationReceiptProfile, OperationID: operationID,
+			BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate,
+			BundleDigest: bundleDigest, DurableBoundary: "wasm-smoke-memory-v1",
+		}, bundle)
+		if err != nil {
+			t.Fatalf("encode fixture receipt (%s): %v", backend, err)
+		}
 		fixtures = append(fixtures, wasmComputeFixture{
 			Backend: backend, OperationID: operationID,
 			UpdateView: wireView, SemanticIntent: wireIntent,
 			ExpectedBundle: response.Bundle, ExpectedNextView: response.NextView,
+			ExpectedReceipt: receipt,
 		})
 	}
 
@@ -170,21 +472,7 @@ func TestGenerateWASMFixtures(t *testing.T) {
 func computeFixture(t *testing.T, backend maltcid.BackendKind) (mutation.UpdateView, mutation.SemanticIntent) {
 	t.Helper()
 	ctx := context.Background()
-	var (
-		scheme commitment.IndexCommitment
-		err    error
-	)
-	switch backend {
-	case maltcid.BackendKindKZG:
-		scheme, err = kzg.NewScheme()
-	case maltcid.BackendKindIPA:
-		scheme, err = ipa.NewScheme()
-	default:
-		t.Fatalf("unsupported fixture backend %q", backend)
-	}
-	if err != nil {
-		t.Fatalf("NewScheme(%s) failed: %v", backend, err)
-	}
+	scheme := fixtureScheme(t, backend)
 	semantic, err := mappingradix.NewMap(scheme, materializermemory.New(true))
 	if err != nil {
 		t.Fatalf("NewMap failed: %v", err)
@@ -233,6 +521,26 @@ func computeFixture(t *testing.T, backend maltcid.BackendKind) (mutation.UpdateV
 		t.Fatalf("NormalizeSemanticIntent failed: %v", err)
 	}
 	return view, intent
+}
+
+func fixtureScheme(t *testing.T, backend maltcid.BackendKind) commitment.IndexCommitment {
+	t.Helper()
+	var (
+		scheme commitment.IndexCommitment
+		err    error
+	)
+	switch backend {
+	case maltcid.BackendKindKZG:
+		scheme, err = kzg.NewScheme()
+	case maltcid.BackendKindIPA:
+		scheme, err = ipa.NewScheme()
+	default:
+		t.Fatalf("unsupported fixture backend %q", backend)
+	}
+	if err != nil {
+		t.Fatalf("NewScheme(%s) failed: %v", backend, err)
+	}
+	return scheme
 }
 
 func payloadCID(t *testing.T, value string) cid.Cid {

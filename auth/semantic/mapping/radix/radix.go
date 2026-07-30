@@ -1140,6 +1140,9 @@ func (s *Map) storeNodeSlots(ctx context.Context, namespace string, root cid.Cid
 	if err != nil {
 		return err
 	}
+	if rooted, ok := s.materializer.(materializer.RootedNodeUpdater); ok {
+		return rooted.UpdateNode(ctx, namespace, root, snapshot)
+	}
 	return s.materializer.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
 
@@ -1186,6 +1189,18 @@ func (s *Map) storeBucketEntries(ctx context.Context, namespace string, root cid
 	snapshot, err := arcset.NewArcSetFromPaths(arcs)
 	if err != nil {
 		return err
+	}
+	if rooted, ok := s.materializer.(materializer.RootedNodeUpdater); ok {
+		// Radix nodes link to the encoded bucket reference, not directly to the
+		// bucket commitment root. Record the cache under that same reference so
+		// reachability-based reclamation can follow the parent slot into the
+		// bucket entries. The raw root remains part of each entry path because
+		// it is also the commitment verified by bucket proofs.
+		refCID, err := encodeBucketRef(root)
+		if err != nil {
+			return err
+		}
+		return rooted.UpdateNode(ctx, namespace, refCID, snapshot)
 	}
 	return s.materializer.Update(ctx, namespace, cid.Undef, cid.Undef, snapshot)
 }
