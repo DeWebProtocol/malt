@@ -115,7 +115,16 @@ func (s *Session) AcceptReceipt(receipt mutation.MaterializationReceipt, prepare
 	if !next.BaseRoot.Equals(prepared.Bundle.Candidate) {
 		return fmt.Errorf("prepared next view does not match candidate")
 	}
-	s.current = VerifiedUpdateView{View: next, runtime: s.runtime, digest: nextDigest}
+	if len(prepared.seal.workingRoots) != len(next.Objects) {
+		return fmt.Errorf("prepared working-root seal does not match next view")
+	}
+	nextWorkingRoots, err := workingRootsForView(next, prepared.seal.workingRoots)
+	if err != nil {
+		return fmt.Errorf("prepared working-root seal: %w", err)
+	}
+	s.current = VerifiedUpdateView{
+		View: next, runtime: s.runtime, digest: nextDigest, workingRoots: nextWorkingRoots,
+	}
 	return nil
 }
 

@@ -5,6 +5,7 @@ const RPC_FUNCTIONS = Object.freeze({
   load: "maltWriterLoadSessionV1",
   prepare: "maltWriterPrepareSessionV1",
   getPreparedResult: "maltWriterGetPreparedResultV1",
+  validateReceipt: "maltWriterValidateReceiptV1",
   acceptReceipt: "maltWriterAcceptSessionReceiptV1",
   discard: "maltWriterDiscardSessionCandidateV1",
   closeSession: "maltWriterCloseSessionV1",

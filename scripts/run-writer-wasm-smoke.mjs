@@ -45,6 +45,7 @@ while (Date.now() < deadline) {
     typeof globalThis.maltWriterLoadSessionV1 === "function" &&
     typeof globalThis.maltWriterPrepareSessionV1 === "function" &&
     typeof globalThis.maltWriterGetPreparedResultV1 === "function" &&
+    typeof globalThis.maltWriterValidateReceiptV1 === "function" &&
     typeof globalThis.maltWriterAcceptSessionReceiptV1 === "function" &&
     typeof globalThis.maltWriterDiscardSessionCandidateV1 === "function" &&
     typeof globalThis.maltWriterCloseSessionV1 === "function"
@@ -60,6 +61,7 @@ if (
   typeof globalThis.maltWriterLoadSessionV1 !== "function" ||
   typeof globalThis.maltWriterPrepareSessionV1 !== "function" ||
   typeof globalThis.maltWriterGetPreparedResultV1 !== "function" ||
+  typeof globalThis.maltWriterValidateReceiptV1 !== "function" ||
   typeof globalThis.maltWriterAcceptSessionReceiptV1 !== "function" ||
   typeof globalThis.maltWriterDiscardSessionCandidateV1 !== "function" ||
   typeof globalThis.maltWriterCloseSessionV1 !== "function"
@@ -291,9 +293,19 @@ for (const fixture of selectedFixtures) {
     fixture.expected_next_view,
     `${fixture.backend} re-prepared next view differs from the reference`,
   );
+  const expectedReceiptJSON = encoder.encode(JSON.stringify(fixture.expected_receipt));
+  const validatedRoot = await globalThis.maltWriterValidateReceiptV1(
+    encoder.encode(preparedAfterDiscardJSON),
+    expectedReceiptJSON,
+  );
+  if (validatedRoot !== fixture.expected_bundle.candidate) {
+    throw new Error(
+      `${fixture.backend} stateless receipt validation returned ${validatedRoot}, expected ${fixture.expected_bundle.candidate}`,
+    );
+  }
   const acceptedRoot = await globalThis.maltWriterAcceptSessionReceiptV1(
     sessionOperationID,
-    encoder.encode(JSON.stringify(fixture.expected_receipt)),
+    expectedReceiptJSON,
   );
   if (acceptedRoot !== fixture.expected_bundle.candidate) {
     throw new Error(

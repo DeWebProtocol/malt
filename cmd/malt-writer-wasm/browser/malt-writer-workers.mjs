@@ -260,6 +260,13 @@ export class MaltWriterWorkers {
     return this.#request(backend, "getPreparedResult", [operationID]);
   }
 
+  validateReceipt(backend, writerResultJSON, materializationReceiptJSON) {
+    return this.#request(backend, "validateReceipt", [
+      writerResultJSON,
+      materializationReceiptJSON,
+    ]);
+  }
+
   acceptReceipt(backend, operationID, materializationReceiptJSON) {
     return this.#request(backend, "acceptReceipt", [
       operationID,

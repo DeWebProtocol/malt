@@ -139,6 +139,15 @@ test("request errors and session close keep the backend Worker alive", async () 
   kzg.respond(bootstrapRequest, { result: '{"profile":"malt.update-view/v1"}' });
   assert.equal(await bootstrap, '{"profile":"malt.update-view/v1"}');
 
+  const resultJSON = new Uint8Array([1, 2]);
+  const receiptJSON = new Uint8Array([3, 4]);
+  const validate = writers.validateReceipt("ipa", resultJSON, receiptJSON);
+  const validateRequest = await ipa.nextRequest();
+  assert.equal(validateRequest.method, "validateReceipt");
+  assert.deepEqual(validateRequest.args, [resultJSON, receiptJSON]);
+  ipa.respond(validateRequest, { result: "candidate-root" });
+  assert.equal(await validate, "candidate-root");
+
   const invalidLoad = writers.load("kzg", new Uint8Array([1]));
   const invalidRequest = await kzg.nextRequest();
   kzg.respond(invalidRequest, { error: "invalid update view" });

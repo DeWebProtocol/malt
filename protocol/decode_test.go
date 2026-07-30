@@ -101,6 +101,19 @@ func TestDecodeMapProofVerificationStrictAndTargetConditional(t *testing.T) {
 	if _, err := protocol.DecodeMapProofVerification([]byte(withUnknown)); err == nil {
 		t.Fatal("DecodeMapProofVerification accepted an unknown result field")
 	}
+	nullTarget := strings.Replace(string(raw), `"present":false`, `"present":false,"target":null`, 1)
+	if _, err := protocol.DecodeMapProofVerification([]byte(nullTarget)); err == nil || !strings.Contains(err.Error(), "must not be null") {
+		t.Fatalf("explicit-null target error = %v", err)
+	}
+	duplicatePresent := strings.Replace(string(raw), `"present":false`, `"present":false,"present":false`, 1)
+	if _, err := protocol.DecodeMapProofVerification([]byte(duplicatePresent)); err == nil || !strings.Contains(err.Error(), "duplicate field") {
+		t.Fatalf("duplicate present error = %v", err)
+	}
+	requestRoot := `"root":"` + root.String() + `"`
+	duplicateRoot := strings.Replace(string(raw), requestRoot, requestRoot+`,`+requestRoot, 1)
+	if _, err := protocol.DecodeMapProofVerification([]byte(duplicateRoot)); err == nil || !strings.Contains(err.Error(), "duplicate field") {
+		t.Fatalf("duplicate root error = %v", err)
+	}
 	presentWithoutTarget := strings.Replace(string(raw), `"present":false`, `"present":true`, 1)
 	if _, err := protocol.DecodeMapProofVerification([]byte(presentWithoutTarget)); err == nil {
 		t.Fatal("DecodeMapProofVerification accepted a present result without target")

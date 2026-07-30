@@ -29,6 +29,7 @@ func main() {
 	}
 	js.Global().Set("maltWriterLoadedBackend", backend)
 	registerStatelessCompute(writer, initErr)
+	registerReceiptValidation()
 	registerSessionFunctions(sessionWriter, initErr)
 	js.Global().Set("maltWriterReady", true)
 	select {}
@@ -62,6 +63,27 @@ func registerStatelessCompute(writer *computer, initErr error) {
 		})
 	})
 	js.Global().Set("maltComputeClientRootV1", computeFunction)
+}
+
+func registerReceiptValidation() {
+	validateFunction := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		promise := js.Global().Get("Promise")
+		if len(args) != 2 {
+			return promise.Call("reject", "maltWriterValidateReceiptV1 expects writer-result and materialization-receipt JSON Uint8Arrays")
+		}
+		resultJSON, err := copyBoundedBytes(args[0], "writer-result JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		receiptJSON, err := copyBoundedBytes(args[1], "materialization-receipt JSON", protocol.MaxClientRootJSONBytes)
+		if err != nil {
+			return promise.Call("reject", err.Error())
+		}
+		return promiseString(func() (string, error) {
+			return validateMaterializationReceipt(resultJSON, receiptJSON)
+		})
+	})
+	js.Global().Set("maltWriterValidateReceiptV1", validateFunction)
 }
 
 func registerSessionFunctions(writer *sessionComputer, initErr error) {

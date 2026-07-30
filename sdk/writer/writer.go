@@ -55,6 +55,7 @@ type computeResultSeal struct {
 	runtime        *Runtime
 	bundleDigest   [32]byte
 	nextViewDigest [32]byte
+	workingRoots   map[string]cid.Cid
 }
 
 // ComputeMetrics separates the client-local phases required by writer
@@ -368,12 +369,36 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	if err != nil {
 		return ComputeResult{}, fmt.Errorf("seal retained next view: %w", err)
 	}
+	nextWorkingRoots, err := workingRootsForView(next, workingRoots)
+	if err != nil {
+		return ComputeResult{}, fmt.Errorf("seal retained working roots: %w", err)
+	}
 	metrics.NextViewNS = writerDurationNS(time.Since(phaseStart))
 	metrics.TotalNS = writerDurationNS(time.Since(totalStart))
 	return ComputeResult{
 		Bundle: bundle, Materialization: materialization, NextView: next, Metrics: metrics,
-		seal: computeResultSeal{runtime: r, bundleDigest: bundleDigest, nextViewDigest: nextViewDigest},
+		seal: computeResultSeal{
+			runtime: r, bundleDigest: bundleDigest, nextViewDigest: nextViewDigest,
+			workingRoots: nextWorkingRoots,
+		},
 	}, nil
+}
+
+func workingRootsForView(view mutation.UpdateView, roots map[string]cid.Cid) (map[string]cid.Cid, error) {
+	selected := make(map[string]cid.Cid, len(view.Objects))
+	for _, object := range view.Objects {
+		root, ok := roots[object.ObjectID]
+		if !ok || !root.Defined() {
+			return nil, fmt.Errorf("update object %q has no working root", object.ObjectID)
+		}
+		if maltcid.VersionIDOf(root) != maltcid.MALTVersionID ||
+			maltcid.BackendKindOf(root) != maltcid.BackendKindOf(object.Root) ||
+			maltcid.SemanticKindOf(root) != maltcid.SemanticKindOf(object.Root) {
+			return nil, fmt.Errorf("update object %q working root profile does not match its retained root", object.ObjectID)
+		}
+		selected[object.ObjectID] = root
+	}
+	return selected, nil
 }
 
 func mapViewFromEntries(entries *arcset.CanonicalArcSet) (mapping.View, error) {

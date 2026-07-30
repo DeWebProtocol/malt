@@ -117,9 +117,13 @@ func TestBootstrapMapCreatesClientOwnedEmptyBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, base, err := session.BootstrapMap(ctx, maltcid.BackendKindKZG)
+	bounds := mutation.UpdateViewBounds{MaxObjects: 8, MaxTotalEntries: 64, MaxDepth: 8}
+	view, base, err := session.BootstrapMap(ctx, maltcid.BackendKindKZG, bounds)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if view.Bounds != bounds {
+		t.Fatalf("bootstrap bounds = %+v, want %+v", view.Bounds, bounds)
 	}
 	if !session.BaseRoot().Equals(view.BaseRoot) || !base.Root.Equals(view.BaseRoot) {
 		t.Fatalf("bootstrap roots = session %s, view %s, witness %s", session.BaseRoot(), view.BaseRoot, base.Root)

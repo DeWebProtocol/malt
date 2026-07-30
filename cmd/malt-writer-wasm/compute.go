@@ -122,7 +122,9 @@ func (s *sessionComputer) bootstrap(ctx context.Context) ([]byte, error) {
 		}
 		backend = candidate
 	}
-	view, base, err := session.BootstrapMap(ctx, backend)
+	view, base, err := session.BootstrapMap(ctx, backend, mutation.UpdateViewBounds{
+		MaxObjects: 4096, MaxTotalEntries: protocol.MaxClientRootEntries, MaxDepth: 256,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +338,26 @@ func addViewRoots(retain map[string][]cid.Cid, view mutation.UpdateView) {
 		scope := "client-root/v1/" + object.ObjectID
 		retain[scope] = append(retain[scope], object.Root)
 	}
+}
+
+func validateMaterializationReceipt(resultJSON, receiptJSON []byte) (string, error) {
+	result, err := protocol.DecodeWriterComputeResult(resultJSON)
+	if err != nil {
+		return "", fmt.Errorf("decode prepared writer result: %w", err)
+	}
+	bundle, err := result.Bundle.Core()
+	if err != nil {
+		return "", fmt.Errorf("decode prepared writer bundle: %w", err)
+	}
+	receipt, err := protocol.DecodeMaterializationReceipt(receiptJSON, bundle)
+	if err != nil {
+		return "", fmt.Errorf("decode materialization receipt: %w", err)
+	}
+	coreReceipt, err := receipt.Core(bundle)
+	if err != nil {
+		return "", fmt.Errorf("validate materialization receipt: %w", err)
+	}
+	return coreReceipt.Candidate.String(), nil
 }
 
 func encodeComputeResult(result clientwriter.ComputeResult) ([]byte, error) {

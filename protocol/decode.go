@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 )
 
 // MaxVerificationJSONBytes bounds portable verifier inputs before JSON
@@ -45,6 +46,9 @@ func DecodeMapProofRequest(data []byte) (MapProofRequest, error) {
 	if err := decodeVerificationJSON(data, &value); err != nil {
 		return MapProofRequest{}, fmt.Errorf("decode map-proof request: %w", err)
 	}
+	if err := validateRequiredJSONShape(data, reflect.TypeFor[mapProofRequestJSONShape]()); err != nil {
+		return MapProofRequest{}, fmt.Errorf("decode map-proof request: %w", err)
+	}
 	if err := value.Validate(); err != nil {
 		return MapProofRequest{}, err
 	}
@@ -55,6 +59,9 @@ func DecodeMapProofRequest(data []byte) (MapProofRequest, error) {
 func DecodeMapProofResult(data []byte) (MapProofResult, error) {
 	var value MapProofResult
 	if err := decodeVerificationJSON(data, &value); err != nil {
+		return MapProofResult{}, fmt.Errorf("decode map-proof result: %w", err)
+	}
+	if err := validateRequiredJSONShape(data, reflect.TypeFor[mapProofResultJSONShape]()); err != nil {
 		return MapProofResult{}, fmt.Errorf("decode map-proof result: %w", err)
 	}
 	if err := value.Validate(); err != nil {
@@ -69,10 +76,31 @@ func DecodeMapProofVerification(data []byte) (MapProofVerification, error) {
 	if err := decodeVerificationJSON(data, &value); err != nil {
 		return MapProofVerification{}, fmt.Errorf("decode map-proof verification: %w", err)
 	}
+	if err := validateRequiredJSONShape(data, reflect.TypeFor[mapProofVerificationJSONShape]()); err != nil {
+		return MapProofVerification{}, fmt.Errorf("decode map-proof verification: %w", err)
+	}
 	if err := value.Validate(); err != nil {
 		return MapProofVerification{}, err
 	}
 	return value, nil
+}
+
+type mapProofRequestJSONShape struct {
+	Profile string   `json:"profile"`
+	Root    string   `json:"root"`
+	Key     []string `json:"key"`
+}
+
+type mapProofResultJSONShape struct {
+	Profile   string          `json:"profile"`
+	Present   bool            `json:"present"`
+	Target    string          `json:"target,omitempty"`
+	ProofList json.RawMessage `json:"prooflist"`
+}
+
+type mapProofVerificationJSONShape struct {
+	Request mapProofRequestJSONShape `json:"request"`
+	Result  mapProofResultJSONShape  `json:"result"`
 }
 
 func decodeVerificationJSON(data []byte, target any) error {

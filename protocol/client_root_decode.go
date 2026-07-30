@@ -173,6 +173,9 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 	if token == nil {
 		return fmt.Errorf("%s must not be null", path)
 	}
+	if targetType == reflect.TypeFor[json.RawMessage]() {
+		return skipJSONToken(decoder, token)
+	}
 	switch targetType.Kind() {
 	case reflect.Struct:
 		delim, ok := token.(json.Delim)
@@ -265,6 +268,55 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 	default:
 		return fmt.Errorf("%s has unsupported decoder type %s", path, targetType)
 	}
+}
+
+func skipJSONToken(decoder *json.Decoder, token json.Token) error {
+	delim, structured := token.(json.Delim)
+	if !structured {
+		return nil
+	}
+	switch delim {
+	case '{':
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			value, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if err := skipJSONToken(decoder, value); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return fmt.Errorf("invalid JSON object terminator")
+		}
+	case '[':
+		for decoder.More() {
+			value, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if err := skipJSONToken(decoder, value); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return fmt.Errorf("invalid JSON array terminator")
+		}
+	default:
+		return fmt.Errorf("invalid JSON delimiter %q", delim)
+	}
+	return nil
 }
 
 func maxClientRootSliceItems(targetType reflect.Type) int {
