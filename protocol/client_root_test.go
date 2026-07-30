@@ -320,7 +320,25 @@ func TestWriterComputeResultRoundTripsAndBindsNextView(t *testing.T) {
 		}
 	}
 	metrics := protocol.WriterComputeMetrics{CommitmentUpdateNS: 7, TotalNS: 11}
-	wire, err := protocol.NewWriterComputeResult(bundle, nextView, metrics)
+	entries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{{
+		Coordinate: protocolMapCoordinate(t, "radix/node"),
+		Target:     arcset.NewUnknownTarget(bundle.Candidate),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialization, err := mutation.NewClientRootMaterialization(bundle, mutation.ClientRootMaterialization{
+		Profile: mutation.ClientRootMaterializationProfile,
+		Maps: []mutation.MapMaterialization{{
+			TransitionID: "child-output",
+			Root:         bundle.Outputs[0].Root,
+			Entries:      entries,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := protocol.NewWriterComputeResult(bundle, materialization, nextView, metrics)
 	if err != nil {
 		t.Fatalf("NewWriterComputeResult failed: %v", err)
 	}
@@ -339,19 +357,88 @@ func TestWriterComputeResultRoundTripsAndBindsNextView(t *testing.T) {
 		t.Fatalf("unexpected writer compute result: %+v", decoded)
 	}
 
+	longPath := wire
+	longPath.Materialization.Maps = append([]protocol.MapMaterializationWire(nil), wire.Materialization.Maps...)
+	longPath.Materialization.Maps[0].Entries = append([]protocol.MaterializationEntryWire(nil), wire.Materialization.Maps[0].Entries...)
+	longPath.Materialization.Maps[0].Entries[0].Path = strings.Repeat("a", protocol.MaxClientRootPathBytes+1)
+	if err := longPath.Validate(); err == nil {
+		t.Fatal("writer compute result accepted an oversized materialization path")
+	}
+
 	wire.NextView.BaseRoot = bundle.View.BaseRoot.String()
 	if err := wire.Validate(); err == nil {
 		t.Fatal("writer compute result accepted a next view at the wrong root")
 	}
 }
 
+func TestWriterComputeResultV2RequiresMaterializationAndV1StillDecodes(t *testing.T) {
+	bundle, _ := protocolClientRootFixture(t)
+	nextView, err := mutation.NormalizeUpdateView(bundle.View)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextView.BaseRoot = bundle.Candidate
+	for index := range nextView.Objects {
+		if nextView.Objects[index].Root.Equals(bundle.View.BaseRoot) {
+			nextView.Objects[index].Root = bundle.Candidate
+		}
+	}
+	wireBundle, err := protocol.NewClientRootBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireView, err := protocol.NewUpdateView(nextView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRaw, err := json.Marshal(map[string]any{
+		"profile": protocol.WriterComputeResultProfileV1,
+		"bundle":  wireBundle, "next_view": wireView, "metrics": protocol.WriterComputeMetrics{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := protocol.DecodeWriterComputeResult(legacyRaw)
+	if err != nil || legacy.Profile != protocol.WriterComputeResultProfileV1 {
+		t.Fatalf("decode v1 result = %+v, %v", legacy, err)
+	}
+	roundTripRaw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTripObject map[string]json.RawMessage
+	if err := json.Unmarshal(roundTripRaw, &roundTripObject); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := roundTripObject["materialization"]; exists {
+		t.Fatal("v1 writer result acquired a v2 materialization member")
+	}
+	if roundTrip, err := protocol.DecodeWriterComputeResult(roundTripRaw); err != nil || roundTrip.Profile != protocol.WriterComputeResultProfileV1 {
+		t.Fatalf("round-trip v1 result = %+v, %v", roundTrip, err)
+	}
+	if _, err := protocol.DecodeWriterComputeResult([]byte(`{"profile":"malt.writer-compute-result/v2"}`)); err == nil {
+		t.Fatal("v2 result without materialization was accepted")
+	}
+}
+
+func TestWriterComputeResultRejectsOversizedMaterializationBeforeDecode(t *testing.T) {
+	const item = `{"transition_id":"x","root":"x","entries":[]},`
+	maps := strings.TrimSuffix(strings.Repeat(item, protocol.MaxClientRootTransitions+1), ",")
+	raw := []byte(`{"profile":"malt.writer-compute-result/v2","materialization":{"profile":"malt.client-root-materialization/v1","maps":[` + maps + `]},"bundle":{},"next_view":{},"metrics":{}}`)
+	if _, err := protocol.DecodeWriterComputeResult(raw); err == nil || !strings.Contains(err.Error(), "materialization.maps exceeds 65536 items") {
+		t.Fatalf("oversized materialization maps error = %v", err)
+	}
+}
+
 func TestClientRootSchemasAreEmbedded(t *testing.T) {
 	want := map[string]bool{
-		"update-view.schema.json":             false,
-		"semantic-intent.schema.json":         false,
-		"client-root-bundle.schema.json":      false,
-		"materialization-receipt.schema.json": false,
-		"writer-compute-result.schema.json":   false,
+		"update-view.schema.json":                 false,
+		"semantic-intent.schema.json":             false,
+		"client-root-bundle.schema.json":          false,
+		"client-root-materialization.schema.json": false,
+		"materialization-receipt.schema.json":     false,
+		"writer-compute-result.schema.json":       false,
+		"writer-compute-result-v2.schema.json":    false,
 	}
 	for _, name := range protocol.SchemaNames() {
 		if _, ok := want[name]; ok {

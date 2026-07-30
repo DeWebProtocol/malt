@@ -290,7 +290,7 @@ func addViewRoots(retain map[string][]cid.Cid, view mutation.UpdateView) {
 }
 
 func encodeComputeResult(result clientwriter.ComputeResult) ([]byte, error) {
-	response, err := protocol.NewWriterComputeResult(result.Bundle, result.NextView, protocol.WriterComputeMetrics{
+	response, err := protocol.NewWriterComputeResult(result.Bundle, result.Materialization, result.NextView, protocol.WriterComputeMetrics{
 		ViewNormalizationNS:    result.Metrics.ViewNormalizationNS,
 		IntentNormalizationNS:  result.Metrics.IntentNormalizationNS,
 		DigestNS:               result.Metrics.DigestNS,

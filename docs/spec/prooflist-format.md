@@ -111,7 +111,7 @@ These encodings remain experimental and consumers must pin a MALT release.
 The byte-level map/list envelopes inside `evidence` and `proof` are specified in
 [Commitment and proof encoding](./commitment-proof-encoding.md). Cross-language
 accept/reject behavior is locked by the
-[Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md).
+[Resolve/Read conformance corpus v2](./resolve-read-conformance-v2.md).
 
 ## Serialization And Transport
 

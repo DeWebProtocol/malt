@@ -164,7 +164,7 @@ for (const fixture of selectedFixtures) {
     semanticIntent,
   );
   const result = JSON.parse(resultJSON);
-  if (result.profile !== "malt.writer-compute-result/v1") {
+  if (result.profile !== "malt.writer-compute-result/v2") {
     throw new Error(`unexpected writer result profile ${JSON.stringify(result.profile)}`);
   }
   if (result.bundle.operation_id !== fixture.operation_id) {

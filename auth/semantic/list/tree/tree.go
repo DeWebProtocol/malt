@@ -26,6 +26,7 @@ type TreeList struct {
 	commitment   *list.Commitment
 	materializer materializer.NodeStore
 	geometry     nodegeometry.Geometry
+	version      uint8
 }
 
 type proofEnvelope struct {
@@ -51,6 +52,12 @@ type rangeIndexProof struct {
 }
 
 func NewList(scheme commitment.IndexCommitment, materializer materializer.NodeStore) (*TreeList, error) {
+	return NewListForVersion(scheme, materializer, maltcid.MALTVersionID)
+}
+
+// NewListForVersion creates list semantics that emit an exact supported typed
+// root version. Legacy mode is reserved for replaying complete old views.
+func NewListForVersion(scheme commitment.IndexCommitment, materializer materializer.NodeStore, version uint8) (*TreeList, error) {
 	geometry, err := layout.ValidateCommitment(scheme)
 	if err != nil {
 		return nil, err
@@ -64,16 +71,27 @@ func NewList(scheme commitment.IndexCommitment, materializer materializer.NodeSt
 		return nil, fmt.Errorf("failed to create list commitment: %w", err)
 	}
 
+	if version != maltcid.MALTVersionID && version != maltcid.LegacyMALTVersionID {
+		return nil, fmt.Errorf("unsupported MALT version %d", version)
+	}
 	return &TreeList{
 		commitment:   commitmentHandler,
 		materializer: materializer,
 		geometry:     geometry,
+		version:      version,
 	}, nil
 }
 
 // Commitment returns the underlying commitment primitives.
 func (s *TreeList) Commitment() *list.Commitment {
 	return s.commitment
+}
+
+func (s *TreeList) validateMutationRootVersion(root cid.Cid) error {
+	if version := maltcid.VersionIDOf(root); version != s.version {
+		return fmt.Errorf("list root version %d cannot be mutated by version %d semantics; replay the complete view first", version, s.version)
+	}
+	return nil
 }
 
 func (s *TreeList) Commit(ctx context.Context, namespace string, view list.View) (cid.Cid, error) {
@@ -344,6 +362,9 @@ func (s *TreeList) VerifyRange(root cid.Cid, start uint64, end *uint64, expected
 }
 
 func (s *TreeList) Replace(ctx context.Context, namespace string, root cid.Cid, index uint64, oldKey, newKey cid.Cid) (cid.Cid, error) {
+	if err := s.validateMutationRootVersion(root); err != nil {
+		return cid.Undef, err
+	}
 	if !oldKey.Defined() {
 		return cid.Undef, fmt.Errorf("old key is undefined")
 	}
@@ -361,6 +382,9 @@ func (s *TreeList) Replace(ctx context.Context, namespace string, root cid.Cid, 
 }
 
 func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, key cid.Cid) (cid.Cid, uint64, error) {
+	if err := s.validateMutationRootVersion(root); err != nil {
+		return cid.Undef, 0, err
+	}
 	if !key.Defined() {
 		return cid.Undef, 0, fmt.Errorf("key is undefined")
 	}
@@ -449,6 +473,9 @@ func (s *TreeList) Append(ctx context.Context, namespace string, root cid.Cid, k
 // updated measured root. The existing measured list must end on a chunk
 // boundary; extending a partial final chunk requires replacing that chunk first.
 func (s *TreeList) AppendFixed(ctx context.Context, namespace string, root cid.Cid, key cid.Cid, totalSize uint64) (cid.Cid, uint64, error) {
+	if err := s.validateMutationRootVersion(root); err != nil {
+		return cid.Undef, 0, err
+	}
 	if !key.Defined() {
 		return cid.Undef, 0, fmt.Errorf("key is undefined")
 	}
@@ -543,6 +570,9 @@ func (s *TreeList) AppendFixed(ctx context.Context, namespace string, root cid.C
 }
 
 func (s *TreeList) Truncate(ctx context.Context, namespace string, root cid.Cid, newLen uint64) (cid.Cid, error) {
+	if err := s.validateMutationRootVersion(root); err != nil {
+		return cid.Undef, err
+	}
 	rootSlots, oldLen, err := s.loadRoot(ctx, namespace, root)
 	if err != nil {
 		return cid.Undef, err
@@ -985,9 +1015,18 @@ func (s *TreeList) loadNode(ctx context.Context, namespace string, root cid.Cid,
 	return nil, validateErr
 }
 
-// validateSlots checks that the materialized slot vector recomputes to root.
+// validateSlots proves one materialized cell against root when the backend
+// supports root-bound openings. The compatibility fallback recomputes only for
+// older third-party backends that do not expose IndexRootProver.
 func (s *TreeList) validateSlots(root cid.Cid, slots []cid.Cid) error {
-	recomputed, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	cells := cellsFromCIDs(slots)
+	if rootProver, ok := s.commitment.Scheme().(commitment.IndexRootProver); ok {
+		if _, _, err := rootProver.ProveAtRoot(root, cells, 0); err != nil {
+			return fmt.Errorf("%w: node state does not match root %s: %v", materializer.ErrIncomplete, root.String(), err)
+		}
+		return nil
+	}
+	recomputed, err := s.commitment.Scheme().Commit(cells)
 	if err != nil {
 		return err
 	}
@@ -1012,7 +1051,7 @@ func (s *TreeList) commitSlots(ctx context.Context, namespace string, slots []ci
 	if err != nil {
 		return cid.Undef, err
 	}
-	listRoot, err := maltcid.NewTypedCID(maltcid.SemanticKindList, maltcid.BackendKindOf(root), commBytes)
+	listRoot, err := maltcid.NewTypedCIDForVersion(s.version, maltcid.SemanticKindList, maltcid.BackendKindOf(root), commBytes)
 	if err != nil {
 		return cid.Undef, err
 	}

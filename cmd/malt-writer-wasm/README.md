@@ -109,16 +109,22 @@ candidate. KZG and IPA sessions are unrelated because they live in different
 Workers.
 
 The stateless compute path and `getPreparedResult` return the protocol-owned
-`malt.writer-compute-result/v1`:
+`malt.writer-compute-result/v2`:
 
 ```json
 {
-  "profile": "malt.writer-compute-result/v1",
+  "profile": "malt.writer-compute-result/v2",
   "bundle": {},
+  "materialization": {},
   "next_view": {},
   "metrics": {}
 }
 ```
+
+`materialization` is the root-bound radix proof-serving witness for every map
+transition output. A service must validate it against the canonical bundle and
+derived logical post-view through `radix.ValidateMaterialization` before import;
+it must not treat the witness as trusted storage or a state-transition proof.
 
 The writer computes locally and does not contact a Gateway, publish a root, or
 promote a candidate to trusted state.

@@ -86,7 +86,7 @@ func Generate() ([]byte, error) {
 		return 0
 	})
 
-	corpus := conformance.Corpus{SchemaVersion: conformance.ResolveReadV1, Vectors: vectors}
+	corpus := conformance.Corpus{SchemaVersion: conformance.ResolveReadV2, Vectors: vectors}
 	if err := corpus.Validate(); err != nil {
 		return nil, fmt.Errorf("validate generated corpus: %w", err)
 	}
@@ -121,7 +121,7 @@ func identityVector() (conformance.Vector, error) {
 func generateBackend(name string, scheme commitment.IndexCommitment) (*backendFixture, error) {
 	ctx := context.Background()
 
-	mapScope := "conformance-v1-" + name + "-map"
+	mapScope := "conformance-v2-" + name + "-map"
 	mapGraph, err := newGraph(mapScope, scheme)
 	if err != nil {
 		return nil, err

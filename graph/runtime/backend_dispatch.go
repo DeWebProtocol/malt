@@ -61,6 +61,18 @@ func (d *mapBackendDispatcher) BatchUpdate(ctx context.Context, namespace string
 	return backend.BatchUpdate(ctx, namespace, root, updates)
 }
 
+func (d *mapBackendDispatcher) ExportMaterialization(ctx context.Context, namespace string, root cid.Cid, view mapping.View) (*arcset.CanonicalArcSet, error) {
+	backend, err := d.forRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	exporter, ok := backend.(mapping.MaterializationExporter)
+	if !ok {
+		return nil, fmt.Errorf("commitment backend %q does not export map materialization", maltcid.BackendKindOf(root))
+	}
+	return exporter.ExportMaterialization(ctx, namespace, root, view)
+}
+
 func (d *mapBackendDispatcher) defaultSemantics() (mapping.Semantics, error) {
 	backend := d.backends[d.defaultBackend]
 	if backend == nil {

@@ -13,8 +13,9 @@ behavior, wire formats, and proof semantics in this folder.
 The current transport-neutral proof-bearing contracts are
 `malt.resolve/v0alpha1` and `malt.read/v0alpha1`. The post-release client-root
 contracts are `malt.update-view/v1`, `malt.semantic-intent/v1`,
-`malt.client-root-bundle/v1`, `malt.writer-compute-result/v1`, and
-`malt.materialization-receipt/v1`. The v0.0.4 `malt.artifact/v0alpha2` profile
+`malt.client-root-bundle/v1`, `malt.client-root-materialization/v1`,
+`malt.writer-compute-result/v2`, and `malt.materialization-receipt/v1`. The
+v0.0.4 `malt.artifact/v0alpha2` profile
 remains frozen for compatibility. See [MIP-1012](../mips/mip-1012-segment-path-resolution.md) and
 [MIP-1013](../mips/mip-1013-client-gateway-core-boundary.md).
 
@@ -30,7 +31,8 @@ remains frozen for compatibility. See [MIP-1012](../mips/mip-1012-segment-path-r
 - [Commitment model](./commitment.md)
 - [Commitment and proof encoding](./commitment-proof-encoding.md)
 - [CID and wire format](./cid-and-wire-format.md)
-- [Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md)
+- [Resolve/Read conformance corpus v2](./resolve-read-conformance-v2.md)
+- [Frozen Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md)
 
 ## Protocol Schema Index
 
@@ -38,6 +40,7 @@ Every filename returned by `protocol.SchemaNames()` is indexed here:
 
 <!-- schema-catalog:protocol:start -->
 - [`client-root-bundle.schema.json`](../../protocol/schemas/client-root-bundle.schema.json)
+- [`client-root-materialization.schema.json`](../../protocol/schemas/client-root-materialization.schema.json)
 - [`materialization-receipt.schema.json`](../../protocol/schemas/materialization-receipt.schema.json)
 - [`prooflist.schema.json`](../../protocol/schemas/prooflist.schema.json)
 - [`read-request.schema.json`](../../protocol/schemas/read-request.schema.json)
@@ -49,6 +52,7 @@ Every filename returned by `protocol.SchemaNames()` is indexed here:
 - [`semantic-intent.schema.json`](../../protocol/schemas/semantic-intent.schema.json)
 - [`update-view.schema.json`](../../protocol/schemas/update-view.schema.json)
 - [`verification-result.schema.json`](../../protocol/schemas/verification-result.schema.json)
+- [`writer-compute-result-v2.schema.json`](../../protocol/schemas/writer-compute-result-v2.schema.json)
 - [`writer-compute-result.schema.json`](../../protocol/schemas/writer-compute-result.schema.json)
 <!-- schema-catalog:protocol:end -->
 

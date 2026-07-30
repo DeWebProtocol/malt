@@ -40,6 +40,7 @@ const (
 	MaxClientRootChanges     = 1 << 20
 	MaxClientRootPayloadCIDs = 1 << 20
 	MaxClientRootCIDBytes    = 4096
+	MaxClientRootPathBytes   = 4096
 )
 
 // Presence makes optional wire values explicit. An absent value has empty

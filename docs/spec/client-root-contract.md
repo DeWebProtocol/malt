@@ -19,7 +19,8 @@ Go source APIs stable at v1.
 | complete old-state closure | `malt.update-view/v1` | `update-view.schema.json` |
 | output-free requested change | `malt.semantic-intent/v1` | `semantic-intent.schema.json` |
 | exact locally computed submission | `malt.client-root-bundle/v1` | `client-root-bundle.schema.json` |
-| browser-local computation result | `malt.writer-compute-result/v1` | `writer-compute-result.schema.json` |
+| map proof-serving witness | `malt.client-root-materialization/v1` | `client-root-materialization.schema.json` |
+| browser-local computation result | `malt.writer-compute-result/v2` | `writer-compute-result-v2.schema.json` |
 | durable exact-bundle acknowledgement | `malt.materialization-receipt/v1` | `materialization-receipt.schema.json` |
 
 Canonical in-process values live in `mutation`. Their JSON projections and
@@ -38,6 +39,7 @@ caller-selected accepted base root
   -> locally verified complete semantic vectors
   -> application-produced SemanticIntent
   -> locally computed transition outputs and candidate root
+  -> root-bound map materialization for every map transition output
   -> exact ClientRootBundle
   -> service accepts that exact candidate or rejects the bundle
   -> exact MaterializationReceipt
@@ -176,9 +178,13 @@ Browser clients may invoke the same computation through
 `cmd/malt-writer-wasm`. Its `maltComputeClientRootV1` entry point strictly
 decodes bounded UTF-8 JSON `Uint8Array` values for an `UpdateView` and
 `SemanticIntent`, runs `sdk/writer`, and returns a strictly validated
-`malt.writer-compute-result/v1` carrying the canonical bundle, complete next
-view, and diagnostic local timings. The WASM adapter does not contact a service
-or change publication or trusted-root state.
+`malt.writer-compute-result/v2` carrying the canonical bundle, root-bound map
+materialization, complete next view, and diagnostic local timings. The
+materialization contains backend-owned radix cache coordinates for every map
+transition output; it is untrusted until validated against the declared output
+root and complete logical post-view. The WASM adapter does not contact a
+service or change publication or trusted-root state. The v1 result schema is
+retained for decode compatibility but is no longer emitted.
 
 ## Strict JSON Decoding And Limits
 
@@ -207,23 +213,36 @@ The wire contract additionally caps:
 | changes | 1,048,576 |
 | payload CIDs | 1,048,576 |
 | encoded CID string | 4,096 bytes |
+| materialization entries | 4,194,304 |
 
 The positive bounds inside an `UpdateView` may be lower than those hard
 ceilings. Both the declared bounds and the independent wire ceilings are
 enforced.
 
-## Service Replay And Receipt
+## Service Validation, Import, And Receipt
 
-A service claiming exact-bundle replay and materialization must independently:
+A service importing client-computed map roots must independently:
 
-1. validate the complete update view and its declared old roots;
-2. recompute the normalized intent and every transition output;
-3. require the replayed candidate to equal the submitted candidate;
-4. check the required payload CIDs at its declared durability boundary;
-5. complete every write named by its documented durability boundary without
-   acknowledging a partial exact bundle; and
-6. return a `MaterializationReceipt` only after that declared durable boundary
-   succeeds.
+1. bind the bundle base to its authoritative current state and validate the
+   complete view, canonical digests, normalized intent, output identities, and
+   candidate selection;
+2. derive each map transition's complete logical post-view from the validated
+   before-image and normalized changes;
+3. require exactly one materialization witness for every map output and call
+   `radix.ValidateMaterialization` against that declared output root and logical
+   post-view;
+4. reject unsupported output kinds unless it has an equivalent root-bound
+   importer for them;
+5. check the required payload CIDs at its declared durability boundary;
+6. atomically persist every accepted proof-serving witness entry and the
+   service head/publication state named by its durability boundary; and
+7. return a `MaterializationReceipt` only after that boundary succeeds.
+
+`radix.ValidateMaterialization` depends on `IndexVerifier` and
+`IndexRootProver`; it opens caller-supplied vectors through `ProveAtRoot` and
+does not call `Commit`. The service therefore verifies and imports the exact
+client root instead of recomputing a replacement candidate. The witness is
+proof-serving state, not a portable transition proof.
 
 Core defines the receipt value and its binding to one exact canonical bundle,
 not the service's transaction, idempotency, persistence, or HTTP mechanism.

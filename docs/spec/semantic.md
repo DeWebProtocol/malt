@@ -89,9 +89,14 @@ facade:
 - `execution.Executor.Resolve`, `Read`, and `Apply` are the separate, untrusted
   execution facade.
 
-When a map implementation reports `mapping.ErrPathNotFound`, `execution.Executor.Read`
-returns an error recognizable through `errors.Is(err, malt.ErrQueryNotFound)`
-or `malt.IsQueryNotFound`. Other execution-plane errors are returned unchanged.
+Map `Prove` returns either a membership binding or a root-bound non-membership
+binding (`Present=false`). Radix non-membership terminates at an authenticated
+empty slot, a conflicting leaf, or a collision bucket whose complete canonical
+vector (including empty tail slots) is batch-opened. `execution.Executor.Read`
+keeps its established application contract: it converts an absent binding, or
+the compatibility sentinel `mapping.ErrPathNotFound`, into an error recognizable
+through `errors.Is(err, malt.ErrQueryNotFound)` or `malt.IsQueryNotFound`. Other
+execution-plane errors are returned unchanged.
 
 Client/application adapters compose primitive arc operations into domain
 traversal. A Unix path is therefore a UnixFS client concern, not a generic core

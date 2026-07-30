@@ -16,19 +16,19 @@ func TestCodecLayout(t *testing.T) {
 		semantic maltcid.SemanticKind
 		backend  maltcid.BackendKind
 	}{
-		{name: "map_kzg", codec: maltcid.CodecMaltMapKZG, version: 2, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindKZG},
-		{name: "list_kzg", codec: maltcid.CodecMaltListKZG, version: 2, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindKZG},
-		{name: "map_ipa", codec: maltcid.CodecMaltMapIPA, version: 2, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindIPA},
-		{name: "list_ipa", codec: maltcid.CodecMaltListIPA, version: 2, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindIPA},
+		{name: "map_kzg", codec: maltcid.CodecMaltMapKZG, version: 3, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindKZG},
+		{name: "list_kzg", codec: maltcid.CodecMaltListKZG, version: 3, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindKZG},
+		{name: "map_ipa", codec: maltcid.CodecMaltMapIPA, version: 3, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindIPA},
+		{name: "list_ipa", codec: maltcid.CodecMaltListIPA, version: 3, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindIPA},
 	}
 	wantCodecs := map[string]uint64{
-		"map_kzg":  0x302101,
-		"list_kzg": 0x302201,
-		"map_ipa":  0x302102,
-		"list_ipa": 0x302202,
+		"map_kzg":  0x303101,
+		"list_kzg": 0x303201,
+		"map_ipa":  0x303102,
+		"list_ipa": 0x303202,
 	}
-	if maltcid.MALTVersionID != 2 {
-		t.Fatalf("MALTVersionID = %d, want 2", maltcid.MALTVersionID)
+	if maltcid.MALTVersionID != 3 {
+		t.Fatalf("MALTVersionID = %d, want 3", maltcid.MALTVersionID)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -64,14 +64,14 @@ func TestCodecClassificationRejectsUnsupportedFields(t *testing.T) {
 		{name: "old_flat_list_ipa", codec: 0x300004},
 		{name: "version_zero", codec: 0x300101},
 		{name: "version_one", codec: 0x301101, versionHint: 1},
-		{name: "version_three", codec: 0x303101, versionHint: 3},
+		{name: "version_four", codec: 0x304101, versionHint: 4},
 		{name: "version_fifteen", codec: 0x30F101, versionHint: 15},
-		{name: "semantic_zero", codec: 0x302001, versionHint: 2},
-		{name: "semantic_unknown", codec: 0x302301, versionHint: 2},
-		{name: "semantic_fifteen", codec: 0x302F01, versionHint: 2},
-		{name: "backend_zero", codec: 0x302100, versionHint: 2},
-		{name: "backend_unknown", codec: 0x302103, versionHint: 2},
-		{name: "backend_255", codec: 0x3021FF, versionHint: 2},
+		{name: "semantic_zero", codec: 0x303001, versionHint: 3},
+		{name: "semantic_unknown", codec: 0x303301, versionHint: 3},
+		{name: "semantic_fifteen", codec: 0x303F01, versionHint: 3},
+		{name: "backend_zero", codec: 0x303100, versionHint: 3},
+		{name: "backend_unknown", codec: 0x303103, versionHint: 3},
+		{name: "backend_255", codec: 0x3031FF, versionHint: 3},
 		{name: "outside_root_subrange", codec: 0x311101},
 		{name: "high_bit_alias", codec: 0x100302101},
 	}
@@ -97,6 +97,26 @@ func TestCodecClassificationRejectsUnsupportedFields(t *testing.T) {
 				t.Fatal("ExtractCommitment accepted unsupported codec")
 			}
 		})
+	}
+}
+
+func TestLegacyVersion2CodecsRemainClassified(t *testing.T) {
+	tests := []struct {
+		codec    uint64
+		semantic maltcid.SemanticKind
+		backend  maltcid.BackendKind
+	}{
+		{codec: 0x302101, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindKZG},
+		{codec: 0x302201, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindKZG},
+		{codec: 0x302102, semantic: maltcid.SemanticKindMap, backend: maltcid.BackendKindIPA},
+		{codec: 0x302202, semantic: maltcid.SemanticKindList, backend: maltcid.BackendKindIPA},
+	}
+	for _, test := range tests {
+		root := cidWithIdentityDigest(t, test.codec, commitmentSize(test.backend))
+		if !maltcid.IsMaltCid(root) || maltcid.VersionIDOf(root) != maltcid.LegacyMALTVersionID ||
+			maltcid.SemanticKindOf(root) != test.semantic || maltcid.BackendKindOf(root) != test.backend {
+			t.Fatalf("legacy codec %#x was not classified", test.codec)
+		}
 	}
 }
 

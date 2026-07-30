@@ -94,7 +94,7 @@ try {
     encoder.encode(kzgFixture.operation_id),
   );
   const kzgPrepared = JSON.parse(kzgPreparedJSON);
-  assert.equal(kzgPrepared.profile, "malt.writer-compute-result/v1");
+  assert.equal(kzgPrepared.profile, "malt.writer-compute-result/v2");
   assert.deepStrictEqual(kzgPrepared.bundle, kzgFixture.expected_bundle);
   assert.deepStrictEqual(kzgPrepared.next_view, kzgFixture.expected_next_view);
   const kzgWorkFinishedAt = performance.now();
@@ -124,7 +124,7 @@ try {
     encoder.encode(ipaFixture.operation_id),
   );
   const ipaPrepared = JSON.parse(ipaPreparedJSON);
-  assert.equal(ipaPrepared.profile, "malt.writer-compute-result/v1");
+  assert.equal(ipaPrepared.profile, "malt.writer-compute-result/v2");
   assert.deepStrictEqual(ipaPrepared.bundle, ipaFixture.expected_bundle);
   assert.deepStrictEqual(ipaPrepared.next_view, ipaFixture.expected_next_view);
 

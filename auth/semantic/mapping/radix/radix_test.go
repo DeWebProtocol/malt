@@ -14,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -113,6 +114,28 @@ func findPathsWithSharedFirstKZGDigit(t *testing.T) (string, string) {
 	return "", ""
 }
 
+func findPathWithSharedFirstDigit(t *testing.T, capacity int, base arcset.Path) arcset.Path {
+	t.Helper()
+	geometry, err := nodegeometry.ForCapacity(capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseDigest := sha256.Sum256([]byte(base.String()))
+	baseDigit, ok := geometry.MapDigit(baseDigest[:], 0)
+	if !ok {
+		t.Fatal("base path has no first radix digit")
+	}
+	for index := 0; index < 1<<18; index++ {
+		candidate := arcset.CanonicalizePath(fmt.Sprintf("absent-shared-%d", index))
+		digest := sha256.Sum256([]byte(candidate.String()))
+		if digit, ok := geometry.MapDigit(digest[:], 0); ok && digit == baseDigit && candidate != base {
+			return candidate
+		}
+	}
+	t.Fatal("could not find absent path with shared first digit")
+	return ""
+}
+
 func TestMapCommitProveVerify(t *testing.T) {
 	ctx := context.Background()
 	view := mapping.NewViewFrom(map[string]cid.Cid{
@@ -153,6 +176,57 @@ func TestMapCommitProveVerify(t *testing.T) {
 			ok, err = semantic.Verify(root, arcset.CanonicalizePath("a"), binding, proof)
 			if err == nil && ok {
 				t.Fatal("expected proof to be path-bound")
+			}
+		})
+	}
+}
+
+func TestMapProvesEmptySlotAndConflictingLeafAbsence(t *testing.T) {
+	ctx := context.Background()
+	for name, factory := range mappingSchemes() {
+		t.Run(name, func(t *testing.T) {
+			scheme := factory(t)
+			semantic, err := mappingradix.NewMap(scheme, materialmemory.New(true))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			emptyRoot, err := semantic.Commit(ctx, testNamespace+"-absence-empty-"+name, mapping.NewViewFrom(nil))
+			if err != nil {
+				t.Fatalf("Commit(empty) failed: %v", err)
+			}
+			emptyKey := arcset.CanonicalizePath("definitely-absent")
+			emptyBinding, emptyProof, err := semantic.Prove(ctx, testNamespace+"-absence-empty-"+name, emptyRoot, emptyKey)
+			if err != nil {
+				t.Fatalf("Prove(empty absence) failed: %v", err)
+			}
+			if emptyBinding.Present || emptyBinding.Value.Defined() {
+				t.Fatalf("empty absence binding = %+v", emptyBinding)
+			}
+			if ok, err := semantic.Verify(emptyRoot, emptyKey, emptyBinding, emptyProof); err != nil || !ok {
+				t.Fatalf("Verify(empty absence) = %v, %v", ok, err)
+			}
+
+			presentKey := arcset.CanonicalizePath("present-leaf")
+			presentValue := fakeCID("present-leaf-value-" + name)
+			namespace := testNamespace + "-absence-leaf-" + name
+			root, err := semantic.Commit(ctx, namespace, mapping.NewViewFromPaths(map[arcset.Path]cid.Cid{presentKey: presentValue}))
+			if err != nil {
+				t.Fatalf("Commit(single leaf) failed: %v", err)
+			}
+			absentKey := findPathWithSharedFirstDigit(t, scheme.MaxValues(), presentKey)
+			binding, proof, err := semantic.Prove(ctx, namespace, root, absentKey)
+			if err != nil {
+				t.Fatalf("Prove(conflicting leaf absence) failed: %v", err)
+			}
+			if binding.Present || binding.Value.Defined() {
+				t.Fatalf("conflicting leaf absence binding = %+v", binding)
+			}
+			if ok, err := semantic.Verify(root, absentKey, binding, proof); err != nil || !ok {
+				t.Fatalf("Verify(conflicting leaf absence) = %v, %v", ok, err)
+			}
+			if ok, err := semantic.Verify(root, presentKey, binding, proof); err == nil && ok {
+				t.Fatal("absence proof verified for the present path")
 			}
 		})
 	}

@@ -17,7 +17,7 @@ JSON Schemas live in `protocol/schemas/` and are embedded through
 
 Cross-language accept/reject behavior for these complete request/result pairs
 is locked by the
-[Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md).
+[Resolve/Read conformance corpus v2](./resolve-read-conformance-v2.md).
 
 ## Resolve
 

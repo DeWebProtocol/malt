@@ -14,7 +14,9 @@ profiles rejected.
 | `stateful-complete-vectors-v1` | Experimental state profile required by the current update-view contract |
 | `malt.semantic-intent/v1` | Experimental post-v0.0.6 output-free update intent |
 | `malt.client-root-bundle/v1` | Experimental post-v0.0.6 exact-root submission; not a transition proof |
-| `malt.writer-compute-result/v1` | Experimental post-v0.0.6 browser-local bundle and next-view result |
+| `malt.client-root-materialization/v1` | Experimental root-bound map proof-serving witness; not a transition proof |
+| `malt.writer-compute-result/v1` | Legacy browser-local bundle and next-view result; decode compatibility only |
+| `malt.writer-compute-result/v2` | Experimental browser-local bundle, map materialization, and next-view result |
 | `malt.materialization-receipt/v1` | Experimental post-v0.0.6 exact-bundle durability acknowledgement |
 | ProofList JSON and proof semantics | Experimental, verifier-facing |
 | Typed MALT root CIDs/codecs | Experimental, verifier-facing |
@@ -48,10 +50,21 @@ documentation in the same PR:
 - mutation, client-root, or receipt value semantics;
 - payload-binding and measured-list evidence.
 
-Typed-root decoders accept only the current registered `MALTVersionID`,
-semantic IDs, backend suite IDs, and combinations. Earlier experimental codec
-allocations are not compatibility inputs and must not be recognized through
-fallback mappings.
+Typed-root constructors emit the current registered `MALTVersionID=3`.
+Decoders explicitly retain v2 typed roots for read/proof compatibility and
+reject every other unknown version, semantic ID, backend suite ID, and
+combination; there is no heuristic fallback mapping.
+
+Radix map profiles bind the entire internal tree to one typed-root version and
+backend: v2 roots use v1 variable-length collision-bucket references, while v3
+roots use v2 fixed-domain references. Readers recognize both profiles but reject
+mixed-version internal children or a bucket reference that does not match its
+parent profile. Only the v3/fixed-domain profile supports collision-bucket
+non-membership proofs. Incremental map/list mutation APIs require the input root
+version to match the semantics instance. The client writer handles v2 updates
+by exactly replaying the complete v2 view, fully rebuilding it as v3, and
+applying changes only to that v3 working root; direct partial v2-to-v3 mutation
+is rejected so unchanged v2 child CIDs cannot leak into a v3 root.
 
 v0.0.6 intentionally removes application and deployment packages from this
 module. Consumers of the former CLI/daemon/UnixFS/server/storage packages must

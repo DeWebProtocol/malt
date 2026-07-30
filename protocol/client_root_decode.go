@@ -70,6 +70,37 @@ func DecodeMaterializationReceipt(data []byte, bundle mutation.ClientRootBundle)
 // DecodeWriterComputeResult strictly decodes and validates one browser writer
 // result.
 func DecodeWriterComputeResult(data []byte) (WriterComputeResult, error) {
+	if len(data) == 0 {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: client-root JSON is empty")
+	}
+	if len(data) > MaxClientRootJSONBytes {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: client-root JSON exceeds %d bytes", MaxClientRootJSONBytes)
+	}
+	if !utf8.Valid(data) {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: client-root JSON is not valid UTF-8")
+	}
+	var envelope struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result profile: %w", err)
+	}
+	if envelope.Profile == WriterComputeResultProfileV1 {
+		var legacy writerComputeResultV1
+		if err := decodeClientRootJSON(data, &legacy); err != nil {
+			return WriterComputeResult{}, fmt.Errorf("decode writer compute result: %w", err)
+		}
+		value := WriterComputeResult{
+			Profile:  legacy.Profile,
+			Bundle:   legacy.Bundle,
+			NextView: legacy.NextView,
+			Metrics:  legacy.Metrics,
+		}
+		if err := value.Validate(); err != nil {
+			return WriterComputeResult{}, err
+		}
+		return value, nil
+	}
 	var value WriterComputeResult
 	if err := decodeClientRootJSON(data, &value); err != nil {
 		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: %w", err)
@@ -254,6 +285,10 @@ func maxClientRootSliceItems(targetType reflect.Type) int {
 		return MaxClientRootChanges
 	case reflect.TypeFor[TransitionOutput]():
 		return MaxClientRootTransitions
+	case reflect.TypeFor[MapMaterializationWire]():
+		return MaxClientRootTransitions
+	case reflect.TypeFor[MaterializationEntryWire]():
+		return MaxClientRootMaterializationEntries
 	case reflect.TypeFor[string]():
 		return MaxClientRootPayloadCIDs
 	default:

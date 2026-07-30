@@ -1,8 +1,8 @@
-# Resolve/Read Conformance Corpus V1
+# Resolve/Read Conformance Corpus V2
 
-The v1 corpus is the language-neutral executable contract for local
+The v2 corpus is the language-neutral executable contract for local
 verification of `malt.resolve/v0alpha1` and `malt.read/v0alpha1` values. The
-canonical files live under `conformance/resolve-read/v1/` in this repository:
+canonical files live under `conformance/resolve-read/v2/` in this repository:
 `vectors.json`, `corpus.schema.json`, and `vector.schema.json`.
 
 ## Ownership And Versioning
@@ -12,20 +12,22 @@ Gateway, native client, browser/WASM, and future language SDK tests consume the
 same checked-in bytes; they do not redefine proof semantics or maintain edited
 copies.
 
-The corpus version is `malt.resolve-read.conformance/v1`. It is independent of
-the two enclosed operation profiles and of the typed-root `MALTVersionID=2`.
-This corpus shipped with v0.0.6 and is immutable: a vector ID, its input, and
-its expected verdict cannot change. Later behavioral or encoding changes use a
-new corpus version. Error strings, timing, and implementation-specific
-exception types are not conformance outputs.
+The corpus version is `malt.resolve-read.conformance/v2`. It is independent of
+the two enclosed operation profiles and of typed-root `MALTVersionID=3`; the
+verifier separately retains explicit v2 typed-root compatibility. Before this
+corpus is released, an intentional encoding change may regenerate it as part
+of the same reviewed change. After release, a vector ID, its input, and its
+expected verdict are immutable; later changes require v3. Error strings,
+timing, and implementation-specific exception types are not conformance
+outputs.
 
 ## File And Envelope
 
-`conformance/resolve-read/v1/vectors.json` has this shape:
+`conformance/resolve-read/v2/vectors.json` has this shape:
 
 ```json
 {
-  "schema_version": "malt.resolve-read.conformance/v1",
+  "schema_version": "malt.resolve-read.conformance/v2",
   "vectors": [
     {
       "id": "resolve.identity.accept",
@@ -57,7 +59,7 @@ The corpus itself is valid JSON. Negative cases remain parseable JSON objects.
 Malformed-evidence cases remove, truncate, or corrupt encoded proof bytes;
 strict-JSON cases add an unknown verification field. Semantic and
 cryptographic tampering remain separately categorized. Syntactically invalid
-JSON is outside v1.
+JSON is outside v2.
 
 Consumers must select the verifier from `operation`; they must not infer the
 operation from fields inside `verification`, and they must not use `backend` to

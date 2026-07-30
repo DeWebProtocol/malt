@@ -64,11 +64,11 @@ func NewGraph(id string, materializer materializer.MutableStore, opts ...Option)
 		maps := make(map[maltcid.BackendKind]mapping.Semantics, len(o.Backends))
 		lists := make(map[maltcid.BackendKind]list.MeasuredSemantics, len(o.Backends))
 		for kind, scheme := range o.Backends {
-			maps[kind], err = mappingradix.NewMap(scheme, materializer)
+			maps[kind], err = mappingradix.NewMapForVersion(scheme, materializer, o.MALTVersion)
 			if err != nil {
 				return nil, fmt.Errorf("create %s mapping semantic: %w", kind, err)
 			}
-			lists[kind], err = listtree.NewList(scheme, materializer)
+			lists[kind], err = listtree.NewListForVersion(scheme, materializer, o.MALTVersion)
 			if err != nil {
 				return nil, fmt.Errorf("create %s list semantic: %w", kind, err)
 			}
@@ -87,11 +87,11 @@ func NewGraph(id string, materializer materializer.MutableStore, opts ...Option)
 		}
 
 		var err error
-		semantic, err = mappingradix.NewMap(scheme, materializer)
+		semantic, err = mappingradix.NewMapForVersion(scheme, materializer, o.MALTVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create mapping semantic: %w", err)
 		}
-		listSemantic, err = listtree.NewList(scheme, materializer)
+		listSemantic, err = listtree.NewListForVersion(scheme, materializer, o.MALTVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create list semantic: %w", err)
 		}

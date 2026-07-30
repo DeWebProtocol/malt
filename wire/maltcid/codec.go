@@ -12,10 +12,13 @@
 //
 // Current allocations:
 //
-//	malt-map-kzg  = 0x302101
-//	malt-list-kzg = 0x302201
-//	malt-map-ipa  = 0x302102
-//	malt-list-ipa = 0x302202
+//	malt-map-kzg  = 0x303101
+//	malt-list-kzg = 0x303201
+//	malt-map-ipa  = 0x303102
+//	malt-list-ipa = 0x303202
+//
+// Version 2 remains decode-compatible for roots created before fixed-domain
+// collision-bucket absence proofs. New roots are always encoded as version 3.
 package maltcid
 
 import (
@@ -28,7 +31,12 @@ import (
 
 // MALTVersionID identifies the current typed-root wire layout. It is not a
 // source release or protocol-profile version.
-const MALTVersionID uint8 = 2
+const MALTVersionID uint8 = 3
+
+// LegacyMALTVersionID identifies version-2 roots retained for decode, proof,
+// and exact complete-view replay compatibility. Default constructors never emit
+// this version.
+const LegacyMALTVersionID uint8 = 2
 
 const (
 	codecMaltRootBase = 0x300000
@@ -140,7 +148,14 @@ func NewListIPACid(commitment []byte) (cid.Cid, error) {
 
 // NewTypedCID constructs a typed MALT CID for the given semantic/backend kinds.
 func NewTypedCID(semantic SemanticKind, backend BackendKind, commitment []byte) (cid.Cid, error) {
-	codec, descriptor, err := codecFor(semantic, backend)
+	return NewTypedCIDForVersion(MALTVersionID, semantic, backend, commitment)
+}
+
+// NewTypedCIDForVersion constructs a typed MALT CID for a supported wire
+// version. It is intended for exact replay of decode-compatible legacy roots;
+// new application state should use [NewTypedCID].
+func NewTypedCIDForVersion(versionID uint8, semantic SemanticKind, backend BackendKind, commitment []byte) (cid.Cid, error) {
+	codec, descriptor, err := codecForVersion(versionID, semantic, backend)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -272,6 +287,13 @@ type codecParts struct {
 }
 
 func codecFor(semantic SemanticKind, backend BackendKind) (uint64, backendDescriptor, error) {
+	return codecForVersion(MALTVersionID, semantic, backend)
+}
+
+func codecForVersion(versionID uint8, semantic SemanticKind, backend BackendKind) (uint64, backendDescriptor, error) {
+	if versionID != MALTVersionID && versionID != LegacyMALTVersionID {
+		return 0, backendDescriptor{}, fmt.Errorf("unsupported typed cid version %d", versionID)
+	}
 	semanticID, ok := semanticIDForKind(semantic)
 	if !ok {
 		return 0, backendDescriptor{}, fmt.Errorf("unsupported typed cid semantic kind %q", semantic)
@@ -281,7 +303,7 @@ func codecFor(semantic SemanticKind, backend BackendKind) (uint64, backendDescri
 		return 0, backendDescriptor{}, fmt.Errorf("unsupported typed cid backend %q", backend)
 	}
 	codec := uint64(codecMaltRootBase) |
-		uint64(MALTVersionID)<<codecVersionShift |
+		uint64(versionID)<<codecVersionShift |
 		uint64(semanticID)<<codecSemanticShift |
 		uint64(descriptor.id)
 	return codec, descriptor, nil
@@ -293,7 +315,7 @@ func decodeCodec(codec uint64) (codecParts, bool) {
 	}
 	offset := codec - codecMaltRootBase
 	versionID := uint8(offset >> codecVersionShift)
-	if versionID != MALTVersionID {
+	if versionID != MALTVersionID && versionID != LegacyMALTVersionID {
 		return codecParts{}, false
 	}
 	semanticID := uint8((offset >> codecSemanticShift) & 0x0F)
@@ -305,7 +327,7 @@ func decodeCodec(codec uint64) (codecParts, bool) {
 	if !ok {
 		return codecParts{}, false
 	}
-	reconstructed, _, err := codecFor(semantic, descriptor.kind)
+	reconstructed, _, err := codecForVersion(versionID, semantic, descriptor.kind)
 	if err != nil || reconstructed != codec {
 		return codecParts{}, false
 	}

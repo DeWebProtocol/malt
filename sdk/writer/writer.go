@@ -27,25 +27,28 @@ import (
 // persistent-free materialization used for local computation. The materializer
 // is not an ArcTable and no result is durable until a service accepts it.
 type Runtime struct {
-	store  materializer.MutableStore
-	graphs map[maltcid.BackendKind]*runtimegraph.RuntimeGraph
+	store        materializer.MutableStore
+	graphs       map[maltcid.BackendKind]*runtimegraph.RuntimeGraph
+	legacyGraphs map[maltcid.BackendKind]*runtimegraph.RuntimeGraph
 }
 
 // VerifiedUpdateView is a normalized view whose complete logical vectors have
 // independently recomputed every declared old root in this runtime.
 type VerifiedUpdateView struct {
-	View    mutation.UpdateView
-	runtime *Runtime
-	digest  [32]byte
+	View         mutation.UpdateView
+	runtime      *Runtime
+	digest       [32]byte
+	workingRoots map[string]cid.Cid
 }
 
 // ComputeResult carries both the exact submission bundle and the complete next
 // view retained by a long-lived client session.
 type ComputeResult struct {
-	Bundle   mutation.ClientRootBundle
-	NextView mutation.UpdateView
-	Metrics  ComputeMetrics
-	seal     computeResultSeal
+	Bundle          mutation.ClientRootBundle
+	Materialization mutation.ClientRootMaterialization
+	NextView        mutation.UpdateView
+	Metrics         ComputeMetrics
+	seal            computeResultSeal
 }
 
 type computeResultSeal struct {
@@ -85,7 +88,11 @@ func NewRuntime(store materializer.MutableStore, schemes map[maltcid.BackendKind
 	if len(schemes) == 0 {
 		return nil, fmt.Errorf("client writer has no commitment backends")
 	}
-	runtime := &Runtime{store: store, graphs: make(map[maltcid.BackendKind]*runtimegraph.RuntimeGraph, len(schemes))}
+	runtime := &Runtime{
+		store:        store,
+		graphs:       make(map[maltcid.BackendKind]*runtimegraph.RuntimeGraph, len(schemes)),
+		legacyGraphs: make(map[maltcid.BackendKind]*runtimegraph.RuntimeGraph, len(schemes)),
+	}
 	for _, backend := range []maltcid.BackendKind{maltcid.BackendKindKZG, maltcid.BackendKindIPA} {
 		scheme, ok := schemes[backend]
 		if !ok {
@@ -104,8 +111,19 @@ func NewRuntime(store materializer.MutableStore, schemes map[maltcid.BackendKind
 			return nil, fmt.Errorf("create client writer %s backend: %w", backend, err)
 		}
 		runtime.graphs[backend] = graph
+		legacyGraph, err := runtimegraph.NewGraph(
+			"client-root-legacy-"+string(backend),
+			store,
+			runtimegraph.WithCommitmentBackend(backend, scheme),
+			runtimegraph.WithDefaultCommitmentBackend(backend),
+			runtimegraph.WithMALTVersion(maltcid.LegacyMALTVersionID),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create legacy client writer %s backend: %w", backend, err)
+		}
+		runtime.legacyGraphs[backend] = legacyGraph
 	}
-	if len(runtime.graphs) != len(schemes) {
+	if len(runtime.graphs) != len(schemes) || len(runtime.legacyGraphs) != len(schemes) {
 		return nil, fmt.Errorf("client writer schemes contain an unsupported backend")
 	}
 	return runtime, nil
@@ -121,21 +139,37 @@ func (r *Runtime) VerifyUpdateView(ctx context.Context, view mutation.UpdateView
 	if err != nil {
 		return VerifiedUpdateView{}, err
 	}
+	workingRoots := make(map[string]cid.Cid, len(canonical.Objects))
 	for _, object := range canonical.Objects {
 		if err := ctx.Err(); err != nil {
 			return VerifiedUpdateView{}, err
 		}
 		backend := maltcid.BackendKindOf(object.Root)
-		graph, ok := r.graphs[backend]
+		currentGraph, ok := r.graphs[backend]
 		if !ok {
 			return VerifiedUpdateView{}, fmt.Errorf("update object %q requires unavailable backend %q", object.ObjectID, backend)
 		}
-		recomputed, err := commitCompleteObject(ctx, graph, objectScope(object.ObjectID), object)
+		verificationGraph := currentGraph
+		switch version := maltcid.VersionIDOf(object.Root); version {
+		case maltcid.MALTVersionID:
+		case maltcid.LegacyMALTVersionID:
+			verificationGraph = r.legacyGraphs[backend]
+		default:
+			return VerifiedUpdateView{}, fmt.Errorf("update object %q uses unsupported MALT version %d", object.ObjectID, version)
+		}
+		recomputed, err := commitCompleteObject(ctx, verificationGraph, objectScope(object.ObjectID), object)
 		if err != nil {
 			return VerifiedUpdateView{}, fmt.Errorf("verify update object %q: %w", object.ObjectID, err)
 		}
 		if !recomputed.Equals(object.Root) {
 			return VerifiedUpdateView{}, fmt.Errorf("verify update object %q: recomputed root %s does not match declared root %s", object.ObjectID, recomputed, object.Root)
+		}
+		workingRoot := recomputed
+		if verificationGraph != currentGraph {
+			workingRoot, err = commitCompleteObject(ctx, currentGraph, objectScope(object.ObjectID), object)
+			if err != nil {
+				return VerifiedUpdateView{}, fmt.Errorf("migrate update object %q materialization: %w", object.ObjectID, err)
+			}
 		}
 		logical, err := completeObjectArcSet(object)
 		if err != nil {
@@ -144,12 +178,18 @@ func (r *Runtime) VerifyUpdateView(ctx context.Context, view mutation.UpdateView
 		if err := r.store.Update(ctx, objectScope(object.ObjectID), recomputed, cid.Undef, logical); err != nil {
 			return VerifiedUpdateView{}, fmt.Errorf("seed update object %q: %w", object.ObjectID, err)
 		}
+		if !workingRoot.Equals(recomputed) {
+			if err := r.store.Update(ctx, objectScope(object.ObjectID), workingRoot, cid.Undef, logical); err != nil {
+				return VerifiedUpdateView{}, fmt.Errorf("seed migrated update object %q: %w", object.ObjectID, err)
+			}
+		}
+		workingRoots[object.ObjectID] = workingRoot
 	}
 	digest, err := canonical.Digest()
 	if err != nil {
 		return VerifiedUpdateView{}, fmt.Errorf("digest verified update view: %w", err)
 	}
-	return VerifiedUpdateView{View: canonical, runtime: r, digest: digest}, nil
+	return VerifiedUpdateView{View: canonical, runtime: r, digest: digest, workingRoots: workingRoots}, nil
 }
 
 // ComputeBundle applies a normalized intent bottom-up and returns the exact
@@ -189,11 +229,18 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 
 	phaseStart = time.Now()
 	objects := make(map[string]mutation.UpdateObject, len(view.Objects)+len(normalized.Transitions))
+	workingRoots := make(map[string]cid.Cid, len(verified.workingRoots)+len(normalized.Transitions))
 	for _, object := range view.Objects {
 		objects[object.ObjectID] = object
+		workingRoot, ok := verified.workingRoots[object.ObjectID]
+		if !ok || !workingRoot.Defined() {
+			return ComputeResult{}, fmt.Errorf("verified update object %q has no working root", object.ObjectID)
+		}
+		workingRoots[object.ObjectID] = workingRoot
 	}
 	outputRoots := make(map[string]cid.Cid, len(normalized.Transitions))
 	outputs := make([]mutation.TransitionOutput, 0, len(normalized.Transitions))
+	materializations := make([]mutation.MapMaterialization, 0, len(normalized.Transitions))
 	payloadSet := make(map[string]cid.Cid)
 	for _, transition := range normalized.Transitions {
 		if err := ctx.Err(); err != nil {
@@ -212,10 +259,18 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 			return ComputeResult{}, fmt.Errorf("transition %q delta: %w", transition.ID, err)
 		}
 		commitmentStarted := time.Now()
+		workingRoot := cid.Undef
+		if transition.OldRoot.Defined() {
+			var ok bool
+			workingRoot, ok = workingRoots[transition.ObjectID]
+			if !ok || !workingRoot.Defined() {
+				return ComputeResult{}, fmt.Errorf("transition %q has no verified working root", transition.ID)
+			}
+		}
 		receipt, err := graph.Writer().Apply(ctx, objectScope(transition.ObjectID), mutation.SemanticMutation{
 			BaseRoot: view.BaseRoot,
 			Deltas: []mutation.ArcSetDelta{{
-				Object:  transition.OldRoot,
+				Object:  workingRoot,
 				Kind:    transition.Kind,
 				Changes: delta,
 				Commit:  transition.Commit,
@@ -233,6 +288,7 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 			return ComputeResult{}, fmt.Errorf("compute transition %q returned backend %q, want %q", transition.ID, maltcid.BackendKindOf(receipt.NewRoot), transition.Backend)
 		}
 		outputRoots[transition.ID] = receipt.NewRoot
+		workingRoots[transition.ObjectID] = receipt.NewRoot
 		outputs = append(outputs, mutation.TransitionOutput{TransitionID: transition.ID, Root: receipt.NewRoot})
 		postEntries, err := applyCompleteVector(objects[transition.ObjectID].Entries, transition.Kind, changes)
 		if err != nil {
@@ -244,6 +300,23 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 			Kind:     transition.Kind,
 			Entries:  postEntries,
 			Commit:   transition.Commit,
+		}
+		if transition.Kind == arcset.KindMap {
+			exporter, ok := graph.Semantic().(mapping.MaterializationExporter)
+			if !ok {
+				return ComputeResult{}, fmt.Errorf("transition %q backend does not export map materialization", transition.ID)
+			}
+			postView, err := mapViewFromEntries(postEntries)
+			if err != nil {
+				return ComputeResult{}, fmt.Errorf("materialize transition %q logical view: %w", transition.ID, err)
+			}
+			entries, err := exporter.ExportMaterialization(ctx, objectScope(transition.ObjectID), receipt.NewRoot, postView)
+			if err != nil {
+				return ComputeResult{}, fmt.Errorf("materialize transition %q: %w", transition.ID, err)
+			}
+			materializations = append(materializations, mutation.MapMaterialization{
+				TransitionID: transition.ID, Root: receipt.NewRoot, Entries: entries,
+			})
 		}
 	}
 	candidate := outputRoots[normalized.TopOutputID]
@@ -278,6 +351,13 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	if err != nil {
 		return ComputeResult{}, fmt.Errorf("seal client-root bundle: %w", err)
 	}
+	materialization, err := mutation.NewClientRootMaterialization(bundle, mutation.ClientRootMaterialization{
+		Profile: mutation.ClientRootMaterializationProfile,
+		Maps:    materializations,
+	})
+	if err != nil {
+		return ComputeResult{}, err
+	}
 	metrics.BundleValidationNS = writerDurationNS(time.Since(phaseStart))
 	phaseStart = time.Now()
 	next, err := nextReachableView(view, candidate, objects)
@@ -291,9 +371,20 @@ func (r *Runtime) ComputeBundle(ctx context.Context, operationID string, verifie
 	metrics.NextViewNS = writerDurationNS(time.Since(phaseStart))
 	metrics.TotalNS = writerDurationNS(time.Since(totalStart))
 	return ComputeResult{
-		Bundle: bundle, NextView: next, Metrics: metrics,
+		Bundle: bundle, Materialization: materialization, NextView: next, Metrics: metrics,
 		seal: computeResultSeal{runtime: r, bundleDigest: bundleDigest, nextViewDigest: nextViewDigest},
 	}, nil
+}
+
+func mapViewFromEntries(entries *arcset.CanonicalArcSet) (mapping.View, error) {
+	if entries == nil || entries.Kind() != arcset.KindMap {
+		return nil, fmt.Errorf("complete entries must be a canonical map")
+	}
+	values := make(map[arcset.Path]cid.Cid, entries.Len())
+	for _, entry := range entries.Entries() {
+		values[arcset.CanonicalizePath(entry.Coordinate.String())] = entry.Target.CID()
+	}
+	return mapping.NewViewFromPaths(values), nil
 }
 
 func commitCompleteObject(ctx context.Context, graph *runtimegraph.RuntimeGraph, scope string, object mutation.UpdateObject) (cid.Cid, error) {

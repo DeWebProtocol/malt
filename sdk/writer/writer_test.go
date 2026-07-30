@@ -57,6 +57,36 @@ func TestComputeBundleMatchesIndependentFullRebuildAndRetainsNextView(t *testing
 		result.Metrics.ExpectedRootEncodingNS == 0 {
 		t.Fatalf("compute metrics = %#v", result.Metrics)
 	}
+	if result.Materialization.Profile != mutation.ClientRootMaterializationProfile || len(result.Materialization.Maps) != 2 {
+		t.Fatalf("materialization = %#v", result.Materialization)
+	}
+	var mapWitness mutation.MapMaterialization
+	for _, witness := range result.Materialization.Maps {
+		if witness.TransitionID == "child-output" {
+			mapWitness = witness
+			break
+		}
+	}
+	if mapWitness.TransitionID == "" || mapWitness.Entries == nil || mapWitness.Entries.Len() == 0 {
+		t.Fatalf("map materialization = %#v", mapWitness)
+	}
+	var childEntries *arcset.CanonicalArcSet
+	for _, object := range result.NextView.Objects {
+		if object.ObjectID == "child" {
+			childEntries = object.Entries
+			break
+		}
+	}
+	if childEntries == nil {
+		t.Fatal("retained child object is missing")
+	}
+	logicalView, err := mapViewFromEntries(childEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mappingradix.ValidateMaterialization(ctx, scheme, mapWitness.Root, logicalView, mapWitness.Entries); err != nil {
+		t.Fatalf("validate exported map materialization without Commit: %v", err)
+	}
 
 	// A fresh runtime must independently accept the retained complete vectors;
 	// this prevents a session-only materialization cache from hiding bad roots.
@@ -195,6 +225,205 @@ func TestFixedListReplaceAndAppendRetainVerifiableMetadataAcrossBackends(t *test
 					}
 					if _, err := fresh.VerifyUpdateView(ctx, result.NextView); err != nil {
 						t.Fatalf("verify retained fixed-list view: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestComputeBundleCreatesDependencyObjectWithoutWorkingRoot(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentSemantic, err := mappingradix.NewMap(scheme, materializermemory.New(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentRoot, err := parentSemantic.Commit(ctx, "parent", mapping.NewViewFrom(map[string]cid.Cid{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyEntries, err := arcset.NewCanonicalArcSet(arcset.KindMap, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := writerRawCID(t, "new-object-payload")
+	view := mutation.UpdateView{
+		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
+		BaseRoot: parentRoot, Bounds: mutation.UpdateViewBounds{MaxObjects: 4, MaxTotalEntries: 8, MaxDepth: 4},
+		Objects: []mutation.UpdateObject{{ObjectID: "parent", Root: parentRoot, Kind: arcset.KindMap, Entries: emptyEntries}},
+	}
+	afterPayload := arcset.NewCASTarget(payload)
+	intent := mutation.SemanticIntent{
+		Profile: mutation.SemanticIntentProfile, BaseRoot: parentRoot, TopOutputID: "parent-output",
+		Transitions: []mutation.IntentTransition{
+			{
+				ID: "parent-output", ObjectID: "parent", OldRoot: parentRoot, Kind: arcset.KindMap, Backend: maltcid.BackendKindKZG,
+				Changes: []mutation.IntentChange{{
+					Coordinate: writerMapCoordinate(t, "child"), OutputID: "child-output", OutputKind: arcset.TargetKindMap,
+				}},
+			},
+			{
+				ID: "child-output", ObjectID: "child", Kind: arcset.KindMap, Backend: maltcid.BackendKindKZG, ExpectedUses: 1,
+				Changes: []mutation.IntentChange{{Coordinate: writerMapCoordinate(t, "payload"), After: &afterPayload}},
+			},
+		},
+	}
+	runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{
+		maltcid.BackendKindKZG: scheme,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := runtime.VerifyUpdateView(ctx, view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runtime.ComputeBundle(ctx, "create-child", verified, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childSemantic, err := mappingradix.NewMap(scheme, materializermemory.New(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRoot, err := childSemantic.Commit(ctx, "child", mapping.NewViewFrom(map[string]cid.Cid{"payload": payload}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := parentSemantic.Commit(ctx, "parent-expected", mapping.NewViewFrom(map[string]cid.Cid{"child": childRoot}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Bundle.Candidate.Equals(expected) {
+		t.Fatalf("candidate = %s, want %s", result.Bundle.Candidate, expected)
+	}
+}
+
+func TestLegacyV2MapAndListViewsComputeCurrentCandidatesAcrossBackends(t *testing.T) {
+	for _, backend := range []maltcid.BackendKind{maltcid.BackendKindKZG, maltcid.BackendKindIPA} {
+		t.Run(string(backend), func(t *testing.T) {
+			var (
+				scheme commitment.IndexCommitment
+				err    error
+			)
+			if backend == maltcid.BackendKindKZG {
+				scheme, err = kzg.NewScheme()
+			} else {
+				scheme, err = ipa.NewScheme()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, kind := range []arcset.Kind{arcset.KindMap, arcset.KindList} {
+				t.Run(string(kind), func(t *testing.T) {
+					ctx := context.Background()
+					oldValue := writerRawCID(t, string(backend)+"-"+string(kind)+"-old")
+					untouched := writerRawCID(t, string(backend)+"-"+string(kind)+"-untouched")
+					newValue := writerRawCID(t, string(backend)+"-"+string(kind)+"-new")
+					legacyStore := materializermemory.New(true)
+					var (
+						root     cid.Cid
+						entries  *arcset.CanonicalArcSet
+						change   mutation.IntentChange
+						commit   mutation.CommitDescriptor
+						expected cid.Cid
+					)
+					switch kind {
+					case arcset.KindMap:
+						legacy, err := mappingradix.NewMapForVersion(scheme, legacyStore, maltcid.LegacyMALTVersionID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						root, err = legacy.Commit(ctx, "legacy-object", mapping.NewViewFrom(map[string]cid.Cid{
+							"key": oldValue, "untouched": untouched,
+						}))
+						if err != nil {
+							t.Fatal(err)
+						}
+						entries, err = arcset.NewCanonicalArcSet(kind, []arcset.ArcEntry{
+							{Coordinate: writerMapCoordinate(t, "key"), Target: arcset.NewCASTarget(oldValue)},
+							{Coordinate: writerMapCoordinate(t, "untouched"), Target: arcset.NewCASTarget(untouched)},
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						before, after := arcset.NewCASTarget(oldValue), arcset.NewCASTarget(newValue)
+						change = mutation.IntentChange{Coordinate: writerMapCoordinate(t, "key"), Before: &before, After: &after}
+						current, err := mappingradix.NewMap(scheme, materializermemory.New(true))
+						if err != nil {
+							t.Fatal(err)
+						}
+						expected, err = current.Commit(ctx, "legacy-object", mapping.NewViewFrom(map[string]cid.Cid{
+							"key": newValue, "untouched": untouched,
+						}))
+						if err != nil {
+							t.Fatal(err)
+						}
+					case arcset.KindList:
+						legacy, err := listtree.NewListForVersion(scheme, legacyStore, maltcid.LegacyMALTVersionID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						commit = mutation.CommitDescriptor{FixedList: &mutation.FixedListCommit{ChunkSize: 4, TotalSize: 8}}
+						root, err = legacy.CommitFixed(ctx, "legacy-object", []cid.Cid{oldValue, untouched}, 4, 8)
+						if err != nil {
+							t.Fatal(err)
+						}
+						entries, err = arcset.NewCanonicalArcSet(kind, []arcset.ArcEntry{
+							{Coordinate: arcset.NewListCoordinateUint64(0), Target: arcset.NewCASTarget(oldValue)},
+							{Coordinate: arcset.NewListCoordinateUint64(1), Target: arcset.NewCASTarget(untouched)},
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						before, after := arcset.NewCASTarget(oldValue), arcset.NewCASTarget(newValue)
+						change = mutation.IntentChange{Coordinate: arcset.NewListCoordinateUint64(0), Before: &before, After: &after}
+						current, err := listtree.NewList(scheme, materializermemory.New(true))
+						if err != nil {
+							t.Fatal(err)
+						}
+						expected, err = current.CommitFixed(ctx, "legacy-object", []cid.Cid{newValue, untouched}, 4, 8)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					if got := maltcid.VersionIDOf(root); got != maltcid.LegacyMALTVersionID {
+						t.Fatalf("legacy root version = %d", got)
+					}
+					view := mutation.UpdateView{
+						Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
+						BaseRoot: root, Bounds: mutation.UpdateViewBounds{MaxObjects: 2, MaxTotalEntries: 8, MaxDepth: 2},
+						Objects: []mutation.UpdateObject{{ObjectID: "legacy-object", Root: root, Kind: kind, Entries: entries, Commit: commit}},
+					}
+					intent := mutation.SemanticIntent{
+						Profile: mutation.SemanticIntentProfile, BaseRoot: root, TopOutputID: "legacy-output",
+						Transitions: []mutation.IntentTransition{{
+							ID: "legacy-output", ObjectID: "legacy-object", OldRoot: root, Kind: kind, Backend: backend,
+							Changes: []mutation.IntentChange{change}, Commit: commit,
+						}},
+					}
+					runtime, err := NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{backend: scheme})
+					if err != nil {
+						t.Fatal(err)
+					}
+					verified, err := runtime.VerifyUpdateView(ctx, view)
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, err := runtime.ComputeBundle(ctx, "legacy-v2-"+string(kind), verified, intent)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !result.Bundle.Candidate.Equals(expected) {
+						t.Fatalf("candidate = %s, want %s", result.Bundle.Candidate, expected)
+					}
+					if maltcid.VersionIDOf(result.Bundle.Candidate) != maltcid.MALTVersionID ||
+						!result.Bundle.View.Objects[0].Root.Equals(root) {
+						t.Fatal("bundle did not preserve v2 evidence while producing a current candidate")
 					}
 				})
 			}

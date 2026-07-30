@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	// ResolveReadV1 is the independent conformance-corpus version. It is not a
-	// replacement for the resolve/read wire profile identifiers.
-	ResolveReadV1 = "malt.resolve-read.conformance/v1"
+	// ResolveReadV1 and ResolveReadV2 are independent conformance-corpus
+	// versions, not replacements for the resolve/read wire profile identifiers.
+	ResolveReadV1      = "malt.resolve-read.conformance/v1"
+	ResolveReadV2      = "malt.resolve-read.conformance/v2"
+	ResolveReadCurrent = ResolveReadV2
 
 	OperationResolve = "resolve"
 	OperationRead    = "read"
@@ -29,11 +31,9 @@ const (
 	BackendIPA  = "ipa"
 )
 
-const corpusPath = "resolve-read/v1/vectors.json"
+//go:generate go run ../internal/conformancegen/cmd -out resolve-read/v2/vectors.json
 
-//go:generate go run ../internal/conformancegen/cmd -out resolve-read/v1/vectors.json
-
-//go:embed resolve-read/v1/*.json
+//go:embed resolve-read/v1/*.json resolve-read/v2/*.json
 var corpusFiles embed.FS
 
 // Corpus is the stable, ordered envelope shared by every verifier adapter.
@@ -83,9 +83,14 @@ type Verifier interface {
 	VerifyRead(context.Context, protocol.ReadVerification) error
 }
 
-// Load returns and validates the embedded v1 corpus.
+// Load returns and validates the current conformance corpus.
 func Load() (Corpus, error) {
-	data, err := Bytes()
+	return LoadVersion(ResolveReadCurrent)
+}
+
+// LoadVersion returns and validates one explicitly supported corpus version.
+func LoadVersion(version string) (Corpus, error) {
+	data, err := BytesVersion(version)
 	if err != nil {
 		return Corpus{}, err
 	}
@@ -93,37 +98,69 @@ func Load() (Corpus, error) {
 	if err := decodeStrict(data, &corpus); err != nil {
 		return Corpus{}, fmt.Errorf("decode conformance corpus: %w", err)
 	}
+	if corpus.SchemaVersion != version {
+		return Corpus{}, fmt.Errorf("conformance corpus version %q does not match requested %q", corpus.SchemaVersion, version)
+	}
 	if err := corpus.Validate(); err != nil {
 		return Corpus{}, err
 	}
 	return corpus, nil
 }
 
-// Bytes returns a detached copy of the canonical checked-in corpus bytes.
+// Bytes returns a detached copy of the current checked-in corpus bytes.
 func Bytes() ([]byte, error) {
-	data, err := corpusFiles.ReadFile(corpusPath)
+	return BytesVersion(ResolveReadCurrent)
+}
+
+// BytesVersion returns a detached copy of one supported checked-in corpus.
+func BytesVersion(version string) ([]byte, error) {
+	directory, err := corpusDirectory(version)
+	if err != nil {
+		return nil, err
+	}
+	data, err := corpusFiles.ReadFile(directory + "/vectors.json")
 	if err != nil {
 		return nil, fmt.Errorf("read embedded conformance corpus: %w", err)
 	}
 	return slices.Clone(data), nil
 }
 
-// Schema returns a detached copy of one checked-in conformance schema.
+// Schema returns a detached copy of one current conformance schema.
 func Schema(name string) ([]byte, error) {
+	return SchemaVersion(ResolveReadCurrent, name)
+}
+
+// SchemaVersion returns a detached schema for one supported corpus version.
+func SchemaVersion(version, name string) ([]byte, error) {
 	if name != "corpus.schema.json" && name != "vector.schema.json" {
 		return nil, fmt.Errorf("unknown conformance schema %q", name)
 	}
-	data, err := corpusFiles.ReadFile("resolve-read/v1/" + name)
+	directory, err := corpusDirectory(version)
+	if err != nil {
+		return nil, err
+	}
+	data, err := corpusFiles.ReadFile(directory + "/" + name)
 	if err != nil {
 		return nil, fmt.Errorf("read conformance schema %q: %w", name, err)
 	}
 	return slices.Clone(data), nil
 }
 
+func corpusDirectory(version string) (string, error) {
+	switch version {
+	case ResolveReadV1:
+		return "resolve-read/v1", nil
+	case ResolveReadV2:
+		return "resolve-read/v2", nil
+	default:
+		return "", fmt.Errorf("unsupported conformance schema version %q", version)
+	}
+}
+
 // Validate checks corpus-level invariants that JSON Schema alone cannot make
 // convenient for small consumers, including stable ID uniqueness.
 func (c Corpus) Validate() error {
-	if c.SchemaVersion != ResolveReadV1 {
+	if c.SchemaVersion != ResolveReadV1 && c.SchemaVersion != ResolveReadV2 {
 		return fmt.Errorf("unsupported conformance schema version %q", c.SchemaVersion)
 	}
 	if len(c.Vectors) == 0 {
