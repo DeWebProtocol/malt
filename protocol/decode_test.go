@@ -101,6 +101,25 @@ func TestDecodeMapProofVerificationStrictAndTargetConditional(t *testing.T) {
 	if _, err := protocol.DecodeMapProofVerification([]byte(withUnknown)); err == nil {
 		t.Fatal("DecodeMapProofVerification accepted an unknown result field")
 	}
+	emptyTarget := strings.Replace(string(raw), `"present":false`, `"present":false,"target":""`, 1)
+	if _, err := protocol.DecodeMapProofVerification([]byte(emptyTarget)); err == nil || !strings.Contains(err.Error(), "must be omitted") {
+		t.Fatalf("explicit-empty absent target error = %v", err)
+	}
+	resultRaw, err := json.Marshal(value.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directEmptyTarget := strings.Replace(string(resultRaw), `"present":false`, `"present":false,"target":""`, 1)
+	if _, err := protocol.DecodeMapProofResult([]byte(directEmptyTarget)); err == nil || !strings.Contains(err.Error(), "must be omitted") {
+		t.Fatalf("direct explicit-empty absent target error = %v", err)
+	}
+	missingStepTarget := strings.Replace(string(raw), `"target":null,`, ``, 1)
+	if missingStepTarget == string(raw) {
+		t.Fatalf("map absence fixture has no explicit null step target: %s", raw)
+	}
+	if _, err := protocol.DecodeMapProofVerification([]byte(missingStepTarget)); err == nil || !strings.Contains(err.Error(), `missing required field "target"`) {
+		t.Fatalf("missing map_absence step target error = %v", err)
+	}
 	nullTarget := strings.Replace(string(raw), `"present":false`, `"present":false,"target":null`, 1)
 	if _, err := protocol.DecodeMapProofVerification([]byte(nullTarget)); err == nil || !strings.Contains(err.Error(), "must not be null") {
 		t.Fatalf("explicit-null target error = %v", err)

@@ -61,7 +61,11 @@ func DecodeMapProofResult(data []byte) (MapProofResult, error) {
 	if err := decodeVerificationJSON(data, &value); err != nil {
 		return MapProofResult{}, fmt.Errorf("decode map-proof result: %w", err)
 	}
-	if err := validateRequiredJSONShape(data, reflect.TypeFor[mapProofResultJSONShape]()); err != nil {
+	presence := make(map[string]struct{})
+	if err := validateRequiredJSONShapeWithPresence(data, reflect.TypeFor[mapProofResultJSONShape](), presence); err != nil {
+		return MapProofResult{}, fmt.Errorf("decode map-proof result: %w", err)
+	}
+	if err := validateMapProofTargetPresence(value.Present, presence, "$.target"); err != nil {
 		return MapProofResult{}, fmt.Errorf("decode map-proof result: %w", err)
 	}
 	if err := value.Validate(); err != nil {
@@ -76,7 +80,11 @@ func DecodeMapProofVerification(data []byte) (MapProofVerification, error) {
 	if err := decodeVerificationJSON(data, &value); err != nil {
 		return MapProofVerification{}, fmt.Errorf("decode map-proof verification: %w", err)
 	}
-	if err := validateRequiredJSONShape(data, reflect.TypeFor[mapProofVerificationJSONShape]()); err != nil {
+	presence := make(map[string]struct{})
+	if err := validateRequiredJSONShapeWithPresence(data, reflect.TypeFor[mapProofVerificationJSONShape](), presence); err != nil {
+		return MapProofVerification{}, fmt.Errorf("decode map-proof verification: %w", err)
+	}
+	if err := validateMapProofTargetPresence(value.Result.Present, presence, "$.result.target"); err != nil {
 		return MapProofVerification{}, fmt.Errorf("decode map-proof verification: %w", err)
 	}
 	if err := value.Validate(); err != nil {
@@ -92,15 +100,55 @@ type mapProofRequestJSONShape struct {
 }
 
 type mapProofResultJSONShape struct {
-	Profile   string          `json:"profile"`
-	Present   bool            `json:"present"`
-	Target    string          `json:"target,omitempty"`
-	ProofList json.RawMessage `json:"prooflist"`
+	Profile   string             `json:"profile"`
+	Present   bool               `json:"present"`
+	Target    string             `json:"target,omitempty"`
+	ProofList proofListJSONShape `json:"prooflist"`
 }
+
+type proofListJSONShape struct {
+	Root  json.RawMessage      `json:"root"`
+	Query string               `json:"query,omitempty"`
+	Steps []proofStepJSONShape `json:"steps"`
+}
+
+type proofStepJSONShape struct {
+	Kind            string                 `json:"kind"`
+	From            json.RawMessage        `json:"from"`
+	Query           string                 `json:"query,omitempty"`
+	Coordinate      string                 `json:"coordinate,omitempty"`
+	Path            string                 `json:"path,omitempty"`
+	Index           *uint64                `json:"index,omitempty"`
+	Length          *uint64                `json:"length,omitempty"`
+	Start           *uint64                `json:"start,omitempty"`
+	End             *uint64                `json:"end,omitempty"`
+	ChildCount      *uint64                `json:"child_count,omitempty"`
+	TotalSize       *uint64                `json:"total_size,omitempty"`
+	ChunkSize       *uint64                `json:"chunk_size,omitempty"`
+	Target          nullableJSONRawMessage `json:"target"`
+	Segments        []json.RawMessage      `json:"segments,omitempty"`
+	EvidenceKind    string                 `json:"evidence_kind,omitempty"`
+	EvidenceBackend string                 `json:"evidence_backend,omitempty"`
+	Evidence        string                 `json:"evidence,omitempty"`
+	Proof           string                 `json:"proof,omitempty"`
+}
+
+type nullableJSONRawMessage json.RawMessage
 
 type mapProofVerificationJSONShape struct {
 	Request mapProofRequestJSONShape `json:"request"`
 	Result  mapProofResultJSONShape  `json:"result"`
+}
+
+func validateMapProofTargetPresence(present bool, presence map[string]struct{}, path string) error {
+	_, carried := presence[path]
+	if present && !carried {
+		return fmt.Errorf("%s is required for a present map-proof result", path)
+	}
+	if !present && carried {
+		return fmt.Errorf("%s must be omitted for an absent map-proof result", path)
+	}
+	return nil
 }
 
 func decodeVerificationJSON(data []byte, target any) error {

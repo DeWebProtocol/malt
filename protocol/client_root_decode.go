@@ -148,13 +148,17 @@ func decodeClientRootJSON(data []byte, target any) error {
 // are deliberately required; optional semantic values use explicit presence
 // discriminators instead of optional JSON properties.
 func validateRequiredJSONShape(data []byte, targetType reflect.Type) error {
+	return validateRequiredJSONShapeWithPresence(data, targetType, nil)
+}
+
+func validateRequiredJSONShapeWithPresence(data []byte, targetType reflect.Type, presence map[string]struct{}) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	token, err := decoder.Token()
 	if err != nil {
 		return err
 	}
-	if err := validateJSONToken(decoder, token, targetType, "$", true); err != nil {
+	if err := validateJSONToken(decoder, token, targetType, "$", true, presence); err != nil {
 		return err
 	}
 	if _, err := decoder.Token(); err != io.EOF {
@@ -166,9 +170,12 @@ func validateRequiredJSONShape(data []byte, targetType reflect.Type) error {
 	return nil
 }
 
-func validateJSONToken(decoder *json.Decoder, token json.Token, targetType reflect.Type, path string, required bool) error {
+func validateJSONToken(decoder *json.Decoder, token json.Token, targetType reflect.Type, path string, required bool, presence map[string]struct{}) error {
 	for targetType.Kind() == reflect.Pointer {
 		targetType = targetType.Elem()
+	}
+	if targetType == reflect.TypeFor[nullableJSONRawMessage]() {
+		return skipJSONToken(decoder, token)
 	}
 	if token == nil {
 		return fmt.Errorf("%s must not be null", path)
@@ -201,11 +208,14 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 				return fmt.Errorf("%s has duplicate field %q", path, name)
 			}
 			seen[name] = struct{}{}
+			if presence != nil {
+				presence[path+"."+name] = struct{}{}
+			}
 			valueToken, err := decoder.Token()
 			if err != nil {
 				return err
 			}
-			if err := validateJSONToken(decoder, valueToken, field.typ, path+"."+name, !field.optional); err != nil {
+			if err := validateJSONToken(decoder, valueToken, field.typ, path+"."+name, !field.optional, presence); err != nil {
 				return err
 			}
 		}
@@ -237,7 +247,7 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 			if err != nil {
 				return err
 			}
-			if err := validateJSONToken(decoder, valueToken, targetType.Elem(), fmt.Sprintf("%s[%d]", path, index), true); err != nil {
+			if err := validateJSONToken(decoder, valueToken, targetType.Elem(), fmt.Sprintf("%s[%d]", path, index), true, presence); err != nil {
 				return err
 			}
 			index++
