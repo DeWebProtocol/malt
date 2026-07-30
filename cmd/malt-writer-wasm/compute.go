@@ -31,27 +31,13 @@ type sessionComputer struct {
 
 type preparedCandidate struct {
 	result        clientwriter.ComputeResult
-	responseBytes int
+	encodedResult []byte
 }
 
 const (
 	maxPreparedCandidates    = 64
 	maxPreparedResponseBytes = 64 << 20
-	writerPrepareSummaryV1   = "malt.writer-prepare-summary/v1"
 )
-
-type writerPrepareSummary struct {
-	Profile     string                       `json:"profile"`
-	OperationID string                       `json:"operation_id"`
-	Candidate   string                       `json:"candidate"`
-	Outputs     []writerPrepareSummaryOutput `json:"outputs"`
-	PayloadCIDs []string                     `json:"payload_cids"`
-}
-
-type writerPrepareSummaryOutput struct {
-	TransitionID string `json:"transition_id"`
-	Root         string `json:"root"`
-}
 
 func newSessionComputer(computer *computer) (*sessionComputer, error) {
 	if computer == nil || len(computer.schemes) == 0 {
@@ -140,6 +126,9 @@ func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (stri
 	if err := session.Load(ctx, view); err != nil {
 		return "", fmt.Errorf("load client writer session: %w", err)
 	}
+	if s.store != nil {
+		s.store.RetainRoots(nil)
+	}
 
 	s.session = session
 	s.store = store
@@ -149,20 +138,52 @@ func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (stri
 	return view.BaseRoot.String(), nil
 }
 
-func (s *sessionComputer) prepare(ctx context.Context, operationID string, semanticIntentJSON []byte) ([]byte, error) {
-	return s.prepareResponse(ctx, operationID, semanticIntentJSON, false)
+func (s *sessionComputer) prepare(ctx context.Context, operationID string, semanticIntentJSON []byte) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("client writer session is not initialized")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.session == nil {
+		return "", fmt.Errorf("client writer session has no update view")
+	}
+	if _, exists := s.prepared[operationID]; exists {
+		return "", fmt.Errorf("operation %q is already prepared", operationID)
+	}
+	if len(s.prepared) >= maxPreparedCandidates {
+		return "", fmt.Errorf("client writer session already retains %d prepared candidates", maxPreparedCandidates)
+	}
+	wireIntent, err := protocol.DecodeSemanticIntent(semanticIntentJSON, s.view)
+	if err != nil {
+		return "", err
+	}
+	intent, err := wireIntent.Core(s.view)
+	if err != nil {
+		return "", err
+	}
+	result, err := s.session.Prepare(ctx, operationID, intent)
+	if err != nil {
+		s.retainMaterializedRoots()
+		return "", fmt.Errorf("prepare client writer session: %w", err)
+	}
+	fullResponse, err := encodeComputeResult(result)
+	if err != nil {
+		s.retainMaterializedRoots()
+		return "", err
+	}
+	if len(fullResponse) > maxPreparedResponseBytes-s.preparedResponseBytes {
+		s.retainMaterializedRoots()
+		return "", fmt.Errorf(
+			"prepared client writer responses exceed %d retained bytes",
+			maxPreparedResponseBytes,
+		)
+	}
+	s.prepared[operationID] = preparedCandidate{result: result, encodedResult: fullResponse}
+	s.preparedResponseBytes += len(fullResponse)
+	return result.Bundle.Candidate.String(), nil
 }
 
-func (s *sessionComputer) prepareCompact(ctx context.Context, operationID string, semanticIntentJSON []byte) ([]byte, error) {
-	return s.prepareResponse(ctx, operationID, semanticIntentJSON, true)
-}
-
-func (s *sessionComputer) prepareResponse(
-	ctx context.Context,
-	operationID string,
-	semanticIntentJSON []byte,
-	compact bool,
-) ([]byte, error) {
+func (s *sessionComputer) getPreparedResult(operationID string) ([]byte, error) {
 	if s == nil {
 		return nil, fmt.Errorf("client writer session is not initialized")
 	}
@@ -171,48 +192,27 @@ func (s *sessionComputer) prepareResponse(
 	if s.session == nil {
 		return nil, fmt.Errorf("client writer session has no update view")
 	}
-	if _, exists := s.prepared[operationID]; exists {
-		return nil, fmt.Errorf("operation %q is already prepared", operationID)
+	candidate, ok := s.prepared[operationID]
+	if !ok {
+		return nil, fmt.Errorf("operation %q is not prepared", operationID)
 	}
-	if len(s.prepared) >= maxPreparedCandidates {
-		return nil, fmt.Errorf("client writer session already retains %d prepared candidates", maxPreparedCandidates)
+	return append([]byte(nil), candidate.encodedResult...), nil
+}
+
+func (s *sessionComputer) closeSession() {
+	if s == nil {
+		return
 	}
-	wireIntent, err := protocol.DecodeSemanticIntent(semanticIntentJSON, s.view)
-	if err != nil {
-		return nil, err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.store != nil {
+		s.store.RetainRoots(nil)
 	}
-	intent, err := wireIntent.Core(s.view)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.session.Prepare(ctx, operationID, intent)
-	if err != nil {
-		s.retainMaterializedRoots()
-		return nil, fmt.Errorf("prepare client writer session: %w", err)
-	}
-	fullResponse, err := encodeComputeResult(result)
-	if err != nil {
-		s.retainMaterializedRoots()
-		return nil, err
-	}
-	response := fullResponse
-	if compact {
-		response, err = encodePrepareSummary(result)
-		if err != nil {
-			s.retainMaterializedRoots()
-			return nil, err
-		}
-	}
-	if len(fullResponse) > maxPreparedResponseBytes-s.preparedResponseBytes {
-		s.retainMaterializedRoots()
-		return nil, fmt.Errorf(
-			"prepared client writer responses exceed %d retained bytes",
-			maxPreparedResponseBytes,
-		)
-	}
-	s.prepared[operationID] = preparedCandidate{result: result, responseBytes: len(fullResponse)}
-	s.preparedResponseBytes += len(fullResponse)
-	return response, nil
+	s.session = nil
+	s.store = nil
+	s.view = mutation.UpdateView{}
+	s.prepared = nil
+	s.preparedResponseBytes = 0
 }
 
 func (s *sessionComputer) acceptReceipt(operationID string, receiptJSON []byte) (string, error) {
@@ -265,7 +265,7 @@ func (s *sessionComputer) discard(operationID string) error {
 	}
 	candidate := s.prepared[operationID]
 	delete(s.prepared, operationID)
-	s.preparedResponseBytes -= candidate.responseBytes
+	s.preparedResponseBytes -= len(candidate.encodedResult)
 	s.retainMaterializedRoots()
 	return nil
 }
@@ -305,25 +305,4 @@ func encodeComputeResult(result clientwriter.ComputeResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode writer compute result: %w", err)
 	}
 	return json.Marshal(response)
-}
-
-func encodePrepareSummary(result clientwriter.ComputeResult) ([]byte, error) {
-	outputs := make([]writerPrepareSummaryOutput, len(result.Bundle.Outputs))
-	for index, output := range result.Bundle.Outputs {
-		outputs[index] = writerPrepareSummaryOutput{
-			TransitionID: output.TransitionID,
-			Root:         output.Root.String(),
-		}
-	}
-	payloadCIDs := make([]string, len(result.Bundle.PayloadCIDs))
-	for index, payload := range result.Bundle.PayloadCIDs {
-		payloadCIDs[index] = payload.String()
-	}
-	return json.Marshal(writerPrepareSummary{
-		Profile:     writerPrepareSummaryV1,
-		OperationID: result.Bundle.OperationID,
-		Candidate:   result.Bundle.Candidate.String(),
-		Outputs:     outputs,
-		PayloadCIDs: payloadCIDs,
-	})
 }

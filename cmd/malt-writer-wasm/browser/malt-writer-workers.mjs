@@ -175,8 +175,23 @@ export class MaltWriterWorkers {
       return;
     }
     const failure = error instanceof Error ? error : new Error(errorMessage(error));
-    state.phase = "failed";
+    this.#stop(state, "failed", failure);
+  }
+
+  #stop(state, phase, failure) {
+    if (state.phase === "failed" || state.phase === "terminated") {
+      return;
+    }
+    state.phase = phase;
     state.error = failure;
+    const worker = state.worker;
+    state.worker = undefined;
+    try {
+      worker?.terminate();
+    } catch {
+      // Reject readiness and requests even if a custom Worker adapter fails
+      // while releasing its underlying Worker.
+    }
     state.ready.reject(failure);
     for (const pending of state.pending.values()) {
       pending.reject(failure);
@@ -237,8 +252,8 @@ export class MaltWriterWorkers {
     return this.#request(backend, "prepare", [operationID, semanticIntentJSON]);
   }
 
-  prepareCompact(backend, operationID, semanticIntentJSON) {
-    return this.#request(backend, "prepareCompact", [operationID, semanticIntentJSON]);
+  getPreparedResult(backend, operationID) {
+    return this.#request(backend, "getPreparedResult", [operationID]);
   }
 
   acceptReceipt(backend, operationID, materializationReceiptJSON) {
@@ -252,24 +267,35 @@ export class MaltWriterWorkers {
     return this.#request(backend, "discard", [operationID]);
   }
 
-  terminate() {
+  closeSession(backend) {
+    return this.#request(backend, "closeSession", []).then(() => undefined);
+  }
+
+  terminateBackend(backend) {
+    const state = this.#states.get(requireBackend(backend));
+    this.#stop(
+      state,
+      "terminated",
+      new Error(`${state.backend} writer was terminated`),
+    );
+  }
+
+  terminateAll() {
     if (this.#terminated) {
       return;
     }
     this.#terminated = true;
     for (const state of this.#states.values()) {
-      state.worker?.terminate();
-      if (state.phase !== "failed") {
-        const failure = new Error(`${state.backend} writer was terminated`);
-        state.error = failure;
-        state.ready.reject(failure);
-        for (const pending of state.pending.values()) {
-          pending.reject(failure);
-        }
-        state.pending.clear();
-        state.phase = "terminated";
-      }
+      this.#stop(
+        state,
+        "terminated",
+        new Error(`${state.backend} writer was terminated`),
+      );
     }
+  }
+
+  terminate() {
+    this.terminateAll();
   }
 }
 

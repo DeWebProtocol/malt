@@ -5,6 +5,9 @@ repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/malt-writer-wasm.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
 
+node --test \
+  "$repo_root/cmd/malt-writer-wasm/browser/malt-writer-workers.test.mjs"
+
 if go list -buildvcs=false -deps -tags=writer_kzg ./cmd/malt-writer-wasm | rg -q '/auth/commitment/ipa$'; then
   printf '%s\n' "KZG writer unexpectedly links the IPA backend" >&2
   exit 1

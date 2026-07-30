@@ -3,14 +3,24 @@ const RPC_FUNCTIONS = Object.freeze({
   compute: "maltComputeClientRootV1",
   load: "maltWriterLoadSessionV1",
   prepare: "maltWriterPrepareSessionV1",
-  prepareCompact: "maltWriterPrepareSessionCompactV1",
+  getPreparedResult: "maltWriterGetPreparedResultV1",
   acceptReceipt: "maltWriterAcceptSessionReceiptV1",
   discard: "maltWriterDiscardSessionCandidateV1",
+  closeSession: "maltWriterCloseSessionV1",
 });
+const STATEFUL_RPC_METHODS = new Set([
+  "load",
+  "prepare",
+  "getPreparedResult",
+  "acceptReceipt",
+  "discard",
+  "closeSession",
+]);
 
 let initialized = false;
 let ready = false;
 let loadedBackend;
+let sessionRequestQueue = Promise.resolve();
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -108,6 +118,21 @@ async function handleRequest(message) {
   return globalThis[functionName](...args);
 }
 
+function postResponse(message, task) {
+  void task.then(
+    (result) => {
+      self.postMessage({ type: "response", id: message.id, result });
+    },
+    (error) => {
+      self.postMessage({
+        type: "response",
+        id: message.id,
+        error: errorMessage(error),
+      });
+    },
+  );
+}
+
 self.addEventListener("message", (event) => {
   const message = event.data;
   if (!message || typeof message !== "object") {
@@ -126,16 +151,14 @@ self.addEventListener("message", (event) => {
     return;
   }
 
-  void handleRequest(message).then(
-    (result) => {
-      self.postMessage({ type: "response", id: message.id, result });
-    },
-    (error) => {
-      self.postMessage({
-        type: "response",
-        id: message.id,
-        error: errorMessage(error),
-      });
-    },
-  );
+  if (STATEFUL_RPC_METHODS.has(message.method)) {
+    const task = sessionRequestQueue.then(() => handleRequest(message));
+    sessionRequestQueue = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    postResponse(message, task);
+    return;
+  }
+  postResponse(message, handleRequest(message));
 });

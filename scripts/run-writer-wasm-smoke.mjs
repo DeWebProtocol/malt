@@ -43,9 +43,10 @@ while (Date.now() < deadline) {
     typeof globalThis.maltComputeClientRootV1 === "function" &&
     typeof globalThis.maltWriterLoadSessionV1 === "function" &&
     typeof globalThis.maltWriterPrepareSessionV1 === "function" &&
-    typeof globalThis.maltWriterPrepareSessionCompactV1 === "function" &&
+    typeof globalThis.maltWriterGetPreparedResultV1 === "function" &&
     typeof globalThis.maltWriterAcceptSessionReceiptV1 === "function" &&
-    typeof globalThis.maltWriterDiscardSessionCandidateV1 === "function"
+    typeof globalThis.maltWriterDiscardSessionCandidateV1 === "function" &&
+    typeof globalThis.maltWriterCloseSessionV1 === "function"
   ) {
     break;
   }
@@ -56,9 +57,10 @@ if (
   typeof globalThis.maltComputeClientRootV1 !== "function" ||
   typeof globalThis.maltWriterLoadSessionV1 !== "function" ||
   typeof globalThis.maltWriterPrepareSessionV1 !== "function" ||
-  typeof globalThis.maltWriterPrepareSessionCompactV1 !== "function" ||
+  typeof globalThis.maltWriterGetPreparedResultV1 !== "function" ||
   typeof globalThis.maltWriterAcceptSessionReceiptV1 !== "function" ||
-  typeof globalThis.maltWriterDiscardSessionCandidateV1 !== "function"
+  typeof globalThis.maltWriterDiscardSessionCandidateV1 !== "function" ||
+  typeof globalThis.maltWriterCloseSessionV1 !== "function"
 ) {
   throw new Error("timed out waiting for MALT writer globals");
 }
@@ -208,9 +210,22 @@ for (const fixture of selectedFixtures) {
   }
   const sessionOperationID = encoder.encode(fixture.operation_id);
   const sessionIntent = encoder.encode(JSON.stringify(fixture.semantic_intent));
-  const preparedJSON = await globalThis.maltWriterPrepareSessionV1(
+  const candidate = await globalThis.maltWriterPrepareSessionV1(
     sessionOperationID,
     sessionIntent,
+  );
+  if (candidate !== fixture.expected_bundle.candidate) {
+    throw new Error(
+      `${fixture.backend} session prepared ${candidate}, expected ${fixture.expected_bundle.candidate}`,
+    );
+  }
+  const preparedJSON = await globalThis.maltWriterGetPreparedResultV1(
+    sessionOperationID,
+  );
+  assert.equal(
+    await globalThis.maltWriterGetPreparedResultV1(sessionOperationID),
+    preparedJSON,
+    `${fixture.backend} repeated prepared-result lookup changed bytes`,
   );
   const prepared = JSON.parse(preparedJSON);
   assert.deepStrictEqual(
@@ -230,21 +245,37 @@ for (const fixture of selectedFixtures) {
   if (discarded !== fixture.operation_id) {
     throw new Error(`${fixture.backend} session discarded the wrong operation`);
   }
-  const preparedAfterDiscardJSON = await globalThis.maltWriterPrepareSessionCompactV1(
+  let rejectedDiscardedResult = false;
+  try {
+    await globalThis.maltWriterGetPreparedResultV1(sessionOperationID);
+  } catch {
+    rejectedDiscardedResult = true;
+  }
+  if (!rejectedDiscardedResult) {
+    throw new Error(`${fixture.backend} session returned a discarded prepared result`);
+  }
+  const candidateAfterDiscard = await globalThis.maltWriterPrepareSessionV1(
     sessionOperationID,
     sessionIntent,
   );
+  assert.equal(
+    candidateAfterDiscard,
+    fixture.expected_bundle.candidate,
+    `${fixture.backend} re-prepared a different candidate after discard`,
+  );
+  const preparedAfterDiscardJSON = await globalThis.maltWriterGetPreparedResultV1(
+    sessionOperationID,
+  );
   const preparedAfterDiscard = JSON.parse(preparedAfterDiscardJSON);
   assert.deepStrictEqual(
-    preparedAfterDiscard,
-    {
-      profile: "malt.writer-prepare-summary/v1",
-      operation_id: fixture.expected_bundle.operation_id,
-      candidate: fixture.expected_bundle.candidate,
-      outputs: fixture.expected_bundle.outputs,
-      payload_cids: fixture.expected_bundle.payload_cids,
-    },
-    `${fixture.backend} compact session result differs from the full result`,
+    preparedAfterDiscard.bundle,
+    fixture.expected_bundle,
+    `${fixture.backend} re-prepared bundle differs from the reference`,
+  );
+  assert.deepStrictEqual(
+    preparedAfterDiscard.next_view,
+    fixture.expected_next_view,
+    `${fixture.backend} re-prepared next view differs from the reference`,
   );
   const acceptedRoot = await globalThis.maltWriterAcceptSessionReceiptV1(
     sessionOperationID,
@@ -268,8 +299,30 @@ for (const fixture of selectedFixtures) {
   if (!rejectedStaleIntent) {
     throw new Error(`${fixture.backend} session accepted an intent at the stale base`);
   }
+  await globalThis.maltWriterCloseSessionV1();
+  let rejectedClosedPrepare = false;
+  try {
+    await globalThis.maltWriterPrepareSessionV1(
+      encoder.encode(`${fixture.operation_id}-closed`),
+      sessionIntent,
+    );
+  } catch {
+    rejectedClosedPrepare = true;
+  }
+  if (!rejectedClosedPrepare) {
+    throw new Error(`${fixture.backend} session prepared after close`);
+  }
+  const reloadedRoot = await globalThis.maltWriterLoadSessionV1(
+    encoder.encode(JSON.stringify(fixture.update_view)),
+  );
+  assert.equal(
+    reloadedRoot,
+    fixture.update_view.base_root,
+    `${fixture.backend} Worker could not load a new session after close`,
+  );
+  await globalThis.maltWriterCloseSessionV1();
+  await globalThis.maltWriterCloseSessionV1();
 }
-
 console.log(
   `WASM ${selectedBackend} stateless/session smoke passed (${selectedFixtures.length} valid fixture(s))`,
 );

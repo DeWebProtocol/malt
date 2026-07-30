@@ -23,11 +23,13 @@ await writers.kzgReady;
 console.log(writers.status("ipa")); // { backend: "ipa", state: "initializing" }
 
 const baseRoot = await writers.load("kzg", updateViewJSONUTF8);
-const summaryJSON = await writers.prepareCompact(
+const candidateRoot = await writers.prepare(
   "kzg",
   operationIDUTF8,
   semanticIntentJSONUTF8,
 );
+const resultJSON = await writers.getPreparedResult("kzg", operationIDUTF8);
+await writers.closeSession("kzg");
 
 // Await IPA only when an IPA view needs it.
 await writers.ipaReady;
@@ -35,8 +37,11 @@ await writers.ipaReady;
 
 `kzgReady`, `ipaReady`, `whenReady(backend)`, and `status(backend)` are
 independent. IPA initialization cannot block the KZG Worker event loop, RPC
-queue, session, or WASM memory. Call `terminate()` when both instances are no
-longer needed.
+queue, session, or WASM memory. Closing a session releases its accepted view,
+prepared candidates, and materialized snapshots while keeping that Worker ready
+for another `load`. Call `terminateBackend(backend)` to release one Worker, or
+`terminateAll()` when neither instance is needed. `terminate()` remains an alias
+for `terminateAll()`.
 
 The controller exposes the following backend-routed methods:
 
@@ -54,13 +59,12 @@ prepare(
   backend,
   operationIDUTF8,
   semanticIntentJSONUTF8
-) -> Promise<resultJSON>
+) -> Promise<candidateRoot>
 
-prepareCompact(
+getPreparedResult(
   backend,
-  operationIDUTF8,
-  semanticIntentJSONUTF8
-) -> Promise<summaryJSON>
+  operationIDUTF8
+) -> Promise<resultJSON>
 
 acceptReceipt(
   backend,
@@ -69,6 +73,11 @@ acceptReceipt(
 ) -> Promise<newBaseRoot>
 
 discard(backend, operationIDUTF8) -> Promise<operationID>
+
+closeSession(backend) -> Promise<void>
+
+terminateBackend(backend) -> void
+terminateAll() -> void
 ```
 
 All byte arguments are strict `Uint8Array` values. The operation ID contains up
@@ -84,7 +93,10 @@ and a single instance never initializes both schemes.
 
 Loading recomputes and verifies the complete update view once. Preparing a
 mutation uses the retained logical vectors and semantic materialization, but
-does not advance the session. Only an exact
+does not advance the session. `prepare` returns only the candidate root. The
+caller requests the full result for a retained operation through
+`getPreparedResult` only when it needs the bundle, next view, or metrics. Only
+an exact
 `malt.materialization-receipt/v1` for the prepared bundle advances the retained
 base.
 
@@ -96,7 +108,7 @@ is no longer reachable from the accepted view or a remaining prepared
 candidate. KZG and IPA sessions are unrelated because they live in different
 Workers.
 
-The stateless and full session compute paths return
+The stateless compute path and `getPreparedResult` return the protocol-owned
 `malt.writer-compute-result/v1`:
 
 ```json
@@ -105,20 +117,6 @@ The stateless and full session compute paths return
   "bundle": {},
   "next_view": {},
   "metrics": {}
-}
-```
-
-The compact session path performs and retains the same full computation, but
-only crosses the Worker boundary with the complete root summary used by the
-comparison runner:
-
-```json
-{
-  "profile": "malt.writer-prepare-summary/v1",
-  "operation_id": "write-1",
-  "candidate": "bag...",
-  "outputs": [{"transition_id": "root", "root": "bag..."}],
-  "payload_cids": ["baf..."]
 }
 ```
 
@@ -134,9 +132,10 @@ instance:
 globalThis.maltComputeClientRootV1(...)
 globalThis.maltWriterLoadSessionV1(...)
 globalThis.maltWriterPrepareSessionV1(...)
-globalThis.maltWriterPrepareSessionCompactV1(...)
+globalThis.maltWriterGetPreparedResultV1(...)
 globalThis.maltWriterAcceptSessionReceiptV1(...)
 globalThis.maltWriterDiscardSessionCandidateV1(...)
+globalThis.maltWriterCloseSessionV1()
 ```
 
 Code that starts the Go runtime directly must set

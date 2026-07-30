@@ -83,18 +83,20 @@ try {
     encoder.encode(JSON.stringify(kzgFixture.update_view)),
   );
   assert.equal(loadedRoot, kzgFixture.update_view.base_root);
-  const compactJSON = await writers.prepareCompact(
+  const kzgCandidate = await writers.prepare(
     "kzg",
     encoder.encode(kzgFixture.operation_id),
     encoder.encode(JSON.stringify(kzgFixture.semantic_intent)),
   );
-  assert.deepStrictEqual(JSON.parse(compactJSON), {
-    profile: "malt.writer-prepare-summary/v1",
-    operation_id: kzgFixture.expected_bundle.operation_id,
-    candidate: kzgFixture.expected_bundle.candidate,
-    outputs: kzgFixture.expected_bundle.outputs,
-    payload_cids: kzgFixture.expected_bundle.payload_cids,
-  });
+  assert.equal(kzgCandidate, kzgFixture.expected_bundle.candidate);
+  const kzgPreparedJSON = await writers.getPreparedResult(
+    "kzg",
+    encoder.encode(kzgFixture.operation_id),
+  );
+  const kzgPrepared = JSON.parse(kzgPreparedJSON);
+  assert.equal(kzgPrepared.profile, "malt.writer-compute-result/v1");
+  assert.deepStrictEqual(kzgPrepared.bundle, kzgFixture.expected_bundle);
+  assert.deepStrictEqual(kzgPrepared.next_view, kzgFixture.expected_next_view);
   const kzgWorkFinishedAt = performance.now();
   assert.equal(
     writers.status("ipa").state,
@@ -111,18 +113,44 @@ try {
     encoder.encode(JSON.stringify(ipaFixture.update_view)),
   );
   assert.equal(ipaLoadedRoot, ipaFixture.update_view.base_root);
-  const ipaCompactJSON = await writers.prepareCompact(
+  const ipaCandidate = await writers.prepare(
     "ipa",
     encoder.encode(ipaFixture.operation_id),
     encoder.encode(JSON.stringify(ipaFixture.semantic_intent)),
   );
-  assert.deepStrictEqual(JSON.parse(ipaCompactJSON), {
-    profile: "malt.writer-prepare-summary/v1",
-    operation_id: ipaFixture.expected_bundle.operation_id,
-    candidate: ipaFixture.expected_bundle.candidate,
-    outputs: ipaFixture.expected_bundle.outputs,
-    payload_cids: ipaFixture.expected_bundle.payload_cids,
-  });
+  assert.equal(ipaCandidate, ipaFixture.expected_bundle.candidate);
+  const ipaPreparedJSON = await writers.getPreparedResult(
+    "ipa",
+    encoder.encode(ipaFixture.operation_id),
+  );
+  const ipaPrepared = JSON.parse(ipaPreparedJSON);
+  assert.equal(ipaPrepared.profile, "malt.writer-compute-result/v1");
+  assert.deepStrictEqual(ipaPrepared.bundle, ipaFixture.expected_bundle);
+  assert.deepStrictEqual(ipaPrepared.next_view, ipaFixture.expected_next_view);
+
+  const orderedReload = writers.load(
+    "kzg",
+    encoder.encode(JSON.stringify(kzgFixture.update_view)),
+  );
+  const orderedClose = writers.closeSession("kzg");
+  assert.equal(await orderedReload, kzgFixture.update_view.base_root);
+  assert.equal(await orderedClose, undefined);
+  await assert.rejects(
+    writers.prepare(
+      "kzg",
+      encoder.encode(`${kzgFixture.operation_id}-after-close`),
+      encoder.encode(JSON.stringify(kzgFixture.semantic_intent)),
+    ),
+    /has no update view/,
+    "stateful Worker RPCs did not preserve load-then-close arrival order",
+  );
+  assert.equal(writers.status("kzg").state, "ready");
+  assert.equal(writers.status("ipa").state, "ready");
+  assert.equal(
+    await writers.getPreparedResult("ipa", encoder.encode(ipaFixture.operation_id)),
+    ipaPreparedJSON,
+    "closing the KZG session affected the IPA prepared candidate",
+  );
 
   console.log(
     [
@@ -134,5 +162,5 @@ try {
     ].join("; "),
   );
 } finally {
-  writers.terminate();
+  writers.terminateAll();
 }

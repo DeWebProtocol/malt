@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -161,16 +162,23 @@ func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
 	}
 
 	const operationID = "session-operation-1"
-	raw, err := session.prepare(t.Context(), operationID, intentJSON)
+	preparedRoot, err := session.prepare(t.Context(), operationID, intentJSON)
 	if err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
 	if _, err := session.prepare(t.Context(), operationID, intentJSON); err == nil {
 		t.Fatal("session accepted a duplicate prepared operation")
 	}
+	raw, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatalf("getPreparedResult failed: %v", err)
+	}
 	response, err := protocol.DecodeWriterComputeResult(raw)
 	if err != nil {
 		t.Fatalf("DecodeWriterComputeResult failed: %v", err)
+	}
+	if preparedRoot != response.Bundle.Candidate {
+		t.Fatalf("prepared root = %s, result candidate = %s", preparedRoot, response.Bundle.Candidate)
 	}
 	bundle, err := response.Bundle.Core()
 	if err != nil {
@@ -197,6 +205,21 @@ func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
 	if got := session.session.BaseRoot(); !got.Equals(view.BaseRoot) {
 		t.Fatalf("base advanced after bad receipt: %s", got)
 	}
+	stillPrepared, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatalf("getPreparedResult after rejected receipt failed: %v", err)
+	}
+	if !bytes.Equal(stillPrepared, raw) {
+		t.Fatal("rejected receipt changed the prepared result")
+	}
+	stillPrepared[0] ^= 0xff
+	unmodified, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatalf("getPreparedResult after caller mutation failed: %v", err)
+	}
+	if !bytes.Equal(unmodified, raw) {
+		t.Fatal("caller mutation changed the retained prepared result")
+	}
 
 	receiptJSON, _ := json.Marshal(receipt)
 	acceptedRoot, err := session.acceptReceipt(operationID, receiptJSON)
@@ -208,6 +231,9 @@ func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
 	}
 	if got := session.session.BaseRoot(); !got.Equals(bundle.Candidate) {
 		t.Fatalf("retained base = %s, want %s", got, bundle.Candidate)
+	}
+	if _, err := session.getPreparedResult(operationID); err == nil {
+		t.Fatal("accepted operation remained available as a prepared result")
 	}
 	fresh, err := newSessionComputer(computer)
 	if err != nil {
@@ -264,9 +290,12 @@ func TestSessionComputerDiscardReclaimsCandidateSnapshots(t *testing.T) {
 	if got := session.store.EntryCount(); got != baseline {
 		t.Fatalf("discard retained %d entries, want loaded baseline %d", got, baseline)
 	}
+	if _, err := session.getPreparedResult("discard-operation"); err == nil {
+		t.Fatal("discarded operation remained available as a prepared result")
+	}
 }
 
-func TestSessionComputerPrepareCompactReturnsCompleteRootSummary(t *testing.T) {
+func TestSessionComputerCloseReleasesStateAndAllowsReload(t *testing.T) {
 	view, intent := computeFixture(t, maltcid.BackendKindKZG)
 	wireView, err := protocol.NewUpdateView(view)
 	if err != nil {
@@ -286,50 +315,76 @@ func TestSessionComputerPrepareCompactReturnsCompleteRootSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	session.closeSession()
+	session.closeSession()
+	if _, err := session.prepare(t.Context(), "before-load", intentJSON); err == nil {
+		t.Fatal("closed session prepared without a loaded update view")
+	}
 	if _, err := session.load(t.Context(), viewJSON); err != nil {
 		t.Fatal(err)
 	}
+	const operationID = "close-operation"
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err != nil {
+		t.Fatal(err)
+	}
+	firstStore := session.store
+	firstSession := session.session
+	if firstStore.EntryCount() == 0 {
+		t.Fatal("loaded and prepared session retained no materialized state")
+	}
+	if _, err := session.load(t.Context(), []byte(`{}`)); err == nil {
+		t.Fatal("session accepted an invalid replacement update view")
+	}
+	if session.store != firstStore || session.session != firstSession {
+		t.Fatal("failed load replaced the current session")
+	}
+	if _, err := session.getPreparedResult(operationID); err != nil {
+		t.Fatalf("failed load discarded the prepared result: %v", err)
+	}
 
-	const operationID = "compact-operation"
-	raw, err := session.prepareCompact(t.Context(), operationID, intentJSON)
-	if err != nil {
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
 		t.Fatal(err)
 	}
-	var summary writerPrepareSummary
-	if err := json.Unmarshal(raw, &summary); err != nil {
-		t.Fatal(err)
+	if got := firstStore.EntryCount(); got != 0 {
+		t.Fatalf("successful replacement retained %d entries in the old store", got)
 	}
-	if summary.Profile != writerPrepareSummaryV1 {
-		t.Fatalf("profile = %q, want %q", summary.Profile, writerPrepareSummaryV1)
+	if session.store == firstStore {
+		t.Fatal("successful replacement reused the old store")
 	}
-	if summary.OperationID != operationID {
-		t.Fatalf("operation ID = %q, want %q", summary.OperationID, operationID)
+	if _, err := session.getPreparedResult(operationID); err == nil {
+		t.Fatal("successful replacement retained an old prepared result")
 	}
-	candidate := session.prepared[operationID]
-	if summary.Candidate != candidate.result.Bundle.Candidate.String() {
-		t.Fatalf("candidate = %q, want %q", summary.Candidate, candidate.result.Bundle.Candidate)
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err != nil {
+		t.Fatalf("prepare after successful replacement failed: %v", err)
 	}
-	if got, want := len(summary.Outputs), len(candidate.result.Bundle.Outputs); got != want {
-		t.Fatalf("outputs = %d, want %d", got, want)
+	secondStore := session.store
+	session.closeSession()
+	session.closeSession()
+	if got := secondStore.EntryCount(); got != 0 {
+		t.Fatalf("closed session retained %d materialized entries", got)
 	}
-	for index, output := range candidate.result.Bundle.Outputs {
-		if got := summary.Outputs[index]; got.TransitionID != output.TransitionID || got.Root != output.Root.String() {
-			t.Fatalf("output %d = %+v, want %s/%s", index, got, output.TransitionID, output.Root)
-		}
+	if session.session != nil || session.store != nil || session.view.BaseRoot.Defined() || session.prepared != nil || session.preparedResponseBytes != 0 {
+		t.Fatal("close did not clear all retained session state")
 	}
-	if got, want := len(summary.PayloadCIDs), len(candidate.result.Bundle.PayloadCIDs); got != want {
-		t.Fatalf("payload CIDs = %d, want %d", got, want)
+	if _, err := session.getPreparedResult(operationID); err == nil {
+		t.Fatal("closed session returned a prepared result")
 	}
-	for index, payload := range candidate.result.Bundle.PayloadCIDs {
-		if summary.PayloadCIDs[index] != payload.String() {
-			t.Fatalf("payload CID %d = %q, want %q", index, summary.PayloadCIDs[index], payload)
-		}
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err == nil {
+		t.Fatal("closed session prepared without reload")
 	}
-	if candidate.responseBytes <= len(raw) {
-		t.Fatalf("retained full response = %d bytes, compact response = %d bytes", candidate.responseBytes, len(raw))
+	if _, err := session.acceptReceipt(operationID, []byte(`{}`)); err == nil {
+		t.Fatal("closed session accepted a receipt")
 	}
-	if err := session.discard(operationID); err != nil {
-		t.Fatal(err)
+	if err := session.discard(operationID); err == nil {
+		t.Fatal("closed session discarded a candidate")
+	}
+
+	if _, err := session.load(t.Context(), viewJSON); err != nil {
+		t.Fatalf("reload after close failed: %v", err)
+	}
+	if _, err := session.prepare(t.Context(), "after-close", intentJSON); err != nil {
+		t.Fatalf("prepare after reload failed: %v", err)
 	}
 }
 
