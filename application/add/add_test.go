@@ -27,6 +27,15 @@ func TestClassifyStagedTargetFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyMapRoot, err := maltcid.NewTypedCIDForVersion(
+		maltcid.LegacyMALTVersionID,
+		maltcid.SemanticKindMap,
+		maltcid.BackendKindKZG,
+		make([]byte, maltcid.KZGCommitmentSize),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw := testCID(t, "raw")
 	invalidHash, err := mh.Sum([]byte("not a commitment"), mh.SHA2_256, -1)
 	if err != nil {
@@ -39,7 +48,7 @@ func TestClassifyStagedTargetFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	unknownBackend := cid.NewCidV1(0x3011ff, identityCommitment)
-	unknownVersion := cid.NewCidV1(0x302101, identityCommitment)
+	unknownVersion := cid.NewCidV1(0x30f101, identityCommitment)
 
 	for name, test := range map[string]struct {
 		target      cid.Cid
@@ -48,6 +57,7 @@ func TestClassifyStagedTargetFailsClosed(t *testing.T) {
 		wantErr     bool
 	}{
 		"map":                {target: mapRoot, wantKind: unixfs.StagedKindDirectory, wantStorage: "map"},
+		"legacy map":         {target: legacyMapRoot, wantKind: unixfs.StagedKindDirectory, wantStorage: "map"},
 		"list":               {target: listRoot, wantKind: unixfs.StagedKindFile, wantStorage: "list"},
 		"raw":                {target: raw, wantKind: unixfs.StagedKindFile, wantStorage: "raw"},
 		"invalid typed root": {target: invalidTypedRoot, wantErr: true},

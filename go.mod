@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
-	github.com/dewebprotocol/malt v0.0.7-0.20260723022756-6c27d58b07d0
+	github.com/dewebprotocol/malt v0.0.7-0.20260730150328-3907518359ff
 	github.com/ipfs/boxo v0.41.0
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
@@ -18,6 +18,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
+	golang.org/x/term v0.44.0
 )
 
 require (
@@ -68,7 +69,6 @@ require (
 	go.uber.org/zap v1.28.0 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
