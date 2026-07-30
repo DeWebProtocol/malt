@@ -327,10 +327,20 @@ func (s *sessionComputer) retainMaterializedRoots() {
 	}
 	retain := make(map[string][]cid.Cid)
 	addViewRoots(retain, s.view)
+	if s.session != nil {
+		addWorkingRoots(retain, s.session.WorkingRoots())
+	}
 	for _, candidate := range s.prepared {
 		addViewRoots(retain, candidate.result.NextView)
 	}
 	s.store.RetainRoots(retain)
+}
+
+func addWorkingRoots(retain map[string][]cid.Cid, roots map[string]cid.Cid) {
+	for objectID, root := range roots {
+		scope := "client-root/v1/" + objectID
+		retain[scope] = append(retain[scope], root)
+	}
 }
 
 func addViewRoots(retain map[string][]cid.Cid, view mutation.UpdateView) {

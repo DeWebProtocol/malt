@@ -332,6 +332,203 @@ func TestSessionComputerAdvancesOnlyAfterExactReceipt(t *testing.T) {
 	}
 }
 
+func TestSessionComputerRetainsLegacyWorkingRootsAcrossAcceptedOperations(t *testing.T) {
+	for _, backend := range []maltcid.BackendKind{maltcid.BackendKindKZG, maltcid.BackendKindIPA} {
+		t.Run(string(backend), func(t *testing.T) {
+			ctx := context.Background()
+			computer, err := newComputer(string(backend))
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacyStore := materializermemory.New(true)
+			legacyMap, err := mappingradix.NewMapForVersion(
+				computer.schemes[backend], legacyStore, maltcid.LegacyMALTVersionID,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			childOld := payloadCID(t, string(backend)+"-legacy-child-old")
+			childNew := payloadCID(t, string(backend)+"-legacy-child-new")
+			childRoot, err := legacyMap.Commit(ctx, "client-root/v1/child", mapping.NewViewFrom(map[string]cid.Cid{
+				"value": childOld,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			childEntries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{{
+				Coordinate: wasmMapCoordinate(t, "value"), Target: arcset.NewCASTarget(childOld),
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rootOld := payloadCID(t, string(backend)+"-legacy-root-old")
+			rootNew := payloadCID(t, string(backend)+"-legacy-root-new")
+			rootRoot, err := legacyMap.Commit(ctx, "client-root/v1/root", mapping.NewViewFrom(map[string]cid.Cid{
+				"child": childRoot,
+				"value": rootOld,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rootEntries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{
+				{Coordinate: wasmMapCoordinate(t, "child"), Target: arcset.NewMapTarget(childRoot)},
+				{Coordinate: wasmMapCoordinate(t, "value"), Target: arcset.NewCASTarget(rootOld)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			view := mutation.UpdateView{
+				Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
+				BaseRoot: rootRoot, Bounds: mutation.UpdateViewBounds{MaxObjects: 4, MaxTotalEntries: 16, MaxDepth: 4},
+				Objects: []mutation.UpdateObject{
+					{ObjectID: "root", Root: rootRoot, Kind: arcset.KindMap, Entries: rootEntries},
+					{ObjectID: "child", Root: childRoot, Kind: arcset.KindMap, Entries: childEntries},
+				},
+			}
+			wireView, err := protocol.NewUpdateView(view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			viewJSON, err := json.Marshal(wireView)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, err := newSessionComputer(computer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.load(ctx, viewJSON); err != nil {
+				t.Fatalf("load legacy view: %v", err)
+			}
+			workingRoots := session.session.WorkingRoots()
+			childWorkingRoot := workingRoots["child"]
+			if !childWorkingRoot.Defined() || maltcid.VersionIDOf(childWorkingRoot) != maltcid.MALTVersionID || childWorkingRoot.Equals(childRoot) {
+				t.Fatalf("child working root = %s, want migrated current root distinct from %s", childWorkingRoot, childRoot)
+			}
+			workingRoots["child"] = cid.Undef
+			if got := session.session.WorkingRoots()["child"]; !got.Equals(childWorkingRoot) {
+				t.Fatal("caller mutation changed the session working-root projection")
+			}
+
+			beforeRoot, afterRoot := arcset.NewCASTarget(rootOld), arcset.NewCASTarget(rootNew)
+			firstIntent := mutation.SemanticIntent{
+				Profile: mutation.SemanticIntentProfile, BaseRoot: rootRoot, TopOutputID: "root-output-1",
+				Transitions: []mutation.IntentTransition{{
+					ID: "root-output-1", ObjectID: "root", OldRoot: rootRoot,
+					Kind: arcset.KindMap, Backend: backend,
+					Changes: []mutation.IntentChange{{
+						Coordinate: wasmMapCoordinate(t, "value"), Before: &beforeRoot, After: &afterRoot,
+					}},
+				}},
+			}
+			firstCandidate := prepareAndAcceptSessionIntent(t, session, "legacy-root-first", firstIntent)
+			if got := wasmObjectRootByID(t, session.view, "child"); !got.Equals(childRoot) {
+				t.Fatalf("first next view child root = %s, want legacy root %s", got, childRoot)
+			}
+
+			beforeChild := arcset.NewMapTarget(childRoot)
+			beforeChildValue, afterChildValue := arcset.NewCASTarget(childOld), arcset.NewCASTarget(childNew)
+			secondIntent := mutation.SemanticIntent{
+				Profile: mutation.SemanticIntentProfile, BaseRoot: firstCandidate, TopOutputID: "root-output-2",
+				Transitions: []mutation.IntentTransition{
+					{
+						ID: "root-output-2", ObjectID: "root", OldRoot: firstCandidate,
+						Kind: arcset.KindMap, Backend: backend,
+						Changes: []mutation.IntentChange{{
+							Coordinate: wasmMapCoordinate(t, "child"), Before: &beforeChild,
+							OutputID: "child-output-2", OutputKind: arcset.TargetKindMap,
+						}},
+					},
+					{
+						ID: "child-output-2", ObjectID: "child", OldRoot: childRoot,
+						Kind: arcset.KindMap, Backend: backend, ExpectedUses: 1,
+						Changes: []mutation.IntentChange{{
+							Coordinate: wasmMapCoordinate(t, "value"), Before: &beforeChildValue, After: &afterChildValue,
+						}},
+					},
+				},
+			}
+			secondCandidate := prepareAndAcceptSessionIntent(t, session, "legacy-child-second", secondIntent)
+			if got := session.session.BaseRoot(); !got.Equals(secondCandidate) {
+				t.Fatalf("accepted base = %s, want %s", got, secondCandidate)
+			}
+		})
+	}
+}
+
+func wasmMapCoordinate(t *testing.T, key string) arcset.CanonicalCoordinate {
+	t.Helper()
+	coordinate, err := arcset.NewMapCoordinate(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coordinate
+}
+
+func wasmObjectRootByID(t *testing.T, view mutation.UpdateView, objectID string) cid.Cid {
+	t.Helper()
+	for _, object := range view.Objects {
+		if object.ObjectID == objectID {
+			return object.Root
+		}
+	}
+	t.Fatalf("update view has no object %q", objectID)
+	return cid.Undef
+}
+
+func prepareAndAcceptSessionIntent(t *testing.T, session *sessionComputer, operationID string, intent mutation.SemanticIntent) cid.Cid {
+	t.Helper()
+	wireIntent, err := protocol.NewSemanticIntent(session.view, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intentJSON, err := json.Marshal(wireIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.prepare(t.Context(), operationID, intentJSON); err != nil {
+		t.Fatalf("prepare %s: %v", operationID, err)
+	}
+	resultJSON, err := session.getPreparedResult(operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := protocol.DecodeWriterComputeResult(resultJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := result.Bundle.Core()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := bundle.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := protocol.NewMaterializationReceipt(mutation.MaterializationReceipt{
+		Profile: mutation.MaterializationReceiptProfile, OperationID: operationID,
+		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate,
+		BundleDigest: digest, DurableBoundary: "unit-memory-v1",
+	}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptJSON, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := session.acceptReceipt(operationID, receiptJSON)
+	if err != nil {
+		t.Fatalf("accept %s: %v", operationID, err)
+	}
+	if accepted != bundle.Candidate.String() {
+		t.Fatalf("accepted root = %s, want %s", accepted, bundle.Candidate)
+	}
+	return bundle.Candidate
+}
+
 func TestSessionComputerDiscardReclaimsCandidateSnapshots(t *testing.T) {
 	view, intent := computeFixture(t, maltcid.BackendKindIPA)
 	wireView, err := protocol.NewUpdateView(view)

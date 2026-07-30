@@ -57,6 +57,26 @@ func (s *Session) BaseRoot() cid.Cid {
 	return s.current.View.BaseRoot
 }
 
+// WorkingRoots returns a detached object-to-root projection of the semantic
+// materialization currently used for the next incremental update. During a
+// legacy view migration these roots may differ from the roots declared by the
+// accepted view, so stateful callers must retain both sets.
+func (s *Session) WorkingRoots() map[string]cid.Cid {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.loaded {
+		return nil
+	}
+	roots := make(map[string]cid.Cid, len(s.current.workingRoots))
+	for objectID, root := range s.current.workingRoots {
+		roots[objectID] = root
+	}
+	return roots
+}
+
 // Prepare computes a candidate against the session's current accepted base.
 func (s *Session) Prepare(ctx context.Context, operationID string, intent mutation.SemanticIntent) (ComputeResult, error) {
 	if s == nil {
