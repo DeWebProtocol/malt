@@ -19,6 +19,50 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whitespace
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero=0000000000000000000000000000000000000000
+
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              head="$PR_HEAD_SHA"
+              mode=merge-base
+              ;;
+            push)
+              base="$PUSH_BEFORE_SHA"
+              head="$GITHUB_SHA"
+              mode=direct
+              ;;
+            *)
+              echo "unsupported event: $EVENT_NAME" >&2
+              exit 2
+              ;;
+          esac
+
+          if [[ -z "$base" || "$base" == "$zero" ]]; then
+            echo "missing usable base SHA for $EVENT_NAME" >&2
+            exit 2
+          fi
+
+          git rev-parse --verify "${base}^{commit}"
+          git rev-parse --verify "${head}^{commit}"
+
+          if [[ "$mode" == merge-base ]]; then
+            git diff --check "${base}...${head}"
+          else
+            git diff --check "$base" "$head"
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5

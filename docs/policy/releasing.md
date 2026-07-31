@@ -6,8 +6,16 @@ MALT core uses source tags for experimental releases.
 
 Run from the repository root:
 
+Set `MALT_RELEASE_BASE` to the previous authoritative source tag. For
+v0.0.7-rc.1, that tag is `v0.0.6`.
+
 ```bash
-git diff --check
+set -euo pipefail
+MALT_RELEASE_BASE=v0.0.6
+git fetch --prune --tags origin
+git rev-parse --verify "${MALT_RELEASE_BASE}^{commit}"
+git merge-base --is-ancestor "$MALT_RELEASE_BASE" HEAD
+git diff --check "${MALT_RELEASE_BASE}...HEAD"
 test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go test ./...
 GOARCH=386 go test ./auth/commitment/kzg ./auth/commitment/ipa
