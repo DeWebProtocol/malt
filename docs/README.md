@@ -28,6 +28,7 @@ research narrative remain in `DeWebProtocol/documents`.
 - [Threat model](./policy/threat-model.md)
 - [Compatibility policy](./policy/compatibility.md)
 - [Release process](./policy/releasing.md)
+- [v0.0.7-rc.1 release notes](./releases/v0.0.7.md)
 - [v0.0.6 release notes](./releases/v0.0.6.md)
 - [v0.0.5 release notes](./releases/v0.0.5.md)
 - [v0.0.4 release notes](./releases/v0.0.4.md)
@@ -61,9 +62,10 @@ The current public-core contracts are
 [MIP-1012: Segment Path Resolution](./mips/mip-1012-segment-path-resolution.md),
 the final
 [MIP-1013: Client, Gateway, And Core Responsibility Boundary](./mips/mip-1013-client-gateway-core-boundary.md),
-the operation-specific resolve/read profiles introduced by that MIP, the
-experimental post-v0.0.6
-[client-root contract](./spec/client-root-contract.md), and the frozen v0.0.4
+the operation-specific resolve/read profiles introduced by that MIP,
+`malt.map-proof/v0alpha1`, and the experimental
+[client-root contract](./spec/client-root-contract.md) included in
+v0.0.7-rc.1, together with the frozen v0.0.4
 artifact compatibility profile recorded by
 [MIP-1004](./mips/mip-1004-resolve-prooflist-artifact-schema.md).
 

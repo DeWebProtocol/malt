@@ -12,11 +12,12 @@ behavior, wire formats, and proof semantics in this folder.
 
 The current transport-neutral proof-bearing contracts are
 `malt.resolve/v0alpha1`, `malt.read/v0alpha1`, and
-`malt.map-proof/v0alpha1`. The post-release client-root
+`malt.map-proof/v0alpha1`. The experimental client-root
 contracts are `malt.update-view/v1`, `malt.semantic-intent/v1`,
 `malt.client-root-bundle/v1`, `malt.client-root-materialization/v1`,
 `malt.writer-compute-result/v2`, and `malt.materialization-receipt/v1`. The
-v0.0.4 `malt.artifact/v0alpha2` profile
+client-root contracts are included in v0.0.7-rc.1. The v0.0.4
+`malt.artifact/v0alpha2` profile
 remains frozen for compatibility. See [MIP-1012](../mips/mip-1012-segment-path-resolution.md) and
 [MIP-1013](../mips/mip-1013-client-gateway-core-boundary.md).
 

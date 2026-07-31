@@ -12,12 +12,13 @@ Gateway, native client, browser/WASM, and future language SDK tests consume the
 same checked-in bytes; they do not redefine proof semantics or maintain edited
 copies.
 
-The corpus version is `malt.resolve-read.conformance/v1`. It is independent of
-the two enclosed operation profiles and of the typed-root `MALTVersionID=2`.
-This corpus shipped with v0.0.6 and is immutable: a vector ID, its input, and
-its expected verdict cannot change. Later behavioral or encoding changes use a
-new corpus version. Error strings, timing, and implementation-specific
-exception types are not conformance outputs.
+The corpus version is `malt.resolve-read.conformance/v1`. It is independent
+of the enclosed operation profiles and uses structured typed-root
+`MALTVersionID=2`. It was introduced on `main` after v0.0.6 and did not
+ship with that tag. It is now frozen as the structured-version-2 corpus: a
+vector ID, its input, and its expected verdict cannot change. v0.0.7-rc.1
+publishes the v2 corpus as the current version. Error strings, timing, and
+implementation-specific exception types are not conformance outputs.
 
 ## File And Envelope
 

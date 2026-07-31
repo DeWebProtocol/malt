@@ -14,12 +14,11 @@ copies.
 
 The corpus version is `malt.resolve-read.conformance/v2`. It is independent of
 the two enclosed operation profiles and of typed-root `MALTVersionID=3`; the
-verifier separately retains explicit v2 typed-root compatibility. Before this
-corpus is released, an intentional encoding change may regenerate it as part
-of the same reviewed change. After release, a vector ID, its input, and its
-expected verdict are immutable; later changes require v3. Error strings,
-timing, and implementation-specific exception types are not conformance
-outputs.
+verifier separately retains explicit v2 typed-root compatibility. This corpus
+is first released with v0.0.7-rc.1. From that tag, a vector ID, its input, and
+its expected verdict are immutable; later behavioral or encoding changes
+require a new corpus version. Error strings, timing, and
+implementation-specific exception types are not conformance outputs.
 
 ## File And Envelope
 

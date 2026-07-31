@@ -78,6 +78,16 @@ func TestResolveReadV1CorpusDigestIsImmutable(t *testing.T) {
 	}
 }
 
+func TestResolveReadV2CorpusDigestIsImmutable(t *testing.T) {
+	data, err := conformance.BytesVersion(conformance.ResolveReadV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != "f96aad71c4b60a3073f823bb2aa0b05307f18400630e1920ad25889beb4600d5" {
+		t.Fatalf("v2 corpus digest changed: %s", got)
+	}
+}
+
 func TestResolveReadV2CoverageMatrix(t *testing.T) {
 	corpus, err := conformance.Load()
 	if err != nil {

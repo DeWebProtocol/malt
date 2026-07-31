@@ -37,6 +37,12 @@ default `all` instance.
 non-membership pair. The caller constructs the request from its trusted root and intended query before
 passing the untrusted result to WASM. Schemas live in `protocol/schemas/`.
 
+The release gate `scripts/test-verifier-wasm-vectors.sh` runs the current
+Resolve/Read v2 conformance corpus together with runtime-generated Map-proof
+non-membership smoke vectors. It checks the same WASM artifact with all
+backends enabled and in backend-selected KZG and IPA runs, including
+acceptance, proof-tamper, cross-root, and wrong-key cases.
+
 For example:
 
 ```json

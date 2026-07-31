@@ -2,10 +2,11 @@ import { webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const [wasmPath, wasmExecPath, corpusPath, selectedBackend = "all"] = process.argv.slice(2);
+const [wasmPath, wasmExecPath, corpusPath, selectedBackend = "all", mapProofFixturePath] =
+  process.argv.slice(2);
 if (!wasmPath || !wasmExecPath || !corpusPath) {
   console.error(
-    "usage: node run-verifier-wasm-vectors.mjs <verifier.wasm> <wasm_exec.js> <vectors.json> [all|kzg|ipa]",
+    "usage: node run-verifier-wasm-vectors.mjs <verifier.wasm> <wasm_exec.js> <vectors.json> [all|kzg|ipa] [map-proof-fixtures.json]",
   );
   process.exit(2);
 }
@@ -26,6 +27,12 @@ const corpus = JSON.parse(await readFile(corpusPath, "utf8"));
 if (!Array.isArray(corpus.vectors) || corpus.vectors.length === 0) {
   throw new Error(`${corpusPath} does not contain a non-empty vectors array`);
 }
+const mapProofFixtures = mapProofFixturePath
+  ? JSON.parse(await readFile(mapProofFixturePath, "utf8"))
+  : { vectors: [] };
+if (!Array.isArray(mapProofFixtures.vectors)) {
+  throw new Error(`${mapProofFixturePath} does not contain a vectors array`);
+}
 
 globalThis.maltVerifierBackend = selectedBackend;
 const go = new globalThis.Go();
@@ -42,10 +49,11 @@ if (invalidMapProof.valid !== false || invalidMapProof.profile !== "malt.map-pro
   throw new Error("maltVerifyMapProof did not fail closed on an invalid verification envelope");
 }
 
+const allVectors = [...corpus.vectors, ...mapProofFixtures.vectors];
 const vectors =
   selectedBackend === "all"
-    ? corpus.vectors
-    : corpus.vectors.filter(
+    ? allVectors
+    : allVectors.filter(
         (vector) => vector.backend === selectedBackend || vector.backend === "none",
       );
 const seen = new Set();
@@ -71,14 +79,17 @@ for (const vector of vectors) {
 }
 
 if (failures.length > 0) {
-  console.error(`WASM ${selectedBackend} conformance failed (${failures.length}/${vectors.length}):`);
+  console.error(`WASM ${selectedBackend} verification failed (${failures.length}/${vectors.length}):`);
   for (const failure of failures) {
     console.error(`- ${failure}`);
   }
   process.exit(1);
 }
 
-console.log(`WASM ${selectedBackend} conformance passed (${vectors.length} vectors)`);
+const mapProofCount = vectors.filter((vector) => vector.operation === "map_proof").length;
+console.log(
+  `WASM ${selectedBackend} verification passed (${vectors.length - mapProofCount} Resolve/Read conformance vectors; ${mapProofCount} Map-proof smoke vectors)`,
+);
 process.exit(0);
 
 function selectVerifier(operation) {
@@ -87,6 +98,8 @@ function selectVerifier(operation) {
       return globalThis.maltVerifyResolve;
     case "read":
       return globalThis.maltVerifyRead;
+    case "map_proof":
+      return globalThis.maltVerifyMapProof;
     default:
       throw new Error(`unsupported operation ${JSON.stringify(operation)}`);
   }
