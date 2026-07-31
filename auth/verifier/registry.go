@@ -116,7 +116,7 @@ func NewDefaultBackendRegistry() (*BackendRegistry, error) {
 		return nil, err
 	}
 
-	ipaScheme, err := ipa.NewScheme()
+	ipaScheme, err := ipa.NewVerifierScheme()
 	if err != nil {
 		return nil, fmt.Errorf("creating IPA verifier backend: %w", err)
 	}

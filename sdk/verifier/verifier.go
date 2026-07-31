@@ -84,7 +84,7 @@ func NewForBackend(kind maltcid.BackendKind) (*Verifier, error) {
 	case maltcid.BackendKindKZG:
 		scheme, err = kzg.NewScheme()
 	case maltcid.BackendKindIPA:
-		scheme, err = ipa.NewScheme()
+		scheme, err = ipa.NewVerifierScheme()
 	default:
 		return nil, fmt.Errorf("unsupported verifier backend %q", kind)
 	}

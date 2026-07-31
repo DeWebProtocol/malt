@@ -4,10 +4,11 @@ go 1.25.7
 
 require (
 	github.com/consensys/gnark-crypto v0.20.1
-	github.com/crate-crypto/go-ipa v0.0.0-20240724233137-53bbb0ceb27a
 	github.com/crate-crypto/go-kzg-4844 v1.1.0
 	github.com/ipfs/go-cid v0.6.2
 	github.com/multiformats/go-multihash v0.2.3
+	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -21,7 +22,5 @@ require (
 	github.com/multiformats/go-varint v0.1.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )

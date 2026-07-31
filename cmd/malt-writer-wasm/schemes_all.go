@@ -16,6 +16,13 @@ func startupBackend() (string, error) {
 	return parseStartupBackend(os.Args[1:])
 }
 
+func startupProfile(backend string) string {
+	if backend == string(maltcid.BackendKindIPA) {
+		return string(ipa.ProfileFast)
+	}
+	return ""
+}
+
 func newComputer(backend string) (*computer, error) {
 	var (
 		kind   maltcid.BackendKind
@@ -31,7 +38,7 @@ func newComputer(backend string) (*computer, error) {
 		}
 	case string(maltcid.BackendKindIPA):
 		kind = maltcid.BackendKindIPA
-		scheme, err = ipa.NewScheme()
+		scheme, err = ipa.NewCommitterScheme(ipa.ProfileFast)
 		if err != nil {
 			return nil, fmt.Errorf("initialize IPA writer: %w", err)
 		}

@@ -16,6 +16,7 @@ const maxOperationIDBytes = 128
 
 func main() {
 	backend, initErr := startupBackend()
+	profile := startupProfile(backend)
 	var writer *computer
 	if initErr == nil {
 		writer, initErr = newComputer(backend)
@@ -28,6 +29,7 @@ func main() {
 		js.Global().Set("maltWriterInitError", initErr.Error())
 	}
 	js.Global().Set("maltWriterLoadedBackend", backend)
+	js.Global().Set("maltWriterLoadedProfile", profile)
 	registerStatelessCompute(writer, initErr)
 	registerReceiptValidation()
 	registerSessionFunctions(sessionWriter, initErr)

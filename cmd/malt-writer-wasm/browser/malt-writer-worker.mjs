@@ -23,6 +23,7 @@ const STATEFUL_RPC_METHODS = new Set([
 let initialized = false;
 let ready = false;
 let loadedBackend;
+let loadedProfile = "";
 let sessionRequestQueue = Promise.resolve();
 
 function errorMessage(error) {
@@ -33,6 +34,7 @@ function postFailure(backend, error) {
   self.postMessage({
     type: "failed",
     backend,
+    profile: loadedProfile,
     error: errorMessage(error),
   });
 }
@@ -43,7 +45,7 @@ async function initialize(message) {
   }
   initialized = true;
 
-  const { backend, module, wasmExecURL } = message;
+  const { backend, profile = "", module, wasmExecURL } = message;
   if (!SUPPORTED_BACKENDS.has(backend)) {
     throw new Error(`unsupported writer backend ${JSON.stringify(backend)}`);
   }
@@ -57,6 +59,7 @@ async function initialize(message) {
   }
 
   loadedBackend = backend;
+  loadedProfile = profile;
   await import(wasmExecURL);
   if (typeof globalThis.Go !== "function") {
     throw new Error(`${wasmExecURL} did not install the Go WASM runtime`);
@@ -93,6 +96,11 @@ async function initialize(message) {
       `MALT writer loaded backend ${JSON.stringify(globalThis.maltWriterLoadedBackend)}, expected ${JSON.stringify(backend)}`,
     );
   }
+  if (globalThis.maltWriterLoadedProfile !== profile) {
+    throw new Error(
+      `MALT writer loaded profile ${JSON.stringify(globalThis.maltWriterLoadedProfile)}, expected ${JSON.stringify(profile)}`,
+    );
+  }
   for (const functionName of Object.values(RPC_FUNCTIONS)) {
     if (typeof globalThis[functionName] !== "function") {
       throw new Error(`MALT writer did not register ${functionName}`);
@@ -100,7 +108,7 @@ async function initialize(message) {
   }
 
   ready = true;
-  self.postMessage({ type: "ready", backend });
+  self.postMessage({ type: "ready", backend, profile });
 }
 
 async function handleRequest(message) {

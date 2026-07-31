@@ -5,14 +5,15 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 
-	multiproof "github.com/crate-crypto/go-ipa"
-	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
-	"github.com/crate-crypto/go-ipa/banderwagon"
-	"github.com/crate-crypto/go-ipa/common"
-	ipa "github.com/crate-crypto/go-ipa/ipa"
 	"github.com/dewebprotocol/malt/auth/commitment"
+	multiproof "github.com/dewebprotocol/malt/internal/third_party/goipa"
+	"github.com/dewebprotocol/malt/internal/third_party/goipa/bandersnatch/fr"
+	"github.com/dewebprotocol/malt/internal/third_party/goipa/banderwagon"
+	"github.com/dewebprotocol/malt/internal/third_party/goipa/common"
+	ipa "github.com/dewebprotocol/malt/internal/third_party/goipa/ipa"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -29,6 +30,10 @@ const (
 	MaxCacheEntries = 1024
 )
 
+// ParameterSetID identifies the fixed IPA SRS serialization hashed by
+// ParameterSHA256.
+const ParameterSetID = "malt.ipa-parameters/v1"
+
 const (
 	singleTranscriptLabel = "malt-ipa"
 	batchTranscriptLabel  = "malt-ipa-batch"
@@ -36,21 +41,93 @@ const (
 
 // Scheme implements an IPA-based index commitment backend.
 type Scheme struct {
-	ipaConfig *ipa.IPAConfig
+	ipaConfig    *ipa.IPAConfig
+	profile      CommitterProfile
+	verifierOnly bool
 }
 
 var _ commitment.IndexOpener = (*Scheme)(nil)
 
-// NewScheme creates a new IPA commitment scheme.
+// CommitterProfile selects an IPA fixed-base MSM memory/performance tradeoff.
+// Profiles never change the SRS, commitment bytes, proof bytes, or typed CID.
+type CommitterProfile string
+
+const (
+	// ProfileDirect retains no fixed-base table and performs a generic MSM for
+	// every commitment.
+	ProfileDirect CommitterProfile = "direct"
+	// ProfileCompact retains a uniform 4-bit fixed-base table (about 12 MiB of
+	// normalized curve points).
+	ProfileCompact CommitterProfile = "compact"
+	// ProfileFast retains the original Verkle-optimized table (about 334 MiB of
+	// normalized curve points).
+	ProfileFast CommitterProfile = "fast"
+)
+
+// NewScheme creates the original fast IPA commitment scheme. New browser
+// callers should select a profile explicitly with NewCommitterScheme.
 func NewScheme() (*Scheme, error) {
-	ipaConfig, err := ipa.NewIPASettings()
+	return NewCommitterScheme(ProfileFast)
+}
+
+// NewVerifierScheme creates an IPA verification scheme without a fixed-base
+// commitment table. Its execution methods fail closed if called.
+func NewVerifierScheme() (*Scheme, error) {
+	return &Scheme{
+		ipaConfig:    ipa.NewIPASettingsForVerifier(),
+		verifierOnly: true,
+	}, nil
+}
+
+// NewCommitterScheme creates an IPA scheme using one explicit MSM profile.
+func NewCommitterScheme(profile CommitterProfile) (*Scheme, error) {
+	var upstreamProfile ipa.MSMProfile
+	switch profile {
+	case ProfileDirect:
+		upstreamProfile = ipa.MSMProfileDirect
+	case ProfileCompact:
+		upstreamProfile = ipa.MSMProfileCompact
+	case ProfileFast:
+		upstreamProfile = ipa.MSMProfileFast
+	default:
+		return nil, fmt.Errorf("unsupported IPA committer profile %q", profile)
+	}
+
+	ipaConfig, err := ipa.NewIPASettingsWithProfile(upstreamProfile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create IPA settings: %w", err)
+		return nil, fmt.Errorf("failed to create IPA %s settings: %w", profile, err)
 	}
 
 	return &Scheme{
 		ipaConfig: ipaConfig,
+		profile:   profile,
 	}, nil
+}
+
+// CommitterProfile reports the selected execution profile. The second return
+// value is false for a verification-only scheme.
+func (s *Scheme) CommitterProfile() (CommitterProfile, bool) {
+	if s == nil || s.verifierOnly {
+		return "", false
+	}
+	return s.profile, true
+}
+
+// ParameterSHA256 fingerprints the domain-separated compressed SRS followed
+// by Q. It is suitable for release provenance and is independent of the
+// committer performance profile.
+func ParameterSHA256() string {
+	config := ipa.NewIPASettingsForVerifier()
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(ParameterSetID))
+	_, _ = digest.Write([]byte{0})
+	for i := range config.SRS {
+		point := config.SRS[i].Bytes()
+		_, _ = digest.Write(point[:])
+	}
+	q := config.Q.Bytes()
+	_, _ = digest.Write(q[:])
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // MaxValues returns the maximum number of authenticated slots.
@@ -80,6 +157,9 @@ func (s *Scheme) Prove(values []commitment.Cell, index uint64) (cid.Cid, commitm
 // the IPA commitment. The generated proof is verified before it is returned so
 // inconsistent client materialization fails closed.
 func (s *Scheme) ProveAtRoot(root cid.Cid, values []commitment.Cell, index uint64) (commitment.Cell, []byte, error) {
+	if err := s.requireCommitter(); err != nil {
+		return nil, nil, err
+	}
 	if _, err := maltcid.ExtractCommitment(root); err != nil {
 		return nil, nil, fmt.Errorf("invalid proof root: %w", err)
 	}
@@ -115,6 +195,9 @@ type opening struct {
 // PrepareOpening computes a commitment once and returns an opaque witness
 // whose Open method reuses that commitment in the IPA transcript.
 func (s *Scheme) PrepareOpening(values []commitment.Cell) (commitment.IndexOpening, error) {
+	if err := s.requireCommitter(); err != nil {
+		return nil, err
+	}
 	root, err := s.commitValues(values)
 	if err != nil {
 		return nil, err
@@ -181,6 +264,9 @@ func (s *Scheme) BatchProve(values []commitment.Cell, indices []uint64) (cid.Cid
 // BatchProveAtRoot opens values against a caller-supplied root without
 // recomputing the IPA commitment.
 func (s *Scheme) BatchProveAtRoot(root cid.Cid, values []commitment.Cell, indices []uint64) ([]commitment.Cell, []byte, error) {
+	if err := s.requireCommitter(); err != nil {
+		return nil, nil, err
+	}
 	if _, err := maltcid.ExtractCommitment(root); err != nil {
 		return nil, nil, fmt.Errorf("invalid proof root: %w", err)
 	}
@@ -416,6 +502,9 @@ func (s *Scheme) VerifyProof(comm cid.Cid, value commitment.Cell, proof []byte) 
 
 // Replace performs an index-stable replacement.
 func (s *Scheme) Replace(values []commitment.Cell, index uint64, oldValue, newValue commitment.Cell) (cid.Cid, error) {
+	if err := s.requireCommitter(); err != nil {
+		return cid.Undef, err
+	}
 	if index >= uint64(len(values)) {
 		return cid.Cid{}, fmt.Errorf("index %d out of range", index)
 	}
@@ -521,15 +610,31 @@ func cellToFieldElement(cell commitment.Cell) fr.Element {
 }
 
 func (s *Scheme) commitValues(values []commitment.Cell) (cid.Cid, error) {
+	if err := s.requireCommitter(); err != nil {
+		return cid.Undef, err
+	}
 	if len(values) > MaxValues {
 		return cid.Cid{}, fmt.Errorf("too many values: %d > %d", len(values), MaxValues)
 	}
 
 	vector := valuesToVector(values)
 
-	comm := s.ipaConfig.Commit(vector)
+	comm, err := s.ipaConfig.CommitWithError(vector)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("commit IPA vector: %w", err)
+	}
 	commBytes := comm.Bytes()
 	return maltcid.NewIPACid(commBytes[:])
+}
+
+func (s *Scheme) requireCommitter() error {
+	if s == nil || s.ipaConfig == nil {
+		return fmt.Errorf("IPA scheme is nil")
+	}
+	if s.verifierOnly {
+		return fmt.Errorf("IPA scheme is verification-only")
+	}
+	return nil
 }
 
 func valuesToVector(values []commitment.Cell) []fr.Element {

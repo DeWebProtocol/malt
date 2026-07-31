@@ -3,16 +3,19 @@ import { webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const [wasmPath, wasmExecPath, fixturePath, selectedBackend = "kzg"] =
+const [wasmPath, wasmExecPath, fixturePath, selectedBackend = "kzg", selectedProfile = ""] =
   process.argv.slice(2);
 if (!wasmPath || !wasmExecPath || !fixturePath) {
   console.error(
-    "usage: node run-writer-wasm-smoke.mjs <writer.wasm> <wasm_exec.js> <fixtures.json> [kzg|ipa]",
+    "usage: node run-writer-wasm-smoke.mjs <writer.wasm> <wasm_exec.js> <fixtures.json> [kzg|ipa] [direct|compact|fast]",
   );
   process.exit(2);
 }
 if (!["kzg", "ipa"].includes(selectedBackend)) {
   throw new Error(`unsupported writer backend ${JSON.stringify(selectedBackend)}`);
+}
+if (selectedBackend === "kzg" ? selectedProfile !== "" : !["direct", "compact", "fast"].includes(selectedProfile)) {
+  throw new Error(`unsupported writer target ${selectedBackend}/${selectedProfile}`);
 }
 if (!globalThis.crypto) {
   globalThis.crypto = webcrypto;
@@ -74,6 +77,11 @@ if (globalThis.maltWriterInitError) {
 if (globalThis.maltWriterLoadedBackend !== selectedBackend) {
   throw new Error(
     `MALT writer loaded backend ${JSON.stringify(globalThis.maltWriterLoadedBackend)}, expected ${JSON.stringify(selectedBackend)}`,
+  );
+}
+if (globalThis.maltWriterLoadedProfile !== selectedProfile) {
+  throw new Error(
+    `MALT writer loaded profile ${JSON.stringify(globalThis.maltWriterLoadedProfile)}, expected ${JSON.stringify(selectedProfile)}`,
   );
 }
 
