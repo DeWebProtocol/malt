@@ -365,6 +365,14 @@ func TestWriterComputeResultRoundTripsAndBindsNextView(t *testing.T) {
 		t.Fatal("writer compute result accepted an oversized materialization path")
 	}
 
+	noncanonicalPath := wire
+	noncanonicalPath.Materialization.Maps = append([]protocol.MapMaterializationWire(nil), wire.Materialization.Maps...)
+	noncanonicalPath.Materialization.Maps[0].Entries = append([]protocol.MaterializationEntryWire(nil), wire.Materialization.Maps[0].Entries...)
+	noncanonicalPath.Materialization.Maps[0].Entries[0].Path = "radix//node"
+	if err := noncanonicalPath.Validate(); err == nil || !strings.Contains(err.Error(), "path is not canonical") {
+		t.Fatalf("noncanonical materialization path error = %v", err)
+	}
+
 	wire.NextView.BaseRoot = bundle.View.BaseRoot.String()
 	if err := wire.Validate(); err == nil {
 		t.Fatal("writer compute result accepted a next view at the wrong root")

@@ -132,6 +132,9 @@ func decodeMaterializationEntries(label string, wire []MaterializationEntryWire)
 		if err != nil {
 			return nil, fmt.Errorf("%s.entries[%d].path: %w", label, index, err)
 		}
+		if coordinate.String() != entry.Path {
+			return nil, fmt.Errorf("%s.entries[%d].path is not canonical", label, index)
+		}
 		target, err := parseCanonicalCID(entry.CID, fmt.Sprintf("%s.entries[%d].cid", label, index))
 		if err != nil {
 			return nil, err
