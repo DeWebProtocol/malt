@@ -11,13 +11,16 @@ import (
 	structure "github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
 const (
-	radixLeafPrefix   = "malt:map:radix:leaf:v1:"
-	radixBucketPrefix = "malt:map:radix:bucket:v1:"
+	radixLeafPrefix     = "malt:map:radix:leaf:v1:"
+	radixBucketPrefixV1 = "malt:map:radix:bucket:v1:"
+	radixBucketPrefixV2 = "malt:map:radix:bucket:v2:"
+	radixBucketBatch    = 16
 )
 
 // radixMapVerifier is the storage-free half of the runtime radix-map
@@ -40,7 +43,59 @@ type radixProofStep struct {
 }
 
 type radixBucketWitness struct {
-	Proof []byte `json:"proof"`
+	Entries [][]byte `json:"entries,omitempty"`
+	Proof   []byte   `json:"proof"`
+	Batches [][]byte `json:"batches,omitempty"`
+}
+
+func (v *radixMapVerifier) verifyBucketAbsence(root cid.Cid, key arcset.Path, witness *radixBucketWitness) (bool, error) {
+	capacity := v.scheme.MaxValues()
+	if witness == nil || len(witness.Entries) < 2 || len(witness.Entries) > capacity {
+		return false, nil
+	}
+	values := make([]commitment.Cell, capacity)
+	var previous arcset.Path
+	for index, encoded := range witness.Entries {
+		marker, err := cid.Cast(encoded)
+		if err != nil {
+			return false, err
+		}
+		path, value, err := decodeRadixLeafMarker(marker)
+		if err != nil {
+			return false, err
+		}
+		canonical, err := encodeRadixLeafMarker(path, value)
+		if err != nil {
+			return false, err
+		}
+		if !canonical.Equals(marker) {
+			return false, nil
+		}
+		if index > 0 && path <= previous {
+			return false, nil
+		}
+		if path == key {
+			return false, nil
+		}
+		previous = path
+		values[index] = commitment.CellFromCID(marker)
+	}
+	batchCount := (capacity + radixBucketBatch - 1) / radixBucketBatch
+	if len(witness.Batches) != batchCount || len(witness.Proof) != 0 {
+		return false, nil
+	}
+	for batch, start := 0, 0; start < capacity; batch, start = batch+1, start+radixBucketBatch {
+		end := min(start+radixBucketBatch, capacity)
+		indices := make([]uint64, end-start)
+		for offset := range indices {
+			indices[offset] = uint64(start + offset)
+		}
+		ok, err := v.scheme.BatchVerify(root, indices, values[start:end], cloneProofBytes(witness.Batches[batch]))
+		if err != nil || !ok {
+			return ok, err
+		}
+	}
+	return true, nil
 }
 
 func newRadixMapVerifier(scheme commitment.IndexVerifier, geometry nodegeometry.Geometry) MapVerifier {
@@ -51,17 +106,36 @@ func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mappin
 	if v == nil || v.scheme == nil {
 		return false, fmt.Errorf("radix verifier commitment scheme is nil")
 	}
-	if !expected.Present {
-		return false, fmt.Errorf("non-membership verification is not implemented")
-	}
 	if !root.Defined() {
 		return false, fmt.Errorf("root is undefined")
 	}
 	if key.IsEmpty() {
 		return false, fmt.Errorf("key is empty")
 	}
-	if !expected.Value.Defined() {
-		return false, fmt.Errorf("expected value is undefined")
+	if expected.Present && !expected.Value.Defined() {
+		return false, fmt.Errorf("expected membership value is undefined")
+	}
+	if !expected.Present && expected.Value.Defined() {
+		return false, fmt.Errorf("expected absence value must be undefined")
+	}
+	rootVersion := maltcid.VersionIDOf(root)
+	var expectedBucketVersion uint8
+	switch rootVersion {
+	case maltcid.LegacyMALTVersionID:
+		expectedBucketVersion = 1
+	case maltcid.MALTVersionID:
+		expectedBucketVersion = 2
+	default:
+		return false, fmt.Errorf("root does not encode a supported radix map version")
+	}
+	rootBackend := maltcid.BackendKindOf(root)
+	matchesRootProfile := func(candidate cid.Cid) bool {
+		return maltcid.VersionIDOf(candidate) == rootVersion &&
+			maltcid.SemanticKindOf(candidate) == maltcid.SemanticKindMap &&
+			maltcid.BackendKindOf(candidate) == rootBackend
+	}
+	if !matchesRootProfile(root) {
+		return false, fmt.Errorf("root does not encode a supported radix map profile")
 	}
 
 	var envelope radixProofEnvelope
@@ -77,9 +151,13 @@ func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mappin
 		return false, fmt.Errorf("proof has too many radix steps")
 	}
 	currentRoot := root
-	expectedLeaf, err := encodeRadixLeafMarker(key, expected.Value)
-	if err != nil {
-		return false, err
+	var expectedLeaf cid.Cid
+	var err error
+	if expected.Present {
+		expectedLeaf, err = encodeRadixLeafMarker(key, expected.Value)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	for depth, step := range envelope.Steps {
@@ -100,7 +178,7 @@ func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mappin
 			return ok, err
 		}
 		if !slotCID.Defined() {
-			return false, nil
+			return !expected.Present && depth == len(envelope.Steps)-1 && envelope.Bucket == nil, nil
 		}
 
 		if leafPath, leafValue, isLeaf, err := tryDecodeRadixLeafMarker(slotCID); err != nil {
@@ -109,19 +187,37 @@ func (v *radixMapVerifier) Verify(root cid.Cid, key arcset.Path, expected mappin
 			if depth != len(envelope.Steps)-1 || envelope.Bucket != nil {
 				return false, nil
 			}
-			return leafPath == key && leafValue.Equals(expected.Value), nil
+			if expected.Present {
+				return leafPath == key && leafValue.Equals(expected.Value), nil
+			}
+			return leafPath != key, nil
 		}
 
-		if bucketRoot, isBucket, err := tryDecodeRadixBucketRef(slotCID); err != nil {
+		if bucketRoot, bucketVersion, isBucket, err := decodeRadixBucketRef(slotCID); err != nil {
 			return false, err
 		} else if isBucket {
+			if bucketVersion != expectedBucketVersion || !matchesRootProfile(bucketRoot) {
+				return false, nil
+			}
 			if depth != len(envelope.Steps)-1 || envelope.Bucket == nil {
+				return false, nil
+			}
+			if !expected.Present {
+				if bucketVersion == 1 {
+					return false, nil
+				}
+				return v.verifyBucketAbsence(bucketRoot, key, envelope.Bucket)
+			}
+			if len(envelope.Bucket.Entries) != 0 || len(envelope.Bucket.Batches) != 0 {
 				return false, nil
 			}
 			return v.scheme.VerifyProof(bucketRoot, commitment.CellFromCID(expectedLeaf), cloneProofBytes(envelope.Bucket.Proof))
 		}
 
 		if depth == len(envelope.Steps)-1 {
+			return false, nil
+		}
+		if !matchesRootProfile(slotCID) {
 			return false, nil
 		}
 		currentRoot = slotCID
@@ -185,16 +281,23 @@ func tryDecodeRadixLeafMarker(marker cid.Cid) (arcset.Path, cid.Cid, bool, error
 	return path, value, err == nil, err
 }
 
-func tryDecodeRadixBucketRef(marker cid.Cid) (cid.Cid, bool, error) {
+func decodeRadixBucketRef(marker cid.Cid) (cid.Cid, uint8, bool, error) {
 	payload, err := decodeIdentityPayload(marker)
 	if err != nil {
-		return cid.Undef, false, nil
+		return cid.Undef, 0, false, nil
 	}
-	if len(payload) < len(radixBucketPrefix) || string(payload[:len(radixBucketPrefix)]) != radixBucketPrefix {
-		return cid.Undef, false, nil
+	var version uint8
+	var prefix string
+	switch {
+	case len(payload) >= len(radixBucketPrefixV2) && string(payload[:len(radixBucketPrefixV2)]) == radixBucketPrefixV2:
+		version, prefix = 2, radixBucketPrefixV2
+	case len(payload) >= len(radixBucketPrefixV1) && string(payload[:len(radixBucketPrefixV1)]) == radixBucketPrefixV1:
+		version, prefix = 1, radixBucketPrefixV1
+	default:
+		return cid.Undef, 0, false, nil
 	}
-	root, err := cid.Cast(payload[len(radixBucketPrefix):])
-	return root, err == nil, err
+	root, err := cid.Cast(payload[len(prefix):])
+	return root, version, err == nil, err
 }
 
 func identityCID(payload []byte) (cid.Cid, error) {

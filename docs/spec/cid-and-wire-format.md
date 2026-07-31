@@ -5,8 +5,8 @@ objects remain ordinary CAS CIDs.
 
 ## Status
 
-Experimental and implementation-bound. The current layout is the only accepted
-typed-root encoding, but it is not yet a stable release contract.
+Experimental and implementation-bound. Constructors emit the current layout;
+the immediately preceding v2 layout remains accepted for read/proof compatibility.
 
 ## MALT Root Codec Namespace
 
@@ -37,7 +37,7 @@ codec = 0x300000
       | backend_id
 ```
 
-The current `MALTVersionID` is `2`. It identifies this typed-root layout;
+The current `MALTVersionID` is `3`. It identifies this typed-root layout;
 it is not the CID version, a source release, a Resolve/Read profile, or a
 conformance-corpus version. Adding a semantic kind or backend suite does not
 change it. It changes only when the interpretation of the root codec or
@@ -72,10 +72,10 @@ ID even when it belongs to the same broad cryptographic family.
 
 | Name | Value | Semantic kind | Backend |
 | --- | ---: | --- | --- |
-| `malt-map-kzg` | `0x302101` | map | KZG |
-| `malt-list-kzg` | `0x302201` | list | KZG |
-| `malt-map-ipa` | `0x302102` | map | IPA |
-| `malt-list-ipa` | `0x302202` | list | IPA |
+| `malt-map-kzg` | `0x303101` | map | KZG |
+| `malt-list-kzg` | `0x303201` | list | KZG |
+| `malt-map-ipa` | `0x303102` | map | IPA |
+| `malt-list-ipa` | `0x303202` | list | IPA |
 
 The implementation owner is `wire/maltcid`.
 
@@ -109,22 +109,31 @@ alone must never select or override the backend.
 A supported typed root must satisfy all of these checks:
 
 1. its codec is in `0x300000-0x30FFFF`;
-2. `V` equals the current `MALTVersionID`;
+2. `V` equals the current `MALTVersionID` or the explicitly registered legacy v2 ID;
 3. `S` and `BB` are nonzero registered IDs and their combination is
    supported;
 4. the multihash code is identity;
 5. the identity digest length matches the selected backend descriptor.
 
-Unknown versions, semantics, backends, combinations, and codecs outside the
-typed-root subrange fail closed. Classifiers must validate the complete codec
+Unknown versions other than registered v2 compatibility, unknown semantics,
+backends, combinations, and codecs outside the typed-root subrange fail closed. Classifiers must validate the complete codec
 before returning either semantic or backend; independently masking one field
 is insufficient.
+
+Version 3 introduces fixed-domain collision buckets for sound map
+non-membership proofs. New constructors emit v3 roots. Version-2 roots remain
+classified and verifiable; their legacy variable-length collision buckets
+remain membership-readable but cannot provide collision-bucket non-membership
+proofs. Incremental mutation requires the root version to match the semantic
+instance. A v2 update therefore requires exact complete-view replay followed by
+a full v3 rebuild before any change; partial path-only v2-to-v3 rewrites are
+rejected because they would retain unchanged v2 child CIDs under a v3 root.
 
 Version 2 makes semantic node geometry backend-sized: KZG map and list nodes
 use all 4096 positions in the current KZG suite, while IPA nodes retain the
 current suite's 256 positions. Map radix digits and list branching therefore
 also depend on the backend suite. Version-1 experimental roots are not
-recognized by version-2 decoders and must be rebuilt together with their
+recognized by current decoders and must be rebuilt together with their
 materialized node state.
 
 Verifiers must also reject roots or proof steps whose semantic kind, backend

@@ -10,14 +10,16 @@ not a generic operation envelope.
 | --- | --- | --- |
 | path resolution | `malt.resolve/v0alpha1` | `malt.ResolveRequest`, `malt.ResolveResult`, `malt.VerifyResolve` |
 | primitive semantic read | `malt.read/v0alpha1` | `malt.ReadRequest`, `malt.ReadResult`, `malt.VerifyRead` |
+| map membership or non-membership | `malt.map-proof/v0alpha1` | `malt.MapProofRequest`, `malt.MapProofResult`, `malt.VerifyMapProof` |
 
 Serialized values live in `github.com/dewebprotocol/malt/protocol`. Checked-in
 JSON Schemas live in `protocol/schemas/` and are embedded through
 `protocol.Schema` and `protocol.SchemaNames`.
 
-Cross-language accept/reject behavior for these complete request/result pairs
-is locked by the
-[Resolve/Read conformance corpus v1](./resolve-read-conformance-v1.md).
+Cross-language accept/reject behavior for resolve and read is locked by the
+[Resolve/Read conformance corpus v2](./resolve-read-conformance-v2.md).
+Map-proof behavior is covered by KZG/IPA runtime, portable-verifier, protocol,
+and WASM registration tests; it does not alter the frozen resolve/read corpus.
 
 ## Resolve
 
@@ -101,6 +103,32 @@ The result carries `target`, optional ordered `range_segments`, and
 `prooflist`. `VerifyRead` binds those fields to the original typed request.
 Read is intentionally primitive; multi-root prefix consumption belongs to
 resolve.
+
+## Map Membership And Non-Membership
+
+`Read` preserves its existing target-oriented behavior: a missing map key
+returns `ErrQueryNotFound`. A caller that needs proof of either outcome uses the
+separate map-proof contract:
+
+```json
+{
+  "profile": "malt.map-proof/v0alpha1",
+  "root": "b...map",
+  "key": ["name"]
+}
+```
+
+A present result carries `present: true`, a target CID, and a normal
+`map_step` (or terminal `payload_binding`) step. An absent result carries
+`present: false`, omits the result target, and terminates with a
+`map_absence` step whose `target` is JSON `null`. The step contains
+`structure/map` evidence proving `mapping.Binding{Present:false}` at the exact
+root and key; `null` is not evidence by itself.
+
+`VerifyMapProof` binds the caller-selected root and canonical key to the
+presence discriminator, conditional target, one proof step, and its
+cryptographic evidence. A proof for another key, a membership proof relabeled
+as absence, or an absence proof relabeled as membership is rejected.
 
 ## Transport Projection
 

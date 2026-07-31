@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/arcset"
@@ -570,6 +571,23 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 	}
 }
 
+func TestTreeListPlainRangeReportsNotMeasured(t *testing.T) {
+	ctx := context.Background()
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			semantic := newList(t, factory, materialmemory.New(true))
+			root, err := semantic.Commit(ctx, "tree-plain-range-"+name, list.NewViewFromSlice(makeValues(1)))
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
+			end := uint64(0)
+			if _, _, err := semantic.ProveRange(ctx, "tree-plain-range-"+name, root, 0, &end); !errors.Is(err, list.ErrNotMeasured) {
+				t.Fatalf("ProveRange error = %v, want ErrNotMeasured", err)
+			}
+		})
+	}
+}
+
 func TestTreeListFixedRangeProofsUseOptionalEnd(t *testing.T) {
 	ctx := context.Background()
 	chunks := makeValues(5)
@@ -844,4 +862,49 @@ func TestTreeListRejectsCorruptedMaterialization(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMutationRejectsLegacyRootBeforePartialVersionUpgrade(t *testing.T) {
+	ctx := context.Background()
+	scheme, err := ipa.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := materialmemory.New(true)
+	legacy, err := tree.NewListForVersion(scheme, store, maltcid.LegacyMALTVersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := tree.NewList(scheme, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	geometry := geometryForScheme(t, scheme)
+	values := makeValues(geometry.ListBranchingFactor() + 1)
+	root, err := legacy.Commit(ctx, "legacy-deep-list", list.NewViewFromSlice(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maltcid.VersionIDOf(root) != maltcid.LegacyMALTVersionID {
+		t.Fatal("fixture did not produce a v2 list root")
+	}
+	assertRejected := func(operation string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "cannot be mutated") {
+			t.Fatalf("%s legacy root error = %v", operation, err)
+		}
+	}
+	_, err = current.Replace(ctx, "legacy-deep-list", root, uint64(len(values)-1), values[len(values)-1], newPayloadCID([]byte("replacement")))
+	assertRejected("Replace", err)
+	_, _, err = current.Append(ctx, "legacy-deep-list", root, newPayloadCID([]byte("append")))
+	assertRejected("Append", err)
+	_, err = current.Truncate(ctx, "legacy-deep-list", root, uint64(len(values)-1))
+	assertRejected("Truncate", err)
+
+	fixedRoot, err := legacy.CommitFixed(ctx, "legacy-fixed-list", values[:2], 4, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = current.AppendFixed(ctx, "legacy-fixed-list", fixedRoot, newPayloadCID([]byte("fixed-append")), 12)
+	assertRejected("AppendFixed", err)
 }

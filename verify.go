@@ -132,6 +132,57 @@ func VerifyRead(ctx context.Context, req ReadRequest, result ReadResult, verifie
 	return nil
 }
 
+// VerifyMapProof validates a membership or non-membership proof against the
+// caller-selected root and key.
+func VerifyMapProof(ctx context.Context, req MapProofRequest, result MapProofResult, verifier ProofVerifier) error {
+	if verifier == nil {
+		return fmt.Errorf("portable MALT verifier is nil")
+	}
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	if !result.ProofList.Root.Equals(req.Root) {
+		return fmt.Errorf("ProofList root does not match trusted root")
+	}
+	if result.ProofList.Query != req.Key.String() {
+		return fmt.Errorf("ProofList query %q does not match map key %q", result.ProofList.Query, req.Key)
+	}
+	if len(result.ProofList.Steps) != 1 {
+		return fmt.Errorf("map proof requires exactly one ProofList step, got %d", len(result.ProofList.Steps))
+	}
+	step := result.ProofList.Steps[0]
+	if arcset.CanonicalizePath(step.Path) != req.Key {
+		return fmt.Errorf("map proof path %q does not match %q", step.Path, req.Key)
+	}
+	if result.Present {
+		wantKind := prooflist.KindMapStep
+		if req.Key == arcset.PayloadPath {
+			wantKind = prooflist.KindPayloadBinding
+		}
+		if step.Kind != wantKind {
+			return fmt.Errorf("present map proof kind %q does not match %q", step.Kind, wantKind)
+		}
+		if !result.Target.Defined() || !step.Target.Equals(result.Target) {
+			return fmt.Errorf("ProofList target does not match present map result")
+		}
+	} else {
+		if step.Kind != prooflist.KindMapAbsence {
+			return fmt.Errorf("absent map proof has kind %q, want %q", step.Kind, prooflist.KindMapAbsence)
+		}
+		if result.Target.Defined() || step.Target.Defined() {
+			return fmt.Errorf("absent map proof must not carry a target")
+		}
+	}
+	valid, err := verifier.VerifyProofList(ctx, result.ProofList)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return ErrVerifierRejected
+	}
+	return nil
+}
+
 func validateQueryProofStep(query Query, steps []prooflist.Step) error {
 	if len(steps) != 1 {
 		return fmt.Errorf("typed arc query requires exactly one ProofList step, got %d", len(steps))

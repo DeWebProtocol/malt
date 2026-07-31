@@ -14,9 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   consume SHA-256 keys in 12-bit radix digits and KZG lists branch over 4095
   content slots; the fixed 256-position IPA suite retains 8-bit map digits and
   255 list content slots.
-- Advance typed MALT roots to `MALTVersionID=2`. Experimental version-1 roots
-  and their materialized node state must be rebuilt; current decoders reject
-  them rather than interpreting them with the new geometry.
+- Advance newly constructed typed MALT roots to `MALTVersionID=3` for
+  fixed-domain collision buckets and sound map non-membership proofs. Version-2
+  roots remain explicitly readable and verifiable. Incremental mutation APIs
+  reject a root/semantics version mismatch; the client writer verifies an exact
+  v2 complete view, fully rebuilds it as v3, and only then applies changes so it
+  cannot emit mixed-version trees. Experimental version-1 roots remain rejected.
 
 ### Removed
 

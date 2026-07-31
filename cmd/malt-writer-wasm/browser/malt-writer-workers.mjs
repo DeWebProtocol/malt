@@ -244,6 +244,10 @@ export class MaltWriterWorkers {
     ]);
   }
 
+  bootstrap(backend) {
+    return this.#request(backend, "bootstrap", []);
+  }
+
   load(backend, updateViewJSON) {
     return this.#request(backend, "load", [updateViewJSON]);
   }
@@ -254,6 +258,13 @@ export class MaltWriterWorkers {
 
   getPreparedResult(backend, operationID) {
     return this.#request(backend, "getPreparedResult", [operationID]);
+  }
+
+  validateReceipt(backend, writerResultJSON, materializationReceiptJSON) {
+    return this.#request(backend, "validateReceipt", [
+      writerResultJSON,
+      materializationReceiptJSON,
+    ]);
   }
 
   acceptReceipt(backend, operationID, materializationReceiptJSON) {

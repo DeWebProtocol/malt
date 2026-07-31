@@ -21,20 +21,48 @@ import (
 	"github.com/dewebprotocol/malt/auth/semantic"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
 
 const (
 	leafPrefix        = "malt:map:radix:leaf:v1:"
-	bucketRefPrefix   = "malt:map:radix:bucket:v1:"
+	bucketRefPrefixV1 = "malt:map:radix:bucket:v1:"
+	bucketRefPrefixV2 = "malt:map:radix:bucket:v2:"
 	bucketCountPrefix = "malt:map:radix:bucket-count:v1:"
+	bucketProofBatch  = 16
 )
+
+type bucketRefVersion uint8
+
+const (
+	bucketRefV1 bucketRefVersion = 1
+	bucketRefV2 bucketRefVersion = 2
+)
+
+func bucketVersionForMALTVersion(version uint8) (bucketRefVersion, bool) {
+	switch version {
+	case maltcid.LegacyMALTVersionID:
+		return bucketRefV1, true
+	case maltcid.MALTVersionID:
+		return bucketRefV2, true
+	default:
+		return 0, false
+	}
+}
+
+func matchesRadixRootProfile(root cid.Cid, version uint8, backend maltcid.BackendKind) bool {
+	return maltcid.VersionIDOf(root) == version &&
+		maltcid.SemanticKindOf(root) == maltcid.SemanticKindMap &&
+		maltcid.BackendKindOf(root) == backend
+}
 
 type Map struct {
 	commitment   *mapping.Commitment
 	materializer materializer.NodeStore
 	geometry     nodegeometry.Geometry
+	version      uint8
 }
 
 // ErrPathNotFound is retained as a compatibility alias for the semantic-level
@@ -70,10 +98,19 @@ type proofStep struct {
 }
 
 type bucketWitness struct {
-	Proof []byte `json:"proof"`
+	Entries [][]byte `json:"entries,omitempty"`
+	Proof   []byte   `json:"proof"`
+	Batches [][]byte `json:"batches,omitempty"`
 }
 
 func NewMap(scheme commitment.IndexCommitment, e materializer.NodeStore) (*Map, error) {
+	return NewMapForVersion(scheme, e, maltcid.MALTVersionID)
+}
+
+// NewMapForVersion creates radix-map semantics that emit an exact supported
+// typed-root version. Legacy mode exists only to replay and verify old complete
+// views; new state should use [NewMap].
+func NewMapForVersion(scheme commitment.IndexCommitment, e materializer.NodeStore, version uint8) (*Map, error) {
 	if scheme == nil {
 		return nil, fmt.Errorf("scheme is nil")
 	}
@@ -90,12 +127,56 @@ func NewMap(scheme commitment.IndexCommitment, e materializer.NodeStore) (*Map, 
 		return nil, fmt.Errorf("failed to create map commitment: %w", err)
 	}
 
-	return &Map{commitment: commitmentHandler, materializer: e, geometry: geometry}, nil
+	if version != maltcid.MALTVersionID && version != maltcid.LegacyMALTVersionID {
+		return nil, fmt.Errorf("unsupported MALT version %d", version)
+	}
+	return &Map{commitment: commitmentHandler, materializer: e, geometry: geometry, version: version}, nil
 }
 
 // Commitment returns the underlying commitment primitives.
 func (s *Map) Commitment() *mapping.Commitment {
 	return s.commitment
+}
+
+func (s *Map) typedRoot(root cid.Cid) (cid.Cid, error) {
+	commitmentBytes, err := maltcid.ExtractCommitment(root)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return maltcid.NewTypedCIDForVersion(s.version, maltcid.SemanticKindMap, maltcid.BackendKindOf(root), commitmentBytes)
+}
+
+func (s *Map) commitSlots(slots []cid.Cid) (cid.Cid, error) {
+	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	if err != nil {
+		return cid.Undef, err
+	}
+	return s.typedRoot(root)
+}
+
+func (s *Map) bucketVersion() bucketRefVersion {
+	if s.version == maltcid.LegacyMALTVersionID {
+		return bucketRefV1
+	}
+	return bucketRefV2
+}
+
+func (s *Map) encodeBucketRef(root cid.Cid) (cid.Cid, error) {
+	return encodeBucketRefVersion(root, s.bucketVersion())
+}
+
+func (s *Map) bucketCommitVector(markers []cid.Cid) []cid.Cid {
+	if s.bucketVersion() == bucketRefV1 {
+		return markers
+	}
+	return bucketVector(markers, s.commitment.Scheme().MaxValues())
+}
+
+func (s *Map) validateMutationRootVersion(root cid.Cid) error {
+	if version := maltcid.VersionIDOf(root); version != s.version {
+		return fmt.Errorf("map root version %d cannot be mutated by version %d semantics; replay the complete view first", version, s.version)
+	}
+	return nil
 }
 
 func (s *Map) Commit(ctx context.Context, namespace string, view mapping.View) (cid.Cid, error) {
@@ -112,6 +193,12 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 	}
 	if key.IsEmpty() {
 		return mapping.Binding{}, nil, fmt.Errorf("key is empty")
+	}
+	rootVersion := maltcid.VersionIDOf(root)
+	expectedBucketVersion, ok := bucketVersionForMALTVersion(rootVersion)
+	rootBackend := maltcid.BackendKindOf(root)
+	if !ok || !matchesRadixRootProfile(root, rootVersion, rootBackend) {
+		return mapping.Binding{}, nil, fmt.Errorf("root does not encode a supported radix map profile")
 	}
 
 	digest := hashPath(key)
@@ -151,14 +238,26 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 		})
 
 		if !slotCID.Defined() {
-			return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+			finishSerialization := observation.Start(ctx, observation.PhaseSerialization)
+			proofBytes, err := json.Marshal(envelope)
+			finishSerialization(1, uint64(len(envelope.Steps)), uint64(len(proofBytes)))
+			if err != nil {
+				return mapping.Binding{}, nil, err
+			}
+			return mapping.Binding{Present: false}, structure.Proof(proofBytes), nil
 		}
 
 		if leafPath, leafValue, ok, err := tryDecodeLeafMarker(slotCID); err != nil {
 			return mapping.Binding{}, nil, err
 		} else if ok {
 			if leafPath != key {
-				return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+				finishSerialization := observation.Start(ctx, observation.PhaseSerialization)
+				proofBytes, err := json.Marshal(envelope)
+				finishSerialization(1, uint64(len(envelope.Steps)), uint64(len(proofBytes)))
+				if err != nil {
+					return mapping.Binding{}, nil, err
+				}
+				return mapping.Binding{Present: false}, structure.Proof(proofBytes), nil
 			}
 			finishSerialization := observation.Start(ctx, observation.PhaseSerialization)
 			proofBytes, err := json.Marshal(envelope)
@@ -169,9 +268,12 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 			return mapping.Binding{Value: leafValue, Present: true}, structure.Proof(proofBytes), nil
 		}
 
-		if bucketRoot, ok, err := tryDecodeBucketRef(slotCID); err != nil {
+		if bucketRoot, version, ok, err := decodeBucketRef(slotCID); err != nil {
 			return mapping.Binding{}, nil, err
 		} else if ok {
+			if version != expectedBucketVersion || !matchesRadixRootProfile(bucketRoot, rootVersion, rootBackend) {
+				return mapping.Binding{}, nil, fmt.Errorf("collision bucket does not match radix root profile")
+			}
 			finishMaterialization := observation.Start(ctx, observation.PhaseMaterialization)
 			markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
 			var materializedBytes uint64
@@ -194,11 +296,29 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 				}
 			}
 			if index < 0 {
-				return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
+				if version == bucketRefV1 {
+					return mapping.Binding{}, nil, fmt.Errorf("legacy v1 collision bucket cannot produce a sound absence proof")
+				}
+				witness, err := s.proveBucketAbsence(bucketRoot, markers, key)
+				if err != nil {
+					return mapping.Binding{}, nil, err
+				}
+				envelope.Bucket = witness
+				finishSerialization := observation.Start(ctx, observation.PhaseSerialization)
+				proofBytes, err := json.Marshal(envelope)
+				finishSerialization(1, uint64(len(envelope.Steps))+uint64(len(markers)), uint64(len(proofBytes)))
+				if err != nil {
+					return mapping.Binding{}, nil, err
+				}
+				return mapping.Binding{Present: false}, structure.Proof(proofBytes), nil
 			}
 
+			proofMarkers := markers
+			if version == bucketRefV2 {
+				proofMarkers = bucketVector(markers, s.commitment.Scheme().MaxValues())
+			}
 			finishOpen := observation.Start(ctx, observation.PhaseOpen)
-			value, proof, err := s.commitment.ProveSlot(bucketRoot, markers, uint64(index))
+			value, proof, err := s.commitment.ProveSlot(bucketRoot, proofMarkers, uint64(index))
 			finishOpen(1, 1, uint64(len(proof)))
 			if err != nil {
 				return mapping.Binding{}, nil, err
@@ -217,21 +337,138 @@ func (s *Map) Prove(ctx context.Context, namespace string, root cid.Cid, key arc
 			return mapping.Binding{Value: leafValue, Present: true}, structure.Proof(proofBytes), nil
 		}
 
+		if !matchesRadixRootProfile(slotCID, rootVersion, rootBackend) {
+			return mapping.Binding{}, nil, fmt.Errorf("internal node does not match radix root profile")
+		}
 		currentRoot = slotCID
 	}
 
 	return mapping.Binding{}, nil, fmt.Errorf("%w: path %s", ErrPathNotFound, key.String())
 }
 
-func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, proof structure.Proof) (bool, error) {
-	if !expected.Present {
-		return false, fmt.Errorf("non-membership verification is not implemented")
+func (s *Map) proveBucketAbsence(root cid.Cid, markers []cid.Cid, key arcset.Path) (*bucketWitness, error) {
+	capacity := s.commitment.Scheme().MaxValues()
+	if len(markers) < 2 || len(markers) > capacity {
+		return nil, fmt.Errorf("invalid bucket size %d", len(markers))
 	}
+	padded := make([]cid.Cid, capacity)
+	entries := make([][]byte, len(markers))
+	var previous arcset.Path
+	for index, marker := range markers {
+		path, value, err := decodeLeafMarker(marker)
+		if err != nil {
+			return nil, err
+		}
+		canonical, err := encodeLeafMarker(path, value)
+		if err != nil {
+			return nil, err
+		}
+		if !canonical.Equals(marker) {
+			return nil, fmt.Errorf("bucket entry %d is not canonically encoded", index)
+		}
+		if index > 0 && path <= previous {
+			return nil, fmt.Errorf("bucket entries are not in canonical path order")
+		}
+		if path == key {
+			return nil, fmt.Errorf("bucket contains queried path %s", key.String())
+		}
+		previous = path
+		padded[index] = marker
+		entries[index] = cidBytes(marker)
+	}
+	batches := make([][]byte, 0, (capacity+bucketProofBatch-1)/bucketProofBatch)
+	for start := 0; start < capacity; start += bucketProofBatch {
+		end := min(start+bucketProofBatch, capacity)
+		indices := make([]uint64, end-start)
+		for offset := range indices {
+			indices[offset] = uint64(start + offset)
+		}
+		proved, proof, err := s.commitment.ProveSlots(root, padded, indices)
+		if err != nil {
+			return nil, err
+		}
+		if len(proved) != len(indices) {
+			return nil, fmt.Errorf("bucket absence batch returned %d cells, want %d", len(proved), len(indices))
+		}
+		for offset := range proved {
+			if !proved[offset].Equal(commitment.CellFromCID(padded[start+offset])) {
+				return nil, fmt.Errorf("bucket absence proof cell %d mismatch", start+offset)
+			}
+		}
+		batches = append(batches, proof)
+	}
+	return &bucketWitness{Entries: entries, Proof: []byte{}, Batches: batches}, nil
+}
+
+func (s *Map) verifyBucketAbsence(root cid.Cid, key arcset.Path, witness *bucketWitness) (bool, error) {
+	capacity := s.commitment.Scheme().MaxValues()
+	if witness == nil || len(witness.Entries) < 2 || len(witness.Entries) > capacity {
+		return false, nil
+	}
+	padded := make([]cid.Cid, capacity)
+	var previous arcset.Path
+	for index, encoded := range witness.Entries {
+		marker, err := cid.Cast(encoded)
+		if err != nil {
+			return false, err
+		}
+		path, value, err := decodeLeafMarker(marker)
+		if err != nil {
+			return false, err
+		}
+		canonical, err := encodeLeafMarker(path, value)
+		if err != nil {
+			return false, err
+		}
+		if !canonical.Equals(marker) {
+			return false, nil
+		}
+		if index > 0 && path <= previous {
+			return false, nil
+		}
+		if path == key {
+			return false, nil
+		}
+		previous = path
+		padded[index] = marker
+	}
+	cells := cellsFromCIDs(padded)
+	batchCount := (capacity + bucketProofBatch - 1) / bucketProofBatch
+	if len(witness.Batches) != batchCount || len(witness.Proof) != 0 {
+		return false, nil
+	}
+	for batch, start := 0, 0; start < capacity; batch, start = batch+1, start+bucketProofBatch {
+		end := min(start+bucketProofBatch, capacity)
+		indices := make([]uint64, end-start)
+		for offset := range indices {
+			indices[offset] = uint64(start + offset)
+		}
+		ok, err := s.commitment.Scheme().BatchVerify(root, indices, cells[start:end], witness.Batches[batch])
+		if err != nil || !ok {
+			return ok, err
+		}
+	}
+	return true, nil
+}
+
+func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, proof structure.Proof) (bool, error) {
 	if !root.Defined() {
 		return false, fmt.Errorf("root is undefined")
 	}
 	if key.IsEmpty() {
 		return false, fmt.Errorf("key is empty")
+	}
+	if expected.Present && !expected.Value.Defined() {
+		return false, fmt.Errorf("expected membership value is undefined")
+	}
+	if !expected.Present && expected.Value.Defined() {
+		return false, fmt.Errorf("expected absence value must be undefined")
+	}
+	rootVersion := maltcid.VersionIDOf(root)
+	expectedBucketVersion, profileOK := bucketVersionForMALTVersion(rootVersion)
+	rootBackend := maltcid.BackendKindOf(root)
+	if !profileOK || !matchesRadixRootProfile(root, rootVersion, rootBackend) {
+		return false, fmt.Errorf("root does not encode a supported radix map profile")
 	}
 
 	var envelope proofEnvelope
@@ -247,9 +484,13 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 		return false, fmt.Errorf("proof has too many radix steps")
 	}
 	currentRoot := root
-	expectedLeaf, err := encodeLeafMarker(key, expected.Value)
-	if err != nil {
-		return false, err
+	var expectedLeaf cid.Cid
+	var err error
+	if expected.Present {
+		expectedLeaf, err = encodeLeafMarker(key, expected.Value)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	for depth, step := range envelope.Steps {
@@ -270,28 +511,43 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 			return ok, err
 		}
 		if !slotCID.Defined() {
-			return false, nil
+			return !expected.Present && depth == len(envelope.Steps)-1 && envelope.Bucket == nil, nil
 		}
 
-		if leafPath, leafValue, ok, err := tryDecodeLeafMarker(slotCID); err != nil {
+		if leafPath, leafValue, isLeaf, err := tryDecodeLeafMarker(slotCID); err != nil {
 			return false, err
-		} else if ok {
+		} else if isLeaf {
 			if depth != len(envelope.Steps)-1 || envelope.Bucket != nil {
 				return false, nil
 			}
-			return leafPath == key && leafValue.Equals(expected.Value), nil
+			if expected.Present {
+				return leafPath == key && leafValue.Equals(expected.Value), nil
+			}
+			return leafPath != key, nil
 		}
 
-		if bucketRoot, ok, err := tryDecodeBucketRef(slotCID); err != nil {
+		if bucketRoot, bucketVersion, isBucket, err := decodeBucketRef(slotCID); err != nil {
 			return false, err
-		} else if ok {
+		} else if isBucket {
+			if bucketVersion != expectedBucketVersion || !matchesRadixRootProfile(bucketRoot, rootVersion, rootBackend) {
+				return false, nil
+			}
 			if depth != len(envelope.Steps)-1 || envelope.Bucket == nil {
+				return false, nil
+			}
+			if !expected.Present {
+				return s.verifyBucketAbsence(bucketRoot, key, envelope.Bucket)
+			}
+			if len(envelope.Bucket.Entries) != 0 || len(envelope.Bucket.Batches) != 0 {
 				return false, nil
 			}
 			return s.commitment.Scheme().VerifyProof(bucketRoot, commitment.CellFromCID(expectedLeaf), envelope.Bucket.Proof)
 		}
 
 		if depth == len(envelope.Steps)-1 {
+			return false, nil
+		}
+		if !matchesRadixRootProfile(slotCID, rootVersion, rootBackend) {
 			return false, nil
 		}
 		currentRoot = slotCID
@@ -303,6 +559,9 @@ func (s *Map) Verify(root cid.Cid, key arcset.Path, expected mapping.Binding, pr
 func (s *Map) Update(ctx context.Context, namespace string, root cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, fmt.Errorf("root is undefined")
+	}
+	if err := s.validateMutationRootVersion(root); err != nil {
+		return cid.Undef, err
 	}
 	if key.IsEmpty() {
 		return cid.Undef, fmt.Errorf("key is empty")
@@ -354,7 +613,7 @@ func (s *Map) updateWithoutPersist(ctx context.Context, namespace string, root c
 
 	nextSlots := cloneCIDs(rootSlots)
 	nextSlots[slotIndex] = nextSlot
-	newRoot, err := s.commitment.Scheme().Commit(cellsFromCIDs(nextSlots))
+	newRoot, err := s.commitSlots(nextSlots)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
@@ -394,7 +653,7 @@ func (s *Map) updateWithoutPersistCached(ctx context.Context, namespace string, 
 
 	nextSlots := cloneCIDs(rootSlots)
 	nextSlots[slotIndex] = nextSlot
-	newRoot, err := s.commitment.Scheme().Commit(cellsFromCIDs(nextSlots))
+	newRoot, err := s.commitSlots(nextSlots)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
@@ -455,10 +714,10 @@ func (s *Map) updateSubtreeWithoutPersistCached(
 		}
 	}
 
-	if bucketRoot, ok, err := tryDecodeBucketRef(current); err != nil {
+	if bucketRoot, version, ok, err := decodeBucketRef(current); err != nil {
 		return cid.Undef, nil, nil, err
 	} else if ok {
-		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, key, oldValue, newValue)
+		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, version, key, oldValue, newValue)
 	}
 
 	if depth >= s.geometry.MapDepth(len(digest)) {
@@ -501,6 +760,9 @@ func (s *Map) updateSubtreeWithoutPersistCached(
 func (s *Map) BatchUpdate(ctx context.Context, namespace string, root cid.Cid, updates []mapping.BatchUpdate) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, fmt.Errorf("root is undefined")
+	}
+	if err := s.validateMutationRootVersion(root); err != nil {
+		return cid.Undef, err
 	}
 	if len(updates) == 0 {
 		return root, nil
@@ -611,10 +873,10 @@ func (s *Map) updateSubtreeWithoutPersist(
 		}
 	}
 
-	if bucketRoot, ok, err := tryDecodeBucketRef(current); err != nil {
+	if bucketRoot, version, ok, err := decodeBucketRef(current); err != nil {
 		return cid.Undef, nil, nil, err
 	} else if ok {
-		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, key, oldValue, newValue)
+		return s.updateBucketWithoutPersist(ctx, namespace, bucketRoot, version, key, oldValue, newValue)
 	}
 
 	if depth >= s.geometry.MapDepth(len(digest)) {
@@ -644,7 +906,7 @@ func (s *Map) updateSubtreeWithoutPersist(
 }
 
 // updateBucketWithoutPersist updates a bucket without persisting to ArcSet materializer.
-func (s *Map) updateBucketWithoutPersist(ctx context.Context, namespace string, bucketRoot cid.Cid, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
+func (s *Map) updateBucketWithoutPersist(ctx context.Context, namespace string, bucketRoot cid.Cid, version bucketRefVersion, key arcset.Path, oldValue, newValue cid.Cid) (cid.Cid, []pendingNode, []pendingBucket, error) {
 	markers, err := s.loadBucketEntries(ctx, namespace, bucketRoot)
 	if err != nil {
 		return cid.Undef, nil, nil, err
@@ -673,7 +935,7 @@ func (s *Map) updateBucketWithoutPersist(ctx context.Context, namespace string, 
 		if exists {
 			return cid.Undef, nil, nil, fmt.Errorf("path %s exists; absent-to-absent update is invalid", key.String())
 		}
-		refCID, err := encodeBucketRef(bucketRoot)
+		refCID, err := encodeBucketRefVersion(bucketRoot, version)
 		return refCID, nil, nil, err
 	case exists:
 		if !oldValue.Defined() {
@@ -699,7 +961,7 @@ func (s *Map) updateBucketWithoutPersist(ctx context.Context, namespace string, 
 			return cid.Undef, nil, nil, fmt.Errorf("path %s is absent", key.String())
 		}
 		if !newValue.Defined() {
-			refCID, err := encodeBucketRef(bucketRoot)
+			refCID, err := encodeBucketRefVersion(bucketRoot, version)
 			return refCID, nil, nil, err
 		}
 		newMarker, err := encodeLeafMarker(key, newValue)
@@ -753,23 +1015,16 @@ func (s *Map) updateBucket(ctx context.Context, namespace string, bucketRoot cid
 		if len(markers) == 1 {
 			return nextMarker, nil
 		}
-		root, err := s.commitment.Scheme().Replace(cellsFromCIDs(markers), uint64(index), commitment.CellFromCID(markers[index]), commitment.CellFromCID(nextMarker))
-		if err != nil {
-			return cid.Undef, err
-		}
 		next := cloneCIDs(markers)
 		next[index] = nextMarker
-		if err := s.storeBucketEntries(ctx, namespace, root, next); err != nil {
-			return cid.Undef, err
-		}
-		return encodeBucketRef(root)
+		return s.commitBucketMarkers(ctx, namespace, next)
 
 	default:
 		if oldValue.Defined() {
 			return cid.Undef, fmt.Errorf("path %s is absent", key.String())
 		}
 		if !newValue.Defined() {
-			return encodeBucketRef(bucketRoot)
+			return s.encodeBucketRef(bucketRoot)
 		}
 		nextMarker, err := encodeLeafMarker(key, newValue)
 		if err != nil {
@@ -855,7 +1110,7 @@ func (s *Map) buildSubtreeWithoutPersist(ctx context.Context, namespace string, 
 		allBuckets = append(allBuckets, buckets...)
 	}
 
-	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	root, err := s.commitSlots(slots)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
@@ -900,7 +1155,7 @@ func (s *Map) buildSubtree(ctx context.Context, namespace string, bindings []lea
 }
 
 func (s *Map) commitNode(ctx context.Context, namespace string, slots []cid.Cid) (cid.Cid, error) {
-	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	root, err := s.commitSlots(slots)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -940,7 +1195,7 @@ func (s *Map) commitOrCollapseNodeWithoutPersist(ctx context.Context, namespace 
 		}
 	}
 
-	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	root, err := s.commitSlots(slots)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
@@ -992,13 +1247,13 @@ func (s *Map) commitBucketMarkersWithoutPersist(ctx context.Context, namespace s
 		return cid.Undef, nil, nil, fmt.Errorf("bucket size %d exceeds commitment capacity %d", len(markers), s.commitment.Scheme().MaxValues())
 	}
 
-	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(markers))
+	root, err := s.commitSlots(s.bucketCommitVector(markers))
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
 
 	buckets := []pendingBucket{{root: root, markers: markers}}
-	refCID, err := encodeBucketRef(root)
+	refCID, err := s.encodeBucketRef(root)
 	if err != nil {
 		return cid.Undef, nil, nil, err
 	}
@@ -1016,14 +1271,14 @@ func (s *Map) commitBucketMarkers(ctx context.Context, namespace string, markers
 		return cid.Undef, fmt.Errorf("bucket size %d exceeds commitment capacity %d", len(markers), s.commitment.Scheme().MaxValues())
 	}
 
-	root, err := s.commitment.Scheme().Commit(cellsFromCIDs(markers))
+	root, err := s.commitSlots(s.bucketCommitVector(markers))
 	if err != nil {
 		return cid.Undef, err
 	}
 	if err := s.storeBucketEntries(ctx, namespace, root, markers); err != nil {
 		return cid.Undef, err
 	}
-	return encodeBucketRef(root)
+	return s.encodeBucketRef(root)
 }
 
 func extractBindings(view mapping.View) ([]leafBinding, error) {
@@ -1096,11 +1351,22 @@ func (s *Map) loadValidatedNode(ctx context.Context, namespace string, root cid.
 	if err != nil {
 		return nil, err
 	}
-	recomputed, err := s.commitment.Scheme().Commit(cellsFromCIDs(slots))
+	cells := cellsFromCIDs(slots)
+	if rootProver, ok := s.commitment.Scheme().(commitment.IndexRootProver); ok {
+		if _, _, err := rootProver.ProveAtRoot(root, cells, 0); err != nil {
+			return nil, fmt.Errorf("materialized node state does not match root %s", root.String())
+		}
+		return slots, nil
+	}
+	recomputed, err := s.commitment.Scheme().Commit(cells)
 	if err != nil {
 		return nil, err
 	}
-	if !recomputed.Equals(root) {
+	equal, err := maltcid.EqualCommitment(recomputed, root)
+	if err != nil {
+		return nil, err
+	}
+	if !equal {
 		return nil, fmt.Errorf("materialized node state does not match root %s", root.String())
 	}
 	return slots, nil
@@ -1155,6 +1421,13 @@ func (s *Map) loadBucketEntries(ctx context.Context, namespace string, root cid.
 	if err != nil {
 		return nil, err
 	}
+	capacity := nodegeometry.KZGNodeWidth
+	if s.commitment != nil && s.commitment.Scheme() != nil {
+		capacity = s.commitment.Scheme().MaxValues()
+	}
+	if count < 2 || count > uint64(capacity) {
+		return nil, fmt.Errorf("bucket count %d is outside [2,%d]", count, capacity)
+	}
 
 	paths := make([]arcset.Path, count)
 	for i := uint64(0); i < count; i++ {
@@ -1196,7 +1469,7 @@ func (s *Map) storeBucketEntries(ctx context.Context, namespace string, root cid
 		// reachability-based reclamation can follow the parent slot into the
 		// bucket entries. The raw root remains part of each entry path because
 		// it is also the commitment verified by bucket proofs.
-		refCID, err := encodeBucketRef(root)
+		refCID, err := s.encodeBucketRef(root)
 		if err != nil {
 			return err
 		}
@@ -1215,6 +1488,15 @@ func cellsFromCIDs(values []cid.Cid) []commitment.Cell {
 
 func cloneCIDs(values []cid.Cid) []cid.Cid {
 	return append([]cid.Cid(nil), values...)
+}
+
+func bucketVector(markers []cid.Cid, capacity int) []cid.Cid {
+	if capacity < len(markers) {
+		capacity = len(markers)
+	}
+	values := make([]cid.Cid, capacity)
+	copy(values, markers)
+	return values
 }
 
 func cidVectorBytes(values []cid.Cid) uint64 {
@@ -1324,11 +1606,19 @@ func decodeLeafMarkerCID(cell commitment.Cell) (arcset.Path, cid.Cid, error) {
 }
 
 func encodeBucketRef(root cid.Cid) (cid.Cid, error) {
+	return encodeBucketRefVersion(root, bucketRefV2)
+}
+
+func encodeBucketRefVersion(root cid.Cid, version bucketRefVersion) (cid.Cid, error) {
 	if !root.Defined() {
 		return cid.Undef, fmt.Errorf("bucket root is undefined")
 	}
-	payload := make([]byte, 0, len(bucketRefPrefix)+len(root.Bytes()))
-	payload = append(payload, []byte(bucketRefPrefix)...)
+	prefix, err := bucketRefPrefix(version)
+	if err != nil {
+		return cid.Undef, err
+	}
+	payload := make([]byte, 0, len(prefix)+len(root.Bytes()))
+	payload = append(payload, []byte(prefix)...)
 	payload = append(payload, root.Bytes()...)
 	sum, err := mh.Sum(payload, mh.IDENTITY, len(payload))
 	if err != nil {
@@ -1338,18 +1628,38 @@ func encodeBucketRef(root cid.Cid) (cid.Cid, error) {
 }
 
 func tryDecodeBucketRef(marker cid.Cid) (cid.Cid, bool, error) {
+	root, _, ok, err := decodeBucketRef(marker)
+	return root, ok, err
+}
+
+func decodeBucketRef(marker cid.Cid) (cid.Cid, bucketRefVersion, bool, error) {
 	payload, err := decodeIdentityPayload(marker)
 	if err != nil {
-		if !marker.Defined() {
-			return cid.Undef, false, nil
-		}
-		return cid.Undef, false, nil
+		return cid.Undef, 0, false, nil
 	}
-	if len(payload) < len(bucketRefPrefix) || string(payload[:len(bucketRefPrefix)]) != bucketRefPrefix {
-		return cid.Undef, false, nil
+	var version bucketRefVersion
+	var prefix string
+	switch {
+	case len(payload) >= len(bucketRefPrefixV2) && string(payload[:len(bucketRefPrefixV2)]) == bucketRefPrefixV2:
+		version, prefix = bucketRefV2, bucketRefPrefixV2
+	case len(payload) >= len(bucketRefPrefixV1) && string(payload[:len(bucketRefPrefixV1)]) == bucketRefPrefixV1:
+		version, prefix = bucketRefV1, bucketRefPrefixV1
+	default:
+		return cid.Undef, 0, false, nil
 	}
-	root, err := cid.Cast(payload[len(bucketRefPrefix):])
-	return root, err == nil, err
+	root, err := cid.Cast(payload[len(prefix):])
+	return root, version, err == nil, err
+}
+
+func bucketRefPrefix(version bucketRefVersion) (string, error) {
+	switch version {
+	case bucketRefV1:
+		return bucketRefPrefixV1, nil
+	case bucketRefV2:
+		return bucketRefPrefixV2, nil
+	default:
+		return "", fmt.Errorf("unsupported collision bucket reference version %d", version)
+	}
 }
 
 func encodeBucketCountMarker(count uint64) (cid.Cid, error) {

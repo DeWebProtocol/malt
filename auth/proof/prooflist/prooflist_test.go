@@ -325,3 +325,28 @@ func TestValidateShapeRejectsTraversalAfterListEvidence(t *testing.T) {
 		t.Fatal("expected traversal after structure/measured_list evidence to be rejected")
 	}
 }
+
+func TestValidateShapeAcceptsOnlyTerminalStructureMapAbsence(t *testing.T) {
+	root := testCID(t, "absence-root")
+	absence := Step{
+		Kind: KindMapAbsence, From: root, Path: "missing", Target: cid.Undef,
+		EvidenceKind: "structure", EvidenceBackend: "map", Proof: []byte("absence"),
+	}
+	if err := (ProofList{Root: root, Query: "missing", Steps: []Step{absence}}).ValidateShape(RequireSteps()); err != nil {
+		t.Fatalf("terminal map absence rejected: %v", err)
+	}
+
+	wrongEvidence := absence
+	wrongEvidence.EvidenceBackend = "list"
+	if err := (ProofList{Root: root, Steps: []Step{wrongEvidence}}).ValidateShape(RequireSteps()); err == nil {
+		t.Fatal("map absence with non-map evidence was accepted")
+	}
+
+	nonTerminal := absence
+	nonTerminal.Target = testCID(t, "forged-target")
+	if err := (ProofList{Root: root, Steps: []Step{nonTerminal, {
+		Kind: KindMapStep, From: nonTerminal.Target, Path: "next", Target: testCID(t, "next"),
+	}}}).ValidateShape(RequireSteps()); err == nil {
+		t.Fatal("non-terminal map absence was accepted")
+	}
+}

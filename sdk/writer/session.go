@@ -57,6 +57,26 @@ func (s *Session) BaseRoot() cid.Cid {
 	return s.current.View.BaseRoot
 }
 
+// WorkingRoots returns a detached object-to-root projection of the semantic
+// materialization currently used for the next incremental update. During a
+// legacy view migration these roots may differ from the roots declared by the
+// accepted view, so stateful callers must retain both sets.
+func (s *Session) WorkingRoots() map[string]cid.Cid {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.loaded {
+		return nil
+	}
+	roots := make(map[string]cid.Cid, len(s.current.workingRoots))
+	for objectID, root := range s.current.workingRoots {
+		roots[objectID] = root
+	}
+	return roots
+}
+
 // Prepare computes a candidate against the session's current accepted base.
 func (s *Session) Prepare(ctx context.Context, operationID string, intent mutation.SemanticIntent) (ComputeResult, error) {
 	if s == nil {
@@ -115,7 +135,16 @@ func (s *Session) AcceptReceipt(receipt mutation.MaterializationReceipt, prepare
 	if !next.BaseRoot.Equals(prepared.Bundle.Candidate) {
 		return fmt.Errorf("prepared next view does not match candidate")
 	}
-	s.current = VerifiedUpdateView{View: next, runtime: s.runtime, digest: nextDigest}
+	if len(prepared.seal.workingRoots) != len(next.Objects) {
+		return fmt.Errorf("prepared working-root seal does not match next view")
+	}
+	nextWorkingRoots, err := workingRootsForView(next, prepared.seal.workingRoots)
+	if err != nil {
+		return fmt.Errorf("prepared working-root seal: %w", err)
+	}
+	s.current = VerifiedUpdateView{
+		View: next, runtime: s.runtime, digest: nextDigest, workingRoots: nextWorkingRoots,
+	}
 	return nil
 }
 

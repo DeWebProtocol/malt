@@ -160,9 +160,9 @@ func TestSemanticBatchUpdate_MidBatchFailure(t *testing.T) {
 	}
 
 	// key-new must NOT be findable under the original root either.
-	_, _, err = maps.Prove(ctx, namespace, root, arcset.CanonicalizePath("key-new"))
-	if err == nil {
-		t.Error("atomicity violated: key-new was persisted despite mid-batch failure")
+	absent, _, err := maps.Prove(ctx, namespace, root, arcset.CanonicalizePath("key-new"))
+	if err != nil || absent.Present {
+		t.Errorf("atomicity violated: key-new absence = %+v, %v", absent, err)
 	}
 
 	// key-a must still have original value

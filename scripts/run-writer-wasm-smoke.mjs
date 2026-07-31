@@ -41,9 +41,11 @@ while (Date.now() < deadline) {
   if (
     globalThis.maltWriterReady &&
     typeof globalThis.maltComputeClientRootV1 === "function" &&
+    typeof globalThis.maltWriterBootstrapSessionV1 === "function" &&
     typeof globalThis.maltWriterLoadSessionV1 === "function" &&
     typeof globalThis.maltWriterPrepareSessionV1 === "function" &&
     typeof globalThis.maltWriterGetPreparedResultV1 === "function" &&
+    typeof globalThis.maltWriterValidateReceiptV1 === "function" &&
     typeof globalThis.maltWriterAcceptSessionReceiptV1 === "function" &&
     typeof globalThis.maltWriterDiscardSessionCandidateV1 === "function" &&
     typeof globalThis.maltWriterCloseSessionV1 === "function"
@@ -55,9 +57,11 @@ while (Date.now() < deadline) {
 if (
   !globalThis.maltWriterReady ||
   typeof globalThis.maltComputeClientRootV1 !== "function" ||
+  typeof globalThis.maltWriterBootstrapSessionV1 !== "function" ||
   typeof globalThis.maltWriterLoadSessionV1 !== "function" ||
   typeof globalThis.maltWriterPrepareSessionV1 !== "function" ||
   typeof globalThis.maltWriterGetPreparedResultV1 !== "function" ||
+  typeof globalThis.maltWriterValidateReceiptV1 !== "function" ||
   typeof globalThis.maltWriterAcceptSessionReceiptV1 !== "function" ||
   typeof globalThis.maltWriterDiscardSessionCandidateV1 !== "function" ||
   typeof globalThis.maltWriterCloseSessionV1 !== "function"
@@ -137,6 +141,18 @@ if (!rejectedInvalidJSON) {
   throw new Error("writer accepted invalid update-view and semantic-intent JSON");
 }
 
+const bootstrapView = JSON.parse(await globalThis.maltWriterBootstrapSessionV1());
+if (
+  bootstrapView.profile !== "malt.update-view/v1" ||
+  bootstrapView.objects?.length !== 1 ||
+  bootstrapView.objects[0]?.object_id !== "root" ||
+  bootstrapView.objects[0]?.kind !== "map" ||
+  bootstrapView.objects[0]?.entries?.length !== 0
+) {
+  throw new Error(`${selectedBackend} bootstrap did not return the canonical empty-map view`);
+}
+await globalThis.maltWriterCloseSessionV1();
+
 const selectedFixtures = fixtures.filter(
   ({ backend }) => backend === selectedBackend,
 );
@@ -164,7 +180,7 @@ for (const fixture of selectedFixtures) {
     semanticIntent,
   );
   const result = JSON.parse(resultJSON);
-  if (result.profile !== "malt.writer-compute-result/v1") {
+  if (result.profile !== "malt.writer-compute-result/v2") {
     throw new Error(`unexpected writer result profile ${JSON.stringify(result.profile)}`);
   }
   if (result.bundle.operation_id !== fixture.operation_id) {
@@ -277,9 +293,19 @@ for (const fixture of selectedFixtures) {
     fixture.expected_next_view,
     `${fixture.backend} re-prepared next view differs from the reference`,
   );
+  const expectedReceiptJSON = encoder.encode(JSON.stringify(fixture.expected_receipt));
+  const validatedRoot = await globalThis.maltWriterValidateReceiptV1(
+    encoder.encode(preparedAfterDiscardJSON),
+    expectedReceiptJSON,
+  );
+  if (validatedRoot !== fixture.expected_bundle.candidate) {
+    throw new Error(
+      `${fixture.backend} stateless receipt validation returned ${validatedRoot}, expected ${fixture.expected_bundle.candidate}`,
+    );
+  }
   const acceptedRoot = await globalThis.maltWriterAcceptSessionReceiptV1(
     sessionOperationID,
-    encoder.encode(JSON.stringify(fixture.expected_receipt)),
+    expectedReceiptJSON,
   );
   if (acceptedRoot !== fixture.expected_bundle.candidate) {
     throw new Error(

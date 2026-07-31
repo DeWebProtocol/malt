@@ -26,9 +26,9 @@ import (
 const bindingPrefix = "malt:map:binding:v1:"
 
 // ErrPathNotFound indicates that a requested map path is absent from the
-// committed semantic state. Implementations should wrap this sentinel
-// when Prove cannot find the requested binding so layout adapters do not need
-// to depend on implementation-specific runtime packages.
+// committed semantic state. It is retained for read APIs that translate an
+// absent verified binding into a not-found error; Prove returns a verifiable
+// Binding{Present:false} instead.
 var ErrPathNotFound = errors.New("map path not found")
 
 // Iterator iterates over a map view in canonical key order.
@@ -46,10 +46,8 @@ type View interface {
 
 // Binding is the verifiable result for one keyed binding.
 //
-// Current map semantics emit membership proofs only. Callers should obtain
-// absence through current structure state (for example a caller materializer or a
-// supplied materialized view) rather than expecting a dedicated semantic
-// non-membership proof.
+// Present=false denotes a cryptographically verifiable non-membership result;
+// Value must then be undefined.
 type Binding struct {
 	Value   cid.Cid
 	Present bool
@@ -149,6 +147,31 @@ func (c *Commitment) ProveSlot(root cid.Cid, slots []cid.Cid, slot uint64) (comm
 	return value, proof, nil
 }
 
+// ProveSlots proves an ordered index set in one committed node. The caller
+// supplies the complete stable vector, including explicit undefined padding
+// when the proof needs to establish canonical tail emptiness.
+func (c *Commitment) ProveSlots(root cid.Cid, slots []cid.Cid, indices []uint64) ([]commitment.Cell, []byte, error) {
+	if !root.Defined() {
+		return nil, nil, fmt.Errorf("root is undefined")
+	}
+	cells := cellsFromCIDs(slots)
+	if rootProver, ok := c.scheme.(commitment.IndexRootProver); ok {
+		return rootProver.BatchProveAtRoot(root, cells, indices)
+	}
+	provedRoot, values, proof, err := c.scheme.BatchProve(cells, indices)
+	if err != nil {
+		return nil, nil, err
+	}
+	ok, err := maltcid.EqualCommitment(provedRoot, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, nil, fmt.Errorf("proved root does not match requested root")
+	}
+	return values, proof, nil
+}
+
 // VerifySlot verifies a single slot proof against a committed root.
 //
 // This function does not require access to the actual slot values - it only
@@ -220,8 +243,9 @@ type Semantics interface {
 	// Commit commits the supplied map view and returns a structure root.
 	Commit(ctx context.Context, namespace string, view View) (cid.Cid, error)
 
-	// Prove proves the existing binding for key under root.
-	// It returns an error if key is absent from the committed runtime state.
+	// Prove proves membership or non-membership for key under root. An absent
+	// key returns Binding{Present:false} with a root-bound proof; errors denote
+	// malformed inputs or unavailable/inconsistent materialization.
 	Prove(ctx context.Context, namespace string, root cid.Cid, key arcset.Path) (Binding, structure.Proof, error)
 
 	// Verify verifies the proof for a keyed binding under root.
@@ -237,4 +261,12 @@ type Semantics interface {
 	// Updates are applied in an order determined by the implementation to
 	// maintain structural consistency.
 	BatchUpdate(ctx context.Context, namespace string, root cid.Cid, updates []BatchUpdate) (cid.Cid, error)
+}
+
+// MaterializationExporter returns the complete backend-specific proof-serving
+// state for a caller-supplied logical map view. The returned ArcSet is
+// untrusted transport data until a root-bound validator accepts it against
+// the declared root and logical view.
+type MaterializationExporter interface {
+	ExportMaterialization(context.Context, string, cid.Cid, View) (*arcset.CanonicalArcSet, error)
 }

@@ -161,7 +161,7 @@ func (v *Verifier) verifyStep(index int, step prooflist.Step) (bool, error) {
 	case "structure":
 		switch step.EvidenceBackend {
 		case "map":
-			if step.Kind != prooflist.KindMapStep && step.Kind != prooflist.KindPayloadBinding {
+			if step.Kind != prooflist.KindMapStep && step.Kind != prooflist.KindMapAbsence && step.Kind != prooflist.KindPayloadBinding {
 				return false, fmt.Errorf("prooflist step %d structure/map evidence does not match kind %q", index, step.Kind)
 			}
 			return v.verifyMapStep(index, step, structure.Proof(step.Proof))
@@ -188,7 +188,14 @@ func (v *Verifier) verifyMapStep(index int, step prooflist.Step, proof structure
 	if err != nil {
 		return false, fmt.Errorf("prooflist step %d: %w", index, err)
 	}
-	return maps.Verify(step.From, key, mapping.Binding{Value: step.Target, Present: true}, proof)
+	expected := mapping.Binding{Value: step.Target, Present: true}
+	if step.Kind == prooflist.KindMapAbsence {
+		if step.Target.Defined() {
+			return false, fmt.Errorf("prooflist step %d map absence target is defined", index)
+		}
+		expected = mapping.Binding{Present: false}
+	}
+	return maps.Verify(step.From, key, expected, proof)
 }
 
 func validateProofListQuery(pl prooflist.ProofList, verifiedPath proofListVerifiedPath) error {

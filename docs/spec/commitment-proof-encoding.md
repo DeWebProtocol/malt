@@ -1,7 +1,7 @@
 # Commitment And Proof Encoding
 
 This document fixes the implementation-bound byte encodings exercised by the
-Resolve/Read conformance corpus v1. It complements the typed-root rules in
+Resolve/Read conformance corpus v2. It complements the typed-root rules in
 [CID and wire format](./cid-and-wire-format.md) and the semantic contract in
 [ProofList format](./prooflist-format.md).
 
@@ -159,7 +159,11 @@ envelope itself is JSON-encoded:
   "steps": [
     {"slot": "<CID bytes>", "proof": "<primitive single proof>"}
   ],
-  "bucket": {"proof": "<primitive single proof>"}
+  "bucket": {
+    "entries": ["<canonical leaf-marker CID bytes>"],
+    "proof": "<membership proof or empty>",
+    "batches": ["<absence batch proof>"]
+  }
 }
 ```
 
@@ -183,11 +187,35 @@ The marker encodings are raw CIDv1 values with identity multihashes over:
 
 - leaf: `malt:map:radix:leaf:v1:` || key-byte-length as big-endian `uint16` ||
   canonical key UTF-8 || target CID bytes;
-- bucket reference: `malt:map:radix:bucket:v1:` || bucket-root CID bytes.
+- current bucket reference: `malt:map:radix:bucket:v2:` || bucket-root CID bytes;
+- legacy read-compatible bucket reference: `malt:map:radix:bucket:v1:` || bucket-root CID bytes.
 
-A bucket witness opens the expected leaf marker from the bucket commitment;
-its primitive proof carries the bucket index. Current map proofs authenticate
-membership only.
+Map proofs authenticate both membership and non-membership. Non-membership
+terminates at a proved empty radix slot, a proved terminal leaf for a different
+canonical key, or a collision bucket. A membership bucket witness leaves
+`entries` and `batches` absent and opens the expected leaf marker through
+`proof`, whose primitive encoding carries the bucket index.
+
+A v2 collision bucket commits a fixed-width vector: canonical leaf markers
+followed by explicit empty cells through the backend capacity. Its absence
+witness carries every canonical marker in `entries` and covers the complete
+fixed-width vector with ordered `batches`; each batch covers at most 16
+consecutive indices. Verification rejects noncanonical marker encodings,
+duplicate or out-of-order keys, a queried key present in the bucket, missing or
+extra batches, any nonempty tail cell, and any invalid batch opening. `proof`
+must be empty for bucket absence.
+
+The reader and portable verifier continue to recognize v1 bucket references
+for membership proofs under a v2 typed map root. Every internal node and bucket
+root must retain that parent root version and backend; a v3 root carrying a v1
+bucket reference, or any mixed-version child, is noncanonical and rejected.
+Because the legacy variable-length bucket commitment did not authenticate a
+fixed empty tail, it cannot produce the new sound collision-bucket
+non-membership proof. Direct incremental mutation rejects a root whose typed
+version differs from the semantic instance; the client writer migrates a v2
+object by exact complete-view replay and a full v3 rebuild, which rewrites every
+collision bucket into the v2 fixed-domain reference before it applies the
+requested change.
 
 In a resolve ProofList this envelope is stored in `step.evidence` with
 `evidence_kind="explicit"`; the primitive backend is inferred from the typed

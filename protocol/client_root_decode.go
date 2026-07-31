@@ -70,6 +70,37 @@ func DecodeMaterializationReceipt(data []byte, bundle mutation.ClientRootBundle)
 // DecodeWriterComputeResult strictly decodes and validates one browser writer
 // result.
 func DecodeWriterComputeResult(data []byte) (WriterComputeResult, error) {
+	if len(data) == 0 {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: client-root JSON is empty")
+	}
+	if len(data) > MaxClientRootJSONBytes {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: client-root JSON exceeds %d bytes", MaxClientRootJSONBytes)
+	}
+	if !utf8.Valid(data) {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: client-root JSON is not valid UTF-8")
+	}
+	var envelope struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return WriterComputeResult{}, fmt.Errorf("decode writer compute result profile: %w", err)
+	}
+	if envelope.Profile == WriterComputeResultProfileV1 {
+		var legacy writerComputeResultV1
+		if err := decodeClientRootJSON(data, &legacy); err != nil {
+			return WriterComputeResult{}, fmt.Errorf("decode writer compute result: %w", err)
+		}
+		value := WriterComputeResult{
+			Profile:  legacy.Profile,
+			Bundle:   legacy.Bundle,
+			NextView: legacy.NextView,
+			Metrics:  legacy.Metrics,
+		}
+		if err := value.Validate(); err != nil {
+			return WriterComputeResult{}, err
+		}
+		return value, nil
+	}
 	var value WriterComputeResult
 	if err := decodeClientRootJSON(data, &value); err != nil {
 		return WriterComputeResult{}, fmt.Errorf("decode writer compute result: %w", err)
@@ -117,13 +148,17 @@ func decodeClientRootJSON(data []byte, target any) error {
 // are deliberately required; optional semantic values use explicit presence
 // discriminators instead of optional JSON properties.
 func validateRequiredJSONShape(data []byte, targetType reflect.Type) error {
+	return validateRequiredJSONShapeWithPresence(data, targetType, nil)
+}
+
+func validateRequiredJSONShapeWithPresence(data []byte, targetType reflect.Type, presence map[string]struct{}) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	token, err := decoder.Token()
 	if err != nil {
 		return err
 	}
-	if err := validateJSONToken(decoder, token, targetType, "$", true); err != nil {
+	if err := validateJSONToken(decoder, token, targetType, "$", true, presence); err != nil {
 		return err
 	}
 	if _, err := decoder.Token(); err != io.EOF {
@@ -135,15 +170,18 @@ func validateRequiredJSONShape(data []byte, targetType reflect.Type) error {
 	return nil
 }
 
-func validateJSONToken(decoder *json.Decoder, token json.Token, targetType reflect.Type, path string, required bool) error {
+func validateJSONToken(decoder *json.Decoder, token json.Token, targetType reflect.Type, path string, required bool, presence map[string]struct{}) error {
 	for targetType.Kind() == reflect.Pointer {
 		targetType = targetType.Elem()
 	}
+	if targetType == reflect.TypeFor[nullableJSONRawMessage]() {
+		return skipJSONToken(decoder, token)
+	}
 	if token == nil {
-		if required {
-			return fmt.Errorf("%s must not be null", path)
-		}
-		return nil
+		return fmt.Errorf("%s must not be null", path)
+	}
+	if targetType == reflect.TypeFor[json.RawMessage]() {
+		return skipJSONToken(decoder, token)
 	}
 	switch targetType.Kind() {
 	case reflect.Struct:
@@ -170,11 +208,14 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 				return fmt.Errorf("%s has duplicate field %q", path, name)
 			}
 			seen[name] = struct{}{}
+			if presence != nil {
+				presence[path+"."+name] = struct{}{}
+			}
 			valueToken, err := decoder.Token()
 			if err != nil {
 				return err
 			}
-			if err := validateJSONToken(decoder, valueToken, field.typ, path+"."+name, !field.optional); err != nil {
+			if err := validateJSONToken(decoder, valueToken, field.typ, path+"."+name, !field.optional, presence); err != nil {
 				return err
 			}
 		}
@@ -206,7 +247,7 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 			if err != nil {
 				return err
 			}
-			if err := validateJSONToken(decoder, valueToken, targetType.Elem(), fmt.Sprintf("%s[%d]", path, index), true); err != nil {
+			if err := validateJSONToken(decoder, valueToken, targetType.Elem(), fmt.Sprintf("%s[%d]", path, index), true, presence); err != nil {
 				return err
 			}
 			index++
@@ -239,6 +280,55 @@ func validateJSONToken(decoder *json.Decoder, token json.Token, targetType refle
 	}
 }
 
+func skipJSONToken(decoder *json.Decoder, token json.Token) error {
+	delim, structured := token.(json.Delim)
+	if !structured {
+		return nil
+	}
+	switch delim {
+	case '{':
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			value, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if err := skipJSONToken(decoder, value); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return fmt.Errorf("invalid JSON object terminator")
+		}
+	case '[':
+		for decoder.More() {
+			value, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if err := skipJSONToken(decoder, value); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return fmt.Errorf("invalid JSON array terminator")
+		}
+	default:
+		return fmt.Errorf("invalid JSON delimiter %q", delim)
+	}
+	return nil
+}
+
 func maxClientRootSliceItems(targetType reflect.Type) int {
 	if targetType.Kind() == reflect.Array {
 		return targetType.Len()
@@ -254,6 +344,10 @@ func maxClientRootSliceItems(targetType reflect.Type) int {
 		return MaxClientRootChanges
 	case reflect.TypeFor[TransitionOutput]():
 		return MaxClientRootTransitions
+	case reflect.TypeFor[MapMaterializationWire]():
+		return MaxClientRootTransitions
+	case reflect.TypeFor[MaterializationEntryWire]():
+		return MaxClientRootMaterializationEntries
 	case reflect.TypeFor[string]():
 		return MaxClientRootPayloadCIDs
 	default:

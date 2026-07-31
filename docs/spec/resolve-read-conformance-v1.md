@@ -13,12 +13,11 @@ same checked-in bytes; they do not redefine proof semantics or maintain edited
 copies.
 
 The corpus version is `malt.resolve-read.conformance/v1`. It is independent of
-the two enclosed operation profiles and of the typed-root
-`MALTVersionID=2`. Before the first release, an intentional encoding change
-may regenerate the corpus as part of the same reviewed change. Once released,
-a vector ID and its input and expected verdict are immutable; later behavioral
-or encoding changes require v2. Error strings, timing, and
-implementation-specific exception types are not conformance outputs.
+the two enclosed operation profiles and of the typed-root `MALTVersionID=2`.
+This corpus shipped with v0.0.6 and is immutable: a vector ID, its input, and
+its expected verdict cannot change. Later behavioral or encoding changes use a
+new corpus version. Error strings, timing, and implementation-specific
+exception types are not conformance outputs.
 
 ## File And Envelope
 

@@ -76,6 +76,12 @@ try {
   );
 
   const encoder = new TextEncoder();
+  const kzgBootstrap = JSON.parse(await writers.bootstrap("kzg"));
+  assert.equal(kzgBootstrap.profile, "malt.update-view/v1");
+  assert.equal(kzgBootstrap.objects.length, 1);
+  assert.equal(kzgBootstrap.objects[0].object_id, "root");
+  assert.equal(kzgBootstrap.objects[0].entries.length, 0);
+
   const kzgFixture = fixtures.find(({ backend }) => backend === "kzg");
   assert.ok(kzgFixture, "missing KZG fixture");
   const loadedRoot = await writers.load(
@@ -94,7 +100,7 @@ try {
     encoder.encode(kzgFixture.operation_id),
   );
   const kzgPrepared = JSON.parse(kzgPreparedJSON);
-  assert.equal(kzgPrepared.profile, "malt.writer-compute-result/v1");
+  assert.equal(kzgPrepared.profile, "malt.writer-compute-result/v2");
   assert.deepStrictEqual(kzgPrepared.bundle, kzgFixture.expected_bundle);
   assert.deepStrictEqual(kzgPrepared.next_view, kzgFixture.expected_next_view);
   const kzgWorkFinishedAt = performance.now();
@@ -106,6 +112,12 @@ try {
 
   await writers.ipaReady;
   const ipaReadyAt = performance.now();
+  const ipaBootstrap = JSON.parse(await writers.bootstrap("ipa"));
+  assert.equal(ipaBootstrap.profile, "malt.update-view/v1");
+  assert.equal(ipaBootstrap.objects.length, 1);
+  assert.equal(ipaBootstrap.objects[0].object_id, "root");
+  assert.equal(ipaBootstrap.objects[0].entries.length, 0);
+
   const ipaFixture = fixtures.find(({ backend }) => backend === "ipa");
   assert.ok(ipaFixture, "missing IPA fixture");
   const ipaLoadedRoot = await writers.load(
@@ -124,7 +136,7 @@ try {
     encoder.encode(ipaFixture.operation_id),
   );
   const ipaPrepared = JSON.parse(ipaPreparedJSON);
-  assert.equal(ipaPrepared.profile, "malt.writer-compute-result/v1");
+  assert.equal(ipaPrepared.profile, "malt.writer-compute-result/v2");
   assert.deepStrictEqual(ipaPrepared.bundle, ipaFixture.expected_bundle);
   assert.deepStrictEqual(ipaPrepared.next_view, ipaFixture.expected_next_view);
 

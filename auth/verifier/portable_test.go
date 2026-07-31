@@ -17,6 +17,7 @@ import (
 	listtree "github.com/dewebprotocol/malt/auth/semantic/list/tree"
 	"github.com/dewebprotocol/malt/auth/semantic/mapping"
 	mapradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt/auth/semantic/nodegeometry"
 	authverifier "github.com/dewebprotocol/malt/auth/verifier"
 	"github.com/dewebprotocol/malt/execution"
 	"github.com/dewebprotocol/malt/wire/maltcid"
@@ -90,6 +91,55 @@ func TestPortableVerifierAcceptsRuntimeRadixAndTreeProofs(t *testing.T) {
 
 				pl.Steps[0].Target = portableTestCID(t, "forged-map-target")
 				assertPortableRejected(t, portable, pl)
+			})
+
+			t.Run("map_absence", func(t *testing.T) {
+				tests := []struct {
+					name    string
+					present map[arcset.Path]cid.Cid
+					absent  arcset.Path
+				}{
+					{name: "empty", present: map[arcset.Path]cid.Cid{}, absent: arcset.CanonicalizePath("definitely-absent")},
+				}
+				presentKey := arcset.CanonicalizePath("present-leaf")
+				tests = append(tests, struct {
+					name    string
+					present map[arcset.Path]cid.Cid
+					absent  arcset.Path
+				}{
+					name:    "conflicting_leaf",
+					present: map[arcset.Path]cid.Cid{presentKey: portableTestCID(t, "absence-present-"+name)},
+					absent:  portableSharedFirstDigitPath(t, scheme.MaxValues(), presentKey),
+				})
+				for _, test := range tests {
+					t.Run(test.name, func(t *testing.T) {
+						scope := fmt.Sprintf("portable-map-absence-%s-%s", name, test.name)
+						root, err := maps.Commit(ctx, scope, mapping.NewViewFromPaths(test.present))
+						if err != nil {
+							t.Fatalf("Commit: %v", err)
+						}
+						executor, err := execution.NewExecutor(execution.Options{Scope: scope, Maps: maps})
+						if err != nil {
+							t.Fatalf("NewExecutor: %v", err)
+						}
+						request := malt.MapProofRequest{Root: root, Key: test.absent}
+						result, err := executor.ProveMap(ctx, request)
+						if err != nil {
+							t.Fatalf("ProveMap: %v", err)
+						}
+						if result.Present || result.Target.Defined() || result.ProofList.Steps[0].Kind != prooflist.KindMapAbsence {
+							t.Fatalf("absence result = %+v", result)
+						}
+						if err := malt.VerifyMapProof(ctx, request, result, portable); err != nil {
+							t.Fatalf("VerifyMapProof: %v", err)
+						}
+						wrong := request
+						wrong.Key = arcset.CanonicalizePath("another-missing-key")
+						if err := malt.VerifyMapProof(ctx, wrong, result, portable); err == nil {
+							t.Fatal("VerifyMapProof accepted absence for another key")
+						}
+					})
+				}
 			})
 
 			t.Run("generic_map_coordinates", func(t *testing.T) {
@@ -284,4 +334,26 @@ func portableSharedFirstKZGDigitPaths(t *testing.T) (string, string) {
 	}
 	t.Fatal("could not find portable KZG paths with a shared first digit")
 	return "", ""
+}
+
+func portableSharedFirstDigitPath(t *testing.T, capacity int, base arcset.Path) arcset.Path {
+	t.Helper()
+	geometry, err := nodegeometry.ForCapacity(capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseDigest := sha256.Sum256([]byte(base.String()))
+	baseDigit, ok := geometry.MapDigit(baseDigest[:], 0)
+	if !ok {
+		t.Fatal("base path has no first radix digit")
+	}
+	for index := 0; index < 1<<18; index++ {
+		candidate := arcset.CanonicalizePath(fmt.Sprintf("portable-absent-shared-%d", index))
+		digest := sha256.Sum256([]byte(candidate.String()))
+		if digit, ok := geometry.MapDigit(digest[:], 0); ok && digit == baseDigit && candidate != base {
+			return candidate
+		}
+	}
+	t.Fatal("could not find portable absent path with a shared first digit")
+	return ""
 }

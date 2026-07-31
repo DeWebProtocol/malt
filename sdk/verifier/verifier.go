@@ -50,6 +50,20 @@ func (v *Verifier) VerifyRead(ctx context.Context, value protocol.ReadVerificati
 	return malt.VerifyRead(ctx, request, result, v.proofs)
 }
 
+// VerifyMapProof locally verifies one transport-neutral map membership or
+// non-membership request/result pair.
+func (v *Verifier) VerifyMapProof(ctx context.Context, value protocol.MapProofVerification) error {
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	if v == nil || v.proofs == nil {
+		return fmt.Errorf("client verifier is nil")
+	}
+	request, _ := value.Request.Core()
+	result, _ := value.Result.Core()
+	return malt.VerifyMapProof(ctx, request, result, v.proofs)
+}
+
 func NewDefault() (*Verifier, error) {
 	proofs, err := authverifier.NewDefault()
 	if err != nil {

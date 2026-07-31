@@ -25,6 +25,7 @@ type sessionComputer struct {
 	session               *clientwriter.Session
 	store                 *materializermemory.Store
 	view                  mutation.UpdateView
+	bootstrapBase         *mutation.MapStateMaterialization
 	prepared              map[string]preparedCandidate
 	preparedResponseBytes int
 }
@@ -100,6 +101,49 @@ func (c *computer) compute(ctx context.Context, operationID string, updateViewJS
 	return encodeComputeResult(result)
 }
 
+func (s *sessionComputer) bootstrap(ctx context.Context) ([]byte, error) {
+	if s == nil || s.computer == nil {
+		return nil, fmt.Errorf("client writer session is not initialized")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime, store, err := s.computer.newSessionRuntime()
+	if err != nil {
+		return nil, err
+	}
+	session, err := clientwriter.NewSession(runtime)
+	if err != nil {
+		return nil, err
+	}
+	backend := maltcid.BackendKind("")
+	for candidate := range s.computer.schemes {
+		if backend != "" {
+			return nil, fmt.Errorf("bootstrap writer must load exactly one backend")
+		}
+		backend = candidate
+	}
+	view, base, err := session.BootstrapMap(ctx, backend, mutation.UpdateViewBounds{
+		MaxObjects: 4096, MaxTotalEntries: protocol.MaxClientRootEntries, MaxDepth: 256,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if s.store != nil {
+		s.store.RetainRoots(nil)
+	}
+	s.session = session
+	s.store = store
+	s.view = view
+	s.bootstrapBase = &base
+	s.prepared = make(map[string]preparedCandidate)
+	s.preparedResponseBytes = 0
+	wire, err := protocol.NewUpdateView(view)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(wire)
+}
+
 func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (string, error) {
 	if s == nil || s.computer == nil {
 		return "", fmt.Errorf("client writer session is not initialized")
@@ -133,6 +177,7 @@ func (s *sessionComputer) load(ctx context.Context, updateViewJSON []byte) (stri
 	s.session = session
 	s.store = store
 	s.view = view
+	s.bootstrapBase = nil
 	s.prepared = make(map[string]preparedCandidate)
 	s.preparedResponseBytes = 0
 	return view.BaseRoot.String(), nil
@@ -165,6 +210,10 @@ func (s *sessionComputer) prepare(ctx context.Context, operationID string, seman
 	if err != nil {
 		s.retainMaterializedRoots()
 		return "", fmt.Errorf("prepare client writer session: %w", err)
+	}
+	if s.bootstrapBase != nil {
+		base := *s.bootstrapBase
+		result.Materialization.Base = &base
 	}
 	fullResponse, err := encodeComputeResult(result)
 	if err != nil {
@@ -211,6 +260,7 @@ func (s *sessionComputer) closeSession() {
 	s.session = nil
 	s.store = nil
 	s.view = mutation.UpdateView{}
+	s.bootstrapBase = nil
 	s.prepared = nil
 	s.preparedResponseBytes = 0
 }
@@ -245,6 +295,7 @@ func (s *sessionComputer) acceptReceipt(operationID string, receiptJSON []byte) 
 		return "", fmt.Errorf("retain client writer next view: %w", err)
 	}
 	s.view = next
+	s.bootstrapBase = nil
 	s.prepared = make(map[string]preparedCandidate)
 	s.preparedResponseBytes = 0
 	s.retainMaterializedRoots()
@@ -276,10 +327,20 @@ func (s *sessionComputer) retainMaterializedRoots() {
 	}
 	retain := make(map[string][]cid.Cid)
 	addViewRoots(retain, s.view)
+	if s.session != nil {
+		addWorkingRoots(retain, s.session.WorkingRoots())
+	}
 	for _, candidate := range s.prepared {
 		addViewRoots(retain, candidate.result.NextView)
 	}
 	s.store.RetainRoots(retain)
+}
+
+func addWorkingRoots(retain map[string][]cid.Cid, roots map[string]cid.Cid) {
+	for objectID, root := range roots {
+		scope := "client-root/v1/" + objectID
+		retain[scope] = append(retain[scope], root)
+	}
 }
 
 func addViewRoots(retain map[string][]cid.Cid, view mutation.UpdateView) {
@@ -289,8 +350,28 @@ func addViewRoots(retain map[string][]cid.Cid, view mutation.UpdateView) {
 	}
 }
 
+func validateMaterializationReceipt(resultJSON, receiptJSON []byte) (string, error) {
+	result, err := protocol.DecodeWriterComputeResult(resultJSON)
+	if err != nil {
+		return "", fmt.Errorf("decode prepared writer result: %w", err)
+	}
+	bundle, err := result.Bundle.Core()
+	if err != nil {
+		return "", fmt.Errorf("decode prepared writer bundle: %w", err)
+	}
+	receipt, err := protocol.DecodeMaterializationReceipt(receiptJSON, bundle)
+	if err != nil {
+		return "", fmt.Errorf("decode materialization receipt: %w", err)
+	}
+	coreReceipt, err := receipt.Core(bundle)
+	if err != nil {
+		return "", fmt.Errorf("validate materialization receipt: %w", err)
+	}
+	return coreReceipt.Candidate.String(), nil
+}
+
 func encodeComputeResult(result clientwriter.ComputeResult) ([]byte, error) {
-	response, err := protocol.NewWriterComputeResult(result.Bundle, result.NextView, protocol.WriterComputeMetrics{
+	response, err := protocol.NewWriterComputeResult(result.Bundle, result.Materialization, result.NextView, protocol.WriterComputeMetrics{
 		ViewNormalizationNS:    result.Metrics.ViewNormalizationNS,
 		IntentNormalizationNS:  result.Metrics.IntentNormalizationNS,
 		DigestNS:               result.Metrics.DigestNS,

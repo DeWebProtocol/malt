@@ -22,6 +22,7 @@ const writers = await createMaltWriterWorkers();
 await writers.kzgReady;
 console.log(writers.status("ipa")); // { backend: "ipa", state: "initializing" }
 
+const bootstrapViewJSON = await writers.bootstrap("kzg"); // new empty Bucket only
 const baseRoot = await writers.load("kzg", updateViewJSONUTF8);
 const candidateRoot = await writers.prepare(
   "kzg",
@@ -52,6 +53,8 @@ compute(
   updateViewJSONUTF8,
   semanticIntentJSONUTF8
 ) -> Promise<resultJSON>
+
+bootstrap(backend) -> Promise<bootstrapUpdateViewJSON>
 
 load(backend, updateViewJSONUTF8) -> Promise<baseRoot>
 
@@ -91,7 +94,10 @@ and a single instance never initializes both schemes.
 
 ## Session behavior
 
-Loading recomputes and verifies the complete update view once. Preparing a
+`bootstrap` creates, commits, and retains the canonical empty-map base in the
+client Worker; its first prepared result carries a root-bound base witness so an
+untrusted service can materialize that root without calling `Commit`. Loading
+recomputes and verifies the complete update view once. Preparing a
 mutation uses the retained logical vectors and semantic materialization, but
 does not advance the session. `prepare` returns only the candidate root. The
 caller requests the full result for a retained operation through
@@ -109,16 +115,22 @@ candidate. KZG and IPA sessions are unrelated because they live in different
 Workers.
 
 The stateless compute path and `getPreparedResult` return the protocol-owned
-`malt.writer-compute-result/v1`:
+`malt.writer-compute-result/v2`:
 
 ```json
 {
-  "profile": "malt.writer-compute-result/v1",
+  "profile": "malt.writer-compute-result/v2",
   "bundle": {},
+  "materialization": {},
   "next_view": {},
   "metrics": {}
 }
 ```
+
+`materialization` is the root-bound radix proof-serving witness for every map
+transition output. A service must validate it against the canonical bundle and
+derived logical post-view through `radix.ValidateMaterialization` before import;
+it must not treat the witness as trusted storage or a state-transition proof.
 
 The writer computes locally and does not contact a Gateway, publish a root, or
 promote a candidate to trusted state.
@@ -130,6 +142,7 @@ instance:
 
 ```text
 globalThis.maltComputeClientRootV1(...)
+globalThis.maltWriterBootstrapSessionV1()
 globalThis.maltWriterLoadSessionV1(...)
 globalThis.maltWriterPrepareSessionV1(...)
 globalThis.maltWriterGetPreparedResultV1(...)
