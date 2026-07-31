@@ -6,29 +6,114 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.7-rc.1] - 2026-07-31
+
+This experimental release candidate centers on three protocol changes:
+structured typed-root codecs, backend-sized semantic geometry, and verifiable
+Map non-membership.
+
+### Highlights
+
+#### Structured typed roots: `0x30VSBB`
+
+- Define typed MALT root codecs in the private-use `0x30VSBB` layout, where
+  `V` is the wire-format version, `S` is the semantic kind, and `BB` is the
+  commitment-backend suite.
+- New constructors emit `MALTVersionID=3` roots:
+  - Map/KZG: `0x303101`
+  - List/KZG: `0x303201`
+  - Map/IPA: `0x303102`
+  - List/IPA: `0x303202`
+- Fail closed on unknown versions, semantics, backend suites, combinations,
+  identity-hash sizes, and mixed-profile children.
+- Retain structured version-2 roots for read, proof, and exact complete-view
+  replay compatibility. Default constructors do not emit them.
+
+#### 4096-slot KZG semantic geometry
+
+- Use all 4096 KZG commitment positions in semantic Map and List nodes.
+- Consume SHA-256 Map keys as 12-bit radix digits under KZG.
+- Reserve List position zero for authenticated metadata and use the remaining
+  4095 KZG positions for content.
+- Keep IPA at 256 positions, with 8-bit Map radix digits and 255 List content
+  positions.
+- Share backend-sized geometry between semantic producers, materialization,
+  and portable verifiers.
+
+#### Verifiable Map non-membership
+
+- Add root-bound Map membership and non-membership proofs for KZG and IPA.
+- Authenticate an absent keyed relation through a proved empty radix slot, a
+  conflicting terminal leaf, or a complete fixed-domain collision bucket.
+- Add fixed-domain collision buckets under `MALTVersionID=3`, including
+  authenticated empty tail positions, so collision-bucket non-membership can
+  be verified.
+- Add `MapProofRequest`, `MapProofResult`, `MapProver`,
+  `VerifyMapProof`, the transport-neutral `malt.map-proof/v0alpha1` profile
+  and schemas, and the terminal ProofList step kind `map_absence`.
+- Expose the same Map-proof verification boundary through the Go SDK and
+  browser/WASM verifier.
+
+### Added
+
+- Add deterministic Resolve/Read conformance corpora; v2 is the current corpus
+  for version-3 roots, while v1 is retained as the frozen
+  structured-version-2 corpus.
+- Add complete-view client-root contracts, `sdk/writer`, exact candidate-root
+  bundles, root-bound Map materialization witnesses, and receipt-gated writer
+  sessions.
+- Add a unified browser writer WASM with isolated KZG and IPA workers.
+- Add request-scoped read and writer phase observations for diagnostics.
+
 ### Changed
 
 - Align the default Make target and CI build gate with the SDK-only package
   tree.
-- Use all 4096 KZG positions for semantic map and list nodes. KZG maps now
-  consume SHA-256 keys in 12-bit radix digits and KZG lists branch over 4095
-  content slots; the fixed 256-position IPA suite retains 8-bit map digits and
-  255 list content slots.
-- Advance newly constructed typed MALT roots to `MALTVersionID=3` for
-  fixed-domain collision buckets and sound map non-membership proofs. Version-2
-  roots remain explicitly readable and verifiable. Incremental mutation APIs
-  reject a root/semantics version mismatch; the client writer verifies an exact
-  v2 complete view, fully rebuilds it as v3, and only then applies changes so it
-  cannot emit mixed-version trees. Experimental version-1 roots remain rejected.
+- Narrow materializer and graph-writer dependencies to the capabilities each
+  algorithm consumes.
+- Require stable freshness identities where Go value identity cannot safely
+  identify a materializer.
+- Rebuild a verified structured-version-2 complete view as version 3 before
+  applying client-side changes.
+- Require exact materialization receipts before a stateful writer session
+  advances its retained working view.
+
+### Fixed
+
+- Reject missing authenticated List leaves instead of treating incomplete
+  materialization as semantic absence.
+- Preserve underlying materializer failures instead of collapsing them into
+  not-found results.
+- Reject noncanonical Map-proof targets and materialization coordinates.
+- Preserve collision-bucket and working-root state across writer preparation,
+  receipt recovery, and reachability reclamation.
+- Reject target relabeling, invalid UTF-8, stale intents, mismatched receipts,
+  and mixed backend/version materialization.
 
 ### Removed
 
-- Remove `radix.ProveTimings` and `(*radix.Map).ProveWithTimings`; evaluator
-  timing no longer runs inside the SDK proof path. This is an intentional
-  pre-v1 Go source break.
-- Remove the unused process-global logger, the former HTTP stat/content query
-  path helper, and the stale daemon configuration example. These are
-  intentional pre-v1 Go source removals after the Gateway/client split.
+- Remove `radix.ProveTimings` and `(*radix.Map).ProveWithTimings`.
+- Remove the obsolete process-global `logger` package.
+- Remove the former HTTP-oriented `graph/querypath` helper and stale daemon
+  configuration example.
+- Remove unused `zap` and `multierr` dependencies.
+
+### Compatibility
+
+This is an intentional pre-v1 source- and wire-breaking release candidate.
+
+- v0.0.6 flat root codecs `0x300001` through `0x300004` are not accepted by
+  the structured typed-root decoder. No migration layer is provided; recreate
+  experimental roots and materialized proof-serving state with this release.
+- Structured version-2 roots were introduced on `main` after v0.0.6. They
+  remain readable and verifiable, but new constructors emit version 3.
+  Collision-bucket non-membership requires the version-3 fixed-domain bucket
+  profile.
+- Removed Go APIs do not have forwarding compatibility shims.
+- Client-root `/v1` suffixes version experimental serialized profiles; they do
+  not declare the project or Go APIs stable at v1.
+- Client-root bundles and materialization receipts are not portable
+  state-transition, publication, freshness, or trust proofs.
 
 ## [0.0.6] - 2026-07-14
 
@@ -147,7 +232,8 @@ for the trusted CLI/daemon and UnixFS application, and
 - KZG verification rejects out-of-range proof indices and non-canonical proof
   lengths instead of allowing malformed input to panic or reuse a commitment.
 
-[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/DeWebProtocol/malt/compare/v0.0.7-rc.1...HEAD
+[0.0.7-rc.1]: https://github.com/DeWebProtocol/malt/compare/v0.0.6...v0.0.7-rc.1
 [0.0.6]: https://github.com/DeWebProtocol/malt/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/DeWebProtocol/malt/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/DeWebProtocol/malt/compare/v0.0.3...v0.0.4

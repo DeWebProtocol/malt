@@ -22,11 +22,11 @@ line client, daemon, UnixFS model, or website.
 [Client-root contract](./docs/spec/client-root-contract.md) ·
 [ProofList](./docs/spec/prooflist-format.md) ·
 [Compatibility](./docs/policy/compatibility.md) ·
-[v0.0.6 release](./docs/releases/v0.0.6.md) · [Roadmap](./ROADMAP.md)
+[v0.0.7-rc.1 release candidate](./docs/releases/v0.0.7.md) · [Roadmap](./ROADMAP.md)
 
-`v0.0.6` is the current tagged release. The client-root profiles and
-`sdk/writer` are experimental post-release contracts on `main`; their `/v1`
-profile suffixes do not declare the Go module or project stable at v1.
+`v0.0.7-rc.1` is the current release candidate. Its Map-proof and client-root
+profiles remain experimental; `/v1` profile suffixes do not declare MALT or
+its Go APIs stable at v1.
 
 ## Boundary
 
@@ -35,7 +35,8 @@ MALT core owns:
 - canonical segment and arc semantics;
 - typed map/list roots and CID rules;
 - map/list commitment, proof, and verification algorithms;
-- `malt.resolve/v0alpha1` and `malt.read/v0alpha1` values and JSON Schemas;
+- `malt.resolve/v0alpha1`, `malt.read/v0alpha1`, and
+  `malt.map-proof/v0alpha1` values and JSON Schemas;
 - complete-view client-root values, schemas, and local candidate computation;
 - ProofList generation/verification semantics;
 - portable mutation and receipt values;
@@ -90,7 +91,7 @@ conformance tests and examples, not deployment.
 ## Install
 
 ```bash
-go get github.com/dewebprotocol/malt@v0.0.6
+go get github.com/dewebprotocol/malt@v0.0.7-rc.1
 ```
 
 ### Verify a resolve result
@@ -116,13 +117,13 @@ in the application client.
 
 | Package | Role |
 | --- | --- |
-| module root `malt` | Stable typed resolve/read/query values and verification entry points |
+| module root `malt` | Minimal typed resolve/read/map-proof values and verification entry points |
 | `auth/arcset` | Canonical typed arcs, targets, sets, and iteration |
 | `auth/commitment` | KZG/IPA commitment capabilities |
 | `auth/semantic` | Map/list semantic contracts and reference algorithms |
 | `auth/proof` | ProofList/evidence formats |
 | `auth/verifier` | Storage-free ProofList verification |
-| `protocol` | Versioned serialized resolve/read and client-root profiles and schemas |
+| `protocol` | Versioned serialized resolve/read/map-proof and client-root profiles and schemas |
 | `mutation` | Portable mutation, client-root, and receipt values |
 | `execution` | Untrusted resolve/read/apply composition |
 | `graph` | Resolver, semantic mutation, bootstrap, and explicit reference-writer algorithms over injected capabilities |

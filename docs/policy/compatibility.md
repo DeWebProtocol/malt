@@ -10,14 +10,15 @@ profiles rejected.
 | Root `malt` typed facade | Experimental |
 | `malt.resolve/v0alpha1` | Profiled; incompatible wire revisions require a new profile |
 | `malt.read/v0alpha1` | Profiled; incompatible wire revisions require a new profile |
-| `malt.update-view/v1` | Experimental post-v0.0.6 complete semantic closure |
+| `malt.map-proof/v0alpha1` | Experimental in v0.0.7-rc.1; exact Map membership and non-membership |
+| `malt.update-view/v1` | Experimental in v0.0.7-rc.1; complete semantic closure |
 | `stateful-complete-vectors-v1` | Experimental state profile required by the current update-view contract |
-| `malt.semantic-intent/v1` | Experimental post-v0.0.6 output-free update intent |
-| `malt.client-root-bundle/v1` | Experimental post-v0.0.6 exact-root submission; not a transition proof |
-| `malt.client-root-materialization/v1` | Experimental root-bound map proof-serving witness; not a transition proof |
+| `malt.semantic-intent/v1` | Experimental in v0.0.7-rc.1; output-free update intent |
+| `malt.client-root-bundle/v1` | Experimental in v0.0.7-rc.1; exact-root submission, not a transition proof |
+| `malt.client-root-materialization/v1` | Experimental in v0.0.7-rc.1; root-bound Map proof-serving witness, not a transition proof |
 | `malt.writer-compute-result/v1` | Legacy browser-local bundle and next-view result; decode compatibility only |
-| `malt.writer-compute-result/v2` | Experimental browser-local bundle, map materialization, and next-view result |
-| `malt.materialization-receipt/v1` | Experimental post-v0.0.6 exact-bundle durability acknowledgement |
+| `malt.writer-compute-result/v2` | Experimental in v0.0.7-rc.1; browser-local bundle, Map materialization, and next-view result |
+| `malt.materialization-receipt/v1` | Experimental in v0.0.7-rc.1; exact-bundle durability acknowledgement |
 | ProofList JSON and proof semantics | Experimental, verifier-facing |
 | Typed MALT root CIDs/codecs | Experimental, verifier-facing |
 | `SegmentPath` projection | `/`-joined UTF-8 segments; experimental |
@@ -34,8 +35,8 @@ than extending that union.
 
 The `/v1` suffixes on the client-root profiles version those serialized
 contracts. They do not mean that MALT, the Go module, or the source APIs have
-reached a stable v1 release. The profiles are present on post-v0.0.6 `main` and
-are not part of the immutable v0.0.6 tag.
+reached a stable v1 release. These experimental profiles are included in
+v0.0.7-rc.1 and are not part of the immutable v0.0.6 tag.
 
 ## Pre-v1 changes
 
@@ -50,7 +51,18 @@ documentation in the same PR:
 - mutation, client-root, or receipt value semantics;
 - payload-binding and measured-list evidence.
 
-Typed-root constructors emit the current registered `MALTVersionID=3`.
+The root-codec compatibility boundaries are intentionally explicit:
+
+- v0.0.6 emitted flat experimental codecs `0x300001` through `0x300004`.
+  The structured decoder does not accept those roots. No migration layer is
+  provided in this pre-v1 release; recreate experimental roots and their
+  materialized proof-serving state.
+- Structured version-2 codecs (`0x302...`) were introduced on `main` after
+  v0.0.6. They are not v0.0.6 roots and remain readable and verifiable.
+- Current constructors emit structured version-3 codecs (`0x303...`) in the
+  project private-use `0x30VSBB` layout.
+
+Typed-root constructors emit `MALTVersionID=3`.
 Decoders explicitly retain v2 typed roots for read/proof compatibility and
 reject every other unknown version, semantic ID, backend suite ID, and
 combination; there is no heuristic fallback mapping.
@@ -65,6 +77,13 @@ version to match the semantics instance. The client writer handles v2 updates
 by exactly replaying the complete v2 view, fully rebuilding it as v3, and
 applying changes only to that v3 working root; direct partial v2-to-v3 mutation
 is rejected so unchanged v2 child CIDs cannot leak into a v3 root.
+
+Map non-membership proves only the absence of one exact keyed relation in a
+Map. It does not prove List-index, graph-path, object, payload-byte, or remote
+data absence, and ordinary `Read` retains its `ErrQueryNotFound` behavior.
+There is no List non-membership API. Empty-slot and conflicting-leaf absence
+work for compatible roots; collision-bucket non-membership requires the
+version-3 fixed-domain bucket profile.
 
 v0.0.6 intentionally removes application and deployment packages from this
 module. Consumers of the former CLI/daemon/UnixFS/server/storage packages must

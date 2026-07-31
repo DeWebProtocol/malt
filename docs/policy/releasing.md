@@ -10,9 +10,11 @@ Run from the repository root:
 git diff --check
 test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go test ./...
+GOARCH=386 go test ./auth/commitment/kzg ./auth/commitment/ipa
+sh scripts/test-verifier-wasm-vectors.sh
+scripts/test-writer-wasm.sh
 go vet ./...
 go build -buildvcs=false ./...
-scripts/build-verifier-wasm.sh dist/verifier
 ```
 
 Also compile a temporary external Go module against the candidate tag or

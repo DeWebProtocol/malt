@@ -7,10 +7,10 @@ state-transition proof.
 
 ## Status
 
-This is an experimental post-v0.0.6 contract on `main`; it is not part of the
-immutable v0.0.6 release and has not yet been published as v0.0.7. The `/v1`
-suffixes below version the serialized profiles. They do not declare MALT or its
-Go source APIs stable at v1.
+This contract is included in v0.0.7-rc.1 as an experimental pre-v1 surface.
+The `/v1` suffixes below version serialized profiles; they do not declare
+MALT or its Go source APIs stable at v1. Client-root bundles and receipts
+retain the explicit non-claims defined below.
 
 ## Profiles And Schemas
 

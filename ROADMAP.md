@@ -15,25 +15,32 @@ v0.0.6 turns this repository into an SDK-only core:
   `malt-client`; managed browser application behavior lives in
   `gateway/console`.
 
-## Post-v0.0.6 main
+## v0.0.7 release-candidate boundary
 
-Current `main` additionally contains the experimental complete-view
-client-root profiles, `sdk/writer` local candidate computation, and optional
-request-scoped phase observations. These contracts are not part of the
-immutable v0.0.6 tag. Before a later release, they need a language-neutral
-accept/reject conformance corpus as well as the checked-in schemas and Go tests.
+v0.0.7-rc.1 adds:
+
+- structured typed roots in the private-use `0x30VSBB` codec layout;
+- backend-sized semantic geometry, including 4096 KZG positions;
+- exact Map membership and non-membership proofs through
+  `malt.map-proof/v0alpha1`;
+- the experimental complete-view client-root profiles and `sdk/writer` local
+  candidate computation;
+- unified verifier and writer browser/WASM builds; and
+- optional request-scoped phase observations.
+
+The Resolve/Read v2 corpus is first frozen by this release candidate. The WASM
+gate also runs runtime-generated Map-proof smoke vectors for KZG and IPA.
+Before a final v0.0.7, a dedicated language-neutral Map-proof and client-root
+corpus remains a stabilization follow-up rather than an RC compatibility claim.
 
 ## Next core work
 
-1. Expand resolve/read conformance vectors across KZG and IPA: root identity,
-   multi-hop resolution, segment grouping, map reads, list reads, measured
-   ranges, malformed evidence, cross-root splicing, and payload bindings.
-2. Publish the same vectors as language-neutral JSON so Go, WASM, and future
-   TypeScript/Rust clients can prove behavioral parity.
-3. Define verifiable mutation transition semantics before introducing a new
+1. Define language-neutral Map-proof and client-root conformance corpora for
+   independent Go, WASM, TypeScript, and Rust consumers.
+2. Define verifiable mutation transition semantics before introducing a new
    mutation artifact/profile. Current receipts remain operational only.
-4. Harden variable-size measured-list evidence and native multi-open proofs.
-5. Stabilize the minimal materializer capability without standardizing any
+3. Harden variable-size measured-list evidence and native multi-open proofs.
+4. Stabilize the minimal materializer capability without standardizing any
    ArcTable persistence format.
 
 ## Product integration work outside core
