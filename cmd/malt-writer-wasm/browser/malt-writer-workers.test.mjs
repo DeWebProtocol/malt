@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MaltWriterWorker } from "./malt-writer-workers.mjs";
+import { createMaltWriterWorker, MaltWriterWorker } from "./malt-writer-workers.mjs";
 
 const EMPTY_WASM_MODULE = new WebAssembly.Module(
   new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
@@ -170,4 +170,52 @@ test("invalid backend/profile combinations fail before a Worker starts", () => {
     /must not select/,
   );
   assert.throws(() => new MaltWriterWorker({ ...options, backend: "other" }), /unsupported writer/);
+});
+
+test("abort signal cancels an in-flight WASM fetch before a Worker starts", async () => {
+  const controller = new AbortController();
+  let receivedSignal;
+  let workerStarts = 0;
+  const creating = createMaltWriterWorker({
+    backend: "ipa",
+    profile: "fast",
+    wasmURL: "https://example.test/malt-writer-ipa-fast.wasm",
+    wasmExecURL: "https://example.test/wasm_exec.js",
+    signal: controller.signal,
+    fetch: (_url, options) => {
+      receivedSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    },
+    workerFactory: () => {
+      workerStarts += 1;
+      return new FakeWorker("ipa", "fast");
+    },
+  });
+
+  controller.abort(new Error("profile selection changed"));
+  await assert.rejects(creating, /profile selection changed/);
+  assert.equal(receivedSignal, controller.signal);
+  assert.equal(workerStarts, 0);
+});
+
+test("an already-aborted signal rejects a compiled module before Worker creation", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("component unmounted"));
+  let workerStarts = 0;
+  await assert.rejects(
+    createMaltWriterWorker({
+      backend: "kzg",
+      module: EMPTY_WASM_MODULE,
+      wasmExecURL: "https://example.test/wasm_exec.js",
+      signal: controller.signal,
+      workerFactory: () => {
+        workerStarts += 1;
+        return new FakeWorker("kzg", "");
+      },
+    }),
+    /component unmounted/,
+  );
+  assert.equal(workerStarts, 0);
 });

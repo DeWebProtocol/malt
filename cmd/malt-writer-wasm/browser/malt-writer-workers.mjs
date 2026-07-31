@@ -30,20 +30,43 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function compileModule(wasmURL, fetchFunction) {
-  const response = await fetchFunction(wasmURL);
+function abortFailure(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new Error("MALT writer initialization was aborted");
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortFailure(signal);
+}
+
+async function compileModule(wasmURL, fetchFunction, signal) {
+  throwIfAborted(signal);
+  const response = await fetchFunction(wasmURL, { signal });
+  throwIfAborted(signal);
   if (!response.ok) {
     throw new Error(`fetch ${wasmURL}: HTTP ${response.status}`);
   }
   if (typeof WebAssembly.compileStreaming === "function") {
     const fallback = response.clone();
     try {
-      return await WebAssembly.compileStreaming(response);
+      const module = await WebAssembly.compileStreaming(response);
+      throwIfAborted(signal);
+      return module;
     } catch {
-      return WebAssembly.compile(await fallback.arrayBuffer());
+      throwIfAborted(signal);
+      const bytes = await fallback.arrayBuffer();
+      throwIfAborted(signal);
+      const module = await WebAssembly.compile(bytes);
+      throwIfAborted(signal);
+      return module;
     }
   }
-  return WebAssembly.compile(await response.arrayBuffer());
+  const bytes = await response.arrayBuffer();
+  throwIfAborted(signal);
+  const module = await WebAssembly.compile(bytes);
+  throwIfAborted(signal);
+  return module;
 }
 
 function defaultWorkerFactory({ backend, profile, workerURL }) {
@@ -282,16 +305,19 @@ export async function createMaltWriterWorker({
   module,
   fetch: fetchFunction = globalThis.fetch,
   workerFactory,
+  signal,
 } = {}) {
   requireTarget(backend, profile);
+  throwIfAborted(signal);
   let compiledModule = module;
   if (compiledModule === undefined) {
     if (wasmURL === undefined) throw new Error("wasmURL is required");
     if (typeof fetchFunction !== "function") {
       throw new Error("fetch is unavailable and no compiled module was provided");
     }
-    compiledModule = await compileModule(wasmURL, fetchFunction);
+    compiledModule = await compileModule(wasmURL, fetchFunction, signal);
   }
+  throwIfAborted(signal);
   return new MaltWriterWorker({
     backend,
     profile,
