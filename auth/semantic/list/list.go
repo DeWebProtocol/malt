@@ -11,6 +11,7 @@ package list
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
@@ -18,6 +19,10 @@ import (
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
+
+// ErrNotMeasured reports that a plain list does not carry fixed-width byte
+// range metadata. Callers may fall back to index semantics for this case.
+var ErrNotMeasured = errors.New("list is not measured")
 
 // Iterator iterates over a list view in index order.
 type Iterator interface {

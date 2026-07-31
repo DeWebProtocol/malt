@@ -571,6 +571,23 @@ func TestTreeListMeasuredChildNodesCarryRangeMetadata(t *testing.T) {
 	}
 }
 
+func TestTreeListPlainRangeReportsNotMeasured(t *testing.T) {
+	ctx := context.Background()
+	for name, factory := range listSchemes() {
+		t.Run(name, func(t *testing.T) {
+			semantic := newList(t, factory, materialmemory.New(true))
+			root, err := semantic.Commit(ctx, "tree-plain-range-"+name, list.NewViewFromSlice(makeValues(1)))
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
+			end := uint64(0)
+			if _, _, err := semantic.ProveRange(ctx, "tree-plain-range-"+name, root, 0, &end); !errors.Is(err, list.ErrNotMeasured) {
+				t.Fatalf("ProveRange error = %v, want ErrNotMeasured", err)
+			}
+		})
+	}
+}
+
 func TestTreeListFixedRangeProofsUseOptionalEnd(t *testing.T) {
 	ctx := context.Background()
 	chunks := makeValues(5)

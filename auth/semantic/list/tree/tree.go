@@ -1200,7 +1200,7 @@ func fixedRangeMetadata(marker cid.Cid) (layout.NodeMetadata, error) {
 		return layout.NodeMetadata{}, fmt.Errorf("root does not carry node metadata: %w", err)
 	}
 	if meta.ChunkSize == 0 {
-		return layout.NodeMetadata{}, fmt.Errorf("root does not carry fixed range metadata")
+		return layout.NodeMetadata{}, list.ErrNotMeasured
 	}
 	return meta, nil
 }
