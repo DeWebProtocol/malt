@@ -14,6 +14,8 @@ func startupBackend() (string, error) {
 	return string(maltcid.BackendKindKZG), nil
 }
 
+func startupProfile(string) string { return "" }
+
 func newComputer(backend string) (*computer, error) {
 	if backend != string(maltcid.BackendKindKZG) {
 		return nil, fmt.Errorf("KZG writer does not support backend %q", backend)

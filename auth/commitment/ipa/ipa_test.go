@@ -1,12 +1,92 @@
 package ipa_test
 
 import (
+	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt/auth/commitment"
 	"github.com/dewebprotocol/malt/auth/commitment/ipa"
 )
+
+func TestIPACommitterProfilesAreWireIdentical(t *testing.T) {
+	values := []commitment.Cell{
+		commitment.NewCell([]byte("slot0")),
+		commitment.NewCell([]byte("slot1")),
+		commitment.NewCell([]byte("slot2")),
+	}
+	indices := []uint64{0, 2}
+	type output struct {
+		root       string
+		proof      []byte
+		batchProof []byte
+	}
+	var want output
+	for _, profile := range []ipa.CommitterProfile{
+		ipa.ProfileDirect,
+		ipa.ProfileCompact,
+		ipa.ProfileFast,
+	} {
+		profile := profile
+		t.Run(string(profile), func(t *testing.T) {
+			scheme, err := ipa.NewCommitterScheme(profile)
+			if err != nil {
+				t.Fatalf("NewCommitterScheme(%s) failed: %v", profile, err)
+			}
+			if got, ok := scheme.CommitterProfile(); !ok || got != profile {
+				t.Fatalf("CommitterProfile = %q, %v; want %q, true", got, ok, profile)
+			}
+
+			root, _, proof, err := scheme.Prove(values, 2)
+			if err != nil {
+				t.Fatalf("Prove failed: %v", err)
+			}
+			batchRoot, _, batchProof, err := scheme.BatchProve(values, indices)
+			if err != nil {
+				t.Fatalf("BatchProve failed: %v", err)
+			}
+			if !batchRoot.Equals(root) {
+				t.Fatalf("batch root %s differs from single root %s", batchRoot, root)
+			}
+			got := output{root: root.String(), proof: proof, batchProof: batchProof}
+			if want.root == "" {
+				want = got
+				return
+			}
+			if got.root != want.root {
+				t.Fatalf("root = %s, want %s", got.root, want.root)
+			}
+			if !bytes.Equal(got.proof, want.proof) {
+				t.Fatal("single proof differs across committer profiles")
+			}
+			if !bytes.Equal(got.batchProof, want.batchProof) {
+				t.Fatal("batch proof differs across committer profiles")
+			}
+		})
+	}
+
+	verifier, err := ipa.NewVerifierScheme()
+	if err != nil {
+		t.Fatalf("NewVerifierScheme failed: %v", err)
+	}
+	if profile, ok := verifier.CommitterProfile(); ok || profile != "" {
+		t.Fatalf("verifier CommitterProfile = %q, %v; want empty, false", profile, ok)
+	}
+	if _, err := verifier.Commit(values); err == nil || !strings.Contains(err.Error(), "verification-only") {
+		t.Fatalf("verifier Commit error = %v; want verification-only failure", err)
+	}
+	if _, err := ipa.NewCommitterScheme("unknown"); err == nil {
+		t.Fatal("NewCommitterScheme accepted an unknown profile")
+	}
+}
+
+func TestIPAParameterFingerprint(t *testing.T) {
+	const expected = "3799df0a77d1843b13a3a08744165180a12e1cd2dca529bee64ad691ac63adaf"
+	if got := ipa.ParameterSHA256(); got != expected {
+		t.Fatalf("ParameterSHA256 = %s, want %s", got, expected)
+	}
+}
 
 func TestIPAProveIsStateless(t *testing.T) {
 	scheme, err := ipa.NewScheme()

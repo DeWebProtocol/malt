@@ -1,4 +1,5 @@
 const SUPPORTED_BACKENDS = new Set(["kzg", "ipa"]);
+const IPA_PROFILES = new Set(["direct", "compact", "fast"]);
 const RPC_FUNCTIONS = Object.freeze({
   compute: "maltComputeClientRootV1",
   bootstrap: "maltWriterBootstrapSessionV1",
@@ -23,6 +24,7 @@ const STATEFUL_RPC_METHODS = new Set([
 let initialized = false;
 let ready = false;
 let loadedBackend;
+let loadedProfile = "";
 let sessionRequestQueue = Promise.resolve();
 
 function errorMessage(error) {
@@ -33,8 +35,35 @@ function postFailure(backend, error) {
   self.postMessage({
     type: "failed",
     backend,
+    profile: loadedProfile,
     error: errorMessage(error),
   });
+}
+
+function requireTarget(backend, profile) {
+  if (!SUPPORTED_BACKENDS.has(backend)) {
+    throw new Error(`unsupported writer backend ${JSON.stringify(backend)}`);
+  }
+  if (backend === "kzg" && profile !== "") {
+    throw new Error("KZG writer must not select an IPA committer profile");
+  }
+  if (backend === "ipa" && !IPA_PROFILES.has(profile)) {
+    throw new Error(`unsupported IPA committer profile ${JSON.stringify(profile)}`);
+  }
+}
+
+function requireMessageTarget(message) {
+  for (const field of ["backend", "profile"]) {
+    if (!Object.hasOwn(message, field)) {
+      throw new Error(`Worker message is missing ${field}`);
+    }
+  }
+  if (message.backend !== loadedBackend || message.profile !== loadedProfile) {
+    throw new Error(
+      `Worker message targets ${JSON.stringify(message.backend)}/${JSON.stringify(message.profile)}, ` +
+        `loaded ${JSON.stringify(loadedBackend)}/${JSON.stringify(loadedProfile)}`,
+    );
+  }
 }
 
 async function initialize(message) {
@@ -43,10 +72,13 @@ async function initialize(message) {
   }
   initialized = true;
 
-  const { backend, module, wasmExecURL } = message;
-  if (!SUPPORTED_BACKENDS.has(backend)) {
-    throw new Error(`unsupported writer backend ${JSON.stringify(backend)}`);
+  for (const field of ["backend", "profile"]) {
+    if (!Object.hasOwn(message, field)) {
+      throw new Error(`Worker initialize message is missing ${field}`);
+    }
   }
+  const { backend, profile, module, wasmExecURL } = message;
+  requireTarget(backend, profile);
   if (typeof wasmExecURL !== "string" || wasmExecURL.length === 0) {
     throw new Error("wasmExecURL must be a non-empty string");
   }
@@ -57,6 +89,7 @@ async function initialize(message) {
   }
 
   loadedBackend = backend;
+  loadedProfile = profile;
   await import(wasmExecURL);
   if (typeof globalThis.Go !== "function") {
     throw new Error(`${wasmExecURL} did not install the Go WASM runtime`);
@@ -93,6 +126,11 @@ async function initialize(message) {
       `MALT writer loaded backend ${JSON.stringify(globalThis.maltWriterLoadedBackend)}, expected ${JSON.stringify(backend)}`,
     );
   }
+  if (globalThis.maltWriterLoadedProfile !== profile) {
+    throw new Error(
+      `MALT writer loaded profile ${JSON.stringify(globalThis.maltWriterLoadedProfile)}, expected ${JSON.stringify(profile)}`,
+    );
+  }
   for (const functionName of Object.values(RPC_FUNCTIONS)) {
     if (typeof globalThis[functionName] !== "function") {
       throw new Error(`MALT writer did not register ${functionName}`);
@@ -100,11 +138,12 @@ async function initialize(message) {
   }
 
   ready = true;
-  self.postMessage({ type: "ready", backend });
+  self.postMessage({ type: "ready", backend, profile });
 }
 
 async function handleRequest(message) {
   const { id, method, args } = message;
+  requireMessageTarget(message);
   if (!ready) {
     throw new Error(`${loadedBackend ?? "uninitialized"} writer is not ready`);
   }
@@ -124,11 +163,19 @@ async function handleRequest(message) {
 function postResponse(message, task) {
   void task.then(
     (result) => {
-      self.postMessage({ type: "response", id: message.id, result });
+      self.postMessage({
+        type: "response",
+        backend: loadedBackend,
+        profile: loadedProfile,
+        id: message.id,
+        result,
+      });
     },
     (error) => {
       self.postMessage({
         type: "response",
+        backend: loadedBackend,
+        profile: loadedProfile,
         id: message.id,
         error: errorMessage(error),
       });

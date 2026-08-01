@@ -26,18 +26,21 @@ sh "$repo_root/scripts/build-writer-wasm.sh" "$work_dir/writer"
     -count=1
 )
 node "$repo_root/scripts/run-writer-wasm-smoke.mjs" \
-  "$work_dir/writer/malt-writer.wasm" \
+  "$work_dir/writer/malt-writer-kzg.wasm" \
   "$work_dir/writer/wasm_exec.js" \
   "$work_dir/fixtures.json" \
   kzg
-node "$repo_root/scripts/run-writer-wasm-smoke.mjs" \
-  "$work_dir/writer/malt-writer.wasm" \
-  "$work_dir/writer/wasm_exec.js" \
-  "$work_dir/fixtures.json" \
-  ipa
-node "$repo_root/scripts/run-writer-dual-worker-smoke.mjs" \
-  "$work_dir/writer/malt-writer.wasm" \
+for profile in direct compact fast; do
+  node "$repo_root/scripts/run-writer-wasm-smoke.mjs" \
+    "$work_dir/writer/malt-writer-ipa-$profile.wasm" \
+    "$work_dir/writer/wasm_exec.js" \
+    "$work_dir/fixtures.json" \
+    ipa "$profile"
+done
+node "$repo_root/scripts/run-writer-worker-smoke.mjs" \
+  "$work_dir/writer/malt-writer-ipa-compact.wasm" \
   "$work_dir/writer/wasm_exec.js" \
   "$work_dir/writer/malt-writer-workers.mjs" \
   "$work_dir/writer/malt-writer-worker.mjs" \
-  "$work_dir/fixtures.json"
+  "$work_dir/fixtures.json" \
+  ipa compact

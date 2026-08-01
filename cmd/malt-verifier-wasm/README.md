@@ -16,7 +16,9 @@ globalThis.maltVerifyMapProof(verificationJSON) -> resultJSON
 globalThis.maltVerifyArtifact(requestJSON) -> resultJSON  # v0.0.4 compatibility
 ```
 
-The default module initializes both built-in commitment backends. Browser
+The default module initializes both built-in commitment backends. IPA verifier
+initialization retains only the SRS and barycentric weights; it never creates
+the direct/compact/fast committer fixed-base tables. Browser
 clients that isolate initialization may set one of the following values before
 calling `go.run`:
 

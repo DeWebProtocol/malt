@@ -1,15 +1,22 @@
-const BACKENDS = Object.freeze(["kzg", "ipa"]);
-const BACKEND_SET = new Set(BACKENDS);
+const BACKENDS = new Set(["kzg", "ipa"]);
+const IPA_PROFILES = new Set(["direct", "compact", "fast"]);
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function requireBackend(backend) {
-  if (!BACKEND_SET.has(backend)) {
+function requireTarget(backend, profile = "") {
+  if (!BACKENDS.has(backend)) {
     throw new Error(`unsupported writer backend ${JSON.stringify(backend)}`);
   }
-  return backend;
+  if (backend === "kzg") {
+    if (profile !== "") {
+      throw new Error("KZG writer must not select an IPA committer profile");
+    }
+  } else if (!IPA_PROFILES.has(profile)) {
+    throw new Error(`unsupported IPA committer profile ${JSON.stringify(profile)}`);
+  }
+  return Object.freeze({ backend, profile });
 }
 
 function deferred() {
@@ -19,33 +26,104 @@ function deferred() {
     resolve = resolvePromise;
     reject = rejectPromise;
   });
-  // A caller may intentionally use only one backend. Keep failure of the other
-  // readiness Promise observable without producing an unhandled rejection.
   void promise.catch(() => {});
   return { promise, resolve, reject };
 }
 
-async function compileModule(wasmURL, fetchFunction) {
-  const response = await fetchFunction(wasmURL);
+function onceSignal() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function abortFailure(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new Error("MALT writer initialization was aborted");
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortFailure(signal);
+}
+
+// WebAssembly compilation promises are not cancellable in current browser
+// APIs. This race releases the caller immediately and prevents a late compile
+// settlement from becoming unhandled; the engine may still finish that compile
+// in the background. Worker creation remains strictly after this await.
+function raceWithAbort(promise, signal) {
+  const observed = Promise.resolve(promise);
+  if (!signal) return observed;
+  if (signal.aborted) {
+    // The operation was already started by the caller, so keep observing a
+    // possible late rejection even though this consumer is done with it.
+    void observed.catch(() => {});
+    return Promise.reject(abortFailure(signal));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(abortFailure(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    observed.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function compileModule(
+  wasmURL,
+  fetchFunction,
+  signal,
+  compileStreamingFunction,
+  compileFunction,
+) {
+  throwIfAborted(signal);
+  const response = await fetchFunction(wasmURL, { signal });
+  throwIfAborted(signal);
   if (!response.ok) {
     throw new Error(`fetch ${wasmURL}: HTTP ${response.status}`);
   }
-  if (typeof WebAssembly.compileStreaming === "function") {
+  if (typeof compileStreamingFunction === "function") {
     const fallback = response.clone();
     try {
-      return await WebAssembly.compileStreaming(response);
+      const module = await raceWithAbort(compileStreamingFunction(response), signal);
+      throwIfAborted(signal);
+      return module;
     } catch {
-      return WebAssembly.compile(await fallback.arrayBuffer());
+      throwIfAborted(signal);
+      const bytes = await raceWithAbort(fallback.arrayBuffer(), signal);
+      throwIfAborted(signal);
+      const module = await raceWithAbort(compileFunction(bytes), signal);
+      throwIfAborted(signal);
+      return module;
     }
   }
-  return WebAssembly.compile(await response.arrayBuffer());
+  const bytes = await raceWithAbort(response.arrayBuffer(), signal);
+  throwIfAborted(signal);
+  const module = await raceWithAbort(compileFunction(bytes), signal);
+  throwIfAborted(signal);
+  return module;
 }
 
-function defaultWorkerFactory({ backend, workerURL }) {
-  return new Worker(workerURL, {
-    type: "module",
-    name: `malt-writer-${backend}`,
-  });
+function defaultWorkerFactory({ backend, profile, workerURL }) {
+  const suffix = profile ? `${backend}-${profile}` : backend;
+  return new Worker(workerURL, { type: "module", name: `malt-writer-${suffix}` });
 }
 
 function validateWorker(worker) {
@@ -60,16 +138,22 @@ function validateWorker(worker) {
   return worker;
 }
 
-export class MaltWriterWorkers {
-  #module;
-  #wasmExecURL;
-  #workerURL;
-  #workerFactory;
-  #states = new Map();
+// MaltWriterWorker owns exactly one immutable backend/profile WASM instance.
+// Callers must terminate it before selecting a different implementation.
+export class MaltWriterWorker {
+  #target;
+  #state;
   #nextRequestID = 1;
-  #terminated = false;
 
-  constructor({ module, wasmExecURL, workerURL, workerFactory = defaultWorkerFactory }) {
+  constructor({
+    backend,
+    profile = "",
+    module,
+    wasmExecURL,
+    workerURL,
+    workerFactory = defaultWorkerFactory,
+  }) {
+    this.#target = requireTarget(backend, profile);
     try {
       WebAssembly.Module.exports(module);
     } catch {
@@ -82,87 +166,91 @@ export class MaltWriterWorkers {
       throw new Error("workerFactory must be a function");
     }
 
-    this.#module = module;
-    this.#wasmExecURL = wasmExecURL;
-    this.#workerURL = workerURL;
-    this.#workerFactory = workerFactory;
-    for (const backend of BACKENDS) {
-      this.#start(backend);
-    }
-    this.kzgReady = this.#states.get("kzg").ready.promise;
-    this.ipaReady = this.#states.get("ipa").ready.promise;
-  }
-
-  #start(backend) {
-    const state = {
-      backend,
+    const ready = deferred();
+    const fatal = onceSignal();
+    this.#state = {
       phase: "initializing",
       error: undefined,
-      ready: deferred(),
+      ready,
+      fatal,
       pending: new Map(),
       worker: undefined,
     };
-    this.#states.set(backend, state);
+    this.ready = ready.promise;
+    // Fatal failures resolve instead of reject so an idle controller can be
+    // observed without creating an unhandled-rejection hazard. Explicit
+    // termination is not a failure and intentionally leaves this pending.
+    this.fatal = fatal.promise;
     try {
-      state.worker = validateWorker(
-        this.#workerFactory({ backend, workerURL: this.#workerURL }),
-      );
-      state.worker.addEventListener("message", (event) => {
-        this.#handleMessage(state, event.data);
+      const worker = validateWorker(workerFactory({ ...this.#target, workerURL }));
+      this.#state.worker = worker;
+      worker.addEventListener("message", (event) => this.#handleMessage(event.data));
+      worker.addEventListener("error", (event) => {
+        this.#fail(event?.error ?? event?.message ?? "Worker error");
       });
-      state.worker.addEventListener("error", (event) => {
-        this.#fail(state, event?.error ?? event?.message ?? "Worker error");
+      worker.addEventListener("messageerror", () => {
+        this.#fail("Worker message could not be deserialized");
       });
-      state.worker.addEventListener("messageerror", () => {
-        this.#fail(state, "Worker message could not be deserialized");
-      });
-      state.worker.postMessage({
+      worker.postMessage({
         type: "initialize",
-        backend,
-        module: this.#module,
-        wasmExecURL: this.#wasmExecURL,
+        ...this.#target,
+        module,
+        wasmExecURL,
       });
     } catch (error) {
-      this.#fail(state, error);
+      this.#fail(error);
     }
   }
 
-  #handleMessage(state, message) {
+  get backend() {
+    return this.#target.backend;
+  }
+
+  get profile() {
+    return this.#target.profile;
+  }
+
+  #handleMessage(message) {
     if (!message || typeof message !== "object") {
-      this.#fail(state, "Worker returned a non-object message");
+      this.#fail("Worker returned a non-object message");
       return;
     }
-    if (message.backend !== undefined && message.backend !== state.backend) {
-      this.#fail(
-        state,
-        `Worker identified itself as ${JSON.stringify(message.backend)}, expected ${JSON.stringify(state.backend)}`,
-      );
-      return;
-    }
-    if (message.type === "ready") {
-      if (state.phase !== "initializing") {
-        this.#fail(state, `Worker became ready from state ${state.phase}`);
+    for (const field of ["backend", "profile"]) {
+      if (!Object.hasOwn(message, field)) {
+        this.#fail(`Worker message is missing ${field}`);
         return;
       }
-      state.phase = "ready";
-      state.ready.resolve(Object.freeze({ backend: state.backend }));
+      if (message[field] !== this.#target[field]) {
+        this.#fail(
+          `Worker ${field} ${JSON.stringify(message[field])}, expected ${JSON.stringify(this.#target[field])}`,
+        );
+        return;
+      }
+    }
+    if (message.type === "ready") {
+      if (this.#state.phase !== "initializing") {
+        this.#fail(`Worker became ready from state ${this.#state.phase}`);
+        return;
+      }
+      this.#state.phase = "ready";
+      this.#state.ready.resolve(this.#target);
       return;
     }
     if (message.type === "failed") {
-      this.#fail(state, message.error ?? "Worker failed");
+      this.#fail(message.error ?? "Worker failed");
       return;
     }
     if (message.type !== "response") {
-      this.#fail(state, `Worker returned unsupported message ${JSON.stringify(message.type)}`);
+      this.#fail(`Worker returned unsupported message ${JSON.stringify(message.type)}`);
       return;
     }
 
-    const pending = state.pending.get(message.id);
+    const pending = this.#state.pending.get(message.id);
     if (!pending) {
-      this.#fail(state, `Worker returned unknown request id ${JSON.stringify(message.id)}`);
+      this.#fail(`Worker returned unknown request id ${JSON.stringify(message.id)}`);
       return;
     }
-    state.pending.delete(message.id);
+    this.#state.pending.delete(message.id);
     if (message.error !== undefined) {
       pending.reject(new Error(String(message.error)));
     } else {
@@ -170,162 +258,150 @@ export class MaltWriterWorkers {
     }
   }
 
-  #fail(state, error) {
-    if (state.phase === "failed" || state.phase === "terminated") {
-      return;
-    }
+  #fail(error) {
+    if (this.#state.phase === "failed" || this.#state.phase === "terminated") return;
     const failure = error instanceof Error ? error : new Error(errorMessage(error));
-    this.#stop(state, "failed", failure);
+    this.#stop("failed", failure);
   }
 
-  #stop(state, phase, failure) {
-    if (state.phase === "failed" || state.phase === "terminated") {
-      return;
-    }
-    state.phase = phase;
-    state.error = failure;
-    const worker = state.worker;
-    state.worker = undefined;
+  #stop(phase, failure) {
+    if (this.#state.phase === "failed" || this.#state.phase === "terminated") return;
+    this.#state.phase = phase;
+    this.#state.error = failure;
+    const worker = this.#state.worker;
+    this.#state.worker = undefined;
     try {
       worker?.terminate();
     } catch {
-      // Reject readiness and requests even if a custom Worker adapter fails
-      // while releasing its underlying Worker.
+      // Readiness and pending requests are rejected even if a custom adapter
+      // fails while releasing its underlying Worker.
     }
-    state.ready.reject(failure);
-    for (const pending of state.pending.values()) {
-      pending.reject(failure);
-    }
-    state.pending.clear();
+    this.#state.ready.reject(failure);
+    for (const pending of this.#state.pending.values()) pending.reject(failure);
+    this.#state.pending.clear();
+    if (phase === "failed") this.#state.fatal.resolve(failure);
   }
 
-  status(backend) {
-    const state = this.#states.get(requireBackend(backend));
+  #requireBackend(backend) {
+    if (backend !== this.backend) {
+      throw new Error(
+        `loaded ${this.backend} writer cannot serve ${JSON.stringify(backend)}`,
+      );
+    }
+  }
+
+  status(backend = this.backend) {
+    this.#requireBackend(backend);
     return Object.freeze({
-      backend,
-      state: state.phase,
-      ...(state.error ? { error: state.error.message } : {}),
+      ...this.#target,
+      state: this.#state.phase,
+      ...(this.#state.error ? { error: this.#state.error.message } : {}),
     });
   }
 
-  whenReady(backend) {
-    return this.#states.get(requireBackend(backend)).ready.promise;
+  whenReady(backend = this.backend) {
+    this.#requireBackend(backend);
+    return this.#state.ready.promise;
   }
 
   async #request(backend, method, args) {
-    const state = this.#states.get(requireBackend(backend));
-    if (this.#terminated) {
-      throw new Error("MALT writer Workers are terminated");
-    }
-    await state.ready.promise;
-    if (state.phase !== "ready") {
-      throw state.error ?? new Error(`${backend} writer is not ready`);
+    this.#requireBackend(backend);
+    await this.#state.ready.promise;
+    if (this.#state.phase !== "ready") {
+      throw this.#state.error ?? new Error(`${backend} writer is not ready`);
     }
     const id = this.#nextRequestID++;
     if (!Number.isSafeInteger(id)) {
       throw new Error("MALT writer request id space is exhausted");
     }
     return new Promise((resolve, reject) => {
-      state.pending.set(id, { resolve, reject });
+      this.#state.pending.set(id, { resolve, reject });
       try {
-        state.worker.postMessage({ type: "request", id, method, args });
+        this.#state.worker.postMessage({
+          type: "request",
+          ...this.#target,
+          id,
+          method,
+          args,
+        });
       } catch (error) {
-        state.pending.delete(id);
+        this.#state.pending.delete(id);
         reject(error);
       }
     });
   }
 
   compute(backend, operationID, updateViewJSON, semanticIntentJSON) {
-    return this.#request(backend, "compute", [
-      operationID,
-      updateViewJSON,
-      semanticIntentJSON,
-    ]);
+    return this.#request(backend, "compute", [operationID, updateViewJSON, semanticIntentJSON]);
   }
-
-  bootstrap(backend) {
-    return this.#request(backend, "bootstrap", []);
-  }
-
-  load(backend, updateViewJSON) {
-    return this.#request(backend, "load", [updateViewJSON]);
-  }
-
+  bootstrap(backend) { return this.#request(backend, "bootstrap", []); }
+  load(backend, updateViewJSON) { return this.#request(backend, "load", [updateViewJSON]); }
   prepare(backend, operationID, semanticIntentJSON) {
     return this.#request(backend, "prepare", [operationID, semanticIntentJSON]);
   }
-
   getPreparedResult(backend, operationID) {
     return this.#request(backend, "getPreparedResult", [operationID]);
   }
-
   validateReceipt(backend, writerResultJSON, materializationReceiptJSON) {
-    return this.#request(backend, "validateReceipt", [
-      writerResultJSON,
-      materializationReceiptJSON,
-    ]);
+    return this.#request(backend, "validateReceipt", [writerResultJSON, materializationReceiptJSON]);
   }
-
   acceptReceipt(backend, operationID, materializationReceiptJSON) {
-    return this.#request(backend, "acceptReceipt", [
-      operationID,
-      materializationReceiptJSON,
-    ]);
+    return this.#request(backend, "acceptReceipt", [operationID, materializationReceiptJSON]);
   }
-
-  discard(backend, operationID) {
-    return this.#request(backend, "discard", [operationID]);
-  }
-
+  discard(backend, operationID) { return this.#request(backend, "discard", [operationID]); }
   closeSession(backend) {
     return this.#request(backend, "closeSession", []).then(() => undefined);
   }
 
   terminateBackend(backend) {
-    const state = this.#states.get(requireBackend(backend));
-    this.#stop(
-      state,
-      "terminated",
-      new Error(`${state.backend} writer was terminated`),
-    );
+    this.#requireBackend(backend);
+    this.terminate();
   }
 
-  terminateAll() {
-    if (this.#terminated) {
-      return;
-    }
-    this.#terminated = true;
-    for (const state of this.#states.values()) {
-      this.#stop(
-        state,
-        "terminated",
-        new Error(`${state.backend} writer was terminated`),
-      );
-    }
-  }
+  terminateAll() { this.terminate(); }
 
   terminate() {
-    this.terminateAll();
+    this.#stop("terminated", new Error(`${this.backend} writer was terminated`));
   }
 }
 
-export async function createMaltWriterWorkers({
-  wasmURL = new URL("./malt-writer.wasm", import.meta.url),
+export async function createMaltWriterWorker({
+  backend,
+  profile = "",
+  wasmURL,
   wasmExecURL = new URL("./wasm_exec.js", import.meta.url),
   workerURL = new URL("./malt-writer-worker.mjs", import.meta.url),
   module,
   fetch: fetchFunction = globalThis.fetch,
+  compileStreaming: compileStreamingFunction =
+    globalThis.WebAssembly?.compileStreaming?.bind(globalThis.WebAssembly),
+  compile: compileFunction = globalThis.WebAssembly?.compile?.bind(globalThis.WebAssembly),
   workerFactory,
+  signal,
 } = {}) {
+  requireTarget(backend, profile);
+  throwIfAborted(signal);
   let compiledModule = module;
   if (compiledModule === undefined) {
+    if (wasmURL === undefined) throw new Error("wasmURL is required");
     if (typeof fetchFunction !== "function") {
       throw new Error("fetch is unavailable and no compiled module was provided");
     }
-    compiledModule = await compileModule(wasmURL, fetchFunction);
+    if (typeof compileFunction !== "function") {
+      throw new Error("WebAssembly.compile is unavailable and no compiled module was provided");
+    }
+    compiledModule = await compileModule(
+      wasmURL,
+      fetchFunction,
+      signal,
+      compileStreamingFunction,
+      compileFunction,
+    );
   }
-  return new MaltWriterWorkers({
+  throwIfAborted(signal);
+  return new MaltWriterWorker({
+    backend,
+    profile,
     module: compiledModule,
     wasmExecURL: String(wasmExecURL),
     workerURL,
