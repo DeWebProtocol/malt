@@ -51,6 +51,12 @@ terminate it and construct another controller only when no writer session or
 prepared candidate is active. An IPA loader may fall back
 `fast -> compact -> direct`, but must never reinterpret an IPA root as KZG.
 
+An `AbortSignal` releases initialization callers immediately during fetch,
+response decoding, or WebAssembly compilation and prevents a late Worker from
+starting. Browser WebAssembly compilation promises are not themselves
+cancellable, however, so the engine may finish an already-started compilation
+in the background; its late resolution or rejection is observed and discarded.
+
 The controller retains the backend argument in every method so typed-root
 routing remains explicit:
 

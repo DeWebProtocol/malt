@@ -7,7 +7,7 @@ licenses.
 
 The source is compiled as packages inside the MALT module (rather than as a
 nested module or a relative `replace`) so tagged and pseudo-version consumers
-receive the exact audited code.
+receive the exact pinned source snapshot.
 
 MALT carries the copy because upstream exposes only one fixed-base MSM setup:
 a roughly 334 MiB Verkle-optimized table. The local patch adds verifier-only,

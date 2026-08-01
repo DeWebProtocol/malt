@@ -84,6 +84,16 @@ function newHarness({ backend = "ipa", profile = "compact", throwOnInitialize = 
   return { writer, worker };
 }
 
+function deferredPromise() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 test("one controller starts exactly one immutable backend/profile Worker", async () => {
   const { writer, worker } = newHarness();
   assert.deepEqual(
@@ -158,6 +168,50 @@ test("initialization and fatal failures terminate and reject work", async () => 
   assert.equal(worker.terminationCount, 1);
 });
 
+test("ready and failed messages require an explicit exact backend/profile target", async () => {
+  for (const { message, error } of [
+    {
+      message: { type: "ready", backend: "ipa" },
+      error: "Worker message is missing profile",
+    },
+    {
+      message: { type: "failed", profile: "compact", error: "runtime failed" },
+      error: "Worker message is missing backend",
+    },
+    {
+      message: { type: "ready", backend: "ipa", profile: "fast" },
+      error: 'Worker profile "fast", expected "compact"',
+    },
+  ]) {
+    const { writer, worker } = newHarness();
+    worker.emit("message", { data: message });
+    await assert.rejects(writer.ready, (failure) => failure.message === error);
+    assert.deepEqual(writer.status(), {
+      backend: "ipa",
+      profile: "compact",
+      state: "failed",
+      error,
+    });
+    assert.equal(worker.terminationCount, 1);
+  }
+});
+
+test("response messages require an explicit exact backend/profile target", async () => {
+  const { writer, worker } = newHarness();
+  worker.ready();
+  await writer.ready;
+  const pending = writer.bootstrap("ipa");
+  const request = await worker.nextRequest();
+  assert.equal(request.backend, "ipa");
+  assert.equal(request.profile, "compact");
+  worker.emit("message", {
+    data: { type: "response", backend: "ipa", id: request.id, result: "ignored" },
+  });
+  await assert.rejects(pending, /missing profile/);
+  assert.equal(writer.status().state, "failed");
+  assert.equal(worker.terminationCount, 1);
+});
+
 test("invalid backend/profile combinations fail before a Worker starts", () => {
   const options = {
     module: EMPTY_WASM_MODULE,
@@ -219,3 +273,56 @@ test("an already-aborted signal rejects a compiled module before Worker creation
   );
   assert.equal(workerStarts, 0);
 });
+
+for (const compileMode of ["compileStreaming", "compile"]) {
+  test(`abort rejects immediately during WebAssembly.${compileMode} without starting a Worker`, async () => {
+    const controller = new AbortController();
+    const compileStarted = deferredPromise();
+    const compileFinished = deferredPromise();
+    let workerStarts = 0;
+    const compile = () => {
+      compileStarted.resolve();
+      return compileFinished.promise;
+    };
+    const response = {
+      ok: true,
+      clone() { return this; },
+      async arrayBuffer() { return new ArrayBuffer(8); },
+    };
+    const creating = createMaltWriterWorker({
+      backend: "ipa",
+      profile: "direct",
+      wasmURL: "https://example.test/malt-writer-ipa-direct.wasm",
+      wasmExecURL: "https://example.test/wasm_exec.js",
+      signal: controller.signal,
+      fetch: async () => response,
+      compileStreaming: compileMode === "compileStreaming" ? compile : null,
+      compile: compileMode === "compile" ? compile : () => {
+        throw new Error("fallback compile must not start");
+      },
+      workerFactory: () => {
+        workerStarts += 1;
+        return new FakeWorker("ipa", "direct");
+      },
+    });
+
+    await compileStarted.promise;
+    controller.abort(new Error("writer selection changed during compile"));
+    const outcome = await Promise.race([
+      creating.then(
+        () => new Error("initialization unexpectedly resolved"),
+        (error) => error,
+      ),
+      new Promise((resolve) => setImmediate(() => resolve("still pending"))),
+    ]);
+    assert.notEqual(outcome, "still pending");
+    assert.match(outcome.message, /selection changed during compile/);
+    assert.equal(workerStarts, 0);
+
+    // A late engine rejection remains observed after the caller has already
+    // received the abort failure.
+    compileFinished.reject(new Error("late engine compile failure"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(workerStarts, 0);
+  });
+}

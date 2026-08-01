@@ -100,9 +100,40 @@ verification.
 
 ## IPA
 
-The current implementation is `auth/commitment/ipa`. It uses the 256-element
-configuration from `go-ipa`
-v0.0.0-20240724233137-53bbb0ceb27a.
+The current implementation is `auth/commitment/ipa`. Its pinned upstream
+source snapshot is compiled inside the MALT module at
+`internal/third_party/goipa`; it is not resolved as an external module during
+consumer builds. The snapshot is
+`github.com/crate-crypto/go-ipa@53bbb0ceb27adb011950fd0fce885ad6d4516f84`
+(formerly represented by pseudo-version
+`v0.0.0-20240724233137-53bbb0ceb27a`). Import paths are mechanically rewritten
+to the internal location. The behavioral patch is restricted to:
+
+- `ipa/config.go`, which exposes verifier-only settings and the direct,
+  compact, and fast committer profiles;
+- `banderwagon/precomp.go`, which permits the compact uniform 4-bit
+  fixed-base table; and
+- `multiproof.go`, which propagates commitment errors instead of relying on a
+  panic-returning call.
+
+The `direct`, `compact`, and `fast` profiles are execution strategies over the
+same 256-point SRS and auxiliary point `Q`. They differ only in retained
+fixed-base MSM tables. Profile-equivalence tests require byte-identical typed
+roots, commitments, single proofs, and batch proofs. A profile identifier is
+therefore runtime provenance and is not part of any commitment or proof wire
+encoding.
+
+The parameter set identifier is `malt.ipa-parameters/v1`. Its fingerprint is
+SHA-256 over the identifier, one zero byte, the 256 ordered compressed SRS
+points, and compressed `Q`; the current digest is
+`3799df0a77d1843b13a3a08744165180a12e1cd2dca529bee64ad691ac63adaf`.
+`auth/commitment/ipa.ParameterSetID` and `ParameterSHA256()` are the source of
+these release-provenance values, and `go run ./cmd/malt-ipa-parameters` exports
+them as JSON. The digest binds only the SRS and `Q`, not transcripts, cell
+hashing, CID typing, or proof encodings. Any change to those surrounding suite
+rules still requires an explicit compatibility review even if the parameter
+digest is unchanged; changing the parameters requires a new backend/wire
+identity rather than selecting another performance profile.
 
 The 256 SRS points are generated deterministically. Starting with counter zero,
 hash ASCII `eth_verkle_oct_2021` followed by the counter as big-endian `uint64`,
@@ -142,11 +173,11 @@ index.
 
 ### Current Batch Proof
 
-Batch openings use transcript label `malt-ipa-batch`. The locked `go-ipa`
-`MultiProof.Write` encoding is 576 bytes: the 32-byte `D` point, eight 32-byte
-`L` points, eight 32-byte `R` points, and a 32-byte little-endian `A_scalar`.
-It contains no count or index list; the ordered indices and expected cells are
-separate verifier inputs.
+Batch openings use transcript label `malt-ipa-batch`. The locked internal
+snapshot's `MultiProof.Write` encoding is 576 bytes: the 32-byte `D` point,
+eight 32-byte `L` points, eight 32-byte `R` points, and a 32-byte little-endian
+`A_scalar`. It contains no count or index list; the ordered indices and
+expected cells are separate verifier inputs.
 
 ## Radix Map Semantic Proof
 

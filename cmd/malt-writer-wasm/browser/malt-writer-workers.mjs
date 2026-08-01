@@ -40,31 +40,75 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortFailure(signal);
 }
 
-async function compileModule(wasmURL, fetchFunction, signal) {
+// WebAssembly compilation promises are not cancellable in current browser
+// APIs. This race releases the caller immediately and prevents a late compile
+// settlement from becoming unhandled; the engine may still finish that compile
+// in the background. Worker creation remains strictly after this await.
+function raceWithAbort(promise, signal) {
+  const observed = Promise.resolve(promise);
+  if (!signal) return observed;
+  if (signal.aborted) {
+    // The operation was already started by the caller, so keep observing a
+    // possible late rejection even though this consumer is done with it.
+    void observed.catch(() => {});
+    return Promise.reject(abortFailure(signal));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(abortFailure(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    observed.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function compileModule(
+  wasmURL,
+  fetchFunction,
+  signal,
+  compileStreamingFunction,
+  compileFunction,
+) {
   throwIfAborted(signal);
   const response = await fetchFunction(wasmURL, { signal });
   throwIfAborted(signal);
   if (!response.ok) {
     throw new Error(`fetch ${wasmURL}: HTTP ${response.status}`);
   }
-  if (typeof WebAssembly.compileStreaming === "function") {
+  if (typeof compileStreamingFunction === "function") {
     const fallback = response.clone();
     try {
-      const module = await WebAssembly.compileStreaming(response);
+      const module = await raceWithAbort(compileStreamingFunction(response), signal);
       throwIfAborted(signal);
       return module;
     } catch {
       throwIfAborted(signal);
-      const bytes = await fallback.arrayBuffer();
+      const bytes = await raceWithAbort(fallback.arrayBuffer(), signal);
       throwIfAborted(signal);
-      const module = await WebAssembly.compile(bytes);
+      const module = await raceWithAbort(compileFunction(bytes), signal);
       throwIfAborted(signal);
       return module;
     }
   }
-  const bytes = await response.arrayBuffer();
+  const bytes = await raceWithAbort(response.arrayBuffer(), signal);
   throwIfAborted(signal);
-  const module = await WebAssembly.compile(bytes);
+  const module = await raceWithAbort(compileFunction(bytes), signal);
   throwIfAborted(signal);
   return module;
 }
@@ -158,7 +202,11 @@ export class MaltWriterWorker {
       return;
     }
     for (const field of ["backend", "profile"]) {
-      if (message[field] !== undefined && message[field] !== this.#target[field]) {
+      if (!Object.hasOwn(message, field)) {
+        this.#fail(`Worker message is missing ${field}`);
+        return;
+      }
+      if (message[field] !== this.#target[field]) {
         this.#fail(
           `Worker ${field} ${JSON.stringify(message[field])}, expected ${JSON.stringify(this.#target[field])}`,
         );
@@ -254,7 +302,13 @@ export class MaltWriterWorker {
     return new Promise((resolve, reject) => {
       this.#state.pending.set(id, { resolve, reject });
       try {
-        this.#state.worker.postMessage({ type: "request", id, method, args });
+        this.#state.worker.postMessage({
+          type: "request",
+          ...this.#target,
+          id,
+          method,
+          args,
+        });
       } catch (error) {
         this.#state.pending.delete(id);
         reject(error);
@@ -304,6 +358,9 @@ export async function createMaltWriterWorker({
   workerURL = new URL("./malt-writer-worker.mjs", import.meta.url),
   module,
   fetch: fetchFunction = globalThis.fetch,
+  compileStreaming: compileStreamingFunction =
+    globalThis.WebAssembly?.compileStreaming?.bind(globalThis.WebAssembly),
+  compile: compileFunction = globalThis.WebAssembly?.compile?.bind(globalThis.WebAssembly),
   workerFactory,
   signal,
 } = {}) {
@@ -315,7 +372,16 @@ export async function createMaltWriterWorker({
     if (typeof fetchFunction !== "function") {
       throw new Error("fetch is unavailable and no compiled module was provided");
     }
-    compiledModule = await compileModule(wasmURL, fetchFunction, signal);
+    if (typeof compileFunction !== "function") {
+      throw new Error("WebAssembly.compile is unavailable and no compiled module was provided");
+    }
+    compiledModule = await compileModule(
+      wasmURL,
+      fetchFunction,
+      signal,
+      compileStreamingFunction,
+      compileFunction,
+    );
   }
   throwIfAborted(signal);
   return new MaltWriterWorker({
