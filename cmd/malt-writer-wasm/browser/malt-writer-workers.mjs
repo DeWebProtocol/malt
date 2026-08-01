@@ -30,6 +30,14 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function onceSignal() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function abortFailure(signal) {
   return signal?.reason instanceof Error
     ? signal.reason
@@ -159,14 +167,20 @@ export class MaltWriterWorker {
     }
 
     const ready = deferred();
+    const fatal = onceSignal();
     this.#state = {
       phase: "initializing",
       error: undefined,
       ready,
+      fatal,
       pending: new Map(),
       worker: undefined,
     };
     this.ready = ready.promise;
+    // Fatal failures resolve instead of reject so an idle controller can be
+    // observed without creating an unhandled-rejection hazard. Explicit
+    // termination is not a failure and intentionally leaves this pending.
+    this.fatal = fatal.promise;
     try {
       const worker = validateWorker(workerFactory({ ...this.#target, workerURL }));
       this.#state.worker = worker;
@@ -265,6 +279,7 @@ export class MaltWriterWorker {
     this.#state.ready.reject(failure);
     for (const pending of this.#state.pending.values()) pending.reject(failure);
     this.#state.pending.clear();
+    if (phase === "failed") this.#state.fatal.resolve(failure);
   }
 
   #requireBackend(backend) {

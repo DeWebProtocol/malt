@@ -49,6 +49,19 @@ class FakeWorker {
 
   fail(error) { this.emit("error", { error, message: error.message }); }
 
+  messageError() { this.emit("messageerror", {}); }
+
+  runtimeFailed(error) {
+    this.emit("message", {
+      data: {
+        type: "failed",
+        backend: this.backend,
+        profile: this.profile,
+        error,
+      },
+    });
+  }
+
   nextRequest() {
     const request = this.requests.shift();
     if (request) return Promise.resolve(request);
@@ -165,6 +178,57 @@ test("initialization and fatal failures terminate and reject work", async () => 
     state: "failed",
     error: "runtime crashed",
   });
+  assert.equal(worker.terminationCount, 1);
+});
+
+test("idle Worker error, messageerror, and failed messages resolve fatal once", async () => {
+  const cases = [
+    {
+      expected: "idle Worker crashed",
+      trigger: (worker) => worker.fail(new Error("idle Worker crashed")),
+    },
+    {
+      expected: "Worker message could not be deserialized",
+      trigger: (worker) => worker.messageError(),
+    },
+    {
+      expected: "idle runtime failed",
+      trigger: (worker) => worker.runtimeFailed("idle runtime failed"),
+    },
+  ];
+
+  for (const { expected, trigger } of cases) {
+    const { writer, worker } = newHarness();
+    worker.ready();
+    await writer.ready;
+
+    // Trigger before attaching a consumer to cover the late-subscriber race.
+    trigger(worker);
+    const failure = await writer.fatal;
+    assert.ok(failure instanceof Error);
+    assert.equal(failure.message, expected);
+    assert.deepEqual(writer.status(), {
+      backend: "ipa",
+      profile: "compact",
+      state: "failed",
+      error: expected,
+    });
+    assert.equal(worker.terminationCount, 1);
+  }
+});
+
+test("explicit termination does not resolve fatal", async () => {
+  const { writer, worker } = newHarness();
+  worker.ready();
+  await writer.ready;
+  let fatalResolved = false;
+  void writer.fatal.then(() => { fatalResolved = true; });
+
+  writer.terminate();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(fatalResolved, false);
+  assert.equal(writer.status().state, "terminated");
   assert.equal(worker.terminationCount, 1);
 });
 

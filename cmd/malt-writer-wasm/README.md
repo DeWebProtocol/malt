@@ -51,6 +51,12 @@ terminate it and construct another controller only when no writer session or
 prepared candidate is active. An IPA loader may fall back
 `fast -> compact -> direct`, but must never reinterpret an IPA root as KZG.
 
+`writer.fatal` is a once-settling Promise for lifecycle observation. It resolves
+with the fatal `Error` if initialization or the running Worker fails, including
+while no RPC is active, and never rejects. Explicit `terminate()` is a normal
+lifecycle transition and does not resolve `fatal`. Subscribers attached after
+a failure observe the same already-resolved Promise.
+
 An `AbortSignal` releases initialization callers immediately during fetch,
 response decoding, or WebAssembly compilation and prevents a late Worker from
 starting. Browser WebAssembly compilation promises are not themselves
