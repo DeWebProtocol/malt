@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
-	github.com/dewebprotocol/malt v0.0.7-0.20260731034543-ae8e5216e0d9
+	github.com/dewebprotocol/malt v0.0.7-rc.2
 	github.com/ipfs/boxo v0.41.0
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
@@ -17,7 +17,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.53.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.44.0
 )
 
@@ -26,7 +26,6 @@ require (
 	github.com/bits-and-blooms/bitset v1.24.5 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/consensys/gnark-crypto v0.20.1 // indirect
-	github.com/crate-crypto/go-ipa v0.0.0-20240724233137-53bbb0ceb27a // indirect
 	github.com/crate-crypto/go-kzg-4844 v1.1.0 // indirect
 	github.com/gammazero/chanqueue v1.1.2 // indirect
 	github.com/gammazero/deque v1.2.1 // indirect
