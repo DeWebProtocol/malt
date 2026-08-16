@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strings"
 
 	malt "github.com/dewebprotocol/malt"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
@@ -150,9 +151,22 @@ type WriterOptions struct {
 }
 
 type verifiedReader struct {
-	remote   Remote
-	blocks   BlockGetter
-	verifier LocalVerifier
+	remote            Remote
+	blocks            BlockGetter
+	verifier          LocalVerifier
+	stagedResolutions map[stagedProjectionCacheKey]*Resolution
+	stagedManifests   map[stagedProjectionCacheKey]stagedManifestProjection
+}
+
+type stagedProjectionCacheKey struct {
+	root string
+	path string
+}
+
+type stagedManifestProjection struct {
+	manifest *unixfsmodel.DirectoryManifest
+	payload  cid.Cid
+	binding  *Resolution
 }
 
 type verifiedWriter struct {
@@ -195,6 +209,23 @@ func NewStagedPathStatter(opts ReaderOptions) (StagedPathStatter, error) {
 		return nil, err
 	}
 	return reader.(*verifiedReader), nil
+}
+
+func (r *verifiedReader) newStagedPathSession(blocks BlockGetter) StagedPathStatter {
+	return &verifiedReader{
+		remote:            r.remote,
+		blocks:            blocks,
+		verifier:          r.verifier,
+		stagedResolutions: make(map[stagedProjectionCacheKey]*Resolution),
+		stagedManifests:   make(map[stagedProjectionCacheKey]stagedManifestProjection),
+	}
+}
+
+func stagedProjectionKey(root cid.Cid, segments []string) stagedProjectionCacheKey {
+	return stagedProjectionCacheKey{
+		root: root.KeyString(),
+		path: strings.Join(segments, "\x00"),
+	}
 }
 
 // NewWriter constructs a verified reader plus the narrowly scoped immutable
@@ -255,6 +286,15 @@ func (r *verifiedReader) resolveSegments(ctx context.Context, trustedRoot cid.Ci
 	if err != nil {
 		return nil, err
 	}
+	cacheKey := stagedProjectionKey(trustedRoot, segments)
+	if r.stagedResolutions != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if cached, ok := r.stagedResolutions[cacheKey]; ok {
+			return cached, nil
+		}
+	}
 	result, err := r.remote.Resolve(ctx, request)
 	if err != nil {
 		return nil, err
@@ -269,7 +309,11 @@ func (r *verifiedReader) resolveSegments(ctx context.Context, trustedRoot cid.Ci
 	if err != nil {
 		return nil, fmt.Errorf("decode verified resolve target: %w", err)
 	}
-	return &Resolution{Request: request, Result: *result, Target: target}, nil
+	resolution := &Resolution{Request: request, Result: *result, Target: target}
+	if r.stagedResolutions != nil {
+		r.stagedResolutions[cacheKey] = resolution
+	}
+	return resolution, nil
 }
 
 // resolveUnixFSPath verifies both the Core arc path and the UnixFS projection
@@ -321,6 +365,15 @@ func (r *verifiedReader) readDirectoryManifest(
 	trustedRoot cid.Cid,
 	segments []string,
 ) (*unixfsmodel.DirectoryManifest, cid.Cid, *Resolution, error) {
+	cacheKey := stagedProjectionKey(trustedRoot, segments)
+	if r.stagedManifests != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, cid.Undef, nil, err
+		}
+		if cached, ok := r.stagedManifests[cacheKey]; ok {
+			return cached.manifest, cached.payload, cached.binding, nil
+		}
+	}
 	node, err := r.resolveSegments(ctx, trustedRoot, segments)
 	if err != nil {
 		return nil, cid.Undef, nil, err
@@ -350,6 +403,13 @@ func (r *verifiedReader) readDirectoryManifest(
 	decoded, err := unixfsmodel.ParseDirectoryManifest(payloadTarget, payload)
 	if err != nil {
 		return nil, cid.Undef, nil, fmt.Errorf("parse authenticated directory manifest: %w", err)
+	}
+	if r.stagedManifests != nil {
+		r.stagedManifests[cacheKey] = stagedManifestProjection{
+			manifest: decoded,
+			payload:  payloadTarget,
+			binding:  payloadBinding,
+		}
 	}
 	return decoded, payloadTarget, payloadBinding, nil
 }
@@ -871,7 +931,7 @@ func (w *verifiedWriter) materializeWrite(ctx context.Context, base cid.Cid, raw
 	if err != nil {
 		return nil, fmt.Errorf("materialize UnixFS candidate: %w", err)
 	}
-	if err := w.verifyStagedCandidate(ctx, materialized.Key, "", current); err != nil {
+	if err := w.verifyStagedCandidate(ctx, materialized.Key, current); err != nil {
 		return nil, fmt.Errorf("verify UnixFS candidate root: %w", err)
 	}
 	return &WriteResult{
@@ -938,7 +998,7 @@ func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, ra
 	}
 	// Treat the candidate as a caller-selected input only for consistency
 	// checking. This does not promote it into the caller's accepted-root policy.
-	if err := w.verifyStagedCandidate(ctx, materialized.Key, "", current); err != nil {
+	if err := w.verifyStagedCandidate(ctx, materialized.Key, current); err != nil {
 		return nil, fmt.Errorf("verify removal candidate root: %w", err)
 	}
 	return &RemoveResult{
@@ -947,51 +1007,44 @@ func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, ra
 	}, nil
 }
 
-func (w *verifiedWriter) verifyStagedCandidate(ctx context.Context, candidate cid.Cid, currentPath string, expected *StagedNode) error {
-	stat, err := w.Stat(ctx, candidate, currentPath)
+func (w *verifiedWriter) verifyStagedCandidate(ctx context.Context, candidate cid.Cid, expected *StagedNode) error {
+	projected, err := LoadStagedCurrentTree(ctx, w, w.store, candidate.String())
 	if err != nil {
 		return err
 	}
-	expectedKind := ""
-	if expected != nil {
-		expectedKind = expected.Kind
-		if expectedKind == StagedKindMapDirectory {
-			expectedKind = StagedKindDirectory
-		}
-	}
-	if expected == nil || stat.Kind != expectedKind || !stat.NodeRoot.Equals(expected.Key) {
+	return verifyStagedProjection("", projected, expected)
+}
+
+func verifyStagedProjection(currentPath string, projected, expected *StagedNode) error {
+	if projected == nil || expected == nil {
 		return fmt.Errorf("candidate path %q does not match materialized node", currentPath)
 	}
-	if expected.Kind != StagedKindDirectory {
+	expectedKind := expected.Kind
+	if expectedKind == StagedKindMapDirectory {
+		expectedKind = StagedKindDirectory
+	}
+	if projected.Kind != expectedKind || !projected.Key.Equals(expected.Key) {
+		return fmt.Errorf("candidate path %q does not match materialized node", currentPath)
+	}
+	if expected.Kind == StagedKindMapDirectory || expected.Kind == StagedKindFile {
 		return nil
 	}
-	expectedEntries := make([]unixfsmodel.DirectoryEntry, 0, len(expected.Children))
-	for name, child := range expected.Children {
-		entryType := unixfsmodel.DirectoryEntryTypeFile
-		if child != nil && (child.Kind == StagedKindDirectory || child.Kind == StagedKindMapDirectory) {
-			entryType = unixfsmodel.DirectoryEntryTypeDir
-		}
-		expectedEntries = append(expectedEntries, unixfsmodel.DirectoryEntry{Name: name, Type: entryType})
+	if expected.Kind != StagedKindDirectory {
+		return fmt.Errorf("candidate path %q has unsupported staged kind %q", currentPath, expected.Kind)
 	}
-	slices.SortFunc(expectedEntries, func(left, right unixfsmodel.DirectoryEntry) int {
-		switch {
-		case left.Name < right.Name:
-			return -1
-		case left.Name > right.Name:
-			return 1
-		default:
-			return 0
-		}
-	})
-	if !slices.Equal(stat.Entries, expectedEntries) {
+	if len(projected.Children) != len(expected.Children) {
 		return fmt.Errorf("candidate directory %q entries do not match materialized manifest", currentPath)
 	}
-	for _, entry := range expectedEntries {
-		childPath := entry.Name
-		if currentPath != "" {
-			childPath = path.Join(currentPath, entry.Name)
+	for name, expectedChild := range expected.Children {
+		projectedChild, ok := projected.Children[name]
+		if !ok {
+			return fmt.Errorf("candidate directory %q entries do not match materialized manifest", currentPath)
 		}
-		if err := w.verifyStagedCandidate(ctx, candidate, childPath, expected.Children[entry.Name]); err != nil {
+		childPath := name
+		if currentPath != "" {
+			childPath = path.Join(currentPath, name)
+		}
+		if err := verifyStagedProjection(childPath, projectedChild, expectedChild); err != nil {
 			return err
 		}
 	}

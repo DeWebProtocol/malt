@@ -24,10 +24,45 @@ type StagedPathStatter interface {
 	StatStagedPath(ctx context.Context, root string, path string) (StagedPathStat, error)
 }
 
+// stagedPathSessionFactory lets the verified facade bind one projection to the
+// same short-lived block and proof caches used by this tree load. External
+// statters do not need to implement it.
+type stagedPathSessionFactory interface {
+	newStagedPathSession(BlockGetter) StagedPathStatter
+}
+
+type stagedLoadBlockCache struct {
+	inner  BlockGetter
+	blocks map[string][]byte
+}
+
+func newStagedLoadBlockCache(inner BlockGetter) *stagedLoadBlockCache {
+	return &stagedLoadBlockCache{inner: inner, blocks: make(map[string][]byte)}
+}
+
+func (c *stagedLoadBlockCache) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if cached, ok := c.blocks[key.KeyString()]; ok {
+		return append([]byte(nil), cached...), nil
+	}
+	payload, err := c.inner.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	c.blocks[key.KeyString()] = append([]byte(nil), payload...)
+	return append([]byte(nil), payload...), nil
+}
+
 // LoadStagedCurrentTree rebuilds a staged directory tree from an existing
 // UnixFS root. It preserves existing node keys so later materialization can
 // rewrite only changed subtrees.
 func LoadStagedCurrentTree(ctx context.Context, statter StagedPathStatter, blocks BlockGetter, rootCID string) (*StagedNode, error) {
+	cachedBlocks := newStagedLoadBlockCache(blocks)
+	if factory, ok := statter.(stagedPathSessionFactory); ok {
+		statter = factory.newStagedPathSession(cachedBlocks)
+	}
 	rootStat, err := statter.StatStagedPath(ctx, rootCID, "")
 	if err != nil {
 		return nil, err
@@ -38,7 +73,7 @@ func LoadStagedCurrentTree(ctx context.Context, statter StagedPathStatter, block
 	if rootStat.Kind != StagedKindDirectory {
 		return nil, fmt.Errorf("current root must be directory, got %q", rootStat.Kind)
 	}
-	return loadStagedCurrentDirRecursive(ctx, statter, blocks, rootCID, "", rootStat)
+	return loadStagedCurrentDirRecursive(ctx, statter, cachedBlocks, rootCID, "", rootStat)
 }
 
 func loadStagedCurrentDirRecursive(ctx context.Context, statter StagedPathStatter, blocks BlockGetter, root string, currentPath string, stat StagedPathStat) (*StagedNode, error) {
