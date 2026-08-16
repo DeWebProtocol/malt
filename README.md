@@ -251,9 +251,11 @@ letting the daemon replace a live Vault directory. Verified remote content is
 prepared outside the Vault, applied by a scoped plugin through Obsidian APIs,
 and accepted as installed only after a daemon-owned confirming scan. See the
 [Obsidian integration design](./docs/obsidian-integration.md) and the draft
-[Workspace Adapter IPC v0](./docs/workspace-adapter-ipc-v0.md). These documents
-describe a pre-implementation contract; the routes and plugin are not yet part
-of this binary.
+[Workspace Adapter IPC v0](./docs/workspace-adapter-ipc-v0.md). The exact
+cross-language path policy vectors live in the pinned
+[`obsidian-visible-v0` fixture](./docs/fixtures/obsidian-visible-v0-paths.json).
+These documents describe a pre-implementation contract; the routes and plugin
+are not yet part of this binary.
 
 Trust an independently obtained root, resolve a UnixFS path, and add a local
 tree:

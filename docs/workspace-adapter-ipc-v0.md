@@ -116,15 +116,36 @@ The daemon validates every path when creating a session. The adapter validates
 again with Obsidian `normalizePath` and MUST require exact equality with the
 contract path. Normalization is not authorization.
 
-The portable v0 policy is identical on every host. Every raw source, decrypted
-remote, and apply-path segment MUST already be byte-for-byte Unicode NFC; v0
-rejects a lone non-NFC segment rather than inventing a raw-to-logical alias.
-The daemon also rejects two paths whose NFC plus Unicode Default Case Folding
-collision keys match, even on a case-sensitive filesystem. It rejects Windows
-reserved device names, trailing dot/space aliases, control characters, and
-Windows-forbidden filename characters on Linux and macOS. Unicode data and
-adversarial path fixtures are pinned by `obsidian-visible-v0`; a platform may
-not silently substitute its native collision or normalization rules.
+The portable v0 policy is identical on every host and is defined by revision 1
+of [`obsidian-visible-v0-paths.json`](fixtures/obsidian-visible-v0-paths.json),
+whose exact bytes have SHA-256
+`0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd`.
+Every raw source, decrypted remote, and apply-path segment MUST be valid UTF-8
+and already byte-for-byte Unicode 17.0.0 NFC; v0 rejects a lone non-NFC segment
+rather than inventing a raw-to-logical alias.
+
+The per-segment collision key is exactly
+`NFC17(DefaultCaseFold17_CF(NFD17(segment)))`; path keys join those values
+with `/`. Full, non-Turkic Default Case Folding uses only status C and F
+mappings from `CaseFolding-17.0.0.txt`, never the simple S or Turkic T
+alternatives. The policy pins:
+
+- `CaseFolding-17.0.0.txt`: SHA-256
+  `ff8d8fefbf123574205085d6714c36149eb946d717a0c585c27f0f4ef58c4183`;
+- `NormalizationTest-17.0.0.txt`: SHA-256
+  `5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`.
+
+The daemon rejects matching collision keys even on a case-sensitive
+filesystem. On every OS it also rejects U+0000 through U+001F, `< > : " \\ |
+? *`, a trailing ASCII space/dot, and the exact ASCII-case-insensitive device
+stems `CON`, `PRN`, `AUX`, `NUL`, `COM1` through `COM9`,
+`COM¹`/`COM²`/`COM³`, `LPT1` through `LPT9`, and
+`LPT¹`/`LPT²`/`LPT³`. The device stem is the segment prefix before the
+first dot, so extensions remain invalid. Native Go, JavaScript, OS, or
+filesystem tables may be used only when they pass the complete pinned fixture
+and upstream normalization test. Pairing, manifests, and branch writer
+metadata bind the fixture digest; an absent or different digest is an
+unsupported content policy, not a locally selected variant.
 
 The v0 logical tree contains regular files by relative path, exact bytes,
 length, and SHA-256 digest. Parent folders are derived containers. Empty
@@ -180,6 +201,8 @@ Non-2xx JSON responses use this envelope:
 | 403 | `scope_denied` | Capability is valid but lacks this exact workspace action. |
 | 404 | `not_found` | Scoped resource does not exist or is deliberately concealed. |
 | 409 | `state_conflict` | Workspace state cannot perform the requested transition. |
+| 409 | `vault_identity_mismatch` | Installation, current Vault path/config, or path generation differs from approval. |
+| 409 | `branch_writer_mismatch` | Gateway branch writer contract/epoch/capability is absent or mismatched. |
 | 409 | `idempotency_mismatch` | An idempotency key was reused with another request. |
 | 409 | `apply_precondition_failed` | Vault state differs from the immutable apply precondition. |
 | 410 | `pairing_expired` | Pairing request can no longer be approved. |
@@ -218,16 +241,23 @@ Idempotency-Key: <plugin pairing attempt ID>
     "desktop_path": "/Users/alice/Notes/Research",
     "config_dir": ".obsidian"
   },
+  "content_policy": {
+    "id": "obsidian-visible-v0",
+    "revision": 1,
+    "fixture_sha256": "sha256:0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd"
+  },
   "capability_digest": "sha256:..."
 }
 ```
 
-`installation_id` is random, non-secret plugin data. `desktop_path` is a claim,
-not authorization. `config_dir` is read from `Vault.configDir`; it must be one
-portable non-empty path component beginning with `.`, not a hard-coded
-assumption. The daemon canonicalizes the path, validates that it is an existing
-directory and a safe potential Binding, validates the configuration component,
-and stores the request for at most ten minutes.
+`installation_id` is random, non-secret plugin data. `desktop_path` is the
+current value returned by the desktop `FileSystemAdapter.getBasePath()`; it is
+a claim, not authorization. `config_dir` is read from `Vault.configDir`; it
+must be one portable non-empty path component beginning with `.`, not a hard-
+coded assumption. The daemon canonicalizes the path, validates that it is an
+existing directory and a safe potential Binding, validates the configuration
+component and exact content-policy identity, and stores both the reported and
+canonical paths in the request for at most ten minutes.
 
 Example `201` response:
 
@@ -236,7 +266,7 @@ Example `201` response:
   "pairing_id": "pair_...",
   "approval_code": "MALT-7K4P-XM2D-9QRF-V6TW-3H8C",
   "expires_at": "2026-08-16T10:15:00Z",
-  "approval_command": "malt workspace approve MALT-7K4P-XM2D-9QRF-V6TW-3H8C --bucket <bucket>"
+  "approval_command": "malt workspace approve MALT-7K4P-XM2D-9QRF-V6TW-3H8C --bucket <bucket> --branch <branch>"
 }
 ```
 
@@ -250,8 +280,15 @@ Approval is a CLI operation, not an adapter route:
 
 ```text
 malt workspace approve <approval-code> --bucket <selector> \
-  [--branch <branch>] [--create-branch]
+  --branch <branch> [--create-branch]
 ```
+
+v0 has no implicit branch default and forbids `main` as an adapter target.
+Both joining and creation require an explicit non-`main` branch. When
+`--create-branch` is present, that name must not already exist; without it,
+the named branch must already carry the exact immutable adapter writer
+descriptor. This matches the Gateway's existing reserved `main` ref and avoids
+reinterpreting a pre-created empty `main` as a create-if-absent result.
 
 Before confirmation the CLI displays:
 
@@ -261,7 +298,10 @@ Before confirmation the CLI displays:
 - whether the exact Bucket/branch will enroll an existing remote Plan or the
   explicit `--create-branch` path will reserve a new branch identity;
 - exact Bucket and branch;
-- fixed ignore policy and unsupported-object policy;
+- fixed content-policy ID, revision, fixture digest, Unicode/Windows rules,
+  and unsupported-object policy;
+- immutable Gateway branch writer contract/epoch and whether this device has
+  an approved branch-writer capability;
 - requested workspace scopes; and
 - whether an old capability will be rotated.
 
@@ -269,15 +309,75 @@ Approval calls the existing protected-source and global Binding-overlap
 validation. It fails closed if the path, pairing, account, Bucket, or branch
 changed. It does not accept a Gateway root or perform a scan/sync.
 
-New Plan/Binding IDs are allowed only when approval includes
-`--create-branch` and a generic Bucket branch create-if-absent CAS succeeds.
-The authenticated response must bind the Bucket, exact branch name, immutable
-branch identity, zero/head-absent generation, request idempotency key, and
-creation generation. The daemon re-reads and matches that branch metadata,
-then journals the receipt in the provisional enrollment record before approval
-returns. If the branch already exists, the CAS fails; v0 does not initialize an
-existing empty-looking branch. A lost response is recovered by the idempotency
-key and exact receipt, never by interpreting a later `404` as absence.
+Adapter approval requires the Gateway to expose an immutable generic branch
+writer descriptor with this exact value:
+
+```json
+{
+  "contract_id": "malt-client.backup-plan/workspace-adapter-v0",
+  "epoch": 1,
+  "manifest_version": 2,
+  "content_policy_id": "obsidian-visible-v0",
+  "content_policy_fixture_sha256": "sha256:0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd"
+}
+```
+
+Each explicitly approved device receives a separate revocable Gateway branch-
+writer capability ID backed by a daemon-generated random 256-bit secret. Before
+requesting either branch creation or a join grant, the daemon first fsyncs an
+owner-only pending keyring record containing the secret and its SHA-256 digest,
+then durably journals a non-secret pending-grant record containing that digest,
+request idempotency key, authorization principal, Bucket, explicit branch
+name, contract/epoch, and issuing device credential. It sends the request only
+after both records are durable. Only the digest is sent to or stored by the
+Gateway. After the Gateway resolves the immutable branch ID, its
+authorization record is bound to the exact tuple
+`(authorization_principal_id, bucket_id, immutable_branch_id, contract_id,
+epoch, device_credential_id)` plus that digest; `authorization_principal_id`
+is the canonical account or tenant security principal used by Gateway
+authorization. The plugin, encrypted manifest, and Plan store never receive
+the secret.
+
+Every branch push carries the exact contract ID/epoch, capability ID, and
+secret under the issuing device credential. In the same authorization
+transaction, the Gateway hashes the presented secret, matches the digest and
+all six scope fields, and rejects an absent, cross-principal, cross-Bucket,
+cross-branch, cross-device, mismatched, stale, or revoked assertion before
+candidate materialization, idempotency reservation, conflict preservation,
+merge, or ref mutation. Bucket writer role alone is insufficient, so an old
+v1 device cannot fast-forward or otherwise mutate the adapter branch.
+
+New Plan/Binding IDs are allowed only when approval names a new non-`main`
+branch, includes `--create-branch`, and a generic Bucket branch create-if-
+absent CAS succeeds while atomically binding that writer descriptor. The
+authenticated response must bind the authorization principal, Bucket, exact
+branch name, immutable branch identity, zero/head-absent generation, issuing
+device credential, request idempotency key, creation generation, complete
+writer descriptor, non-secret writer-capability ID, and the exact pending
+secret digest. The capability grant in that receipt has the exact six-field
+scope above. The daemon re-reads and matches that branch metadata and receipt
+digest, journals the receipt and capability ID in the provisional enrollment
+record, and atomically promotes the matching pending keyring record to active
+before approval returns. If the branch already exists, the CAS fails; v0 does
+not initialize an existing empty-looking branch, including the Bucket's pre-
+created `main`. A lost response is recovered by the idempotency key and exact
+receipt plus the already durable pending secret, never by interpreting a later
+`404` as absence or asking the Gateway to replay plaintext secret material.
+
+Joining an existing non-`main` adapter branch requires its immutable descriptor
+to match exactly and a Gateway-authenticated approval under the joining device
+credential to bind the already persisted pending digest to a new capability
+ID with the exact principal/Bucket/branch/contract/epoch/device scope. The
+idempotent join-grant receipt returns that ID, digest, and complete scope so a
+lost response is recoverable exactly like creation. An uncontracted branch, a
+descriptor/policy mismatch, `main`, or a manifest without matching branch
+metadata is unsupported. v0 has no in-place contract adoption, epoch downgrade,
+or generic-branch migration. Revocation names the scoped capability ID and
+cannot revoke or rotate a capability outside that same principal/Bucket/
+branch/device scope. If recovery finds the pending secret missing or corrupt,
+it fails closed and uses an explicit authenticated revoke-and-reissue flow with
+a new durable pending secret/idempotency key; a capability ID or receipt alone
+never reconstructs or authorizes a secret.
 
 Approval creates a provisional workspace for the canonical path and exact
 Bucket/branch. It does not invent a Plan or Binding ID when an encrypted remote
@@ -293,7 +393,15 @@ marker:
   "workspace_adapter": {
     "kind": "obsidian",
     "contract": "workspace-adapter/0",
-    "content_policy": "obsidian-visible-v0",
+    "content_policy": {
+      "id": "obsidian-visible-v0",
+      "revision": 1,
+      "fixture_sha256": "sha256:0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd"
+    },
+    "writer_contract": {
+      "id": "malt-client.backup-plan/workspace-adapter-v0",
+      "epoch": 1
+    },
     "installer": "vault-api"
   }
 }
@@ -309,7 +417,11 @@ authorization, timeout, missing-head, manifest lookup, proof, decryption,
 decode, and validation failures are errors, never evidence of an empty branch.
 A local Plan already targeting the Bucket/branch must already be the exact
 adapter Plan or approval fails; the user chooses another branch. No automatic
-legacy migration is permitted.
+legacy migration is permitted. The current Gateway create/push APIs do not yet
+implement the required receipt, immutable writer descriptor, or per-device
+capability checks; adapter approval, enrollment, and publication are therefore
+hard-disabled until that generic Gateway dependency is deployed, even if an
+existing head appears to contain a valid version 2 manifest.
 
 The provisional record reserves its canonical path before approval returns.
 Plan binding, restore-destination, foreground, and other adapter validation
@@ -321,7 +433,9 @@ cannot become eligible for the generic installer between files.
 After enrollment, generic and scheduled backup, generic sync, and
 conflict-install commands reject the adapter Plan and direct the user to the
 paired workspace workflow. Only an authenticated workspace request carrying
-the current approved `config_dir` may scan for publication or push a candidate.
+the complete current live Vault assertion may scan for publication or push a
+candidate, and only a daemon holding the matching Gateway branch-writer
+capability may publish it.
 
 ### 4.3 Observe approval
 
@@ -349,7 +463,18 @@ returns:
     "apply:read",
     "apply:write"
   ],
-  "ignore_policy": "obsidian-visible-v0"
+  "content_policy": {
+    "id": "obsidian-visible-v0",
+    "revision": 1,
+    "fixture_sha256": "sha256:0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd"
+  },
+  "vault_identity": {
+    "installation_id": "install_...",
+    "approved_desktop_path": "/Users/alice/Notes/Research",
+    "canonical_desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  }
 }
 ```
 
@@ -374,10 +499,53 @@ Every route after pairing uses:
 Authorization: Bearer <workspace capability>
 ```
 
-The capability is bound to one workspace record and exact scope set. A path
-parameter naming another workspace returns `404`, not a cross-workspace
-existence signal. The adapter listener has no general control handlers, and
-the adapter never receives the daemon lifecycle instance token.
+The capability is bound to one workspace record, plugin installation ID,
+canonical approved Vault path, monotonic path generation, and exact scope set.
+A path parameter naming another workspace returns `404`, not a cross-
+workspace existence signal. The adapter listener has no general control
+handlers, and the adapter never receives the daemon lifecycle instance token.
+
+### 5.1 Live Vault assertion
+
+Every capability-authenticated workspace route MUST carry the plugin's current
+Vault identity. The unauthenticated pairing-status poll is outside this rule.
+JSON mutation bodies include:
+
+```json
+{
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  }
+}
+```
+
+`desktop_path` is freshly read from desktop
+`FileSystemAdapter.getBasePath()`; `config_dir` is freshly read from
+`Vault.configDir`. For bodyless GET/Range routes the same object is UTF-8
+compact JSON, base64url-encoded without padding, in
+`Malt-Vault-Assertion`. The decoded value is bounded to 8 KiB. Duplicate JSON
+keys, unknown fields, invalid UTF-8, an oversized value, or a missing assertion
+are rejected.
+
+On every request the daemon compares installation ID and generation, resolves
+and canonicalizes `desktop_path` using the same pairing rules, and requires
+the result plus `config_dir` to equal the approved record. It performs this
+check before a scan, dirty scheduling, operation/candidate/conflict mutation,
+staged-object response, or apply continuation. A mismatch returns
+`409 vault_identity_mismatch`, blocks the workspace, and has no scan,
+publication, trust, journal-prefix, object-delivery, or Vault-side effect.
+
+`path_generation` starts at 1 and is monotonic for any recovered or explicitly
+approved identity-record replacement. Moving, renaming, or reopening a
+different Vault never retargets a workspace. v0 requires a new pairing for the
+new path and explicit revocation of the old workspace; there is no silent path
+update. Every queued operation, candidate, conflict, apply session, and
+idempotency record freezes the workspace path
+generation. Replaying it after any identity generation change fails before its
+logical result can be reused.
 
 The workspace API MUST NOT proxy or expose:
 
@@ -401,13 +569,24 @@ Example response:
   "workspace_id": "ws_...",
   "adapter_kind": "obsidian",
   "display_name": "Research",
-  "config_dir": ".obsidian",
+  "vault_identity": {
+    "installation_id": "install_...",
+    "approved_desktop_path": "/Users/alice/Notes/Research",
+    "canonical_desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
+  "branch_writer": {
+    "contract_id": "malt-client.backup-plan/workspace-adapter-v0",
+    "epoch": 1,
+    "capability_id": "bwc_..."
+  },
   "plan": {
     "id": "plan_...",
     "name": "Research",
     "bucket_id": "bucket_...",
     "bucket_name": "notes",
-    "branch": "main",
+    "branch": "obsidian-research",
     "binding_id": "binding_..."
   },
   "enrollment": null,
@@ -435,7 +614,10 @@ immutable Bucket/branch target is returned as:
     "state": "provisional",
     "bucket_id": "bucket_...",
     "bucket_name": "notes",
-    "branch": "main"
+    "branch": "obsidian-research",
+    "writer_contract_id": "malt-client.backup-plan/workspace-adapter-v0",
+    "writer_epoch": 1,
+    "writer_capability_id": "bwc_..."
   }
 }
 ```
@@ -471,7 +653,8 @@ error
 `idle` means the daemon's last full filtered scan matches its confirmed
 baseline and is no older than `idle_stale_after_seconds`. While loaded, the
 plugin MUST request a status-only reconciliation scan at least every
-`reconcile_interval_seconds`, with jitter and the current `config_dir`. If no
+`reconcile_interval_seconds`, with jitter and the complete current live Vault
+assertion. If no
 successful attested scan completes by the stale threshold, the daemon changes
 `idle` to `stale`; it never presents an indefinitely old scan as clean.
 `idle` does not mean the Gateway is reachable forever or that an unseen remote
@@ -488,6 +671,12 @@ Idempotency-Key: <plugin event batch ID>
 
 ```json
 {
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
   "observed_at": "2026-08-16T10:20:00Z",
   "overflow": false,
   "hints": [
@@ -517,15 +706,20 @@ Idempotency-Key: <request ID>
 
 ```json
 {
-  "config_dir": ".obsidian"
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  }
 }
 ```
 
 requests an asynchronous full scan. It returns `202` with an operation. The
-daemon MUST match `config_dir` to the approved single dot-prefixed component
-and MAY coalesce it with an active or already queued scan carrying the same
-assertion. This standalone route updates scan generation and status only; it
-never creates or publishes a local candidate. Candidate publication occurs
+daemon MUST validate the complete assertion before opening the recorded source
+path and MAY coalesce it only with an active or queued scan carrying the same
+identity tuple. This standalone route updates scan generation and status only;
+it never creates or publishes a local candidate. Candidate publication occurs
 only inside an explicit sync operation carrying the same current assertion.
 
 Every full scan that may report `idle`, confirm an apply, or feed a local
@@ -617,38 +811,47 @@ Idempotency-Key: <user action ID>
 
 ```json
 {
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
   "reason": "user",
   "message": "Sync from MALT Sync",
-  "allow_automatic_merge": true,
-  "config_dir": ".obsidian"
+  "allow_automatic_merge": true
 }
 ```
 
 `reason` is `user`, `scheduled`, or `reconcile`. Plugin v0 may request `user`
-only. `config_dir` must exactly equal the approved value and still satisfy the
-single dot-prefixed component rule. The daemon schedules one serialized
-operation and returns `202`.
+only. The daemon validates the complete live Vault assertion before opening the
+source, freezing an operation, or consulting idempotency state. It schedules
+one serialized operation and returns `202`.
 
 The daemon MUST execute these semantic stages:
 
-1. recover unfinished workspace and Backup Plan journals;
+1. recover unfinished workspace and Backup Plan journals, validate the live
+   Vault assertion, and verify that the daemon still holds a current writer
+   capability for the exact immutable Gateway branch contract/epoch;
 2. complete a full policy-filtered local scan into an immutable staged
-   plaintext snapshot;
+   plaintext snapshot only after those identity checks;
 3. if the workspace is provisional, durably freeze that snapshot and choose
    exactly one enrollment path:
-   - with the exact journaled create-if-absent branch receipt, establish a new
-     marked Plan bound to its branch generation and prepare the local-only
-     candidate; or
-   - for an existing head, record it as a candidate, wait for exact user
+   - with the exact journaled create-if-absent branch receipt, writer
+     descriptor, and capability ID, establish a new marked Plan bound to its
+     branch generation and prepare the local-only candidate; or
+   - for an existing contracted head and an explicitly granted current device
+     writer capability, record it as a candidate, wait for exact user
      acceptance, verify/decrypt the marked version 2 single-Binding manifest
      and its Binding tree, and complete the empty-base enrollment merge before
      publication; a conflict publishes nothing, while a clean result stashes
      only the merged candidate with the exact accepted root as its CAS base;
-4. create and push the changed encrypted candidate: an initialized workspace
-   and a receipt-created new branch preserve local-candidate-first order, but
-   existing-branch enrollment may publish only the merged candidate from stage
-   3; a CAS race returns that enrollment to observation and merge and MUST NOT
-   publish its raw local snapshot;
+4. create and push the changed encrypted candidate with the exact Gateway
+   writer contract/epoch and current device writer capability: an initialized
+   workspace and a receipt-created new branch preserve local-candidate-first
+   order, but existing-branch enrollment may publish only the merged candidate
+   from stage 3; a CAS race returns that enrollment to observation and merge
+   and MUST NOT publish its raw local snapshot;
 5. for an initialized workspace, fetch the branch only after the local
    candidate is durably stashed/pushed; existing-branch enrollment has already
    performed its exceptional accepted-root fetch in stage 3;
@@ -667,7 +870,9 @@ non-empty, an empty logical base permits distinct additions, converges byte-
 identical additions at the same path, and treats differing additions at the
 same path as conflicts. No first-join conflict publishes a candidate. Only a
 new branch backed by the exact create-if-absent receipt may directly publish a
-local-only first candidate.
+local-only first candidate. A dedicated name or valid encrypted manifest is
+never sufficient without immutable branch writer metadata and this device's
+current capability.
 
 The route does not accept an arbitrary Plan selector, source path, root,
 Gateway URL, merge implementation, key, or destination.
@@ -690,9 +895,20 @@ binaries that were blocked during the fence reject v2 on open. A subsequent
 adapter-enabled release requires the enable marker before exposing approval/
 enrollment.
 
-Installer policy is a mandatory `PlanService` and Plan-store-writer dependency,
-not a handler check. The local Plan descriptor and adapter registry must agree
-after recovery.
+That local two-release barrier is necessary but not sufficient across devices.
+The adapter-enabled release also requires the Gateway writer-contract feature
+to be deployed. Conformance must start a real v1 client on another device/
+client root with ordinary Bucket writer role and prove its legacy push is
+rejected before candidate storage or ref mutation. If the Gateway cannot make
+that guarantee, all adapter approval and enrollment remain disabled rather
+than claiming single-device safety for a remotely shared branch.
+
+Installer and writer policy are mandatory `PlanService` and Plan-store-writer
+dependencies, not handler checks. The local PlanStore v2 descriptor records the
+content-policy identity, immutable Gateway writer contract/epoch, and non-
+secret capability ID; the capability secret remains in the daemon keyring.
+Plan descriptor, adapter registry, encrypted manifest, Gateway branch metadata,
+and keyring capability state must agree after recovery.
 
 Every generic publication, install, bind, import, schedule mutation, or future
 Plan-store write acquires their current guard generation under the enrollment
@@ -735,6 +951,12 @@ Idempotency-Key: <confirmation ID>
 
 ```json
 {
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
   "confirmed": true,
   "expected_operation_id": "op_...",
   "expected_candidate_generation": 42,
@@ -765,6 +987,13 @@ Example:
 {
   "apply_id": "apply_...",
   "state": "ready",
+  "vault_identity": {
+    "installation_id": "install_...",
+    "approved_desktop_path": "/Users/alice/Notes/Research",
+    "canonical_desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
   "source_scan_generation": 41,
   "source_tree_fingerprint": "sha256:...",
   "target_tree_fingerprint": "sha256:...",
@@ -860,7 +1089,12 @@ Idempotency-Key: <plugin apply attempt ID>
 
 ```json
 {
-  "config_dir": ".obsidian"
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  }
 }
 ```
 
@@ -869,11 +1103,13 @@ performs the apply-wide content-mutation gate from section 11.1. Rejection
 returns no operation and permits no Vault API call.
 
 For a fresh session the daemon validates that no unrelated workspace mutation
-is active, `config_dir` exactly equals the approved single dot-prefixed value,
-and the current full scan still equals `source_tree_fingerprint`. The plugin
-MUST re-read `Vault.configDir`; a change blocks begin rather than dynamically
-excluding another path. For resume the daemon MUST NOT require the original
-source fingerprint, but before allowing any remaining operation it MUST scan
+is active, the complete live Vault assertion equals the session identity and
+current registry generation, and the current full scan still equals
+`source_tree_fingerprint`. The plugin MUST re-read its installation ID,
+`FileSystemAdapter.getBasePath()`, and `Vault.configDir`; any change blocks
+begin rather than retargeting the session. For resume the daemon MUST NOT
+require the original source fingerprint, but it MUST revalidate the same
+identity tuple before allowing any remaining operation and then scan
 and revalidate the exact physical/logical postcondition of every operation in
 the journaled successful prefix. Any drift invalidates the session immediately.
 Only after the whole prefix still matches does it evaluate later operations in
@@ -898,7 +1134,8 @@ GET /v1/workspace-adapters/workspaces/{workspace_id}/applies/{apply_id}/objects/
 ```
 
 The object must be referenced by this session and a remaining `write_file`
-operation. Response headers include:
+operation. The daemon validates the `Malt-Vault-Assertion` header before
+opening or returning staged bytes. Response headers include:
 
 ```http
 Content-Type: application/octet-stream
@@ -914,8 +1151,12 @@ path, conflict checkout, unrelated apply, arbitrary CAS block, or remote URL.
 
 ### 11.4 Apply preconditions
 
-Immediately before an operation, the plugin checks the exact Vault-relative
-entry:
+Immediately before every Vault API side effect, including `mkdir`, the plugin
+re-reads its current installation ID, desktop
+`FileSystemAdapter.getBasePath()`, and `Vault.configDir` and requires exact
+equality with the immutable session tuple and path generation. A mismatch or
+Vault lifecycle change aborts without executing the operation. Only then does
+it check the exact Vault-relative entry:
 
 - `missing` requires no `TAbstractFile` at the path;
 - `directory` requires `TFolder`;
@@ -946,6 +1187,12 @@ Idempotency-Key: <apply ID + operation ID>
 
 ```json
 {
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
   "outcome": "applied",
   "observed_before": {"kind": "missing"},
   "observed_after": {"kind": "file", "bytes": 126, "digest": "sha256:..."}
@@ -976,14 +1223,19 @@ Idempotency-Key: <apply completion ID>
 
 ```json
 {
-  "config_dir": ".obsidian"
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  }
 }
 ```
 
-The plugin re-reads `Vault.configDir`; the daemon requires an exact match with
-the approved single dot-prefixed component. It then transitions to
-`confirming`, runs a complete filtered scan, and returns `202` with the
-confirmation operation. Only an exact match with
+The plugin re-reads the complete live Vault identity; the daemon requires an
+exact installation/path/config/generation match before it transitions to
+`confirming`, opens the source, runs a complete filtered scan, and returns
+`202` with the confirmation operation. Only an exact match with
 `target_tree_fingerprint` changes the session to `confirmed`, records history,
 and returns the workspace to `idle`. A mismatch changes it to `invalid` and
 returns the workspace to `dirty` or `conflict`; staged evidence is retained
@@ -994,8 +1246,23 @@ POST /v1/workspace-adapters/workspaces/{workspace_id}/applies/{apply_id}/abort
 Idempotency-Key: <apply abort ID>
 ```
 
-accepts a bounded reason and leaves the Vault as-is. It does not attempt a
-filesystem rollback behind Obsidian. The next scan determines the actual local
+```json
+{
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
+  "reason": "user cancelled"
+}
+```
+
+accepts the complete matching live Vault assertion plus a bounded reason and
+leaves the Vault as-is. A Vault identity mismatch on any route already returns
+`409 vault_identity_mismatch` and safely invalidates/blocks the session; the
+plugin MUST NOT replay the old assertion merely to make abort succeed. Abort
+does not attempt a filesystem rollback behind Obsidian. The next scan determines the actual local
 state and a later sync merges or prepares a new session.
 
 ## 12. Conflict resources
@@ -1059,6 +1326,12 @@ Idempotency-Key: <user decision ID>
 
 ```json
 {
+  "vault_assertion": {
+    "installation_id": "install_...",
+    "desktop_path": "/Users/alice/Notes/Research",
+    "config_dir": ".obsidian",
+    "path_generation": 1
+  },
   "resolution": "keep-local",
   "confirmed": true,
   "expected_conflict_generation": 7,
@@ -1110,6 +1383,8 @@ The daemon journals before publishing each of these transitions and retains
 their idempotent logical results for the common-values window:
 
 - pairing approved and capability digest activated;
+- Gateway branch-writer secret pending, digest grant committed, activated, or
+  revoked;
 - operation queued/running/waiting/completed;
 - apply prepared/begun;
 - operation acknowledgement accepted;
@@ -1121,6 +1396,13 @@ route as ready. It validates every staging path against its owner-only staging
 root and every session against the paired Plan/Binding. Unknown or unsafe
 journals fail closed and are quarantined; they are never replayed into a Vault.
 
+For a pending branch-writer grant, recovery loads the non-secret journal,
+replays its exact idempotency key, matches the returned capability ID, digest,
+six-field scope, writer descriptor, and creation/join receipt, then promotes
+the pending keyring record. A missing or corrupt pending secret still leaves
+the journal able to identify and authentically revoke the committed grant
+before explicit reissue; it never recovers a secret from a non-secret receipt.
+
 Confirmed/expired object bytes are deleted according to a bounded retention
 policy only after their journal no longer requires them. Diagnostic metadata
 must not retain Vault content indefinitely. Capability revocation prevents
@@ -1131,9 +1413,11 @@ future reads immediately even if staging still exists.
 A daemon and adapter claiming `workspace-adapter/0` must share fixtures that
 cover at least:
 
-1. unsupported contract rejection;
+1. unsupported contract, content-policy revision, or fixture-digest rejection;
 2. expired, rejected, replayed, and secret-mismatched pairing;
-3. capability use against another workspace, apply, object, or conflict;
+3. capability use against another workspace, apply, object, or conflict, plus
+   wrong installation ID, moved/renamed desktop base path, changed config
+   directory, and stale path generation on every body and GET assertion;
 4. missing idempotency keys, duplicate keys with same/different bodies, and
    same-body replay after daemon restart through the advertised retention
    window;
@@ -1148,11 +1432,17 @@ cover at least:
 8. object truncation, range mismatch, and digest mismatch before Vault write;
 9. create/update/trash precondition mismatch for file-vs-folder and content;
 10. plugin or daemon restart before/after every acknowledgement, including an
-    earlier successful-prefix path drifting before resume and failed/
-    precondition-failed acks stopping all later operations;
+    earlier successful-prefix path drifting before resume, the Obsidian Vault
+    moving or switching after begin and immediately before each operation, zero
+    Vault API side effects on identity mismatch, and failed/precondition-failed
+    acks stopping all later operations;
 11. completion acknowledgement without matching full target scan;
-12. case-folding and Unicode path collisions on each supported platform,
-    including a lone non-NFC path, an NFC/NFD pair, and an apply alias;
+12. both Go and TypeScript execute the exact
+    `0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd`
+    fixture and Unicode 17.0.0 normalization tests, including C/F full non-
+    Turkic folding, expansion/sigma/dotted-I vectors, all declared Windows
+    device/character rules, a lone non-NFC path, an NFC/NFD pair, and an apply
+    alias;
 13. excluded dot paths, Windows metadata, included symlink rejection, and
     rejection of non-dot, nested, or post-pairing `Vault.configDir` changes;
 14. large binary attachment streaming without a JSON/body fallback;
@@ -1173,7 +1463,22 @@ cover at least:
     later open; every PlanStore
     writer shares the coordinator, and same-target/disjoint-source bind,
     generic import, and schedule mutation all reject an adapter Plan;
-20. provisional enrollment preserves a non-empty local tree, imports the
+20. a new adapter uses an explicitly named non-`main` branch; the Gateway
+    atomically binds the exact writer contract/epoch and policy digest, the
+    daemon fsyncs a pending random secret and journals its digest, scope, and
+    idempotency key before either create or join; create/grant replay returns
+    the exact receipt bound to that digest; crashes immediately before and
+    after pending-keyring fsync, pending-grant journal commit, Gateway commit,
+    receipt delivery, receipt journal commit, and keyring promotion all
+    recover the same usable grant, while a missing pending secret requires
+    revoke-and-reissue; each approved device receives a distinct revocable
+    capability scoped to the exact authorization principal, Bucket, immutable
+    branch, contract, epoch, and issuing device credential; cross-principal,
+    cross-Bucket, cross-ref, and cross-device capability reuse plus a real v1
+    client with ordinary Bucket writer role are rejected before candidate,
+    idempotency, conflict, merge, or ref mutation on fast-forward and stale-
+    head pushes;
+21. provisional enrollment preserves a non-empty local tree, imports the
     remote Plan/Binding identity only from the marked version 2 manifest after
     exact root acceptance, creates new IDs only from the journaled
     create-if-absent branch receipt, never treats transport/authorization/
@@ -1184,20 +1489,22 @@ cover at least:
     publishes only a clean merged candidate against the exact accepted root,
     and represents differing same-path additions as `both-added` with a
     missing base entry, no magic base/local root, and exact tree fingerprints;
-21. adapter fingerprints ignore filesystem metadata and empty folders, and no
+22. adapter fingerprints ignore filesystem metadata and empty folders, and no
     apply session can request folder deletion;
-22. a target file colliding with an ignored empty folder, or a required parent
+23. a target file colliding with an ignored empty folder, or a required parent
     colliding with a file, becomes `physical_namespace_obstruction` without an
     apply-regeneration loop;
-23. stable mode refuses an entire apply containing any write or deletion,
+24. stable mode refuses an entire apply containing any write or deletion,
     including a missing-target create racing an external writer, before the
     first Vault API call or preceding `mkdir`; the configured primitive must
     prove create-if-absent, replacement, and deletion behavior; and
-24. a non-UTF-8 existing file with a UTF-8 target remains `binary`, while a
+25. a non-UTF-8 existing file with a UTF-8 target remains `binary`, while a
     text update rechecks the exact expected byte digest inside
     `Vault.process`.
 
 The final Product E2E must also prove that authenticated remote content is
 ProofList/CID verified before decryption, local state is preserved before
-remote observation, and the generic directory Backup Plan continues using its
-existing crash-safe filesystem installer unchanged.
+remote observation, every remote adapter publication is rejected without the
+exact Gateway branch-writer contract/capability, and the generic directory
+Backup Plan continues using its existing crash-safe filesystem installer
+unchanged.

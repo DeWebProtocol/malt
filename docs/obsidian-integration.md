@@ -101,10 +101,11 @@ The adapter registry is also a publication and installation guard. Generic
 `malt backup`, scheduled backup, generic `malt sync`, foreground sync,
 keep-remote, and manual-conflict paths MUST refuse an adapter-backed Plan. Only
 the workspace service may snapshot or publish it, after an authenticated live
-plugin request supplies the current approved `Vault.configDir`. Filesystem
-installation remains forbidden. The rejected commands return an actionable
-instruction to connect the adapter; no alternate CLI or timer path may bypass
-that guard.
+plugin request supplies the complete current installation/path/config/
+generation assertion and the daemon proves it holds the exact Gateway branch-
+writer capability. Filesystem installation remains forbidden. The rejected
+commands return an actionable instruction to connect the adapter; no alternate
+CLI or timer path may bypass that guard.
 
 The current `mergePlaintextTrees` also compares directory entries and
 permission modes. It cannot be called unchanged for the adapter's file-only
@@ -126,7 +127,15 @@ Obsidian adapter Plan or selected the same content and installer policy. Phase
   "workspace_adapter": {
     "kind": "obsidian",
     "contract": "workspace-adapter/0",
-    "content_policy": "obsidian-visible-v0",
+    "content_policy": {
+      "id": "obsidian-visible-v0",
+      "revision": 1,
+      "fixture_sha256": "sha256:0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd"
+    },
+    "writer_contract": {
+      "id": "malt-client.backup-plan/workspace-adapter-v0",
+      "epoch": 1
+    },
     "installer": "vault-api"
   }
 }
@@ -140,7 +149,9 @@ reject an unknown manifest version; updated generic restore/sync code must also
 refuse the `vault-api` installer and direct the user to the workspace adapter.
 There is no implicit legacy-Plan migration in v0. Moving an existing generic
 Backup Plan requires a later explicit migration after every participating
-device understands the marker; the alpha should use a dedicated branch.
+device understands the marker. A dedicated branch name is not a security or
+compatibility boundary by itself; the branch must also carry the Gateway-
+enforced writer contract described below.
 
 Adapter enrollment cannot safely ship in the same compatibility step that
 introduces its guard. A transition release first makes the coordinator lease
@@ -170,11 +181,14 @@ that already loaded v1 and an old CLI starting between process census and
 rename from overlapping activation; deliberate same-OS-user bypass remains
 outside the stated isolation boundary just like direct Vault writes.
 
-The separate adapter registry supplies path, capability, and live workspace
-state, but is not the only evidence that a Plan is adapter-backed. A
-descriptor/registry/manifest mismatch, missing registry state for an adapter
-Plan, or registry recovery failure blocks publication and installation rather
-than defaulting to the generic path.
+Every adapter PlanStore v2 descriptor also records the content-policy identity,
+Gateway writer contract/epoch, and non-secret capability ID; the secret remains
+in the daemon keyring. The separate adapter registry supplies path, capability,
+and live workspace state, but is not the only evidence that a Plan is adapter-
+backed. A Plan descriptor/registry/encrypted-manifest/Gateway-branch mismatch,
+missing registry or keyring state for an adapter Plan, or recovery failure
+blocks publication and installation rather than defaulting to the generic
+path.
 
 ## Ownership
 
@@ -208,10 +222,11 @@ second synchronization engine.
 
 The daemon owns all persistent and trusted behavior:
 
-- canonicalize and validate the Vault path during pairing;
-- bind one local workspace identity to one exact source path and
-  Bucket/branch target, then resolve its Plan/Binding identity during
-  enrollment;
+- canonicalize and validate the Vault path during pairing and again on every
+  workspace-affecting live Vault assertion;
+- bind one local workspace identity to one plugin installation, exact reported
+  and canonical source path, monotonic path generation, and Bucket/contracted-
+  branch target, then resolve its Plan/Binding identity during enrollment;
 - store capability hashes, pairing state, operation journals, staged content,
   scan generations, and adapter state in owner-only client storage;
 - enforce the fixed v0 include/exclude policy before scanning, archiving,
@@ -236,13 +251,73 @@ publication, and server-side independent-change merge. It receives ciphertext
 and never receives Vault plaintext, archive keys, recovery keys, local source
 paths, apply sessions, or Obsidian installation data.
 
-Creating a brand-new adapter identity does require a generic Bucket branch
-create-if-absent operation with a durable idempotency receipt and an exact
-head-absent generation. The current explicit-branch API is not assumed to
-provide that lost-response receipt. If it cannot, Phase 1 must add the generic
-Bucket concurrency primitive in `gateway`; it is not an Obsidian route. Until
-that primitive is available, v0 may import an existing marked manifest but
-must refuse new Plan/Binding identity creation.
+The local PlanStore fence cannot protect the same Bucket branch from an old
+client on another device. Adapter enablement therefore also requires a generic
+Gateway branch writer contract. Branch creation atomically and immutably binds
+this opaque descriptor to the ref:
+
+```json
+{
+  "contract_id": "malt-client.backup-plan/workspace-adapter-v0",
+  "epoch": 1,
+  "manifest_version": 2,
+  "content_policy_id": "obsidian-visible-v0",
+  "content_policy_fixture_sha256": "sha256:0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd"
+}
+```
+
+The Gateway treats the descriptor as managed branch authorization policy, not
+as trusted content semantics. Each explicitly approved device receives a
+separate revocable capability ID backed by a daemon-generated random 256-bit
+secret. Before create or join, the daemon first fsyncs a pending keyring record
+with the secret and its SHA-256 digest, then journals a non-secret pending-grant
+record with that digest, request idempotency key, intended principal, Bucket/
+branch, contract/epoch, and device credential. It sends the request only after
+both are durable; only the digest reaches or is stored by the Gateway. After
+resolving the immutable branch identity,
+the grant is scoped to `(authorization_principal_id, bucket_id,
+immutable_branch_id, contract_id, epoch, device_credential_id)` plus that
+digest, where the first value is the canonical account or tenant security
+principal used for authorization. Every push, including a fast-forward,
+server merge, conflict-preservation path, and retry, supplies the exact
+contract ID/epoch, capability ID, and secret under the issuing device
+credential. In the same authorization transaction, the Gateway hashes the
+secret, matches its digest and all six fields, and rejects absent, cross-
+principal, cross-Bucket, cross-branch, cross-device, stale, mismatched, or
+revoked assertions before candidate materialization, idempotency reservation,
+or any ref/candidate mutation. A v1 client has neither the fields nor the
+capability and therefore cannot replace the encrypted manifest on an adapter
+branch even if it still has the Bucket writer role. The writer secret remains
+daemon-owned; it is never put in the encrypted manifest or exposed to the
+Obsidian plugin.
+
+Creating a brand-new adapter identity additionally requires an explicitly
+named non-`main` Bucket branch and a generic branch create-if-absent operation
+with a durable idempotency receipt and exact head-absent generation. v0 never
+uses the Bucket's pre-created `main` ref and never adopts an empty-looking
+branch. The receipt binds the authorization principal, Bucket, branch name,
+immutable branch identity, writer descriptor, issuing device credential,
+writer-capability ID, pending secret digest, request idempotency key, and
+creation generation. The daemon matches that receipt to the already durable
+pending secret and promotes it to active. Joining an existing non-`main` branch
+from another device uses the same pending-secret protocol and an idempotent
+grant receipt scoped to that principal/Bucket/branch/contract/epoch and the
+joining device credential before it can publish. A response lost at any point
+is recovered from the same idempotency receipt, non-secret pending-grant
+journal, and pending secret. If that secret is missing or corrupt, the
+journal still identifies the committed grant; recovery fails closed, revokes
+it, and explicitly reissues against a new durable pending secret. Receipts
+never contain or reconstruct plaintext secret material.
+
+Revocation and rotation operate on that exact scoped grant.
+
+The current explicit-branch and push APIs provide neither the lost-response
+receipt nor writer-contract enforcement. Phase 1 must add both generic Bucket
+concurrency/authorization primitives in `gateway`; they are not Obsidian
+routes. Until they are deployed, adapter approval, enrollment, and publication
+remain hard-disabled, including import of an apparently valid existing version
+2 manifest. v0 rejects an existing uncontracted branch and provides no in-place
+contract migration or downgrade path.
 
 ## Workspace identity and records
 
@@ -253,18 +328,24 @@ record containing:
 
 - adapter kind and contract version (`obsidian`, `workspace-adapter/0`);
 - the exact Bucket/branch target and, after enrollment, Plan ID and Binding ID;
-- the canonical absolute source path approved by the user;
+- the immutable Gateway writer contract/epoch, non-secret capability ID, and a
+  reference to the daemon-keyring capability secret;
+- the plugin-reported and canonical absolute source paths approved by the
+  user, plus a monotonic workspace-path generation;
 - the plugin installation ID and non-secret Vault display name;
 - the approved single-component `Vault.configDir` value;
-- the v0 ignore-policy version;
+- the content-policy ID, revision, and exact fixture digest;
 - capability-token hashes and revocation state; and
 - the last confirmed scan/apply generations.
 
 This record is local-only. The encrypted version 2 workspace-adapter Plan
 manifest is the cross-device source for Plan, Binding, adapter, contract,
-content-policy, and installer identity. Copying a Vault directory or its
-plugin data to a second path does not copy authorization: the new path must
-pair as a new local workspace.
+content-policy, writer-contract, and installer identity. The daemon also
+cross-checks those fields against immutable Gateway branch metadata before
+enrollment or publication. Copying or moving a Vault directory, or copying its
+plugin data to a second path, does not copy authorization: the new path must
+pair as a new local workspace and the old capability remains bound to the old
+installation/path generation.
 
 The workspace-adapter registry must be separate from plugin `data.json` and
 from the remote manifest. It cross-checks the installer descriptor persisted
@@ -296,10 +377,11 @@ Plan-store import and adapter-record activation as one recoverable transition;
 a crash cannot leave the path writable through both installer types.
 
 An approved workspace may initially be `provisional`: it is bound to the
-canonical Vault path plus exact Bucket/branch, but has no Plan or Binding ID
-yet. This is required when another device may already have published the
-encrypted Plan manifest. The daemon cannot safely invent a new Binding ID or
-read that manifest before the observed root is explicitly accepted.
+plugin installation, reported and canonical Vault paths, path generation, and
+exact contracted Bucket/branch, but has no Plan or Binding ID yet. This is
+required when another device may already have published the encrypted Plan
+manifest. The daemon cannot safely invent a new Binding ID or read that
+manifest before the observed root is explicitly accepted.
 
 The first sync freezes a complete local scan before observing the branch. For
 an existing branch it records the observed root as a candidate and waits for
@@ -329,9 +411,9 @@ The first release synchronizes ordinary visible Vault files, including
 Markdown, Canvas files, attachments, and arbitrary regular-file bytes. Paths
 use normalized Vault-relative `/` separators. Absolute paths, `.`/`..`
 segments, NUL, and platform-colliding names are rejected before an apply
-session is exposed. v0 also rejects every raw segment that is not already
-byte-for-byte Unicode NFC; it does not normalize a lone NFD disk/Obsidian path
-into a possibly different Vault API lookup.
+session is exposed. v0 also rejects invalid UTF-8 and every raw segment that
+is not already byte-for-byte Unicode 17.0.0 NFC; it does not normalize a lone
+NFD disk/Obsidian path into a possibly different Vault API lookup.
 
 The adapter's logical tree commits relative file path, file kind, byte length,
 and content digest. File mtime, permission mode, xattrs, ACLs, and empty
@@ -351,6 +433,36 @@ that two devices cannot silently scan different logical trees:
 - reject a non-excluded symlink or other special filesystem object as an
   actionable unsupported-content error rather than silently omitting it.
 
+Policy revision 1 is defined by the exact bytes of the shared
+[path fixture](fixtures/obsidian-visible-v0-paths.json), whose SHA-256 is
+`0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd`.
+Both Go and TypeScript implementations MUST execute every vector and advertise
+that digest; pairing, the encrypted manifest, and Gateway branch writer
+descriptor all reject a different or absent digest before scanning or
+publication.
+
+The fixture pins Unicode 17.0.0. NFC conformance is tested against
+`NormalizationTest-17.0.0.txt` with SHA-256
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`.
+The per-segment portable collision key is exactly
+`NFC17(DefaultCaseFold17_CF(NFD17(segment)))`, joined with `/`.
+`DefaultCaseFold17_CF` uses only status C and F mappings from
+`CaseFolding-17.0.0.txt`, excludes the simple S and Turkic T alternatives,
+and pins that file at SHA-256
+`ff8d8fefbf123574205085d6714c36149eb946d717a0c585c27f0f4ef58c4183`.
+Native filesystem, JavaScript runtime, and Go library Unicode tables are not
+substitutes unless they produce the complete pinned fixture and upstream
+normalization conformance results.
+
+The portable Windows rejection is also exact on every OS: reject U+0000
+through U+001F, `< > : " \\ | ? *`, a final ASCII space or dot, and
+ASCII-case-insensitive device stems `CON`, `PRN`, `AUX`, `NUL`,
+`COM1` through `COM9`, `COM¹`/`COM²`/`COM³`, `LPT1` through
+`LPT9`, and `LPT¹`/`LPT²`/`LPT³`. The stem is the segment prefix
+before its first dot, so an extension does not make it valid. This list and
+the metadata exclusions are data in the fixture, not platform-dependent
+library behavior.
+
 Obsidian permits a custom configuration directory, so the plugin reports the
 actual `Vault.configDir` at pairing. v0 accepts it only when it is one portable
 single path component beginning with `.`, records it, displays it during CLI
@@ -359,7 +471,10 @@ and apply. A non-dot, nested, changed, or invalid configuration directory
 blocks the workspace and requires re-pairing; the daemon never turns a
 device-local custom path into a dynamic ignore rule. The fixed dot-component
 rule therefore excludes both the usual `.obsidian` and an accepted custom
-configuration directory identically on every device.
+configuration directory identically on every device. The same check never
+stands alone: every dirty/scan/sync/candidate/conflict/apply continuation also
+asserts the current plugin installation ID, current
+`FileSystemAdapter.getBasePath()`, and approved workspace-path generation.
 
 Excluding the active configuration directory is a v0 product decision, not a
 permanent claim that settings should never synchronize. Obsidian's Vault API
@@ -394,29 +509,57 @@ Pairing is user-mediated:
    exact `Vault.configDir` value over the private endpoint.
 2. The daemon returns a short-lived pairing request and a human approval code.
    The plugin shows the exact CLI approval command.
-3. `malt workspace approve <code> --bucket <selector> [--branch <name>]`
-   displays the canonical Vault path, content policy, Bucket, branch, and
-   requested scopes. It requires explicit terminal confirmation before
-   creating a provisional workspace record. The first sync imports an existing
-   marked version 2 single-Binding adapter manifest. New Plan/Binding IDs are
-   permitted only when approval explicitly requested `--create-branch` and
-   journaled the exact generic branch create-if-absent CAS receipt.
+3. `malt workspace approve <code> --bucket <selector> --branch <name>`
+   (plus `--create-branch` only for a new branch) displays the canonical Vault
+   path, content policy, Bucket, branch, and requested scopes. It requires
+   explicit terminal confirmation before creating a provisional workspace
+   record. Approval also obtains a daemon-owned Gateway branch-writer capability
+   for the exact immutable writer contract/epoch and six-field principal/Bucket/
+   branch/device scope. Before the Gateway request, it fsyncs the pending
+   writer secret, then journals its digest, scope, and idempotency key; the
+   receipt binds the digest and promotes that secret only after exact recovery
+   checks.
+   v0 requires an explicit non-`main` branch for both join and creation. The
+   first sync imports an existing marked version 2 single-Binding adapter
+   manifest only from a branch carrying that same contract. New Plan/Binding
+   IDs are permitted only when approval explicitly requested `--create-branch`
+   and journaled the exact generic branch create-if-absent receipt
+   including writer descriptor and capability ID.
 4. The plugin polls the opaque pairing resource. Approval atomically activates
    the already-committed capability digest and returns the workspace ID and
    scopes, never the secret.
 5. The plugin promotes its pending SecretStorage entry to active. It never puts
-   the capability in plugin `data.json`; the daemon persists only its digest.
+   the plugin workspace capability in `data.json`; the daemon persists only
+   that plugin capability's digest.
 
 Pairings expire, are single-use, and are rate-limited. Re-pairing rotates the
 capability. `malt workspace revoke <workspace>` immediately revokes all plugin
 capabilities without deleting the Plan, local Vault, remote data, or accepted
 root.
 
-The capability is bound to one `workspace_id` and permits only status/event
-reads, dirty hints, sync requests, exact candidate acceptance, conflict
+The capability is bound to one `workspace_id`, plugin installation ID,
+canonical approved Vault path, and path generation. It permits only status/
+event reads, dirty hints, sync requests, exact candidate acceptance, conflict
 choices, staged-object reads, and apply acknowledgements for that workspace.
 It cannot select another source path, Bucket, branch, Plan, Binding, root, key,
 or Gateway account.
+
+Every workspace-affecting request carries a live Vault assertion containing
+the current installation ID, current desktop base path returned by
+`FileSystemAdapter.getBasePath()`, exact `Vault.configDir`, and approved path
+generation. The daemon resolves and canonicalizes that path on every request
+and rejects a mismatch before scanning, publication, trust mutation, object
+delivery, or apply continuation. Moving or renaming the Vault therefore blocks
+the old workspace rather than redirecting daemon scans and plugin writes to
+different directories. v0 requires a fresh pairing for the new path and
+revocation of the old workspace; it never silently edits a bound path.
+
+Every apply session freezes the same Vault identity tuple. Immediately before
+each `createFolder`, create/modify/process, or trash call, the plugin re-reads
+the installation ID, `FileSystemAdapter.getBasePath()`, and `Vault.configDir`
+and compares them with the session tuple. An Obsidian Vault lifecycle change or
+mismatch aborts before the side effect. A final scan is confirmation, not the
+first identity check.
 
 This capability boundary prevents accidental overreach and confused-deputy
 bugs. It does not claim to isolate the daemon from fully malicious code already
@@ -447,7 +590,7 @@ provisional
 
 Vault events are coalesced and sent as hints. Plugin startup, resume, overflow
 recovery, every explicit Sync, and a negotiated live-plugin cadence request a
-complete daemon scan while supplying the current approved `Vault.configDir`.
+complete daemon scan while supplying the full current live Vault assertion.
 The cadence scan updates status only and never publishes. A silently lost event
 is therefore discovered within the bounded interval; if the plugin is absent
 past the declared threshold, the daemon reports `stale` rather than presenting
@@ -497,6 +640,8 @@ a loop.
 An apply session is immutable and contains:
 
 - the workspace and scan generations it depends on;
+- the approved plugin installation ID, reported/canonical Vault paths,
+  `Vault.configDir`, and workspace-path generation;
 - accepted/base/local/remote/target root metadata needed for status;
 - ordered `mkdir`, `write_file`, and `trash_file` operations using
   Vault-relative paths;
@@ -506,9 +651,10 @@ An apply session is immutable and contains:
 - an expiry and journal generation.
 
 The plugin never receives a daemon staging path. It downloads content by
-opaque object ID, verifies the digest, rechecks the current Vault entry, and
-applies operations through Obsidian APIs. Directory creation is
-shallowest-first, followed by writes and file trashing. Directories left empty
+opaque object ID only after the daemon revalidates the live Vault assertion,
+verifies the digest, rechecks the current Vault identity and entry immediately
+before the side effect, and applies operations through Obsidian APIs. Directory
+creation is shallowest-first, followed by writes and file trashing. Directories left empty
 after file trashing are harmless non-entries in the adapter tree. Renames are
 represented as a write followed by a trash because the remote snapshot
 contains path state, not authenticated rename provenance.
@@ -520,8 +666,9 @@ was actually installed.
 
 ### Confirmation and races
 
-The plugin's completion call starts a new daemon scan; it does not commit the
-apply. The daemon records the new baseline only if the complete filtered tree
+The plugin's completion call carries the full live Vault assertion and starts
+a new daemon scan; it does not commit the apply. The daemon records the new
+baseline only if the identity still matches and the complete filtered tree
 equals the immutable target fingerprint. Otherwise it preserves staging and
 returns to dirty/conflict state.
 
@@ -627,27 +774,44 @@ acknowledgements are idempotent.
 - only while that compatibility lock and proven quiescence remain continuous,
   migrate PlanStore v1 to v2 atomically, write explicit `filesystem`
   descriptors plus the minimum-client enable epoch, and verify old binaries
-  blocked during the fence reject the store after release; and
-- release and validate this transition before any build can create an adapter
-  record or manifest.
+  blocked during the fence reject the store after release;
+- add the generic Gateway branch create-if-absent receipt, immutable writer-
+  contract/epoch metadata, per-device writer capabilities, and pre-mutation
+  enforcement on every push outcome; bind each grant to the exact
+  authorization principal, Bucket, immutable non-`main` branch, contract,
+  epoch, device credential, and daemon-persisted pending-secret digest; prove
+  create/join recovery at every pending-keyring, journal, and Gateway commit
+  boundary, reject cross-scope reuse, and prove that a v1 client with Bucket
+  writer role cannot advance or preserve a candidate on a contracted
+  branch; and
+- release and validate both the client transition and Gateway writer fence
+  before any build can create, import, or approve an adapter record or
+  manifest.
 
 ### Phase 1b: daemon foundation
 
 - add a reusable workspace application service separate from `cmd/malt`;
 - add the dedicated adapter socket/pipe and mux, owner-only adapter registry,
-  pairing/approval CLI, capability validation, operation journal, and async
-  status/events;
+  pairing/approval CLI, capability validation, operation journal, async
+  status/events, and live installation/path/config/generation assertions on
+  every workspace-affecting request;
 - version the encrypted client-owned Plan manifest and require the exact
   single-Binding workspace-adapter marker during enrollment;
-- require the completed PlanStore v2 enable epoch before mounting adapter
-  approval/enrollment routes;
-- require a generic Bucket branch create-if-absent CAS receipt before creating
-  new Plan/Binding IDs; no error or missing head is empty-branch evidence;
+- require the completed PlanStore v2 enable epoch and deployed Gateway branch
+  writer-contract capability before mounting adapter approval/enrollment
+  routes;
+- require an exact contracted-branch create-if-absent CAS receipt before
+  creating new Plan/Binding IDs, and require an explicitly granted per-device
+  writer capability before joining an existing contracted branch; no error,
+  missing head, uncontracted ref, or manifest alone is branch eligibility;
 - refactor verified restore so it can prepare a plaintext target without
   calling `installPrepared`;
 - add an immutable plaintext snapshot primitive whose scan fingerprint and
   encrypted archive are derived from the same staged bytes, followed by an
   exact fresh live scan;
+- implement the pinned `obsidian-visible-v0` Unicode 17.0.0 and Windows path
+  policy in Go, execute the shared fixture, and expose its exact digest through
+  pairing/manifest/branch checks;
 - refactor three-way merge over a policy-aware canonical entry projection so
   adapter merge ignores mode and empty-directory differences without changing
   generic Backup Plan semantics;
@@ -665,7 +829,8 @@ acknowledgements are idempotent.
   `App.secretStorage`;
 - implement pairing, SecretStorage, event hints, status, candidate acceptance,
   bounded status-only reconciliation scans, sync start, immutable object
-  download, Vault API apply, and acknowledgement;
+  download, Vault API apply, acknowledgement, live Vault identity assertions,
+  and the same shared TypeScript path fixture;
 - test only against disposable Vaults; and
 - publish GitHub prereleases consumable through BRAT.
 
@@ -702,6 +867,10 @@ The first implementation is not complete until tests demonstrate:
   address another Binding or read arbitrary daemon files;
 - provisional and initialized Vault paths are reserved against generic bind,
   restore, foreground, and second-adapter overlap;
+- a wrong installation ID, moved/renamed `FileSystemAdapter` base path, stale
+  workspace-path generation, or changed `Vault.configDir` blocks every
+  workspace-affecting route and every apply side effect before daemon scan or
+  Vault API mutation;
 - unauthenticated pairing cannot invoke sync, trust, apply, root, key, or
   lifecycle operations;
 - remote bytes are proof/CID verified before decryption and staged outside the
@@ -718,6 +887,16 @@ The first implementation is not complete until tests demonstrate:
   census, quiescence, durable v2 migration, and enablement; PlanStore v2 makes
   old CLIs blocked by that fence fail on reopen, and bind/import/schedule/future
   writers cannot mutate an adapter Plan or its Bucket/branch target;
+- the Gateway immutably binds the exact writer contract/epoch and policy digest
+  to an explicit non-`main` branch, scopes each current device capability to
+  the authorization principal, Bucket, immutable branch, contract, epoch, and
+  device credential plus the daemon's pre-persisted secret digest; create and
+  join survive crashes before and after Gateway commit, receipt delivery,
+  local journaling, and pending-keyring promotion without losing the usable
+  secret, while a missing pending secret is revoked and explicitly reissued;
+  the Gateway rejects cross-principal/Bucket/ref/device reuse before any
+  candidate/ref mutation and therefore rejects a v1 device attempting a same-
+  branch fast-forward, merge, or preserved conflict;
 - every plugin write/trash uses Obsidian APIs and checks its operation
   precondition;
 - an acknowledgement without a matching full scan cannot advance history;
@@ -735,8 +914,12 @@ The first implementation is not complete until tests demonstrate:
   Linux, macOS, and Windows;
 - pairing rejects a non-dot, nested, or changed `Vault.configDir` instead of
   creating a device-specific exclusion;
-- the portable path fixture rejects Unicode/case/Windows alias collisions
-  and every single non-NFC raw segment identically on every host;
+- Go and TypeScript execute the exact
+  `0fddd4e451f00585718c14392dbd7bcf4e8f9e804f3ee9aec1f20ea65a3fb6dd`
+  fixture, pin Unicode 17.0.0 normalization plus C/F full non-Turkic case
+  folding and the complete declared Windows device/character rules, and reject
+  every digest mismatch, Unicode/case/Windows alias collision, and non-NFC raw
+  segment identically on every host;
 - adapter confirmation ignores filesystem metadata and empty directories and
   never trashes a folder containing potentially excluded local content;
 - a physical file/directory namespace obstruction becomes `blocked` before an

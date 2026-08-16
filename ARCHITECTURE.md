@@ -185,7 +185,9 @@ The adapter capability cannot call general root, key, lifecycle, Gateway, or
 filesystem-path operations on that endpoint. The pre-implementation design is
 documented in
 [`docs/obsidian-integration.md`](./docs/obsidian-integration.md) and
-[`docs/workspace-adapter-ipc-v0.md`](./docs/workspace-adapter-ipc-v0.md).
+[`docs/workspace-adapter-ipc-v0.md`](./docs/workspace-adapter-ipc-v0.md), with
+portable path policy vectors pinned in
+[`docs/fixtures/obsidian-visible-v0-paths.json`](./docs/fixtures/obsidian-visible-v0-paths.json).
 
 ## Encrypted backup boundary
 

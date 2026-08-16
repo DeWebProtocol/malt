@@ -1,0 +1,260 @@
+{
+  "schema": "malt.workspace-path-policy-fixture/1",
+  "policy": "obsidian-visible-v0",
+  "revision": 1,
+  "source_data": {
+    "ucd_version": "17.0.0",
+    "normalization": {
+      "algorithm": "Unicode 17.0.0 canonical NFC",
+      "conformance_url": "https://www.unicode.org/Public/17.0.0/ucd/NormalizationTest.txt",
+      "conformance_sha256": "5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db"
+    },
+    "case_folding": {
+      "algorithm": "Unicode 17.0.0 Default Case Folding, full, non-Turkic",
+      "mapping_statuses": ["C", "F"],
+      "ignored_alternatives": ["S", "T"],
+      "data_url": "https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt",
+      "data_sha256": "ff8d8fefbf123574205085d6714c36149eb946d717a0c585c27f0f4ef58c4183"
+    }
+  },
+  "collision_key": "join('/', NFC17(DefaultCaseFold17_CF(NFD17(segment))))",
+  "metadata_exclusions": {
+    "matching": "ASCII-case-insensitive whole path component at every depth",
+    "canonical_names": ["thumbs.db", "desktop.ini"]
+  },
+  "portable_windows_rules": {
+    "forbidden_characters": ["<", ">", ":", "\"", "\\", "|", "?", "*"],
+    "forbidden_code_point_ranges": ["U+0000-U+001F"],
+    "forbidden_trailing_characters": ["U+0020", "U+002E"],
+    "reserved_device_stems": [
+      "CON",
+      "PRN",
+      "AUX",
+      "NUL",
+      "COM1",
+      "COM2",
+      "COM3",
+      "COM4",
+      "COM5",
+      "COM6",
+      "COM7",
+      "COM8",
+      "COM9",
+      "COM¹",
+      "COM²",
+      "COM³",
+      "LPT1",
+      "LPT2",
+      "LPT3",
+      "LPT4",
+      "LPT5",
+      "LPT6",
+      "LPT7",
+      "LPT8",
+      "LPT9",
+      "LPT¹",
+      "LPT²",
+      "LPT³"
+    ],
+    "reserved_stem_rule": "ASCII-case-insensitive segment prefix before the first U+002E; extensions do not make a reserved stem valid"
+  },
+  "single_path_cases": [
+    {
+      "id": "visible-markdown",
+      "path": "Notes/Today.md",
+      "expect": {
+        "result": "included",
+        "collision_key": "notes/today.md"
+      }
+    },
+    {
+      "id": "dot-component-excluded",
+      "path": "Notes/.private/today.md",
+      "expect": {
+        "result": "excluded",
+        "reason": "dot_component"
+      }
+    },
+    {
+      "id": "windows-metadata-excluded-case-insensitively",
+      "path": "Assets/THUMBS.DB",
+      "expect": {
+        "result": "excluded",
+        "reason": "windows_metadata"
+      }
+    },
+    {
+      "id": "desktop-ini-excluded-case-insensitively-at-depth",
+      "path": "Nested/DeSkToP.InI",
+      "expect": {
+        "result": "excluded",
+        "reason": "windows_metadata"
+      }
+    },
+    {
+      "id": "metadata-prefix-is-visible",
+      "path": "Assets/desktop.ini.backup",
+      "expect": {
+        "result": "included",
+        "collision_key": "assets/desktop.ini.backup"
+      }
+    },
+    {
+      "id": "nfc-precomposed-included",
+      "path": "Café.md",
+      "expect": {
+        "result": "included",
+        "collision_key": "café.md"
+      }
+    },
+    {
+      "id": "nfd-segment-rejected",
+      "path": "Café.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "non_nfc"
+      }
+    },
+    {
+      "id": "canonical-kelvin-alias-rejected",
+      "path": "Kelvin.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "non_nfc"
+      }
+    },
+    {
+      "id": "reserved-device-with-extension",
+      "path": "notes/con.txt",
+      "expect": {
+        "result": "rejected",
+        "reason": "windows_reserved_device"
+      }
+    },
+    {
+      "id": "reserved-device-superscript",
+      "path": "COM¹.log",
+      "expect": {
+        "result": "rejected",
+        "reason": "windows_reserved_device"
+      }
+    },
+    {
+      "id": "non-reserved-device-number",
+      "path": "COM10.md",
+      "expect": {
+        "result": "included",
+        "collision_key": "com10.md"
+      }
+    },
+    {
+      "id": "trailing-dot-rejected",
+      "path": "notes/today.md.",
+      "expect": {
+        "result": "rejected",
+        "reason": "windows_trailing_dot_or_space"
+      }
+    },
+    {
+      "id": "forbidden-colon-rejected",
+      "path": "notes/09:30.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "windows_forbidden_character"
+      }
+    },
+    {
+      "id": "control-character-rejected",
+      "path": "notes/a\u0001b.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "windows_control_character"
+      }
+    },
+    {
+      "id": "backslash-rejected",
+      "path": "notes\\today.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "windows_forbidden_character"
+      }
+    },
+    {
+      "id": "absolute-path-rejected",
+      "path": "/notes/today.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "absolute_path"
+      }
+    },
+    {
+      "id": "parent-segment-rejected",
+      "path": "notes/../today.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "parent_segment"
+      }
+    },
+    {
+      "id": "empty-segment-rejected",
+      "path": "notes//today.md",
+      "expect": {
+        "result": "rejected",
+        "reason": "empty_segment"
+      }
+    }
+  ],
+  "path_set_cases": [
+    {
+      "id": "ascii-case-collision",
+      "paths": ["Notes/A.md", "notes/a.md"],
+      "expect": {
+        "result": "rejected",
+        "reason": "portable_collision"
+      }
+    },
+    {
+      "id": "full-fold-expansion-collision",
+      "paths": ["Straße.md", "STRASSE.md"],
+      "expect": {
+        "result": "rejected",
+        "reason": "portable_collision",
+        "collision_key": "strasse.md"
+      }
+    },
+    {
+      "id": "greek-sigma-collision",
+      "paths": ["Σ.md", "ς.md"],
+      "expect": {
+        "result": "rejected",
+        "reason": "portable_collision",
+        "collision_key": "σ.md"
+      }
+    },
+    {
+      "id": "default-dotted-i-collision",
+      "paths": ["İ.md", "i̇.md"],
+      "expect": {
+        "result": "rejected",
+        "reason": "portable_collision",
+        "collision_key": "i̇.md"
+      }
+    },
+    {
+      "id": "turkic-fold-not-selected",
+      "paths": ["I.md", "ı.md"],
+      "expect": {
+        "result": "accepted",
+        "collision_keys": ["i.md", "ı.md"]
+      }
+    },
+    {
+      "id": "file-parent-obstruction",
+      "paths": ["notes", "notes/today.md"],
+      "expect": {
+        "result": "rejected",
+        "reason": "file_parent_obstruction"
+      }
+    }
+  ]
+}
