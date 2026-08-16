@@ -284,12 +284,25 @@ contract ID/epoch, capability ID, and secret under the issuing device
 credential. In the same authorization transaction, the Gateway hashes the
 secret, matches its digest and all six fields, and rejects absent, cross-
 principal, cross-Bucket, cross-branch, cross-device, stale, mismatched, or
-revoked assertions before candidate materialization, idempotency reservation,
-or any ref/candidate mutation. A v1 client has neither the fields nor the
-capability and therefore cannot replace the encrypted manifest on an adapter
-branch even if it still has the Bucket writer role. The writer secret remains
-daemon-owned; it is never put in the encrypted manifest or exposed to the
-Obsidian plugin.
+revoked assertions before the push handler creates a checkpoint, reserves an
+idempotency result, writes candidate-version or push metadata, preserves a
+conflict, publishes a merge, or mutates any ref. A v1 client has neither the
+fields nor the capability and therefore cannot replace the encrypted manifest
+on an adapter branch even if it still has the Bucket writer role. The writer
+secret remains daemon-owned; it is never put in the encrypted manifest or
+exposed to the Obsidian plugin.
+
+This writer contract is a publication boundary, not a storage-admission
+boundary. The existing data plane uploads immutable CAS blocks and materializes
+the candidate root before `push`, so those requests do not carry the branch
+capability in v0. An ordinary Bucket writer, including a v1 client, may leave
+unreferenced blocks or roots and consume quota even when its later push is
+rejected. Those bytes MUST acquire no checkpoint, commit, candidate-version,
+conflict, push-result, or ref reachability from the rejected request. Charging,
+retention, garbage collection, and revoking the general Bucket writer role
+remain generic Gateway policy. Preventing the uploads themselves would require
+a future branch-bound upload reservation and capability on every CAS, mutation,
+and materialization request; this contract does not claim that stronger gate.
 
 Creating a brand-new adapter identity additionally requires an explicitly
 named non-`main` Bucket branch and a generic branch create-if-absent operation
@@ -777,13 +790,15 @@ acknowledgements are idempotent.
   blocked during the fence reject the store after release;
 - add the generic Gateway branch create-if-absent receipt, immutable writer-
   contract/epoch metadata, per-device writer capabilities, and pre-mutation
-  enforcement on every push outcome; bind each grant to the exact
-  authorization principal, Bucket, immutable non-`main` branch, contract,
-  epoch, device credential, and daemon-persisted pending-secret digest; prove
-  create/join recovery at every pending-keyring, journal, and Gateway commit
-  boundary, reject cross-scope reuse, and prove that a v1 client with Bucket
-  writer role cannot advance or preserve a candidate on a contracted
-  branch; and
+  enforcement before push-side checkpoint, idempotency reservation, candidate-
+  version/push metadata, conflict/merge publication, or ref mutation; bind each
+  grant to the exact authorization principal, Bucket, immutable non-`main`
+  branch, contract, epoch, device credential, and daemon-persisted pending-
+  secret digest; prove create/join recovery at every pending-keyring, journal,
+  and Gateway commit boundary, reject cross-scope reuse, and prove that a v1
+  client with Bucket writer role cannot publish to a contracted branch even
+  though pre-push immutable uploads may remain unreferenced and consume generic
+  quota; and
 - release and validate both the client transition and Gateway writer fence
   before any build can create, import, or approve an adapter record or
   manifest.
@@ -894,9 +909,15 @@ The first implementation is not complete until tests demonstrate:
   join survive crashes before and after Gateway commit, receipt delivery,
   local journaling, and pending-keyring promotion without losing the usable
   secret, while a missing pending secret is revoked and explicitly reissued;
-  the Gateway rejects cross-principal/Bucket/ref/device reuse before any
-  candidate/ref mutation and therefore rejects a v1 device attempting a same-
-  branch fast-forward, merge, or preserved conflict;
+  the Gateway rejects cross-principal/Bucket/ref/device reuse before any push-
+  side checkpoint, idempotency reservation, candidate-version/push metadata,
+  merge/conflict publication, or ref mutation and therefore rejects a v1
+  device attempting a same-branch fast-forward, merge, or preserved conflict;
+  fresh unique pre-push blocks/roots may remain unreferenced and consume quota,
+  while deduplicated or independently reachable bytes retain their prior
+  accounting and reachability; in every case the rejected push adds no adapter
+  checkpoint, version, conflict, result, ref, or other publication metadata,
+  and generic Gateway retention/garbage-collection policy still applies;
 - every plugin write/trash uses Obsidian APIs and checks its operation
   precondition;
 - an acknowledgement without a matching full scan cannot advance history;

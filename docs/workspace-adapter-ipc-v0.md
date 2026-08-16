@@ -342,10 +342,23 @@ Every branch push carries the exact contract ID/epoch, capability ID, and
 secret under the issuing device credential. In the same authorization
 transaction, the Gateway hashes the presented secret, matches the digest and
 all six scope fields, and rejects an absent, cross-principal, cross-Bucket,
-cross-branch, cross-device, mismatched, stale, or revoked assertion before
-candidate materialization, idempotency reservation, conflict preservation,
-merge, or ref mutation. Bucket writer role alone is insufficient, so an old
-v1 device cannot fast-forward or otherwise mutate the adapter branch.
+cross-branch, cross-device, mismatched, stale, or revoked assertion before the
+push handler creates a checkpoint, reserves push idempotency state, writes
+candidate-version or push metadata, preserves a conflict, publishes a merge,
+or mutates any ref. Bucket writer role alone is insufficient, so an old v1
+device cannot fast-forward or otherwise mutate the adapter branch.
+
+The capability is deliberately a publication gate, not a storage-admission
+gate. The current client uploads immutable CAS blocks and materializes a
+candidate root before `push`; those pre-push requests carry no branch-writer
+capability in v0. They may succeed under ordinary Bucket authorization and
+leave unreferenced blocks/roots that consume quota after the push is rejected.
+The rejected request MUST create no checkpoint, commit, candidate-version,
+conflict, push-result, or ref reachability. Generic Gateway quota charging,
+retention, garbage collection, and Bucket-role revocation govern those orphan
+writes. Preventing them would require a future branch-bound upload reservation
+whose capability covers every CAS, mutation, and materialization request; v0
+does not claim that stronger storage gate.
 
 New Plan/Binding IDs are allowed only when approval names a new non-`main`
 branch, includes `--create-branch`, and a generic Bucket branch create-if-
@@ -899,9 +912,12 @@ That local two-release barrier is necessary but not sufficient across devices.
 The adapter-enabled release also requires the Gateway writer-contract feature
 to be deployed. Conformance must start a real v1 client on another device/
 client root with ordinary Bucket writer role and prove its legacy push is
-rejected before candidate storage or ref mutation. If the Gateway cannot make
-that guarantee, all adapter approval and enrollment remain disabled rather
-than claiming single-device safety for a remotely shared branch.
+rejected before push-side checkpoint, idempotency reservation, candidate-
+version/push metadata, merge/conflict publication, or ref mutation. Its pre-
+uploaded immutable blocks/root may remain unreferenced and consume generic
+quota; that is not a writer-contract failure. If the Gateway cannot make the
+publication guarantee, all adapter approval and enrollment remain disabled
+rather than claiming single-device safety for a remotely shared branch.
 
 Installer and writer policy are mandatory `PlanService` and Plan-store-writer
 dependencies, not handler checks. The local PlanStore v2 descriptor records the
@@ -1475,9 +1491,15 @@ cover at least:
     capability scoped to the exact authorization principal, Bucket, immutable
     branch, contract, epoch, and issuing device credential; cross-principal,
     cross-Bucket, cross-ref, and cross-device capability reuse plus a real v1
-    client with ordinary Bucket writer role are rejected before candidate,
-    idempotency, conflict, merge, or ref mutation on fast-forward and stale-
-    head pushes;
+    client with ordinary Bucket writer role are rejected before push-side
+    checkpoint, idempotency reservation, candidate-version/push metadata,
+    conflict/merge publication, or ref mutation on fast-forward and stale-head
+    pushes; that v1 client may first upload immutable blocks and materialize a
+    root, but the rejection adds no checkpoint/commit/candidate-version/
+    conflict/push-result/ref reachability or other publication metadata;
+    deduplicated or independently reachable bytes keep their prior state, while
+    a fresh unique fixture may consume quota and remain orphaned under generic
+    Gateway retention and garbage-collection policy;
 21. provisional enrollment preserves a non-empty local tree, imports the
     remote Plan/Binding identity only from the marked version 2 manifest after
     exact root acceptance, creates new IDs only from the journaled
