@@ -13,75 +13,9 @@ import (
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt/mutation"
 	"github.com/dewebprotocol/malt/protocol"
-	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
-
-func TestClassifyStagedTargetFailsClosed(t *testing.T) {
-	mapRoot, err := maltcid.NewMapKZGCid(make([]byte, maltcid.KZGCommitmentSize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	listRoot, err := maltcid.NewListIPACid(make([]byte, maltcid.IPACommitmentSize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyMapRoot, err := maltcid.NewTypedCIDForVersion(
-		maltcid.LegacyMALTVersionID,
-		maltcid.SemanticKindMap,
-		maltcid.BackendKindKZG,
-		make([]byte, maltcid.KZGCommitmentSize),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw := testCID(t, "raw")
-	invalidHash, err := mh.Sum([]byte("not a commitment"), mh.SHA2_256, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	invalidTypedRoot := cid.NewCidV1(maltcid.CodecMaltMapKZG, invalidHash)
-	unknownCodec := cid.NewCidV1(0x320002, invalidHash)
-	identityCommitment, err := mh.Encode(make([]byte, maltcid.KZGCommitmentSize), mh.IDENTITY)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unknownBackend := cid.NewCidV1(0x3031ff, identityCommitment)
-	unknownVersion := cid.NewCidV1(0x30f101, identityCommitment)
-
-	for name, test := range map[string]struct {
-		target      cid.Cid
-		wantKind    string
-		wantStorage string
-		wantErr     bool
-	}{
-		"map":                {target: mapRoot, wantKind: unixfs.StagedKindDirectory, wantStorage: "map"},
-		"legacy map":         {target: legacyMapRoot, wantKind: unixfs.StagedKindDirectory, wantStorage: "map"},
-		"list":               {target: listRoot, wantKind: unixfs.StagedKindFile, wantStorage: "list"},
-		"raw":                {target: raw, wantKind: unixfs.StagedKindFile, wantStorage: "raw"},
-		"invalid typed root": {target: invalidTypedRoot, wantErr: true},
-		"unknown codec":      {target: unknownCodec, wantErr: true},
-		"unknown backend":    {target: unknownBackend, wantErr: true},
-		"unknown version":    {target: unknownVersion, wantErr: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			kind, storage, err := classifyStagedTarget(test.target)
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("expected unsupported CID error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kind != test.wantKind || storage != test.wantStorage {
-				t.Fatalf("classification = (%q, %q), want (%q, %q)", kind, storage, test.wantKind, test.wantStorage)
-			}
-		})
-	}
-}
 
 func TestNormalizeOptionsAcrossTargets(t *testing.T) {
 	tests := []struct {

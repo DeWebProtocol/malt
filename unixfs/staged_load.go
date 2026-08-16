@@ -62,6 +62,13 @@ func loadStagedCurrentDirRecursive(ctx context.Context, statter StagedPathStatte
 	if err != nil {
 		return nil, fmt.Errorf("read directory manifest %s: %w", stat.Payload, err)
 	}
+	computedPayloadCID, err := payloadCID.Prefix().Sum(payload)
+	if err != nil {
+		return nil, fmt.Errorf("compute directory manifest CID %s: %w", stat.Payload, err)
+	}
+	if !computedPayloadCID.Equals(payloadCID) {
+		return nil, fmt.Errorf("directory manifest bytes do not match authenticated CID %s", stat.Payload)
+	}
 	manifest, err := unixfsmodel.ParseDirectoryManifest(payloadCID, payload)
 	if err != nil {
 		return nil, fmt.Errorf("parse directory manifest %s: %w", stat.Payload, err)

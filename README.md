@@ -280,8 +280,11 @@ The native MALT target exposes two versioned UnixFS application layouts:
 - `hybrid-v1` keeps one authenticated Map per directory and also retains
   descendant root-relative bindings in ancestor Maps.
 
-`malt add` retains `hybrid` as its compatibility default and accepts it as an
-alias of `hybrid-v1`. Select the flat implementation explicitly with
+`malt add` retains `hybrid` as its compatibility default outside managed
+Bucket mode and accepts it as an alias of `hybrid-v1`. When a Bucket is
+selected, `malt add` and `malt rm` fetch and strictly validate its persisted
+layout before materialization; an explicit `--layout` must match that fixed
+value. Select the flat implementation explicitly for non-Bucket roots with
 `--layout flat-v1`. The removed bare `flat` and `hierarchical` pre-release
 aliases remain invalid. Flat bulk add rejects followed directory symlinks
 before uploading any blocks because an opaque nested Map root would violate

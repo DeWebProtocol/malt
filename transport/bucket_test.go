@@ -3,6 +3,7 @@ package transport_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -119,6 +120,97 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 	var apiErr *client.Error
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict || !strings.Contains(apiErr.Message, "already used") {
 		t.Fatalf("push ID conflict error = %T %v", err, err)
+	}
+}
+
+func TestBucketClientPreservesAndStrictlyValidatesLayout(t *testing.T) {
+	valid := client.Bucket{
+		ID: "bkt_one", TenantID: "tenant_one", Name: "One", State: "active",
+		Role: "owner", CreatedBy: "alice", Layout: client.BucketLayoutFlatV1,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/buckets":
+			_ = json.NewEncoder(w).Encode(map[string]any{"buckets": []client.Bucket{
+				valid,
+				{
+					ID: "bkt_two", TenantID: "tenant_one", Name: "Two", State: "active",
+					Role: "reader", CreatedBy: "alice", Layout: client.BucketLayoutHybridV1,
+				},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/buckets/bkt_one":
+			_ = json.NewEncoder(w).Encode(valid)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/buckets":
+			_ = json.NewEncoder(w).Encode(valid)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	transport, err := client.New(client.Options{
+		BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := transport.ListBuckets(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 || listed[0].Layout != client.BucketLayoutFlatV1 || listed[1].Layout != client.BucketLayoutHybridV1 {
+		t.Fatalf("listed Buckets = %#v", listed)
+	}
+	selected, err := transport.GetBucket(t.Context())
+	if err != nil || selected.Layout != client.BucketLayoutFlatV1 {
+		t.Fatalf("selected Bucket = %#v, err = %v", selected, err)
+	}
+	created, err := transport.CreateBucket(t.Context(), "One")
+	if err != nil || created.Layout != client.BucketLayoutFlatV1 {
+		t.Fatalf("created Bucket = %#v, err = %v", created, err)
+	}
+
+	for _, layout := range []any{"", "flat", "future-v2", nil} {
+		t.Run(fmt.Sprint(layout), func(t *testing.T) {
+			invalidServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				value := map[string]any{
+					"id": "bkt_one", "tenant_id": "tenant_one", "name": "One",
+					"state": "active", "role": "owner", "created_by": "alice",
+				}
+				if layout != nil {
+					value["layout"] = layout
+				}
+				_ = json.NewEncoder(w).Encode(value)
+			}))
+			defer invalidServer.Close()
+			invalid, err := client.New(client.Options{
+				BaseURL: invalidServer.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := invalid.GetBucket(t.Context()); err == nil || !strings.Contains(err.Error(), "unsupported layout") {
+				t.Fatalf("GetBucket layout %v error = %v", layout, err)
+			}
+		})
+	}
+}
+
+func TestBucketClientRejectsSelectedBucketIdentityMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(client.Bucket{
+			ID: "bkt_other", TenantID: "tenant_one", Name: "Other", State: "active",
+			Role: "owner", CreatedBy: "alice", Layout: client.BucketLayoutFlatV1,
+		})
+	}))
+	defer server.Close()
+	transport, err := client.New(client.Options{
+		BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.GetBucket(t.Context()); err == nil || !strings.Contains(err.Error(), "want") {
+		t.Fatalf("GetBucket identity mismatch error = %v", err)
 	}
 }
 

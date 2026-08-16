@@ -185,6 +185,18 @@ func NewReader(opts ReaderOptions) (Reader, error) {
 	return &verifiedReader{remote: opts.Remote, blocks: opts.Blocks, verifier: verifier}, nil
 }
 
+// NewStagedPathStatter constructs the lightweight verified projection used to
+// rebuild an existing staged tree. It verifies Resolve results and the parent
+// manifests needed to classify each path, but it deliberately does not fetch
+// file payload bytes or List metadata.
+func NewStagedPathStatter(opts ReaderOptions) (StagedPathStatter, error) {
+	reader, err := NewReader(opts)
+	if err != nil {
+		return nil, err
+	}
+	return reader.(*verifiedReader), nil
+}
+
 // NewWriter constructs a verified reader plus the narrowly scoped immutable
 // block/root capabilities required to materialize write candidates.
 func NewWriter(opts WriterOptions) (Writer, error) {
@@ -439,6 +451,60 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		return stat, nil
 	default:
 		return nil, fmt.Errorf("unsupported UnixFS entry type %q", entryType)
+	}
+}
+
+func (r *verifiedReader) StatStagedPath(
+	ctx context.Context,
+	root string,
+	rawPath string,
+) (StagedPathStat, error) {
+	trustedRoot, err := cid.Parse(root)
+	if err != nil {
+		return StagedPathStat{}, err
+	}
+	segments, err := unixfsmodel.ParsePath(rawPath)
+	if err != nil {
+		return StagedPathStat{}, err
+	}
+	resolution, entryType, err := r.resolveUnixFSPath(ctx, trustedRoot, segments)
+	if err != nil {
+		return StagedPathStat{}, err
+	}
+	storageKind := unixfsmodel.StorageKindFromCID(resolution.Target)
+	result := StagedPathStat{
+		StorageKind: storageKind,
+		Key:         resolution.Target.String(),
+	}
+	switch entryType {
+	case unixfsmodel.DirectoryEntryTypeDir:
+		result.Kind = StagedKindDirectory
+		payload := resolution.Target
+		switch storageKind {
+		case "map":
+			payloadSegments := append(append([]string(nil), segments...), "@payload")
+			binding, err := r.resolveSegments(ctx, trustedRoot, payloadSegments)
+			if err != nil {
+				return StagedPathStat{}, fmt.Errorf("resolve directory manifest: %w", err)
+			}
+			payload = binding.Target
+		case "raw":
+			// Flat layout directories bind their manifest CID directly.
+		default:
+			return StagedPathStat{}, fmt.Errorf("%w: %s", ErrNotDirectory, path.Join(segments...))
+		}
+		result.Payload = payload.String()
+		return result, nil
+	case unixfsmodel.DirectoryEntryTypeFile:
+		result.Kind = StagedKindFile
+		switch storageKind {
+		case "map", "list", "raw":
+			return result, nil
+		default:
+			return StagedPathStat{}, fmt.Errorf("unsupported UnixFS target CID %s", resolution.Target)
+		}
+	default:
+		return StagedPathStat{}, fmt.Errorf("unsupported UnixFS entry type %q", entryType)
 	}
 }
 
@@ -933,19 +999,7 @@ func (w *verifiedWriter) verifyStagedCandidate(ctx context.Context, candidate ci
 }
 
 func (w *verifiedWriter) StatStagedPath(ctx context.Context, root string, path string) (StagedPathStat, error) {
-	rootCID, err := cid.Parse(root)
-	if err != nil {
-		return StagedPathStat{}, err
-	}
-	stat, err := w.Stat(ctx, rootCID, path)
-	if err != nil {
-		return StagedPathStat{}, err
-	}
-	payload := ""
-	if stat.Kind == StagedKindDirectory {
-		payload = stat.Payload.String()
-	}
-	return StagedPathStat{Kind: stat.Kind, StorageKind: stat.StorageKind, Key: stat.NodeRoot.String(), Payload: payload}, nil
+	return w.verifiedReader.StatStagedPath(ctx, root, path)
 }
 
 func saturatingAdd(a, b uint64) uint64 {
@@ -957,4 +1011,5 @@ func saturatingAdd(a, b uint64) uint64 {
 
 var _ Reader = (*verifiedReader)(nil)
 var _ Writer = (*verifiedWriter)(nil)
+var _ StagedPathStatter = (*verifiedReader)(nil)
 var _ StagedPathStatter = (*verifiedWriter)(nil)
