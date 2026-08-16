@@ -174,6 +174,19 @@ No browser-facing loopback TCP service is opened. A future Web or native GUI
 may use the private management API, but it must not own backup, trust, or key
 policy.
 
+An adapter-backed workspace such as an Obsidian Vault requires a different
+installation boundary from an ordinary Backup Plan Binding. It reuses daemon
+scan, encryption, trust, Bucket, verification, and merge services, but verified
+plaintext is prepared in owner-only staging and exposed as an immutable scoped
+apply session. A dedicated adapter socket/pipe and mux omit the CLI's general
+control routes. The adapter applies relative operations through its host
+application API; a subsequent complete daemon scan is the only confirmation.
+The adapter capability cannot call general root, key, lifecycle, Gateway, or
+filesystem-path operations on that endpoint. The pre-implementation design is
+documented in
+[`docs/obsidian-integration.md`](./docs/obsidian-integration.md) and
+[`docs/workspace-adapter-ipc-v0.md`](./docs/workspace-adapter-ipc-v0.md).
+
 ## Encrypted backup boundary
 
 The backup application stores one opaque snapshot at

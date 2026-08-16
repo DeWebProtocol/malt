@@ -246,6 +246,15 @@ future Web or native GUI should be a thin client of that private management
 API; backup, scheduling, trust, and key policy remain reusable application
 services rather than UI logic.
 
+The planned Obsidian desktop integration follows that adapter boundary without
+letting the daemon replace a live Vault directory. Verified remote content is
+prepared outside the Vault, applied by a scoped plugin through Obsidian APIs,
+and accepted as installed only after a daemon-owned confirming scan. See the
+[Obsidian integration design](./docs/obsidian-integration.md) and the draft
+[Workspace Adapter IPC v0](./docs/workspace-adapter-ipc-v0.md). These documents
+describe a pre-implementation contract; the routes and plugin are not yet part
+of this binary.
+
 Trust an independently obtained root, resolve a UnixFS path, and add a local
 tree:
 
