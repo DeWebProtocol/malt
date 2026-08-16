@@ -13,75 +13,9 @@ import (
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt/mutation"
 	"github.com/dewebprotocol/malt/protocol"
-	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
-
-func TestClassifyStagedTargetFailsClosed(t *testing.T) {
-	mapRoot, err := maltcid.NewMapKZGCid(make([]byte, maltcid.KZGCommitmentSize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	listRoot, err := maltcid.NewListIPACid(make([]byte, maltcid.IPACommitmentSize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyMapRoot, err := maltcid.NewTypedCIDForVersion(
-		maltcid.LegacyMALTVersionID,
-		maltcid.SemanticKindMap,
-		maltcid.BackendKindKZG,
-		make([]byte, maltcid.KZGCommitmentSize),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw := testCID(t, "raw")
-	invalidHash, err := mh.Sum([]byte("not a commitment"), mh.SHA2_256, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	invalidTypedRoot := cid.NewCidV1(maltcid.CodecMaltMapKZG, invalidHash)
-	unknownCodec := cid.NewCidV1(0x320002, invalidHash)
-	identityCommitment, err := mh.Encode(make([]byte, maltcid.KZGCommitmentSize), mh.IDENTITY)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unknownBackend := cid.NewCidV1(0x3031ff, identityCommitment)
-	unknownVersion := cid.NewCidV1(0x30f101, identityCommitment)
-
-	for name, test := range map[string]struct {
-		target      cid.Cid
-		wantKind    string
-		wantStorage string
-		wantErr     bool
-	}{
-		"map":                {target: mapRoot, wantKind: unixfs.StagedKindDirectory, wantStorage: "map"},
-		"legacy map":         {target: legacyMapRoot, wantKind: unixfs.StagedKindDirectory, wantStorage: "map"},
-		"list":               {target: listRoot, wantKind: unixfs.StagedKindFile, wantStorage: "list"},
-		"raw":                {target: raw, wantKind: unixfs.StagedKindFile, wantStorage: "raw"},
-		"invalid typed root": {target: invalidTypedRoot, wantErr: true},
-		"unknown codec":      {target: unknownCodec, wantErr: true},
-		"unknown backend":    {target: unknownBackend, wantErr: true},
-		"unknown version":    {target: unknownVersion, wantErr: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			kind, storage, err := classifyStagedTarget(test.target)
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("expected unsupported CID error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kind != test.wantKind || storage != test.wantStorage {
-				t.Fatalf("classification = (%q, %q), want (%q, %q)", kind, storage, test.wantKind, test.wantStorage)
-			}
-		})
-	}
-}
 
 func TestNormalizeOptionsAcrossTargets(t *testing.T) {
 	tests := []struct {
@@ -95,6 +29,8 @@ func TestNormalizeOptionsAcrossTargets(t *testing.T) {
 	}{
 		{name: "MALT defaults", wantTarget: TargetMALT, wantLayout: LayoutHybrid},
 		{name: "MALT hybrid", in: Options{Target: TargetMALT, Layout: LayoutHybrid}, wantTarget: TargetMALT, wantLayout: LayoutHybrid},
+		{name: "MALT hybrid-v1", in: Options{Target: TargetMALT, Layout: LayoutHybridV1}, wantTarget: TargetMALT, wantLayout: LayoutHybridV1},
+		{name: "MALT flat-v1", in: Options{Target: TargetMALT, Layout: LayoutFlatV1}, wantTarget: TargetMALT, wantLayout: LayoutFlatV1},
 		{name: "Merkle DAG defaults", in: Options{Target: "merkledag", Model: ModelUnixFS}, wantTarget: TargetMerkleDAG, wantFileLayout: FileLayoutBalanced, wantDirLayout: DirLayoutAdaptive},
 		{name: "Merkle DAG explicit layouts", in: Options{Target: TargetMerkleDAG, FileLayout: FileLayoutTrickle, DirLayout: DirLayoutHAMT}, wantTarget: TargetMerkleDAG, wantFileLayout: FileLayoutTrickle, wantDirLayout: DirLayoutHAMT},
 		{name: "reject former MALT flat alias", in: Options{Target: TargetMALT, Layout: "flat"}, wantErr: true},
@@ -336,6 +272,29 @@ func TestBuildAddStagingTreePreflightsSymlinkDirectoryBeforeWrite(t *testing.T) 
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
 		t.Fatalf("symlink preflight allowed writes before validation failure: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+	}
+}
+
+func TestBuildAddStagingTreeRejectsFlatDirectorySymlinkBeforeWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory symlink setup is not portable to Windows")
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	writeTestFile(t, filepath.Join(target, "nested.txt"), "nested")
+	root := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{Layout: LayoutFlatV1}); err == nil {
+		t.Fatal("flat-v1 accepted a directory symlink")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("flat-v1 directory symlink performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
 	}
 }
 

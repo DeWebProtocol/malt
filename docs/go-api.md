@@ -129,7 +129,7 @@ operations and reusable IPFS-compatible `ImportPath`, without exposing HTTP
 routes or representing CID/link evidence as a ProofList.
 
 Bulk local-input import is reusable through `application/add`. `add.Run` owns
-option normalization, ignore and symlink policy, native hybrid staging,
+option normalization, ignore and symlink policy, native layout-aware staging,
 Merkle DAG import, accepted-alias selection, and unaccepted candidate
 recording. The caller injects a narrow graph/fixed-list Gateway and CAS; Cobra
 is not part of this package.
@@ -178,8 +178,21 @@ writer, err := unixfs.NewWriter(unixfs.WriterOptions{
     Blocks: remote,
     Roots:  remote,
     Lists:  lists,
+    Layout:  layout,
 })
 ```
+
+`unixfs.NewLayout(unixfs.LayoutFlatV1)` and
+`unixfs.NewLayout(unixfs.LayoutHybridV1)` return implementations of the
+application-level `unixfs.Layout` interface. A nil `WriterOptions.Layout`
+preserves the historical `hybrid-v1` behavior. Managed Bucket callers should
+pass the Bucket's persisted layout explicitly; the layout is not encoded in a
+MALT root CID and does not alter Core proof or commitment contracts.
+
+`unixfs.NewStagedPathStatter` constructs the locally verified, lightweight
+projection used when rebuilding an existing staged tree. It verifies Resolve
+proofs and parent directory manifests but does not fetch retained raw file
+payloads or issue List metadata reads.
 
 The public `unixfs.MutationTransport` returns
 `unixfs.CandidateRootReceipt`, not a Gateway HTTP response type. Fixed-list base
@@ -296,10 +309,13 @@ malt bucket branches
 malt bucket branch <name> [--from commit-id]
 ```
 
-Native `malt add` and `malt rm` stage their results automatically when a
-Bucket is configured. `bucket stage` is the explicit bridge for candidates
-materialized by another tool; its base values must have been captured before
-that materialization.
+Native `malt add` and `malt rm` first read the selected Bucket's immutable
+layout, materialize with that implementation, and stage their results
+automatically. An explicit `malt add --layout` that disagrees with the Bucket
+is rejected before payload upload. `bucket stage` is the explicit bridge for
+candidates materialized by another tool; its base values must have been
+captured before that materialization, and the external tool remains responsible
+for using the Bucket's persisted layout.
 
 - `stat` writes one JSON object containing verified metadata and evidence.
 - `cat` writes exact verified bytes only; diagnostics and JSON are not mixed

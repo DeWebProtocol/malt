@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
@@ -263,6 +264,181 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	}
 	if !bytes.Equal(full.Body, large) {
 		t.Fatal("full list-backed body differs")
+	}
+}
+
+func TestStagedPathProjectionRebuildsLayoutsWithoutReadingFilePayloads(t *testing.T) {
+	for _, kind := range []unixfs.LayoutKind{unixfs.LayoutHybridV1, unixfs.LayoutFlatV1} {
+		t.Run(string(kind), func(t *testing.T) {
+			remote := newRealRemote(t)
+			rawCID, err := remote.Put(t.Context(), []byte("retained raw payload"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			largeBody := bytes.Repeat([]byte("retained-list-payload"), 32)
+			listCID, _, err := unixfs.MaterializeStagedFilePayload(
+				t.Context(),
+				remote,
+				remote,
+				bytes.NewReader(largeBody),
+				int64(len(largeBody)),
+				32,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if unixfsmodel.StorageKindFromCID(listCID) != "list" {
+				t.Fatalf("large payload CID = %s, want List", listCID)
+			}
+			staged := unixfs.NewStagedDirectory()
+			if err := unixfs.SetStagedFile(staged, "raw.txt", rawCID); err != nil {
+				t.Fatal(err)
+			}
+			if err := unixfs.SetStagedFile(staged, "nested/list.bin", listCID); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := unixfs.NewLayout(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			materialized, err := layout.Materialize(t.Context(), remote, remote, staged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifestProjector, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{
+				Remote: remote,
+				Blocks: remote,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rootStat, err := manifestProjector.StatStagedPath(t.Context(), materialized.Key.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			nestedStat, err := manifestProjector.StatStagedPath(t.Context(), materialized.Key.String(), "nested")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rootManifestCID, err := cid.Decode(rootStat.Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nestedManifestCID, err := cid.Decode(nestedStat.Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			counted := &countingBlocks{inner: remote, gets: make(map[string]int)}
+			remote.reads = nil
+			projector, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{
+				Remote: remote,
+				Blocks: counted,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rebuilt, err := unixfs.LoadStagedCurrentTree(
+				t.Context(),
+				projector,
+				counted,
+				materialized.Key.String(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rebuilt.Children["raw.txt"]; got == nil || !got.Key.Equals(rawCID) {
+				t.Fatalf("rebuilt raw file = %#v", got)
+			}
+			if got := rebuilt.Children["nested"].Children["list.bin"]; got == nil || !got.Key.Equals(listCID) {
+				t.Fatalf("rebuilt List file = %#v", got)
+			}
+			if counted.gets[rawCID.KeyString()] != 0 || counted.gets[listCID.KeyString()] != 0 {
+				t.Fatalf(
+					"tree projection fetched retained file payloads: raw=%d list=%d",
+					counted.gets[rawCID.KeyString()],
+					counted.gets[listCID.KeyString()],
+				)
+			}
+			if len(remote.reads) != 0 {
+				t.Fatalf("tree projection issued %d List metadata reads", len(remote.reads))
+			}
+			for label, manifestCID := range map[string]cid.Cid{
+				"root":   rootManifestCID,
+				"nested": nestedManifestCID,
+			} {
+				if got := counted.gets[manifestCID.KeyString()]; got != 1 {
+					t.Fatalf("%s manifest GETs = %d, want 1", label, got)
+				}
+			}
+			totalGets := 0
+			for _, count := range counted.gets {
+				totalGets += count
+			}
+			if totalGets == 0 {
+				t.Fatal("tree projection did not fetch and validate directory manifests")
+			}
+		})
+	}
+}
+
+func TestStagedPathProjectionRejectsManifestBytesNotBoundToCID(t *testing.T) {
+	remote := newRealRemote(t)
+	root := materializeTree(t, remote, map[string][]byte{
+		"keep.txt": []byte("retained"),
+	}, 64)
+	emptyRoot := materializeTree(t, remote, map[string][]byte{}, 64)
+
+	honestProjector, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{
+		Remote: remote,
+		Blocks: remote,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootStat, err := honestProjector.StatStagedPath(t.Context(), root.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyStat, err := honestProjector.StatStagedPath(t.Context(), emptyRoot.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootManifestCID, err := cid.Decode(rootStat.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyManifestCID, err := cid.Decode(emptyStat.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyManifest, err := remote.Get(t.Context(), emptyManifestCID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootManifest, err := remote.Get(t.Context(), rootManifestCID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(emptyManifest, rootManifest) {
+		t.Fatal("attack fixture did not substitute different canonical manifest bytes")
+	}
+
+	attacker := substitutedBlocks{
+		inner:       remote,
+		replace:     rootManifestCID,
+		replacement: emptyManifest,
+	}
+	projector, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{
+		Remote: remote,
+		Blocks: attacker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = unixfs.LoadStagedCurrentTree(t.Context(), projector, attacker, root.String())
+	if err == nil || !strings.Contains(err.Error(), "directory manifest bytes do not match authenticated CID") {
+		t.Fatalf("LoadStagedCurrentTree error = %v, want manifest CID mismatch", err)
 	}
 }
 
@@ -556,6 +732,35 @@ func (b *countingBlocks) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	return b.inner.Get(ctx, key)
 }
 
+func (b *countingBlocks) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	return b.inner.Put(ctx, data)
+}
+
+func (b *countingBlocks) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	return b.inner.PutWithCodec(ctx, data, codec)
+}
+
+type fixedRootCreator struct {
+	root cid.Cid
+}
+
+func (c fixedRootCreator) CreateStagedRoot(context.Context, map[string]string) (cid.Cid, error) {
+	return c.root, nil
+}
+
+type substitutedBlocks struct {
+	inner       *realRemote
+	replace     cid.Cid
+	replacement []byte
+}
+
+func (b substitutedBlocks) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
+	if key.Equals(b.replace) {
+		return append([]byte(nil), b.replacement...), nil
+	}
+	return b.inner.Get(ctx, key)
+}
+
 type splicedReadRemote struct {
 	*realRemote
 	other cid.Cid
@@ -604,6 +809,127 @@ func TestVerifiedReaderRejectsResolveToReadCrossRootSplice(t *testing.T) {
 	}
 	if _, err := reader.ReadFileRange(t.Context(), firstRoot, "file.bin", 0, 10); err == nil {
 		t.Fatal("reader accepted a valid list proof from an unrelated resolved root")
+	}
+}
+
+func TestVerifiedWriterRemoveDoesNotReadRetainedFilePayloads(t *testing.T) {
+	for _, kind := range []unixfs.LayoutKind{unixfs.LayoutHybridV1, unixfs.LayoutFlatV1} {
+		t.Run(string(kind), func(t *testing.T) {
+			remote := newRealRemote(t)
+			rawCID, err := remote.Put(t.Context(), []byte("retained raw payload"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			listBody := bytes.Repeat([]byte("retained-list-payload"), 32)
+			listCID, _, err := unixfs.MaterializeStagedFilePayload(
+				t.Context(),
+				remote,
+				remote,
+				bytes.NewReader(listBody),
+				int64(len(listBody)),
+				32,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			removedCID, err := remote.Put(t.Context(), []byte("removed payload"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			staged := unixfs.NewStagedDirectory()
+			if err := unixfs.SetStagedFile(staged, "retained/raw.txt", rawCID); err != nil {
+				t.Fatal(err)
+			}
+			if err := unixfs.SetStagedFile(staged, "retained/list.bin", listCID); err != nil {
+				t.Fatal(err)
+			}
+			if err := unixfs.SetStagedFile(staged, "remove.txt", removedCID); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := unixfs.NewLayout(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			materialized, err := layout.Materialize(t.Context(), remote, remote, staged)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			counted := &countingBlocks{inner: remote, gets: make(map[string]int)}
+			writer, err := unixfs.NewWriter(unixfs.WriterOptions{
+				Remote: remote, Blocks: counted, Roots: remote, Layout: layout, ChunkSize: 32,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			remote.reads = nil
+			result, err := writer.RemovePath(t.Context(), materialized.Key, "remove.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.CandidateRoot.Equals(materialized.Key) {
+				t.Fatal("remove did not change the candidate root")
+			}
+			if counted.gets[rawCID.KeyString()] != 0 || counted.gets[listCID.KeyString()] != 0 {
+				t.Fatalf(
+					"rm fetched retained file payloads: raw=%d list=%d",
+					counted.gets[rawCID.KeyString()],
+					counted.gets[listCID.KeyString()],
+				)
+			}
+			if len(remote.reads) != 0 {
+				t.Fatalf("rm issued %d retained List metadata reads", len(remote.reads))
+			}
+		})
+	}
+}
+
+func TestVerifiedWriterRejectsCandidateWithWrongDirectoryProjection(t *testing.T) {
+	for _, kind := range []unixfs.LayoutKind{unixfs.LayoutHybridV1, unixfs.LayoutFlatV1} {
+		t.Run(string(kind), func(t *testing.T) {
+			remote := newRealRemote(t)
+			layout, err := unixfs.NewLayout(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseTree := unixfs.NewStagedDirectory()
+			keepCID, err := remote.Put(t.Context(), []byte("keep"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			removeCID, err := remote.Put(t.Context(), []byte("remove"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := unixfs.SetStagedFile(baseTree, "keep.txt", keepCID); err != nil {
+				t.Fatal(err)
+			}
+			if err := unixfs.SetStagedFile(baseTree, "remove.txt", removeCID); err != nil {
+				t.Fatal(err)
+			}
+			base, err := layout.Materialize(t.Context(), remote, remote, baseTree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			empty, err := layout.Materialize(t.Context(), remote, remote, unixfs.NewStagedDirectory())
+			if err != nil {
+				t.Fatal(err)
+			}
+			writer, err := unixfs.NewWriter(unixfs.WriterOptions{
+				Remote: remote,
+				Blocks: remote,
+				Roots:  fixedRootCreator{root: empty.Key},
+				Lists:  remote,
+				Layout: layout,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = writer.RemovePath(t.Context(), base.Key, "remove.txt")
+			if err == nil || !strings.Contains(err.Error(), "entries do not match materialized manifest") {
+				t.Fatalf("RemovePath error = %v, want candidate projection mismatch", err)
+			}
+		})
 	}
 }
 

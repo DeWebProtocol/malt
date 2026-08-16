@@ -272,11 +272,23 @@ writes only verified file bytes to stdout. `rm` never changes the accepted root:
 it emits `accepted: false` and, when given an alias, records the result as a
 candidate for a later explicit `root accept` command.
 
-The native MALT target currently exposes one UnixFS materialization strategy:
-`hybrid` (the default). Each directory is an authenticated map root, while
-ancestor maps retain descendant root-relative path bindings. Pure `flat` and
-pure `hierarchical` strategies remain design and evaluation counterfactuals;
-they are not accepted CLI values.
+The native MALT target exposes two versioned UnixFS application layouts:
+
+- `flat-v1` stores the root manifest, every directory manifest, and every file
+  target as root-relative bindings in one authenticated MALT Map. A write
+  updates one semantic Map object even when several ancestor manifests change.
+- `hybrid-v1` keeps one authenticated Map per directory and also retains
+  descendant root-relative bindings in ancestor Maps.
+
+`malt add` retains `hybrid` as its compatibility default outside managed
+Bucket mode and accepts it as an alias of `hybrid-v1`. When a Bucket is
+selected, `malt add` and `malt rm` fetch and strictly validate its persisted
+layout before materialization; an explicit `--layout` must match that fixed
+value. Select the flat implementation explicitly for non-Bucket roots with
+`--layout flat-v1`. The removed bare `flat` and `hierarchical` pre-release
+aliases remain invalid. Flat bulk add rejects followed directory symlinks
+before uploading any blocks because an opaque nested Map root would violate
+the single-Map layout invariant.
 
 UnixFS file/directory projection is authenticated by each parent directory's
 typed V2 manifest rather than inferred from a child's MALT semantic kind. A
@@ -316,8 +328,11 @@ Package `application` is the reusable use-case layer used by the CLI and local
 daemon. It selects explicit or locally accepted roots, composes verified UnixFS
 and Merkle DAG reads, records writer results as candidates, and exposes
 candidate promotion only as an explicit call. Its `application/add` package
-owns the CLI-independent ignore, symlink, staging, hybrid materialization, and
-Merkle DAG import workflow used by `malt add`.
+owns the CLI-independent ignore, symlink, staging, layout selection, and Merkle
+DAG import workflow used by `malt add`. Package `unixfs` defines the
+application-level `Layout` interface and the stable `flat-v1` and
+`hybrid-v1` identifiers. Layout selection does not change MALT Core codecs,
+proofs, commitments, or canonical graph semantics.
 
 Explicit CIDs are selected without opening `roots.json`; the trust store is
 required only for an alias. A missing, corrupt, or unwritable alias store

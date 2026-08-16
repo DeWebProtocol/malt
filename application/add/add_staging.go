@@ -129,7 +129,7 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, remote Gateway, ca
 	if err != nil {
 		return cid.Undef, 0, 0, nil, 0, err
 	}
-	mat, err := materializeDirectory(ctx, remote, casClient, staged)
+	mat, err := materializeDirectory(ctx, remote, casClient, staged, unixfs.LayoutHybridV1)
 	if err != nil {
 		return cid.Undef, 0, 0, nil, 0, err
 	}
@@ -241,7 +241,7 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, remote Gat
 	if err != nil {
 		return nil, err
 	}
-	if err := preflightMountedInputs(mounted, opts.Ignore); err != nil {
+	if err := preflightMountedInputs(mounted, opts.Layout, opts.Ignore); err != nil {
 		return nil, err
 	}
 
@@ -414,19 +414,22 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 // followed filesystem object before staging is allowed to write CAS blocks or
 // invoke gateway mutations. Execution intentionally constructs fresh ignore
 // filters afterward so preflight does not consume their per-directory state.
-func preflightMountedInputs(mounted []addMountedInput, ignoreOpts addIgnoreOptions) error {
+func preflightMountedInputs(mounted []addMountedInput, layout string, ignoreOpts addIgnoreOptions) error {
 	for _, item := range mounted {
 		if err := validateStagedPath(item.MountBase); err != nil {
 			return fmt.Errorf("invalid mount path for input %q: %w", item.Input.Original, err)
 		}
 		if item.Input.Info.IsDir() {
 			if item.Input.Symlink {
+				if layout == addLayoutFlatV1 {
+					return fmt.Errorf("flat-v1 layout does not support directory symlink input %q", item.Input.Original)
+				}
 				if err := preflightHierarchicalDirectory(item.Input.AbsPath, "", nil); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := preflightDirectoryInput(item, ignoreOpts); err != nil {
+			if err := preflightDirectoryInput(item, layout, ignoreOpts); err != nil {
 				return err
 			}
 			continue
@@ -452,7 +455,7 @@ func preflightRegularFile(localPath, targetPath string) error {
 	return nil
 }
 
-func preflightDirectoryInput(item addMountedInput, ignoreOpts addIgnoreOptions) error {
+func preflightDirectoryInput(item addMountedInput, layout string, ignoreOpts addIgnoreOptions) error {
 	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
 	if err != nil {
 		return err
@@ -500,6 +503,9 @@ func preflightDirectoryInput(item addMountedInput, ignoreOpts addIgnoreOptions) 
 				return fmt.Errorf("stat symlink target %s: %w", current, err)
 			}
 			if info.IsDir() {
+				if layout == addLayoutFlatV1 {
+					return fmt.Errorf("flat-v1 layout does not support directory symlink %q", current)
+				}
 				return preflightHierarchicalDirectory(current, "", nil)
 			}
 			if !info.Mode().IsRegular() {

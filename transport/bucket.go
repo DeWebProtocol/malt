@@ -20,15 +20,23 @@ type Identity struct {
 	CredentialID string `json:"credential_id"`
 }
 
+type BucketLayout string
+
+const (
+	BucketLayoutFlatV1   BucketLayout = "flat-v1"
+	BucketLayoutHybridV1 BucketLayout = "hybrid-v1"
+)
+
 type Bucket struct {
-	ID        string    `json:"id"`
-	TenantID  string    `json:"tenant_id"`
-	Name      string    `json:"name"`
-	State     string    `json:"state"`
-	Role      string    `json:"role"`
-	CreatedBy string    `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string       `json:"id"`
+	TenantID  string       `json:"tenant_id"`
+	Name      string       `json:"name"`
+	State     string       `json:"state"`
+	Role      string       `json:"role"`
+	CreatedBy string       `json:"created_by"`
+	Layout    BucketLayout `json:"layout"`
+	CreatedAt time.Time    `json:"created_at"`
+	UpdatedAt time.Time    `json:"updated_at"`
 }
 
 type BucketRef struct {
@@ -118,8 +126,8 @@ func (c *Client) ListBuckets(ctx context.Context) ([]Bucket, error) {
 		return nil, err
 	}
 	for i, value := range response.Buckets {
-		if value.ID == "" || value.TenantID == "" || value.Name == "" || value.Role == "" {
-			return nil, fmt.Errorf("gateway returned invalid Bucket at index %d", i)
+		if err := validateBucket(value); err != nil {
+			return nil, fmt.Errorf("gateway returned invalid Bucket at index %d: %w", i, err)
 		}
 	}
 	return response.Buckets, nil
@@ -130,10 +138,39 @@ func (c *Client) CreateBucket(ctx context.Context, name string) (*Bucket, error)
 	if err := c.doTenant(ctx, http.MethodPost, "/v1/buckets", map[string]string{"name": name}, &result); err != nil {
 		return nil, err
 	}
-	if result.ID == "" || result.TenantID == "" || result.Name == "" || result.Role == "" {
-		return nil, fmt.Errorf("gateway returned an invalid Bucket")
+	if err := validateBucket(result); err != nil {
+		return nil, fmt.Errorf("gateway returned an invalid Bucket: %w", err)
 	}
 	return &result, nil
+}
+
+func (c *Client) GetBucket(ctx context.Context) (*Bucket, error) {
+	if err := c.requireSelectedBucket(); err != nil {
+		return nil, err
+	}
+	var result Bucket
+	if err := c.doTenant(ctx, http.MethodGet, c.bucketRoute(""), nil, &result); err != nil {
+		return nil, err
+	}
+	if err := validateBucket(result); err != nil {
+		return nil, fmt.Errorf("gateway returned an invalid selected Bucket: %w", err)
+	}
+	if result.ID != c.bucketID {
+		return nil, fmt.Errorf("gateway returned selected Bucket %q, want %q", result.ID, c.bucketID)
+	}
+	return &result, nil
+}
+
+func validateBucket(value Bucket) error {
+	if value.ID == "" || value.TenantID == "" || value.Name == "" || value.Role == "" {
+		return fmt.Errorf("required metadata is missing")
+	}
+	switch value.Layout {
+	case BucketLayoutFlatV1, BucketLayoutHybridV1:
+		return nil
+	default:
+		return fmt.Errorf("unsupported layout %q", value.Layout)
+	}
 }
 
 func (c *Client) BucketHead(ctx context.Context) (*BucketRef, error) {

@@ -52,10 +52,16 @@ func AddStagedMaterializeStats(dst *StagedMaterializeResult, src *StagedMaterial
 	dst.ArcCount += src.ArcCount
 }
 
-// MaterializeStagedDirectory writes the changed portions of a staged UnixFS
+// MaterializeStagedDirectory preserves the historical hybrid-v1 behavior.
+// New layout-aware callers should select an implementation with NewLayout.
+func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+	return materializeHybridDirectory(ctx, roots, blocks, node)
+}
+
+// materializeHybridDirectory writes the changed portions of a staged UnixFS
 // directory tree and returns its map root. Unchanged staged directories keep
 // their existing Key while changed directories are committed bottom-up.
-func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+func materializeHybridDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	if node == nil || node.Kind != StagedKindDirectory {
 		return nil, fmt.Errorf("MaterializeStagedDirectory requires a directory node")
 	}
@@ -82,7 +88,7 @@ func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, bl
 			continue
 		}
 		if child.Kind == StagedKindDirectory {
-			mat, err := MaterializeStagedDirectory(ctx, roots, blocks, child)
+			mat, err := materializeHybridDirectory(ctx, roots, blocks, child)
 			if err != nil {
 				return nil, err
 			}
@@ -166,4 +172,106 @@ func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, bl
 		ArcSets:          stats.ArcSets + 1,
 		Arcs:             stats.Arcs + arcCount,
 	}, nil
+}
+
+func materializeFlatDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+	if node == nil || node.Kind != StagedKindDirectory {
+		return nil, fmt.Errorf("flat layout requires a directory node")
+	}
+	bindings := make(map[string]string)
+	descendants := make(map[string]cid.Cid)
+	stats := &StagedMaterializeResult{}
+	payload, err := materializeFlatManifest(ctx, blocks, node, "", bindings, descendants, stats)
+	if err != nil {
+		return nil, err
+	}
+	if flusher, ok := blocks.(stagedBlockFlusher); ok {
+		if err := flusher.Flush(ctx); err != nil {
+			return nil, fmt.Errorf("flush flat directory manifests: %w", err)
+		}
+	}
+	bindings["@payload"] = payload.String()
+	root, err := roots.CreateStagedRoot(ctx, bindings)
+	if err != nil {
+		return nil, err
+	}
+	node.Key = root
+	node.StorageKind = "map"
+	node.Changed = false
+	arcCount := unixfsmodel.CountDefinedBindings(bindings)
+	stats.Key = root
+	stats.ArcCount += arcCount
+	stats.Descendants = descendants
+	stats.MALTObjects++
+	stats.MALTMaps++
+	stats.ArcSets++
+	stats.Arcs += arcCount
+	return stats, nil
+}
+
+func materializeFlatManifest(
+	ctx context.Context,
+	blocks StagedBlockStore,
+	node *StagedNode,
+	prefix string,
+	bindings map[string]string,
+	descendants map[string]cid.Cid,
+	stats *StagedMaterializeResult,
+) (cid.Cid, error) {
+	names := make([]string, 0, len(node.Children))
+	for name := range node.Children {
+		segments, err := ParseCanonicalStagedPath(name)
+		if err != nil || len(segments) != 1 || segments[0] != name {
+			if err == nil {
+				err = fmt.Errorf("child name must be one losslessly canonical portable path segment")
+			}
+			return cid.Undef, fmt.Errorf("invalid staged directory child %q: %w", name, err)
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	manifestEntries := make([]unixfsmodel.DirectoryEntry, 0, len(names))
+	for _, name := range names {
+		child := node.Children[name]
+		if child == nil {
+			continue
+		}
+		childPath := path.Join(prefix, name)
+		entryType := unixfsmodel.DirectoryEntryTypeFile
+		var target cid.Cid
+		switch child.Kind {
+		case StagedKindDirectory:
+			entryType = unixfsmodel.DirectoryEntryTypeDir
+			var err error
+			target, err = materializeFlatManifest(ctx, blocks, child, childPath, bindings, descendants, stats)
+			if err != nil {
+				return cid.Undef, err
+			}
+		case StagedKindMapDirectory:
+			return cid.Undef, fmt.Errorf("flat layout cannot retain opaque map directory %q", childPath)
+		case StagedKindFile:
+			target = child.Key
+		default:
+			return cid.Undef, fmt.Errorf("unsupported staged child kind %q at %q", child.Kind, childPath)
+		}
+		if !target.Defined() {
+			return cid.Undef, fmt.Errorf("staged child %q has no materialized target", childPath)
+		}
+		bindings[childPath] = target.String()
+		descendants[childPath] = target
+		manifestEntries = append(manifestEntries, unixfsmodel.DirectoryEntry{Name: name, Type: entryType})
+	}
+	manifestBlock, err := unixfsmodel.EncodeDirectoryManifest(manifestEntries)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("marshal directory manifest: %w", err)
+	}
+	payload, err := blocks.PutWithCodec(ctx, manifestBlock.Data, manifestBlock.Codec)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("upload directory manifest: %w", err)
+	}
+	node.Key = payload
+	node.StorageKind = "raw"
+	node.Changed = false
+	stats.ImmutableObjects++
+	return payload, nil
 }

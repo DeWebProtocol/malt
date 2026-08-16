@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/bucketsync"
 	client "github.com/dewebprotocol/malt-client/transport"
+	"github.com/dewebprotocol/malt-client/unixfs"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
@@ -231,29 +233,33 @@ func bucketSyncService() (*bucketsync.Service, error) {
 
 // prepareBucketCandidate captures the Bucket base before candidate
 // materialization. A nil service means the client is using legacy routes.
-func prepareBucketCandidate(baseRoot cid.Cid) (*bucketsync.Service, bucketsync.Head, error) {
+func prepareBucketCandidate(
+	ctx context.Context,
+	remote *client.Client,
+	baseRoot cid.Cid,
+) (*bucketsync.Service, bucketsync.Head, unixfs.LayoutKind, error) {
+	if remote == nil || strings.TrimSpace(remote.SelectedBucket()) == "" {
+		return nil, bucketsync.Head{}, unixfs.LayoutHybridV1, nil
+	}
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
-		return nil, bucketsync.Head{}, err
+		return nil, bucketsync.Head{}, "", err
 	}
-	if strings.TrimSpace(cfg.Gateway.Bucket) == "" {
-		return nil, bucketsync.Head{}, nil
-	}
-	options, err := requiredGatewayOptions(cfg, cfg.Gateway.Bucket, "")
+	selected, err := remote.GetBucket(ctx)
 	if err != nil {
-		return nil, bucketsync.Head{}, err
+		return nil, bucketsync.Head{}, "", err
 	}
-	remote, err := client.New(options)
+	layout, err := unixfs.ParseLayoutKind(string(selected.Layout))
 	if err != nil {
-		return nil, bucketsync.Head{}, err
+		return nil, bucketsync.Head{}, "", fmt.Errorf("decode selected Bucket layout: %w", err)
 	}
-	syncer, err := bucketsync.Open(cfg.Workspace.StatePath, remote, cfg.Gateway.Bucket)
+	syncer, err := bucketsync.Open(cfg.Workspace.StatePath, remote, remote.SelectedBucket())
 	if err != nil {
-		return nil, bucketsync.Head{}, err
+		return nil, bucketsync.Head{}, "", err
 	}
 	base, err := syncer.CurrentBase(baseRoot)
 	if err != nil {
-		return nil, bucketsync.Head{}, err
+		return nil, bucketsync.Head{}, "", err
 	}
-	return syncer, base, nil
+	return syncer, base, layout, nil
 }

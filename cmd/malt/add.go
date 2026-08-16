@@ -38,7 +38,7 @@ func init() {
 	addCmd.Flags().StringVar(&addWrapNameFlag, "wrap-name", "", "Wrapper directory name (required for multi-input --wrap)")
 	addCmd.Flags().StringVar(&addTargetFlag, "target", clientadd.TargetMALT, "Target substrate: malt or merkle-dag")
 	addCmd.Flags().StringVar(&addModelFlag, "model", clientadd.ModelUnixFS, "Source data model/schema")
-	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT UnixFS materialization layout: hybrid")
+	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT UnixFS materialization layout: hybrid, hybrid-v1, or flat-v1")
 	addCmd.Flags().StringVar(&addFileLayoutFlag, "file-layout", "", "Merkle DAG UnixFS file layout: balanced or trickle")
 	addCmd.Flags().StringVar(&addDirLayoutFlag, "dir-layout", "", "Merkle DAG UnixFS directory layout: basic, hamt, or adaptive")
 	addCmd.Flags().BoolVar(&addNoGitignoreFlag, "no-gitignore", false, "Do not read .gitignore files while adding directories")
@@ -129,6 +129,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	var bucketSyncer *bucketsync.Service
 	var bucketBase bucketsync.Head
+	var bucketLayout unixfs.LayoutKind
 	if opts.Target == clientadd.TargetMALT {
 		baseRoot := cid.Undef
 		switch {
@@ -144,9 +145,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 			baseRoot = selected.Root
 		}
-		bucketSyncer, bucketBase, err = prepareBucketCandidate(baseRoot)
+		bucketSyncer, bucketBase, bucketLayout, err = prepareBucketCandidate(ctx, remote, baseRoot)
 		if err != nil {
 			return err
+		}
+		if bucketSyncer != nil {
+			opts, err = bindAddLayoutToBucket(opts, strings.TrimSpace(addLayoutFlag) != "", bucketLayout)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	execution, err := clientadd.Run(ctx, roots, addGateway, casClient, clientadd.Request{
@@ -198,6 +205,30 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		fmt.Print(formatAddSummary(summary))
 	}
 	return nil
+}
+
+func bindAddLayoutToBucket(
+	opts clientadd.Options,
+	explicit bool,
+	bucketLayout unixfs.LayoutKind,
+) (clientadd.Options, error) {
+	requestedLayout := opts.Layout
+	if requestedLayout == clientadd.LayoutHybrid {
+		requestedLayout = clientadd.LayoutHybridV1
+	}
+	requestedKind, err := unixfs.ParseLayoutKind(requestedLayout)
+	if err != nil {
+		return opts, err
+	}
+	if explicit && requestedKind != bucketLayout {
+		return opts, fmt.Errorf(
+			"--layout %s conflicts with selected Bucket layout %s",
+			requestedKind,
+			bucketLayout,
+		)
+	}
+	opts.Layout = string(bucketLayout)
+	return opts, nil
 }
 
 func formatAddSummary(summary addSummary) string {

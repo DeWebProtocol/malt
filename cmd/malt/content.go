@@ -41,8 +41,12 @@ func newUnixFSReader(remote *client.Client) (unixfs.Reader, error) {
 	return unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
 }
 
-func newUnixFSWriter(remote *client.Client) (unixfs.Writer, error) {
+func newUnixFSWriter(remote *client.Client, kind unixfs.LayoutKind) (unixfs.Writer, error) {
 	lists, err := unixfs.NewGatewayMutationAdapter(remote)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := unixfs.NewLayout(kind)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +55,7 @@ func newUnixFSWriter(remote *client.Client) (unixfs.Writer, error) {
 		Blocks: remote,
 		Roots:  remote,
 		Lists:  lists,
+		Layout: layout,
 	})
 }
 
@@ -122,10 +127,6 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	writer, err := newUnixFSWriter(remote)
-	if err != nil {
-		return err
-	}
 	roots, err := rootsForSelector(args[0])
 	if err != nil {
 		return err
@@ -134,7 +135,11 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	bucketSyncer, bucketBase, err := prepareBucketCandidate(selected.Root)
+	bucketSyncer, bucketBase, bucketLayout, err := prepareBucketCandidate(cmd.Context(), remote, selected.Root)
+	if err != nil {
+		return err
+	}
+	writer, err := newUnixFSWriter(remote, bucketLayout)
 	if err != nil {
 		return err
 	}
