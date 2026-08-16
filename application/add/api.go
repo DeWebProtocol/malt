@@ -18,6 +18,8 @@ const (
 	TargetMerkleDAG = addTargetMerkleDAG
 	ModelUnixFS     = addModelUnixFS
 	LayoutHybrid    = addLayoutHybrid
+	LayoutHybridV1  = addLayoutHybridV1
+	LayoutFlatV1    = addLayoutFlatV1
 
 	FileLayoutBalanced = addFileLayoutBalanced
 	FileLayoutTrickle  = addFileLayoutTrickle

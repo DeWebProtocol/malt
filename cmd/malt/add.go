@@ -38,7 +38,7 @@ func init() {
 	addCmd.Flags().StringVar(&addWrapNameFlag, "wrap-name", "", "Wrapper directory name (required for multi-input --wrap)")
 	addCmd.Flags().StringVar(&addTargetFlag, "target", clientadd.TargetMALT, "Target substrate: malt or merkle-dag")
 	addCmd.Flags().StringVar(&addModelFlag, "model", clientadd.ModelUnixFS, "Source data model/schema")
-	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT UnixFS materialization layout: hybrid")
+	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT UnixFS materialization layout: hybrid, hybrid-v1, or flat-v1")
 	addCmd.Flags().StringVar(&addFileLayoutFlag, "file-layout", "", "Merkle DAG UnixFS file layout: balanced or trickle")
 	addCmd.Flags().StringVar(&addDirLayoutFlag, "dir-layout", "", "Merkle DAG UnixFS directory layout: basic, hamt, or adaptive")
 	addCmd.Flags().BoolVar(&addNoGitignoreFlag, "no-gitignore", false, "Do not read .gitignore files while adding directories")

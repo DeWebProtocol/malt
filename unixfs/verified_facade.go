@@ -144,6 +144,7 @@ type WriterOptions struct {
 	Verifier  LocalVerifier
 	Roots     StagedRootCreator
 	Lists     FixedListPayloadWriter
+	Layout    Layout
 	ChunkSize int
 	TempDir   string
 }
@@ -159,6 +160,7 @@ type verifiedWriter struct {
 	store     BlockStore
 	roots     StagedRootCreator
 	lists     FixedListPayloadWriter
+	layout    Layout
 	chunkSize int
 	tempDir   string
 }
@@ -203,6 +205,17 @@ func NewWriter(opts WriterOptions) (Writer, error) {
 	if lists == nil {
 		return nil, fmt.Errorf("unixfs fixed-list payload writer is nil")
 	}
+	layout := opts.Layout
+	if layout == nil {
+		var err error
+		layout, err = NewLayout(LayoutHybridV1)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := NewLayout(layout.Kind()); err != nil {
+		return nil, err
+	}
 	chunkSize := opts.ChunkSize
 	if chunkSize == 0 {
 		chunkSize = unixfsmodel.DefaultChunkSize
@@ -212,7 +225,7 @@ func NewWriter(opts WriterOptions) (Writer, error) {
 	}
 	return &verifiedWriter{
 		verifiedReader: reader.(*verifiedReader), store: opts.Blocks,
-		roots: opts.Roots, lists: lists, chunkSize: chunkSize, tempDir: opts.TempDir,
+		roots: opts.Roots, lists: lists, layout: layout, chunkSize: chunkSize, tempDir: opts.TempDir,
 	}, nil
 }
 
@@ -788,7 +801,7 @@ func (w *verifiedWriter) loadWritableTree(ctx context.Context, trustedRoot cid.C
 }
 
 func (w *verifiedWriter) materializeWrite(ctx context.Context, base cid.Cid, rawPath, kind string, size uint64, current *StagedNode) (*WriteResult, error) {
-	materialized, err := MaterializeStagedDirectory(ctx, w.roots, w.store, current)
+	materialized, err := w.layout.Materialize(ctx, w.roots, w.store, current)
 	if err != nil {
 		return nil, fmt.Errorf("materialize UnixFS candidate: %w", err)
 	}
@@ -853,7 +866,7 @@ func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, ra
 	if err := RemoveStagedPath(current, rawPath); err != nil {
 		return nil, err
 	}
-	materialized, err := MaterializeStagedDirectory(ctx, w.roots, w.store, current)
+	materialized, err := w.layout.Materialize(ctx, w.roots, w.store, current)
 	if err != nil {
 		return nil, fmt.Errorf("materialize removal candidate: %w", err)
 	}

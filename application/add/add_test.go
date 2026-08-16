@@ -95,6 +95,8 @@ func TestNormalizeOptionsAcrossTargets(t *testing.T) {
 	}{
 		{name: "MALT defaults", wantTarget: TargetMALT, wantLayout: LayoutHybrid},
 		{name: "MALT hybrid", in: Options{Target: TargetMALT, Layout: LayoutHybrid}, wantTarget: TargetMALT, wantLayout: LayoutHybrid},
+		{name: "MALT hybrid-v1", in: Options{Target: TargetMALT, Layout: LayoutHybridV1}, wantTarget: TargetMALT, wantLayout: LayoutHybridV1},
+		{name: "MALT flat-v1", in: Options{Target: TargetMALT, Layout: LayoutFlatV1}, wantTarget: TargetMALT, wantLayout: LayoutFlatV1},
 		{name: "Merkle DAG defaults", in: Options{Target: "merkledag", Model: ModelUnixFS}, wantTarget: TargetMerkleDAG, wantFileLayout: FileLayoutBalanced, wantDirLayout: DirLayoutAdaptive},
 		{name: "Merkle DAG explicit layouts", in: Options{Target: TargetMerkleDAG, FileLayout: FileLayoutTrickle, DirLayout: DirLayoutHAMT}, wantTarget: TargetMerkleDAG, wantFileLayout: FileLayoutTrickle, wantDirLayout: DirLayoutHAMT},
 		{name: "reject former MALT flat alias", in: Options{Target: TargetMALT, Layout: "flat"}, wantErr: true},
@@ -336,6 +338,29 @@ func TestBuildAddStagingTreePreflightsSymlinkDirectoryBeforeWrite(t *testing.T) 
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
 		t.Fatalf("symlink preflight allowed writes before validation failure: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+	}
+}
+
+func TestBuildAddStagingTreeRejectsFlatDirectorySymlinkBeforeWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory symlink setup is not portable to Windows")
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	writeTestFile(t, filepath.Join(target, "nested.txt"), "nested")
+	root := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{Layout: LayoutFlatV1}); err == nil {
+		t.Fatal("flat-v1 accepted a directory symlink")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("flat-v1 directory symlink performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
 	}
 }
 

@@ -30,14 +30,14 @@ func addInputsWithUnixFS(ctx context.Context, remote Gateway, casClient addCASCl
 	}
 	switch normalized.Target {
 	case addTargetMALT:
-		return addInputsWithMALTHybridUnixFS(ctx, remote, casClient, rawInputs, root, normalized)
+		return addInputsWithMALTUnixFS(ctx, remote, casClient, rawInputs, root, normalized)
 	case addTargetMerkleDAG:
 		return addInputsWithMerkleDAGUnixFS(ctx, casClient, rawInputs, normalized)
 	}
 	return nil, fmt.Errorf("unsupported add target/model/layout %q/%q/%q", normalized.Target, normalized.Model, normalized.Layout)
 }
 
-func addInputsWithMALTHybridUnixFS(ctx context.Context, remote Gateway, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTUnixFS(ctx context.Context, remote Gateway, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if remote == nil {
 		return nil, fmt.Errorf("gateway client is required")
 	}
@@ -54,7 +54,7 @@ func addInputsWithMALTHybridUnixFS(ctx context.Context, remote Gateway, casClien
 		}
 		rootNode = unixfs.MergeStagedNodes(existing, staged.Root)
 	}
-	mat, err := materializeDirectory(ctx, remote, casClient, rootNode)
+	mat, err := materializeDirectory(ctx, remote, casClient, rootNode, unixFSLayoutKind(opts.Layout))
 	if err != nil {
 		return nil, err
 	}

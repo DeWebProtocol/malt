@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	unixfs "github.com/dewebprotocol/malt-client/unixfs/model"
+	"github.com/dewebprotocol/malt-client/unixfs"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 )
 
-const addFixedChunkSize = unixfs.DefaultChunkSize
+const addFixedChunkSize = unixfsmodel.DefaultChunkSize
 
 const (
 	addTargetMALT      = "malt"
@@ -15,7 +16,9 @@ const (
 
 	addModelUnixFS = "unixfs"
 
-	addLayoutHybrid = "hybrid"
+	addLayoutHybrid   = "hybrid"
+	addLayoutHybridV1 = "hybrid-v1"
+	addLayoutFlatV1   = "flat-v1"
 
 	addFileLayoutBalanced = "balanced"
 	addFileLayoutTrickle  = "trickle"
@@ -60,8 +63,13 @@ func normalizeAddBuildOptions(opts addBuildOptions) (addBuildOptions, error) {
 		if opts.Layout == "" {
 			opts.Layout = addLayoutHybrid
 		}
-		if opts.Layout != addLayoutHybrid {
-			return opts, fmt.Errorf("unsupported malt unixfs layout %q: the current client supports only %q", opts.Layout, addLayoutHybrid)
+		if opts.Layout != addLayoutHybrid && opts.Layout != addLayoutHybridV1 && opts.Layout != addLayoutFlatV1 {
+			return opts, fmt.Errorf(
+				"unsupported malt unixfs layout %q: supported layouts are %q and %q",
+				opts.Layout,
+				addLayoutFlatV1,
+				addLayoutHybridV1,
+			)
 		}
 		if opts.FileLayout != "" || opts.DirLayout != "" {
 			return opts, fmt.Errorf("--file-layout and --dir-layout are only supported with --target merkle-dag")
@@ -86,6 +94,13 @@ func normalizeAddBuildOptions(opts addBuildOptions) (addBuildOptions, error) {
 		return opts, fmt.Errorf("unsupported add target %q", opts.Target)
 	}
 	return opts, nil
+}
+
+func unixFSLayoutKind(raw string) unixfs.LayoutKind {
+	if raw == addLayoutFlatV1 {
+		return unixfs.LayoutFlatV1
+	}
+	return unixfs.LayoutHybridV1
 }
 
 func normalizeAddToken(raw string) string {
