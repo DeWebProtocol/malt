@@ -276,9 +276,30 @@ not update trusted-root policy.
 
 ## Trusted-root policy
 
-Package `trust` owns durable accepted/candidate state. `AcceptedRoot` never
-falls back to response data or to a candidate. Mutation and UnixFS writer
+Package `trust` owns three durable, disjoint states:
+
+- `ObservedHead` is an untrusted source/dataset/branch observation;
+- `CandidateRoot` is a locally computed or strictly verified update rooted at
+  one accepted base; and
+- `AcceptedRootState` alone is authoritative for reads.
+
+Trust-store schema v2 persists those states separately. Opening schema v1
+first retains an owner-only, exact-byte recovery artifact at
+`<trust-store>.v1-recovery`, then atomically migrates its flattened accepted
+root and candidates to v2. The runtime never deletes that rollback artifact
+automatically. The compatibility `Record` API remains available and exposes
+only aliases that already have an accepted root; observation-only aliases are
+visible through `GetState` and `ListStates`. `AcceptedRoot` never falls back
+to response data, an observation, or a candidate. Mutation and UnixFS writer
 results remain candidates until `AcceptCandidate` is called explicitly.
+Remote backup heads use `Roots.ObserveHead`; they cannot pass the candidate
+acceptance route. A user may explicitly promote only a recorded observation
+with `Roots.AcceptObserved` or `malt root accept-observed`.
+Use `malt root state [alias]`, `Store.GetState`, or `Store.ListStates` to
+inspect the structured plane without changing the compatibility shape of
+`Record`. The private local API exposes the same read model at
+`GET /v1/trust-states[/{alias}]` and keeps candidate and observation acceptance
+on separate routes.
 
 Transport does not import or mutate this package.
 

@@ -14,7 +14,7 @@ repository rename cannot silently reuse Core's historical module namespace.
 The runtime owns concerns that must not be part of the application-neutral
 authentication core:
 
-- accepted and candidate root policy;
+- separate observed-head, candidate-root, and accepted-root policy;
 - application-path parsing and UnixFS materialization;
 - optional IPFS-compatible Merkle DAG UnixFS import;
 - transport-mediated access to remote or local storage (currently Gateway
@@ -25,8 +25,9 @@ authentication core:
   named pipe.
 
 The gateway is an untrusted proof producer. A successful gateway response does
-not update an accepted root automatically: mutation results are recorded as
-candidates until the user explicitly accepts them.
+not update an accepted root automatically: remote heads are observations,
+while locally computed or strictly verified writes are candidates. Each has a
+separate explicit acceptance path.
 
 ## Status
 
@@ -141,7 +142,8 @@ error. One failed plan does not prevent other selected plans from completing.
 pulls the final latest branch and atomically installs every binding in the
 plan. A fast-forward or Gateway merge still requires exact local acceptance of
 the observed final root. In an interactive CLI, `sync` displays the exact CID
-and asks before recording it; the daemon only records the candidate and
+and asks before accepting the already recorded observation; the daemon records
+the observation without accepting it and
 returns an actionable conflict.
 
 When the Gateway preserves a same-binding conflict, interactive `sync` asks
@@ -268,7 +270,11 @@ tree:
 ./bin/malt resolve my-data docs/readme.txt
 ./bin/malt add ./my-data --alias my-data
 ./bin/malt root list
+./bin/malt root state my-data
 ./bin/malt root accept my-data <candidate-root-cid>
+
+# A remote head must already be recorded as an observation.
+./bin/malt root accept-observed my-data <observed-root-cid>
 ```
 
 Read verified native UnixFS content and materialize a removal candidate:
@@ -355,7 +361,7 @@ Explicitly typed alias inputs such as `malt add --alias` always perform alias
 lookup, even when the alias text happens to be CID-shaped.
 
 Package `transport` is an untrusted gateway transport. Package `trust` owns
-accepted/candidate root policy. Package `unixfs`
+separate observed/candidate/accepted root policy. Package `unixfs`
 composes it into verified `Resolve`, `Stat`, `ReadFile`, `ReadFileRange`,
 `ReadListPayloadRange`, `EmptyDirectory`, `AddDirectory`, `AddFile`, streaming
 file writes, and `RemovePath` operations. The UnixFS facade requires

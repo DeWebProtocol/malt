@@ -59,8 +59,10 @@ application/clientroot and unixfs verification
 
 Current boundary strengths:
 
-- `trust` alone persists accepted/candidate roots and requires explicit
-  promotion.
+- `trust` alone persists structured observed, candidate, and accepted root
+  states and requires a distinct explicit promotion action for each untrusted
+  state class. Legacy v1 trust files retain an owner-only exact-byte recovery
+  artifact before they are atomically migrated to v2.
 - `transport` does not import `application`, `trust`, or `unixfs`.
 - `transport/capability` contains no HTTP, URL, account, trust, or Gateway DTO;
   Gateway HTTP is one adapter implementing the same Native, CAS, Mutations, and
@@ -161,10 +163,10 @@ observed remote head != candidate root != accepted root
 ```
 
 Transport may return observations and results but cannot import the trust
-package or mutate accepted state. Candidate promotion is an explicit local
-policy call. The keyring, recovery keys, encryption epochs, device credentials,
-and peer/Gateway observations remain local state with separate persistence
-records.
+package or mutate accepted state. Candidate and observation promotion are
+distinct explicit local policy calls. The keyring, recovery keys, encryption
+epochs, device credentials, and peer/Gateway observations remain local state
+with separate persistence records.
 
 ### Transport capability boundary
 
@@ -250,7 +252,7 @@ choice and does not define network topology.
 | 2 | **Completed 2026-08-17:** after every Core consumer migrated, rename repository to `malt`, update links/badges/CI, keep the old Go module path, and add a compatibility notice before runtime architecture refactors begin | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
 | 3 | **Completed 2026-08-17:** move backup/sync composition into `internal/runtime.Services` and plan batch orchestration into `application/backup.BatchRunner`; foreground, daemon IPC, and scheduler use the same application contract | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven batch semantics, direct-vs-daemon adapter equivalence, current CLI tests | revert command call sites and the two additive services; persisted state is unchanged |
 | 4 | **Completed 2026-08-17:** define URL-free `transport/capability` Native/CAS/Mutations/DatasetBranch ports, adapt Gateway HTTP into typed untrusted values, move Bucket sync and UnixFS mutation consumers off concrete DTOs, and retain deprecated pre-release aliases | additive ports plus pre-v1 `PushOutcome.Result` type rename; deprecated constructors retained | no; persisted JSON tags unchanged | accidental trust mutation, request mismatch, or route leakage | binding/request/result adversarial contracts, Gateway adapter tests, JSON-field compatibility, architecture imports | select the deprecated Gateway adapters; no persisted-state migration is required |
-| 5 | Make trust observations, candidates, and accepted roots explicit persisted types; forbid transport imports | additive state migration | no | state loss or implicit promotion | migration fixtures, stale-head and malicious-result tests, crash/restart tests | dual-read old state with write-new; restore prior state file |
+| 5 | **Completed 2026-08-17:** persist `ObservedHead`, `CandidateRoot`, and `AcceptedRootState` separately in trust-store v2; preserve an exact owner-only v1 recovery artifact before atomic migration; record backup heads as observations; add distinct candidate/observation acceptance APIs | additive API plus trust-store v2 migration; flattened `Record` retained for accepted-root aliases | no | state loss, stale observation, or implicit promotion | v1 fixture migration and write/sync/secure fault injection, stale/same-revision conflict, malformed root, restart, wrong acceptance-route, and backup observation tests | stop the runtime and replace the v2 store with `<trust-store>.v1-recovery`; the runtime retains this exact v1 artifact until an operator removes it |
 | 6 | Introduce verified cache metadata and operation journal without mounting | new internal APIs | no | treating cache as authority | corruption, stale-version, wrong-epoch, dirty/pending state tests | disable cache/journal feature flag; remote verified path remains |
 | 7 | Add platform-neutral read-only filesystem service over UnixFS and mock transport | new experimental API | no | unverified bytes escape | stat/readdir/open/read/range/cache-hit adversarial contract tests | service is additive and can be disabled |
 | 8 | Add read-only platform mount adapter and daemon-managed lifecycle | new CLI/local API commands | no | mount leakage or lifecycle races | platform adapter tests, restart/remount, permissions, cancellation | unmount and disable adapter; core runtime remains |

@@ -38,6 +38,10 @@ type PlanRootPolicy interface {
 	ObserveCandidate(alias string, candidateRoot, baseRoot cid.Cid, source string) error
 }
 
+type planHeadObserver interface {
+	ObserveHead(alias, source, datasetID, branch, commitID string, root cid.Cid, revision uint64) error
+}
+
 type PlanMaterializer interface {
 	MaterializeManifest(context.Context, string, cid.Cid) (*clientadd.Result, error)
 	MaterializeBinding(context.Context, string, string, cid.Cid) (*clientadd.Result, error)
@@ -1342,15 +1346,25 @@ func (s *PlanService) acceptedObservedRoot(ctx context.Context) (cid.Cid, error)
 			return cid.Undef, fmt.Errorf("%w in plan %s", ErrPendingWorkspace, s.plan.Name)
 		}
 	}
-	rootText := strings.TrimSpace(workspace.Remote.Root)
-	if rootText == "" {
-		rootText = strings.TrimSpace(workspace.Base.Root)
+	head := workspace.Remote
+	if strings.TrimSpace(head.Root) == "" {
+		head = workspace.Base
 	}
-	observed, err := cid.Parse(rootText)
+	observed, err := cid.Parse(strings.TrimSpace(head.Root))
 	if err != nil {
 		return cid.Undef, fmt.Errorf("decode observed backup branch root: %w", err)
 	}
 	alias := PlanRootAlias(s.plan.BucketID, s.plan.Branch)
+	observer, ok := s.roots.(planHeadObserver)
+	if !ok {
+		return cid.Undef, fmt.Errorf("backup plan trusted-root policy does not support remote head observations")
+	}
+	if err := observer.ObserveHead(
+		alias, observationSource(s.plan.BucketID), s.plan.BucketID, s.plan.Branch,
+		head.CommitID, observed, head.Revision,
+	); err != nil {
+		return cid.Undef, fmt.Errorf("record remote backup head for %s: %w", alias, err)
+	}
 	accepted, err := s.roots.AcceptedRoot(alias)
 	if err != nil {
 		return cid.Undef, &UnacceptedRootError{
@@ -1360,12 +1374,13 @@ func (s *PlanService) acceptedObservedRoot(ctx context.Context) (cid.Cid, error)
 	if observed.Equals(accepted) {
 		return accepted, nil
 	}
-	if err := s.roots.ObserveCandidate(alias, observed, accepted, "backup-branch-observation"); err != nil {
-		return cid.Undef, fmt.Errorf("record unaccepted backup root %s for %s: %w", observed, alias, err)
-	}
 	return cid.Undef, &UnacceptedRootError{
-		Plan: s.plan.Name, Alias: alias, Observed: observed, Accepted: accepted, CandidateRecorded: true,
+		Plan: s.plan.Name, Alias: alias, Observed: observed, Accepted: accepted,
 	}
+}
+
+func observationSource(datasetID string) string {
+	return "dataset:" + strings.TrimSpace(datasetID)
 }
 
 func validatePlanManifest(manifest planManifest, local Plan) error {
@@ -1480,7 +1495,7 @@ type UnacceptedRootError struct {
 func (e *UnacceptedRootError) Error() string {
 	if !e.Accepted.Defined() {
 		return fmt.Sprintf(
-			"remote root %s for plan %s is not locally accepted; initialize it explicitly with `malt root trust %s %s`, then rerun",
+			"remote root %s for plan %s is not locally accepted; inspect it, run `malt root accept-observed %s %s`, then rerun",
 			e.Observed, e.Plan, e.Alias, e.Observed,
 		)
 	}
@@ -1490,7 +1505,10 @@ func (e *UnacceptedRootError) Error() string {
 			e.Observed, e.Plan, e.Accepted, e.Alias, e.Observed,
 		)
 	}
-	return fmt.Sprintf("remote root %s for plan %s is not locally accepted", e.Observed, e.Plan)
+	return fmt.Sprintf(
+		"remote root %s for plan %s differs from accepted root %s; it was recorded as an observation—inspect it, run `malt root accept-observed %s %s`, then rerun",
+		e.Observed, e.Plan, e.Accepted, e.Alias, e.Observed,
+	)
 }
 
 func (e *UnacceptedRootError) Unwrap() error { return ErrUnacceptedRoot }

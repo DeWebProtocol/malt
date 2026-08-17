@@ -2,8 +2,10 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,9 +14,102 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+type recordedPlanObservation struct {
+	alias, source, datasetID, branch, commitID string
+	root                                       cid.Cid
+	revision                                   uint64
+}
+
+type recordingPlanRootPolicy struct {
+	accepted    cid.Cid
+	acceptedErr error
+	observeErr  error
+	observed    []recordedPlanObservation
+}
+
+func (p *recordingPlanRootPolicy) AcceptedRoot(string) (cid.Cid, error) {
+	return p.accepted, p.acceptedErr
+}
+
+func (*recordingPlanRootPolicy) ObserveCandidate(string, cid.Cid, cid.Cid, string) error {
+	return nil
+}
+
+func (p *recordingPlanRootPolicy) ObserveHead(alias, source, datasetID, branch, commitID string, root cid.Cid, revision uint64) error {
+	p.observed = append(p.observed, recordedPlanObservation{
+		alias: alias, source: source, datasetID: datasetID, branch: branch,
+		commitID: commitID, root: root, revision: revision,
+	})
+	return p.observeErr
+}
+
 func TestAddPlanMaterializerLegacyUnkeyedLiteralRemainsSourceCompatible(t *testing.T) {
 	var _ PlanMaterializer = AddPlanMaterializer{nil, nil}
 	_ = NewAddPlanMaterializer(nil, nil)
+	_ = PlanServiceOptions{Plan{}, "", "", nil, nil, nil, nil, nil, nil, nil, nil, nil}
+	_ = UnacceptedRootError{"", "", cid.Undef, cid.Undef, false, nil}
+	_ = PlanFailure{"", "", "", "", false, "", false, nil, "", "", "", false, ""}
+}
+
+type legacyPlanRootPolicy struct{}
+
+func (legacyPlanRootPolicy) AcceptedRoot(string) (cid.Cid, error)                    { return cid.Undef, nil }
+func (legacyPlanRootPolicy) ObserveCandidate(string, cid.Cid, cid.Cid, string) error { return nil }
+
+func TestLegacyPlanRootPolicyRemainsSourceCompatibleAndFailsClosedForObservation(t *testing.T) {
+	var legacy PlanRootPolicy = legacyPlanRootPolicy{}
+	service := &PlanService{
+		plan:  Plan{ID: "plan-one", Name: "documents", BucketID: "bucket-one", Branch: "main"},
+		sync:  &fakeSync{workspace: bucketsync.Workspace{Remote: bucketsync.Head{CommitID: "commit-one", Root: "bafkqaaa", Revision: 1}}},
+		roots: legacy,
+	}
+	if _, err := service.acceptedObservedRoot(t.Context()); err == nil || !strings.Contains(err.Error(), "does not support remote head observations") {
+		t.Fatalf("legacy policy observation error = %v", err)
+	}
+}
+
+func TestAcceptedObservedRootRecordsObservationNotCandidate(t *testing.T) {
+	remoteRoot := cid.MustParse("bafkqaaa")
+	policy := &recordingPlanRootPolicy{acceptedErr: errors.New("no accepted root")}
+	service := &PlanService{
+		plan: Plan{ID: "plan-one", Name: "documents", BucketID: "bucket-one", Branch: "main"},
+		sync: &fakeSync{workspace: bucketsync.Workspace{
+			Remote: bucketsync.Head{CommitID: "commit-seven", Root: remoteRoot.String(), Revision: 7},
+		}},
+		roots: policy,
+	}
+	_, err := service.acceptedObservedRoot(t.Context())
+	var rootErr *UnacceptedRootError
+	if !errors.As(err, &rootErr) {
+		t.Fatalf("acceptedObservedRoot error = %v", err)
+	}
+	if rootErr.CandidateRecorded {
+		t.Fatalf("unaccepted root state = %#v", rootErr)
+	}
+	if len(policy.observed) != 1 {
+		t.Fatalf("observations = %#v", policy.observed)
+	}
+	observation := policy.observed[0]
+	if observation.alias != "backup:bucket-one:main" || observation.source != "dataset:bucket-one" ||
+		observation.datasetID != "bucket-one" || observation.branch != "main" ||
+		observation.commitID != "commit-seven" || !observation.root.Equals(remoteRoot) || observation.revision != 7 {
+		t.Fatalf("recorded observation = %#v", observation)
+	}
+}
+
+func TestAcceptedObservedRootRejectsStaleObservationBeforeTrustSelection(t *testing.T) {
+	staleErr := errors.New("stale observation")
+	policy := &recordingPlanRootPolicy{accepted: cid.MustParse("bafkqaaa"), observeErr: staleErr}
+	service := &PlanService{
+		plan: Plan{ID: "plan-one", Name: "documents", BucketID: "bucket-one", Branch: "main"},
+		sync: &fakeSync{workspace: bucketsync.Workspace{
+			Remote: bucketsync.Head{CommitID: "commit-one", Root: "bafkqaaa", Revision: 1},
+		}},
+		roots: policy,
+	}
+	if _, err := service.acceptedObservedRoot(t.Context()); !errors.Is(err, staleErr) {
+		t.Fatalf("stale observation error = %v", err)
+	}
 }
 
 type inspectingPlanMaterializer struct {

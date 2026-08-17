@@ -7,6 +7,7 @@ import (
 
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
+	truststore "github.com/dewebprotocol/malt-client/trust"
 )
 
 func TestPrepareSyncRetryAcceptsEveryObservedPlanRootInOneRound(t *testing.T) {
@@ -33,11 +34,21 @@ func TestPrepareSyncRetryAcceptsEveryObservedPlanRootInOneRound(t *testing.T) {
 	defer func() { cfgFile = previousConfig }()
 
 	observedRoot := mustParseCID(t, "bafkqaaa").String()
+	store, _, err := openTrustStore()
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := &clientbackup.BatchResult{Operation: "sync"}
 	for index := 0; index < 5; index++ {
+		alias := fmt.Sprintf("backup:bucket-%d:main", index)
+		if _, err := store.ObserveHead(alias, truststore.ObservedHead{
+			Source: cfg.GatewayBaseURL(), DatasetID: fmt.Sprintf("bucket-%d", index), Branch: "main",
+			CommitID: fmt.Sprintf("commit-%d", index), Root: observedRoot, Revision: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
 		result.Failures = append(result.Failures, clientbackup.PlanFailure{
-			PlanName:     fmt.Sprintf("plan-%d", index),
-			TrustAlias:   fmt.Sprintf("backup:bucket-%d:main", index),
+			PlanName: fmt.Sprintf("plan-%d", index), TrustAlias: alias,
 			ObservedRoot: observedRoot,
 		})
 	}
@@ -52,10 +63,6 @@ func TestPrepareSyncRetryAcceptsEveryObservedPlanRootInOneRound(t *testing.T) {
 	}
 	if !retry || confirmations != len(result.Failures) {
 		t.Fatalf("retry=%v confirmations=%d, want true/%d", retry, confirmations, len(result.Failures))
-	}
-	store, _, err := openTrustStore()
-	if err != nil {
-		t.Fatal(err)
 	}
 	records, err := store.List()
 	if err != nil {

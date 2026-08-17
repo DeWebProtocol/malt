@@ -202,6 +202,41 @@ func TestUnixFSUseCaseRejectsCrossRootWriterSplice(t *testing.T) {
 	}
 }
 
+func TestRootsKeepsRemoteObservationOutOfCandidateSelection(t *testing.T) {
+	accepted := testCID(t, "accepted-observation-base")
+	observed := testCID(t, "observed-remote-head")
+	store, err := trust.Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust("docs", accepted.String(), "unixfs", "", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := application.NewRoots(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := roots.ObserveHead("docs", "peer:device-two", "dataset-one", "main", "commit-two", observed, 2); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := roots.LookupAlias("docs")
+	if err != nil || !selected.Root.Equals(accepted) {
+		t.Fatalf("observation changed accepted selection: %#v err=%v", selected, err)
+	}
+	state, err := roots.GetState("docs")
+	if err != nil || state.Accepted == nil || !cid.MustParse(state.Accepted.Root).Equals(accepted) ||
+		len(state.Candidates) != 0 || len(state.ObservedHeads) != 1 || state.ObservedHeads[0].Root != observed.String() {
+		t.Fatalf("explicit root state = %#v err=%v", state, err)
+	}
+	if _, err := roots.AcceptCandidate("docs", observed, "wrong-path"); err == nil {
+		t.Fatal("candidate acceptance accepted a remote observation")
+	}
+	record, err := roots.AcceptObserved("docs", observed, "unixfs", "", "manual-observation")
+	if err != nil || record.AcceptedRoot != observed.String() {
+		t.Fatalf("explicit observation acceptance record=%#v err=%v", record, err)
+	}
+}
+
 type fakeMerkleDAG struct {
 	root     cid.Cid
 	segments []string

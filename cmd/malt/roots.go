@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var rootGroupCmd = &cobra.Command{Use: "root", Short: "Manage locally accepted and candidate roots"}
+var rootGroupCmd = &cobra.Command{Use: "root", Short: "Manage observed, candidate, and accepted roots"}
 
 var rootTrustCmd = &cobra.Command{
 	Use:   "trust <alias> <root>",
@@ -57,6 +57,36 @@ var rootListCmd = &cobra.Command{
 	},
 }
 
+var rootStateCmd = &cobra.Command{
+	Use:   "state [alias]",
+	Short: "Inspect explicit observed, candidate, and accepted root states",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		store, _, err := openTrustStore()
+		if err != nil {
+			return err
+		}
+		app, err := application.NewRoots(store)
+		if err != nil {
+			return err
+		}
+		if len(args) == 1 {
+			state, err := app.GetState(args[0])
+			if err != nil {
+				return err
+			}
+			printJSON(state)
+			return nil
+		}
+		states, err := app.ListStates()
+		if err != nil {
+			return err
+		}
+		printJSON(map[string]any{"states": states})
+		return nil
+	},
+}
+
 var rootAcceptCmd = &cobra.Command{
 	Use:   "accept <alias> <candidate-root>",
 	Short: "Explicitly promote a recorded candidate root",
@@ -83,9 +113,39 @@ var rootAcceptCmd = &cobra.Command{
 	},
 }
 
+var rootAcceptObservedCmd = &cobra.Command{
+	Use:   "accept-observed <alias> <observed-root>",
+	Short: "Explicitly accept a recorded remote head observation",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		store, cfg, err := openTrustStore()
+		if err != nil {
+			return err
+		}
+		roots, err := application.NewRoots(store)
+		if err != nil {
+			return err
+		}
+		observed, err := cid.Parse(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid observed root: %w", err)
+		}
+		profile, _ := cmd.Flags().GetString("profile")
+		record, err := roots.AcceptObserved(
+			args[0], observed, profile, cfg.GatewayBaseURL(), "explicit-cli-observation-acceptance",
+		)
+		if err != nil {
+			return err
+		}
+		printJSON(record)
+		return nil
+	},
+}
+
 func init() {
 	rootTrustCmd.Flags().String("profile", "unixfs", "application profile associated with the root")
-	rootGroupCmd.AddCommand(rootTrustCmd, rootListCmd, rootAcceptCmd)
+	rootAcceptObservedCmd.Flags().String("profile", "unixfs", "application profile associated with the root")
+	rootGroupCmd.AddCommand(rootTrustCmd, rootListCmd, rootStateCmd, rootAcceptCmd, rootAcceptObservedCmd)
 	rootCmd.AddCommand(rootGroupCmd)
 }
 

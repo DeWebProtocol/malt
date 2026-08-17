@@ -105,6 +105,51 @@ func TestLocalAPIKeepsCandidateSeparate(t *testing.T) {
 	}
 }
 
+func TestLocalAPIAcceptsOnlyRecordedObservationThroughObservationRoute(t *testing.T) {
+	store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+	if _, err := store.ObserveHead("docs", truststore.ObservedHead{
+		Source: "https://gateway.example", DatasetID: "bucket-one", Branch: "main",
+		CommitID: "commit-one", Root: root, Revision: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateRequest := httptest.NewRequest(http.MethodPost, "/v1/roots/docs/candidates/"+root+"/accept", nil)
+	candidateResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(candidateResponse, candidateRequest)
+	if candidateResponse.Code != http.StatusNotFound {
+		t.Fatalf("candidate acceptance of observation status=%d body=%s", candidateResponse.Code, candidateResponse.Body.String())
+	}
+	request := httptest.NewRequest(
+		http.MethodPost, "/v1/roots/docs/observations/"+root+"/accept",
+		strings.NewReader(`{"profile":"unixfs","gateway":"https://gateway.example","source":"explicit-local-test"}`),
+	)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("observation acceptance status=%d body=%s", response.Code, response.Body.String())
+	}
+	record, err := store.Get("docs")
+	state, stateErr := store.GetState("docs")
+	if err != nil || stateErr != nil || record.AcceptedRoot != root || len(record.Candidates) != 0 || len(state.ObservedHeads) != 1 {
+		t.Fatalf("accepted observation record=%#v state=%#v err=%v stateErr=%v", record, state, err, stateErr)
+	}
+	stateRequest := httptest.NewRequest(http.MethodGet, "/v1/trust-states/docs", nil)
+	stateResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(stateResponse, stateRequest)
+	if stateResponse.Code != http.StatusOK || !strings.Contains(stateResponse.Body.String(), `"observed_heads"`) ||
+		!strings.Contains(stateResponse.Body.String(), `"accepted"`) {
+		t.Fatalf("structured trust-state status=%d body=%s", stateResponse.Code, stateResponse.Body.String())
+	}
+}
+
 func TestPlanControlPlaneMatchesDirectApplicationRunner(t *testing.T) {
 	for _, test := range []struct {
 		name      string
