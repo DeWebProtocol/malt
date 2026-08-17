@@ -60,6 +60,11 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   receive only a read-only filesystem already bound to a locally selected
   View; they must not resolve trust aliases, observe heads, or call transports
   directly.
+- `filesystem/platform/fuse` is the outermost Linux syscall adapter. It may
+  import go-fuse and `filesystem/mount`, but not trust, transport, cache,
+  application, or Gateway packages. Recovery unmount must verify the exact
+  MALT-owned mount identity, remain usable for disconnected FUSE roots, and
+  refuse foreign or ambiguous stacked filesystems.
 - `application/` owns reusable accepted-root selection, observation/candidate recording,
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends

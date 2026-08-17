@@ -375,7 +375,27 @@ Platform adapters receive only a View-bound `ReadOnlyFilesystem`; they cannot
 select roots or access transport.
 The private daemon API exposes the same manager at `GET/POST /v1/mounts` and
 `DELETE /v1/mounts/{id}` when a manager is configured. No concrete FUSE or
-WinFsp adapter is claimed by this step.
+WinFsp adapter is claimed by this lifecycle step.
+
+Package `filesystem/platform/fuse` provides the first concrete outer adapter
+on Linux, pinned to `github.com/hanwen/go-fuse/v2 v2.11.0`. It maps stat,
+lookup, readdir, open, and range reads onto the View-bound read-only port,
+returns `EROFS` for namespace, data, xattr, and metadata mutation, refuses
+nonempty or symlinked mountpoints, and sets a per-mount `malt:<mount-id>` source
+identity. Crash recovery parses exact `/proc/self/mountinfo` entries without
+touching a possibly disconnected final FUSE root. If mounts are stacked, it
+uses `/proc/self/fdinfo` to select the currently visible mount and otherwise
+fails closed. `fusermount` runs only when both the FUSE type and exact MALT
+source match. Unit tests exercise syscall mapping without a kernel mount, while
+the following opt-in test performs a real read-only mount when the host has
+FUSE:
+
+```sh
+MALT_FUSE_SMOKE=1 go test -run TestLinuxFUSESmoke ./filesystem/platform/fuse
+```
+
+The adapter is not yet composed into daemon startup or CLI commands, and no
+WinFsp implementation is claimed.
 
 ## Merkle DAG compatibility
 

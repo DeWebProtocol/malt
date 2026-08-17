@@ -24,6 +24,7 @@ func TestPackageBoundaries(t *testing.T) {
 		{path: "journal", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-core"}},
 		{path: "unixfs", banned: []string{"github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/merkledag"}},
 		{path: "filesystem", banned: []string{"net/http", "github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust"}},
+		{path: "filesystem/platform/fuse", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/cache", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust"}},
 		{path: "merkledag", banned: []string{"github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-core/auth/proof", "github.com/dewebprotocol/malt-core/protocol"}},
 		{path: "application", banned: []string{"github.com/dewebprotocol/malt-client/transport", "github.com/spf13/cobra"}},
 	}
