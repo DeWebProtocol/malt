@@ -29,10 +29,12 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 
 ## Package Ownership
 
-- `transport/` is an untrusted HTTP capability layer. It may expose native
-  MALT, mutation, CAS, and diagnostic ports, but it must not import `trust`,
-  `unixfs`, or `merkledag`. Do not expose evaluation instance credentials,
-  bootstrap controls, unchecked raw-CAS reads, or selective-CAR routes here.
+- `transport/capability` owns URL-free, route-free, trust-free semantic ports
+  and untrusted dataset/mutation results shared by Gateway, local, peer, and
+  hybrid implementations. The root `transport` package is the current Gateway
+  HTTP adapter plus compatibility DTOs. Neither may import `trust`, `unixfs`,
+  or `merkledag`. Do not expose evaluation instance credentials, bootstrap
+  controls, unchecked raw-CAS reads, or selective-CAR routes here.
 - `trust/` is the only package that persists accepted/candidate roots or
   promotes a candidate. It must not depend on network or application packages.
 - `application/` owns reusable accepted-root selection, candidate recording,
@@ -42,13 +44,18 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 - `application/backup.BatchRunner` owns plan selection, batch execution, and
   typed partial-failure aggregation. Foreground, daemon, and scheduled adapters
   must use that same runner contract.
+- `bucketsync` production synchronization uses
+  `transport/capability.DatasetBranch`; its concrete Gateway DTO adapter lives
+  only in `gateway_compat.go` for the pre-release compatibility window.
 - `internal/runtime` is the process-independent composition root. It may bind
   concrete local configuration, transport, trust, keyring, synchronization,
   and UnixFS capabilities into application services; command handlers must not
   duplicate that composition.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
-  behavior here rather than under `cmd/malt`.
+  behavior here rather than under `cmd/malt`. Its semantic mutation adapter
+  consumes `transport/capability.Mutations`; only `gateway_compat.go` may
+  import legacy Gateway mutation DTOs during the compatibility window.
 - `merkledag/` owns the compatibility adapter and local CID/link-evidence
   replay; `merkledag/importer` owns import construction. Do not represent this
   evidence as a MALT ProofList.

@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
@@ -10,26 +11,27 @@ import (
 
 // Native is the untrusted transport for MALT resolve/read contracts. A caller
 // must verify every returned result against the original caller-selected root.
-type Native interface {
-	Resolve(context.Context, protocol.ResolveRequest) (*protocol.ResolveResult, error)
-	Read(context.Context, protocol.ReadRequest) (*protocol.ReadResult, error)
-}
+type Native = transportcap.Native
 
-// Mutations is the untrusted writer transport. Returned roots are candidates,
-// never accepted roots.
-type Mutations interface {
+// GatewayMutations is the compatibility HTTP-DTO writer surface. New
+// application code should depend on capability.Mutations (also exported here
+// as SemanticMutations).
+type GatewayMutations interface {
 	ApplyRootSemanticMutation(context.Context, string, *SemanticMutationRequest) (*SemanticMutationResponse, error)
 	CreateRootStructure(context.Context, map[string]string) (*CreateStructureResponse, error)
 }
 
+// Deprecated: use SemanticMutations.
+type Mutations = GatewayMutations
+
 // CAS is the immutable byte transport. Implementations bind response bytes to
 // requested or returned CIDs before exposing them.
-type CAS interface {
-	Put(context.Context, []byte) (cid.Cid, error)
-	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
-	Get(context.Context, cid.Cid) ([]byte, error)
-	Has(context.Context, cid.Cid) (bool, error)
-}
+type CAS = transportcap.CAS
+
+// SemanticMutations and DatasetBranch are transport-neutral capability aliases
+// implemented by the Gateway HTTP Client and future local/peer transports.
+type SemanticMutations = transportcap.Mutations
+type DatasetBranch = transportcap.DatasetBranch
 
 // Diagnostics exposes operator measurements only. It is never part of a
 // client trust decision.
@@ -56,7 +58,7 @@ type ClientRoot interface {
 
 var (
 	_ Native           = (*Client)(nil)
-	_ Mutations        = (*Client)(nil)
+	_ GatewayMutations = (*Client)(nil)
 	_ CAS              = (*Client)(nil)
 	_ Diagnostics      = (*Client)(nil)
 	_ MerkleDAGProfile = (*Client)(nil)

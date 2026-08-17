@@ -132,6 +132,51 @@ func TestBackupPlanCompositionLivesOutsideCommandHandlers(t *testing.T) {
 	})
 }
 
+func TestSemanticTransportCapabilitiesExcludeGatewayAndTrustDependencies(t *testing.T) {
+	root := moduleRoot(t)
+	checkExactImports(t, filepath.Join(root, "transport", "capability"), []string{
+		"net/http",
+		"net/url",
+		"github.com/dewebprotocol/malt-client/transport",
+		"github.com/dewebprotocol/malt-client/application",
+		"github.com/dewebprotocol/malt-client/trust",
+		"github.com/dewebprotocol/malt-client/unixfs",
+	})
+	checkExactImports(t, filepath.Join(root, "bucketsync", "service.go"), []string{
+		"github.com/dewebprotocol/malt-client/transport",
+	})
+	checkExactImports(t, filepath.Join(root, "unixfs", "gateway_adapter.go"), []string{
+		"github.com/dewebprotocol/malt-client/transport",
+	})
+	checkSourceTokens(t, filepath.Join(root, "application", "add"), []string{
+		"gateway client is required",
+	})
+}
+
+func TestConcreteGatewayDTOImportsRemainCompatibilityOnly(t *testing.T) {
+	root := moduleRoot(t)
+	want := map[string]struct{}{
+		filepath.Join("bucketsync", "gateway_compat.go"): {},
+		filepath.Join("unixfs", "gateway_compat.go"):     {},
+	}
+	for _, directory := range []string{"bucketsync", "unixfs"} {
+		for _, importer := range exactImporters(t, filepath.Join(root, directory), "github.com/dewebprotocol/malt-client/transport") {
+			relative, err := filepath.Rel(root, importer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := want[relative]; !ok {
+				t.Errorf("%s imports concrete Gateway DTOs outside a compatibility adapter", relative)
+				continue
+			}
+			delete(want, relative)
+		}
+	}
+	for missing := range want {
+		t.Errorf("expected compatibility adapter %s does not import the concrete Gateway transport", missing)
+	}
+}
+
 func checkSourceTokens(t *testing.T, root string, forbidden []string) {
 	t.Helper()
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -196,4 +241,68 @@ func checkImports(t *testing.T, root string, banned []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func checkExactImports(t *testing.T, root string, banned []string) {
+	t.Helper()
+	set := token.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(set, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, spec := range file.Imports {
+			value, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return err
+			}
+			for _, forbidden := range banned {
+				if value == forbidden {
+					t.Errorf("%s imports forbidden dependency %s", path, value)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exactImporters(t *testing.T, root, target string) []string {
+	t.Helper()
+	set := token.NewFileSet()
+	var result []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(set, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, spec := range file.Imports {
+			value, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return err
+			}
+			if value == target {
+				result = append(result, path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

@@ -32,42 +32,52 @@ type Options = addBuildOptions
 type IgnoreOptions = addIgnoreOptions
 type Result = addUnixFSResult
 
-// GraphGateway is the narrow native graph capability used by the add
+// GraphRemote is the narrow untrusted graph capability used by the add
 // materializer.
-type GraphGateway interface {
+type GraphRemote interface {
 	unixfs.Remote
 	unixfs.StagedRootCreator
 }
 
-// Gateway combines graph operations with the UnixFS-owned fixed-list writer.
+// Materializer combines graph operations with the UnixFS-owned fixed-list writer.
 // It has no concrete HTTP response types.
-type Gateway interface {
-	GraphGateway
+type Materializer interface {
+	GraphRemote
 	unixfs.FixedListPayloadWriter
 }
 
-type gateway struct {
-	GraphGateway
+type materializer struct {
+	GraphRemote
 	lists unixfs.FixedListPayloadWriter
 }
 
-// NewGateway composes a native graph port with the UnixFS fixed-list adapter.
-func NewGateway(graph GraphGateway, lists unixfs.FixedListPayloadWriter) (Gateway, error) {
+// NewMaterializer composes a native graph port with the UnixFS fixed-list adapter.
+func NewMaterializer(graph GraphRemote, lists unixfs.FixedListPayloadWriter) (Materializer, error) {
 	if graph == nil {
-		return nil, fmt.Errorf("add graph gateway is nil")
+		return nil, fmt.Errorf("add graph remote is nil")
 	}
 	if lists == nil {
 		return nil, fmt.Errorf("add fixed-list writer is nil")
 	}
-	return &gateway{GraphGateway: graph, lists: lists}, nil
+	return &materializer{GraphRemote: graph, lists: lists}, nil
 }
 
-func (g *gateway) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
+func (g *materializer) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
 	return g.lists.CreateFixedListBaseRoot(ctx)
 }
 
-func (g *gateway) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
+func (g *materializer) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
 	return g.lists.ApplyFixedListPayloadMutation(ctx, mut)
+}
+
+// Deprecated compatibility names. New code should use GraphRemote,
+// Materializer, and NewMaterializer.
+type GraphGateway = GraphRemote
+type Gateway = Materializer
+
+// Deprecated: use NewMaterializer.
+func NewGateway(graph GraphGateway, lists unixfs.FixedListPayloadWriter) (Gateway, error) {
+	return NewMaterializer(graph, lists)
 }
 
 // CAS is the immutable byte capability shared by MALT and Merkle DAG targets.
@@ -104,13 +114,13 @@ func NormalizeOptions(opts Options) (Options, error) {
 // Run stages local inputs, materializes the selected target, and records a
 // native MALT result as an unaccepted candidate when Alias is supplied. It
 // never promotes that candidate.
-func Run(ctx context.Context, roots *application.Roots, gateway Gateway, cas CAS, request Request) (*Execution, error) {
-	return run(ctx, roots, gateway, cas, request, addInputsWithUnixFS)
+func Run(ctx context.Context, roots *application.Roots, remote Materializer, cas CAS, request Request) (*Execution, error) {
+	return run(ctx, roots, remote, cas, request, addInputsWithUnixFS)
 }
 
-type materializeFunc func(context.Context, Gateway, addCASClient, []string, string, addBuildOptions) (*addUnixFSResult, error)
+type materializeFunc func(context.Context, Materializer, addCASClient, []string, string, addBuildOptions) (*addUnixFSResult, error)
 
-func run(ctx context.Context, roots *application.Roots, gateway Gateway, cas CAS, request Request, materialize materializeFunc) (*Execution, error) {
+func run(ctx context.Context, roots *application.Roots, remote Materializer, cas CAS, request Request, materialize materializeFunc) (*Execution, error) {
 	normalized, err := normalizeAddBuildOptions(request.Options)
 	if err != nil {
 		return nil, err
@@ -150,7 +160,7 @@ func run(ctx context.Context, roots *application.Roots, gateway Gateway, cas CAS
 		}
 	}
 
-	result, err := materialize(ctx, gateway, cas, request.Inputs, baseRoot, normalized)
+	result, err := materialize(ctx, remote, cas, request.Inputs, baseRoot, normalized)
 	if err != nil {
 		return nil, err
 	}

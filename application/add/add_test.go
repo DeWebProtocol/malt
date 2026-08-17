@@ -155,7 +155,7 @@ func TestBuildAddStagingTreeRejectsNonEmptyLossyPrefixAndWrapBeforeWrite(t *test
 				t.Fatalf("buildAddStagingTree accepted options %#v", opts)
 			}
 			if blocks.puts != 0 || remote.calls != 0 {
-				t.Fatalf("invalid options performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+				t.Fatalf("invalid options performed writes: CAS=%d remote=%d", blocks.puts, remote.calls)
 			}
 		})
 	}
@@ -171,7 +171,7 @@ func TestBuildAddStagingTreeRejectsWhitespaceNameCollisionBeforeWrite(t *testing
 		t.Fatal("buildAddStagingTree accepted lossy whitespace filenames")
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
-		t.Fatalf("invalid tree performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+		t.Fatalf("invalid tree performed writes: CAS=%d remote=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -184,7 +184,7 @@ func TestBuildAddStagingTreeRejectsWhitespacePrefixedReservedNameBeforeWrite(t *
 		t.Fatal("buildAddStagingTree accepted whitespace-prefixed @payload")
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
-		t.Fatalf("invalid tree performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+		t.Fatalf("invalid tree performed writes: CAS=%d remote=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -229,7 +229,7 @@ func TestBuildAddStagingTreePreflightsWholeTreeBeforeWrite(t *testing.T) {
 		t.Fatal("buildAddStagingTree accepted invalid later entry")
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
-		t.Fatalf("preflight allowed writes before later validation failure: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+		t.Fatalf("preflight allowed writes before later validation failure: CAS=%d remote=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -271,7 +271,7 @@ func TestBuildAddStagingTreePreflightsSymlinkDirectoryBeforeWrite(t *testing.T) 
 		t.Fatal("buildAddStagingTree accepted invalid entry inside symlink directory")
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
-		t.Fatalf("symlink preflight allowed writes before validation failure: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+		t.Fatalf("symlink preflight allowed writes before validation failure: CAS=%d remote=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -294,7 +294,7 @@ func TestBuildAddStagingTreeRejectsFlatDirectorySymlinkBeforeWrite(t *testing.T)
 		t.Fatal("flat-v1 accepted a directory symlink")
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
-		t.Fatalf("flat-v1 directory symlink performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+		t.Fatalf("flat-v1 directory symlink performed writes: CAS=%d remote=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -313,7 +313,7 @@ func TestBuildAddStagingTreePreflightsSymlinkCycleBeforeWrite(t *testing.T) {
 		t.Fatal("buildAddStagingTree accepted a symlink cycle")
 	}
 	if blocks.puts != 0 || remote.calls != 0 {
-		t.Fatalf("cycle preflight allowed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+		t.Fatalf("cycle preflight allowed writes: CAS=%d remote=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -353,7 +353,7 @@ func TestRunRecordsAliasResultAsCandidateWithoutAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	roots, _ := application.NewRoots(store)
-	materialize := func(_ context.Context, _ Gateway, _ addCASClient, _ []string, root string, _ addBuildOptions) (*addUnixFSResult, error) {
+	materialize := func(_ context.Context, _ Materializer, _ addCASClient, _ []string, root string, _ addBuildOptions) (*addUnixFSResult, error) {
 		if root != accepted.String() {
 			t.Fatalf("materializer root = %s, want %s", root, accepted)
 		}
@@ -389,7 +389,7 @@ func TestRunTreatsCIDShapedAliasAsAliasAndRecordsCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	materialize := func(_ context.Context, _ Gateway, _ addCASClient, _ []string, root string, _ addBuildOptions) (*addUnixFSResult, error) {
+	materialize := func(_ context.Context, _ Materializer, _ addCASClient, _ []string, root string, _ addBuildOptions) (*addUnixFSResult, error) {
 		if root != accepted.String() {
 			t.Fatalf("materializer root = %s, want alias's accepted root %s", root, accepted)
 		}

@@ -42,7 +42,7 @@ func newUnixFSReader(remote *client.Client) (unixfs.Reader, error) {
 }
 
 func newUnixFSWriter(remote *client.Client, kind unixfs.LayoutKind) (unixfs.Writer, error) {
-	lists, err := unixfs.NewGatewayMutationAdapter(remote)
+	lists, err := unixfs.NewMutationAdapter(remote)
 	if err != nil {
 		return nil, err
 	}

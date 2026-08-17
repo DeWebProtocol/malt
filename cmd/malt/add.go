@@ -101,17 +101,17 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var remote *gatewayclient.Client
-	var addGateway clientadd.Gateway
+	var materializer clientadd.Materializer
 	if opts.Target == clientadd.TargetMALT {
 		remote, err = gatewayClient()
 		if err != nil {
 			return err
 		}
-		lists, err := unixfs.NewGatewayMutationAdapter(remote)
+		lists, err := unixfs.NewMutationAdapter(remote)
 		if err != nil {
 			return err
 		}
-		addGateway, err = clientadd.NewGateway(remote, lists)
+		materializer, err = clientadd.NewMaterializer(remote, lists)
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
-	execution, err := clientadd.Run(ctx, roots, addGateway, casClient, clientadd.Request{
+	execution, err := clientadd.Run(ctx, roots, materializer, casClient, clientadd.Request{
 		Inputs:  args,
 		Root:    addRootFlag,
 		Alias:   addAliasFlag,

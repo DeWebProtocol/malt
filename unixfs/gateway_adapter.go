@@ -4,81 +4,65 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt-client/transport"
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	"github.com/dewebprotocol/malt-core/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
-// GatewayMutationRemote is the untrusted gateway capability consumed by the
-// UnixFS application adapter. Concrete HTTP response types remain private to
-// this adapter and never cross the UnixFS application boundary.
-type GatewayMutationRemote interface {
-	ApplySemanticMutation(context.Context, mutation.SemanticMutation) (*transport.SemanticMutationResponse, error)
-	CreateRootStructure(context.Context, map[string]string) (*transport.CreateStructureResponse, error)
-}
+// MutationRemote is the untrusted semantic writer capability consumed by the
+// UnixFS application adapter. It contains no HTTP or Gateway response DTOs.
+type MutationRemote = transportcap.Mutations
 
 const (
 	payloadArc       = "@payload"
 	emptyPayloadRoot = "bafkqaaa"
 )
 
-// GatewayMutationAdapter translates generic gateway mutation receipts into
+// MutationAdapter translates transport-neutral mutation results into
 // UnixFS-owned candidate-root values and fixed-list writer operations.
-type GatewayMutationAdapter struct {
-	remote GatewayMutationRemote
+type MutationAdapter struct {
+	remote MutationRemote
 }
 
-func NewGatewayMutationAdapter(remote GatewayMutationRemote) (*GatewayMutationAdapter, error) {
+func NewMutationAdapter(remote MutationRemote) (*MutationAdapter, error) {
 	if remote == nil {
-		return nil, fmt.Errorf("unixfs gateway mutation remote is nil")
+		return nil, fmt.Errorf("unixfs mutation remote is nil")
 	}
-	return &GatewayMutationAdapter{remote: remote}, nil
+	return &MutationAdapter{remote: remote}, nil
 }
 
-func (a *GatewayMutationAdapter) ApplySemanticMutation(ctx context.Context, mut mutation.SemanticMutation) (CandidateRootReceipt, error) {
+func (a *MutationAdapter) ApplySemanticMutation(ctx context.Context, mut mutation.SemanticMutation) (CandidateRootReceipt, error) {
 	if a == nil || a.remote == nil {
-		return CandidateRootReceipt{}, fmt.Errorf("unixfs gateway mutation adapter is nil")
+		return CandidateRootReceipt{}, fmt.Errorf("unixfs mutation adapter is nil")
 	}
-	response, err := a.remote.ApplySemanticMutation(ctx, mut)
+	response, err := a.remote.ApplyMutation(ctx, mut)
 	if err != nil {
 		return CandidateRootReceipt{}, err
 	}
-	if response == nil {
-		return CandidateRootReceipt{}, fmt.Errorf("gateway returned a nil semantic mutation receipt")
+	if !response.BaseRoot.Equals(mut.BaseRoot) {
+		return CandidateRootReceipt{}, fmt.Errorf("remote mutation result base root does not match the requested mutation")
 	}
-	base, err := cid.Parse(response.BaseRoot)
-	if err != nil {
-		return CandidateRootReceipt{}, fmt.Errorf("decode gateway mutation base root: %w", err)
+	if !response.CandidateRoot.Defined() {
+		return CandidateRootReceipt{}, fmt.Errorf("remote mutation candidate root is undefined")
 	}
-	if !base.Equals(mut.BaseRoot) {
-		return CandidateRootReceipt{}, fmt.Errorf("gateway mutation receipt base root does not match the requested mutation")
-	}
-	candidate, err := cid.Parse(response.NewRoot)
-	if err != nil {
-		return CandidateRootReceipt{}, fmt.Errorf("decode gateway candidate root: %w", err)
-	}
-	return CandidateRootReceipt{BaseRoot: base, CandidateRoot: candidate, Accepted: false}, nil
+	return CandidateRootReceipt{BaseRoot: response.BaseRoot, CandidateRoot: response.CandidateRoot, Accepted: false}, nil
 }
 
-func (a *GatewayMutationAdapter) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
+func (a *MutationAdapter) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
 	if a == nil || a.remote == nil {
-		return cid.Undef, fmt.Errorf("unixfs gateway mutation adapter is nil")
+		return cid.Undef, fmt.Errorf("unixfs mutation adapter is nil")
 	}
-	response, err := a.remote.CreateRootStructure(ctx, map[string]string{payloadArc: emptyPayloadRoot})
+	root, err := a.remote.CreateStructureCandidate(ctx, map[string]string{payloadArc: emptyPayloadRoot})
 	if err != nil {
 		return cid.Undef, err
 	}
-	if response == nil {
-		return cid.Undef, fmt.Errorf("gateway returned a nil fixed-list base-root receipt")
-	}
-	root, err := cid.Parse(response.Root)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode fixed-list base root: %w", err)
+	if !root.Defined() {
+		return cid.Undef, fmt.Errorf("remote fixed-list base-root candidate is undefined")
 	}
 	return root, nil
 }
 
-func (a *GatewayMutationAdapter) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
+func (a *MutationAdapter) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
 	receipt, err := a.ApplySemanticMutation(ctx, mut)
 	if err != nil {
 		return cid.Undef, err
@@ -86,5 +70,5 @@ func (a *GatewayMutationAdapter) ApplyFixedListPayloadMutation(ctx context.Conte
 	return receipt.CandidateRoot, nil
 }
 
-var _ MutationTransport = (*GatewayMutationAdapter)(nil)
-var _ FixedListPayloadWriter = (*GatewayMutationAdapter)(nil)
+var _ MutationTransport = (*MutationAdapter)(nil)
+var _ FixedListPayloadWriter = (*MutationAdapter)(nil)

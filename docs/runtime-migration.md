@@ -43,6 +43,9 @@ cmd/malt and internal/daemon
     trust          unixfs          bucketsync
                       \               /
                        v             v
+                  transport/capability
+                              ^
+                              |
                     transport.Client (Gateway HTTP)
                               |
                               v
@@ -59,6 +62,9 @@ Current boundary strengths:
 - `trust` alone persists accepted/candidate roots and requires explicit
   promotion.
 - `transport` does not import `application`, `trust`, or `unixfs`.
+- `transport/capability` contains no HTTP, URL, account, trust, or Gateway DTO;
+  Gateway HTTP is one adapter implementing the same Native, CAS, Mutations, and
+  DatasetBranch ports reserved for local, peer, and hybrid implementations.
 - `unixfs` verifies ProofLists, resolve-to-read continuity, payload CIDs, and
   range bodies before exposing bytes.
 - Bucket workspaces separately persist base, observed remote head, and local
@@ -71,11 +77,9 @@ Current boundary strengths:
 
 Current implementation gaps that still encode concrete Gateway coupling:
 
-- `transport.Client` owns semantic capabilities and concrete Gateway routes in
-  one package; Bucket synchronization values also reference Gateway response
-  DTOs.
-- `application/add` names its semantic graph capability `Gateway`, and the
-  native add workflow reports that a "gateway client" is required.
+- The root `transport.Client` still owns all concrete Gateway HTTP routes in
+  one package; it now implements transport-neutral ports, but the concrete
+  adapter has not yet moved under `transport/gateway`.
 - `cmd/malt/content.go` and `cmd/malt/add.go` still directly compose concrete
   Gateway clients and UnixFS adapters. Backup/sync plan composition has moved
   to `internal/runtime`, but the remaining use cases still need the same
@@ -164,14 +168,14 @@ records.
 
 ### Transport capability boundary
 
-Gateway, local, peer, and hybrid transports implement the same semantic ports:
+Gateway, local, peer, and hybrid transports implement the same semantic ports
+now defined in `transport/capability`:
 
 ```go
-type Resolver interface { Resolve(context.Context, protocol.ResolveRequest) (*protocol.ResolveResult, error) }
-type Reader interface { Read(context.Context, protocol.ReadRequest) (*protocol.ReadResult, error) }
-type Blocks interface { Get(context.Context, cid.Cid) ([]byte, error); Put(context.Context, []byte) (cid.Cid, error) }
-type Mutator interface { Apply(context.Context, mutation.SemanticMutation) (UntrustedApplyResult, error) }
-type Heads interface { Observe(context.Context, DatasetRef) (ObservedHead, error) }
+type Native interface { Resolve(context.Context, protocol.ResolveRequest) (*protocol.ResolveResult, error); Read(context.Context, protocol.ReadRequest) (*protocol.ReadResult, error) }
+type CAS interface { Get(context.Context, cid.Cid) ([]byte, error); Put(context.Context, []byte) (cid.Cid, error) }
+type Mutations interface { ApplyMutation(context.Context, mutation.SemanticMutation) (MutationResult, error) }
+type DatasetBranch interface { DatasetBinding() DatasetBinding; ObserveHead(context.Context) (*ObservedHead, error); ApplyCandidate(context.Context, ApplyRequest) (*ApplyResult, error) }
 ```
 
 The exact interfaces may stay split more narrowly than this sketch. They must
@@ -245,7 +249,7 @@ choice and does not define network topology.
 | 1 | Product language plus `malt-core v0.0.7` migration across imports, docs, architecture tests, and `go.mod` | import namespace only | no | missed old import/provenance | full Go test/vet/build, Windows build, downstream E2E | revert one namespace commit; old Core release remains available |
 | 2 | **Completed 2026-08-17:** after every Core consumer migrated, rename repository to `malt`, update links/badges/CI, keep the old Go module path, and add a compatibility notice before runtime architecture refactors begin | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
 | 3 | **Completed 2026-08-17:** move backup/sync composition into `internal/runtime.Services` and plan batch orchestration into `application/backup.BatchRunner`; foreground, daemon IPC, and scheduler use the same application contract | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven batch semantics, direct-vs-daemon adapter equivalence, current CLI tests | revert command call sites and the two additive services; persisted state is unchanged |
-| 4 | Rename semantic `Gateway` ports and split Gateway HTTP DTOs from transport-neutral dataset/head/mutation capabilities | pre-v1 interface rename | no | accidental trust mutation or route leakage | mock capability contract tests and architecture import tests | retain compatibility type aliases for one PR if needed |
+| 4 | **Completed 2026-08-17:** define URL-free `transport/capability` Native/CAS/Mutations/DatasetBranch ports, adapt Gateway HTTP into typed untrusted values, move Bucket sync and UnixFS mutation consumers off concrete DTOs, and retain deprecated pre-release aliases | additive ports plus pre-v1 `PushOutcome.Result` type rename; deprecated constructors retained | no; persisted JSON tags unchanged | accidental trust mutation, request mismatch, or route leakage | binding/request/result adversarial contracts, Gateway adapter tests, JSON-field compatibility, architecture imports | select the deprecated Gateway adapters; no persisted-state migration is required |
 | 5 | Make trust observations, candidates, and accepted roots explicit persisted types; forbid transport imports | additive state migration | no | state loss or implicit promotion | migration fixtures, stale-head and malicious-result tests, crash/restart tests | dual-read old state with write-new; restore prior state file |
 | 6 | Introduce verified cache metadata and operation journal without mounting | new internal APIs | no | treating cache as authority | corruption, stale-version, wrong-epoch, dirty/pending state tests | disable cache/journal feature flag; remote verified path remains |
 | 7 | Add platform-neutral read-only filesystem service over UnixFS and mock transport | new experimental API | no | unverified bytes escape | stat/readdir/open/read/range/cache-hit adversarial contract tests | service is additive and can be disabled |

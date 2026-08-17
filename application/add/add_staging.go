@@ -113,7 +113,7 @@ func stagedPathFromRelative(base, relative string) (string, error) {
 	return target, nil
 }
 
-func materializeSymlinkDirectoryBoundary(ctx context.Context, remote Gateway, casClient addCASClient, localPath string, seen map[string]struct{}) (cid.Cid, int, int64, *addMaterializeResult, int, error) {
+func materializeSymlinkDirectoryBoundary(ctx context.Context, remote Materializer, casClient addCASClient, localPath string, seen map[string]struct{}) (cid.Cid, int, int64, *addMaterializeResult, int, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return cid.Undef, 0, 0, nil, 0, fmt.Errorf("stat symlink directory %s: %w", localPath, err)
@@ -141,7 +141,7 @@ func materializeSymlinkDirectoryBoundary(ctx context.Context, remote Gateway, ca
 	return mat.Key, files, bytesUploaded, mat, nestedSymlinks, nil
 }
 
-func stageHierarchicalDirectoryChildren(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Gateway, localDir string, mountBase string, seen map[string]struct{}) (int, int64, int, *addMaterializeResult, int, error) {
+func stageHierarchicalDirectoryChildren(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Materializer, localDir string, mountBase string, seen map[string]struct{}) (int, int64, int, *addMaterializeResult, int, error) {
 	cycleKey, err := filepath.EvalSymlinks(localDir)
 	if err != nil {
 		cycleKey, err = filepath.Abs(localDir)
@@ -232,7 +232,7 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *unixfs.Staged
 	return files, bytesUploaded, listObjects, nestedMat, symlinkRoots, nil
 }
 
-func buildAddStagingTree(ctx context.Context, casClient addCASClient, remote Gateway, rawInputs []string, opts addBuildOptions) (*addBuildResult, error) {
+func buildAddStagingTree(ctx context.Context, casClient addCASClient, remote Materializer, rawInputs []string, opts addBuildOptions) (*addBuildResult, error) {
 	inputs, err := collectAddInputs(rawInputs)
 	if err != nil {
 		return nil, err
@@ -591,7 +591,7 @@ func preflightHierarchicalDirectory(localDir, mountBase string, seen map[string]
 	return nil
 }
 
-func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Gateway, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, int, *addMaterializeResult, int, error) {
+func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Materializer, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, int, *addMaterializeResult, int, error) {
 	mountBase := item.MountBase
 	unixfs.EnsureStagedDirectory(root, mountBase)
 	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
@@ -707,7 +707,7 @@ func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient
 	return files, bytesUploaded, listObjects, symlinkMat, symlinkRoots, nil
 }
 
-func stageSingleFile(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Gateway, localPath string, targetPath string) (int64, int, error) {
+func stageSingleFile(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Materializer, localPath string, targetPath string) (int64, int, error) {
 	if err := validateStagedPath(targetPath); err != nil {
 		return 0, 0, fmt.Errorf("invalid target path %q: %w", targetPath, err)
 	}

@@ -12,6 +12,11 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
+func TestAddPlanMaterializerLegacyUnkeyedLiteralRemainsSourceCompatible(t *testing.T) {
+	var _ PlanMaterializer = AddPlanMaterializer{nil, nil}
+	_ = NewAddPlanMaterializer(nil, nil)
+}
+
 type inspectingPlanMaterializer struct {
 	key      [32]byte
 	branch   string

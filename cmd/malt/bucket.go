@@ -228,7 +228,7 @@ func bucketSyncService() (*bucketsync.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return bucketsync.Open(cfg.Workspace.StatePath, gateway, cfg.Gateway.Bucket)
+	return bucketsync.OpenRemote(cfg.Workspace.StatePath, gateway, cfg.Gateway.Bucket)
 }
 
 // prepareBucketCandidate captures the Bucket base before candidate
@@ -253,7 +253,7 @@ func prepareBucketCandidate(
 	if err != nil {
 		return nil, bucketsync.Head{}, "", fmt.Errorf("decode selected Bucket layout: %w", err)
 	}
-	syncer, err := bucketsync.Open(cfg.Workspace.StatePath, remote, remote.SelectedBucket())
+	syncer, err := bucketsync.OpenRemote(cfg.Workspace.StatePath, remote, remote.SelectedBucket())
 	if err != nil {
 		return nil, bucketsync.Head{}, "", err
 	}

@@ -7,6 +7,33 @@ MALT protocol and ProofList schemas remain defined by the MALT Core repository.
 
 ## Public gateway transport
 
+Transport-neutral ports live in
+`github.com/dewebprotocol/malt-client/transport/capability`. They identify a
+logical dataset and branch without a URL and return explicitly untrusted typed
+values:
+
+```go
+var native capability.Native = remote
+var blocks capability.CAS = remote
+var mutations capability.Mutations = remote
+var dataset capability.DatasetBranch = remote
+
+binding := dataset.DatasetBinding()
+observed, err := dataset.ObserveHead(ctx)
+result, err := dataset.ApplyCandidate(ctx, capability.ApplyRequest{
+    OperationID: "device-operation-id",
+    BaseCommit: observed.CommitID, BaseRoot: observed.Root,
+    BaseRevision: observed.Revision, CandidateRoot: candidate.String(),
+})
+```
+
+These interfaces contain no HTTP route, URL, account DTO, or trust-store
+method. `MutationResult`, `ObservedHead`, and `ApplyResult` cannot promote an
+accepted root. `ValidateBinding`, `NormalizeApplyRequest`, and
+`ValidateApplyResult` fail closed before or after an untrusted implementation.
+
+The root `transport` package is currently the managed Gateway HTTP adapter.
+
 Import `github.com/dewebprotocol/malt-client/transport` and construct a validated
 transport:
 
@@ -84,9 +111,13 @@ requests to another URL.
 No exported signature contains a type from `internal/`.
 
 Package `bucketsync` provides the durable runtime workflow used by the CLI.
+New code constructs it with `OpenRemote` or `OpenRemoteBranch` and a
+`capability.DatasetBranch`. The former `Open`/`OpenBranch` Gateway-DTO surface
+is retained as a deprecated compatibility adapter during the pre-release
+migration.
 Call `CurrentBase` before materializing local work, then `Stage` the candidate
 against that captured commit/root/revision. `Push` refuses unstaged candidates,
-calls `BucketHead` without changing the stash, leaves it pending across network
+calls `ObserveHead` without changing the stash, leaves it pending across network
 failures, and submits the original base with a stable push ID. `Pull` updates
 the observed remote head but does not replace a base while pending stashes
 exist. The message and change-set fields are frozen before the first network
@@ -95,14 +126,15 @@ explicitly supplies different values fails locally. Malformed push responses
 leave the durable stash pending. This metadata is distinct from the accepted
 root policy in package `trust`.
 
-Bucket workspace schema version 2 persists `request_frozen` explicitly. When a
-version 1 file is opened, every pending stash is conservatively treated as
+Bucket workspace schema version 3 persists branch-qualified workspace keys and
+`request_frozen` explicitly. When a version 1 file is opened, every pending
+stash is conservatively treated as
 possibly sent: its original base, push ID, message, and change-set are frozen
-and atomically rewritten as version 2 before retry is possible. Version 1 had
+and atomically rewritten as version 3 before retry is possible. Version 1 had
 no durable sent/not-sent distinction, so this rule also freezes a legacy stash
-that in fact never reached Gateway. A file claiming schema version 2 must
-contain an explicit boolean `request_frozen` for every stash; incomplete v2
-records are rejected rather than interpreted as unsent work.
+that in fact never reached Gateway. A version 2 file must contain an explicit
+boolean `request_frozen` for every stash before its main-only key is migrated;
+incomplete v2 records are rejected rather than interpreted as unsent work.
 
 ## Reusable application use cases
 
@@ -132,8 +164,10 @@ routes or representing CID/link evidence as a ProofList.
 Bulk local-input import is reusable through `application/add`. `add.Run` owns
 option normalization, ignore and symlink policy, native layout-aware staging,
 Merkle DAG import, accepted-alias selection, and unaccepted candidate
-recording. The caller injects a narrow graph/fixed-list Gateway and CAS; Cobra
-is not part of this package.
+recording. The caller injects a narrow `add.Materializer` graph/fixed-list
+capability and CAS; Cobra and concrete Gateway DTOs are not part of this
+package. `GraphGateway`, `Gateway`, and `NewGateway` remain deprecated aliases
+for one pre-release migration window.
 
 `application/backup` composes encrypted snapshot creation with those add and
 Bucket synchronization ports. `PlanStore` persists complete Branch plans and
@@ -169,11 +203,11 @@ reader, err := unixfs.NewReader(unixfs.ReaderOptions{
 result, err := reader.ReadFile(ctx, trustedRoot, "docs/readme.md")
 ```
 
-For writing through the managed Gateway, adapt generic mutation receipts inside
-the UnixFS application boundary:
+For writing through any semantic mutation implementation, adapt its typed
+candidate result inside the UnixFS application boundary:
 
 ```go
-lists, err := unixfs.NewGatewayMutationAdapter(remote)
+lists, err := unixfs.NewMutationAdapter(remote)
 writer, err := unixfs.NewWriter(unixfs.WriterOptions{
     Remote: remote,
     Blocks: remote,
@@ -182,6 +216,10 @@ writer, err := unixfs.NewWriter(unixfs.WriterOptions{
     Layout:  layout,
 })
 ```
+
+`NewGatewayMutationAdapter` and its legacy DTO port remain as a deprecated
+compatibility adapter. The canonical `MutationAdapter` does not import Gateway
+HTTP response DTOs.
 
 `unixfs.NewLayout(unixfs.LayoutFlatV1)` and
 `unixfs.NewLayout(unixfs.LayoutHybridV1)` return implementations of the

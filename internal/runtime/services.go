@@ -116,15 +116,15 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 	if err != nil {
 		return nil, err
 	}
-	lists, err := unixfs.NewGatewayMutationAdapter(remote)
+	lists, err := unixfs.NewMutationAdapter(remote)
 	if err != nil {
 		return nil, err
 	}
-	addGateway, err := clientadd.NewGateway(remote, lists)
+	graph, err := clientadd.NewMaterializer(remote, lists)
 	if err != nil {
 		return nil, err
 	}
-	syncer, err := bucketsync.OpenBranch(cfg.Workspace.StatePath, remote, plan.BucketID, plan.Branch)
+	syncer, err := bucketsync.OpenRemoteBranch(cfg.Workspace.StatePath, remote, plan.BucketID, plan.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 	return clientbackup.NewPlanService(clientbackup.PlanServiceOptions{
 		Plan: plan, TempDir: cfg.Backup.TempDir,
 		LockPath: operationLock, Keys: keys, Sync: syncer,
-		Materializer: clientbackup.AddPlanMaterializer{Gateway: addGateway, CAS: remote},
+		Materializer: clientbackup.NewAddPlanMaterializer(graph, remote),
 		History:      history, Remote: remote, Blocks: remote, Roots: roots,
 		Protected: protected, RestoreProtected: restoreProtected,
 	})

@@ -1,6 +1,6 @@
 // Package bucketsync owns durable runtime-side Bucket synchronization state.
 // It records local candidates before observing a remote head and never promotes
-// a Gateway head into the separate trusted-root store.
+// a remote head into the separate trusted-root store.
 package bucketsync
 
 import (
@@ -19,7 +19,7 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
-	"github.com/dewebprotocol/malt-client/transport"
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -30,10 +30,7 @@ var (
 
 const bucketWorkspaceVersion = 3
 
-type Gateway interface {
-	BucketHead(context.Context) (*transport.BucketRef, error)
-	PushBucket(context.Context, transport.BucketPushRequest) (*transport.BucketPushResult, error)
-}
+type Remote = transportcap.DatasetBranch
 
 type Head struct {
 	CommitID string `json:"commit_id,omitempty"`
@@ -74,8 +71,8 @@ type Workspace struct {
 }
 
 type PushOutcome struct {
-	Result    transport.BucketPushResult `json:"result"`
-	Workspace Workspace                  `json:"workspace"`
+	Result    transportcap.ApplyResult `json:"result"`
+	Workspace Workspace                `json:"workspace"`
 }
 
 type persistedState struct {
@@ -86,30 +83,34 @@ type persistedState struct {
 type Service struct {
 	mu       sync.Mutex
 	path     string
-	gateway  Gateway
+	remote   Remote
 	bucketID string
 	branch   string
 	stateKey string
 	state    persistedState
 }
 
-func Open(path string, gateway Gateway, bucketID string) (*Service, error) {
-	return OpenBranch(path, gateway, bucketID, "main")
+func OpenRemote(path string, remote Remote, bucketID string) (*Service, error) {
+	return OpenRemoteBranch(path, remote, bucketID, "main")
 }
 
-// OpenBranch opens synchronization state for one writable Bucket branch.
-func OpenBranch(path string, gateway Gateway, bucketID, branch string) (*Service, error) {
+// OpenRemoteBranch opens synchronization state for one writable logical
+// dataset branch using a transport-neutral capability.
+func OpenRemoteBranch(path string, remote Remote, bucketID, branch string) (*Service, error) {
 	path = strings.TrimSpace(path)
 	bucketID = strings.TrimSpace(bucketID)
 	branch, err := normalizeBranch(branch)
 	if err != nil {
 		return nil, err
 	}
-	if path == "" || gateway == nil || bucketID == "" {
-		return nil, fmt.Errorf("Bucket sync path, Gateway, Bucket ID, and branch are required")
+	if path == "" || remote == nil || bucketID == "" {
+		return nil, fmt.Errorf("Bucket sync path, remote dataset capability, Bucket ID, and branch are required")
+	}
+	if err := transportcap.ValidateBinding(bucketID, branch, remote.DatasetBinding()); err != nil {
+		return nil, err
 	}
 	service := &Service{
-		path: path, gateway: gateway, bucketID: bucketID, branch: branch,
+		path: path, remote: remote, bucketID: bucketID, branch: branch,
 		stateKey: workspaceKey(bucketID, branch),
 	}
 	if err := service.withState(false, func() error { return nil }); err != nil {
@@ -118,17 +119,17 @@ func OpenBranch(path string, gateway Gateway, bucketID, branch string) (*Service
 	return service, nil
 }
 
-// Pull observes the latest Gateway head. When pending local stashes exist it
+// Pull observes the latest remote head. When pending local stashes exist it
 // updates Remote only; their recorded Base is never overwritten.
 func (s *Service) Pull(ctx context.Context) (Workspace, error) {
-	head, err := s.gateway.BucketHead(ctx)
+	head, err := s.remote.ObserveHead(ctx)
 	if err != nil {
 		return Workspace{}, err
 	}
 	if head == nil {
-		return Workspace{}, fmt.Errorf("gateway returned an empty Bucket head response")
+		return Workspace{}, fmt.Errorf("remote returned an empty dataset head response")
 	}
-	if err := transport.ValidateBucketHeadForBranch(s.bucketID, s.branch, *head); err != nil {
+	if err := transportcap.ValidateObservedHead(s.bucketID, s.branch, *head); err != nil {
 		return Workspace{}, err
 	}
 	remote, err := headFromRef(*head)
@@ -348,19 +349,23 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 	if _, err := s.Pull(ctx); err != nil {
 		return PushOutcome{}, err
 	}
-	request := transport.BucketPushRequest{
-		PushID: stash.PushID, Branch: s.branch, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
+	request := transportcap.ApplyRequest{
+		OperationID: stash.PushID, Branch: s.branch, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
 		CandidateRoot: stash.CandidateRoot, BaseRevision: stash.Base.Revision,
 		ChangeSetCID: stash.ChangeSetCID, Message: stash.Message,
 	}
-	result, err := s.gateway.PushBucket(ctx, request)
+	request, err := transportcap.NormalizeApplyRequest(s.branch, request)
+	if err != nil {
+		return PushOutcome{}, err
+	}
+	result, err := s.remote.ApplyCandidate(ctx, request)
 	if err != nil {
 		return PushOutcome{}, err
 	}
 	if result == nil {
-		return PushOutcome{}, fmt.Errorf("gateway returned an empty Bucket push response")
+		return PushOutcome{}, fmt.Errorf("remote returned an empty dataset apply response")
 	}
-	if err := transport.ValidateBucketPushResult(s.bucketID, request, *result); err != nil {
+	if err := transportcap.ValidateApplyResult(s.bucketID, request, *result); err != nil {
 		return PushOutcome{}, err
 	}
 	var workspace Workspace
@@ -375,7 +380,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 				if result.Branch != nil {
 					current.Stashes[i].Branch = result.Branch.Name
 				}
-				current.Stashes[i].Conflicts = conflictsFromTransport(result.Conflicts)
+				current.Stashes[i].Conflicts = conflictsFromRemote(result.Conflicts)
 				current.Stashes[i].UpdatedAt = time.Now().UTC()
 			} else {
 				current.Stashes = append(current.Stashes[:i], current.Stashes[i+1:]...)
@@ -417,8 +422,8 @@ func (s *Service) Status() (Workspace, error) {
 
 // ResolveBranched removes one exact conflict stash after the local runtime has
 // preserved or explicitly resolved its local candidate. The conflict branch
-// remains on the Gateway; this only unlocks the local workspace and advances
-// its materialization base to the latest observed target head.
+// remains on the remote executor; this only unlocks the local workspace and
+// advances its materialization base to the latest observed target head.
 func (s *Service) ResolveBranched(stashID, candidateRoot string) (Workspace, error) {
 	stashID = strings.TrimSpace(stashID)
 	candidateRoot = strings.TrimSpace(candidateRoot)
@@ -523,7 +528,7 @@ func (s *Service) reload() (bool, error) {
 	switch state.Version {
 	case 1:
 		// Version 1 omitted RequestFrozen. Treat every pending request as if
-		// it may already have reached Gateway, preserving its exact fingerprint.
+		// it may already have reached the remote executor, preserving its exact fingerprint.
 		for id, workspace := range state.Workspaces {
 			for i := range workspace.Stashes {
 				if workspace.Stashes[i].Status == "pending" {
@@ -659,7 +664,7 @@ func (s *Service) write() error {
 	return nil
 }
 
-func headFromRef(value transport.BucketRef) (Head, error) {
+func headFromRef(value transportcap.ObservedHead) (Head, error) {
 	head := Head{CommitID: value.CommitID, Root: value.Root, Revision: value.Revision}
 	return head, validateHead(head)
 }
@@ -702,7 +707,7 @@ func hasPending(values []Stash) bool {
 	return false
 }
 
-func conflictsFromTransport(values []transport.BucketConflict) []Conflict {
+func conflictsFromRemote(values []transportcap.Conflict) []Conflict {
 	result := make([]Conflict, len(values))
 	for i, value := range values {
 		result[i] = Conflict{Coordinate: value.Coordinate, Base: value.Base, Local: value.Local, Remote: value.Remote}
