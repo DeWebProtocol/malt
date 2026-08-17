@@ -11,8 +11,8 @@ import (
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	"github.com/dewebprotocol/malt-client/trust"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt/mutation"
-	"github.com/dewebprotocol/malt/protocol"
+	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )

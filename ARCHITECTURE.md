@@ -1,16 +1,18 @@
-# MALT Client Architecture
+# MALT Local Runtime Architecture
 
 ## Boundary
 
-This repository is a client application, not the graph-authentication SDK and
-not a managed gateway service.
+This repository is the user-controlled local data runtime, not the
+graph-authentication SDK and not a managed Gateway service. A daemon is its
+primary long-running process shape, while the CLI, foreground mode, future GUI,
+and future local API are adapters over the same runtime services.
 
 It owns:
 
 - the `malt` CLI and local daemon lifecycle;
 - trusted/candidate root state and explicit acceptance;
 - managed-Bucket base/remote/stash state and stash-before-fetch synchronization;
-- gateway HTTP transport;
+- semantic remote capabilities with a current Gateway HTTP implementation;
 - UnixFS path, manifest, fixed-list payload, import, and range-body semantics;
 - IPFS-compatible Merkle DAG UnixFS import as an alternative client target;
 - local replay verification for gateway Merkle DAG compatibility reads;
@@ -22,12 +24,16 @@ Client-specific benchmark process adapters also live in this repository under
 do not own benchmark plans, suites, comparison policy, result schemas, or
 result provenance; those belong in `malt-evaluation`.
 
-It depends on `github.com/dewebprotocol/malt` for canonical graph types,
+It depends on `github.com/dewebprotocol/malt-core` for canonical graph types,
 resolve/read/mutation protocols, ProofList verification, CID rules, and
 commitment implementations. It must not copy or redefine those contracts.
 
-It depends on a gateway for ArcTable materialization, CAS persistence, proof
-generation, and mutation execution. The gateway is not a trust authority.
+The current implementation uses a Gateway for remote ArcTable materialization,
+CAS persistence, proof generation, and mutation execution. Gateway is an
+optional untrusted executor in the target architecture, not a trust authority
+or a permanent prerequisite: local-CAS, peer, and hybrid transports must be
+able to implement the same semantic capability boundary without changing the
+application, trust, sync, or filesystem layers.
 
 ## Data flow
 
@@ -35,11 +41,14 @@ generation, and mutation execution. The gateway is not a trust authority.
 UnixFS path / local files
           |
           v
-  malt-client application adapter
+  MALT local runtime application adapter
           |
           | canonical segments, generic resolve/read/mutation/CAS requests
           v
-     untrusted gateway
+  semantic transport capability
+          |
+          v
+ current Gateway / future Peer or Local CAS
           |
           | result + ProofList + payload bytes
           v

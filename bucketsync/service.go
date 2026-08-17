@@ -415,7 +415,7 @@ func (s *Service) Status() (Workspace, error) {
 	return result, err
 }
 
-// ResolveBranched removes one exact conflict stash after the trusted client has
+// ResolveBranched removes one exact conflict stash after the local runtime has
 // preserved or explicitly resolved its local candidate. The conflict branch
 // remains on the Gateway; this only unlocks the local workspace and advances
 // its materialization base to the latest observed target head.

@@ -3,8 +3,8 @@ package transport
 import (
 	"context"
 
-	"github.com/dewebprotocol/malt/mutation"
-	"github.com/dewebprotocol/malt/protocol"
+	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
 

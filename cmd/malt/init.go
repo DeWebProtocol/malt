@@ -10,7 +10,7 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Create trusted-client configuration",
+	Short: "Create local runtime configuration",
 	Args:  cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
 		cfg, err := clientconfig.Default()

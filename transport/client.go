@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
-	"github.com/dewebprotocol/malt/protocol"
+	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
 

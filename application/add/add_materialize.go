@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
-	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
 )
 
 type addMaterializeResult = unixfs.StagedMaterializeResult

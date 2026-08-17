@@ -12,8 +12,8 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
 	client "github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt/auth/proof/prooflist"
-	"github.com/dewebprotocol/malt/protocol"
+	"github.com/dewebprotocol/malt-core/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
 

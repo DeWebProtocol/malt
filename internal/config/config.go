@@ -1,4 +1,4 @@
-// Package config owns trusted-client process configuration. Server storage,
+// Package config owns local-runtime process configuration. Server storage,
 // ArcSet persistence, and proof-generation settings deliberately do not appear
 // here.
 package config

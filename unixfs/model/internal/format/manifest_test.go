@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	unixfsformat "github.com/dewebprotocol/malt-client/unixfs/model/internal/format"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

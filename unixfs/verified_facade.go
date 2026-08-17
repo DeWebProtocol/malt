@@ -12,11 +12,11 @@ import (
 	"slices"
 	"strings"
 
-	malt "github.com/dewebprotocol/malt"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt/protocol"
-	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	malt "github.com/dewebprotocol/malt-core"
+	"github.com/dewebprotocol/malt-core/protocol"
+	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

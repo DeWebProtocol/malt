@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 func TestBuildsMatchedKZGAndIPAFixtureFromDeclaredBytes(t *testing.T) {

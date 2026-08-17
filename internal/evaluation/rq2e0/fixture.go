@@ -6,13 +6,13 @@ import (
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
-	materializermemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt/auth/commitment"
-	"github.com/dewebprotocol/malt/auth/commitment/ipa"
-	"github.com/dewebprotocol/malt/auth/commitment/kzg"
-	listtree "github.com/dewebprotocol/malt/auth/semantic/list/tree"
-	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
+	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
+	"github.com/dewebprotocol/malt-core/auth/commitment"
+	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
+	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	listtree "github.com/dewebprotocol/malt-core/auth/semantic/list/tree"
+	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
+	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
 	cid "github.com/ipfs/go-cid"
 )
 

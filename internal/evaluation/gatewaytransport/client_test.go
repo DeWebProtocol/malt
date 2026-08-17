@@ -15,12 +15,12 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/merkledag"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt/auth/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/auth/arcset"
+	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
+	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
+	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

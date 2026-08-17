@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2metrics"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

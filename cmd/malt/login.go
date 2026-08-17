@@ -29,7 +29,7 @@ var (
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authorize this client device through the Gateway account",
+	Short: "Authorize this MALT device through the Gateway account",
 	Args:  cobra.NoArgs,
 	RunE:  runLogin,
 }

@@ -2,16 +2,16 @@
 
 ## Scope
 
-This repository owns the trusted MALT client application: CLI, local daemon,
-accepted-root policy, UnixFS application semantics, Merkle DAG import
-compatibility, gateway transport, and payload-byte verification. It also keeps
-the client-owned executable adapters needed to measure those exact behaviors;
+This repository owns the user-controlled MALT local data runtime: CLI, local
+daemon, accepted-root policy, UnixFS application semantics, Merkle DAG import
+compatibility, pluggable transport capabilities, and payload-byte verification.
+It also keeps the runtime-owned executable adapters needed to measure those exact behaviors;
 the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 
 ## Boundaries
 
 - Do not define MALT protocol, ProofList, commitment, CID, schema, or canonical
-  graph semantics here; use the `malt` module.
+  graph semantics here; use the `malt-core` module.
 - Do not add ArcTable/KV persistence or managed gateway policy here; those
   belong in `gateway`.
 - Treat gateway responses as untrusted and verify against caller-selected

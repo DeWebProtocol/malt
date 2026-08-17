@@ -1,13 +1,26 @@
-# MALT Client
+# MALT Local Data Runtime
 
-`malt-client` is the trusted local client and UnixFS application built on the
-[MALT core SDK](https://github.com/DeWebProtocol/malt). It owns the concerns
-that must not be part of the application-neutral authentication core:
+MALT is a user-controlled local data runtime that runs on the user's device.
+It accesses local files, maintains local trust and keys, exposes authenticated
+data through local application interfaces, and communicates through replaceable
+transport capabilities built on the
+[MALT Core SDK](https://github.com/DeWebProtocol/malt-core).
+
+This repository remains named `malt-client` during the staged repository
+migration. The product and binary are MALT; the background process is the MALT
+daemon. The repository name will become `malt` only after every downstream
+consumer is pinned to `malt-core v0.0.7`. Its Go module deliberately remains
+`github.com/dewebprotocol/malt-client` during the initial runtime refactor so a
+repository rename cannot silently reuse Core's historical module namespace.
+
+The runtime owns concerns that must not be part of the application-neutral
+authentication core:
 
 - accepted and candidate root policy;
 - application-path parsing and UnixFS materialization;
 - optional IPFS-compatible Merkle DAG UnixFS import;
-- calls to a remote MALT gateway;
+- transport-mediated access to remote or local storage (currently Gateway
+  HTTP);
 - durable managed-Bucket base/remote/stash synchronization state;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
@@ -19,9 +32,12 @@ candidates until the user explicitly accepts them.
 
 ## Status
 
-This is an experimental, pre-v1 client. It currently provides the `malt` CLI,
-a local trusted-root daemon, and a UnixFS application adapter. There is no
-independent `malt-client` release tag yet; build from a pinned commit.
+This is an experimental, pre-v1 local runtime. It currently provides the
+`malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, and a
+UnixFS application adapter. The current remote transport is Gateway HTTP; a
+host-filesystem mount, local-CAS transport, P2P transport, and hybrid transport
+are staged follow-up work and are not claimed as implemented here. There is no
+independent runtime release tag yet; build from a pinned commit.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact client and dependency revisions they build.
 

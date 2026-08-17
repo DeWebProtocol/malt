@@ -49,7 +49,7 @@ var backupScheduleCmd = &cobra.Command{
 
 var backupKeyInitCmd = &cobra.Command{
 	Use:   "key-init",
-	Short: "Create the client-owned backup keyring without replacing configuration",
+	Short: "Create the runtime-owned backup keyring without replacing configuration",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		cfg, err := loadRuntimeConfig()
