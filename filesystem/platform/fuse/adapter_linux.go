@@ -1,8 +1,10 @@
 //go:build linux
 
 // Package fusefs is the outermost Linux FUSE adapter for the MALT local
-// runtime. It translates kernel operations into a read-only filesystem that is
-// already pinned to a locally selected immutable View.
+// runtime. It translates kernel operations into a filesystem capability that
+// is already pinned to a locally selected immutable View. Read-only remains
+// the default; write-back is exposed only by an explicit mount policy and
+// capability supplied by the local runtime.
 package fusefs
 
 import (
@@ -13,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -64,11 +67,25 @@ func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesyst
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if filesystem == nil {
+	if isNilCapability(filesystem) {
 		return nil, fmt.Errorf("FUSE filesystem capability is nil")
 	}
 	if strings.TrimSpace(spec.ID) == "" || spec.ID != strings.TrimSpace(spec.ID) {
 		return nil, fmt.Errorf("FUSE mount ID is invalid")
+	}
+	var writable filesystemmount.WritableFilesystem
+	mountFlags := []string{"ro"}
+	switch spec.WritePolicy {
+	case filesystemmount.WriteReadOnly:
+	case filesystemmount.WriteBack:
+		var ok bool
+		writable, ok = filesystem.(filesystemmount.WritableFilesystem)
+		if !ok || isNilCapability(writable) {
+			return nil, fmt.Errorf("%w: FUSE write-back capability is unavailable", filesystemmount.ErrWritePolicyUnavailable)
+		}
+		mountFlags = nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported FUSE write policy %q", filesystemmount.ErrWritePolicyUnavailable, spec.WritePolicy)
 	}
 	mountpoint, err := mountpointPath(spec.Mountpoint)
 	if err != nil {
@@ -98,10 +115,10 @@ func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesyst
 	if err := requireEmptyDirectory(mountpoint); err != nil {
 		return nil, err
 	}
-	root := newRoot(filesystem)
+	root := newRoot(filesystem, writable)
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			FsName: expectedSource(spec), Name: "malt", Options: []string{"ro"},
+			FsName: expectedSource(spec), Name: "malt", Options: mountFlags,
 		},
 		NullPermissions: true,
 		RootStableAttr:  &fs.StableAttr{Mode: fuse.S_IFDIR},
@@ -130,6 +147,19 @@ func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesyst
 		return nil, cleanup(fmt.Errorf("%w at %s", ErrMountIdentity, mountpoint))
 	}
 	return newSession(mounted), nil
+}
+
+func isNilCapability(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 func (a *Adapter) RecoverUnmount(ctx context.Context, spec filesystemmount.Spec) error {

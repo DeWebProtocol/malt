@@ -95,7 +95,18 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   import go-fuse and `filesystem/mount`, but not trust, transport, cache,
   application, or Gateway packages. Recovery unmount must verify the exact
   MALT-owned mount identity, remain usable for disconnected FUSE roots, and
-  refuse foreign or ambiguous stacked filesystems.
+  refuse foreign or ambiguous stacked filesystems. Read-only Specs must keep
+  the kernel mount read-only even if a wider dynamic capability is supplied.
+  Write syscalls require both an explicit write-back Spec and a matching
+  `WritableFilesystem`; their handles use the current overlay rather than a
+  pinned pre-write read handle. Mount-local logical inode paths must update
+  atomically with rename, and an orphaned inode must never fall back to a path
+  that can be reused. A forgotten node cannot be revived by a new operation,
+  while an already-open handle remains registered until release and follows
+  atomic renames; unlink or overwrite-rename of an open target fails with
+  `EBUSY` until object-identity-based staging exists. `Flush` cannot claim
+  remote persistence, and `Fsync` succeeds only after `Sync` confirms local
+  durability without accepted-root promotion.
 - `localapi/` owns reusable clients for the private daemon control plane. CLI
   and future GUI adapters may use it, but it must not import trust, transport,
   cache, UnixFS, application, or Gateway packages.

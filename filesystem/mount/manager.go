@@ -21,6 +21,9 @@ var (
 	ErrWritePolicyUnavailable = errors.New("mount write policy is unavailable")
 	ErrWritePolicyViolation   = errors.New("mount write policy was violated")
 	ErrMountCleanupPending    = errors.New("mount cleanup is pending")
+	ErrAlreadyExists          = errors.New("filesystem path already exists")
+	ErrNotEmpty               = errors.New("filesystem directory is not empty")
+	ErrFileTooLarge           = errors.New("filesystem file exceeds configured limit")
 )
 
 // ReadOnlyFilesystem is the only data capability exposed to a platform mount

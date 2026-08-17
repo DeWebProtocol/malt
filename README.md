@@ -38,8 +38,10 @@ authentication core:
   hits;
 - a crash-recoverable mount registry and daemon/local-API lifecycle contract
   that keeps platform drivers outside trust and transport code;
-- daemon-managed Linux read-only FUSE mounts selected from local accepted
-  roots, with lazy verified Gateway reads and a non-authoritative local cache;
+- daemon-managed Linux FUSE mounts selected from local accepted roots, with
+  lazy verified Gateway reads and a non-authoritative local cache; the adapter
+  has an opt-in writable syscall boundary while current daemon composition
+  still supplies only the read-only capability;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
@@ -57,10 +59,10 @@ UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
 `malt unmount`. The cache, operation journal, and platform-neutral dirty
 staging overlay, generic verified write-back orchestrator, and concrete UnixFS
-client-root planner are available as runtime substrate. Platform write
-composition is not implemented yet, so the mounted filesystem remains
-read-only even though the mount layer now has an explicit opt-in write-back
-capability contract. The current remote
+client-root planner are available as runtime substrate. The Linux FUSE adapter
+now maps an explicit write-back capability to create, write, truncate,
+namespace mutation, and local fsync, but daemon write-binding composition is
+not implemented yet, so `malt mount` remains read-only. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
 implemented here. The historical `v0.0.1` tag was published for MALT Client
