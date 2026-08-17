@@ -448,10 +448,15 @@ emits new or changed directory Maps child-before-parent and uses semantic output
 references wherever an ancestor consumes a locally computed child root,
 including flattened descendant bindings. New directories inherit the accepted
 top root's commitment backend; existing directories retain their verified
-backend and object identity. Canonical V2 manifests are stored through a narrow
-block capability, and a returned CID must equal the locally computed manifest
-CID. The planner supports both KZG and IPA roots and does not call a Gateway,
-record a candidate, or accept a root. Platform composition remains separate.
+backend and object identity. When multiple paths share one authenticated
+directory root, equal resulting projections reuse one output while divergent
+edits deterministically copy-on-write the additional branches as complete new
+objects. Canonical V2 manifests are stored through a narrow block capability,
+and a returned CID must equal the locally computed manifest CID. A manifest
+that re-encodes to its existing CID is not published again, so a verified
+no-change batch performs no block-store write. The planner supports both KZG
+and IPA roots and does not call a Gateway, record a candidate, or accept a
+root. Platform composition remains separate.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,

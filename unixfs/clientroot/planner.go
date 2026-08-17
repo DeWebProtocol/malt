@@ -268,6 +268,10 @@ func (p *Planner) storeManifest(ctx context.Context, node *treeNode) error {
 	if err != nil {
 		return err
 	}
+	if expected.Equals(node.manifest) {
+		node.manifestDirty = false
+		return nil
+	}
 	stored, err := p.blocks.PutWithCodec(ctx, block.Data, block.Codec)
 	if err != nil {
 		return err
@@ -276,6 +280,7 @@ func (p *Planner) storeManifest(ctx context.Context, node *treeNode) error {
 		return fmt.Errorf("manifest store substituted CID %s for %s", stored, expected)
 	}
 	node.manifest = expected
+	node.manifestDirty = false
 	return nil
 }
 
@@ -323,7 +328,8 @@ func (p *Planner) prepareFlatManifests(ctx context.Context, node *treeNode) erro
 func (p *Planner) planHybrid(ctx context.Context, view mutation.UpdateView, root *treeNode, objectIDs map[string]struct{}, operationID string) (mutation.SemanticIntent, error) {
 	topBackend := maltcid.BackendKindOf(view.BaseRoot)
 	transitions := make([]mutation.IntentTransition, 0)
-	if err := p.buildHybridTransitions(ctx, root, "", topBackend, operationID, objectIDs, &transitions); err != nil {
+	state := hybridPlanState{usedOldObjects: map[string]bool{}, sharedOutputs: map[string]string{}}
+	if err := p.buildHybridTransitions(ctx, root, "", topBackend, operationID, objectIDs, &state, &transitions); err != nil {
 		return mutation.SemanticIntent{}, err
 	}
 	if root.outputID == "" {
@@ -351,7 +357,12 @@ func (p *Planner) planHybrid(ctx context.Context, view mutation.UpdateView, root
 	}, nil
 }
 
-func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, nodePath string, backend maltcid.BackendKind, operationID string, objectIDs map[string]struct{}, transitions *[]mutation.IntentTransition) error {
+type hybridPlanState struct {
+	usedOldObjects map[string]bool
+	sharedOutputs  map[string]string
+}
+
+func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, nodePath string, backend maltcid.BackendKind, operationID string, objectIDs map[string]struct{}, state *hybridPlanState, transitions *[]mutation.IntentTransition) error {
 	for _, name := range sortedChildNames(node) {
 		child := node.children[name]
 		if child.kind != unixfsmodel.DirectoryEntryTypeDir || !child.dirty {
@@ -361,7 +372,7 @@ func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, no
 		if nodePath != "" {
 			childPath = path.Join(nodePath, name)
 		}
-		if err := p.buildHybridTransitions(ctx, child, childPath, backend, operationID, objectIDs, transitions); err != nil {
+		if err := p.buildHybridTransitions(ctx, child, childPath, backend, operationID, objectIDs, state, transitions); err != nil {
 			return err
 		}
 	}
@@ -373,7 +384,16 @@ func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, no
 	}
 	desired := map[string]desiredTarget{"@payload": literalTarget(arcset.NewCASTarget(node.manifest))}
 	collectDesiredBindings(node, "", desired, true)
-	changes, err := changesFor(node.oldObject, desired)
+	projection := hybridProjectionIdentity(node.oldObject, desired)
+	if outputID := state.sharedOutputs[projection]; outputID != "" {
+		node.outputID = outputID
+		return nil
+	}
+	oldObject := node.oldObject
+	if oldObject != nil && state.usedOldObjects[oldObject.ObjectID] {
+		oldObject = nil
+	}
+	changes, err := changesFor(oldObject, desired)
 	if err != nil {
 		return err
 	}
@@ -387,20 +407,50 @@ func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, no
 	objectID := ""
 	oldRoot := cid.Undef
 	transitionBackend := backend
-	if node.oldObject != nil {
-		objectID = node.oldObject.ObjectID
-		oldRoot = node.oldObject.Root
+	if oldObject != nil {
+		objectID = oldObject.ObjectID
+		oldRoot = oldObject.Root
 		transitionBackend = maltcid.BackendKindOf(oldRoot)
+		state.usedOldObjects[objectID] = true
 	} else {
 		objectID = unusedObjectID(objectIDs, seed)
 		objectIDs[objectID] = struct{}{}
+		if node.oldObject != nil {
+			transitionBackend = maltcid.BackendKindOf(node.oldObject.Root)
+		}
 	}
 	node.outputID = transitionID
+	state.sharedOutputs[projection] = transitionID
 	*transitions = append(*transitions, mutation.IntentTransition{
 		ID: transitionID, ObjectID: objectID, OldRoot: oldRoot, Kind: arcset.KindMap,
 		Backend: transitionBackend, Changes: changes,
 	})
 	return nil
+}
+
+func hybridProjectionIdentity(oldObject *mutation.UpdateObject, desired map[string]desiredTarget) string {
+	digest := sha256.New()
+	if oldObject != nil {
+		_, _ = digest.Write([]byte(oldObject.Root.String()))
+	}
+	_, _ = digest.Write([]byte{0})
+	keys := make([]string, 0, len(desired))
+	for key := range desired {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		value := desired[key]
+		_, _ = digest.Write([]byte(key))
+		_, _ = digest.Write([]byte{0})
+		if value.outputID != "" {
+			_, _ = fmt.Fprintf(digest, "output:%s:%s", value.outputKind, value.outputID)
+		} else if value.literal != nil {
+			_, _ = fmt.Fprintf(digest, "literal:%s:%s", value.literal.Kind(), value.literal.CID())
+		}
+		_, _ = digest.Write([]byte{0})
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func collectLiteralBindings(node *treeNode, prefix string, out map[string]arcset.TargetRef, hybrid bool) {

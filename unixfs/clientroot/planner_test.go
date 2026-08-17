@@ -142,14 +142,101 @@ func TestPlannerClassifiesEquivalentContentAndCanceledNamespaceAsNoChange(t *tes
 			if intent, changed, err := planner.Plan(t.Context(), fixture.view, sameWrite); err != nil || changed || len(intent.Transitions) != 0 {
 				t.Fatalf("equivalent write intent=%#v changed=%v err=%v", intent, changed, err)
 			}
+			if fixture.blocks.putWithCodecCalls != 0 {
+				t.Fatalf("equivalent write published %d manifest blocks", fixture.blocks.putWithCodecCalls)
+			}
 
 			cancel := plannerOperations(fixture.root, fixture.oldPayload)[:2]
 			cancel[0].Path = "temporary"
 			cancel[1].Kind = journal.KindUnlink
 			cancel[1].Path = "temporary"
 			cancel[1].Destination = ""
+			fixture.blocks.putWithCodecCalls = 0
 			if intent, changed, err := planner.Plan(t.Context(), fixture.view, cancel); err != nil || changed || len(intent.Transitions) != 0 {
 				t.Fatalf("canceled namespace intent=%#v changed=%v err=%v", intent, changed, err)
+			}
+			if fixture.blocks.putWithCodecCalls != 0 {
+				t.Fatalf("canceled namespace published %d manifest blocks", fixture.blocks.putWithCodecCalls)
+			}
+		})
+	}
+}
+
+func TestHybridPlannerCopyOnWritesSharedDirectoriesAcrossBackends(t *testing.T) {
+	backends := []struct {
+		name string
+		new  func(*testing.T) commitment.IndexCommitment
+	}{
+		{name: "kzg", new: func(t *testing.T) commitment.IndexCommitment { return mustKZG(t) }},
+		{name: "ipa", new: func(t *testing.T) commitment.IndexCommitment {
+			scheme, err := ipa.NewCommitterScheme(ipa.ProfileDirect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return scheme
+		}},
+	}
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			fixture := newSharedHybridFixture(t, backend.new(t))
+			first := fixture.blocks.putRaw(t, []byte("first alias"))
+			second := fixture.blocks.putRaw(t, []byte("second alias"))
+			operations := []journal.Operation{
+				plannerOperation(fixture.root, 1, journal.KindWrite, "alpha/one.txt", "", first),
+				plannerOperation(fixture.root, 2, journal.KindWrite, "beta/two.txt", "", second),
+			}
+			planner, err := New(unixfs.LayoutHybridV1, fixture.blocks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent, changed, err := planner.Plan(t.Context(), fixture.view, operations)
+			if err != nil || !changed {
+				t.Fatalf("shared-directory plan changed=%v err=%v", changed, err)
+			}
+			verified, err := fixture.writer.VerifyUpdateView(t.Context(), fixture.view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			computed, err := fixture.writer.ComputeBundle(t.Context(), "shared-directory", verified, intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.writer.VerifyUpdateView(t.Context(), computed.NextView); err != nil {
+				t.Fatalf("shared-directory next view does not verify: %v", err)
+			}
+			top := objectByRoot(t, computed.NextView, computed.NextView.BaseRoot)
+			entries := entriesByPath(top)
+			alpha, beta := entries["alpha"], entries["beta"]
+			if alpha.Kind() != arcset.TargetKindMap || beta.Kind() != arcset.TargetKindMap || alpha.CID().Equals(beta.CID()) {
+				t.Fatalf("shared aliases were not copy-on-written: alpha=%v beta=%v", alpha, beta)
+			}
+
+			equalFixture := newSharedHybridFixture(t, backend.new(t))
+			equalPayload := equalFixture.blocks.putRaw(t, []byte("same projected child"))
+			equalOperations := []journal.Operation{
+				plannerOperation(equalFixture.root, 1, journal.KindWrite, "alpha/same.txt", "", equalPayload),
+				plannerOperation(equalFixture.root, 2, journal.KindWrite, "beta/same.txt", "", equalPayload),
+			}
+			equalPlanner, err := New(unixfs.LayoutHybridV1, equalFixture.blocks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			equalIntent, changed, err := equalPlanner.Plan(t.Context(), equalFixture.view, equalOperations)
+			if err != nil || !changed {
+				t.Fatalf("equal shared-directory plan changed=%v err=%v", changed, err)
+			}
+			equalVerified, err := equalFixture.writer.VerifyUpdateView(t.Context(), equalFixture.view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			equalComputed, err := equalFixture.writer.ComputeBundle(t.Context(), "equal-shared-directory", equalVerified, equalIntent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			equalTop := objectByRoot(t, equalComputed.NextView, equalComputed.NextView.BaseRoot)
+			equalEntries := entriesByPath(equalTop)
+			if !equalEntries["alpha"].CID().Equals(equalEntries["beta"].CID()) {
+				t.Fatalf("equal shared projections did not reuse output: alpha=%v beta=%v", equalEntries["alpha"], equalEntries["beta"])
 			}
 		})
 	}
@@ -243,7 +330,59 @@ func newPlannerFixture(t *testing.T, layoutKind unixfs.LayoutKind, scheme commit
 	if err != nil {
 		t.Fatal(err)
 	}
+	blocks.putWithCodecCalls = 0
 	return plannerFixture{root: result.Key, view: view, oldPayload: oldPayload, blocks: blocks, writer: writer}
+}
+
+func newSharedHybridFixture(t *testing.T, scheme commitment.IndexCommitment) plannerFixture {
+	t.Helper()
+	store := materializermemory.New(true)
+	blocks := &plannerBlocks{values: map[string][]byte{}}
+	creator := &plannerRootCreator{t: t, scheme: scheme, store: store}
+	empty, err := unixfsmodel.EncodeDirectoryManifest(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyManifest, err := blocks.PutWithCodec(t.Context(), empty.Data, empty.Codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedRoot, err := creator.CreateStagedRoot(t.Context(), map[string]string{"@payload": emptyManifest.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	topManifestBlock, err := unixfsmodel.EncodeDirectoryManifest([]unixfsmodel.DirectoryEntry{
+		{Name: "alpha", Type: unixfsmodel.DirectoryEntryTypeDir},
+		{Name: "beta", Type: unixfsmodel.DirectoryEntryTypeDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	topManifest, err := blocks.PutWithCodec(t.Context(), topManifestBlock.Data, topManifestBlock.Codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topRoot, err := creator.CreateStagedRoot(t.Context(), map[string]string{
+		"@payload": topManifest.String(), "alpha": sharedRoot.String(), "beta": sharedRoot.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mutation.NormalizeUpdateView(mutation.UpdateView{
+		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
+		BaseRoot: topRoot, Bounds: mutation.UpdateViewBounds{MaxObjects: 64, MaxTotalEntries: 4096, MaxDepth: 32},
+		Objects: append([]mutation.UpdateObject(nil), creator.objects...),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := maltcid.BackendKindOf(topRoot)
+	writer, err := clientwriter.NewRuntime(store, map[maltcid.BackendKind]commitment.IndexCommitment{backend: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks.putWithCodecCalls = 0
+	return plannerFixture{root: topRoot, view: view, blocks: blocks, writer: writer}
 }
 
 type plannerRootCreator struct {
@@ -286,8 +425,9 @@ func (c *plannerRootCreator) CreateStagedRoot(ctx context.Context, bindings map[
 }
 
 type plannerBlocks struct {
-	values        map[string][]byte
-	substitutePut cid.Cid
+	values            map[string][]byte
+	substitutePut     cid.Cid
+	putWithCodecCalls int
 }
 
 func (b *plannerBlocks) Get(_ context.Context, key cid.Cid) ([]byte, error) {
@@ -308,6 +448,7 @@ func (b *plannerBlocks) Put(_ context.Context, body []byte) (cid.Cid, error) {
 }
 
 func (b *plannerBlocks) PutWithCodec(_ context.Context, body []byte, codec uint64) (cid.Cid, error) {
+	b.putWithCodecCalls++
 	key, err := cid.Prefix{Version: 1, Codec: codec, MhType: mh.SHA2_256, MhLength: -1}.Sum(body)
 	if err != nil {
 		return cid.Undef, err
