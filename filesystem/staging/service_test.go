@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dewebprotocol/malt-client/cache"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
@@ -74,7 +75,7 @@ func TestDurableWriteOverlayFsyncRestartAndPinnedHandle(t *testing.T) {
 	root := t.TempDir()
 	view := stagingTestView(t)
 	base := newFakeBase(t)
-	service, cacheStore, journalPath := newStagingService(t, root, base)
+	service, _, journalPath := newStagingService(t, root, base)
 
 	first, err := service.StageWrite(t.Context(), view, "docs/new.txt", []byte("first local body"), false)
 	if err != nil || first.Status != journal.StatusLocalDirty || first.Sequence != 1 {
@@ -114,14 +115,16 @@ func TestDurableWriteOverlayFsyncRestartAndPinnedHandle(t *testing.T) {
 		t.Fatalf("local overlay unexpectedly read remote body %d time(s)", base.rangeReads)
 	}
 
-	reopenedJournal, err := journal.Open(journalPath)
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: journalPath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := New(Options{Base: base, Cache: cacheStore, Journal: reopenedJournal})
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { _ = reopened.Close() })
 	body, _, err = reopened.ReadFileRange(t.Context(), view, "docs/new.txt", 0, 64)
 	if err != nil || string(body) != "second local body" {
 		t.Fatalf("restart overlay read=%q err=%v", body, err)
@@ -218,6 +221,74 @@ func TestOfflineJournalConcurrencyAndExactViewIdentity(t *testing.T) {
 	}
 }
 
+func TestRejectsNonCanonicalViewIdentityBeforePersistingIntent(t *testing.T) {
+	view := stagingTestView(t)
+	service, _, journalPath := newStagingService(t, t.TempDir(), newFakeBase(t))
+	tests := []struct {
+		name   string
+		mutate func(*filesystemservice.View)
+	}{
+		{name: "dataset leading whitespace", mutate: func(value *filesystemservice.View) { value.DatasetID = " bucket-one" }},
+		{name: "branch trailing whitespace", mutate: func(value *filesystemservice.View) { value.Branch = "main " }},
+		{name: "dataset NUL", mutate: func(value *filesystemservice.View) { value.DatasetID = "bucket\x00one" }},
+		{name: "branch invalid UTF-8", mutate: func(value *filesystemservice.View) { value.Branch = string([]byte{0xff}) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := view
+			test.mutate(&invalid)
+			if _, err := service.StageWrite(t.Context(), invalid, "docs/rejected.txt", []byte("rejected"), false); err == nil {
+				t.Fatal("StageWrite accepted a non-canonical View identity")
+			}
+			if _, err := service.Fsync(t.Context(), invalid); err == nil {
+				t.Fatal("Fsync accepted a non-canonical View identity")
+			}
+		})
+	}
+	store, err := journal.Open(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operations, err := store.List(); err != nil || len(operations) != 0 {
+		t.Fatalf("invalid Views persisted operations=%#v err=%v", operations, err)
+	}
+}
+
+func TestExclusiveCacheAndJournalLeasesPreventCrossServiceReconcileRace(t *testing.T) {
+	root := t.TempDir()
+	opts := Options{
+		Base: newFakeBase(t), CacheDirectory: filepath.Join(root, "cache"),
+		JournalPath: filepath.Join(root, "operations.json"), LeaseTimeout: 30 * time.Millisecond,
+	}
+	first, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflicts := []Options{
+		opts,
+		{Base: opts.Base, CacheDirectory: opts.CacheDirectory, JournalPath: filepath.Join(root, "other-operations.json"), LeaseTimeout: opts.LeaseTimeout},
+		{Base: opts.Base, CacheDirectory: filepath.Join(root, "other-cache"), JournalPath: opts.JournalPath, LeaseTimeout: opts.LeaseTimeout},
+	}
+	for index, conflict := range conflicts {
+		if _, err := New(conflict); err == nil {
+			t.Fatalf("conflicting Service %d acquired a shared state path", index)
+		}
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(opts)
+	if err != nil {
+		t.Fatalf("lease was not released by Close: %v", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Stat(t.Context(), stagingTestView(t), "docs"); !errors.Is(err, ErrServiceClosed) {
+		t.Fatalf("closed Service error=%v", err)
+	}
+}
+
 func TestReconcileRemovesUnreferencedLocalBodyAndRejectsMissingReferencedBody(t *testing.T) {
 	root := t.TempDir()
 	view := stagingTestView(t)
@@ -235,11 +306,9 @@ func TestReconcileRemovesUnreferencedLocalBodyAndRejectsMissingReferencedBody(t 
 	if _, err := cacheStore.PutLocal(orphanBinding, orphanBody, cache.StateLocalDirty); err != nil {
 		t.Fatal(err)
 	}
-	journalStore, err := journal.Open(filepath.Join(root, "operations.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := New(Options{Base: base, Cache: cacheStore, Journal: journalStore})
+	service, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: filepath.Join(root, "operations.json"),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +322,10 @@ func TestReconcileRemovesUnreferencedLocalBodyAndRejectsMissingReferencedBody(t 
 	if err := cacheStore.Remove(bindingFromOperation(operation)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Options{Base: base, Cache: cacheStore, Journal: journalStore}); err == nil {
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Options{Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: filepath.Join(root, "operations.json"), LeaseTimeout: time.Second}); err == nil {
 		t.Fatal("restart accepted a journaled write with missing local bytes")
 	}
 }
@@ -280,7 +352,10 @@ func TestReconcileRequiresCompletedCandidateBodyUntilAcceptedViewChanges(t *test
 	if err := cacheStore.Remove(bindingFromOperation(operation)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Options{Base: base, Cache: cacheStore, Journal: journalStore}); err == nil {
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Options{Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: journalPath, LeaseTimeout: time.Second}); err == nil {
 		t.Fatal("restart accepted a completed but not locally accepted candidate with missing staged bytes")
 	}
 }
@@ -294,20 +369,20 @@ func TestFailedJournalAppendLeavesOnlyReconcileableUnacknowledgedBody(t *testing
 		t.Fatal(err)
 	}
 	failed := errors.New("journal disk full")
-	service, err := New(Options{Base: base, Cache: cacheStore, Journal: failingJournal{err: failed}})
-	if err != nil {
+	service := &Service{base: base, cache: cacheStore, journal: failingJournal{err: failed}}
+	if err := service.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.StageWrite(t.Context(), view, "docs/uncommitted.txt", []byte("uncommitted"), false); !errors.Is(err, failed) {
 		t.Fatalf("StageWrite error=%v, want %v", err, failed)
 	}
-	journalStore, err := journal.Open(filepath.Join(root, "operations.json"))
+	reopened, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: filepath.Join(root, "operations.json"),
+	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := New(Options{Base: base, Cache: cacheStore, Journal: journalStore}); err != nil {
 		t.Fatalf("reconcile unacknowledged cache body: %v", err)
 	}
+	t.Cleanup(func() { _ = reopened.Close() })
 	entries, err := cacheStore.List()
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("unacknowledged cache entries=%#v err=%v", entries, err)
@@ -341,18 +416,15 @@ func (f failingJournal) List() ([]journal.Operation, error) { return []journal.O
 
 func newStagingService(t *testing.T, root string, base Base) (*Service, *cache.Store, string) {
 	t.Helper()
-	cacheStore, err := cache.Open(filepath.Join(root, "cache"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	journalPath := filepath.Join(root, "operations.json")
-	journalStore, err := journal.Open(journalPath)
+	service, err := New(Options{Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: journalPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := New(Options{Base: base, Cache: cacheStore, Journal: journalStore})
-	if err != nil {
-		t.Fatal(err)
+	t.Cleanup(func() { _ = service.Close() })
+	cacheStore, ok := service.cache.(*cache.Store)
+	if !ok {
+		t.Fatal("staging Service did not open the durable cache store")
 	}
 	return service, cacheStore, journalPath
 }

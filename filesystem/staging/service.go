@@ -6,12 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	"github.com/dewebprotocol/malt-client/cache"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
+	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	cid "github.com/ipfs/go-cid"
@@ -24,6 +28,7 @@ var (
 	ErrAlreadyExists = errors.New("filesystem path already exists")
 	ErrNotEmpty      = errors.New("filesystem directory is not empty")
 	ErrClosed        = errors.New("staged filesystem handle is closed")
+	ErrServiceClosed = errors.New("filesystem staging service is closed")
 )
 
 // Base is the verified immutable filesystem below the local dirty overlay.
@@ -35,7 +40,7 @@ type Base interface {
 	ReadFileRange(context.Context, filesystemservice.View, string, uint64, uint64) ([]byte, filesystemservice.Info, error)
 }
 
-type Cache interface {
+type cacheStore interface {
 	Inspect(cache.Binding) (cache.Entry, error)
 	List() ([]cache.Entry, error)
 	PutLocal(cache.Binding, []byte, cache.State) (cache.Entry, error)
@@ -44,25 +49,30 @@ type Cache interface {
 	Remove(cache.Binding) error
 }
 
-type Journal interface {
+type operationJournal interface {
 	Append(journal.Intent, journal.Status) (journal.Operation, error)
 	List() ([]journal.Operation, error)
 }
 
 type Options struct {
-	Base    Base
-	Cache   Cache
-	Journal Journal
+	Base           Base
+	CacheDirectory string
+	JournalPath    string
+	LeaseTimeout   time.Duration
 }
 
-// Service serializes local staging across its cache/journal pair. One pair is
-// owned by one runtime composition; the durable stores provide their own
-// cross-process file serialization and crash-safe atomic replacement.
+// Service serializes local staging across its cache/journal pair. New acquires
+// exclusive process-held leases for both paths before opening either store, so
+// reconciliation cannot race the cache-to-journal acknowledgement window.
+// Call Close to release those leases.
 type Service struct {
-	mu      sync.Mutex
-	base    Base
-	cache   Cache
-	journal Journal
+	lifecycle sync.RWMutex
+	mu        sync.Mutex
+	base      Base
+	cache     cacheStore
+	journal   operationJournal
+	release   []func() error
+	closed    bool
 }
 
 // FsyncResult explicitly distinguishes local journal durability from remote
@@ -77,17 +87,75 @@ type FsyncResult struct {
 }
 
 func New(opts Options) (*Service, error) {
-	if opts.Base == nil || opts.Cache == nil || opts.Journal == nil {
-		return nil, fmt.Errorf("filesystem staging requires base, cache, and journal")
+	if opts.Base == nil {
+		return nil, fmt.Errorf("filesystem staging requires a verified base")
 	}
-	service := &Service{base: opts.Base, cache: opts.Cache, journal: opts.Journal}
+	cacheDirectory, err := absoluteStatePath("cache directory", opts.CacheDirectory)
+	if err != nil {
+		return nil, err
+	}
+	journalPath, err := absoluteStatePath("journal path", opts.JournalPath)
+	if err != nil {
+		return nil, err
+	}
+	timeout := opts.LeaseTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	if timeout < 0 {
+		return nil, fmt.Errorf("filesystem staging lease timeout must not be negative")
+	}
+	lockPaths := []string{
+		filepath.Join(cacheDirectory, ".malt-staging.lease"),
+		journalPath + ".staging.lease",
+	}
+	slices.Sort(lockPaths)
+	releases := make([]func() error, 0, len(lockPaths))
+	for index, lockPath := range lockPaths {
+		if index != 0 && lockPath == lockPaths[index-1] {
+			continue
+		}
+		release, err := filelock.Acquire(lockPath, timeout)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("acquire filesystem staging lease %s: %w", lockPath, err), releaseAll(releases))
+		}
+		releases = append(releases, release)
+	}
+	cacheStore, err := cache.Open(cacheDirectory)
+	if err != nil {
+		return nil, errors.Join(err, releaseAll(releases))
+	}
+	journalStore, err := journal.Open(journalPath)
+	if err != nil {
+		return nil, errors.Join(err, releaseAll(releases))
+	}
+	service := &Service{base: opts.Base, cache: cacheStore, journal: journalStore, release: releases}
 	if err := service.Reconcile(context.Background()); err != nil {
-		return nil, fmt.Errorf("reconcile filesystem staging: %w", err)
+		return nil, errors.Join(fmt.Errorf("reconcile filesystem staging: %w", err), service.Close())
 	}
 	return service, nil
 }
 
+// Close releases the exclusive cache/journal leases after all active service
+// operations finish. It is idempotent. Handles cannot read after Close.
+func (s *Service) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	return releaseAll(s.release)
+}
+
 func (s *Service) StageWrite(ctx context.Context, view filesystemservice.View, rawPath string, body []byte, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
 	if err := ctx.Err(); err != nil {
 		return journal.Operation{}, err
 	}
@@ -131,6 +199,10 @@ func (s *Service) StageWrite(ctx context.Context, view filesystemservice.View, r
 }
 
 func (s *Service) StageMkdir(ctx context.Context, view filesystemservice.View, rawPath string, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
 	canonical, err := canonicalPath(rawPath, false)
 	if err != nil {
 		return journal.Operation{}, err
@@ -153,10 +225,18 @@ func (s *Service) StageMkdir(ctx context.Context, view filesystemservice.View, r
 }
 
 func (s *Service) StageUnlink(ctx context.Context, view filesystemservice.View, rawPath string, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
 	return s.stageRemove(ctx, view, rawPath, false, offline)
 }
 
 func (s *Service) StageRemoveDir(ctx context.Context, view filesystemservice.View, rawPath string, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
 	return s.stageRemove(ctx, view, rawPath, true, offline)
 }
 
@@ -194,6 +274,10 @@ func (s *Service) stageRemove(ctx context.Context, view filesystemservice.View, 
 }
 
 func (s *Service) StageRename(ctx context.Context, view filesystemservice.View, rawSource, rawDestination string, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
 	source, err := canonicalPath(rawSource, false)
 	if err != nil {
 		return journal.Operation{}, err
@@ -256,6 +340,10 @@ func (s *Service) appendNamespace(ctx context.Context, view filesystemservice.Vi
 }
 
 func (s *Service) Stat(ctx context.Context, view filesystemservice.View, rawPath string) (filesystemservice.Info, error) {
+	if err := s.enter(); err != nil {
+		return filesystemservice.Info{}, err
+	}
+	defer s.leave()
 	canonical, err := canonicalPath(rawPath, true)
 	if err != nil {
 		return filesystemservice.Info{}, err
@@ -268,6 +356,10 @@ func (s *Service) Stat(ctx context.Context, view filesystemservice.View, rawPath
 }
 
 func (s *Service) ReadDir(ctx context.Context, view filesystemservice.View, rawPath string) ([]filesystemservice.DirEntry, error) {
+	if err := s.enter(); err != nil {
+		return nil, err
+	}
+	defer s.leave()
 	canonical, err := canonicalPath(rawPath, true)
 	if err != nil {
 		return nil, err
@@ -280,6 +372,10 @@ func (s *Service) ReadDir(ctx context.Context, view filesystemservice.View, rawP
 }
 
 func (s *Service) Open(ctx context.Context, view filesystemservice.View, rawPath string) (*Handle, error) {
+	if err := s.enter(); err != nil {
+		return nil, err
+	}
+	defer s.leave()
 	canonical, err := canonicalPath(rawPath, false)
 	if err != nil {
 		return nil, err
@@ -309,6 +405,10 @@ func (s *Service) ReadFileRange(ctx context.Context, view filesystemservice.View
 }
 
 func (s *Service) Fsync(ctx context.Context, view filesystemservice.View) (FsyncResult, error) {
+	if err := s.enter(); err != nil {
+		return FsyncResult{}, err
+	}
+	defer s.leave()
 	if err := ctx.Err(); err != nil {
 		return FsyncResult{}, err
 	}
@@ -338,6 +438,10 @@ func (s *Service) Fsync(ctx context.Context, view filesystemservice.View) (Fsync
 // rejects referenced writes whose exact CID-bound body is unavailable. It
 // never discards an unresolved journal record.
 func (s *Service) Reconcile(ctx context.Context) error {
+	if err := s.enter(); err != nil {
+		return err
+	}
+	defer s.leave()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -617,6 +721,10 @@ func (h *Handle) Read(ctx context.Context, offset, length uint64) ([]byte, error
 	}
 	service, view, resolved := h.service, h.view, h.resolved
 	h.mu.Unlock()
+	if err := service.enter(); err != nil {
+		return nil, err
+	}
+	defer service.leave()
 	if resolved.local {
 		body, _, err := service.cache.ReadLocal(resolved.binding)
 		if err != nil {
@@ -636,10 +744,63 @@ func (h *Handle) Close() error {
 }
 
 func validateView(view filesystemservice.View) error {
-	if strings.TrimSpace(view.DatasetID) == "" || strings.TrimSpace(view.Branch) == "" || !view.Root.Defined() {
+	if err := validateIdentity("dataset", view.DatasetID); err != nil {
+		return err
+	}
+	if err := validateIdentity("branch", view.Branch); err != nil {
+		return err
+	}
+	if !view.Root.Defined() {
 		return fmt.Errorf("filesystem staging View is incomplete")
 	}
 	return nil
+}
+
+func validateIdentity(name, value string) error {
+	if value == "" || strings.TrimSpace(value) != value || !utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("filesystem staging View %s identity is empty or not canonical UTF-8", name)
+	}
+	return nil
+}
+
+func (s *Service) enter() error {
+	if s == nil {
+		return ErrServiceClosed
+	}
+	s.lifecycle.RLock()
+	if s.closed {
+		s.lifecycle.RUnlock()
+		return ErrServiceClosed
+	}
+	return nil
+}
+
+func (s *Service) leave() {
+	s.lifecycle.RUnlock()
+}
+
+func absoluteStatePath(name, value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("filesystem staging %s is empty", name)
+	}
+	absolute, err := filepath.Abs(filepath.Clean(value))
+	if err != nil {
+		return "", fmt.Errorf("resolve filesystem staging %s: %w", name, err)
+	}
+	return absolute, nil
+}
+
+func releaseAll(releases []func() error) error {
+	var failures []error
+	for index := len(releases) - 1; index >= 0; index-- {
+		if releases[index] == nil {
+			continue
+		}
+		if err := releases[index](); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func canonicalPath(raw string, allowRoot bool) (string, error) {

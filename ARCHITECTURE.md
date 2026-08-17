@@ -244,9 +244,10 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `filesystem/staging`: a platform-neutral local dirty overlay over the
   verified read-only service. It records write, mkdir, rename, and unlink
   intent against an exact immutable View, pins local file handles to a payload
-  CID, survives restart through the cache and journal, and reports only local
-  journal durability from `Fsync`. It performs no upload, candidate-root
-  computation, or trust mutation.
+  CID, exclusively leases both cache and journal paths across processes,
+  survives restart through those stores, and reports only local journal
+  durability from `Fsync`. It performs no upload, candidate-root computation,
+  or trust mutation.
 - `filesystem/mount`: durable desired/pending-unmount records, restart
   reconciliation, a process-held exclusive manager lease, immutable local-View
   selection, and the narrow platform adapter/session contract. It does not

@@ -367,6 +367,13 @@ CID selected at open time. Operations are isolated by dataset, branch, base
 root, revision, and encryption epoch, so selecting another local accepted View
 cannot expose dirty bytes from the old View.
 
+`staging.New` opens the configured cache directory and journal path only after
+acquiring process-held exclusive leases for both. A second Service sharing
+either store fails rather than racing the cache-to-journal acknowledgement
+window; callers must invoke `Service.Close` to release the leases. Dataset and
+branch identities must already be canonical UTF-8 without surrounding
+whitespace or NUL.
+
 `staging.Service.Fsync` returns profile `malt.local-journal-fsync/v1` and
 confirms only that the selected View's intent and referenced local bytes are
 durable and CID-valid. It always reports remote persistence and accepted-root
