@@ -122,6 +122,31 @@ func TestUploadCompletionRejectsTamperingButAllowsLaterLocalIntent(t *testing.T)
 	}
 }
 
+func TestUploadBatchRejectsShrunkenOrDuplicatePendingSet(t *testing.T) {
+	view := stagingTestView(t)
+	service, _, _ := newStagingService(t, t.TempDir(), newFakeBase(t))
+	for _, name := range []string{"docs/one.txt", "docs/two.txt"} {
+		if _, err := service.StageWrite(t.Context(), view, name, []byte(name), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batch, err := service.PrepareUpload(t.Context(), view)
+	if err != nil || len(batch.Pending) != 2 {
+		t.Fatalf("prepared batch=%#v err=%v", batch, err)
+	}
+	candidate := stagingTestCID(t, []byte("candidate"))
+	shrunk := batch
+	shrunk.Pending = cloneJournalOperations(batch.Pending[:1])
+	if _, err := service.CompleteUpload(t.Context(), shrunk, candidate); !errors.Is(err, ErrUploadBatch) {
+		t.Fatalf("shrunken pending set error=%v", err)
+	}
+	duplicate := batch
+	duplicate.Pending = append(cloneJournalOperations(batch.Pending), batch.Pending[0])
+	if _, err := service.MarkUploadConflicted(t.Context(), duplicate, "conflict"); !errors.Is(err, ErrUploadBatch) {
+		t.Fatalf("duplicate pending set error=%v", err)
+	}
+}
+
 func TestReconcileRepairsCacheStateAcrossBatchCrashWindows(t *testing.T) {
 	root := t.TempDir()
 	view := stagingTestView(t)
@@ -166,4 +191,70 @@ func TestReconcileRepairsCacheStateAcrossBatchCrashWindows(t *testing.T) {
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestUploadOutcomeRetryRepairsCacheAfterJournalCommit(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		apply     func(*Service, UploadBatch) error
+		wantState cache.State
+	}{
+		{
+			name: "complete",
+			apply: func(service *Service, batch UploadBatch) error {
+				_, err := service.CompleteUpload(t.Context(), batch, stagingTestCID(t, []byte("candidate after cache failure")))
+				return err
+			},
+			wantState: cache.StateCandidate,
+		},
+		{
+			name: "conflict",
+			apply: func(service *Service, batch UploadBatch) error {
+				_, err := service.MarkUploadConflicted(t.Context(), batch, "conflict-after-cache-failure")
+				return err
+			},
+			wantState: cache.StateConflicted,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			view := stagingTestView(t)
+			service, durableCache, _ := newStagingService(t, t.TempDir(), newFakeBase(t))
+			operation, err := service.StageWrite(t.Context(), view, "docs/retry.txt", []byte("retry body"), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			batch, err := service.PrepareUpload(t.Context(), view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			injected := errors.New("cache metadata disk full")
+			service.cache = &failOnceReconcileCache{cacheStore: durableCache, err: injected}
+			if err := test.apply(service, batch); !errors.Is(err, injected) {
+				t.Fatalf("first outcome error=%v, want injected cache failure", err)
+			}
+			if entry, err := durableCache.Inspect(bindingFromOperation(operation)); err != nil || entry.State != cache.StatePendingUpload {
+				t.Fatalf("cache before exact retry=%#v err=%v", entry, err)
+			}
+			if err := test.apply(service, batch); err != nil {
+				t.Fatalf("exact outcome retry failed: %v", err)
+			}
+			if entry, err := durableCache.Inspect(bindingFromOperation(operation)); err != nil || entry.State != test.wantState {
+				t.Fatalf("cache after exact retry=%#v err=%v", entry, err)
+			}
+		})
+	}
+}
+
+type failOnceReconcileCache struct {
+	cacheStore
+	err error
+}
+
+func (c *failOnceReconcileCache) ReconcileLocalState(binding cache.Binding, state cache.State) (cache.Entry, error) {
+	if c.err != nil {
+		err := c.err
+		c.err = nil
+		return cache.Entry{}, err
+	}
+	return c.cacheStore.ReconcileLocalState(binding, state)
 }

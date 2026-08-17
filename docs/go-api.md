@@ -400,8 +400,11 @@ the full overlay from the same accepted base, deduplicates raw-CID write
 payloads, and derives a stable Core-compatible operation identity from the
 complete intent snapshot. `CompleteUpload` and `MarkUploadConflicted` require
 the exact pending snapshot and atomically classify the whole batch. Completion
-uses the non-authoritative candidate cache state; none of these methods perform
-network I/O, compute a root, or accept one.
+uses the non-authoritative candidate cache state. If the journal outcome was
+committed but cache reconciliation or the response failed, repeating the exact
+candidate/conflict outcome repairs cache state idempotently; shrinking or
+substituting the pending set is rejected. None of these methods perform network
+I/O, compute a root, or accept one.
 
 ## Verified filesystem write-back orchestration
 

@@ -537,6 +537,8 @@ func TestOpenRejectsImpossiblePersistedCacheStateCombinations(t *testing.T) {
 		{Binding: binding, State: StateUnmaterializedRemote, BodyPresent: true, Size: int64(len(body)), UpdatedAt: now},
 		{Binding: binding, State: StateLocalDirty, BodyPresent: false, UpdatedAt: now},
 		{Binding: binding, State: StatePendingUpload, BodyPresent: false, Size: int64(len(body)), UpdatedAt: now},
+		{Binding: binding, State: StateCandidate, BodyPresent: false, Size: int64(len(body)), UpdatedAt: now},
+		{Binding: binding, State: StateCandidate, BodyPresent: true, Size: int64(len(body)), Verification: ptrEvidence(testEvidence()), UpdatedAt: now},
 		{Binding: binding, State: StateOfflineOnly, BodyPresent: true, Size: int64(len(body)), Verification: ptrEvidence(testEvidence()), UpdatedAt: now},
 	}
 	for i, entry := range tests {

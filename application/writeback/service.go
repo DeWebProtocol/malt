@@ -151,6 +151,16 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 	}
 	result := Result{Profile: ResultProfile, OperationID: batch.OperationID, BaseRoot: view.Root}
 	for _, payload := range batch.Payloads {
+		if !payload.CID.Defined() {
+			return result, fmt.Errorf("staged payload CID is undefined")
+		}
+		computed, err := payload.CID.Prefix().Sum(payload.Body)
+		if err != nil {
+			return result, fmt.Errorf("compute staged payload CID %s: %w", payload.CID, err)
+		}
+		if !computed.Equals(payload.CID) {
+			return result, fmt.Errorf("staged payload bytes do not match CID %s", payload.CID)
+		}
 		stored, err := s.payloads.Put(ctx, payload.Body)
 		if err != nil {
 			return result, fmt.Errorf("persist staged payload %s: %w", payload.CID, err)

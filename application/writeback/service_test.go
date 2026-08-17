@@ -73,6 +73,28 @@ func TestReplayRejectsPayloadCIDSubstitutionBeforeClientRootRequest(t *testing.T
 	}
 }
 
+func TestReplayRecomputesStagedPayloadCIDBeforeCallingStore(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.queue.batch.Payloads[0].Body = []byte("corrupt local staging body")
+	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
+		t.Fatal("staged payload body with a false CID was accepted")
+	}
+	if fixture.payloads.puts != 0 || fixture.remote.fetches != 0 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
+		t.Fatalf("write-back continued after local payload corruption: payloads=%#v remote=%#v queue=%#v", fixture.payloads, fixture.remote, fixture.queue)
+	}
+}
+
+func TestReplayRejectsUndefinedStagedPayloadCIDBeforeCallingStore(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.queue.batch.Payloads[0].CID = cid.Undef
+	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
+		t.Fatal("undefined staged payload CID was accepted")
+	}
+	if fixture.payloads.puts != 0 || fixture.remote.fetches != 0 {
+		t.Fatalf("write-back continued after undefined payload CID: payloads=%#v remote=%#v", fixture.payloads, fixture.remote)
+	}
+}
+
 func TestReplayRejectsStaleAcceptedRootBeforeFreezingQueue(t *testing.T) {
 	fixture := newWritebackFixture(t)
 	fixture.roots.accepted = writebackRawCID(t, []byte("new accepted"))

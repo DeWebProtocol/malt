@@ -125,7 +125,7 @@ func (s *Service) CompleteUpload(ctx context.Context, batch UploadBatch, candida
 	if err != nil {
 		return nil, err
 	}
-	if err := requirePendingSnapshot(current, batch.Pending); err != nil {
+	if err := requireCompletionSnapshot(current, batch.Pending, candidate); err != nil {
 		return nil, err
 	}
 	ids := operationIDs(batch.Pending)
@@ -163,10 +163,11 @@ func (s *Service) MarkUploadConflicted(ctx context.Context, batch UploadBatch, c
 	if err != nil {
 		return nil, err
 	}
-	if err := requirePendingSnapshot(current, batch.Pending); err != nil {
+	canonicalConflictID := strings.TrimSpace(conflictID)
+	if err := requireConflictSnapshot(current, batch.Pending, canonicalConflictID); err != nil {
 		return nil, err
 	}
-	conflicted, err := s.journal.MarkBatchConflicted(operationIDs(batch.Pending), conflictID)
+	conflicted, err := s.journal.MarkBatchConflicted(operationIDs(batch.Pending), canonicalConflictID)
 	if err != nil {
 		return nil, fmt.Errorf("conflict filesystem upload batch: %w", err)
 	}
@@ -253,29 +254,60 @@ func validateUploadBatch(batch UploadBatch) error {
 		return ErrUploadBatch
 	}
 	byID := make(map[string]journal.Operation, len(batch.Operations))
+	expectedPending := make(map[string]journal.Operation)
 	for _, operation := range batch.Operations {
 		if _, exists := byID[operation.OperationID]; exists {
 			return ErrUploadBatch
 		}
-		byID[operation.OperationID] = operation
-	}
-	for _, operation := range batch.Pending {
-		selected, ok := byID[operation.OperationID]
-		if !ok || selected.Sequence != operation.Sequence || selected.Intent != operation.Intent || operation.Status != journal.StatusPendingUpload {
+		switch operation.Status {
+		case journal.StatusPendingUpload:
+			expectedPending[operation.OperationID] = operation
+		case journal.StatusCompleted:
+			if _, err := cid.Parse(operation.ResultRoot); err != nil {
+				return ErrUploadBatch
+			}
+		default:
 			return ErrUploadBatch
 		}
+		byID[operation.OperationID] = operation
+	}
+	seenPending := make(map[string]struct{}, len(batch.Pending))
+	for _, operation := range batch.Pending {
+		selected, ok := byID[operation.OperationID]
+		_, expected := expectedPending[operation.OperationID]
+		if _, duplicate := seenPending[operation.OperationID]; duplicate || !ok || !expected || selected != operation {
+			return ErrUploadBatch
+		}
+		seenPending[operation.OperationID] = struct{}{}
+	}
+	if len(seenPending) != len(expectedPending) {
+		return ErrUploadBatch
 	}
 	return nil
 }
 
-func requirePendingSnapshot(current, pending []journal.Operation) error {
+func requireCompletionSnapshot(current, pending []journal.Operation, candidate cid.Cid) error {
+	return requireTargetSnapshot(current, pending, func(operation journal.Operation) bool {
+		return operation.Status == journal.StatusPendingUpload ||
+			(operation.Status == journal.StatusCompleted && operation.ResultRoot == candidate.String())
+	})
+}
+
+func requireConflictSnapshot(current, pending []journal.Operation, conflictID string) error {
+	return requireTargetSnapshot(current, pending, func(operation journal.Operation) bool {
+		return operation.Status == journal.StatusPendingUpload ||
+			(operation.Status == journal.StatusConflicted && operation.ConflictID == conflictID)
+	})
+}
+
+func requireTargetSnapshot(current, pending []journal.Operation, validTarget func(journal.Operation) bool) error {
 	byID := make(map[string]journal.Operation, len(current))
 	for _, operation := range current {
 		byID[operation.OperationID] = operation
 	}
 	for _, expected := range pending {
 		operation, ok := byID[expected.OperationID]
-		if !ok || operation.Sequence != expected.Sequence || operation.Intent != expected.Intent || operation.Status != journal.StatusPendingUpload {
+		if !ok || operation.Sequence != expected.Sequence || operation.Intent != expected.Intent || !validTarget(operation) {
 			return fmt.Errorf("%w: pending operation %s changed", ErrUploadBatch, expected.OperationID)
 		}
 	}

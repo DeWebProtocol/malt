@@ -644,7 +644,7 @@ func normalizeEntry(entry Entry) (Entry, error) {
 		if entry.Verification == nil || !entry.BodyPresent || entry.Verification.VerifiedAt.IsZero() || strings.TrimSpace(entry.Verification.Profile) == "" || !utf8.ValidString(entry.Verification.Profile) || len(entry.Verification.Evidence) == 0 {
 			return Entry{}, fmt.Errorf("verified-clean entry lacks verification evidence or body")
 		}
-	case StateLocalDirty, StatePendingUpload, StateConflicted, StateOfflineOnly:
+	case StateLocalDirty, StatePendingUpload, StateCandidate, StateConflicted, StateOfflineOnly:
 		if !entry.BodyPresent || entry.Verification != nil {
 			return Entry{}, fmt.Errorf("local mutation entry lacks a body or contains verification evidence")
 		}
