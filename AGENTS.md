@@ -24,7 +24,7 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   root is a compatibility output, not a MALT-authenticated root or ProofList.
 - Keep benchmark suites, run plans, comparison policy, result schemas, and
   result provenance in `malt-evaluation`. Code under `tools/evaluation` is a
-  pinned process adapter, not a supported client command or an evaluator
+  pinned process adapter, not a supported runtime command or an evaluator
   source of truth.
 
 ## Package Ownership

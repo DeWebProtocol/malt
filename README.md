@@ -313,7 +313,7 @@ Map-to-directory and List/CAS-to-file fallback. See
 [the UnixFS manifest format](./docs/unixfs-manifest.md) for the wire and
 compatibility rules.
 
-The same client can materialize one local file or directory as an
+The same runtime can materialize one local file or directory as an
 IPFS-compatible Merkle DAG while reusing the gateway CAS:
 
 ```bash
@@ -385,7 +385,7 @@ and cannot fall back to the public CAS namespace.
 
 ## Evaluation adapters
 
-`cmd/` contains only the supported `malt` product binary. Client-specific
+`cmd/` contains only the supported `malt` product binary. Runtime-specific
 benchmark process adapters live under `tools/evaluation/cmd`, with shared
 private support under `internal/evaluation`. They preserve their external
 `malt-eval-*` executable and wire contracts, but are not a public Go API or

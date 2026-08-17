@@ -14,12 +14,12 @@ It owns:
 - managed-Bucket base/remote/stash state and stash-before-fetch synchronization;
 - semantic remote capabilities with a current Gateway HTTP implementation;
 - UnixFS path, manifest, fixed-list payload, import, and range-body semantics;
-- IPFS-compatible Merkle DAG UnixFS import as an alternative client target;
+- IPFS-compatible Merkle DAG UnixFS import as an alternative runtime target;
 - local replay verification for gateway Merkle DAG compatibility reads;
 - application-level payload-byte verification.
 - client-side encrypted snapshot creation, restore, and automatic scheduling.
 
-Client-specific benchmark process adapters also live in this repository under
+Runtime-specific benchmark process adapters also live in this repository under
 `tools/evaluation`. They exercise this implementation at a pinned commit, but
 do not own benchmark plans, suites, comparison policy, result schemas, or
 result provenance; those belong in `malt-evaluation`.
