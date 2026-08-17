@@ -62,6 +62,9 @@ transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
 implemented here. There is no
 independent runtime release tag yet; build from a pinned commit.
+Experimental Go interfaces such as filesystem staging and write-back may still
+make explicitly documented source-breaking changes before that first release;
+these changes do not imply a wire-format or persisted-state migration.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact runtime and dependency revisions they build.
 

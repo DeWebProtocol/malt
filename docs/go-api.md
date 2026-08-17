@@ -423,6 +423,12 @@ store. The MALT Core client-root Writer then computes the candidate locally and
 verifies the exact durable receipt before the service records a candidate and
 completes the batch.
 
+This remains an unreleased pre-v1 Go surface. The change-aware planner result
+and exact `CompleteNoChange` queue operation intentionally supersede the earlier
+experimental interfaces and are source-breaking for implementations built from
+intermediate commits. They do not change a wire profile, receipt, journal
+schema, or cache schema.
+
 The root-policy port deliberately exposes accepted-root lookup and candidate
 recording only. `writeback.Result.RootAccepted` is therefore always false. If
 the accepted root advances after the remote receipt but before candidate
