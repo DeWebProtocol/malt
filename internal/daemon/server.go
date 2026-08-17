@@ -5,6 +5,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/dewebprotocol/malt-client/application"
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
+	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
+	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	cid "github.com/ipfs/go-cid"
 )
@@ -25,6 +28,7 @@ type Server struct {
 	mux      *http.ServeMux
 	instance string
 	plans    clientbackup.PlanRunner
+	mounts   MountController
 }
 
 func New(store *truststore.Store) (*Server, error) {
@@ -41,6 +45,13 @@ func NewWithInstance(store *truststore.Store, instance string) (*Server, error) 
 type Options struct {
 	Instance string
 	Plans    clientbackup.PlanRunner
+	Mounts   MountController
+}
+
+type MountController interface {
+	List() ([]filesystemmount.Status, error)
+	Mount(context.Context, filesystemmount.Spec) (filesystemmount.Status, error)
+	Unmount(context.Context, string) error
 }
 
 func NewWithOptions(store *truststore.Store, opts Options) (*Server, error) {
@@ -51,7 +62,7 @@ func NewWithOptions(store *truststore.Store, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{roots: roots, mux: http.NewServeMux(), instance: opts.Instance, plans: opts.Plans}
+	s := &Server{roots: roots, mux: http.NewServeMux(), instance: opts.Instance, plans: opts.Plans, mounts: opts.Mounts}
 	s.routes()
 	return s, nil
 }
@@ -190,6 +201,57 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
 		s.runPlanOperation(w, r, "sync")
 	})
+	s.mux.HandleFunc("GET /v1/mounts", func(w http.ResponseWriter, _ *http.Request) {
+		if s.mounts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "mount service is not configured"})
+			return
+		}
+		mounts, err := s.mounts.List()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"mounts": mounts})
+	})
+	s.mux.HandleFunc("POST /v1/mounts", func(w http.ResponseWriter, r *http.Request) {
+		if s.mounts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "mount service is not configured"})
+			return
+		}
+		var spec filesystemmount.Spec
+		if err := decodeJSON(r, &spec); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		status, err := s.mounts.Mount(r.Context(), spec)
+		if err != nil {
+			code := http.StatusBadGateway
+			if errors.Is(err, filesystemmount.ErrInvalidSpec) {
+				code = http.StatusBadRequest
+			} else if errors.Is(err, filesystemmount.ErrIdentityReuse) || errors.Is(err, filesystemmount.ErrMountpointUse) ||
+				errors.Is(err, filesystemmount.ErrPendingUnmount) {
+				code = http.StatusConflict
+			}
+			writeJSON(w, code, map[string]any{"error": err.Error(), "mount": status})
+			return
+		}
+		writeJSON(w, http.StatusCreated, status)
+	})
+	s.mux.HandleFunc("DELETE /v1/mounts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if s.mounts == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "mount service is not configured"})
+			return
+		}
+		if err := s.mounts.Unmount(r.Context(), r.PathValue("id")); err != nil {
+			code := http.StatusBadGateway
+			if errors.Is(err, filesystemmount.ErrNotFound) {
+				code = http.StatusNotFound
+			}
+			writeJSON(w, code, map[string]string{"error": err.Error()})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
 func (s *Server) runPlanOperation(w http.ResponseWriter, r *http.Request, operation string) {
@@ -231,6 +293,9 @@ func decodeJSON(r *http.Request, target any) error {
 	}
 	if len(data) > 1<<20 {
 		return fmt.Errorf("request body exceeds 1 MiB")
+	}
+	if err := strictjson.ValidateUnicode(data); err != nil {
+		return fmt.Errorf("decode request: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

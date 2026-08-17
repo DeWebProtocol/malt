@@ -241,11 +241,17 @@ it does not silently change the existing plaintext semantics of `malt add`.
   uses the payload-lazy `unixfs.LookupReader` to revalidate projection on each
   read, uses the cache only for raw CID-bound payloads, and keeps List payloads
   on the authenticated range path.
+- `filesystem/mount`: durable desired/pending-unmount records, restart
+  reconciliation, a process-held exclusive manager lease, immutable local-View
+  selection, and the narrow platform adapter/session contract. It does not
+  implement trust or network access. Targets without a kernel-backed,
+  process-released lease fail closed before opening the mount registry.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
   Merkle-DAG compatibility applications.
-- `internal/daemon`: local Unix-socket/Windows-pipe root-control API.
+- `internal/daemon`: local Unix-socket/Windows-pipe runtime control API,
+  including optional mount lifecycle routes backed by the shared manager.
 - `internal/keyring`: runtime-owned backup epoch keys and per-Bucket derivation.
 - `internal/durablefile`: platform-specific parent-directory synchronization
   after security-sensitive atomic state replacement.
@@ -261,10 +267,10 @@ it does not silently change the existing plaintext semantics of `malt add`.
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`application`, `bucketsync`, `cache`, `filesystem/service`, `journal`,
-`transport`, `trust`, `unixfs`, and `merkledag` packages are the intended
-pre-release integration surface; their profiles remain experimental until a
-release policy is published. Architecture tests
+`application`, `bucketsync`, `cache`, `filesystem/service`,
+`filesystem/mount`, `journal`, `transport`, `trust`, `unixfs`, and `merkledag`
+packages are the intended pre-release integration surface; their profiles
+remain experimental until a release policy is published. Architecture tests
 fail if production packages import evaluation support, if `cmd/` gains a
 non-product binary, if public transport regains an evaluation control-plane
 escape hatch, or if Merkle DAG compatibility begins to depend on transport

@@ -84,6 +84,12 @@ Current boundary strengths:
   revalidate both the current projection and stored Resolve proof without first
   fetching the remote payload, while List files use authenticated lazy range
   reads and are not misrepresented as raw CID-bound cache bodies.
+- `filesystem/mount` persists desired mounts and pending-unmount tombstones,
+  excludes competing daemon managers with a process-held registry lease,
+  restores records through an idempotent platform adapter contract, and gives
+  that adapter only a read-only filesystem already bound to a locally accepted
+  View. Unsupported lock targets fail closed before registry access. The
+  private daemon API delegates list/mount/unmount to the same manager.
 - CLI foreground execution, daemon IPC, and scheduled execution share the same
   `application/backup.BatchRunner`; `internal/runtime.Services` supplies one
   configuration snapshot and the same backup services, local locking, and
@@ -104,9 +110,9 @@ Current implementation gaps that still encode concrete Gateway coupling:
   Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
-- There is no mount registry or platform mount adapter yet. The read-only
-  filesystem service is additive and not yet exposed through host syscalls;
-  write-back and journal composition remain follow-up work.
+- The durable mount registry and daemon lifecycle API are additive but are not
+  yet composed with a concrete FUSE/WinFsp adapter in the product daemon. Host
+  syscall exposure, write-back, and journal composition remain follow-up work.
 - There is no local-CAS, peer, or hybrid transport implementation yet.
 
 No code in `malt-core` owns UnixFS, Bucket, account, daemon, key persistence,
@@ -269,7 +275,8 @@ choice and does not define network topology.
 | 5 | **Completed 2026-08-17:** persist `ObservedHead`, `CandidateRoot`, and `AcceptedRootState` separately in trust-store v2; preserve an exact owner-only v1 recovery artifact before atomic migration; record backup heads as observations; add distinct candidate/observation acceptance APIs | additive API plus trust-store v2 migration; flattened `Record` retained for accepted-root aliases | no | state loss, stale observation, or implicit promotion | v1 fixture migration and write/sync/secure fault injection, stale/same-revision conflict, malformed root, restart, wrong acceptance-route, and backup observation tests | stop the runtime and replace the v2 store with `<trust-store>.v1-recovery`; the runtime retains this exact v1 artifact until an operator removes it |
 | 6 | **Completed 2026-08-17:** introduce non-authoritative verified-cache metadata/bodies and an ordered operation journal without mounting; require exact dataset/branch/root/revision/CID/epoch identity, fresh proof-evidence verification on every verified hit, CID recomputation, explicit cache transitions, crash-orphan reconciliation, frozen retry tombstones, non-replayable unresolved conflicts, and new identities for conflict replacements | additive pre-release `cache` and `journal` APIs | no | treating cache as authority, orphaning sensitive bytes, erasing pending/conflict state, or changing/reusing retry identity after an ambiguous upload | corrupt/missing body, invalid proof, stale root/revision/wrong epoch, invalid UTF-8, impossible persisted state, full transition bypass matrix, failed remove/metadata commit, crash reconciliation, lock-held remove/replace, concurrent fill, restart, ordered replay, identity/tombstone reuse, malformed superseded graph, unresolved-conflict exclusion, replacement/completion, CID canonicalization, and concurrent writer tests | do not compose the additive stores; remote verified reads remain the active path and journal records remain recoverable |
 | 7 | **Completed 2026-08-17:** add `filesystem/service` over the verified UnixFS reader with immutable dataset/root/revision/epoch views, stat/readdir/open/full/range reads, raw CID cache proof revalidation, legacy directory projection, and List-range laziness | new additive pre-release API | no | unverified bytes escape or cache becomes authority | selected-root mismatch, stat/readdir/open/closed handle, raw CID corruption, invalid cached proof, wrong revision, lazy List range, cache-hit and architecture contract tests | do not compose the additive service into a platform mount; existing CLI read paths remain unchanged |
-| 8 | Add read-only platform mount adapter and daemon-managed lifecycle | new CLI/local API commands | no | mount leakage or lifecycle races | platform adapter tests, restart/remount, permissions, cancellation | unmount and disable adapter; core runtime remains |
+| 8a | **Completed 2026-08-17:** add durable `filesystem/mount` desired/pending-unmount state, an exclusive process-held manager lease on supported Linux/macOS/BSD and Windows targets, fail-closed rejection elsewhere, exact local-View selector, platform adapter/session contract, restart restore and graceful shutdown semantics, plus private daemon list/mount/unmount routes | additive pre-release manager and local API | no | leaked mount, competing daemon, observed-head selection, or lost unmount intent | persistence/permissions/required-field strict JSON, failed mount retry, tombstone non-revival, pending-unmount crash recovery, exclusive-manager lease, supported/unsupported platform builds, Unix/Windows replacement builds, restart/remount, expected/unexpected session exit, view mismatch, daemon adapter parity and race tests | leave the manager unconfigured; no host mount is created and desired records remain recoverable |
+| 8b | Add concrete read-only platform adapter, daemon composition, and `malt mount/unmount` control commands | new CLI/local API behavior | no | platform permission, stale mount, or lifecycle race | adapter node tests, supported-host smoke test, cancellation, daemon restart/remount | unmount and disable adapter; service/registry remain |
 | 9 | Add local dirty staging, write-back, fsync contract, rename/unlink, and offline journal | experimental filesystem API | no | acknowledged data loss or root promotion | dirty/crash/offline/fsync/conflict/malicious apply tests | read-only mode remains default; journal retained for replay |
 | 10 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |
 | 11 | Separate pre-v1 runtime module namespace decision and release line | breaking Go import change if approved | no | collision with historical Core path | external consumer build with isolated module cache | do not tag; keep old module until cutover is proven |

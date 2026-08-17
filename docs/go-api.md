@@ -357,6 +357,26 @@ The filesystem service is not yet composed into a host mount, and the journal
 is not yet connected to write-back. Existing CLI reads remain unchanged, so
 disabling these additive packages requires no persisted-state rollback.
 
+Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
+`mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,
+cache policy, read-only policy, encryption epoch, and conflict policy. The
+registry persists desired state before platform mount I/O and persists a
+pending-unmount tombstone before unmount I/O. `Manager.Restore` first completes
+those idempotent unmounts, then recreates desired sessions using a newly
+selected local accepted `service.View`. Graceful `Shutdown` stops sessions but
+preserves desired state for daemon restart. A process-held registry lease
+excludes a second daemon manager until `Shutdown` or process exit, and a failed
+unmount tombstone cannot be revived without first completing cleanup. Registry
+replacement uses same-directory rename plus directory sync on Unix and native
+replace-existing/write-through semantics on Windows. The lifecycle store is
+enabled only on the supported Linux, macOS, BSD, and Windows lock targets;
+other build targets return `mount.ErrUnsupportedPlatform` before opening state.
+Platform adapters receive only a View-bound `ReadOnlyFilesystem`; they cannot
+select roots or access transport.
+The private daemon API exposes the same manager at `GET/POST /v1/mounts` and
+`DELETE /v1/mounts/{id}` when a manager is configured. No concrete FUSE or
+WinFsp adapter is claimed by this step.
+
 ## Merkle DAG compatibility
 
 The public transport also supports:
