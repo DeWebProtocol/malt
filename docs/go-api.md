@@ -339,9 +339,23 @@ restart. Journal identities and paths must be valid UTF-8, and persisted
 superseded graphs must remain a single-predecessor chain with the original
 conflict identity intact.
 
-Neither package is currently composed into a host-filesystem mount. Existing
-remote reads continue through the UnixFS verifier, so disabling this additive
-substrate requires no persisted-state rollback.
+Package `filesystem/service` is the additive, platform-neutral read-only host
+filesystem boundary. A `service.View` fixes dataset, branch, caller-selected
+root, revision, and encryption epoch; it must be constructed from local trust
+policy rather than an observed remote head. `Stat`, `ReadDir`, `Open`,
+`ReadFile`, and `ReadFileRange` consume only the verified `unixfs.Reader`
+contract plus its additive `unixfs.LookupReader` capability. `Lookup` proves
+the path and parent-manifest projection without fetching the file payload, so
+a raw cache hit does not first perform the remote block read it is intended to
+avoid. Each read revalidates the current UnixFS projection. Raw payloads may
+use the non-authoritative cache, but every hit rechecks the CID, locally
+reverifies its stored Resolve proof, and matches the exact view. List-backed
+files remain on the authenticated range path and are not cached as if their
+reconstructed bytes were one raw block.
+
+The filesystem service is not yet composed into a host mount, and the journal
+is not yet connected to write-back. Existing CLI reads remain unchanged, so
+disabling these additive packages requires no persisted-state rollback.
 
 ## Merkle DAG compatibility
 

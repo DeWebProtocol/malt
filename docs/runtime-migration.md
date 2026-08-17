@@ -23,7 +23,7 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache and operation-journal substrate, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache and operation journal, platform-neutral verified read-only filesystem service, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
 
@@ -78,6 +78,12 @@ Current boundary strengths:
 - `journal` durably orders local write/mkdir/rename/unlink intent and freezes a
   retry identity before upload. It can retain a candidate result but has no
   accepted-root mutation capability.
+- `filesystem/service` pins every operation to dataset, branch, selected root,
+  revision, and encryption epoch. It exposes stat/readdir/open/full/range read
+  without transport DTOs; payload-lazy UnixFS lookup lets raw cache hits
+  revalidate both the current projection and stored Resolve proof without first
+  fetching the remote payload, while List files use authenticated lazy range
+  reads and are not misrepresented as raw CID-bound cache bodies.
 - CLI foreground execution, daemon IPC, and scheduled execution share the same
   `application/backup.BatchRunner`; `internal/runtime.Services` supplies one
   configuration snapshot and the same backup services, local locking, and
@@ -98,9 +104,9 @@ Current implementation gaps that still encode concrete Gateway coupling:
   Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
-- There is no platform-neutral filesystem service, mount registry, or platform
-  mount adapter yet; the cache and operation journal are additive substrate and
-  are not yet composed into user-facing file operations.
+- There is no mount registry or platform mount adapter yet. The read-only
+  filesystem service is additive and not yet exposed through host syscalls;
+  write-back and journal composition remain follow-up work.
 - There is no local-CAS, peer, or hybrid transport implementation yet.
 
 No code in `malt-core` owns UnixFS, Bucket, account, daemon, key persistence,
@@ -195,9 +201,9 @@ are untrusted by type and naming.
 
 ### Filesystem boundary
 
-The platform-neutral filesystem service will own lookup, verified stat/read,
-range reads, staging, rename/unlink semantics, dirty state, fsync policy,
-offline journal, and conflicts. FUSE/WinFsp/platform packages only translate OS
+The platform-neutral filesystem service owns lookup, verified stat/read, and
+range reads; later phases extend the same boundary with staging, rename/unlink
+semantics, dirty state, fsync policy, offline journal, and conflicts. FUSE/WinFsp/platform packages only translate OS
 operations into this service. A read may return bytes only after path proof,
 payload CID, version/root, and encryption-epoch checks.
 
@@ -262,7 +268,7 @@ choice and does not define network topology.
 | 4 | **Completed 2026-08-17:** define URL-free `transport/capability` Native/CAS/Mutations/DatasetBranch ports, adapt Gateway HTTP into typed untrusted values, move Bucket sync and UnixFS mutation consumers off concrete DTOs, and retain deprecated pre-release aliases | additive ports plus pre-v1 `PushOutcome.Result` type rename; deprecated constructors retained | no; persisted JSON tags unchanged | accidental trust mutation, request mismatch, or route leakage | binding/request/result adversarial contracts, Gateway adapter tests, JSON-field compatibility, architecture imports | select the deprecated Gateway adapters; no persisted-state migration is required |
 | 5 | **Completed 2026-08-17:** persist `ObservedHead`, `CandidateRoot`, and `AcceptedRootState` separately in trust-store v2; preserve an exact owner-only v1 recovery artifact before atomic migration; record backup heads as observations; add distinct candidate/observation acceptance APIs | additive API plus trust-store v2 migration; flattened `Record` retained for accepted-root aliases | no | state loss, stale observation, or implicit promotion | v1 fixture migration and write/sync/secure fault injection, stale/same-revision conflict, malformed root, restart, wrong acceptance-route, and backup observation tests | stop the runtime and replace the v2 store with `<trust-store>.v1-recovery`; the runtime retains this exact v1 artifact until an operator removes it |
 | 6 | **Completed 2026-08-17:** introduce non-authoritative verified-cache metadata/bodies and an ordered operation journal without mounting; require exact dataset/branch/root/revision/CID/epoch identity, fresh proof-evidence verification on every verified hit, CID recomputation, explicit cache transitions, crash-orphan reconciliation, frozen retry tombstones, non-replayable unresolved conflicts, and new identities for conflict replacements | additive pre-release `cache` and `journal` APIs | no | treating cache as authority, orphaning sensitive bytes, erasing pending/conflict state, or changing/reusing retry identity after an ambiguous upload | corrupt/missing body, invalid proof, stale root/revision/wrong epoch, invalid UTF-8, impossible persisted state, full transition bypass matrix, failed remove/metadata commit, crash reconciliation, lock-held remove/replace, concurrent fill, restart, ordered replay, identity/tombstone reuse, malformed superseded graph, unresolved-conflict exclusion, replacement/completion, CID canonicalization, and concurrent writer tests | do not compose the additive stores; remote verified reads remain the active path and journal records remain recoverable |
-| 7 | Add platform-neutral read-only filesystem service over UnixFS and mock transport | new experimental API | no | unverified bytes escape | stat/readdir/open/read/range/cache-hit adversarial contract tests | service is additive and can be disabled |
+| 7 | **Completed 2026-08-17:** add `filesystem/service` over the verified UnixFS reader with immutable dataset/root/revision/epoch views, stat/readdir/open/full/range reads, raw CID cache proof revalidation, legacy directory projection, and List-range laziness | new additive pre-release API | no | unverified bytes escape or cache becomes authority | selected-root mismatch, stat/readdir/open/closed handle, raw CID corruption, invalid cached proof, wrong revision, lazy List range, cache-hit and architecture contract tests | do not compose the additive service into a platform mount; existing CLI read paths remain unchanged |
 | 8 | Add read-only platform mount adapter and daemon-managed lifecycle | new CLI/local API commands | no | mount leakage or lifecycle races | platform adapter tests, restart/remount, permissions, cancellation | unmount and disable adapter; core runtime remains |
 | 9 | Add local dirty staging, write-back, fsync contract, rename/unlink, and offline journal | experimental filesystem API | no | acknowledged data loss or root promotion | dirty/crash/offline/fsync/conflict/malicious apply tests | read-only mode remains default; journal retained for replay |
 | 10 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |

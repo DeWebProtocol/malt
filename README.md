@@ -23,6 +23,9 @@ authentication core:
 - non-authoritative CID-bound cache metadata with explicit verified, dirty,
   pending, conflicted, offline-only, and stale states;
 - a durable ordered local-operation journal with frozen retry identities;
+- a platform-neutral read-only filesystem service pinned to an exact accepted
+  dataset view, with verified lazy List ranges and proof-revalidated raw cache
+  hits;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
@@ -35,10 +38,11 @@ separate explicit acceptance path.
 ## Status
 
 This is an experimental, pre-v1 local runtime. It currently provides the
-`malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, and a
-UnixFS application adapter. Cache and operation-journal packages are available
-as opt-in substrate but are not yet connected to a host-filesystem mount. The
-current remote transport is Gateway HTTP; a host-filesystem mount, local-CAS
+`malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, a
+UnixFS application adapter, and an opt-in platform-neutral read-only filesystem
+service. Cache and operation-journal packages are available as runtime
+substrate, but no platform mount adapter is connected yet. The current remote
+transport is Gateway HTTP; a host-filesystem mount, local-CAS
 transport, P2P transport, and hybrid transport are staged follow-up work and
 are not claimed as implemented here. There is no
 independent runtime release tag yet; build from a pinned commit.

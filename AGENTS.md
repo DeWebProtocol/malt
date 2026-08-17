@@ -49,6 +49,10 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   identity, offline/pending/conflict state, and crash replay metadata. It may
   record a candidate/result root but cannot accept it and must not import trust,
   transport, UnixFS, or application packages.
+- `filesystem/service` owns platform-neutral stat, readdir, open, and read
+  semantics over a caller-selected immutable dataset view. It may compose the
+  verified UnixFS reader and non-authoritative cache, but it must not import a
+  concrete transport, trust store, HTTP route, or platform mount driver.
 - `application/` owns reusable accepted-root selection, observation/candidate recording,
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends
