@@ -42,14 +42,14 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
   behavior here rather than under `cmd/malt`.
-- `merkledag/` owns the compatibility client and local CID/link-evidence
+- `merkledag/` owns the compatibility adapter and local CID/link-evidence
   replay; `merkledag/importer` owns import construction. Do not represent this
   evidence as a MALT ProofList.
 - `cmd/malt/` is the process/composition adapter. Command handlers should
   select capabilities, call `application/` use cases, and format results, not
   become a second UnixFS or trust implementation. `cmd/` contains only the
   supported `malt` product binary.
-- `tools/evaluation/cmd/` owns evaluator-launched client process adapters.
+- `tools/evaluation/cmd/` owns evaluator-launched runtime process adapters.
   Preserve their external binary names and wire contracts, but do not treat
   their Go packages as a compatibility surface.
 - `internal/evaluation/` owns shared implementation for those adapters,

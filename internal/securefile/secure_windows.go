@@ -1,6 +1,6 @@
 //go:build windows
 
-// Package securefile applies owner-only protection to local client state.
+// Package securefile applies owner-only protection to local runtime state.
 package securefile
 
 import "golang.org/x/sys/windows"

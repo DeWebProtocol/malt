@@ -1,4 +1,4 @@
-// Package memory provides an in-memory CAS for client tests.
+// Package memory provides an in-memory CAS for runtime tests.
 package memory
 
 import (

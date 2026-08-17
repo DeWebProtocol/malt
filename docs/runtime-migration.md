@@ -76,7 +76,7 @@ Current implementation gaps that still encode concrete Gateway coupling:
   batch runner lives in the command package even though the daemon invokes it.
 - Root command handlers repeatedly open the trust store and construct
   `application.Roots`; read handlers repeatedly construct a concrete Gateway
-  client, UnixFS reader, selector, and application service.
+  Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
 - There is no platform-neutral filesystem service, mount registry, verified

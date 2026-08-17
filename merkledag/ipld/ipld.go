@@ -1,4 +1,4 @@
-// Package ipld provides client-owned Merkle-DAG parsing and link traversal.
+// Package ipld provides runtime-owned Merkle-DAG parsing and link traversal.
 // It is a compatibility/application facility and deliberately does not expose
 // Merkle-DAG evidence as a MALT ProofList.
 package ipld

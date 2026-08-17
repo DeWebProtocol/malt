@@ -1,4 +1,4 @@
-// Package truststore persists the roots accepted by the local MALT client.
+// Package truststore persists the roots accepted by the local MALT runtime.
 // Candidate roots returned by an untrusted gateway are recorded separately and
 // never become accepted without an explicit local action.
 package trust

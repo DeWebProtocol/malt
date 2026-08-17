@@ -1,5 +1,5 @@
-// Package keyring persists client-owned backup master keys. Bucket content
-// keys are derived in memory, so the client stores one key per epoch rather
+// Package keyring persists runtime-owned backup master keys. Bucket content
+// keys are derived in memory, so the runtime stores one key per epoch rather
 // than one key per Bucket.
 package keyring
 

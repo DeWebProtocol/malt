@@ -31,7 +31,7 @@ func gatewayClient() (*client.Client, error) {
 
 func gatewayOptions(cfg *clientconfig.Config, bucketID, branch string) (client.Options, error) {
 	if cfg == nil {
-		return client.Options{}, fmt.Errorf("client config is nil")
+		return client.Options{}, fmt.Errorf("runtime config is nil")
 	}
 	opts := client.Options{
 		BaseURL: cfg.GatewayBaseURL(), BucketID: strings.TrimSpace(bucketID),

@@ -35,7 +35,7 @@ const (
 var clientRootWriteCategories = []string{"semantic-materialization", "arctable-records", "root-version-metadata"}
 
 // ClientRootPhaseMetrics are Gateway-observed phase durations. They are
-// diagnostics, not part of the exact-root receipt or a client trust decision.
+// diagnostics, not part of the exact-root receipt or a local trust decision.
 type ClientRootPhaseMetrics struct {
 	OldStateValidationNS uint64 `json:"old_state_validation_ns"`
 	GatewayReplayNS      uint64 `json:"gateway_replay_ns"`

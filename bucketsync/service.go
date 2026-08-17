@@ -1,4 +1,4 @@
-// Package bucketsync owns durable client-side Bucket synchronization state.
+// Package bucketsync owns durable runtime-side Bucket synchronization state.
 // It records local candidates before observing a remote head and never promotes
 // a Gateway head into the separate trusted-root store.
 package bucketsync
@@ -344,7 +344,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 	}
 
 	// The candidate and original base are already durable. Fetching cannot
-	// erase its base even when another client has advanced main.
+	// erase its base even when another runtime has advanced main.
 	if _, err := s.Pull(ctx); err != nil {
 		return PushOutcome{}, err
 	}

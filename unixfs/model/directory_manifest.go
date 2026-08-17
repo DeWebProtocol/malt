@@ -88,7 +88,7 @@ func DirectoryManifestPayload(entries []DirectoryEntry) ([]byte, error) {
 
 // ParseDirectoryManifest parses already-fetched bytes according to their CID
 // codec. Historical raw-CID manifests are accepted as V1 because early native
-// client writers stored the locked V1 JSON through a codec-less CAS port.
+// runtime writers stored the locked V1 JSON through a codec-less CAS port.
 func ParseDirectoryManifest(key cid.Cid, data []byte) (*DirectoryManifest, error) {
 	var (
 		value *manifest.DirectoryManifest

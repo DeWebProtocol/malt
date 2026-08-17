@@ -232,7 +232,7 @@ func bucketSyncService() (*bucketsync.Service, error) {
 }
 
 // prepareBucketCandidate captures the Bucket base before candidate
-// materialization. A nil service means the client is using legacy routes.
+// materialization. A nil service means the runtime is using legacy routes.
 func prepareBucketCandidate(
 	ctx context.Context,
 	remote *client.Client,

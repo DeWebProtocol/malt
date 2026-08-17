@@ -6,7 +6,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Policy is the client-local accepted/candidate root boundary. Network
+// Policy is the runtime-local accepted/candidate root boundary. Network
 // transports and application readers may consult it, but they cannot promote
 // a candidate without an explicit AcceptCandidate call.
 type Policy interface {

@@ -1305,7 +1305,7 @@ func validateRestoreDestination(destination string, protected []string, bindings
 			return err
 		}
 		if overlap {
-			return fmt.Errorf("restore destination %s overlaps protected MALT client state %s", destination, candidate)
+			return fmt.Errorf("restore destination %s overlaps protected MALT runtime state %s", destination, candidate)
 		}
 	}
 	for _, binding := range bindings {

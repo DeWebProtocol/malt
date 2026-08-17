@@ -12,7 +12,7 @@ import (
 )
 
 // PipeName maps the configured daemon endpoint path to a stable local named
-// pipe. The configured value remains portable across client config files.
+// pipe. The configured value remains portable across runtime config files.
 func PipeName(endpoint string) string {
 	digest := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(endpoint))))
 	return `\\.\pipe\malt-client-` + hex.EncodeToString(digest[:16])
