@@ -303,6 +303,46 @@ on separate routes.
 
 Transport does not import or mutate this package.
 
+## Local cache and operation journal
+
+Package `cache` is an additive, non-authoritative local payload cache. A
+`cache.Binding` includes dataset, branch, caller-selected MALT root, revision,
+payload CID, and encryption epoch. `PutVerified` independently binds bytes to
+the CID, but `ReadVerified` still requires a non-nil `ProofVerifier`: every hit
+recomputes the payload CID and revalidates the stored opaque proof evidence
+against the exact binding before returning bytes. A wrong root, revision, or
+epoch is a miss/mismatch, while a missing body, corrupt body, or rejected proof
+marks the entry stale. Dirty, pending-upload, conflicted, offline-only, stale,
+and unmaterialized entries cannot pass the verified-read API. `PutLocal` may
+create only dirty or offline-only state; pending/conflict changes use explicit
+transitions, and neither `PutLocal` nor `PutVerified` may overwrite an existing
+pending or conflict record. Persisted identities and evidence profiles must be
+valid UTF-8. Blob deletion happens before its metadata reference is committed
+away; failed new metadata commits remove their body immediately, and restart
+reconciliation removes crash-orphaned blob/temporary files.
+
+Package `journal` is an additive ordered local-operation journal for future
+filesystem write-back. It records canonical write, mkdir, rename, and unlink
+intent with the locally selected base root/revision, payload CID when relevant,
+encryption epoch, and immutable operation/retry identities. A request becomes
+`pending_upload` before transport I/O and cannot be demoted to `offline_only`,
+because an interrupted request may already have reached its destination.
+`Replayable` excludes unresolved conflicts; `Unfinished` exposes them for
+inspection. Conflict resolution atomically supersedes the old audit record with
+a replacement intent that has new operation and retry identities. Completion
+is a separate durable transition; it may retain a canonical candidate result
+root but cannot accept it. Completed records and superseded ancestors remain
+until their finished chain is explicitly removed with `PruneCompleted`.
+Pruning retains durable tombstones for every operation and retry identity, so a
+frozen idempotency key can never be rebound to new intent, including after a
+restart. Journal identities and paths must be valid UTF-8, and persisted
+superseded graphs must remain a single-predecessor chain with the original
+conflict identity intact.
+
+Neither package is currently composed into a host-filesystem mount. Existing
+remote reads continue through the UnixFS verifier, so disabling this additive
+substrate requires no persisted-state rollback.
+
 ## Merkle DAG compatibility
 
 The public transport also supports:

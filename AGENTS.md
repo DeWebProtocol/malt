@@ -40,6 +40,15 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   observations cannot enter the candidate path, and neither observations nor
   candidates promote without their own explicit local acceptance action. The
   package must not depend on network or application packages.
+- `cache/` owns non-authoritative payload-cache metadata and bodies. Every
+  verified hit must bind dataset, branch, selected root, revision, payload CID,
+  and encryption epoch, recheck the CID, and invoke a local proof verifier.
+  Cache state must never import or mutate trust, transport, or application
+  policy.
+- `journal/` owns transport-neutral ordered local operation intent, retry
+  identity, offline/pending/conflict state, and crash replay metadata. It may
+  record a candidate/result root but cannot accept it and must not import trust,
+  transport, UnixFS, or application packages.
 - `application/` owns reusable accepted-root selection, observation/candidate recording,
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends
