@@ -413,6 +413,15 @@ func (f failingJournal) Append(journal.Intent, journal.Status) (journal.Operatio
 }
 
 func (f failingJournal) List() ([]journal.Operation, error) { return []journal.Operation{}, nil }
+func (f failingJournal) FreezeBatchForUpload([]string) ([]journal.Operation, error) {
+	return nil, f.err
+}
+func (f failingJournal) MarkBatchConflicted([]string, string) ([]journal.Operation, error) {
+	return nil, f.err
+}
+func (f failingJournal) CompleteBatch([]string, string) ([]journal.Operation, error) {
+	return nil, f.err
+}
 
 func newStagingService(t *testing.T, root string, base Base) (*Service, *cache.Store, string) {
 	t.Helper()

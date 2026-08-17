@@ -312,7 +312,8 @@ the CID, but `ReadVerified` still requires a non-nil `ProofVerifier`: every hit
 recomputes the payload CID and revalidates the stored opaque proof evidence
 against the exact binding before returning bytes. A wrong root, revision, or
 epoch is a miss/mismatch, while a missing body, corrupt body, or rejected proof
-marks the entry stale. Dirty, pending-upload, conflicted, offline-only, stale,
+marks the entry stale. Dirty, pending-upload, candidate, conflicted,
+offline-only, stale,
 and unmaterialized entries cannot pass the verified-read API. `PutLocal` may
 create only dirty or offline-only state; pending/conflict changes use explicit
 transitions, and neither `PutLocal` nor `PutVerified` may overwrite an existing
@@ -320,6 +321,12 @@ pending or conflict record. Persisted identities and evidence profiles must be
 valid UTF-8. Blob deletion happens before its metadata reference is committed
 away; failed new metadata commits remove their body immediately, and restart
 reconciliation removes crash-orphaned blob/temporary files.
+
+`cache.StateCandidate` marks a locally materialized body associated with a
+verified-but-unaccepted candidate. `ReconcileLocalState` is reserved for
+cross-store crash repair: under the cache lock it rereads the body, verifies
+its size and exact CID, clears remote proof evidence, and permits only local
+body states. It cannot create `StateVerifiedClean`.
 
 Package `journal` is an additive ordered local-operation journal for future
 filesystem write-back. It records canonical write, mkdir, rename, and unlink
@@ -338,6 +345,11 @@ frozen idempotency key can never be rebound to new intent, including after a
 restart. Journal identities and paths must be valid UTF-8, and persisted
 superseded graphs must remain a single-predecessor chain with the original
 conflict identity intact.
+
+`FreezeBatchForUpload`, `MarkBatchConflicted`, and `CompleteBatch` validate the
+entire requested identity set before mutating any record and commit one atomic
+store replacement. Exact repeated transitions are idempotent; partial or
+substituted candidate/conflict outcomes fail without reclassifying the batch.
 
 Package `filesystem/service` is the additive, platform-neutral read-only host
 filesystem boundary. A `service.View` fixes dataset, branch, caller-selected
@@ -381,6 +393,37 @@ promotion as false. Restart reconciliation rejects unresolved journal writes
 with missing or corrupt bodies and removes unreferenced local cache bodies.
 This package has no transport, candidate-root, or trust-store capability and
 is not yet composed into the read-only FUSE adapter.
+
+`staging.Service.PrepareUpload` freezes all replayable operations for one exact
+View before returning bytes, preserves completed operations needed to rebuild
+the full overlay from the same accepted base, deduplicates raw-CID write
+payloads, and derives a stable Core-compatible operation identity from the
+complete intent snapshot. `CompleteUpload` and `MarkUploadConflicted` require
+the exact pending snapshot and atomically classify the whole batch. Completion
+uses the non-authoritative candidate cache state. If the journal outcome was
+committed but cache reconciliation or the response failed, repeating the exact
+candidate/conflict outcome repairs cache state idempotently; shrinking or
+substituting the pending set is rejected. None of these methods perform network
+I/O, compute a root, or accept one.
+
+## Verified filesystem write-back orchestration
+
+Package `application/writeback` composes the staging queue with narrow payload,
+client-root remote, canonical planner, and local root-policy capabilities.
+`Service.Replay` checks that the selected View still equals the locally
+accepted root before freezing a batch, requires every payload store result to
+equal its staged CID, loads and verifies a bounded complete update view, and
+normalizes the planner's semantic intent. The MALT Core client-root Writer then
+computes the candidate locally and verifies the exact durable receipt before
+the service records a candidate and completes the batch.
+
+The root-policy port deliberately exposes accepted-root lookup and candidate
+recording only. `writeback.Result.RootAccepted` is therefore always false. If
+the accepted root advances after the remote receipt but before candidate
+recording, the exact batch is preserved as a deterministic conflict. A remote
+success, payload upload, or receipt alone never changes the accepted root. The
+generic orchestrator is implemented, while a concrete UnixFS planner and FUSE
+write composition remain later phases.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,

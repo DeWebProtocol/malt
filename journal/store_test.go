@@ -65,6 +65,91 @@ func TestJournalReplayOrderRetryIdentityAndRestart(t *testing.T) {
 	assertJournalOwnerOnly(t, journalPath)
 }
 
+func TestBatchFreezeAndCompleteAreAtomicOrderedAndIdempotent(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "operations.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIntent := testIntent(t, "op-first", "retry-first", KindWrite, "docs/first.txt", "")
+	secondIntent := testIntent(t, "op-second", "retry-second", KindMkdir, "docs/second", "")
+	first, err := store.Append(firstIntent, StatusLocalDirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Append(secondIntent, StatusOfflineOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FreezeBatchForUpload([]string{first.OperationID, "missing"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("partial freeze error=%v", err)
+	}
+	if current, err := store.Get(first.OperationID); err != nil || current.Status != StatusLocalDirty {
+		t.Fatalf("failed batch changed first operation=%#v err=%v", current, err)
+	}
+	frozen, err := store.FreezeBatchForUpload([]string{second.OperationID, first.OperationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frozen) != 2 || frozen[0].Sequence != first.Sequence || frozen[1].Sequence != second.Sequence || frozen[0].Status != StatusPendingUpload || frozen[1].Status != StatusPendingUpload {
+		t.Fatalf("frozen batch=%#v", frozen)
+	}
+	if _, err := store.FreezeBatchForUpload([]string{first.OperationID, second.OperationID}); err != nil {
+		t.Fatalf("idempotent freeze: %v", err)
+	}
+	resultRoot := testJournalCID(t, []byte("verified batch candidate")).String()
+	completed, err := store.CompleteBatch([]string{second.OperationID, first.OperationID}, resultRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 2 || completed[0].Status != StatusCompleted || completed[1].Status != StatusCompleted || completed[0].ResultRoot != resultRoot || completed[1].ResultRoot != resultRoot {
+		t.Fatalf("completed batch=%#v", completed)
+	}
+	if _, err := store.CompleteBatch([]string{first.OperationID, second.OperationID}, resultRoot); err != nil {
+		t.Fatalf("idempotent completion: %v", err)
+	}
+	otherRoot := testJournalCID(t, []byte("substituted batch candidate")).String()
+	if _, err := store.CompleteBatch([]string{first.OperationID, second.OperationID}, otherRoot); !errors.Is(err, ErrIdentityReuse) {
+		t.Fatalf("candidate substitution error=%v", err)
+	}
+}
+
+func TestBatchConflictIsAtomicAndCannotReclassify(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "operations.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Append(testIntent(t, "op-first", "retry-first", KindWrite, "docs/first.txt", ""), StatusLocalDirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Append(testIntent(t, "op-second", "retry-second", KindUnlink, "docs/second.txt", ""), StatusLocalDirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FreezeBatchForUpload([]string{first.OperationID, second.OperationID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkBatchConflicted([]string{first.OperationID, "missing"}, "conflict-one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("partial conflict error=%v", err)
+	}
+	if current, err := store.Get(first.OperationID); err != nil || current.Status != StatusPendingUpload {
+		t.Fatalf("failed conflict batch changed first=%#v err=%v", current, err)
+	}
+	conflicted, err := store.MarkBatchConflicted([]string{second.OperationID, first.OperationID}, "conflict-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicted) != 2 || conflicted[0].Status != StatusConflicted || conflicted[1].ConflictID != "conflict-one" {
+		t.Fatalf("conflicted batch=%#v", conflicted)
+	}
+	if _, err := store.MarkBatchConflicted([]string{first.OperationID, second.OperationID}, "conflict-one"); err != nil {
+		t.Fatalf("idempotent conflict: %v", err)
+	}
+	if _, err := store.MarkBatchConflicted([]string{first.OperationID, second.OperationID}, "conflict-two"); !errors.Is(err, ErrIdentityReuse) {
+		t.Fatalf("conflict reclassification error=%v", err)
+	}
+}
+
 func TestConflictResolutionCompletionAndPruningRemainExplicit(t *testing.T) {
 	journalPath := filepath.Join(t.TempDir(), "operations.json")
 	store, err := Open(journalPath)

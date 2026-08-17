@@ -61,6 +61,11 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   state paths across processes before reconciling or acknowledging intent.
   Local fsync is not remote persistence, candidate-root verification, or
   accepted-root promotion.
+- `application/writeback` owns transport-neutral replay of a leased staging
+  batch. It uploads exact CID-bound bodies, invokes the MALT Core client-root
+  workflow, verifies the durable receipt, records only a candidate, and then
+  atomically completes or conflicts the exact batch. It must not import a
+  concrete Gateway transport or expose accepted-root promotion.
 - `filesystem/mount` owns durable desired/pending-unmount state and the
   daemon-managed lifecycle contract. One process-held registry lease excludes
   competing managers on supported Linux/macOS/BSD and Windows targets; other

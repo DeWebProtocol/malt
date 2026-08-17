@@ -146,7 +146,7 @@ func TestCacheStateMachineSeparatesRemoteVerifiedDirtyPendingOfflineAndConflict(
 	if got, _, err := store.ReadLocal(binding); err != nil || string(got) != string(body) {
 		t.Fatalf("local body = %q, %v", got, err)
 	}
-	for _, next := range []State{StateOfflineOnly, StatePendingUpload, StateConflicted, StateLocalDirty} {
+	for _, next := range []State{StateOfflineOnly, StatePendingUpload, StateCandidate, StateConflicted, StateLocalDirty} {
 		entry, err = store.Transition(binding, next)
 		if err != nil || entry.State != next {
 			t.Fatalf("transition to %s = %#v, %v", next, entry, err)
@@ -154,6 +154,13 @@ func TestCacheStateMachineSeparatesRemoteVerifiedDirtyPendingOfflineAndConflict(
 	}
 	if _, err := store.Transition(binding, StateVerifiedClean); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("dirty entry became verified without proof: %v", err)
+	}
+	entry, err = store.ReconcileLocalState(binding, StateCandidate)
+	if err != nil || entry.State != StateCandidate || entry.Verification != nil {
+		t.Fatalf("reconciled candidate entry=%#v err=%v", entry, err)
+	}
+	if _, err := store.ReconcileLocalState(binding, StateVerifiedClean); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("local reconciliation created verified state: %v", err)
 	}
 
 	remoteBinding := testBinding(t, []byte("not fetched"))
@@ -530,6 +537,8 @@ func TestOpenRejectsImpossiblePersistedCacheStateCombinations(t *testing.T) {
 		{Binding: binding, State: StateUnmaterializedRemote, BodyPresent: true, Size: int64(len(body)), UpdatedAt: now},
 		{Binding: binding, State: StateLocalDirty, BodyPresent: false, UpdatedAt: now},
 		{Binding: binding, State: StatePendingUpload, BodyPresent: false, Size: int64(len(body)), UpdatedAt: now},
+		{Binding: binding, State: StateCandidate, BodyPresent: false, Size: int64(len(body)), UpdatedAt: now},
+		{Binding: binding, State: StateCandidate, BodyPresent: true, Size: int64(len(body)), Verification: ptrEvidence(testEvidence()), UpdatedAt: now},
 		{Binding: binding, State: StateOfflineOnly, BodyPresent: true, Size: int64(len(body)), Verification: ptrEvidence(testEvidence()), UpdatedAt: now},
 	}
 	for i, entry := range tests {

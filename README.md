@@ -21,10 +21,13 @@ authentication core:
   HTTP);
 - durable managed-Bucket base/remote/stash synchronization state;
 - non-authoritative CID-bound cache metadata with explicit verified, dirty,
-  pending, conflicted, offline-only, and stale states;
+  pending, candidate, conflicted, offline-only, and stale states;
 - a durable ordered local-operation journal with frozen retry identities;
 - a crash-recoverable local dirty overlay with read-your-writes behavior and
   an explicit local-journal-only `fsync` result;
+- transport-neutral verified write-back orchestration that uploads exact
+  CID-bound bodies, locally computes and verifies a MALT candidate root, and
+  records it without accepting it;
 - a platform-neutral read-only filesystem service pinned to an exact accepted
   dataset view, with verified lazy List ranges and proof-revalidated raw cache
   hits;
@@ -48,8 +51,10 @@ This is an experimental, pre-v1 local runtime. It currently provides the
 UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
 `malt unmount`. The cache, operation journal, and platform-neutral dirty
-staging overlay are available as runtime substrate; remote write-back is not
-implemented and the mounted filesystem remains read-only. The current remote
+staging overlay and the generic verified write-back orchestrator are available
+as runtime substrate. A concrete UnixFS client-root planner and platform write
+composition are not implemented yet, so the mounted filesystem remains
+read-only. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
 implemented here. There is no
