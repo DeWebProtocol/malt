@@ -146,7 +146,7 @@ func supportedCapability() capability {
 	return capability{
 		SchemaVersion: capabilitySchema, CapabilityID: capabilityID, System: systemMALTKZG,
 		Boundary: []string{
-			"malt-client fixed-chunk normalization and local KZG root computation",
+			"MALT runtime fixed-chunk normalization and local KZG root computation",
 			"Gateway embedded CAS exact batch dispositions",
 			"Gateway exact client-root atomic staging accounting",
 		},
