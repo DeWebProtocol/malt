@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	unixfs "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt/auth/arcset"
+	"github.com/dewebprotocol/malt-core/auth/arcset"
 )
 
 func TestParsePathAppliesUnixFSPolicyOutsideCore(t *testing.T) {

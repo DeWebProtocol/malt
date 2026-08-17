@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dewebprotocol/malt/mutation"
-	"github.com/dewebprotocol/malt/protocol"
-	clientwriter "github.com/dewebprotocol/malt/sdk/writer"
+	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/protocol"
+	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	cid "github.com/ipfs/go-cid"
 )
 

@@ -10,7 +10,7 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Create trusted-client configuration",
+	Short: "Create local runtime configuration",
 	Args:  cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
 		cfg, err := clientconfig.Default()
@@ -30,7 +30,7 @@ var initCmd = &cobra.Command{
 		if _, err := keyring.Create(cfg.Backup.KeyringPath); err != nil {
 			return err
 		}
-		fmt.Printf("Initialized MALT client config: %s\n", path)
+		fmt.Printf("Initialized MALT local runtime config: %s\n", path)
 		fmt.Printf("Initialized encrypted backup keyring: %s\n", cfg.Backup.KeyringPath)
 		return nil
 	},

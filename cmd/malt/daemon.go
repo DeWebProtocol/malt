@@ -38,11 +38,11 @@ type daemonHealth struct {
 	Role   string `json:"role"`
 }
 
-var daemonCmd = &cobra.Command{Use: "daemon", Short: "Manage the trusted local client daemon"}
+var daemonCmd = &cobra.Command{Use: "daemon", Short: "Manage the MALT local runtime daemon"}
 
 var daemonServeCmd = &cobra.Command{
 	Use:    "serve",
-	Short:  "Run the trusted client daemon in the foreground",
+	Short:  "Run the MALT daemon in the foreground",
 	Hidden: true,
 	Args:   cobra.NoArgs,
 	RunE:   runDaemonServe,
@@ -50,7 +50,7 @@ var daemonServeCmd = &cobra.Command{
 
 var daemonStartCmd = &cobra.Command{
 	Use:           "start",
-	Short:         "Start the trusted client daemon",
+	Short:         "Start the MALT daemon",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -59,7 +59,7 @@ var daemonStartCmd = &cobra.Command{
 
 var daemonStatusCmd = &cobra.Command{
 	Use:           "status",
-	Short:         "Check the trusted client daemon",
+	Short:         "Check the MALT daemon",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -74,14 +74,14 @@ var daemonStatusCmd = &cobra.Command{
 		if err := checkDaemon(cfg.Daemon.SocketPath); err != nil {
 			return err
 		}
-		fmt.Println("MALT client daemon is running")
+		fmt.Println("MALT daemon is running")
 		return nil
 	},
 }
 
 var daemonStopCmd = &cobra.Command{
 	Use:           "stop",
-	Short:         "Stop the trusted client daemon",
+	Short:         "Stop the MALT daemon",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -96,7 +96,7 @@ var daemonStopCmd = &cobra.Command{
 
 var daemonRestartCmd = &cobra.Command{
 	Use:           "restart",
-	Short:         "Restart the trusted client daemon",
+	Short:         "Restart the MALT daemon",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -209,7 +209,7 @@ func runDaemonRestart(*cobra.Command, []string) error {
 
 func startDaemonLocked(cfg *clientconfig.Config) error {
 	if checkDaemon(cfg.Daemon.SocketPath) == nil {
-		return fmt.Errorf("MALT client daemon is already running")
+		return fmt.Errorf("MALT daemon is already running")
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -250,7 +250,7 @@ func startDaemonLocked(cfg *clientconfig.Config) error {
 				_ = removeDaemonStateIfMatch(pidPath(cfg.Daemon.SocketPath), state)
 				return fmt.Errorf("release daemon process: %w", err)
 			}
-			fmt.Printf("MALT client daemon started (%s)\n", cfg.Daemon.SocketPath)
+			fmt.Printf("MALT daemon started (%s)\n", cfg.Daemon.SocketPath)
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -313,7 +313,7 @@ func stopDaemonWithSignalLocked(socketPath string, signalProcess func(int) error
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 		if checkDaemonInstance(socketPath, state.Instance) != nil {
 			_ = removeDaemonStateIfMatch(pidPath(socketPath), state)
-			fmt.Println("MALT client daemon stopped")
+			fmt.Println("MALT daemon stopped")
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)

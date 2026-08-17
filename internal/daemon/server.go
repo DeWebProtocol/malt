@@ -1,4 +1,4 @@
-// Package daemon exposes the trusted client's local control plane. It listens
+// Package daemon exposes the MALT local runtime control plane. It listens
 // on a user-owned Unix socket or Windows named pipe and never exposes a remote
 // verification service.
 package daemon

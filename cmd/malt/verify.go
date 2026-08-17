@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 
-	malt "github.com/dewebprotocol/malt"
-	"github.com/dewebprotocol/malt/auth/proof/prooflist"
-	"github.com/dewebprotocol/malt/protocol"
-	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	malt "github.com/dewebprotocol/malt-core"
+	"github.com/dewebprotocol/malt-core/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt-core/protocol"
+	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )

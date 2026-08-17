@@ -29,7 +29,7 @@ var (
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authorize this client device through the Gateway account",
+	Short: "Authorize this MALT device through the Gateway account",
 	Args:  cobra.NoArgs,
 	RunE:  runLogin,
 }
@@ -57,7 +57,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	if deviceName == "" {
 		deviceName, err = os.Hostname()
 		if err != nil || strings.TrimSpace(deviceName) == "" {
-			deviceName = "MALT client"
+			deviceName = "MALT runtime"
 		}
 	}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)

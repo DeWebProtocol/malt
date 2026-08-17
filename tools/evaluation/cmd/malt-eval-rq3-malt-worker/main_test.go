@@ -10,12 +10,12 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
-	materializermemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt/auth/commitment"
-	"github.com/dewebprotocol/malt/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt/mutation"
-	clientwriter "github.com/dewebprotocol/malt/sdk/writer"
-	"github.com/dewebprotocol/malt/wire/maltcid"
+	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
+	"github.com/dewebprotocol/malt-core/auth/commitment"
+	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt-core/mutation"
+	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 func TestParseFlagsRequiresDistinctBootstrapAuthorization(t *testing.T) {

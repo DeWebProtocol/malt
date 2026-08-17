@@ -1,7 +1,7 @@
 package format
 
 import (
-	maltcid "github.com/dewebprotocol/malt/wire/maltcid"
+	maltcid "github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
