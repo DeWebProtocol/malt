@@ -398,9 +398,11 @@ is not yet composed into the read-only FUSE adapter.
 View before returning bytes, preserves completed operations needed to rebuild
 the full overlay from the same accepted base, deduplicates raw-CID write
 payloads, and derives a stable Core-compatible operation identity from the
-complete intent snapshot. `CompleteUpload` and `MarkUploadConflicted` require
-the exact pending snapshot and atomically classify the whole batch. Completion
-uses the non-authoritative candidate cache state. If the journal outcome was
+complete intent snapshot. `CompleteUpload`, `CompleteNoChange`, and
+`MarkUploadConflicted` require the exact pending snapshot and atomically
+classify the whole batch. Completion uses the non-authoritative candidate cache
+state; the no-change form records the verified base as its result identity
+without creating a candidate. If the journal outcome was
 committed but cache reconciliation or the response failed, repeating the exact
 candidate/conflict outcome repairs cache state idempotently; shrinking or
 substituting the pending set is rejected. None of these methods perform network
@@ -411,19 +413,57 @@ I/O, compute a root, or accept one.
 Package `application/writeback` composes the staging queue with narrow payload,
 client-root remote, canonical planner, and local root-policy capabilities.
 `Service.Replay` checks that the selected View still equals the locally
-accepted root before freezing a batch, requires every payload store result to
-equal its staged CID, loads and verifies a bounded complete update view, and
-normalizes the planner's semantic intent. The MALT Core client-root Writer then
-computes the candidate locally and verifies the exact durable receipt before
-the service records a candidate and completes the batch.
+accepted root before freezing a batch, locally validates all available staged
+bodies, loads and verifies a bounded complete update view, and normalizes the
+planner's semantic intent before publishing file payloads. Only staged raw CIDs
+that survive as `After` bindings in that final intent are uploaded, and every
+payload store result must equal its staged CID. Intermediate writes later
+overwritten or deleted by the same frozen batch are never sent to the payload
+store. The MALT Core client-root Writer then computes the candidate locally and
+verifies the exact durable receipt before the service records a candidate and
+completes the batch.
+
+These staging/write-back interfaces did not exist in the historical `v0.0.1`
+tag and have not appeared in any later tag. The change-aware planner result and
+exact `CompleteNoChange` queue operation intentionally supersede earlier
+experimental intermediate-commit interfaces; implementers following those
+commits must update. This source change does not alter a wire profile, receipt,
+journal schema, or cache schema.
 
 The root-policy port deliberately exposes accepted-root lookup and candidate
 recording only. `writeback.Result.RootAccepted` is therefore always false. If
 the accepted root advances after the remote receipt but before candidate
-recording, the exact batch is preserved as a deterministic conflict. A remote
-success, payload upload, or receipt alone never changes the accepted root. The
-generic orchestrator is implemented, while a concrete UnixFS planner and FUSE
-write composition remain later phases.
+recording, the exact batch is preserved as a deterministic conflict. A planner
+may explicitly report that the complete batch leaves the authenticated
+projection unchanged. That exact batch is completed against its verified base
+without uploading payloads, submitting a mutation, recording a candidate, or
+claiming remote persistence. Completion executes under the same process and
+cross-process fence as every accepted-root promotion; if the root already
+advanced, the batch is preserved as a conflict. A remote success, payload
+upload, or receipt alone never changes the accepted root. The generic
+orchestrator and concrete UnixFS planner are implemented; FUSE write composition
+remains a later phase.
+
+Package `unixfs/clientroot` is the concrete planner for flat-v1 and hybrid-v1.
+It first reconstructs the UnixFS tree only from the verified complete
+`mutation.UpdateView` and CID-checked manifest blocks, and rejects any mismatch
+between manifest projection and authenticated Map bindings. Ordered completed
+plus pending journal operations are then replayed against that immutable base.
+
+For flat-v1 the planner emits one exact top-Map transition. For hybrid-v1 it
+emits new or changed directory Maps child-before-parent and uses semantic output
+references wherever an ancestor consumes a locally computed child root,
+including flattened descendant bindings. New directories inherit the accepted
+top root's commitment backend; existing directories retain their verified
+backend and object identity. When multiple paths share one authenticated
+directory root, equal resulting projections reuse one output while divergent
+edits deterministically copy-on-write the additional branches as complete new
+objects. Canonical V2 manifests are stored through a narrow block capability,
+and a returned CID must equal the locally computed manifest CID. A manifest
+that re-encodes to its existing CID is not published again, so a verified
+no-change batch performs no block-store write. The planner supports both KZG
+and IPA roots and does not call a Gateway, record a candidate, or accept a
+root. Platform composition remains separate.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,

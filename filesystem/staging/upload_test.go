@@ -94,6 +94,41 @@ func TestUploadBatchConflictBlocksReplayAndMarksCache(t *testing.T) {
 	}
 }
 
+func TestNoChangeCompletionIsDurableAndRestartRecoverable(t *testing.T) {
+	root := t.TempDir()
+	view := stagingTestView(t)
+	service, cacheStore, journalPath := newStagingService(t, root, newFakeBase(t))
+	operation, err := service.StageWrite(t.Context(), view, "docs/same.txt", []byte("same"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := service.PrepareUpload(t.Context(), view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := service.CompleteNoChange(t.Context(), batch)
+	if err != nil || len(completed) != 1 || completed[0].Status != journal.StatusCompleted || completed[0].ResultRoot != view.Root.String() {
+		t.Fatalf("no-change completion=%#v err=%v", completed, err)
+	}
+	if entry, err := cacheStore.Inspect(bindingFromOperation(operation)); err != nil || entry.State != cache.StateCandidate {
+		t.Fatalf("no-change cache=%#v err=%v", entry, err)
+	}
+	if _, err := service.CompleteNoChange(t.Context(), batch); err != nil {
+		t.Fatalf("exact no-change retry failed: %v", err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := New(Options{Base: newFakeBase(t), CacheDirectory: filepath.Join(root, "cache"), JournalPath: journalPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if _, err := reopened.PrepareUpload(t.Context(), view); !errors.Is(err, ErrNoPendingUpload) {
+		t.Fatalf("restarted no-change batch remained pending: %v", err)
+	}
+}
+
 func TestUploadCompletionRejectsTamperingButAllowsLaterLocalIntent(t *testing.T) {
 	view := stagingTestView(t)
 	service, _, _ := newStagingService(t, t.TempDir(), newFakeBase(t))
@@ -203,6 +238,14 @@ func TestUploadOutcomeRetryRepairsCacheAfterJournalCommit(t *testing.T) {
 			name: "complete",
 			apply: func(service *Service, batch UploadBatch) error {
 				_, err := service.CompleteUpload(t.Context(), batch, stagingTestCID(t, []byte("candidate after cache failure")))
+				return err
+			},
+			wantState: cache.StateCandidate,
+		},
+		{
+			name: "no_change",
+			apply: func(service *Service, batch UploadBatch) error {
+				_, err := service.CompleteNoChange(t.Context(), batch)
 				return err
 			},
 			wantState: cache.StateCandidate,

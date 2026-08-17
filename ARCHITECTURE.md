@@ -291,11 +291,17 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `unixfs/model`: UnixFS application values and path rules.
 - `unixfs`: verified UnixFS reader/writer facade, staging, materialization,
   and payload verification.
+- `unixfs/clientroot`: flat-v1/hybrid-v1 filesystem-intent projection over a
+  verified complete update view. It reconstructs and validates the existing
+  manifest/tree projection, applies ordered journal intent, uploads canonical
+  manifests with exact returned-CID checks, and emits child-before-parent
+  output references for local Core computation. It has no trust, filesystem,
+  HTTP, or concrete transport capability.
 
 The `internal` packages are not compatibility promises. The public
 `application`, `application/writeback`, `bucketsync`, `cache`, `filesystem/service`,
 `filesystem/staging`, `filesystem/mount`, `journal`, `localapi`, `transport`,
-`trust`, `unixfs`, and
+`trust`, `unixfs`, `unixfs/clientroot`, and
 `merkledag` packages are the intended pre-release integration surface; their
 profiles remain experimental until a release policy is published.
 Architecture tests fail if production packages import evaluation support, if

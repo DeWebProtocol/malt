@@ -25,9 +25,12 @@ authentication core:
 - a durable ordered local-operation journal with frozen retry identities;
 - a crash-recoverable local dirty overlay with read-your-writes behavior and
   an explicit local-journal-only `fsync` result;
-- transport-neutral verified write-back orchestration that uploads exact
-  CID-bound bodies, locally computes and verifies a MALT candidate root, and
+- transport-neutral verified write-back orchestration that plans before
+  publication, uploads only final CID-bound staged bodies referenced by the
+  normalized intent, locally computes and verifies a MALT candidate root, and
   records it without accepting it;
+- flat-v1 and hybrid-v1 UnixFS client-root planning from a verified complete
+  view, with locally CID-verified manifest reads and writes;
 - a platform-neutral read-only filesystem service pinned to an exact accepted
   dataset view, with verified lazy List ranges and proof-revalidated raw cache
   hits;
@@ -51,14 +54,18 @@ This is an experimental, pre-v1 local runtime. It currently provides the
 UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
 `malt unmount`. The cache, operation journal, and platform-neutral dirty
-staging overlay and the generic verified write-back orchestrator are available
-as runtime substrate. A concrete UnixFS client-root planner and platform write
-composition are not implemented yet, so the mounted filesystem remains
+staging overlay, generic verified write-back orchestrator, and concrete UnixFS
+client-root planner are available as runtime substrate. Platform write
+composition is not implemented yet, so the mounted filesystem remains
 read-only. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
-implemented here. There is no
-independent runtime release tag yet; build from a pinned commit.
+implemented here. The historical `v0.0.1` tag was published for MALT Client
+before the repository rename and before the staging/write-back APIs existed.
+Those current experimental Go interfaces have not appeared in any tag and may
+still make explicitly documented source-breaking changes before a tagged
+release includes them; build the current runtime from a pinned commit. These
+changes do not imply a wire-format or persisted-state migration.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact runtime and dependency revisions they build.
 

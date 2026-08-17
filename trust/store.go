@@ -32,6 +32,7 @@ var (
 	ErrCandidateNotFound      = errors.New("candidate root not found")
 	ErrObservationNotFound    = errors.New("observed root not found")
 	ErrStaleCandidate         = errors.New("candidate is based on a stale accepted root")
+	ErrAcceptedRootChanged    = errors.New("accepted root changed before guarded operation")
 	ErrStaleObservation       = errors.New("remote head observation is stale")
 	ErrConflictingObservation = errors.New("remote head observation conflicts at the same revision")
 )
@@ -201,6 +202,48 @@ func (s *Store) GetState(alias string) (RootState, error) {
 		return RootState{}, ErrNotFound
 	}
 	return cloneRootState(value), nil
+}
+
+// WithAcceptedRoot runs operation while holding the same process and
+// cross-process locks used by every accepted-root promotion. The callback must
+// not call back into this Store. It is intended for a short local durable
+// classification that must be fenced against Trust, AcceptCandidate, and
+// AcceptObserved.
+func (s *Store) WithAcceptedRoot(alias, expectedRoot string, operation func() error) error {
+	alias = normalizeAlias(alias)
+	if alias == "" {
+		return fmt.Errorf("trusted-root alias is empty")
+	}
+	expected, err := canonicalCID(expectedRoot)
+	if err != nil {
+		return fmt.Errorf("invalid expected accepted root: %w", err)
+	}
+	if operation == nil {
+		return fmt.Errorf("accepted-root guarded operation is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, migrated, err := s.lockAndReload()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unlock() }()
+	if migrated {
+		if err := s.finishMigrationLocked(); err != nil {
+			return err
+		}
+	}
+	value, ok := s.state.Roots[alias]
+	if !ok {
+		return ErrNotFound
+	}
+	if value.Accepted == nil {
+		return ErrNoAcceptedRoot
+	}
+	if value.Accepted.Root != expected {
+		return fmt.Errorf("%w: expected %s, current %s", ErrAcceptedRootChanged, expected, value.Accepted.Root)
+	}
+	return operation()
 }
 
 func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, error) {

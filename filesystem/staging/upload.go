@@ -143,6 +143,45 @@ func (s *Service) CompleteUpload(ctx context.Context, batch UploadBatch, candida
 	return cloneJournalOperations(completed), nil
 }
 
+// CompleteNoChange atomically finishes an exact pending batch whose verified
+// application planner proved that the complete authenticated projection remains
+// equal to batch.View.Root. It records the base root only as the durable result
+// identity; it does not create or accept a candidate root.
+func (s *Service) CompleteNoChange(ctx context.Context, batch UploadBatch) ([]journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return nil, err
+	}
+	defer s.leave()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateUploadBatch(batch); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.operations(batch.View)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireCompletionSnapshot(current, batch.Pending, batch.View.Root); err != nil {
+		return nil, err
+	}
+	ids := operationIDs(batch.Pending)
+	completed, err := s.journal.CompleteBatch(ids, batch.View.Root.String())
+	if err != nil {
+		return nil, fmt.Errorf("complete no-change filesystem upload batch: %w", err)
+	}
+	current, err = s.operations(batch.View)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reconcileCacheStates(current); err != nil {
+		return nil, fmt.Errorf("reconcile completed no-change upload cache state: %w", err)
+	}
+	return cloneJournalOperations(completed), nil
+}
+
 // MarkUploadConflicted atomically preserves a conflict identity for every
 // pending record in batch. Conflict resolution must create replacement journal
 // identities; automatic replay excludes these records.

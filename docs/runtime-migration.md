@@ -23,7 +23,7 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache, operation journal, platform-neutral local dirty staging and verified write-back orchestration, daemon-managed Linux read-only FUSE mounts over the verified filesystem service, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache, operation journal, platform-neutral local dirty staging, verified write-back orchestration and flat/hybrid UnixFS client-root planning, daemon-managed Linux read-only FUSE mounts over the verified filesystem service, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
 
@@ -92,11 +92,20 @@ Current boundary strengths:
   startup, labels fsync as local-journal durability only, and freezes exact
   retry batches with atomic completion/conflict classification. It has no
   transport or trust capability and is not composed into FUSE yet.
-- `application/writeback` uploads exact CID-bound bodies through a narrow
-  capability, obtains a bounded verified client-root view, normalizes a
-  canonical planner result, computes the candidate locally, verifies the
-  durable receipt, and records only a candidate before completing the exact
-  batch. Its root-policy port has no acceptance method.
+- `application/writeback` validates local staged bodies, obtains a bounded
+  verified client-root view, and normalizes a canonical planner result before
+  payload publication. It uploads only final staged raw CIDs referenced by that
+  intent, computes the candidate locally, verifies the durable receipt, and
+  records only a candidate before completing the exact batch. Verified
+  no-change completion is fenced against every accepted-root promotion and
+  does not claim remote persistence. Its root-policy port has no acceptance
+  method.
+- `unixfs/clientroot` rebuilds flat-v1/hybrid-v1 projection from the verified
+  complete view, verifies old/new manifest CIDs, applies the complete ordered
+  overlay, skips unchanged manifest publication, performs deterministic
+  copy-on-write for divergent shared-directory aliases, and emits output-free
+  child-before-parent intent for KZG or IPA. It imports neither trust nor a
+  concrete transport.
 - `filesystem/mount` persists desired mounts and pending-unmount tombstones,
   excludes competing daemon managers with a process-held registry lease,
   restores records through an idempotent platform adapter contract, and gives
@@ -127,9 +136,8 @@ Current implementation gaps that still encode concrete Gateway coupling:
   Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
-- A concrete UnixFS client-root planner, WinFsp, and platform write composition
-  remain follow-up work; non-Linux daemons keep the mount API unavailable until
-  a native adapter is added.
+- WinFsp and platform write composition remain follow-up work; non-Linux
+  daemons keep the mount API unavailable until a native adapter is added.
 - There is no local-CAS, peer, or hybrid transport implementation yet.
 
 No code in `malt-core` owns UnixFS, Bucket, account, daemon, key persistence,
@@ -297,7 +305,7 @@ choice and does not define network topology.
 | 8b.2 | **Completed 2026-08-17:** compose the Linux adapter, local accepted-View selector, per-dataset/branch Gateway verified filesystem router, protected cache/registry paths, daemon restore/shutdown, reusable `localapi`, and `malt mount/unmount` control commands; reject encrypted Views until local decryption exists and leave non-Linux mount routes unconfigured | new CLI/local API behavior and additive config fields | no | wrong dataset/root binding, observed-head promotion, startup mount leakage, or control-plane drift | accepted/candidate/observation selector tests, source/dataset/branch revision binding, encrypted-view rejection, router identity/cache, CLI/API parity, daemon/mount lifecycle, Windows build, Linux FUSE smoke | stop the daemon, unmount desired bindings, and leave the registry/cache recoverable; other daemon services remain available |
 | 9a | **Completed 2026-08-17:** add `filesystem/staging` as a platform-neutral, crash-recoverable read-your-writes overlay; exclusively lease both state paths; stage raw-CID-bound write bodies plus mkdir/rename/unlink intent against an exact canonical immutable View; pin local handles; reconcile cache/journal crash edges; and define `malt.local-journal-fsync/v1` without remote-persistence or root-acceptance claims | additive experimental filesystem API; not mounted | no | acknowledged local data loss, cross-Service reconcile race, dirty-state leakage across roots, or false fsync claims | create/overwrite/range/pinned-handle, mkdir/rename/unlink/rmdir, concurrent/offline staging, exact-View/canonical-identity isolation, exclusive pair lease/release, restart, missing body, orphan body, failed append, cancellation, and architecture tests | close the staging service and do not compose the overlay into FUSE; current mounts remain read-only and the durable journal remains recoverable |
 | 9b.1 | **Completed 2026-08-17:** add exact atomic upload batches plus transport-neutral verified write-back orchestration; upload locally CID-verified bodies, verify a bounded client-root view, normalize canonical intent, locally compute the candidate, verify the durable receipt, record only a candidate, and preserve accepted-root races as conflicts | additive experimental staging/write-back APIs and additive `candidate` cache state; on-disk schema version remains 1 | no | partial batch mutation, substituted payload/receipt, retry ambiguity, stale accepted root, or implicit root promotion | exact complete-set batch/retry/completion/conflict, post-journal cache-failure repair, crash reconciliation, local/remote payload substitution, malicious receipt, stale-root precheck/race, client-root candidate, and race tests | leave operations dirty/offline/pending/conflicted and keep accepted root unchanged; before downgrading to a binary that predates `candidate`, finish or reset candidate cache records |
-| 9b.2 | Add the concrete flat-v1/hybrid-v1 UnixFS client-root planner and verified manifest materialization over the generic write-back service | additive experimental UnixFS planner API | no | incorrect ancestor projection, incomplete-view candidate, or manifest CID substitution | flat/hybrid write/mkdir/rename/unlink, new directories, KZG/IPA, malicious manifest CID, and restart tests | leave the generic orchestrator uncomposed; existing journal intent remains recoverable |
+| 9b.2 | **Completed 2026-08-17:** add the concrete flat-v1/hybrid-v1 UnixFS client-root planner; reconstruct exact manifest/authenticated-binding projection, replay the complete ordered overlay, verify old/new manifest CIDs, emit child-before-parent output-free intent for local KZG/IPA computation, copy-on-write divergent shared-directory aliases, publish only final staged payload bindings, skip unchanged manifest writes, and explicitly complete verified no-change batches under the accepted-root promotion fence without mutation, candidate, receipt, or remote-persistence claims | source-breaking evolution of pre-v1 `Queue` and `Planner` interfaces that were absent from historical MALT Client `v0.0.1` and have never appeared in a tag, plus additive trust fencing; no wire or on-disk schema change | no | incorrect ancestor projection, incomplete-view candidate, transient payload disclosure, shared-DAG liveness failure, manifest CID substitution, backend/object-identity drift, no-change remote side effect/root race, false durability claim, or permanently frozen no-op intent | flat/hybrid write/mkdir/rename/unlink and new-directory combined replay, independently verified next views under KZG/IPA, shared aliases with equal-output reuse and divergent copy-on-write, overwritten/deleted payload minimization, zero-write equal-content/canceling namespace no-change, cross-store promotion fence, restart/exact retry, corrupt old manifest, malicious returned manifest CID, immutable-View and frozen-status rejection, and race tests | leave the planner and generic orchestrator uncomposed; intermediate-commit interface implementers must update `Planner.Plan` and add `Queue.CompleteNoChange`; existing journal intent remains recoverable |
 | 9c | Add an explicit opt-in writable platform policy and map FUSE mutations/fsync onto staging plus verified write-back | experimental mount policy | no | host syscall acknowledged beyond configured durability | write/flush/fsync/rename/unlink/crash/remount kernel tests | read-only remains default; disable writable policy and retain journal |
 | 10 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |
 | 11 | Separate pre-v1 runtime module namespace decision and release line | breaking Go import change if approved | no | collision with historical Core path | external consumer build with isolated module cache | do not tag; keep old module until cutover is proven |

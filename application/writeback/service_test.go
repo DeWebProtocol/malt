@@ -47,6 +47,69 @@ func TestReplayComputesPersistsAndRecordsUnacceptedCandidate(t *testing.T) {
 	}
 }
 
+func TestReplayCompletesVerifiedNoChangeWithoutCandidateOrMutation(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.noChange = true
+	result, err := fixture.service(t).Replay(t.Context(), fixture.view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.NoAuthenticatedChange || result.RemotePersisted || result.CandidateRoot.Defined() || result.CandidateStored || result.RootAccepted {
+		t.Fatalf("no-change write-back result=%#v", result)
+	}
+	if fixture.payloads.puts != 0 || fixture.remote.fetches != 1 || fixture.remote.submitted != nil || fixture.roots.candidate.Defined() {
+		t.Fatalf("no-change write-back performed a mutation: remote=%#v roots=%#v", fixture.remote, fixture.roots)
+	}
+	if fixture.queue.completed != 1 || !fixture.queue.candidate.Equals(fixture.view.Root) || fixture.queue.conflicted != 0 {
+		t.Fatalf("no-change queue state=%#v", fixture.queue)
+	}
+}
+
+func TestReplayUploadsOnlyFinalIntentPayloads(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	secretBody := []byte("overwritten secret")
+	secret := writebackRawCID(t, secretBody)
+	secretWrite := fixture.queue.batch.Operations[0]
+	secretWrite.OperationID = "op-secret"
+	secretWrite.RetryID = "retry-secret"
+	secretWrite.Sequence = 0
+	secretWrite.PayloadCID = secret.String()
+	fixture.queue.batch.Operations = append([]journal.Operation{secretWrite}, fixture.queue.batch.Operations...)
+	fixture.queue.batch.Pending = append([]journal.Operation{secretWrite}, fixture.queue.batch.Pending...)
+	fixture.queue.batch.Payloads = append(fixture.queue.batch.Payloads, staging.UploadPayload{CID: secret, Body: secretBody})
+	result, err := fixture.service(t).Replay(t.Context(), fixture.view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RemotePersisted || fixture.payloads.puts != 1 || !fixture.payloads.stored.Equals(fixture.payload) {
+		t.Fatalf("selected payload upload result=%#v payloads=%#v", result, fixture.payloads)
+	}
+}
+
+func TestReplayRejectsPlannerRequiredUnstagedPayload(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.queue.batch.Payloads = nil
+	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
+		t.Fatal("final intent payload missing from staging was accepted")
+	}
+	if fixture.payloads.puts != 0 || fixture.remote.submitted != nil || fixture.queue.completed != 0 {
+		t.Fatalf("unstaged required payload caused side effects: payloads=%#v remote=%#v queue=%#v", fixture.payloads, fixture.remote, fixture.queue)
+	}
+}
+
+func TestReplayNoChangePreservesConflictWhenAcceptedRootAdvances(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.noChange = true
+	fixture.roots.advanceOnRecheck = writebackRawCID(t, []byte("advanced during no-change replay"))
+	result, err := fixture.service(t).Replay(t.Context(), fixture.view)
+	if !errors.Is(err, ErrStaleAcceptedView) {
+		t.Fatalf("no-change accepted-root race error=%v", err)
+	}
+	if result.NoAuthenticatedChange || result.RemotePersisted || fixture.queue.completed != 0 || fixture.queue.conflicted != 1 || fixture.remote.submitted != nil {
+		t.Fatalf("no-change accepted-root race changed state: result=%#v queue=%#v", result, fixture.queue)
+	}
+}
+
 func TestReplayRejectsMaliciousReceiptWithoutCompletingOrRecordingCandidate(t *testing.T) {
 	fixture := newWritebackFixture(t)
 	fixture.remote.substituteReceipt = true
@@ -62,13 +125,13 @@ func TestReplayRejectsMaliciousReceiptWithoutCompletingOrRecordingCandidate(t *t
 	}
 }
 
-func TestReplayRejectsPayloadCIDSubstitutionBeforeClientRootRequest(t *testing.T) {
+func TestReplayRejectsPayloadCIDSubstitutionBeforePayloadPublication(t *testing.T) {
 	fixture := newWritebackFixture(t)
 	fixture.payloads.substitute = writebackRawCID(t, []byte("wrong"))
 	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
 		t.Fatal("payload CID substitution was accepted")
 	}
-	if fixture.remote.fetches != 0 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
+	if fixture.remote.fetches != 1 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
 		t.Fatalf("write-back continued after payload substitution: remote=%#v queue=%#v", fixture.remote, fixture.queue)
 	}
 }
@@ -132,6 +195,7 @@ type writebackFixture struct {
 	payloads *fakePayloadStore
 	remote   *fakeClientRootRemote
 	roots    *fakeRootPolicy
+	noChange bool
 }
 
 func newWritebackFixture(t *testing.T) *writebackFixture {
@@ -202,11 +266,14 @@ func (f *writebackFixture) service(t *testing.T) *Service {
 	t.Helper()
 	service, err := New(Options{
 		Queue: f.queue, Payloads: f.payloads, Remote: f.remote, Writer: f.runtime,
-		Planner: PlannerFunc(func(_ context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, error) {
-			if !view.BaseRoot.Equals(f.update.BaseRoot) || len(operations) != 1 || operations[0].OperationID != "op-one" {
-				return mutation.SemanticIntent{}, errors.New("planner received substituted input")
+		Planner: PlannerFunc(func(_ context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, bool, error) {
+			if !view.BaseRoot.Equals(f.update.BaseRoot) || len(operations) == 0 || operations[len(operations)-1].OperationID != "op-one" {
+				return mutation.SemanticIntent{}, false, errors.New("planner received substituted input")
 			}
-			return f.intent, nil
+			if f.noChange {
+				return mutation.SemanticIntent{}, false, nil
+			}
+			return f.intent, true, nil
 		}),
 		Roots: f.roots, TrustAlias: "docs", Source: "test write-back",
 	})
@@ -245,6 +312,10 @@ func (q *fakeQueue) CompleteUpload(_ context.Context, batch staging.UploadBatch,
 		completed[index].ResultRoot = candidate.String()
 	}
 	return completed, nil
+}
+
+func (q *fakeQueue) CompleteNoChange(_ context.Context, batch staging.UploadBatch) ([]journal.Operation, error) {
+	return q.CompleteUpload(context.Background(), batch, batch.View.Root)
 }
 
 func (q *fakeQueue) MarkUploadConflicted(_ context.Context, batch staging.UploadBatch, conflictID string) ([]journal.Operation, error) {
@@ -316,9 +387,22 @@ type fakeRootPolicy struct {
 	accepted         cid.Cid
 	candidate        cid.Cid
 	advanceOnObserve cid.Cid
+	advanceOnRecheck cid.Cid
 }
 
-func (p *fakeRootPolicy) AcceptedRoot(string) (cid.Cid, error) { return p.accepted, nil }
+func (p *fakeRootPolicy) AcceptedRoot(string) (cid.Cid, error) {
+	return p.accepted, nil
+}
+
+func (p *fakeRootPolicy) CompleteIfAccepted(_ string, expected cid.Cid, operation func() error) (bool, error) {
+	if p.advanceOnRecheck.Defined() {
+		p.accepted = p.advanceOnRecheck
+	}
+	if !p.accepted.Equals(expected) {
+		return false, nil
+	}
+	return true, operation()
+}
 
 func (p *fakeRootPolicy) ObserveCandidate(_ string, candidate, base cid.Cid, _ string) error {
 	if !base.Equals(p.accepted) {
