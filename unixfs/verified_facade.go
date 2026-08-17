@@ -122,6 +122,14 @@ type Reader interface {
 	ReadListPayloadRange(context.Context, cid.Cid, uint64, uint64) (*ReadResult, error)
 }
 
+// LookupReader extends Reader with payload-lazy path projection. Lookup
+// verifies the UnixFS path and resolves payload identity without fetching file
+// payload bytes or List metadata.
+type LookupReader interface {
+	Reader
+	Lookup(context.Context, cid.Cid, string) (*Stat, error)
+}
+
 // Writer extends Reader with immutable candidate-root materialization.
 type Writer interface {
 	Reader
@@ -449,6 +457,41 @@ func legacyV1EntryType(target cid.Cid) (unixfsmodel.DirectoryEntryType, error) {
 }
 
 func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*Stat, error) {
+	stat, err := r.Lookup(ctx, trustedRoot, rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if stat.Kind != StagedKindFile {
+		return stat, nil
+	}
+	switch stat.PayloadKind {
+	case "list":
+		metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, stat.Payload)
+		if err != nil {
+			return nil, err
+		}
+		stat.Size = totalSize
+		stat.ChunkSize = chunkSize
+		stat.MetadataRead = metadata
+	case "raw":
+		body, err := r.getBoundBlock(ctx, stat.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("fetch raw file payload: %w", err)
+		}
+		stat.Size = uint64(len(body))
+		stat.rawBody = body
+		stat.rawBodyLoaded = true
+	default:
+		return nil, fmt.Errorf("unsupported UnixFS file payload CID %s", stat.Payload)
+	}
+	return stat, nil
+}
+
+// Lookup verifies the path and UnixFS parent projection and resolves its
+// payload identity without materializing file payload bytes or List metadata.
+// Directory manifests are still fetched because they define readdir and child
+// projection semantics.
+func (r *verifiedReader) Lookup(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*Stat, error) {
 	segments, err := unixfsmodel.ParsePath(rawPath)
 	if err != nil {
 		return nil, err
@@ -490,21 +533,7 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		stat.PayloadKind = unixfsmodel.StorageKindFromCID(payloadTarget)
 		switch stat.PayloadKind {
 		case "list":
-			metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, payloadTarget)
-			if err != nil {
-				return nil, err
-			}
-			stat.Size = totalSize
-			stat.ChunkSize = chunkSize
-			stat.MetadataRead = metadata
 		case "raw":
-			body, err := r.getBoundBlock(ctx, payloadTarget)
-			if err != nil {
-				return nil, fmt.Errorf("fetch raw file payload: %w", err)
-			}
-			stat.Size = uint64(len(body))
-			stat.rawBody = body
-			stat.rawBodyLoaded = true
 		default:
 			return nil, fmt.Errorf("unsupported UnixFS file payload CID %s", payloadTarget)
 		}

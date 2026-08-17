@@ -236,6 +236,11 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `journal`: ordered local filesystem-operation intent, immutable retry
   identity, and offline/pending/conflict/completed replay state; it has no root
   acceptance capability.
+- `filesystem/service`: platform-neutral read-only filesystem semantics over
+  an immutable caller-selected dataset/root/revision/encryption view. It
+  uses the payload-lazy `unixfs.LookupReader` to revalidate projection on each
+  read, uses the cache only for raw CID-bound payloads, and keeps List payloads
+  on the authenticated range path.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
@@ -256,9 +261,10 @@ it does not silently change the existing plaintext semantics of `malt add`.
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`application`, `bucketsync`, `cache`, `journal`, `transport`, `trust`, `unixfs`,
-and `merkledag` packages are the intended pre-release integration surface;
-their profiles remain experimental until a release policy is published. Architecture tests
+`application`, `bucketsync`, `cache`, `filesystem/service`, `journal`,
+`transport`, `trust`, `unixfs`, and `merkledag` packages are the intended
+pre-release integration surface; their profiles remain experimental until a
+release policy is published. Architecture tests
 fail if production packages import evaluation support, if `cmd/` gains a
 non-product binary, if public transport regains an evaluation control-plane
 escape hatch, or if Merkle DAG compatibility begins to depend on transport

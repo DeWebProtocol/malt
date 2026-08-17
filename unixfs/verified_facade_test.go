@@ -218,6 +218,19 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lookupReader, ok := countedReader.(interface {
+		Lookup(context.Context, cid.Cid, string) (*unixfs.Stat, error)
+	})
+	if !ok {
+		t.Fatal("verified reader does not expose payload-lazy Lookup")
+	}
+	lookedUp, err := lookupReader.Lookup(t.Context(), root, "docs/small.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookedUp.Size != 0 || countedBlocks.gets[lookedUp.Payload.KeyString()] != 0 {
+		t.Fatalf("Lookup materialized raw payload: stat=%#v gets=%d", lookedUp, countedBlocks.gets[lookedUp.Payload.KeyString()])
+	}
 	small, err := countedReader.ReadFile(t.Context(), root, "docs/small.txt")
 	if err != nil {
 		t.Fatal(err)
