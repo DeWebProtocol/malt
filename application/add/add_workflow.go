@@ -23,7 +23,7 @@ type addUnixFSResult struct {
 
 type addCASClient = CAS
 
-func addInputsWithUnixFS(ctx context.Context, remote Gateway, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithUnixFS(ctx context.Context, remote Materializer, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	normalized, err := normalizeAddBuildOptions(opts)
 	if err != nil {
 		return nil, err
@@ -37,9 +37,9 @@ func addInputsWithUnixFS(ctx context.Context, remote Gateway, casClient addCASCl
 	return nil, fmt.Errorf("unsupported add target/model/layout %q/%q/%q", normalized.Target, normalized.Model, normalized.Layout)
 }
 
-func addInputsWithMALTUnixFS(ctx context.Context, remote Gateway, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if remote == nil {
-		return nil, fmt.Errorf("gateway client is required")
+		return nil, fmt.Errorf("graph materialization capability is required")
 	}
 	staged, err := buildAddStagingTree(ctx, casClient, remote, rawInputs, opts)
 	if err != nil {

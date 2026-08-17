@@ -44,8 +44,17 @@ type PlanMaterializer interface {
 }
 
 type AddPlanMaterializer struct {
+	// Gateway is retained for source compatibility. Its type is a deprecated
+	// alias of clientadd.Materializer; new composition should use
+	// NewAddPlanMaterializer so it does not name a network topology.
 	Gateway clientadd.Gateway
 	CAS     clientadd.CAS
+}
+
+// NewAddPlanMaterializer composes a transport-neutral graph materializer and
+// immutable block capability while preserving the legacy two-field struct.
+func NewAddPlanMaterializer(graph clientadd.Materializer, blocks clientadd.CAS) AddPlanMaterializer {
+	return AddPlanMaterializer{Gateway: graph, CAS: blocks}
 }
 
 func (m AddPlanMaterializer) MaterializeManifest(ctx context.Context, archivePath string, base cid.Cid) (*clientadd.Result, error) {

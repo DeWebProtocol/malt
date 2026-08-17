@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dewebprotocol/malt-client/transport"
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/mutation"
@@ -19,28 +19,28 @@ type mutationRemote struct {
 	createdStructure map[string]string
 }
 
-func (r mutationRemote) ApplySemanticMutation(_ context.Context, mut mutation.SemanticMutation) (*transport.SemanticMutationResponse, error) {
+func (r mutationRemote) ApplyMutation(_ context.Context, mut mutation.SemanticMutation) (transportcap.MutationResult, error) {
 	if !mut.BaseRoot.Equals(r.base) {
-		return &transport.SemanticMutationResponse{BaseRoot: r.responseBase.String(), NewRoot: r.base.String()}, nil
+		return transportcap.MutationResult{BaseRoot: r.responseBase, CandidateRoot: r.base}, nil
 	}
 	responseBase := r.responseBase
 	if !responseBase.Defined() {
 		responseBase = r.base
 	}
-	return &transport.SemanticMutationResponse{BaseRoot: responseBase.String(), NewRoot: r.candidate.String()}, nil
+	return transportcap.MutationResult{BaseRoot: responseBase, CandidateRoot: r.candidate}, nil
 }
-func (r mutationRemote) CreateRootStructure(_ context.Context, arcs map[string]string) (*transport.CreateStructureResponse, error) {
+func (r mutationRemote) CreateStructureCandidate(_ context.Context, arcs map[string]string) (cid.Cid, error) {
 	for key, value := range arcs {
 		r.createdStructure[key] = value
 	}
-	return &transport.CreateStructureResponse{Root: r.base.String()}, nil
+	return r.base, nil
 }
 
-func TestGatewayMutationAdapterReturnsUnacceptedTransportNeutralReceipt(t *testing.T) {
+func TestMutationAdapterReturnsUnacceptedTransportNeutralReceipt(t *testing.T) {
 	base := adapterCID(t, "base")
 	candidate := adapterCID(t, "candidate")
 	created := map[string]string{}
-	adapter, err := unixfs.NewGatewayMutationAdapter(mutationRemote{base: base, candidate: candidate, createdStructure: created})
+	adapter, err := unixfs.NewMutationAdapter(mutationRemote{base: base, candidate: candidate, createdStructure: created})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,18 +60,18 @@ func TestGatewayMutationAdapterReturnsUnacceptedTransportNeutralReceipt(t *testi
 	}
 }
 
-func TestGatewayMutationAdapterRejectsMismatchedResponseBaseRoot(t *testing.T) {
+func TestMutationAdapterRejectsMismatchedResponseBaseRoot(t *testing.T) {
 	base := adapterCID(t, "base")
 	other := adapterCID(t, "other-base")
 	candidate := adapterCID(t, "candidate")
-	adapter, err := unixfs.NewGatewayMutationAdapter(mutationRemote{
+	adapter, err := unixfs.NewMutationAdapter(mutationRemote{
 		base: base, responseBase: other, candidate: candidate, createdStructure: map[string]string{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := adapter.ApplySemanticMutation(t.Context(), mutation.SemanticMutation{BaseRoot: base}); err == nil {
-		t.Fatal("adapter accepted a gateway receipt bound to another base root")
+		t.Fatal("adapter accepted a remote result bound to another base root")
 	}
 }
 
