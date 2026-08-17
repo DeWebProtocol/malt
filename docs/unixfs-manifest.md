@@ -1,7 +1,7 @@
 # UnixFS directory manifests
 
-This format belongs to the `malt-client` UnixFS application. It does not add a
-node kind, storage kind, or expansion rule to MALT Core.
+This format belongs to the MALT local runtime's UnixFS application. It does not
+add a node kind, storage kind, or expansion rule to MALT Core.
 
 ## V2
 

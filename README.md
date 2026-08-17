@@ -6,10 +6,8 @@ data through local application interfaces, and communicates through replaceable
 transport capabilities built on the
 [MALT Core SDK](https://github.com/DeWebProtocol/malt-core).
 
-This repository remains named `malt-client` during the staged repository
-migration. The product and binary are MALT; the background process is the MALT
-daemon. The repository name will become `malt` only after every downstream
-consumer is pinned to `malt-core v0.0.7`. Its Go module deliberately remains
+This repository is now named `malt`. The product and binary are MALT; the
+background process is the MALT daemon. Its Go module deliberately remains
 `github.com/dewebprotocol/malt-client` during the initial runtime refactor so a
 repository rename cannot silently reuse Core's historical module namespace.
 

@@ -1,8 +1,9 @@
 # Go API and CLI contracts
 
-This document describes the pre-release integration surface owned by
-`malt-client`. MALT protocol and ProofList schemas remain defined by the MALT
-core repository.
+This document describes the pre-release integration surface owned by the MALT
+local runtime. Its Go module still uses the
+`github.com/dewebprotocol/malt-client` namespace during the initial refactor.
+MALT protocol and ProofList schemas remain defined by the MALT Core repository.
 
 ## Public gateway transport
 
