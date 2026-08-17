@@ -20,6 +20,9 @@ authentication core:
 - transport-mediated access to remote or local storage (currently Gateway
   HTTP);
 - durable managed-Bucket base/remote/stash synchronization state;
+- non-authoritative CID-bound cache metadata with explicit verified, dirty,
+  pending, conflicted, offline-only, and stale states;
+- a durable ordered local-operation journal with frozen retry identities;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
@@ -33,9 +36,11 @@ separate explicit acceptance path.
 
 This is an experimental, pre-v1 local runtime. It currently provides the
 `malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, and a
-UnixFS application adapter. The current remote transport is Gateway HTTP; a
-host-filesystem mount, local-CAS transport, P2P transport, and hybrid transport
-are staged follow-up work and are not claimed as implemented here. There is no
+UnixFS application adapter. Cache and operation-journal packages are available
+as opt-in substrate but are not yet connected to a host-filesystem mount. The
+current remote transport is Gateway HTTP; a host-filesystem mount, local-CAS
+transport, P2P transport, and hybrid transport are staged follow-up work and
+are not claimed as implemented here. There is no
 independent runtime release tag yet; build from a pinned commit.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact runtime and dependency revisions they build.

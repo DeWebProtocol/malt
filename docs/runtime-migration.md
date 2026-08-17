@@ -23,7 +23,7 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache and operation-journal substrate, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
 
@@ -71,6 +71,13 @@ Current boundary strengths:
   range bodies before exposing bytes.
 - Bucket workspaces separately persist base, observed remote head, and local
   stashes; a remote head is not promoted into the trust store.
+- `cache` binds every entry to dataset, branch, selected root, revision,
+  payload CID, and encryption epoch. Verified reads recompute the CID and invoke
+  a local cached-proof verifier; dirty, pending, conflict, offline-only, and
+  stale bodies cannot enter that path.
+- `journal` durably orders local write/mkdir/rename/unlink intent and freezes a
+  retry identity before upload. It can retain a candidate result but has no
+  accepted-root mutation capability.
 - CLI foreground execution, daemon IPC, and scheduled execution share the same
   `application/backup.BatchRunner`; `internal/runtime.Services` supplies one
   configuration snapshot and the same backup services, local locking, and
@@ -91,8 +98,9 @@ Current implementation gaps that still encode concrete Gateway coupling:
   Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
-- There is no platform-neutral filesystem service, mount registry, verified
-  cache state machine, dirty journal, or platform mount adapter yet.
+- There is no platform-neutral filesystem service, mount registry, or platform
+  mount adapter yet; the cache and operation journal are additive substrate and
+  are not yet composed into user-facing file operations.
 - There is no local-CAS, peer, or hybrid transport implementation yet.
 
 No code in `malt-core` owns UnixFS, Bucket, account, daemon, key persistence,
@@ -253,7 +261,7 @@ choice and does not define network topology.
 | 3 | **Completed 2026-08-17:** move backup/sync composition into `internal/runtime.Services` and plan batch orchestration into `application/backup.BatchRunner`; foreground, daemon IPC, and scheduler use the same application contract | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven batch semantics, direct-vs-daemon adapter equivalence, current CLI tests | revert command call sites and the two additive services; persisted state is unchanged |
 | 4 | **Completed 2026-08-17:** define URL-free `transport/capability` Native/CAS/Mutations/DatasetBranch ports, adapt Gateway HTTP into typed untrusted values, move Bucket sync and UnixFS mutation consumers off concrete DTOs, and retain deprecated pre-release aliases | additive ports plus pre-v1 `PushOutcome.Result` type rename; deprecated constructors retained | no; persisted JSON tags unchanged | accidental trust mutation, request mismatch, or route leakage | binding/request/result adversarial contracts, Gateway adapter tests, JSON-field compatibility, architecture imports | select the deprecated Gateway adapters; no persisted-state migration is required |
 | 5 | **Completed 2026-08-17:** persist `ObservedHead`, `CandidateRoot`, and `AcceptedRootState` separately in trust-store v2; preserve an exact owner-only v1 recovery artifact before atomic migration; record backup heads as observations; add distinct candidate/observation acceptance APIs | additive API plus trust-store v2 migration; flattened `Record` retained for accepted-root aliases | no | state loss, stale observation, or implicit promotion | v1 fixture migration and write/sync/secure fault injection, stale/same-revision conflict, malformed root, restart, wrong acceptance-route, and backup observation tests | stop the runtime and replace the v2 store with `<trust-store>.v1-recovery`; the runtime retains this exact v1 artifact until an operator removes it |
-| 6 | Introduce verified cache metadata and operation journal without mounting | new internal APIs | no | treating cache as authority | corruption, stale-version, wrong-epoch, dirty/pending state tests | disable cache/journal feature flag; remote verified path remains |
+| 6 | **Completed 2026-08-17:** introduce non-authoritative verified-cache metadata/bodies and an ordered operation journal without mounting; require exact dataset/branch/root/revision/CID/epoch identity, fresh proof-evidence verification on every verified hit, CID recomputation, explicit cache transitions, crash-orphan reconciliation, frozen retry tombstones, non-replayable unresolved conflicts, and new identities for conflict replacements | additive pre-release `cache` and `journal` APIs | no | treating cache as authority, orphaning sensitive bytes, erasing pending/conflict state, or changing/reusing retry identity after an ambiguous upload | corrupt/missing body, invalid proof, stale root/revision/wrong epoch, invalid UTF-8, impossible persisted state, full transition bypass matrix, failed remove/metadata commit, crash reconciliation, lock-held remove/replace, concurrent fill, restart, ordered replay, identity/tombstone reuse, malformed superseded graph, unresolved-conflict exclusion, replacement/completion, CID canonicalization, and concurrent writer tests | do not compose the additive stores; remote verified reads remain the active path and journal records remain recoverable |
 | 7 | Add platform-neutral read-only filesystem service over UnixFS and mock transport | new experimental API | no | unverified bytes escape | stat/readdir/open/read/range/cache-hit adversarial contract tests | service is additive and can be disabled |
 | 8 | Add read-only platform mount adapter and daemon-managed lifecycle | new CLI/local API commands | no | mount leakage or lifecycle races | platform adapter tests, restart/remount, permissions, cancellation | unmount and disable adapter; core runtime remains |
 | 9 | Add local dirty staging, write-back, fsync contract, rename/unlink, and offline journal | experimental filesystem API | no | acknowledged data loss or root promotion | dirty/crash/offline/fsync/conflict/malicious apply tests | read-only mode remains default; journal retained for replay |

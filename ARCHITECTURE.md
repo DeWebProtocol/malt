@@ -228,7 +228,14 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
   interfaces.
 - `bucketsync`: durable Bucket base/remote/stash state and push orchestration.
-- `trust`: accepted and candidate root policy plus durable local persistence.
+- `trust`: observed, candidate, and accepted root policy plus durable local
+  persistence.
+- `cache`: non-authoritative payload bodies and metadata bound to exact
+  dataset/branch/root/revision/CID/encryption-epoch identity; verified hits
+  recheck the CID and locally revalidate cached proof evidence.
+- `journal`: ordered local filesystem-operation intent, immutable retry
+  identity, and offline/pending/conflict/completed replay state; it has no root
+  acceptance capability.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
@@ -249,9 +256,9 @@ it does not silently change the existing plaintext semantics of `malt add`.
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`application`, `bucketsync`, `transport`, `trust`, `unixfs`, and `merkledag`
-packages are the intended pre-release integration surface; their profiles
-remain experimental until a release policy is published. Architecture tests
+`application`, `bucketsync`, `cache`, `journal`, `transport`, `trust`, `unixfs`,
+and `merkledag` packages are the intended pre-release integration surface;
+their profiles remain experimental until a release policy is published. Architecture tests
 fail if production packages import evaluation support, if `cmd/` gains a
 non-product binary, if public transport regains an evaluation control-plane
 escape hatch, or if Merkle DAG compatibility begins to depend on transport

@@ -20,6 +20,8 @@ func TestPackageBoundaries(t *testing.T) {
 	}{
 		{path: "transport", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-client/merkledag", "github.com/dewebprotocol/malt-client/trust"}},
 		{path: "trust", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-client/merkledag"}},
+		{path: "cache", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-core"}},
+		{path: "journal", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-core"}},
 		{path: "unixfs", banned: []string{"github.com/dewebprotocol/malt-client/merkledag"}},
 		{path: "merkledag", banned: []string{"github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-core/auth/proof", "github.com/dewebprotocol/malt-core/protocol"}},
 		{path: "application", banned: []string{"github.com/dewebprotocol/malt-client/transport", "github.com/spf13/cobra"}},
