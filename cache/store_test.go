@@ -146,7 +146,7 @@ func TestCacheStateMachineSeparatesRemoteVerifiedDirtyPendingOfflineAndConflict(
 	if got, _, err := store.ReadLocal(binding); err != nil || string(got) != string(body) {
 		t.Fatalf("local body = %q, %v", got, err)
 	}
-	for _, next := range []State{StateOfflineOnly, StatePendingUpload, StateConflicted, StateLocalDirty} {
+	for _, next := range []State{StateOfflineOnly, StatePendingUpload, StateCandidate, StateConflicted, StateLocalDirty} {
 		entry, err = store.Transition(binding, next)
 		if err != nil || entry.State != next {
 			t.Fatalf("transition to %s = %#v, %v", next, entry, err)
@@ -154,6 +154,13 @@ func TestCacheStateMachineSeparatesRemoteVerifiedDirtyPendingOfflineAndConflict(
 	}
 	if _, err := store.Transition(binding, StateVerifiedClean); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("dirty entry became verified without proof: %v", err)
+	}
+	entry, err = store.ReconcileLocalState(binding, StateCandidate)
+	if err != nil || entry.State != StateCandidate || entry.Verification != nil {
+		t.Fatalf("reconciled candidate entry=%#v err=%v", entry, err)
+	}
+	if _, err := store.ReconcileLocalState(binding, StateVerifiedClean); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("local reconciliation created verified state: %v", err)
 	}
 
 	remoteBinding := testBinding(t, []byte("not fetched"))

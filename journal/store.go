@@ -156,6 +156,45 @@ func (s *Store) FreezeForUpload(operationID string) (Operation, error) {
 	return s.transition(operationID, StatusPendingUpload, "", "")
 }
 
+// FreezeBatchForUpload atomically freezes every selected retry identity before
+// any transport I/O. Already-pending records are accepted idempotently; no
+// record changes if any identity is missing or no longer replayable.
+func (s *Store) FreezeBatchForUpload(operationIDs []string) ([]Operation, error) {
+	ids, err := normalizeOperationIDs(operationIDs)
+	if err != nil {
+		return nil, err
+	}
+	var result []Operation
+	err = s.withState(true, func() error {
+		selected := make([]Operation, len(ids))
+		for index, id := range ids {
+			operation, ok := s.state.Operations[id]
+			if !ok {
+				return ErrNotFound
+			}
+			switch operation.Status {
+			case StatusLocalDirty, StatusOfflineOnly, StatusPendingUpload:
+				selected[index] = operation
+			default:
+				return fmt.Errorf("%w: %s to %s", ErrInvalidStatus, operation.Status, StatusPendingUpload)
+			}
+		}
+		now := time.Now().UTC()
+		for index, operation := range selected {
+			if operation.Status != StatusPendingUpload {
+				operation.Status = StatusPendingUpload
+				operation.UpdatedAt = now
+				s.state.Operations[operation.OperationID] = operation
+			}
+			selected[index] = operation
+		}
+		result = selected
+		return nil
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].Sequence < result[j].Sequence })
+	return cloneOperations(result), err
+}
+
 // MarkOffline records that a never-submitted local change is waiting for
 // connectivity. A pending upload cannot be demoted because its request may
 // already have reached an untrusted executor.
@@ -169,6 +208,51 @@ func (s *Store) MarkConflicted(operationID, conflictID string) (Operation, error
 		return Operation{}, fmt.Errorf("journal conflict identity is empty or not valid UTF-8")
 	}
 	return s.transition(operationID, StatusConflicted, conflictID, "")
+}
+
+// MarkBatchConflicted atomically preserves one conflict classification across
+// an exact pending batch. Repeating the same conflict is idempotent.
+func (s *Store) MarkBatchConflicted(operationIDs []string, conflictID string) ([]Operation, error) {
+	ids, err := normalizeOperationIDs(operationIDs)
+	if err != nil {
+		return nil, err
+	}
+	conflictID = strings.TrimSpace(conflictID)
+	if conflictID == "" || !utf8.ValidString(conflictID) {
+		return nil, fmt.Errorf("journal conflict identity is empty or not valid UTF-8")
+	}
+	var result []Operation
+	err = s.withState(true, func() error {
+		selected := make([]Operation, len(ids))
+		for index, id := range ids {
+			operation, ok := s.state.Operations[id]
+			if !ok {
+				return ErrNotFound
+			}
+			if operation.Status == StatusConflicted {
+				if operation.ConflictID != conflictID {
+					return ErrIdentityReuse
+				}
+			} else if operation.Status != StatusPendingUpload {
+				return fmt.Errorf("%w: %s to %s", ErrInvalidStatus, operation.Status, StatusConflicted)
+			}
+			selected[index] = operation
+		}
+		now := time.Now().UTC()
+		for index, operation := range selected {
+			if operation.Status != StatusConflicted {
+				operation.Status = StatusConflicted
+				operation.ConflictID = conflictID
+				operation.UpdatedAt = now
+				s.state.Operations[operation.OperationID] = operation
+			}
+			selected[index] = operation
+		}
+		result = selected
+		return nil
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].Sequence < result[j].Sequence })
+	return cloneOperations(result), err
 }
 
 // ResolveConflict atomically supersedes a conflicted operation with new intent.
@@ -239,6 +323,52 @@ func (s *Store) Complete(operationID, resultRoot string) (Operation, error) {
 		return Operation{}, fmt.Errorf("journal result root: %w", err)
 	}
 	return s.transition(operationID, StatusCompleted, "", parsed.String())
+}
+
+// CompleteBatch atomically records one locally verified candidate for every
+// pending operation in the exact batch. It cannot accept the candidate root.
+func (s *Store) CompleteBatch(operationIDs []string, resultRoot string) ([]Operation, error) {
+	ids, err := normalizeOperationIDs(operationIDs)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := cid.Parse(strings.TrimSpace(resultRoot))
+	if err != nil {
+		return nil, fmt.Errorf("journal result root: %w", err)
+	}
+	canonicalRoot := parsed.String()
+	var result []Operation
+	err = s.withState(true, func() error {
+		selected := make([]Operation, len(ids))
+		for index, id := range ids {
+			operation, ok := s.state.Operations[id]
+			if !ok {
+				return ErrNotFound
+			}
+			if operation.Status == StatusCompleted {
+				if operation.ResultRoot != canonicalRoot {
+					return ErrIdentityReuse
+				}
+			} else if operation.Status != StatusPendingUpload {
+				return fmt.Errorf("%w: %s to %s", ErrInvalidStatus, operation.Status, StatusCompleted)
+			}
+			selected[index] = operation
+		}
+		now := time.Now().UTC()
+		for index, operation := range selected {
+			if operation.Status != StatusCompleted {
+				operation.Status = StatusCompleted
+				operation.ResultRoot = canonicalRoot
+				operation.UpdatedAt = now
+				s.state.Operations[operation.OperationID] = operation
+			}
+			selected[index] = operation
+		}
+		result = selected
+		return nil
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].Sequence < result[j].Sequence })
+	return cloneOperations(result), err
 }
 
 func (s *Store) Get(operationID string) (Operation, error) {
@@ -674,6 +804,30 @@ func validStatus(value Status) bool {
 }
 
 func cloneOperation(operation Operation) Operation { return operation }
+
+func cloneOperations(operations []Operation) []Operation {
+	return append([]Operation(nil), operations...)
+}
+
+func normalizeOperationIDs(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("journal operation batch is empty")
+	}
+	ids := make([]string, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || !utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("journal operation identity is empty or invalid")
+		}
+		if _, ok := seen[value]; ok {
+			return nil, fmt.Errorf("journal operation batch contains duplicate identity %q", value)
+		}
+		seen[value] = struct{}{}
+		ids[index] = value
+	}
+	return ids, nil
+}
 
 func emptyState() persistedState {
 	return persistedState{

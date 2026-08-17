@@ -225,6 +225,12 @@ it does not silently change the existing plaintext semantics of `malt add`.
   publication, verified restore, history, and automatic scheduling use cases.
 - `application/add`: reusable ignore-aware local-input staging, symlink policy,
   hybrid MALT materialization, Merkle DAG import, and candidate recording.
+- `application/writeback`: transport-neutral replay over an exact leased
+  staging batch. It verifies payload-store CIDs, obtains a bounded verified
+  client-root view, delegates only canonical intent planning, verifies the
+  exact durable receipt, records a candidate, and atomically completes or
+  conflicts the batch. It has no accepted-root promotion method and imports no
+  concrete transport.
 - `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
   interfaces.
 - `bucketsync`: durable Bucket base/remote/stash state and push orchestration.
@@ -232,7 +238,8 @@ it does not silently change the existing plaintext semantics of `malt add`.
   persistence.
 - `cache`: non-authoritative payload bodies and metadata bound to exact
   dataset/branch/root/revision/CID/encryption-epoch identity; verified hits
-  recheck the CID and locally revalidate cached proof evidence.
+  recheck the CID and locally revalidate cached proof evidence. Candidate
+  bodies remain local non-authoritative state and cannot enter verified reads.
 - `journal`: ordered local filesystem-operation intent, immutable retry
   identity, and offline/pending/conflict/completed replay state; it has no root
   acceptance capability.
@@ -246,8 +253,9 @@ it does not silently change the existing plaintext semantics of `malt add`.
   intent against an exact immutable View, pins local file handles to a payload
   CID, exclusively leases both cache and journal paths across processes,
   survives restart through those stores, and reports only local journal
-  durability from `Fsync`. It performs no upload, candidate-root computation,
-  or trust mutation.
+  durability from `Fsync`. Its upload-batch methods freeze exact replay
+  identities and atomically complete or conflict the batch, but it performs no
+  network I/O, candidate-root computation, or trust mutation.
 - `filesystem/mount`: durable desired/pending-unmount records, restart
   reconciliation, a process-held exclusive manager lease, immutable local-View
   selection, and the narrow platform adapter/session contract. It does not
@@ -285,7 +293,7 @@ it does not silently change the existing plaintext semantics of `malt add`.
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`application`, `bucketsync`, `cache`, `filesystem/service`,
+`application`, `application/writeback`, `bucketsync`, `cache`, `filesystem/service`,
 `filesystem/staging`, `filesystem/mount`, `journal`, `localapi`, `transport`,
 `trust`, `unixfs`, and
 `merkledag` packages are the intended pre-release integration surface; their

@@ -46,12 +46,16 @@ type cacheStore interface {
 	PutLocal(cache.Binding, []byte, cache.State) (cache.Entry, error)
 	ReadLocal(cache.Binding) ([]byte, cache.Entry, error)
 	Transition(cache.Binding, cache.State) (cache.Entry, error)
+	ReconcileLocalState(cache.Binding, cache.State) (cache.Entry, error)
 	Remove(cache.Binding) error
 }
 
 type operationJournal interface {
 	Append(journal.Intent, journal.Status) (journal.Operation, error)
 	List() ([]journal.Operation, error)
+	FreezeBatchForUpload([]string) ([]journal.Operation, error)
+	MarkBatchConflicted([]string, string) ([]journal.Operation, error)
+	CompleteBatch([]string, string) ([]journal.Operation, error)
 }
 
 type Options struct {
@@ -469,6 +473,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	if err := s.reconcileCacheStates(operations); err != nil {
+		return err
+	}
 	entries, err := s.cache.List()
 	if err != nil {
 		return err
@@ -857,7 +864,7 @@ func cacheState(offline bool) cache.State {
 
 func isLocalState(state cache.State) bool {
 	switch state {
-	case cache.StateLocalDirty, cache.StateOfflineOnly, cache.StatePendingUpload, cache.StateConflicted:
+	case cache.StateLocalDirty, cache.StateOfflineOnly, cache.StatePendingUpload, cache.StateCandidate, cache.StateConflicted:
 		return true
 	default:
 		return false

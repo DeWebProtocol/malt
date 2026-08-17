@@ -47,6 +47,7 @@ const (
 	StateVerifiedClean        State = "verified_clean"
 	StateLocalDirty           State = "local_dirty"
 	StatePendingUpload        State = "pending_upload"
+	StateCandidate            State = "candidate"
 	StateConflicted           State = "conflicted"
 	StateOfflineOnly          State = "offline_only"
 	StateStale                State = "stale"
@@ -310,6 +311,51 @@ func (s *Store) Transition(binding Binding, next State) (Entry, error) {
 			entry.Verification = nil
 		}
 		s.state.Entries[id] = entry
+		result = cloneEntry(entry)
+		return nil
+	})
+	return result, err
+}
+
+// ReconcileLocalState aligns non-authoritative cache metadata with the
+// durable operation journal after a crash or a batch transition. It accepts
+// only local-body states, verifies the exact body and CID under the cache
+// lock, and cannot create verified-clean data or proof evidence.
+func (s *Store) ReconcileLocalState(binding Binding, next State) (Entry, error) {
+	binding, err := normalizeBinding(binding)
+	if err != nil {
+		return Entry{}, err
+	}
+	if !isLocalBodyState(next) {
+		return Entry{}, fmt.Errorf("%w: cannot reconcile local body as %q", ErrInvalidState, next)
+	}
+	var result Entry
+	err = s.withState(false, func() error {
+		id := bindingID(binding)
+		entry, ok := s.state.Entries[id]
+		if !ok {
+			return ErrMiss
+		}
+		if !isLocalBodyState(entry.State) || !entry.BodyPresent {
+			return fmt.Errorf("%w: cannot reconcile %s as %s", ErrInvalidState, entry.State, next)
+		}
+		body, err := os.ReadFile(s.bodyPath(id))
+		if err != nil {
+			return errors.Join(ErrCorrupt, err)
+		}
+		if int64(len(body)) != entry.Size {
+			return ErrCorrupt
+		}
+		if err := verifyPayloadCID(binding.CID, body); err != nil {
+			return errors.Join(ErrCorrupt, err)
+		}
+		entry.State = next
+		entry.Verification = nil
+		entry.UpdatedAt = time.Now().UTC()
+		s.state.Entries[id] = entry
+		if err := s.writeMetadataLocked(); err != nil {
+			return err
+		}
 		result = cloneEntry(entry)
 		return nil
 	})
@@ -669,7 +715,9 @@ func allowedTransition(current, next State) bool {
 	case StateOfflineOnly:
 		return next == StatePendingUpload || next == StateLocalDirty || next == StateConflicted || next == StateStale
 	case StatePendingUpload:
-		return next == StateConflicted || next == StateStale
+		return next == StateCandidate || next == StateConflicted || next == StateStale
+	case StateCandidate:
+		return next == StatePendingUpload || next == StateLocalDirty || next == StateOfflineOnly || next == StateConflicted || next == StateStale
 	case StateConflicted:
 		return next == StateLocalDirty || next == StateOfflineOnly || next == StateStale
 	case StateStale:
@@ -693,7 +741,16 @@ func allowedPut(current, next State) bool {
 
 func validState(value State) bool {
 	switch value {
-	case StateUnmaterializedRemote, StateVerifiedClean, StateLocalDirty, StatePendingUpload, StateConflicted, StateOfflineOnly, StateStale:
+	case StateUnmaterializedRemote, StateVerifiedClean, StateLocalDirty, StatePendingUpload, StateCandidate, StateConflicted, StateOfflineOnly, StateStale:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLocalBodyState(value State) bool {
+	switch value {
+	case StateLocalDirty, StatePendingUpload, StateCandidate, StateConflicted, StateOfflineOnly:
 		return true
 	default:
 		return false
