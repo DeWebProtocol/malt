@@ -23,7 +23,7 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt-client` (this repository) | `malt` CLI, daemon/local IPC, local trust and key state, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | migrating to `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt-client` (this repository) | `malt` CLI, daemon/local IPC, local trust and key state, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | pending `malt-core v0.0.7` migration |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | pending `malt-core v0.0.7` provenance/link migration |
 
@@ -63,12 +63,8 @@ Current boundary strengths:
   the same candidate/acceptance policy.
 - Merkle-DAG compatibility evidence is isolated from MALT ProofLists.
 
-Current gaps that still encode the historical Gateway-client boundary:
+Current implementation gaps that still encode concrete Gateway coupling:
 
-- User-facing CLI/daemon text and top-level documents still describe a trusted
-  Gateway client rather than a local runtime.
-- `ARCHITECTURE.md` says the product depends on a Gateway, even though Gateway
-  must become one optional transport implementation.
 - `transport.Client` owns semantic capabilities and concrete Gateway routes in
   one package; Bucket synchronization values also reference Gateway response
   DTOs.
@@ -220,7 +216,7 @@ choice and does not define network topology.
   toolchain, and reproducible checksums.
 - [x] Migrate Gateway Go imports, module pin, Console WASM, and provenance to
   exact `malt-core v0.0.7`.
-- [ ] Migrate this runtime's Core imports and pin exact `malt-core v0.0.7`.
+- [x] Migrate this runtime's Core imports and pin exact `malt-core v0.0.7`.
 - [ ] Migrate `malt-evaluation` imports and record exact module/source
   provenance without relabeling historical results.
 - [ ] Migrate `malt-web` browser build metadata, links, and public terminology.
@@ -231,8 +227,8 @@ choice and does not define network topology.
 - [ ] Run cross-repository verified read/write and malicious-response E2E.
 - [ ] Rename the GitHub repository `malt-client` to `malt` only after all Core
   consumers are migrated.
-- [ ] Keep `module github.com/dewebprotocol/malt-client` during the initial
-  runtime refactor.
+- [x] Keep `module github.com/dewebprotocol/malt-client` during the initial
+  runtime refactor; continue enforcing this invariant until a separate cutover.
 - [ ] Design the runtime module namespace cutover as a separate pre-v1 change;
   do not publish a runtime release under the old Core namespace accidentally.
 
@@ -241,15 +237,15 @@ choice and does not define network topology.
 | PR | Goal and packages | Public API | Wire format | Main risk | Verification | Rollback |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Product language plus `malt-core v0.0.7` migration across imports, docs, architecture tests, and `go.mod` | import namespace only | no | missed old import/provenance | full Go test/vet/build, Windows build, downstream E2E | revert one namespace commit; old Core release remains available |
-| 2 | Move runtime composition and plan batch orchestration out of `cmd/malt` into reusable application/runtime services | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven adapter-equivalence tests and current CLI tests | keep old constructors behind temporary adapter and revert call sites |
-| 3 | Rename semantic `Gateway` ports and split Gateway HTTP DTOs from transport-neutral dataset/head/mutation capabilities | pre-v1 interface rename | no | accidental trust mutation or route leakage | mock capability contract tests and architecture import tests | retain compatibility type aliases for one PR if needed |
-| 4 | Make trust observations, candidates, and accepted roots explicit persisted types; forbid transport imports | additive state migration | no | state loss or implicit promotion | migration fixtures, stale-head and malicious-result tests, crash/restart tests | dual-read old state with write-new; restore prior state file |
-| 5 | Introduce verified cache metadata and operation journal without mounting | new internal APIs | no | treating cache as authority | corruption, stale-version, wrong-epoch, dirty/pending state tests | disable cache/journal feature flag; remote verified path remains |
-| 6 | Add platform-neutral read-only filesystem service over UnixFS and mock transport | new experimental API | no | unverified bytes escape | stat/readdir/open/read/range/cache-hit adversarial contract tests | service is additive and can be disabled |
-| 7 | Add read-only platform mount adapter and daemon-managed lifecycle | new CLI/local API commands | no | mount leakage or lifecycle races | platform adapter tests, restart/remount, permissions, cancellation | unmount and disable adapter; core runtime remains |
-| 8 | Add local dirty staging, write-back, fsync contract, rename/unlink, and offline journal | experimental filesystem API | no | acknowledged data loss or root promotion | dirty/crash/offline/fsync/conflict/malicious apply tests | read-only mode remains default; journal retained for replay |
-| 9 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |
-| 10 | Rename repository to `malt`, update links/badges/CI, keep old Go module path and add compatibility notice | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
+| 2 | After evaluation/web and every remaining Core consumer is migrated, rename repository to `malt`, update links/badges/CI, keep the old Go module path, and add a compatibility notice before runtime architecture refactors begin | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
+| 3 | Move runtime composition and plan batch orchestration out of `cmd/malt` into reusable application/runtime services | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven adapter-equivalence tests and current CLI tests | keep old constructors behind temporary adapter and revert call sites |
+| 4 | Rename semantic `Gateway` ports and split Gateway HTTP DTOs from transport-neutral dataset/head/mutation capabilities | pre-v1 interface rename | no | accidental trust mutation or route leakage | mock capability contract tests and architecture import tests | retain compatibility type aliases for one PR if needed |
+| 5 | Make trust observations, candidates, and accepted roots explicit persisted types; forbid transport imports | additive state migration | no | state loss or implicit promotion | migration fixtures, stale-head and malicious-result tests, crash/restart tests | dual-read old state with write-new; restore prior state file |
+| 6 | Introduce verified cache metadata and operation journal without mounting | new internal APIs | no | treating cache as authority | corruption, stale-version, wrong-epoch, dirty/pending state tests | disable cache/journal feature flag; remote verified path remains |
+| 7 | Add platform-neutral read-only filesystem service over UnixFS and mock transport | new experimental API | no | unverified bytes escape | stat/readdir/open/read/range/cache-hit adversarial contract tests | service is additive and can be disabled |
+| 8 | Add read-only platform mount adapter and daemon-managed lifecycle | new CLI/local API commands | no | mount leakage or lifecycle races | platform adapter tests, restart/remount, permissions, cancellation | unmount and disable adapter; core runtime remains |
+| 9 | Add local dirty staging, write-back, fsync contract, rename/unlink, and offline journal | experimental filesystem API | no | acknowledged data loss or root promotion | dirty/crash/offline/fsync/conflict/malicious apply tests | read-only mode remains default; journal retained for replay |
+| 10 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |
 | 11 | Separate pre-v1 runtime module namespace decision and release line | breaking Go import change if approved | no | collision with historical Core path | external consumer build with isolated module cache | do not tag; keep old module until cutover is proven |
 
 No PR may combine a wire-profile change with repository/module renaming. Each
