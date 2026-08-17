@@ -27,6 +27,7 @@ var ErrStaleAcceptedView = errors.New("filesystem write-back selected accepted r
 type Queue interface {
 	PrepareUpload(context.Context, filesystemservice.View) (staging.UploadBatch, error)
 	CompleteUpload(context.Context, staging.UploadBatch, cid.Cid) ([]journal.Operation, error)
+	CompleteNoChange(context.Context, staging.UploadBatch) ([]journal.Operation, error)
 	MarkUploadConflicted(context.Context, staging.UploadBatch, string) ([]journal.Operation, error)
 }
 
@@ -37,14 +38,16 @@ type PayloadStore interface {
 }
 
 // Planner converts the verified complete old state plus the exact filesystem
-// intent snapshot into one output-free canonical MALT semantic intent.
+// intent snapshot into one output-free canonical MALT semantic intent. Changed
+// is false only when replaying the complete batch leaves the authenticated
+// projection exactly equal to the verified base View.
 type Planner interface {
-	Plan(context.Context, mutation.UpdateView, []journal.Operation) (mutation.SemanticIntent, error)
+	Plan(context.Context, mutation.UpdateView, []journal.Operation) (intent mutation.SemanticIntent, changed bool, err error)
 }
 
-type PlannerFunc func(context.Context, mutation.UpdateView, []journal.Operation) (mutation.SemanticIntent, error)
+type PlannerFunc func(context.Context, mutation.UpdateView, []journal.Operation) (mutation.SemanticIntent, bool, error)
 
-func (f PlannerFunc) Plan(ctx context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, error) {
+func (f PlannerFunc) Plan(ctx context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, bool, error) {
 	return f(ctx, view, operations)
 }
 
@@ -83,15 +86,16 @@ type Service struct {
 // Result distinguishes an exact durable remote materialization from local
 // trusted-root acceptance. RootAccepted is always false here.
 type Result struct {
-	Profile         string
-	OperationID     string
-	BaseRoot        cid.Cid
-	CandidateRoot   cid.Cid
-	Completed       []journal.Operation
-	Receipt         mutation.MaterializationReceipt
-	RemotePersisted bool
-	CandidateStored bool
-	RootAccepted    bool
+	Profile               string
+	OperationID           string
+	BaseRoot              cid.Cid
+	CandidateRoot         cid.Cid
+	Completed             []journal.Operation
+	Receipt               mutation.MaterializationReceipt
+	NoAuthenticatedChange bool
+	RemotePersisted       bool
+	CandidateStored       bool
+	RootAccepted          bool
 }
 
 func New(opts Options) (*Service, error) {
@@ -180,9 +184,33 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 	if err != nil {
 		return result, err
 	}
-	intent, err := s.planner.Plan(ctx, verifiedView, append([]journal.Operation(nil), batch.Operations...))
+	intent, changed, err := s.planner.Plan(ctx, verifiedView, append([]journal.Operation(nil), batch.Operations...))
 	if err != nil {
 		return result, fmt.Errorf("plan filesystem semantic intent: %w", err)
+	}
+	if !changed {
+		current, currentErr := s.roots.AcceptedRoot(s.trustAlias)
+		if currentErr != nil {
+			return result, fmt.Errorf("recheck local accepted root after no-change plan: %w", currentErr)
+		}
+		if !current.Equals(view.Root) {
+			conflictID := acceptedRootConflictID(view.Root, current, view.Root)
+			if _, conflictErr := s.queue.MarkUploadConflicted(ctx, batch, conflictID); conflictErr != nil {
+				return result, errors.Join(
+					fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current),
+					fmt.Errorf("preserve no-change write-back conflict: %w", conflictErr),
+				)
+			}
+			return result, fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current)
+		}
+		completed, completeErr := s.queue.CompleteNoChange(ctx, batch)
+		if completeErr != nil {
+			return result, completeErr
+		}
+		result.Completed = completed
+		result.NoAuthenticatedChange = true
+		result.RemotePersisted = true
+		return result, nil
 	}
 	intent, err = mutation.NormalizeSemanticIntent(verifiedView, intent)
 	if err != nil {

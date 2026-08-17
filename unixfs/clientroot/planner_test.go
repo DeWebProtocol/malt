@@ -53,9 +53,12 @@ func TestPlannerComputesVerifiableFlatAndHybridCandidatesAcrossBackends(t *testi
 				if err != nil {
 					t.Fatal(err)
 				}
-				intent, err := planner.Plan(t.Context(), fixture.view, operations)
+				intent, changed, err := planner.Plan(t.Context(), fixture.view, operations)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if !changed {
+					t.Fatal("mutating filesystem batch was classified as no-change")
 				}
 				verified, err := fixture.writer.VerifyUpdateView(t.Context(), fixture.view)
 				if err != nil {
@@ -91,7 +94,7 @@ func TestPlannerRejectsManifestCIDSubstitutionAndCorruptOldManifest(t *testing.T
 	newPayload := fixture.blocks.putRaw(t, []byte("new"))
 	operations := plannerOperations(fixture.root, newPayload)[:1]
 	fixture.blocks.substitutePut = plannerRawCID(t, []byte("substituted manifest"))
-	if _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
+	if _, _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
 		t.Fatal("manifest CID substitution was accepted")
 	}
 
@@ -99,7 +102,7 @@ func TestPlannerRejectsManifestCIDSubstitutionAndCorruptOldManifest(t *testing.T
 	top := objectByRoot(t, fixture.view, fixture.root)
 	manifest := entriesByPath(top)["@payload"].CID()
 	fixture.blocks.values[manifest.KeyString()] = []byte("corrupt manifest")
-	if _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
+	if _, _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
 		t.Fatal("corrupt old manifest bytes were accepted")
 	}
 }
@@ -113,21 +116,48 @@ func TestPlannerRejectsPartialViewIdentityAndUnfrozenOperations(t *testing.T) {
 	payload := fixture.blocks.putRaw(t, []byte("new"))
 	operations := plannerOperations(fixture.root, payload)
 	operations[1].BaseRevision++
-	if _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
+	if _, _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
 		t.Fatal("operation batch crossing immutable Views was accepted")
 	}
 	operations = plannerOperations(fixture.root, payload)
 	operations[0].Status = journal.StatusLocalDirty
-	if _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
+	if _, _, err := planner.Plan(t.Context(), fixture.view, operations); err == nil {
 		t.Fatal("unfrozen operation was accepted")
 	}
 }
 
+func TestPlannerClassifiesEquivalentContentAndCanceledNamespaceAsNoChange(t *testing.T) {
+	for _, layout := range []unixfs.LayoutKind{unixfs.LayoutFlatV1, unixfs.LayoutHybridV1} {
+		t.Run(string(layout), func(t *testing.T) {
+			fixture := newPlannerFixture(t, layout, mustKZG(t))
+			planner, err := New(layout, fixture.blocks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sameWrite := plannerOperations(fixture.root, fixture.oldPayload)[2:3]
+			sameWrite[0].Path = "docs/old.txt"
+			if intent, changed, err := planner.Plan(t.Context(), fixture.view, sameWrite); err != nil || changed || len(intent.Transitions) != 0 {
+				t.Fatalf("equivalent write intent=%#v changed=%v err=%v", intent, changed, err)
+			}
+
+			cancel := plannerOperations(fixture.root, fixture.oldPayload)[:2]
+			cancel[0].Path = "temporary"
+			cancel[1].Kind = journal.KindUnlink
+			cancel[1].Path = "temporary"
+			cancel[1].Destination = ""
+			if intent, changed, err := planner.Plan(t.Context(), fixture.view, cancel); err != nil || changed || len(intent.Transitions) != 0 {
+				t.Fatalf("canceled namespace intent=%#v changed=%v err=%v", intent, changed, err)
+			}
+		})
+	}
+}
+
 type plannerFixture struct {
-	root   cid.Cid
-	view   mutation.UpdateView
-	blocks *plannerBlocks
-	writer *clientwriter.Runtime
+	root       cid.Cid
+	view       mutation.UpdateView
+	oldPayload cid.Cid
+	blocks     *plannerBlocks
+	writer     *clientwriter.Runtime
 }
 
 func newPlannerFixture(t *testing.T, layoutKind unixfs.LayoutKind, scheme commitment.IndexCommitment) plannerFixture {
@@ -167,7 +197,7 @@ func newPlannerFixture(t *testing.T, layoutKind unixfs.LayoutKind, scheme commit
 	if err != nil {
 		t.Fatal(err)
 	}
-	return plannerFixture{root: result.Key, view: view, blocks: blocks, writer: writer}
+	return plannerFixture{root: result.Key, view: view, oldPayload: oldPayload, blocks: blocks, writer: writer}
 }
 
 type plannerRootCreator struct {

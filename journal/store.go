@@ -74,8 +74,9 @@ type Intent struct {
 }
 
 // Operation is one durable journal record. Sequence is assigned locally and
-// defines replay order. ResultRoot is an untrusted/locally verified candidate
-// record only; this package has no accepted-root mutation capability.
+// defines replay order. ResultRoot is either a locally verified candidate or
+// the unchanged verified base for a completed no-change batch; this package has
+// no accepted-root mutation capability.
 type Operation struct {
 	Intent
 	Sequence               uint64    `json:"sequence"`
@@ -325,8 +326,10 @@ func (s *Store) Complete(operationID, resultRoot string) (Operation, error) {
 	return s.transition(operationID, StatusCompleted, "", parsed.String())
 }
 
-// CompleteBatch atomically records one locally verified candidate for every
-// pending operation in the exact batch. It cannot accept the candidate root.
+// CompleteBatch atomically records one locally verified result root for every
+// pending operation in the exact batch. A verified no-change caller may record
+// the batch base; other callers record a distinct candidate. It cannot accept
+// either root.
 func (s *Store) CompleteBatch(operationIDs []string, resultRoot string) ([]Operation, error) {
 	ids, err := normalizeOperationIDs(operationIDs)
 	if err != nil {

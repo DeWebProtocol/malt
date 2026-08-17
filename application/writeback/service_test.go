@@ -47,6 +47,37 @@ func TestReplayComputesPersistsAndRecordsUnacceptedCandidate(t *testing.T) {
 	}
 }
 
+func TestReplayCompletesVerifiedNoChangeWithoutCandidateOrMutation(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.noChange = true
+	result, err := fixture.service(t).Replay(t.Context(), fixture.view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.NoAuthenticatedChange || !result.RemotePersisted || result.CandidateRoot.Defined() || result.CandidateStored || result.RootAccepted {
+		t.Fatalf("no-change write-back result=%#v", result)
+	}
+	if fixture.remote.fetches != 1 || fixture.remote.submitted != nil || fixture.roots.candidate.Defined() {
+		t.Fatalf("no-change write-back performed a mutation: remote=%#v roots=%#v", fixture.remote, fixture.roots)
+	}
+	if fixture.queue.completed != 1 || !fixture.queue.candidate.Equals(fixture.view.Root) || fixture.queue.conflicted != 0 {
+		t.Fatalf("no-change queue state=%#v", fixture.queue)
+	}
+}
+
+func TestReplayNoChangePreservesConflictWhenAcceptedRootAdvances(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	fixture.noChange = true
+	fixture.roots.advanceOnRecheck = writebackRawCID(t, []byte("advanced during no-change replay"))
+	result, err := fixture.service(t).Replay(t.Context(), fixture.view)
+	if !errors.Is(err, ErrStaleAcceptedView) {
+		t.Fatalf("no-change accepted-root race error=%v", err)
+	}
+	if result.NoAuthenticatedChange || result.RemotePersisted || fixture.queue.completed != 0 || fixture.queue.conflicted != 1 || fixture.remote.submitted != nil {
+		t.Fatalf("no-change accepted-root race changed state: result=%#v queue=%#v", result, fixture.queue)
+	}
+}
+
 func TestReplayRejectsMaliciousReceiptWithoutCompletingOrRecordingCandidate(t *testing.T) {
 	fixture := newWritebackFixture(t)
 	fixture.remote.substituteReceipt = true
@@ -132,6 +163,7 @@ type writebackFixture struct {
 	payloads *fakePayloadStore
 	remote   *fakeClientRootRemote
 	roots    *fakeRootPolicy
+	noChange bool
 }
 
 func newWritebackFixture(t *testing.T) *writebackFixture {
@@ -202,11 +234,14 @@ func (f *writebackFixture) service(t *testing.T) *Service {
 	t.Helper()
 	service, err := New(Options{
 		Queue: f.queue, Payloads: f.payloads, Remote: f.remote, Writer: f.runtime,
-		Planner: PlannerFunc(func(_ context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, error) {
+		Planner: PlannerFunc(func(_ context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, bool, error) {
 			if !view.BaseRoot.Equals(f.update.BaseRoot) || len(operations) != 1 || operations[0].OperationID != "op-one" {
-				return mutation.SemanticIntent{}, errors.New("planner received substituted input")
+				return mutation.SemanticIntent{}, false, errors.New("planner received substituted input")
 			}
-			return f.intent, nil
+			if f.noChange {
+				return mutation.SemanticIntent{}, false, nil
+			}
+			return f.intent, true, nil
 		}),
 		Roots: f.roots, TrustAlias: "docs", Source: "test write-back",
 	})
@@ -245,6 +280,10 @@ func (q *fakeQueue) CompleteUpload(_ context.Context, batch staging.UploadBatch,
 		completed[index].ResultRoot = candidate.String()
 	}
 	return completed, nil
+}
+
+func (q *fakeQueue) CompleteNoChange(_ context.Context, batch staging.UploadBatch) ([]journal.Operation, error) {
+	return q.CompleteUpload(context.Background(), batch, batch.View.Root)
 }
 
 func (q *fakeQueue) MarkUploadConflicted(_ context.Context, batch staging.UploadBatch, conflictID string) ([]journal.Operation, error) {
@@ -316,9 +355,17 @@ type fakeRootPolicy struct {
 	accepted         cid.Cid
 	candidate        cid.Cid
 	advanceOnObserve cid.Cid
+	advanceOnRecheck cid.Cid
+	acceptedReads    int
 }
 
-func (p *fakeRootPolicy) AcceptedRoot(string) (cid.Cid, error) { return p.accepted, nil }
+func (p *fakeRootPolicy) AcceptedRoot(string) (cid.Cid, error) {
+	p.acceptedReads++
+	if p.acceptedReads > 1 && p.advanceOnRecheck.Defined() {
+		p.accepted = p.advanceOnRecheck
+	}
+	return p.accepted, nil
+}
 
 func (p *fakeRootPolicy) ObserveCandidate(_ string, candidate, base cid.Cid, _ string) error {
 	if !base.Equals(p.accepted) {

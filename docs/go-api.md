@@ -398,9 +398,11 @@ is not yet composed into the read-only FUSE adapter.
 View before returning bytes, preserves completed operations needed to rebuild
 the full overlay from the same accepted base, deduplicates raw-CID write
 payloads, and derives a stable Core-compatible operation identity from the
-complete intent snapshot. `CompleteUpload` and `MarkUploadConflicted` require
-the exact pending snapshot and atomically classify the whole batch. Completion
-uses the non-authoritative candidate cache state. If the journal outcome was
+complete intent snapshot. `CompleteUpload`, `CompleteNoChange`, and
+`MarkUploadConflicted` require the exact pending snapshot and atomically
+classify the whole batch. Completion uses the non-authoritative candidate cache
+state; the no-change form records the verified base as its result identity
+without creating a candidate. If the journal outcome was
 committed but cache reconciliation or the response failed, repeating the exact
 candidate/conflict outcome repairs cache state idempotently; shrinking or
 substituting the pending set is rejected. None of these methods perform network
@@ -420,7 +422,11 @@ the service records a candidate and completes the batch.
 The root-policy port deliberately exposes accepted-root lookup and candidate
 recording only. `writeback.Result.RootAccepted` is therefore always false. If
 the accepted root advances after the remote receipt but before candidate
-recording, the exact batch is preserved as a deterministic conflict. A remote
+recording, the exact batch is preserved as a deterministic conflict. A planner
+may explicitly report that the complete batch leaves the authenticated
+projection unchanged. That exact batch is completed against its verified base
+without submitting a mutation or recording a candidate; the service rechecks
+the accepted root first and preserves a conflict if it advanced. A remote
 success, payload upload, or receipt alone never changes the accepted root. The
 generic orchestrator and concrete UnixFS planner are implemented; FUSE write
 composition remains a later phase.

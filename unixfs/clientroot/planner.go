@@ -65,19 +65,19 @@ type desiredTarget struct {
 // Plan implements application/writeback.Planner without importing that
 // orchestration package. The verified complete view remains the only authority
 // for every before-image.
-func (p *Planner) Plan(ctx context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, error) {
+func (p *Planner) Plan(ctx context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, bool, error) {
 	if p == nil || p.blocks == nil {
-		return mutation.SemanticIntent{}, fmt.Errorf("UnixFS client-root planner is nil")
+		return mutation.SemanticIntent{}, false, fmt.Errorf("UnixFS client-root planner is nil")
 	}
 	if ctx == nil {
-		return mutation.SemanticIntent{}, fmt.Errorf("UnixFS client-root planner context is nil")
+		return mutation.SemanticIntent{}, false, fmt.Errorf("UnixFS client-root planner context is nil")
 	}
 	canonical, err := mutation.NormalizeUpdateView(view)
 	if err != nil {
-		return mutation.SemanticIntent{}, fmt.Errorf("normalize verified UnixFS update view: %w", err)
+		return mutation.SemanticIntent{}, false, fmt.Errorf("normalize verified UnixFS update view: %w", err)
 	}
 	if err := validateOperations(canonical.BaseRoot, operations); err != nil {
-		return mutation.SemanticIntent{}, err
+		return mutation.SemanticIntent{}, false, err
 	}
 	objectsByRoot := make(map[string]*mutation.UpdateObject, len(canonical.Objects))
 	objectsByID := make(map[string]struct{}, len(canonical.Objects))
@@ -88,7 +88,7 @@ func (p *Planner) Plan(ctx context.Context, view mutation.UpdateView, operations
 	}
 	top := objectsByRoot[canonical.BaseRoot.KeyString()]
 	if top == nil || top.Kind != arcset.KindMap {
-		return mutation.SemanticIntent{}, fmt.Errorf("UnixFS accepted root is not a Map")
+		return mutation.SemanticIntent{}, false, fmt.Errorf("UnixFS accepted root is not a Map")
 	}
 
 	var root *treeNode
@@ -101,10 +101,10 @@ func (p *Planner) Plan(ctx context.Context, view mutation.UpdateView, operations
 		err = fmt.Errorf("unsupported UnixFS client-root layout %q", p.layout)
 	}
 	if err != nil {
-		return mutation.SemanticIntent{}, err
+		return mutation.SemanticIntent{}, false, err
 	}
 	if err := applyOperations(root, operations); err != nil {
-		return mutation.SemanticIntent{}, err
+		return mutation.SemanticIntent{}, false, err
 	}
 	operationID := batchOperationID(operations)
 
@@ -116,9 +116,16 @@ func (p *Planner) Plan(ctx context.Context, view mutation.UpdateView, operations
 		intent, err = p.planHybrid(ctx, canonical, root, objectsByID, operationID)
 	}
 	if err != nil {
-		return mutation.SemanticIntent{}, err
+		return mutation.SemanticIntent{}, false, err
 	}
-	return mutation.NormalizeSemanticIntent(canonical, intent)
+	if len(intent.Transitions) == 0 {
+		return mutation.SemanticIntent{}, false, nil
+	}
+	normalized, err := mutation.NormalizeSemanticIntent(canonical, intent)
+	if err != nil {
+		return mutation.SemanticIntent{}, false, err
+	}
+	return normalized, true, nil
 }
 
 func (p *Planner) loadFlat(ctx context.Context, top *mutation.UpdateObject) (*treeNode, error) {
@@ -283,7 +290,7 @@ func (p *Planner) planFlat(ctx context.Context, view mutation.UpdateView, root *
 		return mutation.SemanticIntent{}, err
 	}
 	if len(changes) == 0 {
-		return mutation.SemanticIntent{}, fmt.Errorf("UnixFS filesystem batch has no authenticated state change")
+		return mutation.SemanticIntent{}, nil
 	}
 	transitionID := stableID("unixfs-flat", operationID)
 	return mutation.SemanticIntent{
@@ -320,7 +327,7 @@ func (p *Planner) planHybrid(ctx context.Context, view mutation.UpdateView, root
 		return mutation.SemanticIntent{}, err
 	}
 	if root.outputID == "" {
-		return mutation.SemanticIntent{}, fmt.Errorf("UnixFS filesystem batch has no authenticated state change")
+		return mutation.SemanticIntent{}, nil
 	}
 	uses := make(map[string]uint32, len(transitions))
 	for _, transition := range transitions {
