@@ -44,10 +44,12 @@ This is an experimental, pre-v1 local runtime. It currently provides the
 UnixFS application adapter, and an opt-in platform-neutral read-only filesystem
 service. Cache and operation-journal packages are available as runtime
 substrate, and durable mount lifecycle APIs are implemented, but no platform
-mount adapter is connected to the product daemon yet. The current remote
-transport is Gateway HTTP; a host-filesystem mount, local-CAS
-transport, P2P transport, and hybrid transport are staged follow-up work and
-are not claimed as implemented here. There is no
+mount adapter is connected to the product daemon yet. A Linux read-only FUSE
+adapter is available behind that lifecycle boundary and has an opt-in real
+mount smoke test; daemon composition and CLI control remain the next step. The
+current remote transport is Gateway HTTP; a product-composed host-filesystem
+mount, local-CAS transport, P2P transport, and hybrid transport are staged
+follow-up work and are not claimed as implemented here. There is no
 independent runtime release tag yet; build from a pinned commit.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact runtime and dependency revisions they build.
