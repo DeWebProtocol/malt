@@ -60,11 +60,12 @@ composition is not implemented yet, so the mounted filesystem remains
 read-only. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
-implemented here. There is no
-independent runtime release tag yet; build from a pinned commit.
-Experimental Go interfaces such as filesystem staging and write-back may still
-make explicitly documented source-breaking changes before that first release;
-these changes do not imply a wire-format or persisted-state migration.
+implemented here. The historical `v0.0.1` tag was published for MALT Client
+before the repository rename and before the staging/write-back APIs existed.
+Those current experimental Go interfaces have not appeared in any tag and may
+still make explicitly documented source-breaking changes before a tagged
+release includes them; build the current runtime from a pinned commit. These
+changes do not imply a wire-format or persisted-state migration.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact runtime and dependency revisions they build.
 
