@@ -369,9 +369,10 @@ reverifies its stored Resolve proof, and matches the exact view. List-backed
 files remain on the authenticated range path and are not cached as if their
 reconstructed bytes were one raw block.
 
-The filesystem service is composed into Linux read-only mounts. The journal is
-not yet connected to remote write-back; existing CLI content reads remain
-unchanged.
+The filesystem service is composed into Linux mounts through a read-only
+runtime binding. The Linux adapter also accepts the narrow opt-in writable
+mount capability described below, but the daemon does not create that binding
+yet; existing CLI content reads remain unchanged.
 
 Package `filesystem/staging` is the additive platform-neutral dirty overlay.
 It accepts the same immutable `service.View` and a verified read-only base,
@@ -407,7 +408,7 @@ durable and CID-valid. It always reports remote persistence and accepted-root
 promotion as false. Restart reconciliation rejects unresolved journal writes
 with missing or corrupt bodies and removes unreferenced local cache bodies.
 This package has no transport, candidate-root, or trust-store capability and
-is not yet composed into the read-only FUSE adapter.
+is not yet composed into the daemon writable binding consumed by FUSE.
 
 `staging.Service.PrepareUpload` freezes all replayable operations for one exact
 View before returning bytes, preserves completed operations needed to rebuild
@@ -514,26 +515,51 @@ other build targets return `mount.ErrUnsupportedPlatform` before opening state.
 Platform adapters receive only a View-bound filesystem capability; they cannot
 select roots, access transport, or own the binding lifetime. Mount `Sync` can
 report local durability and a verified remote candidate but is rejected if it
-claims accepted-root promotion. The current Linux adapter still consumes the
-read-only subset and therefore remains read-only in this phase.
+claims accepted-root promotion. The Linux adapter consumes the writable subset
+only for an explicit write-back Spec; a wider dynamic type never enables writes
+for a read-only Spec. Current daemon composition does not supply a writable
+binding, so product mounts remain read-only in this phase.
 The private daemon API exposes the same manager at `GET/POST /v1/mounts` and
 `DELETE /v1/mounts/{id}` when a manager is configured.
 
 Package `filesystem/platform/fuse` provides the first concrete outer adapter
 on Linux, pinned to `github.com/hanwen/go-fuse/v2 v2.11.0`. It maps stat,
-lookup, readdir, open, and range reads onto the View-bound read-only port,
-returns `EROFS` for namespace, data, xattr, and metadata mutation, refuses
-nonempty or symlinked mountpoints, and sets a per-mount `malt:<mount-id>` source
+lookup, readdir, open, and range reads onto the View-bound port. Read-only Specs
+retain a kernel `ro` option and return `EROFS` for every mutation even if the
+supplied dynamic value has wider methods. An explicit write-back Spec requires
+`WritableFilesystem` before mountpoint recovery or mount I/O, exposes fixed
+0755/0644 permissions, and maps create, offset write, truncate, mkdir, rename,
+unlink, rmdir, and fsync. Writable handles use direct I/O, fetch each read from
+the current overlay, and use a mount-locked logical inode path that moves with
+rename so an open source handle follows the new path even before go-fuse
+updates its tree. An unlinked or overwritten inode is permanently orphaned and
+never falls back to a newly reused path. `OnForget` blocks new node operations
+from reviving an unregistered inode, while a handle opened before forget keeps
+the inode registered through release and continues to follow atomic renames.
+Because the current staging API is path-based rather than object-handle-based,
+unlink and overwrite-rename return `EBUSY` while the target has an open writable
+handle. Successful capability
+mutations are already locally durable; `Flush` adds no claim, while `Fsync`
+calls `Sync` and fails unless local durability is confirmed. It also rejects
+accepted-root promotion and remote persistence without a candidate. Metadata
+changes, xattrs, links, symlinks, devices, allocation, copy-range, and flagged
+rename remain unsupported. Semantic mount errors map to `EEXIST`, `ENOTEMPTY`,
+`EFBIG`, and the local open-target `EBUSY` guard without importing staging into
+the adapter. Typed-nil and partial read handles fail closed, partial resources
+are closed, and a successful nonempty `WriteAt` result must report a size that
+covers the acknowledged range. The adapter refuses
+nonempty or symlinked mountpoints and sets a per-mount `malt:<mount-id>` source
 identity. Crash recovery parses exact `/proc/self/mountinfo` entries without
 touching a possibly disconnected final FUSE root. If mounts are stacked, it
 uses `/proc/self/fdinfo` to select the currently visible mount and otherwise
 fails closed. `fusermount` runs only when both the FUSE type and exact MALT
 source match. Unit tests exercise syscall mapping without a kernel mount, while
-the following opt-in test performs a real read-only mount when the host has
-FUSE:
+the following opt-in tests perform real read-only and writable capability
+mounts when the host has FUSE:
 
 ```sh
 MALT_FUSE_SMOKE=1 go test -run TestLinuxFUSESmoke ./filesystem/platform/fuse
+MALT_FUSE_WRITABLE_SMOKE=1 go test -run TestLinuxFUSEWritableSmoke ./filesystem/platform/fuse
 ```
 
 `internal/runtime.NewMountManager` composes this adapter on Linux with the

@@ -278,11 +278,21 @@ it does not silently change the existing plaintext semantics of `malt add`.
   succeed. The package does not implement trust or network access. Targets
   without a kernel-backed, process-released lease fail closed before opening
   the mount registry.
-- `filesystem/platform/fuse`: Linux-only read-only FUSE syscall translation.
-  It receives only the View-bound mount capability, rejects every namespace or
-  data/metadata mutation, and verifies `/proc/self/mountinfo` ownership before
-  recovering even a disconnected stale mount. It has no trust or transport
-  access.
+- `filesystem/platform/fuse`: Linux-only FUSE syscall translation. Read-only
+  is the default and remains kernel-enforced. An explicit write-back mount with
+  a matching View-bound capability maps create, offset write, truncate, mkdir,
+  rename, unlink, rmdir, and local fsync while continuing to reject unsupported
+  metadata, xattr, link, device, and allocation operations. Writable handles
+  use direct I/O and re-open the current overlay for reads so write-after-read
+  cannot expose a pinned pre-write body. Mount-local stable logical paths move
+  atomically with rename; orphaned nodes never reuse a recreated path, and
+  forgotten nodes cannot be revived by new operations. Existing open handles
+  remain registered through release and follow atomic renames. Unlink or
+  overwrite-rename returns `EBUSY` for an open target until the staging layer
+  gains stable object handles. `Flush` adds no durability claim;
+  `Fsync` requires local durability and rejects accepted-root claims. Exact
+  `/proc/self/mountinfo` ownership is still verified before recovering even a
+  disconnected stale mount. The adapter has no trust or transport access.
 - `localapi`: reusable client for the private daemon control plane, shared by
   the CLI and future thin GUI adapters without direct trust-store mutation.
 - `internal/runtime`: process-independent composition of local accepted-root

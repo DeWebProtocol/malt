@@ -74,6 +74,65 @@ func TestAdapterMountsOwnedReadOnlyFilesystemAndSessionIsIdempotent(t *testing.T
 	}
 }
 
+func TestAdapterRequiresExplicitMatchingWritablePolicy(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		writePolicy filesystemmount.WritePolicy
+		filesystem  filesystemmount.ReadOnlyFilesystem
+		wantRO      bool
+		wantError   error
+	}{
+		{name: "read-only hides wider capability", writePolicy: filesystemmount.WriteReadOnly, filesystem: newFakeWritableFilesystem(), wantRO: true},
+		{name: "write-back rejects narrow capability", writePolicy: filesystemmount.WriteBack, filesystem: minimalFilesystem(), wantError: filesystemmount.ErrWritePolicyUnavailable},
+		{name: "write-back exposes writable capability", writePolicy: filesystemmount.WriteBack, filesystem: newFakeWritableFilesystem()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mountpoint := t.TempDir()
+			spec := fuseTestSpec(mountpoint)
+			spec.WritePolicy = test.writePolicy
+			if test.writePolicy == filesystemmount.WriteBack {
+				spec.LayoutPolicy = filesystemmount.LayoutFlatV1
+				spec.ConflictPolicy = filesystemmount.ConflictPreserveLocal
+			}
+			var current *mountIdentity
+			mountCalls := 0
+			fuseServer := newFakeServer()
+			adapter := New()
+			adapter.inspect = func(string) (*mountIdentity, error) { return current, nil }
+			adapter.mount = func(_ string, root fs.InodeEmbedder, options *fs.Options) (server, error) {
+				mountCalls++
+				operations := root.(*node)
+				hasWritable := operations.mount.writable != nil
+				if hasWritable != (test.writePolicy == filesystemmount.WriteBack) {
+					t.Fatalf("root writable=%v policy=%s", hasWritable, test.writePolicy)
+				}
+				hasRO := len(options.MountOptions.Options) == 1 && options.MountOptions.Options[0] == "ro"
+				if hasRO != test.wantRO {
+					t.Fatalf("mount options=%#v wantRO=%v", options.MountOptions.Options, test.wantRO)
+				}
+				current = &mountIdentity{ID: 51, Mountpoint: mountpoint, Filesystem: "fuse.malt", Source: expectedSource(spec)}
+				return fuseServer, nil
+			}
+			session, err := adapter.Mount(t.Context(), spec, test.filesystem)
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("Mount error=%v, want %v", err, test.wantError)
+			}
+			if test.wantError != nil {
+				if mountCalls != 0 || session != nil {
+					t.Fatalf("failed capability mount calls=%d session=%T", mountCalls, session)
+				}
+				return
+			}
+			if mountCalls != 1 || session == nil {
+				t.Fatalf("mount calls=%d session=%T", mountCalls, session)
+			}
+			if err := session.Unmount(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestRecoverUnmountDoesNotInspectDisconnectedFinalPath(t *testing.T) {
 	mountpoint := filepath.Join(t.TempDir(), "disconnected")
 	spec := fuseTestSpec(mountpoint)
@@ -306,6 +365,77 @@ func TestLinuxFUSESmoke(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(mountpoint, "new.txt"), []byte("blocked"), 0o600); err == nil {
 		t.Fatal("read-only FUSE mount accepted a write")
+	}
+	if err := session.Unmount(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLinuxFUSEWritableSmoke(t *testing.T) {
+	if os.Getenv("MALT_FUSE_WRITABLE_SMOKE") != "1" {
+		t.Skip("set MALT_FUSE_WRITABLE_SMOKE=1 on a Linux host with FUSE to run the writable mount smoke test")
+	}
+	mountpoint := t.TempDir()
+	filesystem := newFakeWritableFilesystem()
+	spec := fuseTestSpec(mountpoint)
+	spec.WritePolicy = filesystemmount.WriteBack
+	spec.LayoutPolicy = filesystemmount.LayoutFlatV1
+	spec.ConflictPolicy = filesystemmount.ConflictPreserveLocal
+	session, err := New().Mount(t.Context(), spec, filesystem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Unmount(context.Background()) })
+	created := filepath.Join(mountpoint, "created.txt")
+	if err := os.WriteFile(created, []byte("created body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(created, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt([]byte("MALT"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	busySource := filepath.Join(mountpoint, "busy-source.txt")
+	if err := os.WriteFile(busySource, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(busySource, created); !errors.Is(err, syscall.EBUSY) {
+		t.Fatalf("overwrite open destination error=%v, want EBUSY", err)
+	}
+	if err := os.Remove(created); !errors.Is(err, syscall.EBUSY) {
+		t.Fatalf("unlink open file error=%v, want EBUSY", err)
+	}
+	if err := file.Truncate(4); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(created)
+	if err != nil || string(body) != "MALT" {
+		t.Fatalf("writable body=%q err=%v", body, err)
+	}
+	if err := os.Remove(busySource); err != nil {
+		t.Fatal(err)
+	}
+	renamed := filepath.Join(mountpoint, "renamed.txt")
+	if err := os.Rename(created, renamed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(renamed); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(mountpoint, "empty")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(directory); err != nil {
+		t.Fatal(err)
 	}
 	if err := session.Unmount(t.Context()); err != nil {
 		t.Fatal(err)
