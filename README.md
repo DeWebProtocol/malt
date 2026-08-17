@@ -25,8 +25,9 @@ authentication core:
 - a durable ordered local-operation journal with frozen retry identities;
 - a crash-recoverable local dirty overlay with read-your-writes behavior and
   an explicit local-journal-only `fsync` result;
-- transport-neutral verified write-back orchestration that uploads exact
-  CID-bound bodies, locally computes and verifies a MALT candidate root, and
+- transport-neutral verified write-back orchestration that plans before
+  publication, uploads only final CID-bound staged bodies referenced by the
+  normalized intent, locally computes and verifies a MALT candidate root, and
   records it without accepting it;
 - flat-v1 and hybrid-v1 UnixFS client-root planning from a verified complete
   view, with locally CID-verified manifest reads and writes;

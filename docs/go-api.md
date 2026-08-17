@@ -413,11 +413,15 @@ I/O, compute a root, or accept one.
 Package `application/writeback` composes the staging queue with narrow payload,
 client-root remote, canonical planner, and local root-policy capabilities.
 `Service.Replay` checks that the selected View still equals the locally
-accepted root before freezing a batch, requires every payload store result to
-equal its staged CID, loads and verifies a bounded complete update view, and
-normalizes the planner's semantic intent. The MALT Core client-root Writer then
-computes the candidate locally and verifies the exact durable receipt before
-the service records a candidate and completes the batch.
+accepted root before freezing a batch, locally validates all available staged
+bodies, loads and verifies a bounded complete update view, and normalizes the
+planner's semantic intent before publishing file payloads. Only staged raw CIDs
+that survive as `After` bindings in that final intent are uploaded, and every
+payload store result must equal its staged CID. Intermediate writes later
+overwritten or deleted by the same frozen batch are never sent to the payload
+store. The MALT Core client-root Writer then computes the candidate locally and
+verifies the exact durable receipt before the service records a candidate and
+completes the batch.
 
 The root-policy port deliberately exposes accepted-root lookup and candidate
 recording only. `writeback.Result.RootAccepted` is therefore always false. If
@@ -425,11 +429,13 @@ the accepted root advances after the remote receipt but before candidate
 recording, the exact batch is preserved as a deterministic conflict. A planner
 may explicitly report that the complete batch leaves the authenticated
 projection unchanged. That exact batch is completed against its verified base
-without submitting a mutation or recording a candidate; the service rechecks
-the accepted root first and preserves a conflict if it advanced. A remote
-success, payload upload, or receipt alone never changes the accepted root. The
-generic orchestrator and concrete UnixFS planner are implemented; FUSE write
-composition remains a later phase.
+without uploading payloads, submitting a mutation, recording a candidate, or
+claiming remote persistence. Completion executes under the same process and
+cross-process fence as every accepted-root promotion; if the root already
+advanced, the batch is preserved as a conflict. A remote success, payload
+upload, or receipt alone never changes the accepted root. The generic
+orchestrator and concrete UnixFS planner are implemented; FUSE write composition
+remains a later phase.
 
 Package `unixfs/clientroot` is the concrete planner for flat-v1 and hybrid-v1.
 It first reconstructs the UnixFS tree only from the verified complete

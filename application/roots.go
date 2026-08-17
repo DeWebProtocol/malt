@@ -4,6 +4,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -88,6 +89,27 @@ func (r *Roots) AcceptedRoot(alias string) (cid.Cid, error) {
 		return cid.Undef, err
 	}
 	return selected.Root, nil
+}
+
+// CompleteIfAccepted runs a short local durable completion while excluding all
+// accepted-root promotions through the same trust-store fence. False means the
+// selected root changed before the callback, so the callback was not run.
+func (r *Roots) CompleteIfAccepted(alias string, expected cid.Cid, operation func() error) (bool, error) {
+	if r == nil || r.policy == nil {
+		return false, fmt.Errorf("trusted-root application is nil")
+	}
+	if !expected.Defined() {
+		return false, fmt.Errorf("expected accepted root is undefined")
+	}
+	fence, ok := r.policy.(trust.AcceptedRootFence)
+	if !ok {
+		return false, fmt.Errorf("trusted-root policy does not support accepted-root fencing")
+	}
+	err := fence.WithAcceptedRoot(alias, expected.String(), operation)
+	if errors.Is(err, trust.ErrAcceptedRootChanged) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (r *Roots) List() ([]trust.Record, error) {

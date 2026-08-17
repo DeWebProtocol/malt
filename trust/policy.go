@@ -29,6 +29,13 @@ type ObservationPolicy interface {
 	AcceptObserved(string, string, string, string, string) (Record, error)
 }
 
+// AcceptedRootFence is the narrow local durability fence used when completing
+// work that was verified against one accepted root. Implementations hold the
+// same exclusion boundary as every accepted-root promotion for the callback.
+type AcceptedRootFence interface {
+	WithAcceptedRoot(alias, expectedRoot string, operation func() error) error
+}
+
 // AcceptedRoot resolves an alias to the currently accepted root CID. It never
 // falls back to a candidate or a root supplied by an untrusted response.
 func AcceptedRoot(policy Policy, alias string) (cid.Cid, Record, error) {
@@ -51,3 +58,4 @@ func AcceptedRoot(policy Policy, alias string) (cid.Cid, Record, error) {
 
 var _ Policy = (*Store)(nil)
 var _ ObservationPolicy = (*Store)(nil)
+var _ AcceptedRootFence = (*Store)(nil)

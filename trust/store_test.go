@@ -15,6 +15,57 @@ import (
 	"github.com/multiformats/go-multibase"
 )
 
+func TestWithAcceptedRootFencesConcurrentPromotionAcrossStoreInstances(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roots.json")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := testRoot
+	next := candidateRoot
+	if _, err := first.Trust("docs", base, "unixfs", "gateway", "test"); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	guardedDone := make(chan error, 1)
+	go func() {
+		guardedDone <- first.WithAcceptedRoot("docs", base, func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	promotionDone := make(chan error, 1)
+	promotionStarted := make(chan struct{})
+	go func() {
+		close(promotionStarted)
+		_, err := second.Trust("docs", next, "unixfs", "gateway", "concurrent")
+		promotionDone <- err
+	}()
+	<-promotionStarted
+	select {
+	case err := <-promotionDone:
+		t.Fatalf("promotion crossed accepted-root fence: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-guardedDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-promotionDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := first.WithAcceptedRoot("docs", base, func() error { return nil }); !errors.Is(err, ErrAcceptedRootChanged) {
+		t.Fatalf("stale accepted-root fence error=%v", err)
+	}
+}
+
 const testRoot = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
 const candidateRoot = "bafkreib6u4dvknbd5g7pp7z2ex2jvdkbo3hytm5v6hlx3q3iibgfk5j5wi"
 const secondCandidateRoot = "bafkqaaa"

@@ -39,7 +39,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   candidates, and accepted roots. These are separate v2 state types:
   observations cannot enter the candidate path, and neither observations nor
   candidates promote without their own explicit local acceptance action. The
-  package must not depend on network or application packages.
+  package must not depend on network or application packages. Any local
+  classification whose correctness depends on one accepted root must use the
+  same process and cross-process promotion fence as the trust store.
 - `cache/` owns non-authoritative payload-cache metadata and bodies. Every
   verified hit must bind dataset, branch, selected root, revision, payload CID,
   and encryption epoch, recheck the CID, and invoke a local proof verifier.
@@ -62,10 +64,11 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   Local fsync is not remote persistence, candidate-root verification, or
   accepted-root promotion.
 - `application/writeback` owns transport-neutral replay of a leased staging
-  batch. It uploads exact CID-bound bodies, invokes the MALT Core client-root
-  workflow, verifies the durable receipt, records only a candidate, and then
-  atomically completes or conflicts the exact batch. It must not import a
-  concrete Gateway transport or expose accepted-root promotion.
+  batch. It plans before payload publication, uploads only final staged raw
+  bodies referenced by the normalized intent, invokes the MALT Core
+  client-root workflow, verifies the durable receipt, records only a candidate,
+  and then atomically completes or conflicts the exact batch. It must not
+  import a concrete Gateway transport or expose accepted-root promotion.
 - `unixfs/clientroot` owns the concrete flat-v1/hybrid-v1 projection from a
   verified complete update view plus durable filesystem operations into an
   output-free semantic intent. It verifies old and newly stored manifest CIDs

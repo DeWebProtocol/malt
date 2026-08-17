@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
 	"github.com/dewebprotocol/malt-client/journal"
+	"github.com/dewebprotocol/malt-core/auth/arcset"
 	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
@@ -40,7 +42,9 @@ type PayloadStore interface {
 // Planner converts the verified complete old state plus the exact filesystem
 // intent snapshot into one output-free canonical MALT semantic intent. Changed
 // is false only when replaying the complete batch leaves the authenticated
-// projection exactly equal to the verified base View.
+// projection exactly equal to the verified base View. The write-back service
+// derives the minimal staged-payload upload set from the normalized final
+// intent rather than publishing every intermediate filesystem write.
 type Planner interface {
 	Plan(context.Context, mutation.UpdateView, []journal.Operation) (intent mutation.SemanticIntent, changed bool, err error)
 }
@@ -52,10 +56,16 @@ func (f PlannerFunc) Plan(ctx context.Context, view mutation.UpdateView, operati
 }
 
 // RootPolicy supplies only accepted-root selection and candidate recording.
-// It deliberately exposes no acceptance method to this service.
+// It deliberately exposes no acceptance method to this service. A production
+// policy must additionally implement the private acceptedRootCompleter fence
+// before a verified no-change batch can be completed.
 type RootPolicy interface {
 	AcceptedRoot(string) (cid.Cid, error)
 	ObserveCandidate(string, cid.Cid, cid.Cid, string) error
+}
+
+type acceptedRootCompleter interface {
+	CompleteIfAccepted(string, cid.Cid, func() error) (bool, error)
 }
 
 type Options struct {
@@ -154,24 +164,8 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 		return Result{}, err
 	}
 	result := Result{Profile: ResultProfile, OperationID: batch.OperationID, BaseRoot: view.Root}
-	for _, payload := range batch.Payloads {
-		if !payload.CID.Defined() {
-			return result, fmt.Errorf("staged payload CID is undefined")
-		}
-		computed, err := payload.CID.Prefix().Sum(payload.Body)
-		if err != nil {
-			return result, fmt.Errorf("compute staged payload CID %s: %w", payload.CID, err)
-		}
-		if !computed.Equals(payload.CID) {
-			return result, fmt.Errorf("staged payload bytes do not match CID %s", payload.CID)
-		}
-		stored, err := s.payloads.Put(ctx, payload.Body)
-		if err != nil {
-			return result, fmt.Errorf("persist staged payload %s: %w", payload.CID, err)
-		}
-		if !stored.Equals(payload.CID) {
-			return result, fmt.Errorf("payload store substituted CID %s for %s", stored, payload.CID)
-		}
+	if err := validateAvailablePayloads(batch.Payloads); err != nil {
+		return result, err
 	}
 	session, err := clientrootapp.New(s.remote, s.writer)
 	if err != nil {
@@ -189,11 +183,24 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 		return result, fmt.Errorf("plan filesystem semantic intent: %w", err)
 	}
 	if !changed {
-		current, currentErr := s.roots.AcceptedRoot(s.trustAlias)
-		if currentErr != nil {
-			return result, fmt.Errorf("recheck local accepted root after no-change plan: %w", currentErr)
+		roots, ok := s.roots.(acceptedRootCompleter)
+		if !ok {
+			return result, fmt.Errorf("root policy does not support accepted-root fenced completion")
 		}
-		if !current.Equals(view.Root) {
+		var completed []journal.Operation
+		matched, completeErr := roots.CompleteIfAccepted(s.trustAlias, view.Root, func() error {
+			var err error
+			completed, err = s.queue.CompleteNoChange(ctx, batch)
+			return err
+		})
+		if completeErr != nil {
+			return result, fmt.Errorf("complete no-change batch under accepted-root fence: %w", completeErr)
+		}
+		if !matched {
+			current, currentErr := s.roots.AcceptedRoot(s.trustAlias)
+			if currentErr != nil {
+				return result, fmt.Errorf("read advanced accepted root: %w", currentErr)
+			}
 			conflictID := acceptedRootConflictID(view.Root, current, view.Root)
 			if _, conflictErr := s.queue.MarkUploadConflicted(ctx, batch, conflictID); conflictErr != nil {
 				return result, errors.Join(
@@ -203,18 +210,36 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 			}
 			return result, fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current)
 		}
-		completed, completeErr := s.queue.CompleteNoChange(ctx, batch)
-		if completeErr != nil {
-			return result, completeErr
-		}
 		result.Completed = completed
 		result.NoAuthenticatedChange = true
-		result.RemotePersisted = true
 		return result, nil
 	}
 	intent, err = mutation.NormalizeSemanticIntent(verifiedView, intent)
 	if err != nil {
 		return result, fmt.Errorf("normalize filesystem semantic intent: %w", err)
+	}
+	selectedPayloads, err := selectRequiredPayloads(batch, intent)
+	if err != nil {
+		return result, err
+	}
+	for _, payload := range selectedPayloads {
+		if !payload.CID.Defined() {
+			return result, fmt.Errorf("staged payload CID is undefined")
+		}
+		computed, err := payload.CID.Prefix().Sum(payload.Body)
+		if err != nil {
+			return result, fmt.Errorf("compute staged payload CID %s: %w", payload.CID, err)
+		}
+		if !computed.Equals(payload.CID) {
+			return result, fmt.Errorf("staged payload bytes do not match CID %s", payload.CID)
+		}
+		stored, err := s.payloads.Put(ctx, payload.Body)
+		if err != nil {
+			return result, fmt.Errorf("persist staged payload %s: %w", payload.CID, err)
+		}
+		if !stored.Equals(payload.CID) {
+			return result, fmt.Errorf("payload store substituted CID %s for %s", stored, payload.CID)
+		}
 	}
 	executed, err := session.Execute(ctx, batch.OperationID, intent)
 	if err != nil {
@@ -249,4 +274,67 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 func acceptedRootConflictID(base, current, candidate cid.Cid) string {
 	digest := sha256.Sum256([]byte(base.String() + "\x00" + current.String() + "\x00" + candidate.String()))
 	return "accepted-root-advanced-" + hex.EncodeToString(digest[:12])
+}
+
+func selectRequiredPayloads(batch staging.UploadBatch, intent mutation.SemanticIntent) ([]staging.UploadPayload, error) {
+	available := make(map[string]staging.UploadPayload, len(batch.Payloads))
+	for _, payload := range batch.Payloads {
+		if !payload.CID.Defined() {
+			return nil, fmt.Errorf("staged payload CID is undefined")
+		}
+		available[payload.CID.KeyString()] = payload
+	}
+	stagedWrites := make(map[string]cid.Cid)
+	for _, operation := range batch.Operations {
+		if operation.Kind != journal.KindWrite {
+			continue
+		}
+		key, err := cid.Parse(operation.PayloadCID)
+		if err != nil || key.Prefix().Codec != cid.Raw {
+			return nil, fmt.Errorf("filesystem write %s has invalid raw payload CID", operation.OperationID)
+		}
+		stagedWrites[key.KeyString()] = key
+	}
+	required := make(map[string]cid.Cid)
+	for _, transition := range intent.Transitions {
+		for _, change := range transition.Changes {
+			if change.After == nil || change.After.Kind() != arcset.TargetKindCAS || change.After.CID().Prefix().Codec != cid.Raw {
+				continue
+			}
+			identity := change.After.CID().KeyString()
+			if key, staged := stagedWrites[identity]; staged {
+				required[identity] = key
+			}
+		}
+	}
+	keys := make([]cid.Cid, 0, len(required))
+	for _, key := range required {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(left, right cid.Cid) int { return strings.Compare(left.String(), right.String()) })
+	selected := make([]staging.UploadPayload, 0, len(keys))
+	for _, key := range keys {
+		payload, ok := available[key.KeyString()]
+		if !ok {
+			return nil, fmt.Errorf("semantic intent requires unavailable staged payload %s", key)
+		}
+		selected = append(selected, payload)
+	}
+	return selected, nil
+}
+
+func validateAvailablePayloads(payloads []staging.UploadPayload) error {
+	for _, payload := range payloads {
+		if !payload.CID.Defined() {
+			return fmt.Errorf("staged payload CID is undefined")
+		}
+		computed, err := payload.CID.Prefix().Sum(payload.Body)
+		if err != nil {
+			return fmt.Errorf("compute staged payload CID %s: %w", payload.CID, err)
+		}
+		if !computed.Equals(payload.CID) {
+			return fmt.Errorf("staged payload bytes do not match CID %s", payload.CID)
+		}
+	}
+	return nil
 }

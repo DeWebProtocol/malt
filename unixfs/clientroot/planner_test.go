@@ -60,6 +60,9 @@ func TestPlannerComputesVerifiableFlatAndHybridCandidatesAcrossBackends(t *testi
 				if !changed {
 					t.Fatal("mutating filesystem batch was classified as no-change")
 				}
+				if !intentReferencesCID(intent, newPayload) {
+					t.Fatalf("intent does not reference final payload %s", newPayload)
+				}
 				verified, err := fixture.writer.VerifyUpdateView(t.Context(), fixture.view)
 				if err != nil {
 					t.Fatal(err)
@@ -150,6 +153,49 @@ func TestPlannerClassifiesEquivalentContentAndCanceledNamespaceAsNoChange(t *tes
 			}
 		})
 	}
+}
+
+func TestPlannerSelectsOnlyFinalStagedPayloads(t *testing.T) {
+	for _, layout := range []unixfs.LayoutKind{unixfs.LayoutFlatV1, unixfs.LayoutHybridV1} {
+		t.Run(string(layout), func(t *testing.T) {
+			fixture := newPlannerFixture(t, layout, mustKZG(t))
+			planner, err := New(layout, fixture.blocks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secret := fixture.blocks.putRaw(t, []byte("transient secret"))
+			public := fixture.blocks.putRaw(t, []byte("final public body"))
+			operations := []journal.Operation{
+				plannerOperation(fixture.root, 1, journal.KindWrite, "docs/new.txt", "", secret),
+				plannerOperation(fixture.root, 2, journal.KindWrite, "docs/new.txt", "", public),
+				plannerOperation(fixture.root, 3, journal.KindMkdir, "archive", "", cid.Undef),
+			}
+			intent, changed, err := planner.Plan(t.Context(), fixture.view, operations)
+			if err != nil || !changed || !intentReferencesCID(intent, public) || intentReferencesCID(intent, secret) {
+				t.Fatalf("overwritten payload intent=%#v changed=%v err=%v", intent, changed, err)
+			}
+
+			canceled := []journal.Operation{
+				plannerOperation(fixture.root, 1, journal.KindWrite, "docs/transient.txt", "", secret),
+				plannerOperation(fixture.root, 2, journal.KindUnlink, "docs/transient.txt", "", cid.Undef),
+			}
+			intent, changed, err = planner.Plan(t.Context(), fixture.view, canceled)
+			if err != nil || changed || len(intent.Transitions) != 0 {
+				t.Fatalf("deleted payload intent=%#v changed=%v err=%v", intent, changed, err)
+			}
+		})
+	}
+}
+
+func intentReferencesCID(intent mutation.SemanticIntent, target cid.Cid) bool {
+	for _, transition := range intent.Transitions {
+		for _, change := range transition.Changes {
+			if change.After != nil && change.After.Kind() == arcset.TargetKindCAS && change.After.CID().Equals(target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type plannerFixture struct {
@@ -295,6 +341,22 @@ func plannerOperations(root cid.Cid, payload cid.Cid) []journal.Operation {
 		operations[index] = journal.Operation{Intent: intent, Sequence: uint64(index + 1), Status: journal.StatusPendingUpload, CreatedAt: now, UpdatedAt: now}
 	}
 	return operations
+}
+
+func plannerOperation(root cid.Cid, sequence uint64, kind journal.Kind, operationPath, destination string, payload cid.Cid) journal.Operation {
+	now := time.Unix(1, 0).UTC()
+	payloadText := ""
+	if payload.Defined() {
+		payloadText = payload.String()
+	}
+	return journal.Operation{
+		Intent: journal.Intent{
+			OperationID: fmt.Sprintf("op-%d", sequence), RetryID: fmt.Sprintf("retry-%d", sequence),
+			DatasetID: "dataset", Branch: "main", BaseRoot: root.String(), BaseRevision: 7,
+			Kind: kind, Path: operationPath, Destination: destination, PayloadCID: payloadText,
+		},
+		Sequence: sequence, Status: journal.StatusPendingUpload, CreatedAt: now, UpdatedAt: now,
+	}
 }
 
 func assertPlannedTree(t *testing.T, planner *Planner, layout unixfs.LayoutKind, view mutation.UpdateView) {
