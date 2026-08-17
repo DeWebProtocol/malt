@@ -39,6 +39,13 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends
   on narrow ports, not Cobra or arbitrary transport routes.
+- `application/backup.BatchRunner` owns plan selection, batch execution, and
+  typed partial-failure aggregation. Foreground, daemon, and scheduled adapters
+  must use that same runner contract.
+- `internal/runtime` is the process-independent composition root. It may bind
+  concrete local configuration, transport, trust, keyring, synchronization,
+  and UnixFS capabilities into application services; command handlers must not
+  duplicate that composition.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
   behavior here rather than under `cmd/malt`.
@@ -46,9 +53,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   replay; `merkledag/importer` owns import construction. Do not represent this
   evidence as a MALT ProofList.
 - `cmd/malt/` is the process/composition adapter. Command handlers should
-  select capabilities, call `application/` use cases, and format results, not
-  become a second UnixFS or trust implementation. `cmd/` contains only the
-  supported `malt` product binary.
+  select configured runtime services, call `application/` use cases, and
+  format results, not become a second UnixFS, trust, or plan-composition
+  implementation. `cmd/` contains only the supported `malt` product binary.
 - `tools/evaluation/cmd/` owns evaluator-launched runtime process adapters.
   Preserve their external binary names and wire contracts, but do not treat
   their Go packages as a compatibility surface.

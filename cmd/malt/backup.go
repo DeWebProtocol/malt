@@ -340,17 +340,3 @@ func runtimeConfigPath() (string, error) {
 	}
 	return clientconfig.DefaultPath()
 }
-
-func configuredProtectedPaths(cfg *clientconfig.Config, configPath string) []string {
-	return []string{
-		configPath,
-		cfg.Gateway.CredentialPath,
-		cfg.Backup.KeyringPath,
-		cfg.Backup.PlansPath,
-		cfg.Backup.HistoryDir,
-		cfg.Workspace.StatePath,
-		cfg.Daemon.StatePath,
-		cfg.Daemon.SocketPath,
-		pidPath(cfg.Daemon.SocketPath),
-	}
-}

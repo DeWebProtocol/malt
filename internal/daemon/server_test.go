@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,9 +12,32 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 )
+
+type planRunnerCall struct {
+	operation string
+	request   clientbackup.PlanRequest
+}
+
+type recordingPlanRunner struct {
+	result *clientbackup.BatchResult
+	err    error
+	calls  []planRunnerCall
+}
+
+func (r *recordingPlanRunner) BackupPlans(_ context.Context, request clientbackup.PlanRequest) (*clientbackup.BatchResult, error) {
+	r.calls = append(r.calls, planRunnerCall{operation: "backup", request: request})
+	return r.result, r.err
+}
+
+func (r *recordingPlanRunner) SyncPlans(_ context.Context, request clientbackup.PlanRequest) (*clientbackup.BatchResult, error) {
+	r.calls = append(r.calls, planRunnerCall{operation: "sync", request: request})
+	return r.result, r.err
+}
 
 func TestLifecycleIdentityIsAuthenticatedAndNotExposedByHealth(t *testing.T) {
 	store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
@@ -77,6 +102,87 @@ func TestLocalAPIKeepsCandidateSeparate(t *testing.T) {
 	record, err := store.Get("docs")
 	if err != nil || record.AcceptedRoot != root {
 		t.Fatalf("record=%#v err=%v", record, err)
+	}
+}
+
+func TestPlanControlPlaneMatchesDirectApplicationRunner(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		operation string
+		route     string
+		status    int
+		runErr    error
+	}{
+		{name: "backup", operation: "backup", route: "/v1/plan-backups", status: http.StatusOK},
+		{name: "sync conflict", operation: "sync", route: "/v1/sync", status: http.StatusConflict, runErr: clientbackup.ErrBackupConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := &clientbackup.BatchResult{
+				Operation:   test.operation,
+				Runs:        []clientbackup.PlanRun{{PlanID: "plan-one", PlanName: "documents", BucketID: "bucket-one", Branch: "main"}},
+				CompletedAt: time.Date(2026, time.August, 17, 1, 2, 3, 0, time.UTC),
+			}
+			if test.runErr != nil {
+				result.Failures = []clientbackup.PlanFailure{{PlanID: "plan-one", Error: test.runErr.Error(), Conflict: true}}
+			}
+			runner := &recordingPlanRunner{result: result, err: test.runErr}
+			server, err := NewWithOptions(store, Options{Plans: runner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := clientbackup.PlanRequest{Plans: []string{"plan-one"}, Message: "adapter parity", MergeConflicts: true}
+			var direct *clientbackup.BatchResult
+			if test.operation == "sync" {
+				direct, err = runner.SyncPlans(context.Background(), request)
+			} else {
+				direct, err = runner.BackupPlans(context.Background(), request)
+			}
+			if !errors.Is(err, test.runErr) {
+				t.Fatalf("direct error = %v, want %v", err, test.runErr)
+			}
+			body, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			httpRequest := httptest.NewRequest(http.MethodPost, test.route, strings.NewReader(string(body)))
+			recorder := httptest.NewRecorder()
+			server.Handler().ServeHTTP(recorder, httpRequest)
+			if recorder.Code != test.status {
+				t.Fatalf("HTTP status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), test.status)
+			}
+			if len(runner.calls) != 2 || runner.calls[0].operation != test.operation || runner.calls[1].operation != test.operation {
+				t.Fatalf("runner calls = %#v", runner.calls)
+			}
+			for _, call := range runner.calls {
+				if strings.Join(call.request.Plans, ",") != "plan-one" || call.request.Message != request.Message || !call.request.MergeConflicts {
+					t.Fatalf("adapter changed request: %#v", call.request)
+				}
+			}
+			if test.runErr == nil {
+				var decoded clientbackup.BatchResult
+				if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if decoded.Operation != direct.Operation || len(decoded.Runs) != len(direct.Runs) || !decoded.CompletedAt.Equal(direct.CompletedAt) {
+					t.Fatalf("HTTP result = %#v, direct = %#v", decoded, direct)
+				}
+				return
+			}
+			var failure struct {
+				Error  string                    `json:"error"`
+				Result *clientbackup.BatchResult `json:"result"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &failure); err != nil {
+				t.Fatal(err)
+			}
+			if failure.Error != test.runErr.Error() || failure.Result == nil || failure.Result.Operation != direct.Operation {
+				t.Fatalf("HTTP failure = %#v, direct result = %#v err=%v", failure, direct, test.runErr)
+			}
+		})
 	}
 }
 
