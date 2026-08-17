@@ -53,6 +53,14 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   semantics over a caller-selected immutable dataset view. It may compose the
   verified UnixFS reader and non-authoritative cache, but it must not import a
   concrete transport, trust store, HTTP route, or platform mount driver.
+- `filesystem/staging` owns the platform-neutral read-your-writes overlay and
+  locally durable write, mkdir, rename, unlink, and fsync intent for one exact
+  immutable dataset view. It composes `cache`, `journal`, and the verified
+  read-only filesystem port, but it must not import transport, trust,
+  application, HTTP, or MALT Core packages. It must exclusively lease both
+  state paths across processes before reconciling or acknowledging intent.
+  Local fsync is not remote persistence, candidate-root verification, or
+  accepted-root promotion.
 - `filesystem/mount` owns durable desired/pending-unmount state and the
   daemon-managed lifecycle contract. One process-held registry lease excludes
   competing managers on supported Linux/macOS/BSD and Windows targets; other

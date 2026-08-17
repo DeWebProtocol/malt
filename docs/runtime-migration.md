@@ -23,7 +23,7 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache and operation journal, daemon-managed Linux read-only FUSE mounts over the platform-neutral verified filesystem service, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache, operation journal, platform-neutral local dirty staging, daemon-managed Linux read-only FUSE mounts over the verified filesystem service, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
 
@@ -84,6 +84,12 @@ Current boundary strengths:
   revalidate both the current projection and stored Resolve proof without first
   fetching the remote payload, while List files use authenticated lazy range
   reads and are not misrepresented as raw CID-bound cache bodies.
+- `filesystem/staging` layers locally durable read-your-writes state over that
+  verified base. It binds every operation and local payload to the same exact
+  canonical View identity, exclusively leases the cache and journal paths,
+  pins open local handles to a CID, reconciles cross-store crash edges on
+  startup, and labels fsync as local-journal durability only. It has no
+  transport or trust capability and is not composed into FUSE yet.
 - `filesystem/mount` persists desired mounts and pending-unmount tombstones,
   excludes competing daemon managers with a process-held registry lease,
   restores records through an idempotent platform adapter contract, and gives
@@ -114,9 +120,9 @@ Current implementation gaps that still encode concrete Gateway coupling:
   Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
-- WinFsp, filesystem write-back, and journal composition remain follow-up
-  work; non-Linux daemons keep the mount API unavailable until a native adapter
-  is added.
+- WinFsp, remote filesystem write-back, and platform write composition remain
+  follow-up work; non-Linux daemons keep the mount API unavailable until a
+  native adapter is added.
 - There is no local-CAS, peer, or hybrid transport implementation yet.
 
 No code in `malt-core` owns UnixFS, Bucket, account, daemon, key persistence,
@@ -282,7 +288,9 @@ choice and does not define network topology.
 | 8a | **Completed 2026-08-17:** add durable `filesystem/mount` desired/pending-unmount state, an exclusive process-held manager lease on supported Linux/macOS/BSD and Windows targets, fail-closed rejection elsewhere, exact local-View selector, platform adapter/session contract, restart restore and graceful shutdown semantics, plus private daemon list/mount/unmount routes | additive pre-release manager and local API | no | leaked mount, competing daemon, observed-head selection, or lost unmount intent | persistence/permissions/required-field strict JSON, failed mount retry, tombstone non-revival, pending-unmount crash recovery, exclusive-manager lease, supported/unsupported platform builds, Unix/Windows replacement builds, restart/remount, expected/unexpected session exit, view mismatch, daemon adapter parity and race tests | leave the manager unconfigured; no host mount is created and desired records remain recoverable |
 | 8b.1 | **Completed 2026-08-17:** add the outer Linux read-only FUSE adapter with exact `malt:<id>` mount ownership, fail-closed disconnected-root recovery, explicit `EROFS` mutation behavior, verified range-read handles, and an opt-in kernel smoke test | additive Linux adapter and pinned go-fuse dependency; not product-composed | no | foreign unmount, unverified byte exposure, unsafe mountpoint, or leaked session | node/handle/errno tests, invalid entry/kind rejection, exact/stacked mountinfo selection, disconnected-root recovery, identity-cleanup, cancellation/idempotence race test, and real `/dev/fuse` smoke | do not compose the adapter; no host mount is created by daemon or CLI |
 | 8b.2 | **Completed 2026-08-17:** compose the Linux adapter, local accepted-View selector, per-dataset/branch Gateway verified filesystem router, protected cache/registry paths, daemon restore/shutdown, reusable `localapi`, and `malt mount/unmount` control commands; reject encrypted Views until local decryption exists and leave non-Linux mount routes unconfigured | new CLI/local API behavior and additive config fields | no | wrong dataset/root binding, observed-head promotion, startup mount leakage, or control-plane drift | accepted/candidate/observation selector tests, source/dataset/branch revision binding, encrypted-view rejection, router identity/cache, CLI/API parity, daemon/mount lifecycle, Windows build, Linux FUSE smoke | stop the daemon, unmount desired bindings, and leave the registry/cache recoverable; other daemon services remain available |
-| 9 | Add local dirty staging, write-back, fsync contract, rename/unlink, and offline journal | experimental filesystem API | no | acknowledged data loss or root promotion | dirty/crash/offline/fsync/conflict/malicious apply tests | read-only mode remains default; journal retained for replay |
+| 9a | **Completed 2026-08-17:** add `filesystem/staging` as a platform-neutral, crash-recoverable read-your-writes overlay; exclusively lease both state paths; stage raw-CID-bound write bodies plus mkdir/rename/unlink intent against an exact canonical immutable View; pin local handles; reconcile cache/journal crash edges; and define `malt.local-journal-fsync/v1` without remote-persistence or root-acceptance claims | additive experimental filesystem API; not mounted | no | acknowledged local data loss, cross-Service reconcile race, dirty-state leakage across roots, or false fsync claims | create/overwrite/range/pinned-handle, mkdir/rename/unlink/rmdir, concurrent/offline staging, exact-View/canonical-identity isolation, exclusive pair lease/release, restart, missing body, orphan body, failed append, cancellation, and architecture tests | close the staging service and do not compose the overlay into FUSE; current mounts remain read-only and the durable journal remains recoverable |
+| 9b | Add malt-core client-root candidate computation, transport-neutral write-back/replay, malicious-result verification, and conflict transitions | experimental write-back application API | no | unverified candidate, retry ambiguity, or implicit root promotion | canonical mutation, candidate, upload/apply/retry, malicious apply, stale head, conflict, and restart tests | leave operations dirty/offline/conflicted; no accepted root changes |
+| 9c | Add an explicit opt-in writable platform policy and map FUSE mutations/fsync onto staging plus verified write-back | experimental mount policy | no | host syscall acknowledged beyond configured durability | write/flush/fsync/rename/unlink/crash/remount kernel tests | read-only remains default; disable writable policy and retain journal |
 | 10 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |
 | 11 | Separate pre-v1 runtime module namespace decision and release line | breaking Go import change if approved | no | collision with historical Core path | external consumer build with isolated module cache | do not tag; keep old module until cutover is proven |
 
