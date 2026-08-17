@@ -117,6 +117,21 @@ func TestGenericTransportContainsNoUnixFSPayloadBinding(t *testing.T) {
 	checkSourceTokens(t, filepath.Join(moduleRoot(t), "transport"), []string{"CreatePayloadRoot", "@payload", "bafkqaaa"})
 }
 
+func TestBackupPlanCompositionLivesOutsideCommandHandlers(t *testing.T) {
+	file := filepath.Join(moduleRoot(t), "cmd", "malt", "backup_plans.go")
+	checkImports(t, file, []string{
+		"github.com/dewebprotocol/malt-client/application/add",
+		"github.com/dewebprotocol/malt-client/bucketsync",
+		"github.com/dewebprotocol/malt-client/internal/keyring",
+		"github.com/dewebprotocol/malt-client/unixfs",
+	})
+	checkSourceTokens(t, file, []string{
+		"type configuredPlanRunner struct",
+		"func selectBackupPlans(",
+		"func planFailure(",
+	})
+}
+
 func checkSourceTokens(t *testing.T, root string, forbidden []string) {
 	t.Helper()
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {

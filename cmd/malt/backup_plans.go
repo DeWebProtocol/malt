@@ -12,18 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dewebprotocol/malt-client/application"
-	clientadd "github.com/dewebprotocol/malt-client/application/add"
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
-	"github.com/dewebprotocol/malt-client/bucketsync"
 	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
-	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
-	"github.com/dewebprotocol/malt-client/internal/keyring"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-client/unixfs"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
@@ -266,7 +260,10 @@ func invokeConfiguredPlanOperation(
 	request clientbackup.PlanRequest,
 ) (*clientbackup.BatchResult, error) {
 	if backupForeground {
-		runner := &configuredPlanRunner{}
+		runner, err := configuredRuntimeServices()
+		if err != nil {
+			return nil, err
+		}
 		if operation == "sync" {
 			return runner.SyncPlans(cmd.Context(), request)
 		}
@@ -451,217 +448,11 @@ func confirmAtTerminal(cmd *cobra.Command, prompt string) (bool, error) {
 		return false, nil
 	}
 }
-
-type configuredPlanRunner struct {
-	mu sync.Mutex
-}
-
-func (r *configuredPlanRunner) BackupPlans(ctx context.Context, request clientbackup.PlanRequest) (*clientbackup.BatchResult, error) {
-	return r.run(ctx, "backup", request)
-}
-
-func (r *configuredPlanRunner) SyncPlans(ctx context.Context, request clientbackup.PlanRequest) (*clientbackup.BatchResult, error) {
-	return r.run(ctx, "sync", request)
-}
-
-func (r *configuredPlanRunner) run(ctx context.Context, operation string, request clientbackup.PlanRequest) (*clientbackup.BatchResult, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	cfg, err := loadRuntimeConfig()
-	if err != nil {
-		return nil, err
-	}
-	store, err := clientbackup.OpenPlanStore(cfg.Backup.PlansPath)
-	if err != nil {
-		return nil, err
-	}
-	plans, err := selectBackupPlans(store, request.Plans)
-	if err != nil {
-		return nil, err
-	}
-	result := &clientbackup.BatchResult{Operation: operation, Runs: make([]clientbackup.PlanRun, 0, len(plans))}
-	var causes []error
-	for _, plan := range plans {
-		if err := ctx.Err(); err != nil {
-			causes = append(causes, err)
-			result.Failures = append(result.Failures, planFailure(plan, err))
-			break
-		}
-		service, err := buildPlanService(cfg, plan)
-		if err != nil {
-			causes = append(causes, err)
-			result.Failures = append(result.Failures, planFailure(plan, err))
-			continue
-		}
-		var run *clientbackup.Result
-		if operation == "sync" {
-			run, err = service.SyncWithOptions(ctx, request.Message, clientbackup.SyncOptions{
-				MergeConflicts: request.MergeConflicts,
-			})
-		} else {
-			run, err = service.Backup(ctx, request.Message)
-		}
-		if run != nil {
-			result.Runs = append(result.Runs, clientbackup.PlanRun{
-				PlanID: plan.ID, PlanName: plan.Name, BucketID: plan.BucketID, Branch: plan.Branch, Result: run,
-			})
-		}
-		if err != nil {
-			causes = append(causes, err)
-			result.Failures = append(result.Failures, planFailure(plan, err))
-		}
-	}
-	result.CompletedAt = time.Now().UTC()
-	return result, clientbackup.NewBatchError(operation, result.Failures, causes)
-}
-
-func planFailure(plan clientbackup.Plan, err error) clientbackup.PlanFailure {
-	failure := clientbackup.PlanFailure{
-		PlanID: plan.ID, PlanName: plan.Name, BucketID: plan.BucketID, Branch: plan.Branch,
-		Conflict: errors.Is(err, clientbackup.ErrBackupConflict), Error: err.Error(),
-	}
-	var rootErr *clientbackup.UnacceptedRootError
-	if errors.As(err, &rootErr) {
-		failure.TrustAlias = rootErr.Alias
-		failure.ObservedRoot = rootErr.Observed.String()
-		failure.CandidateRecorded = rootErr.CandidateRecorded
-		if rootErr.Accepted.Defined() {
-			failure.AcceptedRoot = rootErr.Accepted.String()
-		}
-	}
-	var conflictErr *clientbackup.ConflictError
-	if errors.As(err, &conflictErr) {
-		failure.ConflictBranch = conflictErr.Branch
-		if conflictErr.Push.Result.Branch != nil {
-			failure.ConflictBranch = conflictErr.Push.Result.Branch.Name
-		}
-		failure.MergeAvailable = true
-	}
-	var mergeErr *clientbackup.ManualMergeError
-	if errors.As(err, &mergeErr) {
-		checkout := mergeErr.Checkout
-		failure.Checkout = &checkout
-		failure.MergeAvailable = false
-	}
-	return failure
-}
-
-func configuredPlanStore() (*clientbackup.PlanStore, error) {
-	cfg, err := loadRuntimeConfig()
-	if err != nil {
-		return nil, err
-	}
-	return clientbackup.OpenPlanStore(cfg.Backup.PlansPath)
-}
-
-func selectBackupPlans(store *clientbackup.PlanStore, selectors []string) ([]clientbackup.Plan, error) {
-	if len(selectors) == 0 {
-		values, err := store.List()
-		if err != nil {
-			return nil, err
-		}
-		if len(values) == 0 {
-			return nil, fmt.Errorf("no backup plans are configured; run `malt backup bind <local-path> --bucket <bucket>`")
-		}
-		return values, nil
-	}
-	result := make([]clientbackup.Plan, 0, len(selectors))
-	seen := map[string]struct{}{}
-	for _, selector := range selectors {
-		value, err := store.Get(selector)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[value.ID]; ok {
-			continue
-		}
-		seen[value.ID] = struct{}{}
-		result = append(result, value)
-	}
-	return result, nil
-}
-
-func buildPlanService(cfg *clientconfig.Config, plan clientbackup.Plan) (*clientbackup.PlanService, error) {
-	keys, err := keyring.Open(cfg.Backup.KeyringPath)
-	if err != nil {
-		return nil, err
-	}
-	remoteOptions, err := requiredGatewayOptions(cfg, plan.BucketID, plan.Branch)
-	if err != nil {
-		return nil, err
-	}
-	remote, err := gatewayclient.New(remoteOptions)
-	if err != nil {
-		return nil, err
-	}
-	lists, err := unixfs.NewGatewayMutationAdapter(remote)
-	if err != nil {
-		return nil, err
-	}
-	addGateway, err := clientadd.NewGateway(remote, lists)
-	if err != nil {
-		return nil, err
-	}
-	syncer, err := bucketsync.OpenBranch(cfg.Workspace.StatePath, remote, plan.BucketID, plan.Branch)
-	if err != nil {
-		return nil, err
-	}
-	statePath := planHistoryPath(cfg, plan.ID)
-	history, err := clientbackup.NewHistory(statePath)
-	if err != nil {
-		return nil, err
-	}
-	configPath, err := runtimeConfigPath()
-	if err != nil {
-		return nil, err
-	}
-	trustStore, _, err := openTrustStore()
-	if err != nil {
-		return nil, err
-	}
-	roots, err := application.NewRoots(trustStore)
-	if err != nil {
-		return nil, err
-	}
-	operationLock := statePath + ".operation.lock"
-	planStore, err := clientbackup.OpenPlanStore(cfg.Backup.PlansPath)
-	if err != nil {
-		return nil, err
-	}
-	allPlans, err := planStore.List()
-	if err != nil {
-		return nil, err
-	}
-	var restoreProtected []string
-	for _, existingPlan := range allPlans {
-		for _, binding := range existingPlan.Bindings {
-			restoreProtected = append(restoreProtected, binding.Source)
-		}
-	}
-	protected := append(
-		configuredProtectedPaths(cfg, configPath),
-		statePath, statePath+".lock", operationLock,
-		operationLock+".sync-transaction.json", operationLock+".restore-transaction.json",
-		operationLock+".conflicts",
-	)
-	return clientbackup.NewPlanService(clientbackup.PlanServiceOptions{
-		Plan: plan, TempDir: cfg.Backup.TempDir,
-		LockPath: operationLock, Keys: keys, Sync: syncer,
-		Materializer: clientbackup.AddPlanMaterializer{Gateway: addGateway, CAS: remote},
-		History:      history, Remote: remote, Blocks: remote, Roots: roots,
-		Protected: protected, RestoreProtected: restoreProtected,
-	})
-}
-
-func planHistoryPath(cfg *clientconfig.Config, planID string) string {
-	return filepath.Join(cfg.Backup.HistoryDir, planID+".json")
-}
-
 func normalizeCLIPlanBranch(value string) (string, error) {
 	return bucketbranch.NormalizeSelector(value)
 }
 
-func runConfiguredPlanScheduler(ctx context.Context, runner *configuredPlanRunner) {
+func runConfiguredPlanScheduler(ctx context.Context, runner clientbackup.PlanRunner) {
 	nextAttempt := map[string]time.Time{}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -675,7 +466,7 @@ func runConfiguredPlanScheduler(ctx context.Context, runner *configuredPlanRunne
 	}
 }
 
-func runConfiguredPlanSchedulerTick(ctx context.Context, runner *configuredPlanRunner, nextAttempt map[string]time.Time) {
+func runConfiguredPlanSchedulerTick(ctx context.Context, runner clientbackup.PlanRunner, nextAttempt map[string]time.Time) {
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "malt daemon: load scheduled backup configuration: %v\n", err)
@@ -739,5 +530,3 @@ func runConfiguredPlanSchedulerTick(ctx context.Context, runner *configuredPlanR
 		nextAttempt[plan.ID] = now.Add(plan.Every)
 	}
 }
-
-var _ clientbackup.PlanRunner = (*configuredPlanRunner)(nil)

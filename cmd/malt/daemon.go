@@ -127,7 +127,10 @@ func runDaemonServe(*cobra.Command, []string) error {
 			return err
 		}
 	}
-	planRunner := &configuredPlanRunner{}
+	planRunner, err := configuredRuntimeServices()
+	if err != nil {
+		return err
+	}
 	if err := recoverConfiguredPlanTransactions(cfg); err != nil {
 		return fmt.Errorf("recover interrupted backup plan transaction: %w", err)
 	}

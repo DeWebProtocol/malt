@@ -8,13 +8,47 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/application"
+	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	"github.com/dewebprotocol/malt-client/internal/deviceauth"
+	localruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	client "github.com/dewebprotocol/malt-client/transport"
 )
 
 func loadRuntimeConfig() (*clientconfig.Config, error) {
 	return clientconfig.Load(cfgFile)
+}
+
+func configuredRuntimeServices() (*localruntime.Services, error) {
+	path, err := runtimeConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	return localruntime.NewServices(path)
+}
+
+func configuredPlanStore() (*clientbackup.PlanStore, error) {
+	services, err := configuredRuntimeServices()
+	if err != nil {
+		return nil, err
+	}
+	return services.PlanStore(nil)
+}
+
+func buildPlanService(cfg *clientconfig.Config, plan clientbackup.Plan) (*clientbackup.PlanService, error) {
+	services, err := configuredRuntimeServices()
+	if err != nil {
+		return nil, err
+	}
+	return services.PlanService(cfg, plan)
+}
+
+func configuredProtectedPaths(cfg *clientconfig.Config, configPath string) []string {
+	return localruntime.ProtectedPaths(configPath, cfg)
+}
+
+func planHistoryPath(cfg *clientconfig.Config, planID string) string {
+	return localruntime.PlanHistoryPath(cfg, planID)
 }
 
 func gatewayClient() (*client.Client, error) {

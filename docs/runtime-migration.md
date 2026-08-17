@@ -33,7 +33,11 @@ The current repository dependency direction is:
 cmd/malt and internal/daemon
               |
               v
- application / application/add / application/backup
+       internal/runtime
+       (composition root)
+              |
+              v
+ application / application/add / application/backup.BatchRunner
       |              |                 |
       v              v                 v
     trust          unixfs          bucketsync
@@ -59,8 +63,10 @@ Current boundary strengths:
   range bodies before exposing bytes.
 - Bucket workspaces separately persist base, observed remote head, and local
   stashes; a remote head is not promoted into the trust store.
-- CLI and daemon share `application.Roots`, backup services, local locking, and
-  the same candidate/acceptance policy.
+- CLI foreground execution, daemon IPC, and scheduled execution share the same
+  `application/backup.BatchRunner`; `internal/runtime.Services` supplies one
+  configuration snapshot and the same backup services, local locking, and
+  candidate/acceptance policy to every adapter.
 - Merkle-DAG compatibility evidence is isolated from MALT ProofLists.
 
 Current implementation gaps that still encode concrete Gateway coupling:
@@ -70,10 +76,10 @@ Current implementation gaps that still encode concrete Gateway coupling:
   DTOs.
 - `application/add` names its semantic graph capability `Gateway`, and the
   native add workflow reports that a "gateway client" is required.
-- `cmd/malt/content.go`, `cmd/malt/add.go`, and
-  `cmd/malt/backup_plans.go` directly compose concrete Gateway clients, UnixFS
-  adapters, trust stores, Bucket state, keyrings, and plan services. The plan
-  batch runner lives in the command package even though the daemon invokes it.
+- `cmd/malt/content.go` and `cmd/malt/add.go` still directly compose concrete
+  Gateway clients and UnixFS adapters. Backup/sync plan composition has moved
+  to `internal/runtime`, but the remaining use cases still need the same
+  container boundary.
 - Root command handlers repeatedly open the trust store and construct
   `application.Roots`; read handlers repeatedly construct a concrete Gateway
   Gateway transport, UnixFS reader, selector, and application service.
@@ -238,7 +244,7 @@ choice and does not define network topology.
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Product language plus `malt-core v0.0.7` migration across imports, docs, architecture tests, and `go.mod` | import namespace only | no | missed old import/provenance | full Go test/vet/build, Windows build, downstream E2E | revert one namespace commit; old Core release remains available |
 | 2 | **Completed 2026-08-17:** after every Core consumer migrated, rename repository to `malt`, update links/badges/CI, keep the old Go module path, and add a compatibility notice before runtime architecture refactors begin | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
-| 3 | Move runtime composition and plan batch orchestration out of `cmd/malt` into reusable application/runtime services | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven adapter-equivalence tests and current CLI tests | keep old constructors behind temporary adapter and revert call sites |
+| 3 | **Completed 2026-08-17:** move backup/sync composition into `internal/runtime.Services` and plan batch orchestration into `application/backup.BatchRunner`; foreground, daemon IPC, and scheduler use the same application contract | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven batch semantics, direct-vs-daemon adapter equivalence, current CLI tests | revert command call sites and the two additive services; persisted state is unchanged |
 | 4 | Rename semantic `Gateway` ports and split Gateway HTTP DTOs from transport-neutral dataset/head/mutation capabilities | pre-v1 interface rename | no | accidental trust mutation or route leakage | mock capability contract tests and architecture import tests | retain compatibility type aliases for one PR if needed |
 | 5 | Make trust observations, candidates, and accepted roots explicit persisted types; forbid transport imports | additive state migration | no | state loss or implicit promotion | migration fixtures, stale-head and malicious-result tests, crash/restart tests | dual-read old state with write-new; restore prior state file |
 | 6 | Introduce verified cache metadata and operation journal without mounting | new internal APIs | no | treating cache as authority | corruption, stale-version, wrong-epoch, dirty/pending state tests | disable cache/journal feature flag; remote verified path remains |
