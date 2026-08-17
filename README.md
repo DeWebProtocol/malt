@@ -26,6 +26,8 @@ authentication core:
 - a platform-neutral read-only filesystem service pinned to an exact accepted
   dataset view, with verified lazy List ranges and proof-revalidated raw cache
   hits;
+- a crash-recoverable mount registry and daemon/local-API lifecycle contract
+  that keeps platform drivers outside trust and transport code;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
@@ -41,7 +43,8 @@ This is an experimental, pre-v1 local runtime. It currently provides the
 `malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, a
 UnixFS application adapter, and an opt-in platform-neutral read-only filesystem
 service. Cache and operation-journal packages are available as runtime
-substrate, but no platform mount adapter is connected yet. The current remote
+substrate, and durable mount lifecycle APIs are implemented, but no platform
+mount adapter is connected to the product daemon yet. The current remote
 transport is Gateway HTTP; a host-filesystem mount, local-CAS
 transport, P2P transport, and hybrid transport are staged follow-up work and
 are not claimed as implemented here. There is no

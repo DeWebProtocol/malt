@@ -53,6 +53,13 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   semantics over a caller-selected immutable dataset view. It may compose the
   verified UnixFS reader and non-authoritative cache, but it must not import a
   concrete transport, trust store, HTTP route, or platform mount driver.
+- `filesystem/mount` owns durable desired/pending-unmount state and the
+  daemon-managed lifecycle contract. One process-held registry lease excludes
+  competing managers on supported Linux/macOS/BSD and Windows targets; other
+  targets must fail closed before opening the registry. Platform adapters
+  receive only a read-only filesystem already bound to a locally selected
+  View; they must not resolve trust aliases, observe heads, or call transports
+  directly.
 - `application/` owns reusable accepted-root selection, observation/candidate recording,
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends

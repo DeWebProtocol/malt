@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
+	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 )
 
@@ -27,6 +30,29 @@ type recordingPlanRunner struct {
 	result *clientbackup.BatchResult
 	err    error
 	calls  []planRunnerCall
+}
+
+type recordingMountController struct {
+	statuses     []filesystemmount.Status
+	mountErr     error
+	unmountErr   error
+	mountCalls   []filesystemmount.Spec
+	unmountCalls []string
+}
+
+func (c *recordingMountController) List() ([]filesystemmount.Status, error) {
+	return append([]filesystemmount.Status(nil), c.statuses...), nil
+}
+
+func (c *recordingMountController) Mount(_ context.Context, spec filesystemmount.Spec) (filesystemmount.Status, error) {
+	c.mountCalls = append(c.mountCalls, spec)
+	status := filesystemmount.Status{Spec: spec, Desired: true, Active: c.mountErr == nil, Adapter: "test"}
+	return status, c.mountErr
+}
+
+func (c *recordingMountController) Unmount(_ context.Context, id string) error {
+	c.unmountCalls = append(c.unmountCalls, id)
+	return c.unmountErr
 }
 
 func (r *recordingPlanRunner) BackupPlans(_ context.Context, request clientbackup.PlanRequest) (*clientbackup.BatchResult, error) {
@@ -226,6 +252,78 @@ func TestPlanControlPlaneMatchesDirectApplicationRunner(t *testing.T) {
 			}
 			if failure.Error != test.runErr.Error() || failure.Result == nil || failure.Result.Operation != direct.Operation {
 				t.Fatalf("HTTP failure = %#v, direct result = %#v err=%v", failure, direct, test.runErr)
+			}
+		})
+	}
+}
+
+func TestMountControlPlaneUsesOneLifecycleServiceAndStrictJSON(t *testing.T) {
+	store, err := truststore.Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := filesystemmount.Spec{
+		ID: "docs", DatasetID: "bucket-one", Branch: "main",
+		Mountpoint: filepath.Join(t.TempDir(), "mnt"), TrustAlias: "docs",
+		CachePolicy: filesystemmount.CacheVerified, WritePolicy: filesystemmount.WriteReadOnly,
+		EncryptionEpoch: 2, ConflictPolicy: filesystemmount.ConflictFailReadOnly,
+	}
+	controller := &recordingMountController{}
+	server, err := NewWithOptions(store, Options{Mounts: controller})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/mounts", strings.NewReader(string(body)))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || len(controller.mountCalls) != 1 || controller.mountCalls[0] != spec {
+		t.Fatalf("mount response=%d body=%s calls=%#v", response.Code, response.Body.String(), controller.mountCalls)
+	}
+	controller.statuses = []filesystemmount.Status{{Spec: spec, Desired: true, Active: true, Adapter: "test"}}
+	request = httptest.NewRequest(http.MethodGet, "/v1/mounts", nil)
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"active":true`) {
+		t.Fatalf("mount list response=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodDelete, "/v1/mounts/docs", nil)
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || len(controller.unmountCalls) != 1 || controller.unmountCalls[0] != "docs" {
+		t.Fatalf("unmount response=%d body=%s calls=%#v", response.Code, response.Body.String(), controller.unmountCalls)
+	}
+
+	invalid := append([]byte(nil), body...)
+	invalid = bytes.Replace(invalid, []byte("bucket-one"), []byte{0xff}, 1)
+	request = httptest.NewRequest(http.MethodPost, "/v1/mounts", bytes.NewReader(invalid))
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || len(controller.mountCalls) != 1 {
+		t.Fatalf("lossy JSON response=%d body=%s calls=%d", response.Code, response.Body.String(), len(controller.mountCalls))
+	}
+
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "invalid specification", err: filesystemmount.ErrInvalidSpec, status: http.StatusBadRequest},
+		{name: "identity conflict", err: filesystemmount.ErrIdentityReuse, status: http.StatusConflict},
+		{name: "mountpoint conflict", err: filesystemmount.ErrMountpointUse, status: http.StatusConflict},
+		{name: "pending unmount", err: filesystemmount.ErrPendingUnmount, status: http.StatusConflict},
+		{name: "platform failure", err: errors.New("platform unavailable"), status: http.StatusBadGateway},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controller.mountErr = fmt.Errorf("mount failed: %w", test.err)
+			request := httptest.NewRequest(http.MethodPost, "/v1/mounts", strings.NewReader(string(body)))
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status=%d body=%s, want %d", response.Code, response.Body.String(), test.status)
 			}
 		})
 	}
