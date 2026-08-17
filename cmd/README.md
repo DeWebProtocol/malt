@@ -1,6 +1,6 @@
 # Product commands
 
-This namespace contains only the supported `malt` client binary:
+This namespace contains only the supported `malt` runtime binary:
 
 ```bash
 go build -o bin/malt ./cmd/malt
