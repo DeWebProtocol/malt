@@ -23,6 +23,8 @@ authentication core:
 - non-authoritative CID-bound cache metadata with explicit verified, dirty,
   pending, conflicted, offline-only, and stale states;
 - a durable ordered local-operation journal with frozen retry identities;
+- a crash-recoverable local dirty overlay with read-your-writes behavior and
+  an explicit local-journal-only `fsync` result;
 - a platform-neutral read-only filesystem service pinned to an exact accepted
   dataset view, with verified lazy List ranges and proof-revalidated raw cache
   hits;
@@ -45,9 +47,10 @@ This is an experimental, pre-v1 local runtime. It currently provides the
 `malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, a
 UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
-`malt unmount`. Cache and operation-journal packages are available as runtime
-substrate; filesystem write-back is not implemented, so mounts remain
-read-only. The current remote transport is Gateway HTTP; WinFsp, local-CAS,
+`malt unmount`. The cache, operation journal, and platform-neutral dirty
+staging overlay are available as runtime substrate; remote write-back is not
+implemented and the mounted filesystem remains read-only. The current remote
+transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
 implemented here. There is no
 independent runtime release tag yet; build from a pinned commit.

@@ -241,6 +241,12 @@ it does not silently change the existing plaintext semantics of `malt add`.
   uses the payload-lazy `unixfs.LookupReader` to revalidate projection on each
   read, uses the cache only for raw CID-bound payloads, and keeps List payloads
   on the authenticated range path.
+- `filesystem/staging`: a platform-neutral local dirty overlay over the
+  verified read-only service. It records write, mkdir, rename, and unlink
+  intent against an exact immutable View, pins local file handles to a payload
+  CID, survives restart through the cache and journal, and reports only local
+  journal durability from `Fsync`. It performs no upload, candidate-root
+  computation, or trust mutation.
 - `filesystem/mount`: durable desired/pending-unmount records, restart
   reconciliation, a process-held exclusive manager lease, immutable local-View
   selection, and the narrow platform adapter/session contract. It does not
@@ -279,7 +285,8 @@ it does not silently change the existing plaintext semantics of `malt add`.
 
 The `internal` packages are not compatibility promises. The public
 `application`, `bucketsync`, `cache`, `filesystem/service`,
-`filesystem/mount`, `journal`, `localapi`, `transport`, `trust`, `unixfs`, and
+`filesystem/staging`, `filesystem/mount`, `journal`, `localapi`, `transport`,
+`trust`, `unixfs`, and
 `merkledag` packages are the intended pre-release integration surface; their
 profiles remain experimental until a release policy is published.
 Architecture tests fail if production packages import evaluation support, if

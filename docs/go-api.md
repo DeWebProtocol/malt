@@ -354,7 +354,26 @@ files remain on the authenticated range path and are not cached as if their
 reconstructed bytes were one raw block.
 
 The filesystem service is composed into Linux read-only mounts. The journal is
-not yet connected to write-back; existing CLI content reads remain unchanged.
+not yet connected to remote write-back; existing CLI content reads remain
+unchanged.
+
+Package `filesystem/staging` is the additive platform-neutral dirty overlay.
+It accepts the same immutable `service.View` and a verified read-only base,
+then records canonical write, mkdir, rename, and unlink operations in the
+durable journal. Write bodies are raw-CID bound in the local cache before the
+journal acknowledges intent. `Stat`, `ReadDir`, `Open`, and range reads provide
+read-your-writes behavior; an open local handle remains pinned to the payload
+CID selected at open time. Operations are isolated by dataset, branch, base
+root, revision, and encryption epoch, so selecting another local accepted View
+cannot expose dirty bytes from the old View.
+
+`staging.Service.Fsync` returns profile `malt.local-journal-fsync/v1` and
+confirms only that the selected View's intent and referenced local bytes are
+durable and CID-valid. It always reports remote persistence and accepted-root
+promotion as false. Restart reconciliation rejects unresolved journal writes
+with missing or corrupt bodies and removes unreferenced local cache bodies.
+This package has no transport, candidate-root, or trust-store capability and
+is not yet composed into the read-only FUSE adapter.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,
