@@ -66,6 +66,11 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   workflow, verifies the durable receipt, records only a candidate, and then
   atomically completes or conflicts the exact batch. It must not import a
   concrete Gateway transport or expose accepted-root promotion.
+- `unixfs/clientroot` owns the concrete flat-v1/hybrid-v1 projection from a
+  verified complete update view plus durable filesystem operations into an
+  output-free semantic intent. It verifies old and newly stored manifest CIDs
+  and must not import trust, filesystem, application, HTTP, or a concrete
+  transport.
 - `filesystem/mount` owns durable desired/pending-unmount state and the
   daemon-managed lifecycle contract. One process-held registry lease excludes
   competing managers on supported Linux/macOS/BSD and Windows targets; other

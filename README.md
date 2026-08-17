@@ -28,6 +28,8 @@ authentication core:
 - transport-neutral verified write-back orchestration that uploads exact
   CID-bound bodies, locally computes and verifies a MALT candidate root, and
   records it without accepting it;
+- flat-v1 and hybrid-v1 UnixFS client-root planning from a verified complete
+  view, with locally CID-verified manifest reads and writes;
 - a platform-neutral read-only filesystem service pinned to an exact accepted
   dataset view, with verified lazy List ranges and proof-revalidated raw cache
   hits;
@@ -51,9 +53,9 @@ This is an experimental, pre-v1 local runtime. It currently provides the
 UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
 `malt unmount`. The cache, operation journal, and platform-neutral dirty
-staging overlay and the generic verified write-back orchestrator are available
-as runtime substrate. A concrete UnixFS client-root planner and platform write
-composition are not implemented yet, so the mounted filesystem remains
+staging overlay, generic verified write-back orchestrator, and concrete UnixFS
+client-root planner are available as runtime substrate. Platform write
+composition is not implemented yet, so the mounted filesystem remains
 read-only. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as

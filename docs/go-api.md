@@ -422,8 +422,24 @@ recording only. `writeback.Result.RootAccepted` is therefore always false. If
 the accepted root advances after the remote receipt but before candidate
 recording, the exact batch is preserved as a deterministic conflict. A remote
 success, payload upload, or receipt alone never changes the accepted root. The
-generic orchestrator is implemented, while a concrete UnixFS planner and FUSE
-write composition remain later phases.
+generic orchestrator and concrete UnixFS planner are implemented; FUSE write
+composition remains a later phase.
+
+Package `unixfs/clientroot` is the concrete planner for flat-v1 and hybrid-v1.
+It first reconstructs the UnixFS tree only from the verified complete
+`mutation.UpdateView` and CID-checked manifest blocks, and rejects any mismatch
+between manifest projection and authenticated Map bindings. Ordered completed
+plus pending journal operations are then replayed against that immutable base.
+
+For flat-v1 the planner emits one exact top-Map transition. For hybrid-v1 it
+emits new or changed directory Maps child-before-parent and uses semantic output
+references wherever an ancestor consumes a locally computed child root,
+including flattened descendant bindings. New directories inherit the accepted
+top root's commitment backend; existing directories retain their verified
+backend and object identity. Canonical V2 manifests are stored through a narrow
+block capability, and a returned CID must equal the locally computed manifest
+CID. The planner supports both KZG and IPA roots and does not call a Gateway,
+record a candidate, or accept a root. Platform composition remains separate.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,
