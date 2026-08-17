@@ -26,7 +26,7 @@ func acquireLock(path string) (func() error, error) {
 			return nil, err
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("timed out waiting for Bucket workspace lock %s; remove a stale lock file if no client process is active", path)
+			return nil, fmt.Errorf("timed out waiting for Bucket workspace lock %s; remove a stale lock file if no runtime process is active", path)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -1,8 +1,9 @@
 # Go API and CLI contracts
 
-This document describes the pre-release integration surface owned by
-`malt-client`. MALT protocol and ProofList schemas remain defined by the MALT
-core repository.
+This document describes the pre-release integration surface owned by the MALT
+local runtime. Its Go module still uses the
+`github.com/dewebprotocol/malt-client` namespace during the initial refactor.
+MALT protocol and ProofList schemas remain defined by the MALT Core repository.
 
 ## Public gateway transport
 
@@ -82,7 +83,7 @@ requests to another URL.
 
 No exported signature contains a type from `internal/`.
 
-Package `bucketsync` provides the durable client workflow used by the CLI.
+Package `bucketsync` provides the durable runtime workflow used by the CLI.
 Call `CurrentBase` before materializing local work, then `Stage` the candidate
 against that captured commit/root/revision. `Push` refuses unstaged candidates,
 calls `BucketHead` without changing the stash, leaves it pending across network

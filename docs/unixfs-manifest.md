@@ -1,7 +1,7 @@
 # UnixFS directory manifests
 
-This format belongs to the `malt-client` UnixFS application. It does not add a
-node kind, storage kind, or expansion rule to MALT Core.
+This format belongs to the MALT local runtime's UnixFS application. It does not
+add a node kind, storage kind, or expansion rule to MALT Core.
 
 ## V2
 
@@ -66,7 +66,7 @@ V1 uses codec `0x310001` and name-only entries:
 
 Early native writers also stored those same bytes under the raw codec, so
 readers accept raw-CID manifests as V1. V1 has no authenticated projection
-field; only while reading V1 does the UnixFS client apply its historical rule:
+field; only while reading V1 does the UnixFS runtime apply its historical rule:
 a Map target is a directory, while a List or CAS target is a file.
 
 Readers apply the same lossless UnixFS segment rules to V1 names so historical

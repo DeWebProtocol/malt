@@ -1,5 +1,5 @@
 // Package application composes trusted-root policy with UnixFS and Merkle-DAG
-// capabilities into reusable native-client use cases. CLI and daemon adapters
+// capabilities into reusable native-runtime use cases. CLI and daemon adapters
 // should remain thin presentation/control-plane layers over these services.
 package application
 

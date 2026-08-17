@@ -1,6 +1,6 @@
 # Security Policy
 
-`malt-client` is experimental and is not production-ready. Security fixes may
+The MALT local runtime is experimental and is not production-ready. Security fixes may
 make breaking changes before v1.
 
 Do not open a public issue for a suspected vulnerability. Use GitHub private

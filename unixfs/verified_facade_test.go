@@ -688,7 +688,7 @@ func TestVerifiedReaderRejectsAuthenticatedUnknownTargetCodec(t *testing.T) {
 	}
 	// The codec claims to be a map/KZG root, but the non-identity multihash
 	// makes it an invalid typed root. A valid parent proof may authenticate this
-	// opaque value, but the UnixFS client must not reinterpret it as raw bytes.
+	// opaque value, but the UnixFS runtime must not reinterpret it as raw bytes.
 	unknown := cid.NewCidV1(maltcid.CodecMaltMapKZG, digest)
 	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{"file.txt": unknown.String()})
 	if err != nil {

@@ -39,7 +39,7 @@ type HasBatchResult struct {
 	Present bool
 }
 
-// PutBatch stores an ordered, bounded group of immutable blocks. The client
+// PutBatch stores an ordered, bounded group of immutable blocks. The runtime
 // recomputes every returned CID before exposing the result.
 func (c *Client) PutBatch(ctx context.Context, blocks []Block) ([]PutBatchResult, error) {
 	measurement, err := c.PutBatchMeasured(ctx, blocks)

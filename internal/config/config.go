@@ -41,7 +41,7 @@ type DaemonConfig struct {
 	StatePath  string `json:"state_path"`
 }
 
-// BackupConfig owns local encrypted-backup state. Keys remain client-side and
+// BackupConfig owns local encrypted-backup state. Keys remain runtime-local and
 // are never sent to the Gateway.
 type BackupConfig struct {
 	KeyringPath string `json:"keyring_path"`
@@ -99,10 +99,10 @@ func Load(path string) (*Config, error) {
 		return defaults, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read client config: %w", err)
+		return nil, fmt.Errorf("read runtime config: %w", err)
 	}
 	if err := securefile.Secure(path); err != nil {
-		return nil, fmt.Errorf("protect client config: %w", err)
+		return nil, fmt.Errorf("protect runtime config: %w", err)
 	}
 	var legacy struct {
 		Backup struct {
@@ -111,7 +111,7 @@ func Load(path string) (*Config, error) {
 		} `json:"backup"`
 	}
 	if err := json.Unmarshal(data, &legacy); err != nil {
-		return nil, fmt.Errorf("decode client config: %w", err)
+		return nil, fmt.Errorf("decode runtime config: %w", err)
 	}
 	if len(legacy.Backup.Jobs) != 0 {
 		return nil, fmt.Errorf("legacy backup.jobs is no longer supported; create Plan bindings with `malt backup bind` and schedules with `malt backup schedule set`")
@@ -120,7 +120,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("legacy backup.state_path is no longer supported; remove it and use the Plan-only backup.history_dir")
 	}
 	if err := json.Unmarshal(data, defaults); err != nil {
-		return nil, fmt.Errorf("decode client config: %w", err)
+		return nil, fmt.Errorf("decode runtime config: %w", err)
 	}
 	defaults.applyDefaults()
 	if err := defaults.Validate(); err != nil {
@@ -131,7 +131,7 @@ func Load(path string) (*Config, error) {
 
 func Write(path string, cfg *Config) error {
 	if cfg == nil {
-		return fmt.Errorf("client config is nil")
+		return fmt.Errorf("runtime config is nil")
 	}
 	if strings.TrimSpace(path) == "" {
 		var err error
@@ -145,7 +145,7 @@ func Write(path string, cfg *Config) error {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create client config directory: %w", err)
+		return fmt.Errorf("create runtime config directory: %w", err)
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -154,7 +154,7 @@ func Write(path string, cfg *Config) error {
 	data = append(data, '\n')
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.json")
 	if err != nil {
-		return fmt.Errorf("create client config temporary file: %w", err)
+		return fmt.Errorf("create runtime config temporary file: %w", err)
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
@@ -164,23 +164,23 @@ func Write(path string, cfg *Config) error {
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write client config: %w", err)
+		return fmt.Errorf("write runtime config: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sync client config: %w", err)
+		return fmt.Errorf("sync runtime config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(name, path); err != nil {
-		return fmt.Errorf("replace client config: %w", err)
+		return fmt.Errorf("replace runtime config: %w", err)
 	}
 	if err := securefile.Secure(path); err != nil {
-		return fmt.Errorf("secure client config permissions: %w", err)
+		return fmt.Errorf("secure runtime config permissions: %w", err)
 	}
 	if err := durablefile.SyncParent(path); err != nil {
-		return fmt.Errorf("sync client config directory: %w", err)
+		return fmt.Errorf("sync runtime config directory: %w", err)
 	}
 	return nil
 }

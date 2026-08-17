@@ -6,10 +6,8 @@ data through local application interfaces, and communicates through replaceable
 transport capabilities built on the
 [MALT Core SDK](https://github.com/DeWebProtocol/malt-core).
 
-This repository remains named `malt-client` during the staged repository
-migration. The product and binary are MALT; the background process is the MALT
-daemon. The repository name will become `malt` only after every downstream
-consumer is pinned to `malt-core v0.0.7`. Its Go module deliberately remains
+This repository is now named `malt`. The product and binary are MALT; the
+background process is the MALT daemon. Its Go module deliberately remains
 `github.com/dewebprotocol/malt-client` during the initial runtime refactor so a
 repository rename cannot silently reuse Core's historical module namespace.
 
@@ -39,7 +37,7 @@ host-filesystem mount, local-CAS transport, P2P transport, and hybrid transport
 are staged follow-up work and are not claimed as implemented here. There is no
 independent runtime release tag yet; build from a pinned commit.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
-must record the exact client and dependency revisions they build.
+must record the exact runtime and dependency revisions they build.
 
 ## Build
 
@@ -236,7 +234,7 @@ not implement cryptographic sharing of a Bucket with another user. A Gateway
 ACL grant alone does not grant decryption, and proxy re-encryption, per-member
 key envelopes, and shared-Bucket revocation are intentionally out of scope.
 
-Client state and portable credential-provider files use owner-only Unix permissions or a protected
+Runtime state and portable credential-provider files use owner-only Unix permissions or a protected
 owner-and-SYSTEM Windows DACL. Custom config, keyring, workspace, trust, and
 Plan-history paths must still live in an owner-only directory: protecting a
 file cannot prevent another principal with parent-directory replacement rights
@@ -244,7 +242,7 @@ from deleting and replacing it. Do not place these paths in a shared
 directory.
 
 If the configured staging directory is inside the selected backup source, the
-client uses the system temporary directory instead. It rejects the operation
+runtime uses the system temporary directory instead. It rejects the operation
 when no staging root exists outside the source, and the archive writer
 independently refuses to archive its own output, including through a symlinked
 staging path. Backup sources containing the configured MALT keyring, config,
@@ -315,7 +313,7 @@ Map-to-directory and List/CAS-to-file fallback. See
 [the UnixFS manifest format](./docs/unixfs-manifest.md) for the wire and
 compatibility rules.
 
-The same client can materialize one local file or directory as an
+The same runtime can materialize one local file or directory as an
 IPFS-compatible Merkle DAG while reusing the gateway CAS:
 
 ```bash
@@ -387,7 +385,7 @@ and cannot fall back to the public CAS namespace.
 
 ## Evaluation adapters
 
-`cmd/` contains only the supported `malt` product binary. Client-specific
+`cmd/` contains only the supported `malt` product binary. Runtime-specific
 benchmark process adapters live under `tools/evaluation/cmd`, with shared
 private support under `internal/evaluation`. They preserve their external
 `malt-eval-*` executable and wire contracts, but are not a public Go API or
@@ -405,7 +403,7 @@ inventory and build boundary.
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the
 generic CID-bound raw, DAG-PB, DAG-CBOR, DAG-JSON, and legacy JSON parser/link
-toolkit for client-side compatibility code.
+toolkit for runtime-side compatibility code.
 
 The CLI exposes the same fail-closed read path without consulting the MALT root
 store:
@@ -425,11 +423,11 @@ HTTPS except for loopback development.
 ## Trust model
 
 1. The caller chooses an already trusted root.
-2. The client sends canonical segments to the gateway.
+2. The runtime sends canonical segments to the gateway.
 3. The gateway returns the result and ProofList.
-4. The client verifies the proof against the caller-selected root using MALT
+4. The runtime verifies the proof against the caller-selected root using MALT
    core.
-5. For payload reads, the client also verifies returned bytes against the
+5. For payload reads, the runtime also verifies returned bytes against the
    authenticated CID.
 6. A mutation's new root remains a candidate until explicit local acceptance
    or an independent publication mechanism establishes trust.

@@ -1,5 +1,5 @@
 // Package filelock provides bounded cross-process advisory locks for local
-// client state transitions.
+// runtime state transitions.
 package filelock
 
 import (

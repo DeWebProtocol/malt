@@ -1,4 +1,4 @@
-// Command malt-eval-rq3-hash-worker exposes the malt-client UnixFS/HAMT
+// Command malt-eval-rq3-hash-worker exposes the MALT runtime UnixFS/HAMT
 // baseline primitive as strict, bounded JSONL over stdin/stdout.
 package main
 

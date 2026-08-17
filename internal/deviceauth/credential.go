@@ -1,4 +1,4 @@
-// Package deviceauth owns the client-side credential issued through browser
+// Package deviceauth owns the runtime-side credential issued through browser
 // authorization. The file provider is the portable fallback behind the
 // future OS Keychain/TPM provider boundary.
 package deviceauth

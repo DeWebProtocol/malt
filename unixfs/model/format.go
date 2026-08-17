@@ -6,7 +6,7 @@ import (
 )
 
 // StorageKindFromCID projects a UnixFS payload CID into the public storage
-// kind vocabulary used by client and gateway adapters.
+// kind vocabulary used by runtime and gateway adapters.
 func StorageKindFromCID(c cid.Cid) string {
 	return unixfsformat.StorageKindFromCID(c)
 }

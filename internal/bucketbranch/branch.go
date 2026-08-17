@@ -1,4 +1,4 @@
-// Package bucketbranch owns the client-side grammar for writable managed
+// Package bucketbranch owns the runtime-side grammar for writable managed
 // Bucket refs. It mirrors the Gateway's public branch-name contract.
 package bucketbranch
 

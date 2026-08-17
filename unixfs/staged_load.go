@@ -10,7 +10,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// StagedPathStat is the client-facing subset of a path stat response needed to
+// StagedPathStat is the runtime-facing subset of a path stat response needed to
 // rebuild a staged tree from an existing UnixFS root.
 type StagedPathStat struct {
 	Kind        string

@@ -14,12 +14,12 @@ It owns:
 - managed-Bucket base/remote/stash state and stash-before-fetch synchronization;
 - semantic remote capabilities with a current Gateway HTTP implementation;
 - UnixFS path, manifest, fixed-list payload, import, and range-body semantics;
-- IPFS-compatible Merkle DAG UnixFS import as an alternative client target;
+- IPFS-compatible Merkle DAG UnixFS import as an alternative runtime target;
 - local replay verification for gateway Merkle DAG compatibility reads;
 - application-level payload-byte verification.
-- client-side encrypted snapshot creation, restore, and automatic scheduling.
+- runtime-side encrypted snapshot creation, restore, and automatic scheduling.
 
-Client-specific benchmark process adapters also live in this repository under
+Runtime-specific benchmark process adapters also live in this repository under
 `tools/evaluation`. They exercise this implementation at a pinned commit, but
 do not own benchmark plans, suites, comparison policy, result schemas, or
 result provenance; those belong in `malt-evaluation`.
@@ -65,16 +65,16 @@ core semantics to `/`, `.`, or `[]`.
 The current native UnixFS materializer is `hybrid`: each directory becomes an
 authenticated map root, and ancestor maps also retain descendant root-relative
 path bindings. Pure flat and pure hierarchical materializers are possible
-future client strategies, not aliases for the current implementation.
+future runtime strategies, not aliases for the current implementation.
 
-For `malt add --target merkle-dag`, the client uses Boxo to construct explicit
+For `malt add --target merkle-dag`, the runtime uses Boxo to construct explicit
 dag-pb UnixFS blocks and writes those immutable blocks through the same untrusted
 gateway CAS. That path returns a Merkle DAG CID and does not invoke MALT
-resolve/read/proof semantics. Supporting both targets is a client feature, not
+resolve/read/proof semantics. Supporting both targets is a runtime feature, not
 an indication that Merkle DAG semantics belong in core.
 
 The gateway may execute Merkle DAG traversal as a compatibility service. In
-that flow it returns every touched CID-bound block. The public client hashes
+that flow it returns every touched CID-bound block. The local runtime hashes
 each block and independently replays UnixFS traversal from the caller-selected
 Merkle DAG root. This is Merkle DAG authentication, not MALT authentication,
 and uses `merkledag.resolve/v0alpha1` and `merkledag.read/v0alpha1`, never a
@@ -99,7 +99,7 @@ merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
 transport  -> HTTP only; never imports unixfs, merkledag, or trust
 bucketsync -> transport + independent durable synchronization metadata
-tools/evaluation/cmd -> internal/evaluation + public client capabilities
+tools/evaluation/cmd -> internal/evaluation + public runtime capabilities
 ```
 
 `transport.Client` is one reusable HTTP connection, but consumers depend on
@@ -229,7 +229,7 @@ it does not silently change the existing plaintext semantics of `malt add`.
   interfaces.
 - `bucketsync`: durable Bucket base/remote/stash state and push orchestration.
 - `trust`: accepted and candidate root policy plus durable local persistence.
-- `merkledag`: isolated compatibility profile client and local CID/link replay.
+- `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
   Merkle-DAG compatibility applications.
@@ -241,7 +241,7 @@ it does not silently change the existing plaintext semantics of `malt add`.
   transitions.
 - `internal/securefile`: owner-only Unix file modes and protected
   owner-and-SYSTEM Windows file DACLs.
-- `internal/cas`: client-side CAS helpers and byte verification.
+- `internal/cas`: runtime-side CAS helpers and byte verification.
 - `internal/evaluation`: private adapter support, including evaluation Gateway
   authentication/control transport and shared workload machinery.
 - `unixfs/model`: UnixFS application values and path rules.

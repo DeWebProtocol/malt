@@ -16,7 +16,7 @@ const restoreRangeSize = uint64(4 << 20)
 var (
 	ErrPendingWorkspace = errors.New("Bucket has pending or branched local work")
 	ErrBackupConflict   = errors.New("backup candidate could not be merged")
-	ErrProtectedSource  = errors.New("backup source contains MALT client key or state")
+	ErrProtectedSource  = errors.New("backup source contains MALT runtime key or state")
 	ErrUnacceptedRoot   = errors.New("remote backup root is not locally accepted")
 )
 
@@ -63,10 +63,10 @@ func ValidateSource(source string, protected []string) error {
 		}
 		overlap, err := bindingSourcesOverlap(source, candidate)
 		if err != nil {
-			return fmt.Errorf("compare backup source and protected client path: %w", err)
+			return fmt.Errorf("compare backup source and protected runtime path: %w", err)
 		}
 		if overlap {
-			return fmt.Errorf("%w %s; choose a narrower source or move client state to an owner-only directory outside it", ErrProtectedSource, candidate)
+			return fmt.Errorf("%w %s; choose a narrower source or move runtime state to an owner-only directory outside it", ErrProtectedSource, candidate)
 		}
 	}
 	return nil

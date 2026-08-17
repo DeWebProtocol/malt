@@ -3,8 +3,8 @@
 Status: implementation plan and current-state audit, updated 2026-08-17.
 
 This document records the repository migration and the incremental conversion
-of this repository from the historically named `malt-client` into the MALT
-local data runtime. It distinguishes current executable behavior from target
+of this repository, renamed from `malt-client` to `malt`, into the MALT local
+data runtime. It distinguishes current executable behavior from target
 architecture. It is not a wire-format specification; normative Core contracts
 remain in `malt-core`.
 
@@ -23,9 +23,9 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt-client` (this repository) | `malt` CLI, daemon/local IPC, local trust and key state, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
-| `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | pending `malt-core v0.0.7` migration |
-| `malt-web` | Public explanation, tutorials, and browser verification tools | pending `malt-core v0.0.7` provenance/link migration |
+| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
+| `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
 
 The current repository dependency direction is:
 
@@ -76,7 +76,7 @@ Current implementation gaps that still encode concrete Gateway coupling:
   batch runner lives in the command package even though the daemon invokes it.
 - Root command handlers repeatedly open the trust store and construct
   `application.Roots`; read handlers repeatedly construct a concrete Gateway
-  client, UnixFS reader, selector, and application service.
+  Gateway transport, UnixFS reader, selector, and application service.
 - Configuration has one mandatory-looking `gateway` block rather than a
   transport/dataset binding model.
 - There is no platform-neutral filesystem service, mount registry, verified
@@ -217,15 +217,15 @@ choice and does not define network topology.
 - [x] Migrate Gateway Go imports, module pin, Console WASM, and provenance to
   exact `malt-core v0.0.7`.
 - [x] Migrate this runtime's Core imports and pin exact `malt-core v0.0.7`.
-- [ ] Migrate `malt-evaluation` imports and record exact module/source
+- [x] Migrate `malt-evaluation` imports and record exact module/source
   provenance without relabeling historical results.
-- [ ] Migrate `malt-web` browser build metadata, links, and public terminology.
-- [ ] Update organization metadata, badges, CI, release scripts, examples, and
+- [x] Migrate `malt-web` browser build metadata, links, and public terminology.
+- [x] Update organization metadata, badges, CI, examples, and
   contribution links.
-- [ ] Prove no active dependency uses the old Core module path, except explicit
+- [x] Prove no active dependency uses the old Core module path, except explicit
   historical/migration notices.
-- [ ] Run cross-repository verified read/write and malicious-response E2E.
-- [ ] Rename the GitHub repository `malt-client` to `malt` only after all Core
+- [x] Run cross-repository verified read/write and malicious-response E2E.
+- [x] Rename the GitHub repository `malt-client` to `malt` only after all Core
   consumers are migrated.
 - [x] Keep `module github.com/dewebprotocol/malt-client` during the initial
   runtime refactor; continue enforcing this invariant until a separate cutover.
@@ -237,7 +237,7 @@ choice and does not define network topology.
 | PR | Goal and packages | Public API | Wire format | Main risk | Verification | Rollback |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Product language plus `malt-core v0.0.7` migration across imports, docs, architecture tests, and `go.mod` | import namespace only | no | missed old import/provenance | full Go test/vet/build, Windows build, downstream E2E | revert one namespace commit; old Core release remains available |
-| 2 | After evaluation/web and every remaining Core consumer is migrated, rename repository to `malt`, update links/badges/CI, keep the old Go module path, and add a compatibility notice before runtime architecture refactors begin | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
+| 2 | **Completed 2026-08-17:** after every Core consumer migrated, rename repository to `malt`, update links/badges/CI, keep the old Go module path, and add a compatibility notice before runtime architecture refactors begin | repository URL only | no | redirect/module namespace confusion | clean clone, old/new URL checks, all dependent CI | GitHub repository rename is reversible; module stays unchanged |
 | 3 | Move runtime composition and plan batch orchestration out of `cmd/malt` into reusable application/runtime services | additive application constructors; command internals change | no | daemon/foreground behavior drift | table-driven adapter-equivalence tests and current CLI tests | keep old constructors behind temporary adapter and revert call sites |
 | 4 | Rename semantic `Gateway` ports and split Gateway HTTP DTOs from transport-neutral dataset/head/mutation capabilities | pre-v1 interface rename | no | accidental trust mutation or route leakage | mock capability contract tests and architecture import tests | retain compatibility type aliases for one PR if needed |
 | 5 | Make trust observations, candidates, and accepted roots explicit persisted types; forbid transport imports | additive state migration | no | state loss or implicit promotion | migration fixtures, stale-head and malicious-result tests, crash/restart tests | dual-read old state with write-new; restore prior state file |
