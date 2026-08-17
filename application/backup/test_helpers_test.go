@@ -25,6 +25,10 @@ func (fixedRootPolicy) ObserveCandidate(string, cid.Cid, cid.Cid, string) error 
 	return nil
 }
 
+func (fixedRootPolicy) ObserveHead(string, string, string, string, string, cid.Cid, uint64) error {
+	return nil
+}
+
 func (k fixedKeys) ActiveEpoch() uint32 { return k.epoch }
 func (k fixedKeys) BucketKey(uint32, string) ([32]byte, error) {
 	return k.key, nil

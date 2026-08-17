@@ -314,11 +314,9 @@ func acceptRestoreRoot(cmd *cobra.Command, cfg *clientconfig.Config, restoreErr 
 	if err != nil {
 		return false, err
 	}
-	if !rootErr.Accepted.Defined() {
-		_, err = roots.Trust(rootErr.Alias, rootErr.Observed.String(), "unixfs", cfg.GatewayBaseURL(), "explicit-malt-restore")
-	} else {
-		_, err = roots.AcceptCandidate(rootErr.Alias, rootErr.Observed, "explicit-malt-restore")
-	}
+	_, err = roots.AcceptObserved(
+		rootErr.Alias, rootErr.Observed, "unixfs", cfg.GatewayBaseURL(), "explicit-malt-restore",
+	)
 	return err == nil, err
 }
 

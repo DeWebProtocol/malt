@@ -86,6 +86,22 @@ func (s *Server) routes() {
 		}
 		writeJSON(w, http.StatusOK, record)
 	})
+	s.mux.HandleFunc("GET /v1/trust-states", func(w http.ResponseWriter, _ *http.Request) {
+		states, err := s.roots.ListStates()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"states": states})
+	})
+	s.mux.HandleFunc("GET /v1/trust-states/{alias}", func(w http.ResponseWriter, r *http.Request) {
+		state, err := s.roots.GetState(r.PathValue("alias"))
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+	})
 	s.mux.HandleFunc("PUT /v1/roots/{alias}", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Root    string `json:"root"`
@@ -138,6 +154,30 @@ func (s *Server) routes() {
 			return
 		}
 		record, err := s.roots.AcceptCandidate(r.PathValue("alias"), candidate, "explicit-local-acceptance")
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, record)
+	})
+	s.mux.HandleFunc("POST /v1/roots/{alias}/observations/{root}/accept", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile string `json:"profile"`
+			Gateway string `json:"gateway"`
+			Source  string `json:"source"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		observed, err := cid.Parse(r.PathValue("root"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid observed root: %v", err)})
+			return
+		}
+		record, err := s.roots.AcceptObserved(
+			r.PathValue("alias"), observed, body.Profile, body.Gateway, body.Source,
+		)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -205,9 +245,11 @@ func decodeJSON(r *http.Request, target any) error {
 
 func writeStoreError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
-	if errors.Is(err, truststore.ErrNotFound) || errors.Is(err, truststore.ErrCandidateNotFound) {
+	if errors.Is(err, truststore.ErrNotFound) || errors.Is(err, truststore.ErrCandidateNotFound) ||
+		errors.Is(err, truststore.ErrObservationNotFound) || errors.Is(err, truststore.ErrNoAcceptedRoot) {
 		status = http.StatusNotFound
-	} else if errors.Is(err, truststore.ErrStaleCandidate) {
+	} else if errors.Is(err, truststore.ErrStaleCandidate) || errors.Is(err, truststore.ErrStaleObservation) ||
+		errors.Is(err, truststore.ErrConflictingObservation) {
 		status = http.StatusConflict
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})

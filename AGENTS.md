@@ -35,9 +35,12 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   HTTP adapter plus compatibility DTOs. Neither may import `trust`, `unixfs`,
   or `merkledag`. Do not expose evaluation instance credentials, bootstrap
   controls, unchecked raw-CAS reads, or selective-CAR routes here.
-- `trust/` is the only package that persists accepted/candidate roots or
-  promotes a candidate. It must not depend on network or application packages.
-- `application/` owns reusable accepted-root selection, candidate recording,
+- `trust/` is the only package that persists observed heads, locally verified
+  candidates, and accepted roots. These are separate v2 state types:
+  observations cannot enter the candidate path, and neither observations nor
+  candidates promote without their own explicit local acceptance action. The
+  package must not depend on network or application packages.
+- `application/` owns reusable accepted-root selection, observation/candidate recording,
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends
   on narrow ports, not Cobra or arbitrary transport routes.

@@ -378,21 +378,15 @@ func prepareSyncRetryWithConfirm(
 				return false, err
 			}
 		}
-		if failure.AcceptedRoot == "" {
-			if _, err := roots.Trust(
-				failure.TrustAlias, failure.ObservedRoot, "unixfs",
-				cfg.GatewayBaseURL(), "explicit-malt-sync",
-			); err != nil {
-				return false, err
-			}
-		} else {
-			candidate, err := cid.Parse(failure.ObservedRoot)
-			if err != nil {
-				return false, err
-			}
-			if _, err := roots.AcceptCandidate(failure.TrustAlias, candidate, "explicit-malt-sync"); err != nil {
-				return false, err
-			}
+		observedRoot, err := cid.Parse(failure.ObservedRoot)
+		if err != nil {
+			return false, err
+		}
+		if _, err := roots.AcceptObserved(
+			failure.TrustAlias, observedRoot, "unixfs",
+			cfg.GatewayBaseURL(), "explicit-malt-sync",
+		); err != nil {
+			return false, err
 		}
 		trusted = true
 	}

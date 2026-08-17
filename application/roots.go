@@ -19,7 +19,7 @@ type RootSelection struct {
 	Alias string
 }
 
-// Roots owns reusable accepted/candidate-root policy use cases.
+// Roots owns reusable accepted/candidate/observed-root policy use cases.
 type Roots struct {
 	policy trust.Policy
 }
@@ -33,7 +33,7 @@ func NewRoots(policy trust.Policy) (*Roots, error) {
 
 // NewExplicitRootSelector returns a selector that accepts caller-supplied CIDs
 // without consulting local trusted-root state. It deliberately cannot resolve
-// aliases or mutate accepted/candidate-root records.
+// aliases or mutate accepted/candidate/observed-root records.
 //
 // This selector keeps explicit-CID operations available even when the optional
 // alias store is missing, corrupt, or not writable.
@@ -97,11 +97,35 @@ func (r *Roots) List() ([]trust.Record, error) {
 	return r.policy.List()
 }
 
+// ListStates returns explicit accepted/candidate/observed trust-plane states.
+func (r *Roots) ListStates() ([]trust.RootState, error) {
+	if r == nil || r.policy == nil {
+		return nil, fmt.Errorf("trusted-root application is nil")
+	}
+	policy, ok := r.policy.(trust.ObservationPolicy)
+	if !ok {
+		return nil, fmt.Errorf("trusted-root policy does not support observations")
+	}
+	return policy.ListStates()
+}
+
 func (r *Roots) Get(alias string) (trust.Record, error) {
 	if r == nil || r.policy == nil {
 		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
 	}
 	return r.policy.Get(alias)
+}
+
+// GetState returns the explicit accepted/candidate/observed trust-plane state.
+func (r *Roots) GetState(alias string) (trust.RootState, error) {
+	if r == nil || r.policy == nil {
+		return trust.RootState{}, fmt.Errorf("trusted-root application is nil")
+	}
+	policy, ok := r.policy.(trust.ObservationPolicy)
+	if !ok {
+		return trust.RootState{}, fmt.Errorf("trusted-root policy does not support observations")
+	}
+	return policy.GetState(alias)
 }
 
 func (r *Roots) Trust(alias, root, profile, gateway, source string) (trust.Record, error) {
@@ -133,6 +157,27 @@ func (r *Roots) ObserveCandidate(alias string, candidateRoot, baseRoot cid.Cid, 
 	return err
 }
 
+// ObserveHead records an untrusted remote dataset head without creating a
+// candidate or changing the accepted root.
+func (r *Roots) ObserveHead(alias, source, datasetID, branch, commitID string, root cid.Cid, revision uint64) error {
+	if r == nil || r.policy == nil {
+		return fmt.Errorf("trusted-root application is nil")
+	}
+	policy, ok := r.policy.(trust.ObservationPolicy)
+	if !ok {
+		return fmt.Errorf("trusted-root policy does not support observations")
+	}
+	rootText := ""
+	if root.Defined() {
+		rootText = root.String()
+	}
+	_, err := policy.ObserveHead(alias, trust.ObservedHead{
+		Source: source, DatasetID: datasetID, Branch: branch,
+		CommitID: commitID, Root: rootText, Revision: revision,
+	})
+	return err
+}
+
 // AcceptCandidate is the only application use case that promotes a recorded
 // candidate. Callers must invoke it as an explicit local action.
 func (r *Roots) AcceptCandidate(alias string, candidate cid.Cid, source string) (trust.Record, error) {
@@ -143,4 +188,20 @@ func (r *Roots) AcceptCandidate(alias string, candidate cid.Cid, source string) 
 		return trust.Record{}, fmt.Errorf("candidate root is undefined")
 	}
 	return r.policy.AcceptCandidate(alias, candidate.String(), source)
+}
+
+// AcceptObserved explicitly promotes a recorded remote observation. It cannot
+// accept a root that was never recorded by ObserveHead.
+func (r *Roots) AcceptObserved(alias string, observed cid.Cid, profile, gateway, source string) (trust.Record, error) {
+	if r == nil || r.policy == nil {
+		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
+	}
+	if !observed.Defined() {
+		return trust.Record{}, fmt.Errorf("observed root is undefined")
+	}
+	policy, ok := r.policy.(trust.ObservationPolicy)
+	if !ok {
+		return trust.Record{}, fmt.Errorf("trusted-root policy does not support observations")
+	}
+	return policy.AcceptObserved(alias, observed.String(), profile, gateway, source)
 }
