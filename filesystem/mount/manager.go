@@ -92,7 +92,7 @@ type liveMount struct {
 }
 
 type Manager struct {
-	opMu        sync.Mutex
+	opGate      chan struct{}
 	mu          sync.Mutex
 	store       *Store
 	selector    ViewSelector
@@ -118,15 +118,18 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	return &Manager{
 		store: opts.Store, selector: opts.Selector, filesystem: opts.Filesystem, adapter: opts.Adapter,
-		live: map[string]liveMount{}, errors: map[string]string{}, nextToken: 1, leaseUnlock: leaseUnlock,
+		opGate: make(chan struct{}, 1), live: map[string]liveMount{}, errors: map[string]string{},
+		nextToken: 1, leaseUnlock: leaseUnlock,
 	}, nil
 }
 
 // Mount persists desired state before platform I/O. A crash after this point
 // is repaired by Restore, which retries the exact durable Spec.
 func (m *Manager) Mount(ctx context.Context, spec Spec) (Status, error) {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	if err := m.acquireOperation(ctx); err != nil {
+		return Status{}, err
+	}
+	defer m.releaseOperation()
 	if err := m.ensureOpen(); err != nil {
 		return Status{}, err
 	}
@@ -188,8 +191,10 @@ func (m *Manager) mount(ctx context.Context, spec Spec) (Status, error) {
 // Unmount first persists a pending-unmount tombstone. The record is deleted
 // only after the live or recovered platform mount is confirmed unmounted.
 func (m *Manager) Unmount(ctx context.Context, id string) error {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	if err := m.acquireOperation(ctx); err != nil {
+		return err
+	}
+	defer m.releaseOperation()
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
@@ -227,8 +232,10 @@ func (m *Manager) Unmount(ctx context.Context, id string) error {
 // Restore cleans incomplete unmounts first, then recreates every desired
 // mount from a fresh locally selected accepted View.
 func (m *Manager) Restore(ctx context.Context) error {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	if err := m.acquireOperation(ctx); err != nil {
+		return err
+	}
+	defer m.releaseOperation()
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
@@ -269,8 +276,10 @@ func (m *Manager) Restore(ctx context.Context) error {
 // Shutdown stops live platform sessions without changing durable desired
 // state, so the next daemon process can Restore them.
 func (m *Manager) Shutdown(ctx context.Context) error {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	if err := m.acquireOperation(ctx); err != nil {
+		return err
+	}
+	defer m.releaseOperation()
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -315,6 +324,30 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 	return errors.Join(failures...)
 }
+
+// acquireOperation serializes lifecycle I/O without making shutdown wait on
+// an uninterruptible mutex. The operation holding the gate receives the same
+// request/daemon context and is expected to stop platform I/O when canceled.
+func (m *Manager) acquireOperation(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("mount operation context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case m.opGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			m.releaseOperation()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *Manager) releaseOperation() { <-m.opGate }
 
 func (m *Manager) List() ([]Status, error) {
 	m.mu.Lock()

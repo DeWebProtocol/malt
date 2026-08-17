@@ -353,9 +353,8 @@ reverifies its stored Resolve proof, and matches the exact view. List-backed
 files remain on the authenticated range path and are not cached as if their
 reconstructed bytes were one raw block.
 
-The filesystem service is not yet composed into a host mount, and the journal
-is not yet connected to write-back. Existing CLI reads remain unchanged, so
-disabling these additive packages requires no persisted-state rollback.
+The filesystem service is composed into Linux read-only mounts. The journal is
+not yet connected to write-back; existing CLI content reads remain unchanged.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,
@@ -374,8 +373,7 @@ other build targets return `mount.ErrUnsupportedPlatform` before opening state.
 Platform adapters receive only a View-bound `ReadOnlyFilesystem`; they cannot
 select roots or access transport.
 The private daemon API exposes the same manager at `GET/POST /v1/mounts` and
-`DELETE /v1/mounts/{id}` when a manager is configured. No concrete FUSE or
-WinFsp adapter is claimed by this lifecycle step.
+`DELETE /v1/mounts/{id}` when a manager is configured.
 
 Package `filesystem/platform/fuse` provides the first concrete outer adapter
 on Linux, pinned to `github.com/hanwen/go-fuse/v2 v2.11.0`. It maps stat,
@@ -394,8 +392,28 @@ FUSE:
 MALT_FUSE_SMOKE=1 go test -run TestLinuxFUSESmoke ./filesystem/platform/fuse
 ```
 
-The adapter is not yet composed into daemon startup or CLI commands, and no
-WinFsp implementation is claimed.
+`internal/runtime.NewMountManager` composes this adapter on Linux with the
+owner-private mount registry and cache, a selector that reads only the local
+accepted UnixFS root, and per-dataset/branch Gateway readers. Matching remote
+observations may supply cache revision metadata but never replace the accepted
+root. Nonzero encryption epochs fail closed until a local mount decryption
+layer exists. The daemon restores desired mounts on startup, preserves them
+through graceful shutdown, and serves the manager through the private local
+API. Package `localapi` supplies the reusable control client used by:
+
+```sh
+malt mount add <id> <dataset-id> <mountpoint> \
+  --branch main --trust-alias <accepted-root-alias>
+malt mount list
+malt unmount <id>
+```
+
+The configuration paths `filesystem.mounts_path` and
+`filesystem.cache_dir` are runtime-owned protected local state. A desired
+mount is persisted before platform I/O, so a failed mount remains visible and
+retryable until explicit `malt unmount`. No WinFsp implementation is claimed;
+on non-Linux targets the daemon keeps mount routes unconfigured and continues
+serving its other local-runtime APIs.
 
 ## Merkle DAG compatibility
 

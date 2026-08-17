@@ -251,6 +251,12 @@ it does not silently change the existing plaintext semantics of `malt add`.
   data/metadata mutation, and verifies `/proc/self/mountinfo` ownership before
   recovering even a disconnected stale mount. It has no trust or transport
   access.
+- `localapi`: reusable client for the private daemon control plane, shared by
+  the CLI and future thin GUI adapters without direct trust-store mutation.
+- `internal/runtime`: process-independent composition of local accepted-root
+  selection, per-dataset Gateway verified readers, non-authoritative cache,
+  durable mount lifecycle, and the outer platform adapter. Non-Linux targets
+  leave mount control unconfigured until a native adapter exists.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
@@ -273,10 +279,10 @@ it does not silently change the existing plaintext semantics of `malt add`.
 
 The `internal` packages are not compatibility promises. The public
 `application`, `bucketsync`, `cache`, `filesystem/service`,
-`filesystem/mount`, `journal`, `transport`, `trust`, `unixfs`, and `merkledag`
-packages are the intended pre-release integration surface; their profiles
-remain experimental until a release policy is published. Architecture tests
-fail if production packages import evaluation support, if `cmd/` gains a
-non-product binary, if public transport regains an evaluation control-plane
-escape hatch, or if Merkle DAG compatibility begins to depend on transport
-implementation types or MALT ProofList contracts.
+`filesystem/mount`, `journal`, `localapi`, `transport`, `trust`, `unixfs`, and
+`merkledag` packages are the intended pre-release integration surface; their
+profiles remain experimental until a release policy is published.
+Architecture tests fail if production packages import evaluation support, if
+`cmd/` gains a non-product binary, if public transport regains an evaluation
+control-plane escape hatch, or if Merkle DAG compatibility begins to depend on
+transport implementation types or MALT ProofList contracts.

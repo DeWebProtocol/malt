@@ -65,6 +65,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   application, or Gateway packages. Recovery unmount must verify the exact
   MALT-owned mount identity, remain usable for disconnected FUSE roots, and
   refuse foreign or ambiguous stacked filesystems.
+- `localapi/` owns reusable clients for the private daemon control plane. CLI
+  and future GUI adapters may use it, but it must not import trust, transport,
+  cache, UnixFS, application, or Gateway packages.
 - `application/` owns reusable accepted-root selection, observation/candidate recording,
   explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
   DAG import/read orchestration shared by CLI and daemon adapters. It depends
@@ -77,8 +80,8 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   only in `gateway_compat.go` for the pre-release compatibility window.
 - `internal/runtime` is the process-independent composition root. It may bind
   concrete local configuration, transport, trust, keyring, synchronization,
-  and UnixFS capabilities into application services; command handlers must not
-  duplicate that composition.
+  UnixFS, verified filesystem, cache, and platform-mount capabilities into
+  application services; command handlers must not duplicate that composition.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
   behavior here rather than under `cmd/malt`. Its semantic mutation adapter

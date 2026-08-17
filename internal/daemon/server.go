@@ -223,6 +223,11 @@ func (s *Server) routes() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		spec, err := filesystemmount.NormalizeSpec(spec)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		status, err := s.mounts.Mount(r.Context(), spec)
 		if err != nil {
 			code := http.StatusBadGateway
