@@ -175,7 +175,7 @@ func ownedMount(identity *mountIdentity, spec filesystemmount.Spec) bool {
 	if identity == nil || identity.Source != expectedSource(spec) {
 		return false
 	}
-	return identity.Filesystem == "fuse.malt" || identity.Filesystem == "fuse"
+	return identity.Filesystem == "fuse.malt"
 }
 
 func safeMountpoint(raw string) (string, error) {

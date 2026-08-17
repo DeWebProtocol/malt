@@ -105,6 +105,7 @@ func TestAdapterRecoversOnlyExactOwnedMount(t *testing.T) {
 		{name: "absent"},
 		{name: "owned", identity: &mountIdentity{ID: 2, Mountpoint: mountpoint, Filesystem: "fuse.malt", Source: expectedSource(spec)}, wantCalls: 1},
 		{name: "foreign source", identity: &mountIdentity{ID: 2, Mountpoint: mountpoint, Filesystem: "fuse.malt", Source: "other"}, wantError: ErrForeignMount},
+		{name: "generic fuse type", identity: &mountIdentity{ID: 2, Mountpoint: mountpoint, Filesystem: "fuse", Source: expectedSource(spec)}, wantError: ErrForeignMount},
 		{name: "foreign type", identity: &mountIdentity{ID: 2, Mountpoint: mountpoint, Filesystem: "ext4", Source: expectedSource(spec)}, wantError: ErrForeignMount},
 	} {
 		t.Run(test.name, func(t *testing.T) {
