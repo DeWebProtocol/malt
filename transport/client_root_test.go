@@ -112,6 +112,101 @@ func TestClientRootTransportStrictlyBindsViewBundleReceiptAndMetrics(t *testing.
 	}
 }
 
+func TestClientRootTransportUsesAuthenticatedBucketRoutes(t *testing.T) {
+	view, prepared := clientRootTransportComputeFixture(t)
+	bundle := prepared.Bundle
+	wireView, err := protocol.NewUpdateView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := bundle.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := mutation.MaterializationReceipt{
+		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
+		DurableBoundary: "gateway-client-root-atomic-v1",
+	}
+	wireReceipt, err := protocol.NewMaterializationReceipt(receipt, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Header.Get("Authorization") != "Bearer tenant-secret" {
+			t.Fatalf("Authorization=%q", request.Header.Get("Authorization"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("Cache-Control", "private, no-store")
+		switch request.URL.Path {
+		case "/v1/buckets/bkt_test/roots/" + view.BaseRoot.String() + "/update-view":
+			if request.Method != http.MethodGet {
+				t.Fatalf("update-view method=%s", request.Method)
+			}
+			_ = json.NewEncoder(response).Encode(wireView)
+		case "/v1/buckets/bkt_test/client-roots":
+			if request.Method != http.MethodPost {
+				t.Fatalf("client-root method=%s", request.Method)
+			}
+			var submitted protocol.WriterComputeResult
+			if err := json.NewDecoder(request.Body).Decode(&submitted); err != nil {
+				t.Fatal(err)
+			}
+			if submitted.Profile != protocol.WriterComputeResultProfile {
+				t.Fatalf("writer result profile=%q", submitted.Profile)
+			}
+			submittedBundle, err := submitted.Bundle.Core()
+			if err != nil || !submittedBundle.Candidate.Equals(bundle.Candidate) {
+				t.Fatalf("submitted bundle=%#v err=%v", submittedBundle, err)
+			}
+			if _, err := submitted.Materialization.Core(submittedBundle); err != nil {
+				t.Fatalf("submitted materialization: %v", err)
+			}
+			response.Header().Set("X-Malt-Client-Root-Old-State-Validation-Nanos", "1")
+			response.Header().Set("X-Malt-Client-Root-Gateway-Replay-Nanos", "1")
+			response.Header().Set("X-Malt-Client-Root-Persist-Nanos", "1")
+			response.Header().Set("X-Malt-Client-Root-Receipt-Nanos", "1")
+			response.Header().Set("X-Malt-Client-Root-Durable-Boundary", receipt.DurableBoundary)
+			response.Header().Set("X-Malt-Client-Root-Idempotent", "false")
+			response.Header().Set("Server-Timing", "old-state-validation;dur=1, gateway-replay;dur=1, persist;dur=1, receipt;dur=1")
+			setWriteAccountingHeader(t, response.Header())
+			_ = json.NewEncoder(response).Encode(wireReceipt)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	transport, err := client.New(client.Options{
+		BaseURL: server.URL, BucketID: "bkt_test", TenantBearerToken: "tenant-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.FetchUpdateView(t.Context(), view.BaseRoot, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.SubmitClientRoot(t.Context(), bundle); err == nil {
+		t.Fatal("managed Bucket transport accepted a bare client-root bundle")
+	}
+	if _, err := transport.SubmitClientRootResult(t.Context(), prepared); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("request count=%d, want 2", requests)
+	}
+	plain, err := client.NewWithBaseURL(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plain.SubmitClientRootResult(t.Context(), prepared); err == nil {
+		t.Fatal("unscoped transport accepted a managed writer result")
+	}
+}
+
 func setWriteAccountingHeader(t *testing.T, header http.Header) {
 	t.Helper()
 	accounting := validWriteAccounting()
@@ -245,6 +340,12 @@ func TestClientRootTransportRejectsCacheableOrIncompleteResponses(t *testing.T) 
 
 func clientRootTransportFixture(t *testing.T) (mutation.UpdateView, mutation.ClientRootBundle) {
 	t.Helper()
+	view, prepared := clientRootTransportComputeFixture(t)
+	return view, prepared.Bundle
+}
+
+func clientRootTransportComputeFixture(t *testing.T) (mutation.UpdateView, clientwriter.ComputeResult) {
+	t.Helper()
 	ctx := context.Background()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
@@ -295,7 +396,7 @@ func clientRootTransportFixture(t *testing.T) (mutation.UpdateView, mutation.Cli
 	if err != nil {
 		t.Fatal(err)
 	}
-	return view, result.Bundle
+	return view, result
 }
 
 func clientRootRawCID(t *testing.T, value string) cid.Cid {

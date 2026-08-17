@@ -20,7 +20,6 @@ import (
 	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -56,8 +55,8 @@ func (r clientRootRemote) FetchUpdateView(ctx context.Context, root cid.Cid, bou
 	return clientrootapp.ViewEnvelope{View: response.View, WireBytes: response.WireBytes}, nil
 }
 
-func (r clientRootRemote) SubmitClientRoot(ctx context.Context, bundle mutation.ClientRootBundle) (clientrootapp.ReceiptEnvelope, error) {
-	response, err := r.client.SubmitClientRoot(ctx, bundle)
+func (r clientRootRemote) SubmitClientRoot(ctx context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
+	response, err := r.client.SubmitClientRoot(ctx, prepared.Bundle)
 	if err != nil {
 		return clientrootapp.ReceiptEnvelope{}, err
 	}

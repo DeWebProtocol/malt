@@ -51,11 +51,14 @@ type BackupConfig struct {
 	TempDir     string `json:"temp_dir,omitempty"`
 }
 
-// FilesystemConfig owns non-authoritative cache and durable local mount intent.
-// Neither path stores or replaces accepted trust state.
+// FilesystemConfig owns non-authoritative cache, durable local mount intent,
+// and leased write-back journal/cache state. None stores or replaces accepted
+// trust state.
 type FilesystemConfig struct {
-	MountsPath string `json:"mounts_path"`
-	CacheDir   string `json:"cache_dir"`
+	MountsPath         string `json:"mounts_path"`
+	CacheDir           string `json:"cache_dir"`
+	WritableStateDir   string `json:"writable_state_dir"`
+	MaxStagedFileBytes uint64 `json:"max_staged_file_bytes"`
 }
 
 func Default() (*Config, error) {
@@ -80,8 +83,10 @@ func Default() (*Config, error) {
 			TempDir:     filepath.Join(root, "staging"),
 		},
 		Filesystem: FilesystemConfig{
-			MountsPath: filepath.Join(root, "mounts.json"),
-			CacheDir:   filepath.Join(root, "filesystem-cache"),
+			MountsPath:         filepath.Join(root, "mounts.json"),
+			CacheDir:           filepath.Join(root, "filesystem-cache"),
+			WritableStateDir:   filepath.Join(root, "filesystem-writeback"),
+			MaxStagedFileBytes: 256 << 20,
 		},
 	}, nil
 }
@@ -232,6 +237,12 @@ func (c *Config) applyDefaults() {
 	if c.Filesystem.CacheDir == "" {
 		c.Filesystem.CacheDir = defaults.Filesystem.CacheDir
 	}
+	if c.Filesystem.WritableStateDir == "" {
+		c.Filesystem.WritableStateDir = defaults.Filesystem.WritableStateDir
+	}
+	if c.Filesystem.MaxStagedFileBytes == 0 {
+		c.Filesystem.MaxStagedFileBytes = defaults.Filesystem.MaxStagedFileBytes
+	}
 }
 
 func (c *Config) Validate() error {
@@ -247,8 +258,12 @@ func (c *Config) Validate() error {
 	if c.Backup.KeyringPath == "" || c.Backup.HistoryDir == "" || c.Backup.PlansPath == "" || c.Backup.TempDir == "" {
 		return fmt.Errorf("backup keyring, history directory, plans, and staging paths are required")
 	}
-	if strings.TrimSpace(c.Filesystem.MountsPath) == "" || strings.TrimSpace(c.Filesystem.CacheDir) == "" {
-		return fmt.Errorf("filesystem mount registry and cache paths are required")
+	if strings.TrimSpace(c.Filesystem.MountsPath) == "" || strings.TrimSpace(c.Filesystem.CacheDir) == "" ||
+		strings.TrimSpace(c.Filesystem.WritableStateDir) == "" {
+		return fmt.Errorf("filesystem mount registry, cache, and writable-state paths are required")
+	}
+	if c.Filesystem.MaxStagedFileBytes == 0 || c.Filesystem.MaxStagedFileBytes > uint64(^uint(0)>>1) {
+		return fmt.Errorf("filesystem max staged file bytes must fit the local address space")
 	}
 	return nil
 }

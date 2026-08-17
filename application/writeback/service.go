@@ -112,6 +112,9 @@ func New(opts Options) (*Service, error) {
 	if opts.Queue == nil || opts.Payloads == nil || opts.Remote == nil || opts.Writer == nil || opts.Planner == nil || opts.Roots == nil {
 		return nil, fmt.Errorf("filesystem write-back requires queue, payload, remote, writer, planner, and root-policy capabilities")
 	}
+	if _, ok := opts.Roots.(acceptedRootCompleter); !ok {
+		return nil, fmt.Errorf("filesystem write-back root policy does not support accepted-root fenced completion")
+	}
 	alias := strings.TrimSpace(opts.TrustAlias)
 	if alias == "" {
 		return nil, fmt.Errorf("filesystem write-back trust alias is empty")
@@ -263,9 +266,29 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 		return result, fmt.Errorf("record verified filesystem candidate: %w", err)
 	}
 	result.CandidateStored = true
-	completed, err := s.queue.CompleteUpload(ctx, batch, executed.Candidate)
-	if err != nil {
-		return result, err
+	roots := s.roots.(acceptedRootCompleter)
+	var completed []journal.Operation
+	matched, completeErr := roots.CompleteIfAccepted(s.trustAlias, view.Root, func() error {
+		var err error
+		completed, err = s.queue.CompleteUpload(ctx, batch, executed.Candidate)
+		return err
+	})
+	if completeErr != nil {
+		return result, fmt.Errorf("complete verified write-back under accepted-root fence: %w", completeErr)
+	}
+	if !matched {
+		current, currentErr := s.roots.AcceptedRoot(s.trustAlias)
+		if currentErr != nil {
+			return result, fmt.Errorf("read advanced accepted root: %w", currentErr)
+		}
+		conflictID := acceptedRootConflictID(view.Root, current, executed.Candidate)
+		if _, conflictErr := s.queue.MarkUploadConflicted(ctx, batch, conflictID); conflictErr != nil {
+			return result, errors.Join(
+				fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current),
+				fmt.Errorf("preserve verified write-back conflict: %w", conflictErr),
+			)
+		}
+		return result, fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current)
 	}
 	result.Completed = completed
 	return result, nil

@@ -79,6 +79,7 @@ type datasetBranch struct {
 }
 
 type viewFilesystemFactory func(string, string) (filesystemmount.ViewFilesystem, error)
+type writableBindingFactory func(context.Context, filesystemmount.Spec, filesystemservice.View, filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error)
 
 // gatewayFilesystemRouter keeps concrete Gateway HTTP types inside the runtime
 // composition root. The mount manager and platform adapter see only semantic
@@ -86,14 +87,15 @@ type viewFilesystemFactory func(string, string) (filesystemmount.ViewFilesystem,
 type gatewayFilesystemRouter struct {
 	mu       sync.Mutex
 	open     viewFilesystemFactory
+	bind     writableBindingFactory
 	services map[datasetBranch]filesystemmount.ViewFilesystem
 }
 
-func newGatewayFilesystemRouter(open viewFilesystemFactory) (*gatewayFilesystemRouter, error) {
+func newGatewayFilesystemRouter(open viewFilesystemFactory, bind writableBindingFactory) (*gatewayFilesystemRouter, error) {
 	if open == nil {
 		return nil, fmt.Errorf("Gateway filesystem factory is nil")
 	}
-	return &gatewayFilesystemRouter{open: open, services: map[datasetBranch]filesystemmount.ViewFilesystem{}}, nil
+	return &gatewayFilesystemRouter{open: open, bind: bind, services: map[datasetBranch]filesystemmount.ViewFilesystem{}}, nil
 }
 
 func (r *gatewayFilesystemRouter) filesystem(view filesystemservice.View) (filesystemmount.ViewFilesystem, error) {
@@ -106,14 +108,14 @@ func (r *gatewayFilesystemRouter) filesystem(view filesystemservice.View) (files
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if service := r.services[key]; service != nil {
+	if service := r.services[key]; !nilInterface(service) {
 		return service, nil
 	}
 	service, err := r.open(key.dataset, key.branch)
 	if err != nil {
 		return nil, err
 	}
-	if service == nil {
+	if nilInterface(service) {
 		return nil, fmt.Errorf("Gateway filesystem factory returned nil")
 	}
 	r.services[key] = service
@@ -144,6 +146,34 @@ func (r *gatewayFilesystemRouter) Open(ctx context.Context, view filesystemservi
 	return service.Open(ctx, view, path)
 }
 
+func (r *gatewayFilesystemRouter) BindWritable(ctx context.Context, spec filesystemmount.Spec, view filesystemservice.View) (filesystemmount.WritableBinding, error) {
+	if r == nil || r.bind == nil {
+		return nil, fmt.Errorf("Gateway filesystem router has no write-back binding factory")
+	}
+	canonical, err := filesystemmount.NormalizeSpec(spec)
+	if err != nil {
+		return nil, err
+	}
+	if canonical.WritePolicy != filesystemmount.WriteBack || canonical.DatasetID != view.DatasetID || canonical.Branch != view.Branch {
+		return nil, fmt.Errorf("write-back mount Spec does not match its selected View")
+	}
+	service, err := r.filesystem(view)
+	if err != nil {
+		return nil, err
+	}
+	binding, err := r.bind(ctx, canonical, view, service)
+	if nilInterface(binding) {
+		binding = nil
+	}
+	if err != nil {
+		return binding, err
+	}
+	if binding == nil {
+		return nil, fmt.Errorf("Gateway write-back binding factory returned nil")
+	}
+	return binding, nil
+}
+
 // NewMountManager composes the locally authoritative selector, verified
 // Gateway reader, non-authoritative cache, durable registry, and platform
 // adapter. It never observes or accepts a remote head.
@@ -171,6 +201,7 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 	if err != nil {
 		return nil, fmt.Errorf("initialize filesystem verifier: %w", err)
 	}
+	writerFactory := &clientRootWriterFactory{}
 	router, err := newGatewayFilesystemRouter(func(datasetID, branch string) (filesystemmount.ViewFilesystem, error) {
 		options, err := requiredGatewayOptions(cfg, datasetID, branch)
 		if err != nil {
@@ -187,6 +218,22 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 		return filesystemservice.New(filesystemservice.Options{
 			Reader: reader, Cache: payloadCache, Verifier: verifier,
 		})
+	}, func(ctx context.Context, spec filesystemmount.Spec, view filesystemservice.View, service filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error) {
+		options, err := requiredGatewayOptions(cfg, spec.DatasetID, spec.Branch)
+		if err != nil {
+			return nil, err
+		}
+		remote, err := gatewayclient.New(options)
+		if err != nil {
+			return nil, err
+		}
+		return newGatewayWritableBinding(ctx, gatewayWritableBindingOptions{
+			Spec: spec, View: view, Base: viewFilesystemBase{filesystem: service},
+			Remote: remote, Roots: trust, WriterFactory: writerFactory,
+			StateDirectory:     cfg.Filesystem.WritableStateDir,
+			MaxStagedFileBytes: cfg.Filesystem.MaxStagedFileBytes,
+			Source:             "filesystem mount " + spec.ID + " via Gateway",
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -202,6 +249,7 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 }
 
 var (
-	_ filesystemmount.ViewSelector   = acceptedViewSelector{}
-	_ filesystemmount.ViewFilesystem = (*gatewayFilesystemRouter)(nil)
+	_ filesystemmount.ViewSelector           = acceptedViewSelector{}
+	_ filesystemmount.ViewFilesystem         = (*gatewayFilesystemRouter)(nil)
+	_ filesystemmount.WritableViewFilesystem = (*gatewayFilesystemRouter)(nil)
 )

@@ -161,18 +161,30 @@ func New(opts Options) (*Service, error) {
 }
 
 // Close releases the exclusive cache/journal leases after all active service
-// operations finish. It is idempotent. Handles cannot read after Close.
+// operations finish. It is idempotent, and a failed lease release remains
+// retryable while new operations stay permanently closed. Handles cannot read
+// after the first Close attempt.
 func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
-	if s.closed {
+	if s.closed && len(s.release) == 0 {
 		return nil
 	}
 	s.closed = true
-	return releaseAll(s.release)
+	failed := make([]func() error, 0, len(s.release))
+	var failures []error
+	for index := len(s.release) - 1; index >= 0; index-- {
+		if err := s.release[index](); err != nil {
+			failures = append(failures, err)
+			failed = append(failed, s.release[index])
+		}
+	}
+	slices.Reverse(failed)
+	s.release = failed
+	return errors.Join(failures...)
 }
 
 func (s *Service) StageWrite(ctx context.Context, view filesystemservice.View, rawPath string, body []byte, offline bool) (journal.Operation, error) {

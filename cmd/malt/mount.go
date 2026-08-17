@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
 	clientdaemon "github.com/dewebprotocol/malt-client/internal/daemon"
@@ -13,6 +14,8 @@ var (
 	mountBranch          string
 	mountTrustAlias      string
 	mountEncryptionEpoch uint32
+	mountWritePolicy     string
+	mountLayoutPolicy    string
 )
 
 var mountCmd = &cobra.Command{
@@ -22,12 +25,18 @@ var mountCmd = &cobra.Command{
 
 var mountAddCmd = &cobra.Command{
 	Use:           "add <id> <dataset-id> <mountpoint>",
-	Short:         "Mount an accepted remote Bucket view read-only",
+	Short:         "Mount an accepted remote Bucket view",
 	Args:          cobra.ExactArgs(3),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		spec := mountSpec(args[0], args[1], args[2], mountBranch, mountTrustAlias, mountEncryptionEpoch)
+		spec, err := mountSpecWithPolicy(
+			args[0], args[1], args[2], mountBranch, mountTrustAlias, mountEncryptionEpoch,
+			mountWritePolicy, mountLayoutPolicy,
+		)
+		if err != nil {
+			return err
+		}
 		client, closeTransport, err := configuredMountClient()
 		if err != nil {
 			return err
@@ -40,6 +49,26 @@ var mountAddCmd = &cobra.Command{
 		printJSON(status)
 		return nil
 	},
+}
+
+func mountSpecWithPolicy(
+	id, datasetID, mountpoint, branch, trustAlias string,
+	encryptionEpoch uint32, writePolicy, layoutPolicy string,
+) (filesystemmount.Spec, error) {
+	spec := mountSpec(id, datasetID, mountpoint, branch, trustAlias, encryptionEpoch)
+	switch filesystemmount.WritePolicy(strings.ToLower(strings.TrimSpace(writePolicy))) {
+	case filesystemmount.WriteReadOnly:
+		if strings.TrimSpace(layoutPolicy) != "" {
+			return filesystemmount.Spec{}, fmt.Errorf("read-only mount does not accept a layout policy")
+		}
+	case filesystemmount.WriteBack:
+		spec.WritePolicy = filesystemmount.WriteBack
+		spec.ConflictPolicy = filesystemmount.ConflictPreserveLocal
+		spec.LayoutPolicy = filesystemmount.LayoutPolicy(strings.ToLower(strings.TrimSpace(layoutPolicy)))
+	default:
+		return filesystemmount.Spec{}, fmt.Errorf("unsupported mount write policy %q", writePolicy)
+	}
+	return filesystemmount.NormalizeSpec(spec)
 }
 
 var mountListCmd = &cobra.Command{
@@ -116,6 +145,8 @@ func init() {
 	mountAddCmd.Flags().StringVar(&mountBranch, "branch", "main", "remote dataset branch")
 	mountAddCmd.Flags().StringVar(&mountTrustAlias, "trust-alias", "", "local accepted-root alias (defaults to mount id)")
 	mountAddCmd.Flags().Uint32Var(&mountEncryptionEpoch, "encryption-epoch", 0, "local encryption epoch (nonzero requires decryption support)")
+	mountAddCmd.Flags().StringVar(&mountWritePolicy, "write-policy", string(filesystemmount.WriteReadOnly), "mount write policy: read_only or write_back")
+	mountAddCmd.Flags().StringVar(&mountLayoutPolicy, "layout", "", "write-back UnixFS layout: flat-v1 or hybrid-v1")
 	mountCmd.AddCommand(mountAddCmd, mountListCmd)
 	rootCmd.AddCommand(mountCmd, unmountCmd)
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
+	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -109,7 +110,7 @@ func (c *Client) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *prot
 	if !root.Defined() {
 		return nil, fmt.Errorf("update-view root is undefined")
 	}
-	u, err := c.endpoint("/v1/roots/" + url.PathEscape(root.String()) + "/update-view")
+	u, err := c.endpoint(c.nativeRoute("/v1/roots/" + url.PathEscape(root.String()) + "/update-view"))
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +128,7 @@ func (c *Client) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *prot
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req, c.bucketID != "")
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +161,9 @@ func (c *Client) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *prot
 // receipt is strictly decoded and checked against the exact submitted bundle.
 // Publication and local root acceptance remain separate operations.
 func (c *Client) SubmitClientRoot(ctx context.Context, bundle mutation.ClientRootBundle) (*ClientRootResponse, error) {
+	if c != nil && c.bucketID != "" {
+		return nil, fmt.Errorf("managed Bucket client-root submission requires the complete local writer result")
+	}
 	encodingStarted := time.Now()
 	wire, err := protocol.NewClientRootBundle(bundle)
 	if err != nil {
@@ -170,7 +174,41 @@ func (c *Client) SubmitClientRoot(ctx context.Context, bundle mutation.ClientRoo
 		return nil, fmt.Errorf("encode client-root bundle: %w", err)
 	}
 	requestEncodingNS := clientRootDurationNS(time.Since(encodingStarted))
-	u, err := c.endpoint("/v1/client-roots")
+	return c.submitClientRootWire(ctx, "/v1/client-roots", false, data, bundle, requestEncodingNS)
+}
+
+// SubmitClientRootResult sends the complete local writer result to the managed
+// Bucket route. The materialization and retained next view are locally bound
+// to the exact bundle before tenant-authenticated network I/O.
+func (c *Client) SubmitClientRootResult(ctx context.Context, prepared clientwriter.ComputeResult) (*ClientRootResponse, error) {
+	if c == nil || c.bucketID == "" {
+		return nil, fmt.Errorf("managed Bucket client-root submission requires a configured Bucket")
+	}
+	encodingStarted := time.Now()
+	wire, err := protocol.NewWriterComputeResult(
+		prepared.Bundle, prepared.Materialization, prepared.NextView,
+		protocol.WriterComputeMetrics(prepared.Metrics),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize client-root writer result: %w", err)
+	}
+	data, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("encode client-root writer result: %w", err)
+	}
+	requestEncodingNS := clientRootDurationNS(time.Since(encodingStarted))
+	return c.submitClientRootWire(ctx, c.nativeRoute("/v1/client-roots"), true, data, prepared.Bundle, requestEncodingNS)
+}
+
+func (c *Client) submitClientRootWire(
+	ctx context.Context,
+	route string,
+	tenantAuth bool,
+	data []byte,
+	bundle mutation.ClientRootBundle,
+	requestEncodingNS uint64,
+) (*ClientRootResponse, error) {
+	u, err := c.endpoint(route)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +217,7 @@ func (c *Client) SubmitClientRoot(ctx context.Context, bundle mutation.ClientRoo
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req, tenantAuth)
 	if err != nil {
 		return nil, err
 	}

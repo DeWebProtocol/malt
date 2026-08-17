@@ -297,7 +297,16 @@ it does not silently change the existing plaintext semantics of `malt add`.
   the CLI and future thin GUI adapters without direct trust-store mutation.
 - `internal/runtime`: process-independent composition of local accepted-root
   selection, per-dataset Gateway verified readers, non-authoritative cache,
-  durable mount lifecycle, and the outer platform adapter. Non-Linux targets
+  durable mount lifecycle, and the outer platform adapter. For an explicit
+  write-back Spec it also owns the concrete per-dataset/branch binding of
+  staging state, flat/hybrid UnixFS planning, isolated MALT Core Writer state,
+  the untrusted Gateway client-root remote, and candidate-only trust policy.
+  Before replay it durably freezes the selected layout for that state directory;
+  remounting the same dataset/branch with a different profile fails closed.
+  Candidate recording and exact journal completion share the accepted-root
+  promotion fence, and post-lease initialization errors return a cleanup-only
+  binding to the manager. The binding keeps local journal durability, verified
+  remote persistence, and accepted-root promotion separate. Non-Linux targets
   leave mount control unconfigured until a native adapter exists.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
@@ -309,7 +318,9 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `internal/durablefile`: platform-specific parent-directory synchronization
   after security-sensitive atomic state replacement.
 - `internal/filelock`: bounded cross-process locks for runtime-owned state
-  transitions.
+  transitions, with stateful idempotent unlock/close release so an unlock error
+  retains a retryable descriptor and a completed unlock is never repeated on an
+  invalid handle.
 - `internal/securefile`: owner-only Unix file modes and protected
   owner-and-SYSTEM Windows file DACLs.
 - `internal/cas`: runtime-side CAS helpers and byte verification.

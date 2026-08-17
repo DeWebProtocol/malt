@@ -88,8 +88,8 @@ func (r wasmRemote) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *p
 	return clientrootapp.ViewEnvelope{View: response.View, WireBytes: response.WireBytes}, nil
 }
 
-func (r wasmRemote) SubmitClientRoot(ctx context.Context, bundle mutation.ClientRootBundle) (clientrootapp.ReceiptEnvelope, error) {
-	response, err := r.client.SubmitClientRoot(ctx, bundle)
+func (r wasmRemote) SubmitClientRoot(ctx context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
+	response, err := r.client.SubmitClientRoot(ctx, prepared.Bundle)
 	if err != nil {
 		return clientrootapp.ReceiptEnvelope{}, err
 	}

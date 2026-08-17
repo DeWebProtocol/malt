@@ -84,7 +84,7 @@ type ReceiptEnvelope struct {
 // transport-neutral envelopes.
 type Remote interface {
 	FetchUpdateView(context.Context, cid.Cid, *protocol.UpdateViewBounds) (ViewEnvelope, error)
-	SubmitClientRoot(context.Context, mutation.ClientRootBundle) (ReceiptEnvelope, error)
+	SubmitClientRoot(context.Context, clientwriter.ComputeResult) (ReceiptEnvelope, error)
 }
 
 type LoadMetrics struct {
@@ -239,7 +239,7 @@ func (s *Session) Execute(ctx context.Context, operationID string, intent mutati
 		return OperationResult{}, fmt.Errorf("client writer advanced before durable receipt")
 	}
 	submitStart := time.Now()
-	envelope, err := s.remote.SubmitClientRoot(ctx, prepared.Bundle)
+	envelope, err := s.remote.SubmitClientRoot(ctx, prepared)
 	submitDuration := time.Since(submitStart)
 	if err != nil {
 		return OperationResult{}, err

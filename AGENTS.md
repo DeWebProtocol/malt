@@ -71,8 +71,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   batch. It plans before payload publication, uploads only final staged raw
   bodies referenced by the normalized intent, invokes the MALT Core
   client-root workflow, verifies the durable receipt, records only a candidate,
-  and then atomically completes or conflicts the exact batch. It must not
-  import a concrete Gateway transport or expose accepted-root promotion.
+  and then completes the exact batch under the accepted-root promotion fence or
+  atomically conflicts it. It must not import a concrete Gateway transport or
+  expose accepted-root promotion.
 - `unixfs/clientroot` owns the concrete flat-v1/hybrid-v1 projection from a
   verified complete update view plus durable filesystem operations into an
   output-free semantic intent. It verifies old and newly stored manifest CIDs
@@ -124,6 +125,14 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   concrete local configuration, transport, trust, keyring, synchronization,
   UnixFS, verified filesystem, cache, and platform-mount capabilities into
   application services; command handlers must not duplicate that composition.
+  An explicit write-back mount is bound here from one exact accepted View to
+  per-dataset/branch staging, a declared UnixFS planner, an isolated Core
+  Writer, untrusted transport capabilities, and candidate-only trust policy.
+  It durably freezes the layout profile for that dataset/branch before replay;
+  a changed layout must fail closed while the state is retained. Initialization
+  after lease acquisition must return a cleanup-only partial binding on error so
+  the mount manager can retry release. The binding must never infer remote
+  persistence from cache/journal state or promote an accepted root.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
   behavior here rather than under `cmd/malt`. Its semantic mutation adapter

@@ -49,6 +49,11 @@ func TestSessionAdvancesOnlyAfterExactDurableReceipt(t *testing.T) {
 	if result.Candidate.Equals(view.BaseRoot) || !session.BaseRoot().Equals(result.Candidate) {
 		t.Fatalf("result=%#v base=%s", result, session.BaseRoot())
 	}
+	if remote.submitted.Materialization.Profile != mutation.ClientRootMaterializationProfile ||
+		!remote.submitted.NextView.BaseRoot.Equals(result.Candidate) ||
+		remote.submitted.Bundle.OperationID != "native-map-replace" {
+		t.Fatalf("remote did not receive the complete writer result: %#v", remote.submitted)
+	}
 	wantViewDigest, err := view.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +111,7 @@ type sessionRemote struct {
 	view              mutation.UpdateView
 	substituteReceipt bool
 	submitErr         error
+	submitted         clientwriter.ComputeResult
 }
 
 func (r *sessionRemote) FetchUpdateView(_ context.Context, root cid.Cid, _ *protocol.UpdateViewBounds) (ViewEnvelope, error) {
@@ -115,10 +121,12 @@ func (r *sessionRemote) FetchUpdateView(_ context.Context, root cid.Cid, _ *prot
 	return ViewEnvelope{View: r.view, WireBytes: 123}, nil
 }
 
-func (r *sessionRemote) SubmitClientRoot(_ context.Context, bundle mutation.ClientRootBundle) (ReceiptEnvelope, error) {
+func (r *sessionRemote) SubmitClientRoot(_ context.Context, prepared clientwriter.ComputeResult) (ReceiptEnvelope, error) {
+	r.submitted = prepared
 	if r.submitErr != nil {
 		return ReceiptEnvelope{}, r.submitErr
 	}
+	bundle := prepared.Bundle
 	digest, err := bundle.Digest()
 	if err != nil {
 		return ReceiptEnvelope{}, err
