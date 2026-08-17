@@ -133,6 +133,25 @@ func (s *callbackSession) Unmount(context.Context) error {
 
 func (s *callbackSession) Done() <-chan error { return s.done }
 
+type blockingMountAdapter struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (*blockingMountAdapter) Name() string { return "blocking-platform" }
+
+func (a *blockingMountAdapter) Mount(ctx context.Context, _ Spec, _ ReadOnlyFilesystem) (Session, error) {
+	close(a.entered)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-a.release:
+		return nil, errors.New("released blocked mount")
+	}
+}
+
+func (*blockingMountAdapter) RecoverUnmount(context.Context, Spec) error { return nil }
+
 func TestManagerPersistsBeforeMountAndRestoresAfterDaemonRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mounts.json")
 	store, err := OpenStore(path)
@@ -373,6 +392,55 @@ func TestManagerLeaseExcludesSecondDaemonAndReleasesOnShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := newTestManager(t, secondStore, &fakeAdapter{}, &fakeViewFilesystem{}, view)
+	if err := second.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShutdownWaitForOperationIsContextCancelable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mounts.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := testSpec(t, "docs")
+	adapter := &blockingMountAdapter{entered: make(chan struct{}), release: make(chan struct{})}
+	manager := newTestManager(t, store, adapter, &fakeViewFilesystem{}, testMountView(t, spec))
+	operationCtx, cancelOperation := context.WithCancel(t.Context())
+	defer cancelOperation()
+	mountDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Mount(operationCtx, spec)
+		mountDone <- err
+	}()
+	select {
+	case <-adapter.entered:
+	case <-time.After(time.Second):
+		t.Fatal("blocking mount operation did not start")
+	}
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancelShutdown()
+	started := time.Now()
+	if err := manager.Shutdown(shutdownCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown error=%v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("context-canceled Shutdown blocked for %s", elapsed)
+	}
+
+	cancelOperation()
+	if err := <-mountDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Mount error=%v, want canceled", err)
+	}
+	if err := manager.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := newTestManager(t, secondStore, &fakeAdapter{}, &fakeViewFilesystem{}, testMountView(t, spec))
 	if err := second.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}

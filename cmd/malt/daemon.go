@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	clientdaemon "github.com/dewebprotocol/malt-client/internal/daemon"
+	clientruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/spf13/cobra"
@@ -108,7 +110,7 @@ func init() {
 	rootCmd.AddCommand(daemonCmd)
 }
 
-func runDaemonServe(*cobra.Command, []string) error {
+func runDaemonServe(*cobra.Command, []string) (result error) {
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
 		return err
@@ -134,8 +136,29 @@ func runDaemonServe(*cobra.Command, []string) error {
 	if err := recoverConfiguredPlanTransactions(cfg); err != nil {
 		return fmt.Errorf("recover interrupted backup plan transaction: %w", err)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), daemonSignals()...)
+	defer stop()
+	mountManager, err := clientruntime.NewMountManager(cfg)
+	if errors.Is(err, clientruntime.ErrPlatformMountUnavailable) {
+		fmt.Fprintf(os.Stderr, "MALT daemon mount service unavailable: %v\n", err)
+		mountManager = nil
+	} else if err != nil {
+		return fmt.Errorf("configure mount service: %w", err)
+	}
+	if mountManager != nil {
+		defer func() {
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := mountManager.Shutdown(shutdown); err != nil {
+				result = errors.Join(result, fmt.Errorf("shutdown mount service: %w", err))
+			}
+		}()
+		if err := mountManager.Restore(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "MALT daemon mount restore incomplete: %v\n", err)
+		}
+	}
 	server, err := clientdaemon.NewWithOptions(store, clientdaemon.Options{
-		Instance: instance, Plans: planRunner,
+		Instance: instance, Plans: planRunner, Mounts: mountManager,
 	})
 	if err != nil {
 		return err
@@ -154,19 +177,48 @@ func runDaemonServe(*cobra.Command, []string) error {
 		_ = removeDaemonEndpointIfMatch(cfg.Daemon.SocketPath, socketInfo)
 	}()
 	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	ctx, stop := signal.NotifyContext(context.Background(), daemonSignals()...)
-	defer stop()
 	go runConfiguredPlanScheduler(ctx, planRunner)
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdown)
-	}()
-	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-		return err
+	return serveDaemonHTTP(ctx, httpServer, listener)
+}
+
+func serveDaemonHTTP(ctx context.Context, server *http.Server, listener net.Listener) error {
+	return serveDaemonHTTPWithTimeout(ctx, server, listener, 3*time.Second)
+}
+
+func serveDaemonHTTPWithTimeout(ctx context.Context, server *http.Server, listener net.Listener, shutdownTimeout time.Duration) error {
+	if ctx == nil || server == nil || listener == nil {
+		return fmt.Errorf("daemon HTTP server requires context, server, and listener")
 	}
-	return nil
+	if shutdownTimeout <= 0 {
+		return fmt.Errorf("daemon HTTP shutdown timeout must be positive")
+	}
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	server.BaseContext = func(net.Listener) context.Context { return serveCtx }
+	shutdownDone := make(chan error, 1)
+	go func() {
+		<-serveCtx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		err := server.Shutdown(shutdown)
+		if err != nil {
+			err = errors.Join(err, server.Close())
+		}
+		shutdownDone <- err
+	}()
+	serveErr := server.Serve(listener)
+	// An unexpected listener/server failure must cancel active handler
+	// contexts before mount-manager shutdown attempts to acquire its lifecycle
+	// operation gate.
+	cancelServe()
+	shutdownErr := <-shutdownDone
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
+	}
+	if errors.Is(shutdownErr, http.ErrServerClosed) {
+		shutdownErr = nil
+	}
+	return errors.Join(serveErr, shutdownErr)
 }
 
 func recoverConfiguredPlanTransactions(cfg *clientconfig.Config) error {

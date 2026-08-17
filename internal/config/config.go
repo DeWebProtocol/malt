@@ -19,10 +19,11 @@ const (
 )
 
 type Config struct {
-	Gateway   GatewayConfig   `json:"gateway"`
-	Daemon    DaemonConfig    `json:"daemon"`
-	Workspace WorkspaceConfig `json:"workspace"`
-	Backup    BackupConfig    `json:"backup"`
+	Gateway    GatewayConfig    `json:"gateway"`
+	Daemon     DaemonConfig     `json:"daemon"`
+	Workspace  WorkspaceConfig  `json:"workspace"`
+	Backup     BackupConfig     `json:"backup"`
+	Filesystem FilesystemConfig `json:"filesystem"`
 }
 
 type GatewayConfig struct {
@@ -50,6 +51,13 @@ type BackupConfig struct {
 	TempDir     string `json:"temp_dir,omitempty"`
 }
 
+// FilesystemConfig owns non-authoritative cache and durable local mount intent.
+// Neither path stores or replaces accepted trust state.
+type FilesystemConfig struct {
+	MountsPath string `json:"mounts_path"`
+	CacheDir   string `json:"cache_dir"`
+}
+
 func Default() (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -70,6 +78,10 @@ func Default() (*Config, error) {
 			HistoryDir:  filepath.Join(root, "backup-history"),
 			PlansPath:   filepath.Join(root, "backup-plans.json"),
 			TempDir:     filepath.Join(root, "staging"),
+		},
+		Filesystem: FilesystemConfig{
+			MountsPath: filepath.Join(root, "mounts.json"),
+			CacheDir:   filepath.Join(root, "filesystem-cache"),
 		},
 	}, nil
 }
@@ -214,6 +226,12 @@ func (c *Config) applyDefaults() {
 	if c.Backup.TempDir == "" {
 		c.Backup.TempDir = defaults.Backup.TempDir
 	}
+	if c.Filesystem.MountsPath == "" {
+		c.Filesystem.MountsPath = defaults.Filesystem.MountsPath
+	}
+	if c.Filesystem.CacheDir == "" {
+		c.Filesystem.CacheDir = defaults.Filesystem.CacheDir
+	}
 }
 
 func (c *Config) Validate() error {
@@ -228,6 +246,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Backup.KeyringPath == "" || c.Backup.HistoryDir == "" || c.Backup.PlansPath == "" || c.Backup.TempDir == "" {
 		return fmt.Errorf("backup keyring, history directory, plans, and staging paths are required")
+	}
+	if strings.TrimSpace(c.Filesystem.MountsPath) == "" || strings.TrimSpace(c.Filesystem.CacheDir) == "" {
+		return fmt.Errorf("filesystem mount registry and cache paths are required")
 	}
 	return nil
 }

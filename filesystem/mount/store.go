@@ -353,6 +353,9 @@ func normalizeSpec(spec Spec) (_ Spec, err error) {
 	if len(spec.ID) > 128 {
 		return Spec{}, fmt.Errorf("mount id exceeds 128 bytes")
 	}
+	if spec.ID == "." || spec.ID == ".." {
+		return Spec{}, fmt.Errorf("mount id is a reserved path segment")
+	}
 	for _, character := range spec.ID {
 		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
 			(character < '0' || character > '9') && character != '-' && character != '_' && character != '.' {
@@ -380,6 +383,11 @@ func normalizeSpec(spec Spec) (_ Spec, err error) {
 	}
 	return spec, nil
 }
+
+// NormalizeSpec validates and canonicalizes one durable mount identity. The
+// daemon, local API client, and store use this one policy so an ID accepted at
+// creation remains addressable by every lifecycle route.
+func NormalizeSpec(spec Spec) (Spec, error) { return normalizeSpec(spec) }
 
 func mountpointKey(path string) string {
 	path = filepath.Clean(path)

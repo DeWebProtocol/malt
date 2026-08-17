@@ -305,6 +305,18 @@ func TestMountControlPlaneUsesOneLifecycleServiceAndStrictJSON(t *testing.T) {
 	if response.Code != http.StatusBadRequest || len(controller.mountCalls) != 1 {
 		t.Fatalf("lossy JSON response=%d body=%s calls=%d", response.Code, response.Body.String(), len(controller.mountCalls))
 	}
+	reserved := spec
+	reserved.ID = ".."
+	reservedBody, err := json.Marshal(reserved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/mounts", bytes.NewReader(reservedBody))
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || len(controller.mountCalls) != 1 {
+		t.Fatalf("reserved-ID response=%d body=%s calls=%d", response.Code, response.Body.String(), len(controller.mountCalls))
+	}
 
 	for _, test := range []struct {
 		name   string

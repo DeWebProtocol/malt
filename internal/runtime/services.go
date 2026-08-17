@@ -192,6 +192,10 @@ func ProtectedPaths(configPath string, cfg *clientconfig.Config) []string {
 		cfg.Daemon.StatePath,
 		cfg.Daemon.SocketPath,
 		cfg.Daemon.SocketPath + ".pid",
+		cfg.Filesystem.MountsPath,
+		cfg.Filesystem.MountsPath + ".lock",
+		cfg.Filesystem.MountsPath + ".manager.lock",
+		cfg.Filesystem.CacheDir,
 	}
 }
 

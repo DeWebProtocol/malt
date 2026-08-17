@@ -25,6 +25,8 @@ func TestServicesOwnConfigurationAndPlanCompositionPaths(t *testing.T) {
 	cfg.Backup.HistoryDir = filepath.Join(root, "history")
 	cfg.Backup.PlansPath = filepath.Join(root, "plans.json")
 	cfg.Backup.TempDir = filepath.Join(root, "staging")
+	cfg.Filesystem.MountsPath = filepath.Join(root, "mounts.json")
+	cfg.Filesystem.CacheDir = filepath.Join(root, "filesystem-cache")
 	configPath := filepath.Join(root, "config.json")
 	if err := clientconfig.Write(configPath, cfg); err != nil {
 		t.Fatal(err)
@@ -57,6 +59,10 @@ func TestServicesOwnConfigurationAndPlanCompositionPaths(t *testing.T) {
 		cfg.Daemon.StatePath,
 		cfg.Daemon.SocketPath,
 		cfg.Daemon.SocketPath + ".pid",
+		cfg.Filesystem.MountsPath,
+		cfg.Filesystem.MountsPath + ".lock",
+		cfg.Filesystem.MountsPath + ".manager.lock",
+		cfg.Filesystem.CacheDir,
 	}
 	if got := services.ProtectedPaths(loaded); !reflect.DeepEqual(got, wantProtected) {
 		t.Fatalf("protected paths = %v, want %v", got, wantProtected)

@@ -67,12 +67,14 @@ func TestStorePersistsDesiredAndPendingUnmountLifecycle(t *testing.T) {
 
 func TestStoreRejectsUnsafeSpecs(t *testing.T) {
 	base := testSpec(t, "docs")
-	tests := []Spec{base, base, base, base, base}
+	tests := []Spec{base, base, base, base, base, base, base}
 	tests[0].ID = "bad/id"
-	tests[1].DatasetID = "bucket-\xff"
-	tests[2].Mountpoint = "relative/path"
-	tests[3].Mountpoint = string(filepath.Separator)
-	tests[4].WritePolicy = "write_back"
+	tests[1].ID = "."
+	tests[2].ID = ".."
+	tests[3].DatasetID = "bucket-\xff"
+	tests[4].Mountpoint = "relative/path"
+	tests[5].Mountpoint = string(filepath.Separator)
+	tests[6].WritePolicy = "write_back"
 	for index, spec := range tests {
 		store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
 		if err != nil {
