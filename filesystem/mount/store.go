@@ -28,6 +28,7 @@ var (
 	ErrInvalidSpec         = errors.New("invalid mount specification")
 	ErrIdentityReuse       = errors.New("mount identity is already bound differently")
 	ErrMountpointUse       = errors.New("mountpoint is already reserved")
+	ErrWritableViewUse     = errors.New("writable dataset branch is already reserved")
 	ErrPendingUnmount      = errors.New("mount has a pending unmount")
 	ErrUnsupportedPlatform = errors.New("mount lifecycle is unsupported on this platform")
 )
@@ -35,11 +36,16 @@ var (
 type CachePolicy string
 type WritePolicy string
 type ConflictPolicy string
+type LayoutPolicy string
 
 const (
-	CacheVerified        CachePolicy    = "verified"
-	WriteReadOnly        WritePolicy    = "read_only"
-	ConflictFailReadOnly ConflictPolicy = "fail_read_only"
+	CacheVerified         CachePolicy    = "verified"
+	WriteReadOnly         WritePolicy    = "read_only"
+	WriteBack             WritePolicy    = "write_back"
+	ConflictFailReadOnly  ConflictPolicy = "fail_read_only"
+	ConflictPreserveLocal ConflictPolicy = "preserve_local"
+	LayoutFlatV1          LayoutPolicy   = "flat-v1"
+	LayoutHybridV1        LayoutPolicy   = "hybrid-v1"
 )
 
 // Spec is the durable identity and local policy for one mount. TrustAlias is
@@ -53,6 +59,7 @@ type Spec struct {
 	TrustAlias      string         `json:"trust_alias"`
 	CachePolicy     CachePolicy    `json:"cache_policy"`
 	WritePolicy     WritePolicy    `json:"write_policy"`
+	LayoutPolicy    LayoutPolicy   `json:"layout_policy,omitempty"`
 	EncryptionEpoch uint32         `json:"encryption_epoch"`
 	ConflictPolicy  ConflictPolicy `json:"conflict_policy"`
 }
@@ -145,6 +152,9 @@ func (s *Store) PutDesired(spec Spec) (Record, error) {
 		for id, existing := range s.state.Records {
 			if id != spec.ID && mountpointKey(existing.Spec.Mountpoint) == mountpointKey(spec.Mountpoint) {
 				return ErrMountpointUse
+			}
+			if id != spec.ID && sameWritableView(existing.Spec, spec) {
+				return ErrWritableViewUse
 			}
 		}
 		result = Record{Spec: spec, Desired: true, UpdatedAt: s.now().UTC()}
@@ -265,6 +275,7 @@ func (s *Store) reloadLocked() error {
 	}
 	next := emptyRegistry()
 	reserved := map[string]string{}
+	writableViews := map[string]string{}
 	for id, wire := range persisted.Records {
 		if wire.Desired == nil {
 			return fmt.Errorf("mount record %s is missing required desired state", id)
@@ -282,6 +293,13 @@ func (s *Store) reloadLocked() error {
 			return fmt.Errorf("mount records %s and %s reserve the same mountpoint", previous, id)
 		}
 		reserved[key] = id
+		if normalized.WritePolicy == WriteBack {
+			key := normalized.DatasetID + "\x00" + normalized.Branch
+			if previous, ok := writableViews[key]; ok {
+				return fmt.Errorf("mount records %s and %s reserve the same writable dataset branch", previous, id)
+			}
+			writableViews[key] = id
+		}
 		record.Spec = normalized
 		next.Records[id] = record
 	}
@@ -376,10 +394,29 @@ func normalizeSpec(spec Spec) (_ Spec, err error) {
 		spec.WritePolicy = WriteReadOnly
 	}
 	if spec.ConflictPolicy == "" {
-		spec.ConflictPolicy = ConflictFailReadOnly
+		if spec.WritePolicy == WriteBack {
+			spec.ConflictPolicy = ConflictPreserveLocal
+		} else {
+			spec.ConflictPolicy = ConflictFailReadOnly
+		}
 	}
-	if spec.CachePolicy != CacheVerified || spec.WritePolicy != WriteReadOnly || spec.ConflictPolicy != ConflictFailReadOnly {
-		return Spec{}, fmt.Errorf("mount policy is unsupported by the read-only runtime")
+	if spec.CachePolicy != CacheVerified {
+		return Spec{}, fmt.Errorf("mount cache policy %q is unsupported", spec.CachePolicy)
+	}
+	switch spec.WritePolicy {
+	case WriteReadOnly:
+		if spec.ConflictPolicy != ConflictFailReadOnly || spec.LayoutPolicy != "" {
+			return Spec{}, fmt.Errorf("read-only mount requires fail-read-only conflict policy and no write layout")
+		}
+	case WriteBack:
+		if spec.ConflictPolicy != ConflictPreserveLocal {
+			return Spec{}, fmt.Errorf("write-back mount requires preserve-local conflict policy")
+		}
+		if spec.LayoutPolicy != LayoutFlatV1 && spec.LayoutPolicy != LayoutHybridV1 {
+			return Spec{}, fmt.Errorf("write-back mount requires flat-v1 or hybrid-v1 layout policy")
+		}
+	default:
+		return Spec{}, fmt.Errorf("mount write policy %q is unsupported", spec.WritePolicy)
 	}
 	return spec, nil
 }
@@ -395,6 +432,11 @@ func mountpointKey(path string) string {
 		return strings.ToLower(path)
 	}
 	return path
+}
+
+func sameWritableView(left, right Spec) bool {
+	return left.WritePolicy == WriteBack && right.WritePolicy == WriteBack &&
+		left.DatasetID == right.DatasetID && left.Branch == right.Branch
 }
 
 func emptyRegistry() registryState {

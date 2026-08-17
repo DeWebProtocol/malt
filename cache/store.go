@@ -26,6 +26,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 const metadataVersion = 1
@@ -36,6 +37,7 @@ var (
 	ErrNotVerified     = errors.New("cache entry is not verified clean data")
 	ErrCorrupt         = errors.New("cache payload is missing or corrupt")
 	ErrInvalidState    = errors.New("invalid cache state transition")
+	ErrBodyTooLarge    = errors.New("cache payload exceeds configured read limit")
 )
 
 // State distinguishes remote materialization, verified bytes, and every local
@@ -255,8 +257,16 @@ func (s *Store) ReadVerified(ctx context.Context, binding Binding, verifier Proo
 }
 
 // ReadLocal returns exact CID-bound local bytes for dirty/journal workflows.
-// It never treats them as remotely verified data.
+// It never treats them as remotely verified data. Callers with a product
+// allocation limit should use ReadLocalBounded or ReadLocalRange.
 func (s *Store) ReadLocal(binding Binding) ([]byte, Entry, error) {
+	return s.ReadLocalBounded(binding, uint64(^uint64(0)>>1))
+}
+
+// ReadLocalBounded checks durable metadata and the actual file size before it
+// allocates, streams CID verification through a bounded reader, then returns
+// the body only when it fits maxBytes.
+func (s *Store) ReadLocalBounded(binding Binding, maxBytes uint64) ([]byte, Entry, error) {
 	binding, err := normalizeBinding(binding)
 	if err != nil {
 		return nil, Entry{}, err
@@ -273,19 +283,102 @@ func (s *Store) ReadLocal(binding Binding) ([]byte, Entry, error) {
 		if value.State == StateVerifiedClean || value.State == StateUnmaterializedRemote || value.State == StateStale || !value.BodyPresent {
 			return ErrInvalidState
 		}
-		body, err = os.ReadFile(s.bodyPath(id))
+		file, err := s.openBoundedLocalBodyLocked(id, value, maxBytes)
 		if err != nil {
+			return err
+		}
+		defer file.Close()
+		body = make([]byte, int(value.Size))
+		if _, err := io.ReadFull(file, body); err != nil {
 			return errors.Join(ErrCorrupt, err)
 		}
-		if int64(len(body)) != value.Size {
+		var extra [1]byte
+		if count, readErr := file.Read(extra[:]); count != 0 || (readErr != nil && !errors.Is(readErr, io.EOF)) {
 			return ErrCorrupt
 		}
-		return verifyPayloadCID(binding.CID, body)
+		if err := verifyPayloadCID(binding.CID, body); err != nil {
+			return errors.Join(ErrCorrupt, err)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, entry, err
 	}
-	return append([]byte(nil), body...), entry, err
+	return body, entry, err
+}
+
+// VerifyLocal streams integrity verification without materializing the body.
+func (s *Store) VerifyLocal(binding Binding, maxBytes uint64) (Entry, error) {
+	binding, err := normalizeBinding(binding)
+	if err != nil {
+		return Entry{}, err
+	}
+	var result Entry
+	err = s.withState(false, func() error {
+		id := bindingID(binding)
+		entry, ok := s.state.Entries[id]
+		if !ok {
+			return ErrMiss
+		}
+		result = cloneEntry(entry)
+		file, err := s.openBoundedLocalBodyLocked(id, entry, maxBytes)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return verifyLocalStream(file, entry.Binding.CID, entry.Size)
+	})
+	return result, err
+}
+
+// ReadLocalRange streams whole-body CID verification but allocates only the
+// requested range after verification. The exact immutable local binding stays
+// pinned by CID across repeated calls.
+func (s *Store) ReadLocalRange(binding Binding, offset, length, maxBytes uint64) ([]byte, Entry, error) {
+	binding, err := normalizeBinding(binding)
+	if err != nil {
+		return nil, Entry{}, err
+	}
+	var entry Entry
+	var body []byte
+	err = s.withState(false, func() error {
+		id := bindingID(binding)
+		value, ok := s.state.Entries[id]
+		if !ok {
+			return ErrMiss
+		}
+		entry = cloneEntry(value)
+		file, err := s.openBoundedLocalBodyLocked(id, value, maxBytes)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		size := uint64(value.Size)
+		wanted := uint64(0)
+		if length != 0 && offset < size {
+			end := offset + length
+			if end < offset || end > size {
+				end = size
+			}
+			wanted = end - offset
+		}
+		if wanted > uint64(maxIntValue()) {
+			return ErrBodyTooLarge
+		}
+		body = make([]byte, int(wanted))
+		capture := &rangeCapture{offset: offset, body: body}
+		if err := verifyLocalStream(io.TeeReader(file, capture), value.Binding.CID, value.Size); err != nil {
+			return err
+		}
+		if capture.copied != len(body) {
+			return ErrCorrupt
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, entry, err
+	}
+	return body, entry, err
 }
 
 // Transition changes only the local cache state. Verified-clean entries can
@@ -322,6 +415,12 @@ func (s *Store) Transition(binding Binding, next State) (Entry, error) {
 // only local-body states, verifies the exact body and CID under the cache
 // lock, and cannot create verified-clean data or proof evidence.
 func (s *Store) ReconcileLocalState(binding Binding, next State) (Entry, error) {
+	return s.ReconcileLocalStateBounded(binding, next, uint64(^uint64(0)>>1))
+}
+
+// ReconcileLocalStateBounded verifies the local body without materializing it
+// and refuses metadata larger than maxBytes before touching the body file.
+func (s *Store) ReconcileLocalStateBounded(binding Binding, next State, maxBytes uint64) (Entry, error) {
 	binding, err := normalizeBinding(binding)
 	if err != nil {
 		return Entry{}, err
@@ -339,16 +438,15 @@ func (s *Store) ReconcileLocalState(binding Binding, next State) (Entry, error) 
 		if !isLocalBodyState(entry.State) || !entry.BodyPresent {
 			return fmt.Errorf("%w: cannot reconcile %s as %s", ErrInvalidState, entry.State, next)
 		}
-		body, err := os.ReadFile(s.bodyPath(id))
+		file, err := s.openBoundedLocalBodyLocked(id, entry, maxBytes)
 		if err != nil {
-			return errors.Join(ErrCorrupt, err)
+			return err
 		}
-		if int64(len(body)) != entry.Size {
-			return ErrCorrupt
+		if err := verifyLocalStream(file, entry.Binding.CID, entry.Size); err != nil {
+			_ = file.Close()
+			return err
 		}
-		if err := verifyPayloadCID(binding.CID, body); err != nil {
-			return errors.Join(ErrCorrupt, err)
-		}
+		_ = file.Close()
 		entry.State = next
 		entry.Verification = nil
 		entry.UpdatedAt = time.Now().UTC()
@@ -360,6 +458,84 @@ func (s *Store) ReconcileLocalState(binding Binding, next State) (Entry, error) 
 		return nil
 	})
 	return result, err
+}
+
+func (s *Store) openBoundedLocalBodyLocked(id string, entry Entry, maxBytes uint64) (*os.File, error) {
+	if !isLocalBodyState(entry.State) || !entry.BodyPresent || entry.Size < 0 {
+		return nil, ErrInvalidState
+	}
+	if uint64(entry.Size) > maxBytes || entry.Size > int64(maxIntValue()) {
+		return nil, fmt.Errorf("%w: size %d, limit %d", ErrBodyTooLarge, entry.Size, maxBytes)
+	}
+	file, err := os.Open(s.bodyPath(id))
+	if err != nil {
+		return nil, errors.Join(ErrCorrupt, err)
+	}
+	fail := func(err error) (*os.File, error) {
+		_ = file.Close()
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return fail(errors.Join(ErrCorrupt, err))
+	}
+	if !info.Mode().IsRegular() || info.Size() != entry.Size {
+		return fail(ErrCorrupt)
+	}
+	return file, nil
+}
+
+func verifyLocalStream(file io.Reader, payload cid.Cid, size int64) error {
+	prefix := payload.Prefix()
+	length := prefix.MhLength
+	if prefix.MhType == mh.IDENTITY {
+		length = -1
+	}
+	limited := &io.LimitedReader{R: file, N: size}
+	digest, err := mh.SumStream(limited, prefix.MhType, length)
+	if err != nil {
+		return errors.Join(ErrCorrupt, err)
+	}
+	if limited.N != 0 || !bytes.Equal(digest, payload.Hash()) {
+		return ErrCorrupt
+	}
+	var extra [1]byte
+	if count, readErr := file.Read(extra[:]); count != 0 || (readErr != nil && !errors.Is(readErr, io.EOF)) {
+		return ErrCorrupt
+	}
+	return nil
+}
+
+func maxIntValue() int { return int(^uint(0) >> 1) }
+
+type rangeCapture struct {
+	offset uint64
+	seen   uint64
+	body   []byte
+	copied int
+}
+
+func (w *rangeCapture) Write(chunk []byte) (int, error) {
+	start := w.seen
+	end := start + uint64(len(chunk))
+	w.seen = end
+	wantedEnd := w.offset + uint64(len(w.body))
+	if end <= w.offset || start >= wantedEnd {
+		return len(chunk), nil
+	}
+	copyStart := start
+	if copyStart < w.offset {
+		copyStart = w.offset
+	}
+	copyEnd := end
+	if copyEnd > wantedEnd {
+		copyEnd = wantedEnd
+	}
+	sourceStart := int(copyStart - start)
+	sourceEnd := int(copyEnd - start)
+	destination := int(copyStart - w.offset)
+	w.copied += copy(w.body[destination:], chunk[sourceStart:sourceEnd])
+	return len(chunk), nil
 }
 
 func (s *Store) Inspect(binding Binding) (Entry, error) {

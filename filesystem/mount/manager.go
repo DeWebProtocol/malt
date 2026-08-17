@@ -1,12 +1,14 @@
-// Package mount owns durable, daemon-managed lifecycle for platform read-only
-// mount adapters. Platform adapters translate syscalls only; trust selection,
-// verified reads, and cache policy remain above them.
+// Package mount owns durable, daemon-managed lifecycle for platform filesystem
+// adapters. Read-only is the default; write-back requires an explicit policy
+// and session-owned capability. Platform adapters translate syscalls only;
+// trust selection, verification, and persistence policy remain above them.
 package mount
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -14,7 +16,12 @@ import (
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 )
 
-var ErrManagerClosed = errors.New("mount manager is closed")
+var (
+	ErrManagerClosed          = errors.New("mount manager is closed")
+	ErrWritePolicyUnavailable = errors.New("mount write policy is unavailable")
+	ErrWritePolicyViolation   = errors.New("mount write policy was violated")
+	ErrMountCleanupPending    = errors.New("mount cleanup is pending")
+)
 
 // ReadOnlyFilesystem is the only data capability exposed to a platform mount
 // adapter. It is already pinned to one locally selected immutable View.
@@ -30,6 +37,41 @@ type ReadHandle interface {
 	Close() error
 }
 
+// SyncResult keeps local journal durability, verified remote persistence, and
+// trusted-root acceptance distinct at the platform boundary.
+type SyncResult struct {
+	LocalDurable    bool
+	RemotePersisted bool
+	CandidateRoot   string
+	RootAccepted    bool
+}
+
+// WritableFilesystem is an optional capability exposed only for an explicitly
+// write-back Spec. Every successful mutation is already locally durable when
+// it returns. Sync may additionally verify remote candidate persistence. It
+// must always report RootAccepted=false because mount I/O has no accepted-root
+// promotion capability.
+type WritableFilesystem interface {
+	ReadOnlyFilesystem
+	Create(context.Context, string) (filesystemservice.Info, error)
+	WriteAt(context.Context, string, uint64, []byte) (filesystemservice.Info, error)
+	Truncate(context.Context, string, uint64) (filesystemservice.Info, error)
+	Mkdir(context.Context, string) (filesystemservice.Info, error)
+	Rename(context.Context, string, string) error
+	Unlink(context.Context, string) error
+	RemoveDir(context.Context, string) error
+	Sync(context.Context) (SyncResult, error)
+}
+
+// WritableBinding owns the state leases and other resources for one exact
+// write-back mount. Close must be idempotent and retryable after an error;
+// ownership remains with Manager until Close succeeds. Manager, rather than
+// the platform adapter, owns its lifetime.
+type WritableBinding interface {
+	WritableFilesystem
+	Close() error
+}
+
 type Session interface {
 	// Unmount must be idempotent because a failed return can leave the local
 	// runtime unable to distinguish a completed platform detach from a retryable
@@ -39,7 +81,10 @@ type Session interface {
 }
 
 // Adapter is the outermost platform boundary. Mount must reconcile an exact
-// stale mount owned by the same Spec or return a recoverable error.
+// stale mount owned by the same Spec or return a recoverable error. A nil
+// Session with an error guarantees that no platform syscall path remains; a
+// non-nil Session returned with an error transfers rollback ownership to
+// Manager.
 // RecoverUnmount must be idempotent and may clean only that exact mountpoint.
 type Adapter interface {
 	Name() string
@@ -85,10 +130,21 @@ type ViewFilesystem interface {
 	Open(context.Context, filesystemservice.View, string) (*filesystemservice.Handle, error)
 }
 
+// WritableViewFilesystem is the application-facing write capability. Manager
+// supplies the complete normalized mount policy and immutable locally accepted
+// View, then owns the returned binding for exactly one platform session.
+type WritableViewFilesystem interface {
+	ViewFilesystem
+	BindWritable(context.Context, Spec, filesystemservice.View) (WritableBinding, error)
+}
+
 type liveMount struct {
-	session Session
-	view    filesystemservice.View
-	token   uint64
+	session      Session
+	view         filesystemservice.View
+	binding      *managedWritableBinding
+	token        uint64
+	cleanupOnly  bool
+	needsUnmount bool
 }
 
 type Manager struct {
@@ -143,48 +199,83 @@ func (m *Manager) mount(ctx context.Context, spec Spec) (Status, error) {
 	}
 	m.mu.Lock()
 	if current, ok := m.live[record.Spec.ID]; ok {
-		status := m.statusLocked(record, current, true)
+		if !current.cleanupOnly {
+			status := m.statusLocked(record, current, true)
+			m.mu.Unlock()
+			return status, nil
+		}
 		m.mu.Unlock()
-		return status, nil
+		if err := m.cleanupLive(ctx, record.Spec.ID, current); err != nil {
+			err = fmt.Errorf("%w: %v", ErrMountCleanupPending, err)
+			return m.failureStatus(record, current.view, err), err
+		}
+		m.mu.Lock()
+		if latest, ok := m.live[record.Spec.ID]; ok && latest.token == current.token {
+			delete(m.live, record.Spec.ID)
+		}
+		m.mu.Unlock()
+	} else {
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 	view, err := m.selectView(ctx, record.Spec)
 	if err != nil {
-		m.mu.Lock()
-		m.errors[record.Spec.ID] = err.Error()
-		status := m.statusLocked(record, liveMount{}, false)
-		m.mu.Unlock()
-		return status, err
+		return m.failureStatus(record, filesystemservice.View{}, err), err
 	}
-	bound := boundFilesystem{service: m.filesystem, view: view}
-	session, err := m.adapter.Mount(ctx, record.Spec, bound)
-	if err != nil {
-		m.mu.Lock()
-		m.errors[record.Spec.ID] = err.Error()
-		status := m.statusLocked(record, liveMount{view: view}, false)
-		m.mu.Unlock()
-		return status, err
-	}
-	if session == nil || session.Done() == nil {
-		if session != nil {
-			_ = session.Unmount(context.Background())
+	var bound ReadOnlyFilesystem = boundFilesystem{service: m.filesystem, view: view}
+	var binding *managedWritableBinding
+	if record.Spec.WritePolicy == WriteBack {
+		writable, ok := m.filesystem.(WritableViewFilesystem)
+		if !ok {
+			err := fmt.Errorf("%w: filesystem does not implement write-back", ErrWritePolicyUnavailable)
+			return m.failureStatus(record, view, err), err
 		}
-		err := fmt.Errorf("mount adapter returned an incomplete session")
-		m.mu.Lock()
-		m.errors[record.Spec.ID] = err.Error()
-		status := m.statusLocked(record, liveMount{view: view}, false)
-		m.mu.Unlock()
-		return status, err
+		created, bindErr := writable.BindWritable(ctx, record.Spec, view)
+		if isNilInterface(created) {
+			created = nil
+		}
+		if bindErr != nil {
+			if created != nil {
+				binding = &managedWritableBinding{WritableBinding: created}
+				bindErr = errors.Join(bindErr, m.rollbackFailedMount(ctx, record.Spec.ID, view, nil, nil, binding))
+			}
+			err := fmt.Errorf("%w: bind write-back filesystem: %w", ErrWritePolicyUnavailable, bindErr)
+			return m.failureStatus(record, view, err), err
+		}
+		if created == nil {
+			err := fmt.Errorf("%w: binder returned nil write-back filesystem", ErrWritePolicyUnavailable)
+			return m.failureStatus(record, view, err), err
+		}
+		binding = &managedWritableBinding{WritableBinding: created}
+		bound = policyWritableFilesystem{WritableFilesystem: binding}
+	}
+	session, err := m.adapter.Mount(ctx, record.Spec, bound)
+	if isNilInterface(session) {
+		session = nil
+	}
+	var done <-chan error
+	if session != nil {
+		done = session.Done()
+	}
+	if err != nil {
+		err = errors.Join(err, m.rollbackFailedMount(ctx, record.Spec.ID, view, session, done, binding))
+		return m.failureStatus(record, view, err), err
+	}
+	if session == nil || done == nil {
+		err := errors.Join(
+			fmt.Errorf("mount adapter returned an incomplete session"),
+			m.rollbackFailedMount(ctx, record.Spec.ID, view, session, done, binding),
+		)
+		return m.failureStatus(record, view, err), err
 	}
 	m.mu.Lock()
 	token := m.nextToken
 	m.nextToken++
-	live := liveMount{session: session, view: view, token: token}
+	live := liveMount{session: session, view: view, binding: binding, token: token, needsUnmount: true}
 	m.live[record.Spec.ID] = live
 	delete(m.errors, record.Spec.ID)
 	status := m.statusLocked(record, live, true)
 	m.mu.Unlock()
-	go m.monitor(record.Spec.ID, token, session.Done())
+	go m.monitor(record.Spec.ID, token, done)
 	return status, nil
 }
 
@@ -206,7 +297,7 @@ func (m *Manager) Unmount(ctx context.Context, id string) error {
 	live, active := m.live[record.Spec.ID]
 	m.mu.Unlock()
 	if active {
-		err = live.session.Unmount(ctx)
+		err = m.cleanupLive(ctx, record.Spec.ID, live)
 	} else {
 		err = m.adapter.RecoverUnmount(ctx, record.Spec)
 	}
@@ -298,7 +389,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	var failures []error
 	for _, id := range ids {
 		live := liveMounts[id]
-		if err := live.session.Unmount(ctx); err != nil {
+		err := m.cleanupLive(ctx, id, live)
+		if err != nil {
 			failures = append(failures, fmt.Errorf("shutdown mount %s: %w", id, err))
 			m.mu.Lock()
 			m.errors[id] = err.Error()
@@ -311,6 +403,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		}
 		delete(m.errors, id)
 		m.mu.Unlock()
+	}
+	if len(failures) != 0 {
+		return errors.Join(failures...)
 	}
 	m.mu.Lock()
 	m.closed = true
@@ -391,12 +486,79 @@ func (m *Manager) selectView(ctx context.Context, spec Spec) (filesystemservice.
 }
 
 func (m *Manager) statusLocked(record Record, live liveMount, active bool) Status {
-	status := Status{Spec: record.Spec, Desired: record.Desired, Active: active, Adapter: m.adapter.Name(), LastError: m.errors[record.Spec.ID]}
+	status := Status{Spec: record.Spec, Desired: record.Desired, Active: active && !live.cleanupOnly, Adapter: m.adapter.Name(), LastError: m.errors[record.Spec.ID]}
 	if live.view.Root.Defined() {
 		status.SelectedRoot = live.view.Root.String()
 		status.Revision = live.view.Revision
 	}
 	return status
+}
+
+func (m *Manager) failureStatus(record Record, view filesystemservice.View, err error) Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.errors[record.Spec.ID] = err.Error()
+	live, ok := m.live[record.Spec.ID]
+	if !ok {
+		live.view = view
+	}
+	return m.statusLocked(record, live, ok)
+}
+
+func (m *Manager) cleanupLive(ctx context.Context, id string, live liveMount) error {
+	if live.session != nil && live.needsUnmount {
+		if err := live.session.Unmount(ctx); err != nil {
+			return err
+		}
+		live.needsUnmount = false
+		live.cleanupOnly = true
+		m.markDetached(id, live)
+	}
+	return live.binding.close()
+}
+
+func (m *Manager) markDetached(id string, live liveMount) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.live[id]; ok && current.token == live.token {
+		current.cleanupOnly = true
+		current.needsUnmount = false
+		m.live[id] = current
+	}
+}
+
+// rollbackFailedMount keeps cleanup ownership whenever either platform detach
+// or binding Close is not confirmed. A later Mount, Unmount, or Shutdown can
+// retry without exposing the binding as an active filesystem.
+func (m *Manager) rollbackFailedMount(ctx context.Context, id string, view filesystemservice.View, session Session, done <-chan error, binding *managedWritableBinding) error {
+	needsUnmount := session != nil
+	if needsUnmount {
+		if err := session.Unmount(ctx); err != nil {
+			m.retainCleanup(id, view, session, done, binding, true)
+			return fmt.Errorf("detach failed mount: %w", err)
+		}
+		needsUnmount = false
+	}
+	if err := binding.close(); err != nil {
+		m.retainCleanup(id, view, session, done, binding, needsUnmount)
+		return fmt.Errorf("close failed mount binding: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) retainCleanup(id string, view filesystemservice.View, session Session, done <-chan error, binding *managedWritableBinding, needsUnmount bool) {
+	m.mu.Lock()
+	token := m.nextToken
+	m.nextToken++
+	live := liveMount{
+		session: session, view: view, binding: binding, token: token,
+		cleanupOnly: true, needsUnmount: needsUnmount,
+	}
+	m.live[id] = live
+	m.mu.Unlock()
+	if done != nil {
+		go m.monitor(id, token, done)
+	}
 }
 
 func (m *Manager) monitor(id string, token uint64, done <-chan error) {
@@ -405,13 +567,26 @@ func (m *Manager) monitor(id string, token uint64, done <-chan error) {
 		err = fmt.Errorf("mount session ended")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	live, ok := m.live[id]
 	if !ok || live.token != token {
+		m.mu.Unlock()
 		return
 	}
-	delete(m.live, id)
+	live.cleanupOnly = true
+	live.needsUnmount = false
+	m.live[id] = live
 	m.errors[id] = err.Error()
+	m.mu.Unlock()
+	closeErr := live.binding.close()
+	m.mu.Lock()
+	if current, active := m.live[id]; active && current.token == token {
+		if closeErr == nil {
+			delete(m.live, id)
+		} else {
+			m.errors[id] = errors.Join(err, closeErr).Error()
+		}
+	}
+	m.mu.Unlock()
 }
 
 type boundFilesystem struct {
@@ -431,4 +606,53 @@ func (f boundFilesystem) Open(ctx context.Context, path string) (ReadHandle, err
 	return f.service.Open(ctx, f.view, path)
 }
 
+type managedWritableBinding struct {
+	WritableBinding
+	mu     sync.Mutex
+	closed bool
+}
+
+func (b *managedWritableBinding) close() error {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil
+	}
+	if err := b.WritableBinding.Close(); err != nil {
+		return err
+	}
+	b.closed = true
+	return nil
+}
+
+func isNilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+type policyWritableFilesystem struct{ WritableFilesystem }
+
+func (f policyWritableFilesystem) Sync(ctx context.Context) (SyncResult, error) {
+	result, err := f.WritableFilesystem.Sync(ctx)
+	if result.RootAccepted {
+		return SyncResult{}, errors.Join(err, fmt.Errorf("%w: mount sync reported accepted-root promotion", ErrWritePolicyViolation))
+	}
+	if result.RemotePersisted && (!result.LocalDurable || strings.TrimSpace(result.CandidateRoot) == "") {
+		return SyncResult{}, errors.Join(err, fmt.Errorf("%w: remote persistence lacks local durability or candidate root", ErrWritePolicyViolation))
+	}
+	return result, err
+}
+
 var _ ReadHandle = (*filesystemservice.Handle)(nil)
+var _ WritableFilesystem = policyWritableFilesystem{}

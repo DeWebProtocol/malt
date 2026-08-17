@@ -294,10 +294,14 @@ type failOnceReconcileCache struct {
 }
 
 func (c *failOnceReconcileCache) ReconcileLocalState(binding cache.Binding, state cache.State) (cache.Entry, error) {
+	return c.ReconcileLocalStateBounded(binding, state, DefaultMaxStagedFileBytes)
+}
+
+func (c *failOnceReconcileCache) ReconcileLocalStateBounded(binding cache.Binding, state cache.State, maxBytes uint64) (cache.Entry, error) {
 	if c.err != nil {
 		err := c.err
 		c.err = nil
 		return cache.Entry{}, err
 	}
-	return c.cacheStore.ReconcileLocalState(binding, state)
+	return c.cacheStore.ReconcileLocalStateBounded(binding, state, maxBytes)
 }

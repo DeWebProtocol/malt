@@ -86,6 +86,71 @@ func TestStoreRejectsUnsafeSpecs(t *testing.T) {
 	}
 }
 
+func TestStorePersistsExplicitWriteBackPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mounts.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := testSpec(t, "writable")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutHybridV1
+	spec.ConflictPolicy = ""
+	record, err := store.PutDesired(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Spec.ConflictPolicy != ConflictPreserveLocal || record.Spec.LayoutPolicy != LayoutHybridV1 {
+		t.Fatalf("normalized write-back policy=%#v", record.Spec)
+	}
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := reopened.Get(spec.ID)
+	if err != nil || persisted.Spec != record.Spec {
+		t.Fatalf("persisted write-back record=%#v err=%v", persisted, err)
+	}
+
+	invalid := testSpec(t, "invalid-writable")
+	invalid.WritePolicy = WriteBack
+	invalid.ConflictPolicy = ConflictPreserveLocal
+	if _, err := store.PutDesired(invalid); err == nil {
+		t.Fatal("write-back mount without an explicit layout was accepted")
+	}
+}
+
+func TestStoreAllowsOnlyOneWriteBackMountPerDatasetBranch(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testSpec(t, "first-writable")
+	first.WritePolicy = WriteBack
+	first.LayoutPolicy = LayoutFlatV1
+	first.ConflictPolicy = ConflictPreserveLocal
+	if _, err := store.PutDesired(first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ID = "second-writable"
+	second.Mountpoint = filepath.Join(t.TempDir(), "second-writable")
+	second.LayoutPolicy = LayoutHybridV1
+	second.TrustAlias = "other-local-alias"
+	if _, err := store.PutDesired(second); !errors.Is(err, ErrWritableViewUse) {
+		t.Fatalf("duplicate writable dataset branch error=%v", err)
+	}
+	readOnly := second
+	readOnly.ID = "read-only-copy"
+	readOnly.Mountpoint = filepath.Join(t.TempDir(), "read-only-copy")
+	readOnly.WritePolicy = WriteReadOnly
+	readOnly.LayoutPolicy = ""
+	readOnly.ConflictPolicy = ConflictFailReadOnly
+	if _, err := store.PutDesired(readOnly); err != nil {
+		t.Fatalf("read-only view alongside writer: %v", err)
+	}
+}
+
 func TestStoreRejectsLossyUnicodeAndDuplicatePersistedMountpoints(t *testing.T) {
 	for _, test := range []struct {
 		name string

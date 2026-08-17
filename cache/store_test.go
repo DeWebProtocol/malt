@@ -238,6 +238,51 @@ func TestRecordRemoteDoesNotDowngradeVerifiedEntry(t *testing.T) {
 	}
 }
 
+func TestBoundedLocalReadsPreflightAndStreamCIDVerification(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("bounded immutable local payload")
+	binding := testBinding(t, body)
+	if _, err := store.PutLocal(binding, body, StateLocalDirty); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.VerifyLocal(binding, uint64(len(body)-1)); !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("undersized VerifyLocal limit error=%v", err)
+	}
+	if _, _, err := store.ReadLocalBounded(binding, uint64(len(body)-1)); !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("undersized ReadLocalBounded limit error=%v", err)
+	}
+	if _, err := store.ReconcileLocalStateBounded(binding, StateOfflineOnly, uint64(len(body)-1)); !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("undersized ReconcileLocalStateBounded limit error=%v", err)
+	}
+	rangeBody, entry, err := store.ReadLocalRange(binding, 8, 9, uint64(len(body)))
+	if err != nil || string(rangeBody) != string(body[8:17]) || entry.Size != int64(len(body)) {
+		t.Fatalf("bounded range=%q entry=%#v err=%v", rangeBody, entry, err)
+	}
+	if _, err := store.VerifyLocal(binding, uint64(len(body))); err != nil {
+		t.Fatal(err)
+	}
+
+	// A body that grows beyond its committed metadata is rejected from stat
+	// information before any whole-file read is attempted.
+	if err := os.WriteFile(store.bodyPath(bindingID(binding)), bytes.Repeat([]byte("x"), len(body)*4), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.VerifyLocal(binding, uint64(len(body)*8)); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("grown local body verification error=%v", err)
+	}
+	corrupt := append([]byte(nil), body...)
+	corrupt[0] ^= 0xff
+	if err := os.WriteFile(store.bodyPath(bindingID(binding)), corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, _, err := store.ReadLocalRange(binding, 8, 9, uint64(len(body))); !errors.Is(err, ErrCorrupt) || result != nil {
+		t.Fatalf("same-size corrupt range=%q error=%v", result, err)
+	}
+}
+
 func TestConcurrentCacheFillAcrossStoresIsSerializedAndRestartable(t *testing.T) {
 	directory := t.TempDir()
 	first, err := Open(directory)

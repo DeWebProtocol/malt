@@ -24,7 +24,9 @@ authentication core:
   pending, candidate, conflicted, offline-only, and stale states;
 - a durable ordered local-operation journal with frozen retry identities;
 - a crash-recoverable local dirty overlay with read-your-writes behavior and
-  an explicit local-journal-only `fsync` result;
+  durable whole-file/offset writes and truncate plus an explicit
+  local-journal-only `fsync` result; the current whole-file implementation has
+  a configurable 256 MiB default staged-file ceiling pending chunked staging;
 - transport-neutral verified write-back orchestration that plans before
   publication, uploads only final CID-bound staged bodies referenced by the
   normalized intent, locally computes and verifies a MALT candidate root, and
@@ -57,7 +59,8 @@ and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
 staging overlay, generic verified write-back orchestrator, and concrete UnixFS
 client-root planner are available as runtime substrate. Platform write
 composition is not implemented yet, so the mounted filesystem remains
-read-only. The current remote
+read-only even though the mount layer now has an explicit opt-in write-back
+capability contract. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
 implemented here. The historical `v0.0.1` tag was published for MALT Client

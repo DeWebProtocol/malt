@@ -324,9 +324,13 @@ reconciliation removes crash-orphaned blob/temporary files.
 
 `cache.StateCandidate` marks a locally materialized body associated with a
 verified-but-unaccepted candidate. `ReconcileLocalState` is reserved for
-cross-store crash repair: under the cache lock it rereads the body, verifies
-its size and exact CID, clears remote proof evidence, and permits only local
-body states. It cannot create `StateVerifiedClean`.
+cross-store crash repair: under the cache lock it verifies the body size and
+exact CID, clears remote proof evidence, and permits only local body states. It
+cannot create `StateVerifiedClean`. The bounded variants preflight metadata and
+actual regular-file size; `VerifyLocal` and bounded reconciliation stream CID
+verification without body materialization, while `ReadLocalBounded` and
+`ReadLocalRange` return only bytes from the same CID-verified read. An error
+never returns partial range bytes.
 
 Package `journal` is an additive ordered local-operation journal for future
 filesystem write-back. It records canonical write, mkdir, rename, and unlink
@@ -373,11 +377,22 @@ Package `filesystem/staging` is the additive platform-neutral dirty overlay.
 It accepts the same immutable `service.View` and a verified read-only base,
 then records canonical write, mkdir, rename, and unlink operations in the
 durable journal. Write bodies are raw-CID bound in the local cache before the
-journal acknowledges intent. `Stat`, `ReadDir`, `Open`, and range reads provide
-read-your-writes behavior; an open local handle remains pinned to the payload
-CID selected at open time. Operations are isolated by dataset, branch, base
-root, revision, and encryption epoch, so selecting another local accepted View
+journal acknowledges intent. `StageWriteAt` atomically reads the latest overlay
+body, applies an offset write with zero-filled extension, and records the new
+full CID-bound body; `StageTruncate` shrinks or zero-extends under the same
+service serialization boundary. `Stat`, `ReadDir`, `Open`, and range reads
+provide read-your-writes behavior; an open local handle remains pinned to the
+payload CID selected at open time. Operations are isolated by dataset, branch,
+base root, revision, and encryption epoch, so selecting another local accepted View
 cannot expose dirty bytes from the old View.
+
+`staging.Options.MaxStagedFileBytes` bounds the current whole-file overlay and
+defaults to 256 MiB. Replacement bodies, offset ends, truncate sizes, and
+existing remote files above the bound return `staging.ErrFileTooLarge` before
+remote full-body reads or local allocation. Restart and cache reconciliation
+apply the same bound before local dirty-body materialization and use streaming
+CID verification. This is an explicit safety limit, not a claim that the final
+filesystem design will remain whole-file based.
 
 `staging.New` opens the configured cache directory and journal path only after
 acquiring process-held exclusive leases for both. A second Service sharing
@@ -467,7 +482,24 @@ root. Platform composition remains separate.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,
-cache policy, read-only policy, encryption epoch, and conflict policy. The
+cache policy, write policy, optional write layout, encryption epoch, and
+conflict policy. Read-only remains the default and exposes only
+`ReadOnlyFilesystem`. An explicit `write_back` Spec must select `flat-v1` or
+`hybrid-v1` plus `preserve_local`; the manager exposes `WritableFilesystem`
+only when its application-facing service creates a session-owned binding from
+that complete normalized Spec and selected accepted View. The manager closes
+the binding only after platform detach is confirmed on mount failure, unmount,
+shutdown, or unexpected session exit.
+The registry allows at most one write-back mount for a dataset/branch, while
+additional read-only views remain valid. Missing or failed writable binding
+persists desired state for retry and fails closed before platform I/O. The
+manager rejects typed-nil bindings and closes a partial binding returned with
+an error. If platform detach or binding Close is not confirmed, it retains a
+cleanup-only non-active entry and the resource owner; later mount, unmount, or
+shutdown retries cleanup before releasing the binding. A failed shutdown
+remains open with its manager lease held so cleanup can be retried. Adapter
+Sessions are also typed-nil checked and their `Done` channel is captured once;
+after detach succeeds, status becomes cleanup-only before binding Close. The
 registry persists desired state before platform mount I/O and persists a
 pending-unmount tombstone before unmount I/O. `Manager.Restore` first completes
 those idempotent unmounts, then recreates desired sessions using a newly
@@ -479,8 +511,11 @@ replacement uses same-directory rename plus directory sync on Unix and native
 replace-existing/write-through semantics on Windows. The lifecycle store is
 enabled only on the supported Linux, macOS, BSD, and Windows lock targets;
 other build targets return `mount.ErrUnsupportedPlatform` before opening state.
-Platform adapters receive only a View-bound `ReadOnlyFilesystem`; they cannot
-select roots or access transport.
+Platform adapters receive only a View-bound filesystem capability; they cannot
+select roots, access transport, or own the binding lifetime. Mount `Sync` can
+report local durability and a verified remote candidate but is rejected if it
+claims accepted-root promotion. The current Linux adapter still consumes the
+read-only subset and therefore remains read-only in this phase.
 The private daemon API exposes the same manager at `GET/POST /v1/mounts` and
 `DELETE /v1/mounts/{id}` when a manager is configured.
 
