@@ -45,8 +45,10 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 - `cache/` owns non-authoritative payload-cache metadata and bodies. Every
   verified hit must bind dataset, branch, selected root, revision, payload CID,
   and encryption epoch, recheck the CID, and invoke a local proof verifier.
-  Cache state must never import or mutate trust, transport, or application
-  policy.
+  Dirty-body recovery and range reads must preflight metadata and actual file
+  size, then verify the CID over the same bounded or streamed bytes they
+  classify or return. Cache state must never import or mutate trust, transport,
+  or application policy.
 - `journal/` owns transport-neutral ordered local operation intent, retry
   identity, offline/pending/conflict state, and crash replay metadata. It may
   record a candidate/result root but cannot accept it and must not import trust,
@@ -56,13 +58,15 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   verified UnixFS reader and non-authoritative cache, but it must not import a
   concrete transport, trust store, HTTP route, or platform mount driver.
 - `filesystem/staging` owns the platform-neutral read-your-writes overlay and
-  locally durable write, mkdir, rename, unlink, and fsync intent for one exact
-  immutable dataset view. It composes `cache`, `journal`, and the verified
-  read-only filesystem port, but it must not import transport, trust,
-  application, HTTP, or MALT Core packages. It must exclusively lease both
-  state paths across processes before reconciling or acknowledging intent.
-  Local fsync is not remote persistence, candidate-root verification, or
-  accepted-root promotion.
+  locally durable whole-file/offset write, truncate, mkdir, rename, unlink, and
+  fsync intent for one exact immutable dataset view. It composes `cache`,
+  `journal`, and the verified read-only filesystem port, but it must not import
+  transport, trust, application, HTTP, or MALT Core packages. It must
+  exclusively lease both state paths across processes before reconciling or
+  acknowledging intent. Local fsync is not remote persistence, candidate-root
+  verification, or accepted-root promotion. Until chunked/sparse staging is
+  implemented, reject whole-file materialization above the configured limit
+  before remote reads or allocations.
 - `application/writeback` owns transport-neutral replay of a leased staging
   batch. It plans before payload publication, uploads only final staged raw
   bodies referenced by the normalized intent, invokes the MALT Core
@@ -78,9 +82,15 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   daemon-managed lifecycle contract. One process-held registry lease excludes
   competing managers on supported Linux/macOS/BSD and Windows targets; other
   targets must fail closed before opening the registry. Platform adapters
-  receive only a read-only filesystem already bound to a locally selected
-  View; they must not resolve trust aliases, observe heads, or call transports
-  directly.
+  receive a filesystem already bound to a locally selected View. The default
+  capability is read-only; an explicitly validated write-back Spec may receive
+  one session-owned writable binding. Only one write-back mount may reserve a
+  dataset/branch at a time. Failed platform detach or binding Close must retain
+  retryable cleanup ownership and the relevant leases; confirmed detach must
+  become cleanup-only before Close. Adapter Session values must reject typed
+  nil and capture one stable completion channel. Adapters must not resolve
+  trust aliases, observe heads, call transports directly, or own the binding
+  lifetime.
 - `filesystem/platform/fuse` is the outermost Linux syscall adapter. It may
   import go-fuse and `filesystem/mount`, but not trust, transport, cache,
   application, or Gateway packages. Recovery unmount must verify the exact

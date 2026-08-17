@@ -1,6 +1,7 @@
 package staging
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -134,6 +135,128 @@ func TestDurableWriteOverlayFsyncRestartAndPinnedHandle(t *testing.T) {
 	otherView.Root = stagingTestCID(t, []byte("other accepted root"))
 	if _, err := reopened.Stat(t.Context(), otherView, "docs/new.txt"); !errors.Is(err, unixfs.ErrNotFound) {
 		t.Fatalf("dirty operation leaked across selected roots: %v", err)
+	}
+}
+
+func TestOffsetWriteAndTruncateAreAtomicDurableOverlayOperations(t *testing.T) {
+	root := t.TempDir()
+	view := stagingTestView(t)
+	base := newFakeBase(t)
+	service, _, journalPath := newStagingService(t, root, base)
+
+	first, err := service.StageWriteAt(t.Context(), view, "docs/old.txt", 4, []byte("local"), false)
+	if err != nil || first.Sequence != 1 {
+		t.Fatalf("first StageWriteAt=%#v err=%v", first, err)
+	}
+	body, _, err := service.ReadFileRange(t.Context(), view, "docs/old.txt", 0, 64)
+	if err != nil || string(body) != "old locale body" {
+		t.Fatalf("offset overlay body=%q err=%v", body, err)
+	}
+	second, err := service.StageWriteAt(t.Context(), view, "docs/old.txt", 17, []byte("!"), false)
+	if err != nil || second.Sequence != 2 {
+		t.Fatalf("extended StageWriteAt=%#v err=%v", second, err)
+	}
+	body, _, err = service.ReadFileRange(t.Context(), view, "docs/old.txt", 0, 64)
+	if err != nil || !bytes.Equal(body, []byte{'o', 'l', 'd', ' ', 'l', 'o', 'c', 'a', 'l', 'e', ' ', 'b', 'o', 'd', 'y', 0, 0, '!'}) {
+		t.Fatalf("zero-filled extension=%v err=%v", body, err)
+	}
+	third, err := service.StageTruncate(t.Context(), view, "docs/old.txt", 3, false)
+	if err != nil || third.Sequence != 3 {
+		t.Fatalf("shrink StageTruncate=%#v err=%v", third, err)
+	}
+	fourth, err := service.StageTruncate(t.Context(), view, "docs/old.txt", 5, false)
+	if err != nil || fourth.Sequence != 4 {
+		t.Fatalf("extend StageTruncate=%#v err=%v", fourth, err)
+	}
+	body, _, err = service.ReadFileRange(t.Context(), view, "docs/old.txt", 0, 64)
+	if err != nil || !bytes.Equal(body, []byte{'o', 'l', 'd', 0, 0}) {
+		t.Fatalf("truncated overlay=%v err=%v", body, err)
+	}
+	if base.rangeReads != 1 {
+		t.Fatalf("offset operations fetched immutable base %d times, want once", base.rangeReads)
+	}
+	if operation, err := service.StageWriteAt(t.Context(), view, "docs/old.txt", 0, nil, false); err != nil || operation.OperationID != "" {
+		t.Fatalf("zero write operation=%#v err=%v", operation, err)
+	}
+	if _, err := service.StageWriteAt(t.Context(), view, "docs/old.txt", ^uint64(0), []byte("x"), false); err == nil {
+		t.Fatal("overflowing offset write was accepted")
+	}
+
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := New(Options{Base: base, CacheDirectory: filepath.Join(root, "cache"), JournalPath: journalPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	body, _, err = reopened.ReadFileRange(t.Context(), view, "docs/old.txt", 0, 64)
+	if err != nil || !bytes.Equal(body, []byte{'o', 'l', 'd', 0, 0}) {
+		t.Fatalf("restarted truncated overlay=%v err=%v", body, err)
+	}
+}
+
+func TestWholeFileStagingLimitRejectsBeforeReadOrAllocation(t *testing.T) {
+	root := t.TempDir()
+	view := stagingTestView(t)
+	base := newFakeBase(t)
+	oversized := base.infos["docs/old.txt"]
+	oversized.Size = 17
+	base.infos["docs/old.txt"] = oversized
+	service, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(root, "cache"),
+		JournalPath: filepath.Join(root, "operations.json"), MaxStagedFileBytes: 16,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+
+	if _, err := service.StageWrite(t.Context(), view, "docs/new.txt", make([]byte, 17), false); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("oversized StageWrite error=%v", err)
+	}
+	if _, err := service.StageWriteAt(t.Context(), view, "docs/old.txt", 16, []byte("x"), false); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("oversized StageWriteAt error=%v", err)
+	}
+	if _, err := service.StageTruncate(t.Context(), view, "docs/old.txt", 17, false); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("oversized StageTruncate error=%v", err)
+	}
+	if _, err := service.StageWriteAt(t.Context(), view, "docs/old.txt", 0, []byte("x"), false); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("oversized remote materialization error=%v", err)
+	}
+	if base.rangeReads != 0 {
+		t.Fatalf("oversized remote body was read %d time(s)", base.rangeReads)
+	}
+	if _, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(t.TempDir(), "cache"),
+		JournalPath: filepath.Join(t.TempDir(), "operations.json"), MaxStagedFileBytes: ^uint64(0),
+	}); err == nil {
+		t.Fatal("file limit beyond local address space was accepted")
+	}
+}
+
+func TestRestartRejectsDirtyBodyAboveReducedWholeFileLimit(t *testing.T) {
+	root := t.TempDir()
+	view := stagingTestView(t)
+	base := newFakeBase(t)
+	first, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(root, "cache"),
+		JournalPath: filepath.Join(root, "operations.json"), MaxStagedFileBytes: 32,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.StageWrite(t.Context(), view, "docs/new.txt", bytes.Repeat([]byte("x"), 24), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Options{
+		Base: base, CacheDirectory: filepath.Join(root, "cache"),
+		JournalPath: filepath.Join(root, "operations.json"), MaxStagedFileBytes: 16,
+	}); !errors.Is(err, cache.ErrBodyTooLarge) {
+		t.Fatalf("restart with lower staged-file limit error=%v", err)
 	}
 }
 

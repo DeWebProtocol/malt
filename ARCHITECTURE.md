@@ -240,6 +240,9 @@ it does not silently change the existing plaintext semantics of `malt add`.
   dataset/branch/root/revision/CID/encryption-epoch identity; verified hits
   recheck the CID and locally revalidate cached proof evidence. Candidate
   bodies remain local non-authoritative state and cannot enter verified reads.
+  Dirty-body recovery preflights metadata and actual file size, streams CID
+  verification, and supports bounded full/range reads without an unbounded
+  `os.ReadFile` allocation.
 - `journal`: ordered local filesystem-operation intent, immutable retry
   identity, and offline/pending/conflict/completed replay state; it has no root
   acceptance capability.
@@ -249,18 +252,32 @@ it does not silently change the existing plaintext semantics of `malt add`.
   read, uses the cache only for raw CID-bound payloads, and keeps List payloads
   on the authenticated range path.
 - `filesystem/staging`: a platform-neutral local dirty overlay over the
-  verified read-only service. It records write, mkdir, rename, and unlink
-  intent against an exact immutable View, pins local file handles to a payload
-  CID, exclusively leases both cache and journal paths across processes,
-  survives restart through those stores, and reports only local journal
-  durability from `Fsync`. Its upload-batch methods freeze exact replay
-  identities and atomically complete or conflict the batch, but it performs no
-  network I/O, candidate-root computation, or trust mutation.
+  verified read-only service. It records whole-file/offset write, truncate,
+  mkdir, rename, and unlink intent against an exact immutable View, pins local
+  file handles to a payload CID, exclusively leases both cache and journal
+  paths across processes, survives restart through those stores, and reports
+  only local journal durability from `Fsync`. Its upload-batch methods freeze
+  exact replay identities and atomically complete or conflict the batch, but it
+  performs no network I/O, candidate-root computation, or trust mutation.
+  The current whole-file overlay defaults to a 256 MiB staged-file ceiling and
+  rejects a larger existing file, offset end, truncate size, or replacement
+  body before remote or local body materialization. Restart reconciliation
+  preserves an oversized dirty record but returns the typed limit error after
+  metadata/file-size preflight and streaming verification. Chunked/sparse
+  staging is a later implementation step rather than an implied unbounded allocation.
 - `filesystem/mount`: durable desired/pending-unmount records, restart
   reconciliation, a process-held exclusive manager lease, immutable local-View
-  selection, and the narrow platform adapter/session contract. It does not
-  implement trust or network access. Targets without a kernel-backed,
-  process-released lease fail closed before opening the mount registry.
+  selection, and narrow read-only plus opt-in writable platform contracts. A
+  write-back Spec must select a UnixFS layout and preserve local conflicts, and
+  receives a session-owned writable binding only when the composed application
+  service implements it. The complete Spec and selected accepted View bind the
+  layout, staging state, and trust identity; the registry reserves at most one
+  writer per dataset/branch. An adapter that returns a partial session or a
+  binding whose `Close` fails leaves a cleanup-only, non-active lifecycle entry;
+  mount/unmount/shutdown retries retain ownership until detach and Close both
+  succeed. The package does not implement trust or network access. Targets
+  without a kernel-backed, process-released lease fail closed before opening
+  the mount registry.
 - `filesystem/platform/fuse`: Linux-only read-only FUSE syscall translation.
   It receives only the View-bound mount capability, rejects every namespace or
   data/metadata mutation, and verifies `/proc/self/mountinfo` ownership before

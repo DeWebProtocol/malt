@@ -22,13 +22,17 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-const LocalFsyncProfile = "malt.local-journal-fsync/v1"
+const (
+	LocalFsyncProfile         = "malt.local-journal-fsync/v1"
+	DefaultMaxStagedFileBytes = uint64(256 << 20)
+)
 
 var (
 	ErrAlreadyExists = errors.New("filesystem path already exists")
 	ErrNotEmpty      = errors.New("filesystem directory is not empty")
 	ErrClosed        = errors.New("staged filesystem handle is closed")
 	ErrServiceClosed = errors.New("filesystem staging service is closed")
+	ErrFileTooLarge  = cache.ErrBodyTooLarge
 )
 
 // Base is the verified immutable filesystem below the local dirty overlay.
@@ -45,8 +49,12 @@ type cacheStore interface {
 	List() ([]cache.Entry, error)
 	PutLocal(cache.Binding, []byte, cache.State) (cache.Entry, error)
 	ReadLocal(cache.Binding) ([]byte, cache.Entry, error)
+	ReadLocalBounded(cache.Binding, uint64) ([]byte, cache.Entry, error)
+	ReadLocalRange(cache.Binding, uint64, uint64, uint64) ([]byte, cache.Entry, error)
+	VerifyLocal(cache.Binding, uint64) (cache.Entry, error)
 	Transition(cache.Binding, cache.State) (cache.Entry, error)
 	ReconcileLocalState(cache.Binding, cache.State) (cache.Entry, error)
+	ReconcileLocalStateBounded(cache.Binding, cache.State, uint64) (cache.Entry, error)
 	Remove(cache.Binding) error
 }
 
@@ -63,6 +71,10 @@ type Options struct {
 	CacheDirectory string
 	JournalPath    string
 	LeaseTimeout   time.Duration
+	// MaxStagedFileBytes bounds the current whole-file staging model. Zero uses
+	// DefaultMaxStagedFileBytes. Chunked/sparse staging can replace this bound
+	// without changing the verified base capability.
+	MaxStagedFileBytes uint64
 }
 
 // Service serializes local staging across its cache/journal pair. New acquires
@@ -76,6 +88,7 @@ type Service struct {
 	cache     cacheStore
 	journal   operationJournal
 	release   []func() error
+	maxFile   uint64
 	closed    bool
 }
 
@@ -93,6 +106,13 @@ type FsyncResult struct {
 func New(opts Options) (*Service, error) {
 	if opts.Base == nil {
 		return nil, fmt.Errorf("filesystem staging requires a verified base")
+	}
+	maxFile := opts.MaxStagedFileBytes
+	if maxFile == 0 {
+		maxFile = DefaultMaxStagedFileBytes
+	}
+	if maxFile > uint64(maxInt()) {
+		return nil, fmt.Errorf("filesystem staging file limit exceeds local address space")
 	}
 	cacheDirectory, err := absoluteStatePath("cache directory", opts.CacheDirectory)
 	if err != nil {
@@ -133,7 +153,7 @@ func New(opts Options) (*Service, error) {
 	if err != nil {
 		return nil, errors.Join(err, releaseAll(releases))
 	}
-	service := &Service{base: opts.Base, cache: cacheStore, journal: journalStore, release: releases}
+	service := &Service{base: opts.Base, cache: cacheStore, journal: journalStore, release: releases, maxFile: maxFile}
 	if err := service.Reconcile(context.Background()); err != nil {
 		return nil, errors.Join(fmt.Errorf("reconcile filesystem staging: %w", err), service.Close())
 	}
@@ -167,10 +187,132 @@ func (s *Service) StageWrite(ctx context.Context, view filesystemservice.View, r
 	if err != nil {
 		return journal.Operation{}, err
 	}
+	if err := s.requireStagedSize(uint64(len(body))); err != nil {
+		return journal.Operation{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	operations, err := s.operations(view)
 	if err != nil {
+		return journal.Operation{}, err
+	}
+	return s.stageWriteBodyLocked(ctx, view, operations, canonical, body, offline)
+}
+
+// StageWriteAt atomically applies one offset write to the latest overlay body
+// and durably appends the resulting full raw-CID-bound file intent before
+// returning. A zero-length write is a no-op.
+func (s *Service) StageWriteAt(ctx context.Context, view filesystemservice.View, rawPath string, offset uint64, data []byte, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
+	if err := ctx.Err(); err != nil {
+		return journal.Operation{}, err
+	}
+	canonical, err := canonicalPath(rawPath, false)
+	if err != nil {
+		return journal.Operation{}, err
+	}
+	if len(data) == 0 {
+		return journal.Operation{}, nil
+	}
+	end := offset + uint64(len(data))
+	if end < offset || end > uint64(maxInt()) {
+		return journal.Operation{}, fmt.Errorf("filesystem offset write exceeds local address space")
+	}
+	if err := s.requireStagedSize(end); err != nil {
+		return journal.Operation{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operations, err := s.operations(view)
+	if err != nil {
+		return journal.Operation{}, err
+	}
+	body, err := s.currentFileBodyLocked(ctx, view, operations, canonical)
+	if err != nil {
+		return journal.Operation{}, err
+	}
+	if end > uint64(len(body)) {
+		expanded := make([]byte, int(end))
+		copy(expanded, body)
+		body = expanded
+	} else {
+		body = append([]byte(nil), body...)
+	}
+	copy(body[int(offset):int(end)], data)
+	return s.stageWriteBodyLocked(ctx, view, operations, canonical, body, offline)
+}
+
+// StageTruncate atomically resizes an existing file in the latest overlay.
+// Extension bytes are zero-filled. An unchanged size is a no-op.
+func (s *Service) StageTruncate(ctx context.Context, view filesystemservice.View, rawPath string, size uint64, offline bool) (journal.Operation, error) {
+	if err := s.enter(); err != nil {
+		return journal.Operation{}, err
+	}
+	defer s.leave()
+	if err := ctx.Err(); err != nil {
+		return journal.Operation{}, err
+	}
+	canonical, err := canonicalPath(rawPath, false)
+	if err != nil {
+		return journal.Operation{}, err
+	}
+	if size > uint64(maxInt()) {
+		return journal.Operation{}, fmt.Errorf("filesystem truncate exceeds local address space")
+	}
+	if err := s.requireStagedSize(size); err != nil {
+		return journal.Operation{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operations, err := s.operations(view)
+	if err != nil {
+		return journal.Operation{}, err
+	}
+	body, err := s.currentFileBodyLocked(ctx, view, operations, canonical)
+	if err != nil {
+		return journal.Operation{}, err
+	}
+	if size == uint64(len(body)) {
+		return journal.Operation{}, nil
+	}
+	resized := make([]byte, int(size))
+	copy(resized, body)
+	return s.stageWriteBodyLocked(ctx, view, operations, canonical, resized, offline)
+}
+
+func (s *Service) currentFileBodyLocked(ctx context.Context, view filesystemservice.View, operations []journal.Operation, canonical string) ([]byte, error) {
+	resolved, err := s.resolveAt(ctx, view, operations, len(operations), canonical)
+	if err != nil {
+		return nil, err
+	}
+	if resolved.info.IsDir() {
+		return nil, unixfs.ErrNotFile
+	}
+	if resolved.info.Size > uint64(maxInt()) {
+		return nil, fmt.Errorf("filesystem file exceeds local address space")
+	}
+	if err := s.requireStagedSize(resolved.info.Size); err != nil {
+		return nil, err
+	}
+	if resolved.local {
+		body, _, err := s.cache.ReadLocalBounded(resolved.binding, s.stagedFileLimit())
+		return body, err
+	}
+	body, _, err := s.base.ReadFileRange(ctx, view, resolved.remotePath, 0, resolved.info.Size)
+	if err != nil {
+		return nil, err
+	}
+	if uint64(len(body)) != resolved.info.Size {
+		return nil, fmt.Errorf("verified base returned %d bytes for declared size %d", len(body), resolved.info.Size)
+	}
+	return body, nil
+}
+
+func (s *Service) stageWriteBodyLocked(ctx context.Context, view filesystemservice.View, operations []journal.Operation, canonical string, body []byte, offline bool) (journal.Operation, error) {
+	if err := s.requireStagedSize(uint64(len(body))); err != nil {
 		return journal.Operation{}, err
 	}
 	if err := s.requireParentDirectory(ctx, view, operations, canonical); err != nil {
@@ -428,7 +570,7 @@ func (s *Service) Fsync(ctx context.Context, view filesystemservice.View) (Fsync
 		if operation.Kind != journal.KindWrite {
 			continue
 		}
-		if _, _, err := s.cache.ReadLocal(bindingFromOperation(operation)); err != nil {
+		if _, err := s.cache.VerifyLocal(bindingFromOperation(operation), s.stagedFileLimit()); err != nil {
 			return FsyncResult{}, fmt.Errorf("fsync local payload for operation %s: %w", operation.OperationID, err)
 		}
 	}
@@ -468,7 +610,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		// record is excluded from operations(view), so it no longer needs its
 		// own body here.
 		if operation.Status != journal.StatusSuperseded {
-			if _, _, err := s.cache.ReadLocal(binding); err != nil {
+			if _, err := s.cache.VerifyLocal(binding, s.stagedFileLimit()); err != nil {
 				return fmt.Errorf("journal operation %s local payload: %w", operation.OperationID, err)
 			}
 		}
@@ -552,13 +694,13 @@ func (s *Service) resolveAt(ctx context.Context, view filesystemservice.View, op
 		case journal.KindWrite:
 			if mapped == operation.Path {
 				binding := bindingFromOperation(operation)
-				body, _, err := s.cache.ReadLocal(binding)
+				entry, err := s.cache.VerifyLocal(binding, s.stagedFileLimit())
 				if err != nil {
 					return resolvedNode{}, err
 				}
 				return resolvedNode{
 					local: true, binding: binding,
-					info: localInfo(canonical, unixfs.StagedKindFile, binding.CID, uint64(len(body))),
+					info: localInfo(canonical, unixfs.StagedKindFile, binding.CID, uint64(entry.Size)),
 				}, nil
 			}
 			if isStrictDescendant(mapped, operation.Path) {
@@ -693,7 +835,7 @@ func (s *Service) ensureLocalBody(binding cache.Binding, body []byte, offline bo
 		_, err = s.cache.PutLocal(binding, body, cacheState(offline))
 		return err
 	default:
-		existing, _, err := s.cache.ReadLocal(binding)
+		existing, _, err := s.cache.ReadLocalBounded(binding, s.stagedFileLimit())
 		if err != nil {
 			return err
 		}
@@ -733,11 +875,8 @@ func (h *Handle) Read(ctx context.Context, offset, length uint64) ([]byte, error
 	}
 	defer service.leave()
 	if resolved.local {
-		body, _, err := service.cache.ReadLocal(resolved.binding)
-		if err != nil {
-			return nil, err
-		}
-		return sliceRange(body, offset, length), nil
+		body, _, err := service.cache.ReadLocalRange(resolved.binding, offset, length, service.stagedFileLimit())
+		return body, err
 	}
 	body, _, err := service.base.ReadFileRange(ctx, view, resolved.remotePath, offset, length)
 	return body, err
@@ -891,6 +1030,23 @@ func sliceRange(body []byte, offset, length uint64) []byte {
 		end = uint64(len(body))
 	}
 	return append([]byte(nil), body[offset:end]...)
+}
+
+func maxInt() int { return int(^uint(0) >> 1) }
+
+func (s *Service) requireStagedSize(size uint64) error {
+	limit := s.stagedFileLimit()
+	if size > limit {
+		return fmt.Errorf("%w: size %d, limit %d", ErrFileTooLarge, size, limit)
+	}
+	return nil
+}
+
+func (s *Service) stagedFileLimit() uint64 {
+	if s != nil && s.maxFile != 0 {
+		return s.maxFile
+	}
+	return DefaultMaxStagedFileBytes
 }
 
 func isWithin(value, ancestor string) bool {

@@ -21,6 +21,121 @@ type fakeViewFilesystem struct {
 	lastView filesystemservice.View
 }
 
+type fakeWritableViewFilesystem struct {
+	*fakeViewFilesystem
+	lastSpec       Spec
+	lastBindView   filesystemservice.View
+	lastMutation   string
+	bindErr        error
+	partialError   bool
+	returnNil      bool
+	returnTypedNil bool
+	syncResult     *SyncResult
+	closeErrors    []error
+	binding        *fakeWritableBinding
+}
+
+type fakeWritableBinding struct {
+	parent      *fakeWritableViewFilesystem
+	view        filesystemservice.View
+	closeErrors []error
+	closeCalls  int
+}
+
+func (f *fakeWritableViewFilesystem) BindWritable(_ context.Context, spec Spec, view filesystemservice.View) (WritableBinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastSpec = spec
+	f.lastBindView = view
+	if f.returnNil {
+		return nil, f.bindErr
+	}
+	if f.returnTypedNil {
+		var binding *fakeWritableBinding
+		return binding, f.bindErr
+	}
+	f.binding = &fakeWritableBinding{parent: f, view: view, closeErrors: append([]error(nil), f.closeErrors...)}
+	if f.bindErr != nil && !f.partialError {
+		return nil, f.bindErr
+	}
+	return f.binding, f.bindErr
+}
+
+func (f *fakeWritableBinding) mutation(name string, info filesystemservice.Info) (filesystemservice.Info, error) {
+	f.parent.mu.Lock()
+	defer f.parent.mu.Unlock()
+	f.parent.lastView = f.view
+	f.parent.lastMutation = name
+	return info, nil
+}
+
+func (f *fakeWritableBinding) Create(_ context.Context, name string) (filesystemservice.Info, error) {
+	return f.mutation("create:"+name, filesystemservice.Info{Path: name, Kind: "file"})
+}
+
+func (f *fakeWritableBinding) WriteAt(_ context.Context, name string, _ uint64, _ []byte) (filesystemservice.Info, error) {
+	return f.mutation("write:"+name, filesystemservice.Info{Path: name, Kind: "file", Size: 1})
+}
+
+func (f *fakeWritableBinding) Truncate(_ context.Context, name string, size uint64) (filesystemservice.Info, error) {
+	return f.mutation("truncate:"+name, filesystemservice.Info{Path: name, Kind: "file", Size: size})
+}
+
+func (f *fakeWritableBinding) Mkdir(_ context.Context, name string) (filesystemservice.Info, error) {
+	return f.mutation("mkdir:"+name, filesystemservice.Info{Path: name, Kind: "directory"})
+}
+
+func (f *fakeWritableBinding) Rename(_ context.Context, source, destination string) error {
+	_, err := f.mutation("rename:"+source+":"+destination, filesystemservice.Info{})
+	return err
+}
+
+func (f *fakeWritableBinding) Unlink(_ context.Context, name string) error {
+	_, err := f.mutation("unlink:"+name, filesystemservice.Info{})
+	return err
+}
+
+func (f *fakeWritableBinding) RemoveDir(_ context.Context, name string) error {
+	_, err := f.mutation("rmdir:"+name, filesystemservice.Info{})
+	return err
+}
+
+func (f *fakeWritableBinding) Sync(_ context.Context) (SyncResult, error) {
+	_, err := f.mutation("sync", filesystemservice.Info{})
+	if f.parent.syncResult != nil {
+		return *f.parent.syncResult, err
+	}
+	return SyncResult{LocalDurable: true, CandidateRoot: "candidate"}, err
+}
+
+func (f *fakeWritableBinding) Stat(ctx context.Context, path string) (filesystemservice.Info, error) {
+	return f.parent.Stat(ctx, f.view, path)
+}
+
+func (f *fakeWritableBinding) ReadDir(ctx context.Context, path string) ([]filesystemservice.DirEntry, error) {
+	return f.parent.ReadDir(ctx, f.view, path)
+}
+
+func (f *fakeWritableBinding) Open(ctx context.Context, path string) (ReadHandle, error) {
+	return f.parent.Open(ctx, f.view, path)
+}
+
+func (f *fakeWritableBinding) Close() error {
+	f.parent.mu.Lock()
+	defer f.parent.mu.Unlock()
+	f.closeCalls++
+	if f.closeCalls <= len(f.closeErrors) {
+		return f.closeErrors[f.closeCalls-1]
+	}
+	return nil
+}
+
+func (f *fakeWritableBinding) closeCallCount() int {
+	f.parent.mu.Lock()
+	defer f.parent.mu.Unlock()
+	return f.closeCalls
+}
+
 func (f *fakeViewFilesystem) Stat(_ context.Context, view filesystemservice.View, path string) (filesystemservice.Info, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -37,13 +152,18 @@ func (*fakeViewFilesystem) Open(context.Context, filesystemservice.View, string)
 }
 
 type fakeAdapter struct {
-	mu             sync.Mutex
-	mountErr       error
-	recoverErr     error
-	mountCalls     int
-	recoverCalls   int
-	lastFilesystem ReadOnlyFilesystem
-	lastSession    *fakeSession
+	mu                sync.Mutex
+	mountErr          error
+	sessionOnError    bool
+	typedNilSession   bool
+	incomplete        bool
+	sessionUnmountErr error
+	suppressDone      bool
+	recoverErr        error
+	mountCalls        int
+	recoverCalls      int
+	lastFilesystem    ReadOnlyFilesystem
+	lastSession       *fakeSession
 }
 
 func (*fakeAdapter) Name() string { return "fake-platform" }
@@ -53,11 +173,19 @@ func (a *fakeAdapter) Mount(_ context.Context, _ Spec, filesystem ReadOnlyFilesy
 	defer a.mu.Unlock()
 	a.mountCalls++
 	a.lastFilesystem = filesystem
+	if a.typedNilSession {
+		var session *fakeSession
+		return session, a.mountErr
+	}
+	session := &fakeSession{done: make(chan error, 1), nilDone: a.incomplete, unmountErr: a.sessionUnmountErr}
+	session.suppressDone = a.suppressDone
+	a.lastSession = session
 	if a.mountErr != nil {
+		if a.sessionOnError {
+			return session, a.mountErr
+		}
 		return nil, a.mountErr
 	}
-	session := &fakeSession{done: make(chan error, 1)}
-	a.lastSession = session
 	return session, nil
 }
 
@@ -71,21 +199,28 @@ func (a *fakeAdapter) RecoverUnmount(context.Context, Spec) error {
 type fakeSession struct {
 	mu           sync.Mutex
 	done         chan error
+	nilDone      bool
+	doneCalls    int
 	unmountErr   error
 	unmounted    bool
+	unmountCalls int
+	suppressDone bool
 	afterUnmount func()
 }
 
 func (s *fakeSession) Unmount(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.unmountCalls++
 	if s.unmountErr != nil {
 		return s.unmountErr
 	}
 	if !s.unmounted {
 		s.unmounted = true
-		s.done <- nil
-		close(s.done)
+		if !s.suppressDone {
+			s.done <- nil
+			close(s.done)
+		}
 		if s.afterUnmount != nil {
 			s.afterUnmount()
 		}
@@ -93,7 +228,21 @@ func (s *fakeSession) Unmount(context.Context) error {
 	return nil
 }
 
-func (s *fakeSession) Done() <-chan error { return s.done }
+func (s *fakeSession) Done() <-chan error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.doneCalls++
+	if s.nilDone {
+		return nil
+	}
+	return s.done
+}
+
+func (s *fakeSession) callCounts() (done, unmount int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.doneCalls, s.unmountCalls
+}
 
 type callbackAdapter struct {
 	onMount   func() error
@@ -209,6 +358,418 @@ func TestManagerPersistsBeforeMountAndRestoresAfterDaemonRestart(t *testing.T) {
 	}
 }
 
+func TestManagerExposesWritesOnlyForExplicitCapablePolicy(t *testing.T) {
+	writableSpec := testSpec(t, "writable")
+	writableSpec.WritePolicy = WriteBack
+	writableSpec.LayoutPolicy = LayoutHybridV1
+	writableSpec.ConflictPolicy = ConflictPreserveLocal
+	view := testMountView(t, writableSpec)
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	filesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+	adapter := &fakeAdapter{}
+	manager := newTestManager(t, store, adapter, filesystem, view)
+	if _, err := manager.Mount(t.Context(), writableSpec); err != nil {
+		t.Fatal(err)
+	}
+	if doneCalls, _ := adapter.lastSession.callCounts(); doneCalls != 1 {
+		t.Fatalf("Session.Done calls=%d, want 1", doneCalls)
+	}
+	writable, ok := adapter.lastFilesystem.(WritableFilesystem)
+	if !ok {
+		t.Fatalf("write-back mount received %T", adapter.lastFilesystem)
+	}
+	if _, err := writable.WriteAt(t.Context(), "docs/file.txt", 4, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if filesystem.lastView != view || filesystem.lastMutation != "write:docs/file.txt" {
+		t.Fatalf("bound write view=%#v mutation=%q", filesystem.lastView, filesystem.lastMutation)
+	}
+	if filesystem.lastSpec != writableSpec || filesystem.lastBindView != view {
+		t.Fatalf("writable binding spec=%#v view=%#v", filesystem.lastSpec, filesystem.lastBindView)
+	}
+	if result, err := writable.Sync(t.Context()); err != nil || !result.LocalDurable || result.RemotePersisted || result.RootAccepted {
+		t.Fatalf("bound Sync=%#v err=%v", result, err)
+	}
+	if err := manager.Unmount(t.Context(), writableSpec.ID); err != nil {
+		t.Fatal(err)
+	}
+	filesystem.mu.Lock()
+	closeCalls := filesystem.binding.closeCalls
+	filesystem.mu.Unlock()
+	if closeCalls != 1 {
+		t.Fatalf("writable binding Close calls=%d, want 1", closeCalls)
+	}
+
+	readOnlyStore, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnlyAdapter := &fakeAdapter{}
+	readOnlySpec := testSpec(t, "readonly")
+	readOnlyManager := newTestManager(t, readOnlyStore, readOnlyAdapter, filesystem, testMountView(t, readOnlySpec))
+	if _, err := readOnlyManager.Mount(t.Context(), readOnlySpec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readOnlyAdapter.lastFilesystem.(WritableFilesystem); ok {
+		t.Fatal("read-only mount received a writable capability")
+	}
+}
+
+func TestManagerRejectsWritableBinderFailuresAndSyncTrustViolation(t *testing.T) {
+	spec := testSpec(t, "writable-failure")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutFlatV1
+	spec.ConflictPolicy = ConflictPreserveLocal
+	view := testMountView(t, spec)
+
+	for _, test := range []struct {
+		name       string
+		filesystem *fakeWritableViewFilesystem
+	}{
+		{name: "error", filesystem: &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}, bindErr: errors.New("state lease busy")}},
+		{name: "nil", filesystem: &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}, returnNil: true}},
+		{name: "typed-nil", filesystem: &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}, returnTypedNil: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			adapter := &fakeAdapter{}
+			manager := newTestManager(t, store, adapter, test.filesystem, view)
+			status, err := manager.Mount(t.Context(), spec)
+			if !errors.Is(err, ErrWritePolicyUnavailable) || !status.Desired || status.Active || adapter.mountCalls != 0 {
+				t.Fatalf("binder failure status=%#v err=%v calls=%d", status, err, adapter.mountCalls)
+			}
+		})
+	}
+
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := SyncResult{LocalDurable: true, RemotePersisted: true, CandidateRoot: "candidate", RootAccepted: true}
+	filesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}, syncResult: &result}
+	adapter := &fakeAdapter{}
+	manager := newTestManager(t, store, adapter, filesystem, view)
+	if _, err := manager.Mount(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	writable := adapter.lastFilesystem.(WritableFilesystem)
+	if result, err := writable.Sync(t.Context()); !errors.Is(err, ErrWritePolicyViolation) || result != (SyncResult{}) {
+		t.Fatalf("accepted-root Sync=%#v err=%v", result, err)
+	}
+}
+
+func TestManagerRetainsPartialBinderUntilCloseRetrySucceeds(t *testing.T) {
+	spec := testSpec(t, "partial-binding")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutFlatV1
+	spec.ConflictPolicy = ConflictPreserveLocal
+	view := testMountView(t, spec)
+	temporary := errors.New("temporary close failure")
+	filesystem := &fakeWritableViewFilesystem{
+		fakeViewFilesystem: &fakeViewFilesystem{},
+		bindErr:            errors.New("binding initialization failed"), partialError: true,
+		closeErrors: []error{temporary, nil},
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &fakeAdapter{}
+	manager := newTestManager(t, store, adapter, filesystem, view)
+	status, err := manager.Mount(t.Context(), spec)
+	if !errors.Is(err, ErrWritePolicyUnavailable) || !errors.Is(err, temporary) || !status.Desired || status.Active || adapter.mountCalls != 0 {
+		t.Fatalf("partial binding status=%#v err=%v calls=%d", status, err, adapter.mountCalls)
+	}
+	partial := filesystem.binding
+	if calls := partial.closeCallCount(); calls != 1 {
+		t.Fatalf("initial partial Close calls=%d, want 1", calls)
+	}
+	if err := manager.Unmount(t.Context(), spec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if calls := partial.closeCallCount(); calls != 2 {
+		t.Fatalf("retried partial Close calls=%d, want 2", calls)
+	}
+	if _, err := store.Get(spec.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("partial binding record remained: %v", err)
+	}
+}
+
+func TestManagerRetainsFailedOrIncompletePlatformSessionUntilDetach(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		adapter *fakeAdapter
+	}{
+		{
+			name: "session-and-error",
+			adapter: &fakeAdapter{mountErr: errors.New("mount postflight failed"), sessionOnError: true,
+				sessionUnmountErr: errors.New("detach ambiguous")},
+		},
+		{
+			name:    "incomplete-session",
+			adapter: &fakeAdapter{incomplete: true, sessionUnmountErr: errors.New("detach ambiguous")},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec := testSpec(t, test.name)
+			spec.WritePolicy = WriteBack
+			spec.LayoutPolicy = LayoutHybridV1
+			spec.ConflictPolicy = ConflictPreserveLocal
+			view := testMountView(t, spec)
+			store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			filesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+			manager := newTestManager(t, store, test.adapter, filesystem, view)
+			status, err := manager.Mount(t.Context(), spec)
+			if err == nil || !status.Desired || status.Active {
+				t.Fatalf("ambiguous mount status=%#v err=%v", status, err)
+			}
+			binding := filesystem.binding
+			if calls := binding.closeCallCount(); calls != 0 {
+				t.Fatalf("binding closed before detach confirmation: calls=%d", calls)
+			}
+			test.adapter.lastSession.unmountErr = nil
+			if err := manager.Unmount(t.Context(), spec.ID); err != nil {
+				t.Fatal(err)
+			}
+			if calls := binding.closeCallCount(); calls != 1 {
+				t.Fatalf("binding Close calls after detach=%d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestManagerNormalizesTypedNilSessionWithoutLeakingBinding(t *testing.T) {
+	for _, mountErr := range []error{nil, errors.New("typed nil mount failure")} {
+		name := "success-result"
+		if mountErr != nil {
+			name = "error-result"
+		}
+		t.Run(name, func(t *testing.T) {
+			spec := testSpec(t, "typed-nil-session-"+name)
+			spec.WritePolicy = WriteBack
+			spec.LayoutPolicy = LayoutFlatV1
+			spec.ConflictPolicy = ConflictPreserveLocal
+			view := testMountView(t, spec)
+			store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			filesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+			adapter := &fakeAdapter{typedNilSession: true, mountErr: mountErr}
+			manager := newTestManager(t, store, adapter, filesystem, view)
+			status, err := manager.Mount(t.Context(), spec)
+			if err == nil || !status.Desired || status.Active {
+				t.Fatalf("typed-nil session status=%#v err=%v", status, err)
+			}
+			if calls := filesystem.binding.closeCallCount(); calls != 1 {
+				t.Fatalf("typed-nil binding Close calls=%d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestManagerRecordsDetachBeforeRetryableBindingClose(t *testing.T) {
+	spec := testSpec(t, "detached-close-retry")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutHybridV1
+	spec.ConflictPolicy = ConflictPreserveLocal
+	view := testMountView(t, spec)
+	temporary := errors.New("temporary close failure")
+	filesystem := &fakeWritableViewFilesystem{
+		fakeViewFilesystem: &fakeViewFilesystem{}, closeErrors: []error{temporary, nil},
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &fakeAdapter{suppressDone: true}
+	manager := newTestManager(t, store, adapter, filesystem, view)
+	if _, err := manager.Mount(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Unmount(t.Context(), spec.ID); !errors.Is(err, temporary) {
+		t.Fatalf("first Unmount error=%v, want %v", err, temporary)
+	}
+	statuses, err := manager.List()
+	if err != nil || len(statuses) != 1 || statuses[0].Active || statuses[0].Desired {
+		t.Fatalf("detached cleanup-only status=%#v err=%v", statuses, err)
+	}
+	if _, unmountCalls := adapter.lastSession.callCounts(); unmountCalls != 1 {
+		t.Fatalf("first detach calls=%d, want 1", unmountCalls)
+	}
+	if err := manager.Unmount(t.Context(), spec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, unmountCalls := adapter.lastSession.callCounts(); unmountCalls != 1 {
+		t.Fatalf("retry detached again: calls=%d", unmountCalls)
+	}
+	adapter.lastSession.done <- nil
+	close(adapter.lastSession.done)
+}
+
+func TestManagerRetriesBindingCloseAfterUnexpectedSessionExit(t *testing.T) {
+	spec := testSpec(t, "close-retry")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutFlatV1
+	spec.ConflictPolicy = ConflictPreserveLocal
+	view := testMountView(t, spec)
+	temporary := errors.New("temporary close failure")
+	filesystem := &fakeWritableViewFilesystem{
+		fakeViewFilesystem: &fakeViewFilesystem{}, closeErrors: []error{temporary, nil},
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &fakeAdapter{}
+	manager := newTestManager(t, store, adapter, filesystem, view)
+	if _, err := manager.Mount(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	original := filesystem.binding
+	adapter.lastSession.done <- errors.New("driver disconnected")
+	close(adapter.lastSession.done)
+	deadline := time.Now().Add(time.Second)
+	for {
+		statuses, statusErr := manager.List()
+		if statusErr != nil {
+			t.Fatal(statusErr)
+		}
+		calls := original.closeCallCount()
+		if calls == 1 && len(statuses) == 1 && !statuses[0].Active && strings.Contains(statuses[0].LastError, temporary.Error()) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("close failure not retained: calls=%d statuses=%#v", calls, statuses)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	filesystem.mu.Lock()
+	filesystem.closeErrors = nil
+	filesystem.mu.Unlock()
+	if status, err := manager.Mount(t.Context(), spec); err != nil || !status.Active {
+		t.Fatalf("Mount after cleanup retry status=%#v err=%v", status, err)
+	}
+	if calls := original.closeCallCount(); calls != 2 {
+		t.Fatalf("original binding Close calls=%d, want 2", calls)
+	}
+}
+
+func TestManagerPersistsUnsupportedWriteBackForRetryWithoutCallingAdapter(t *testing.T) {
+	spec := testSpec(t, "unsupported-writable")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutFlatV1
+	spec.ConflictPolicy = ConflictPreserveLocal
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &fakeAdapter{}
+	manager := newTestManager(t, store, adapter, &fakeViewFilesystem{}, testMountView(t, spec))
+	status, err := manager.Mount(t.Context(), spec)
+	if !errors.Is(err, ErrWritePolicyUnavailable) || !status.Desired || status.Active || adapter.mountCalls != 0 {
+		t.Fatalf("unsupported write-back status=%#v err=%v calls=%d", status, err, adapter.mountCalls)
+	}
+	if record, err := store.Get(spec.ID); err != nil || !record.Desired {
+		t.Fatalf("unsupported write-back was not retained for retry: %#v err=%v", record, err)
+	}
+}
+
+func TestManagerClosesWritableBindingOnMountFailureAndSessionExit(t *testing.T) {
+	spec := testSpec(t, "writable-lifetime")
+	spec.WritePolicy = WriteBack
+	spec.LayoutPolicy = LayoutHybridV1
+	spec.ConflictPolicy = ConflictPreserveLocal
+	view := testMountView(t, spec)
+
+	failedStore, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedFilesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+	failedAdapter := &fakeAdapter{mountErr: errors.New("platform failed")}
+	failedManager := newTestManager(t, failedStore, failedAdapter, failedFilesystem, view)
+	if _, err := failedManager.Mount(t.Context(), spec); err == nil {
+		t.Fatal("platform mount failure was accepted")
+	}
+	failedFilesystem.mu.Lock()
+	failedCloseCalls := failedFilesystem.binding.closeCalls
+	failedFilesystem.mu.Unlock()
+	if failedCloseCalls != 1 {
+		t.Fatalf("failed mount binding Close calls=%d, want 1", failedCloseCalls)
+	}
+
+	exitedStore, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitedFilesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+	exitedAdapter := &fakeAdapter{}
+	exitedManager := newTestManager(t, exitedStore, exitedAdapter, exitedFilesystem, view)
+	if _, err := exitedManager.Mount(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	exitedAdapter.lastSession.done <- errors.New("driver disconnected")
+	close(exitedAdapter.lastSession.done)
+	deadline := time.Now().Add(time.Second)
+	for {
+		exitedFilesystem.mu.Lock()
+		closeCalls := exitedFilesystem.binding.closeCalls
+		exitedFilesystem.mu.Unlock()
+		statuses, statusErr := exitedManager.List()
+		if statusErr != nil {
+			t.Fatal(statusErr)
+		}
+		if closeCalls == 1 && len(statuses) == 1 && !statuses[0].Active && statuses[0].LastError != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("unexpected exit closeCalls=%d statuses=%#v", closeCalls, statuses)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	retryStore, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryFilesystem := &fakeWritableViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+	retryAdapter := &fakeAdapter{}
+	retryManager := newTestManager(t, retryStore, retryAdapter, retryFilesystem, view)
+	if _, err := retryManager.Mount(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	retryAdapter.lastSession.unmountErr = errors.New("ambiguous detach")
+	if err := retryManager.Unmount(t.Context(), spec.ID); err == nil {
+		t.Fatal("ambiguous unmount was accepted")
+	}
+	retryFilesystem.mu.Lock()
+	closeCalls := retryFilesystem.binding.closeCalls
+	retryFilesystem.mu.Unlock()
+	if closeCalls != 0 {
+		t.Fatalf("binding closed while platform mount may remain active: calls=%d", closeCalls)
+	}
+	retryAdapter.lastSession.unmountErr = nil
+	if err := retryManager.Unmount(t.Context(), spec.ID); err != nil {
+		t.Fatal(err)
+	}
+	retryFilesystem.mu.Lock()
+	closeCalls = retryFilesystem.binding.closeCalls
+	retryFilesystem.mu.Unlock()
+	if closeCalls != 1 {
+		t.Fatalf("binding Close calls after confirmed retry=%d, want 1", closeCalls)
+	}
+}
+
 func TestManagerRecoversPendingUnmountTombstone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mounts.json")
 	store, err := OpenStore(path)
@@ -235,6 +796,13 @@ func TestManagerRecoversPendingUnmountTombstone(t *testing.T) {
 	}
 	if err := manager.Shutdown(t.Context()); !errors.Is(err, injected) {
 		t.Fatalf("Shutdown after ambiguous unmount error = %v, want %v", err, injected)
+	}
+	if _, err := manager.List(); err != nil {
+		t.Fatalf("failed Shutdown must remain retryable: %v", err)
+	}
+	adapter.lastSession.unmountErr = nil
+	if err := manager.Shutdown(t.Context()); err != nil {
+		t.Fatalf("retry Shutdown: %v", err)
 	}
 
 	reopened, err := OpenStore(path)

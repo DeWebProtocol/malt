@@ -227,7 +227,7 @@ func (s *Service) uploadPayloads(operations []journal.Operation) ([]UploadPayloa
 			continue
 		}
 		binding := bindingFromOperation(operation)
-		body, _, err := s.cache.ReadLocal(binding)
+		body, _, err := s.cache.ReadLocalBounded(binding, s.stagedFileLimit())
 		if err != nil {
 			return nil, fmt.Errorf("read upload payload for operation %s: %w", operation.OperationID, err)
 		}
@@ -261,7 +261,7 @@ func (s *Service) reconcileCacheStates(operations []journal.Operation) error {
 		}
 	}
 	for binding, value := range desiredByBinding {
-		if _, err := s.cache.ReconcileLocalState(binding, value.state); err != nil {
+		if _, err := s.cache.ReconcileLocalStateBounded(binding, value.state, s.stagedFileLimit()); err != nil {
 			return fmt.Errorf("reconcile local cache payload %s as %s: %w", binding.CID, value.state, err)
 		}
 	}
