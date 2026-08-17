@@ -195,4 +195,35 @@ func TestNodeFailsClosedForWritesInvalidNamesAndRemoteErrors(t *testing.T) {
 	if errno := root.Rename(t.Context(), "a", root, "b", 0); errno != syscall.EROFS {
 		t.Fatalf("Rename errno=%v", errno)
 	}
+	if _, errno := root.Write(t.Context(), nil, []byte("x"), 0); errno != syscall.EROFS {
+		t.Fatalf("Write errno=%v", errno)
+	}
+	if errno := root.Allocate(t.Context(), nil, 0, 1, 0); errno != syscall.EROFS {
+		t.Fatalf("Allocate errno=%v", errno)
+	}
+	if _, errno := root.CopyFileRange(t.Context(), nil, 0, root.EmbeddedInode(), nil, 0, 1, 0); errno != syscall.EROFS {
+		t.Fatalf("CopyFileRange errno=%v", errno)
+	}
+	if errno := root.Setxattr(t.Context(), "user.test", []byte("x"), 0); errno != syscall.EROFS {
+		t.Fatalf("Setxattr errno=%v", errno)
+	}
+	if errno := root.Removexattr(t.Context(), "user.test"); errno != syscall.EROFS {
+		t.Fatalf("Removexattr errno=%v", errno)
+	}
+	if size, errno := root.Getxattr(t.Context(), "user.test", nil); size != 0 || errno != syscall.ENODATA {
+		t.Fatalf("Getxattr size=%d errno=%v", size, errno)
+	}
+	if size, errno := root.Listxattr(t.Context(), nil); size != 0 || errno != 0 {
+		t.Fatalf("Listxattr size=%d errno=%v", size, errno)
+	}
+	file := &fileHandle{}
+	if _, errno := file.Write(t.Context(), []byte("x"), 0); errno != syscall.EROFS {
+		t.Fatalf("file Write errno=%v", errno)
+	}
+	if errno := file.Setattr(t.Context(), &fuse.SetAttrIn{}, &fuse.AttrOut{}); errno != syscall.EROFS {
+		t.Fatalf("file Setattr errno=%v", errno)
+	}
+	if errno := file.Allocate(t.Context(), 0, 1, 0); errno != syscall.EROFS {
+		t.Fatalf("file Allocate errno=%v", errno)
+	}
 }

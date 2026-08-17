@@ -22,29 +22,66 @@ type mountIdentity struct {
 }
 
 func readMountIdentity(mountpoint string) (*mountIdentity, error) {
-	fd, err := unix.Open(mountpoint, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open mountpoint: %w", err)
-	}
-	defer unix.Close(fd)
-	fdinfo, err := os.Open(filepath.Join("/proc/self/fdinfo", strconv.Itoa(fd)))
-	if err != nil {
-		return nil, fmt.Errorf("open mountpoint fdinfo: %w", err)
-	}
-	mountID, err := parseVisibleMountID(fdinfo)
-	closeErr := fdinfo.Close()
-	if err != nil {
-		return nil, err
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close mountpoint fdinfo: %w", closeErr)
-	}
 	file, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
 		return nil, fmt.Errorf("open mount table: %w", err)
 	}
-	defer file.Close()
-	return parseMountIdentity(file, mountpoint, mountID)
+	identities, parseErr := parseMountIdentities(file, mountpoint)
+	closeErr := file.Close()
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close mount table: %w", closeErr)
+	}
+	return selectVisibleMountIdentity(identities, func() (uint64, error) {
+		return readVisibleMountID(mountpoint)
+	})
+}
+
+func selectVisibleMountIdentity(identities []mountIdentity, visible func() (uint64, error)) (*mountIdentity, error) {
+	if len(identities) == 0 {
+		return nil, nil
+	}
+	if len(identities) == 1 {
+		identity := identities[0]
+		return &identity, nil
+	}
+	if visible == nil {
+		return nil, fmt.Errorf("visible mount ID reader is nil")
+	}
+	mountID, err := visible()
+	if err != nil {
+		return nil, fmt.Errorf("identify visible mount among %d stacked mounts: %w", len(identities), err)
+	}
+	for index := range identities {
+		if identities[index].ID == mountID {
+			identity := identities[index]
+			return &identity, nil
+		}
+	}
+	return nil, fmt.Errorf("visible mount ID %d is absent from mount table", mountID)
+}
+
+func readVisibleMountID(mountpoint string) (uint64, error) {
+	fd, err := unix.Open(mountpoint, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return 0, fmt.Errorf("open mountpoint: %w", err)
+	}
+	defer unix.Close(fd)
+	fdinfo, err := os.Open(filepath.Join("/proc/self/fdinfo", strconv.Itoa(fd)))
+	if err != nil {
+		return 0, fmt.Errorf("open mountpoint fdinfo: %w", err)
+	}
+	mountID, err := parseVisibleMountID(fdinfo)
+	closeErr := fdinfo.Close()
+	if err != nil {
+		return 0, err
+	}
+	if closeErr != nil {
+		return 0, fmt.Errorf("close mountpoint fdinfo: %w", closeErr)
+	}
+	return mountID, nil
 }
 
 func parseVisibleMountID(reader io.Reader) (uint64, error) {
@@ -66,11 +103,9 @@ func parseVisibleMountID(reader io.Reader) (uint64, error) {
 	return 0, fmt.Errorf("mountpoint fdinfo does not contain a mount ID")
 }
 
-func parseMountIdentity(reader io.Reader, mountpoint string, visibleMountID uint64) (*mountIdentity, error) {
-	if visibleMountID == 0 {
-		return nil, fmt.Errorf("visible mount ID must be nonzero")
-	}
+func parseMountIdentities(reader io.Reader, mountpoint string) ([]mountIdentity, error) {
 	want := filepath.Clean(mountpoint)
+	var identities []mountIdentity
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -96,22 +131,19 @@ func parseMountIdentity(reader io.Reader, mountpoint string, visibleMountID uint
 		if err != nil || id <= 0 {
 			return nil, fmt.Errorf("mount table contains an invalid mount ID")
 		}
-		if id != visibleMountID {
-			continue
-		}
 		source, err := unescapeMountField(fields[separator+2])
 		if err != nil {
 			return nil, err
 		}
-		return &mountIdentity{
+		identities = append(identities, mountIdentity{
 			ID: id, Mountpoint: decodedMountpoint,
 			Filesystem: fields[separator+1], Source: source,
-		}, nil
+		})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read mount table: %w", err)
 	}
-	return nil, nil
+	return identities, nil
 }
 
 func unescapeMountField(value string) (string, error) {

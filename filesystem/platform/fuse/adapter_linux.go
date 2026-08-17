@@ -35,11 +35,13 @@ type server interface {
 type mountFunc func(string, fs.InodeEmbedder, *fs.Options) (server, error)
 type inspectFunc func(string) (*mountIdentity, error)
 type recoverFunc func(context.Context, string, mountIdentity) error
+type readyFunc func(string) (string, error)
 
 type Adapter struct {
 	mount   mountFunc
 	inspect inspectFunc
 	recover recoverFunc
+	ready   readyFunc
 }
 
 func New() *Adapter {
@@ -49,13 +51,14 @@ func New() *Adapter {
 		},
 		inspect: readMountIdentity,
 		recover: recoverFuseMount,
+		ready:   safeMountpoint,
 	}
 }
 
 func (*Adapter) Name() string { return "linux-fuse" }
 
 func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesystem filesystemmount.ReadOnlyFilesystem) (filesystemmount.Session, error) {
-	if a == nil || a.mount == nil || a.inspect == nil || a.recover == nil {
+	if a == nil || a.mount == nil || a.inspect == nil || a.recover == nil || a.ready == nil {
 		return nil, fmt.Errorf("FUSE adapter is not initialized")
 	}
 	if err := ctx.Err(); err != nil {
@@ -67,9 +70,9 @@ func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesyst
 	if strings.TrimSpace(spec.ID) == "" || spec.ID != strings.TrimSpace(spec.ID) {
 		return nil, fmt.Errorf("FUSE mount ID is invalid")
 	}
-	mountpoint, err := safeMountpoint(spec.Mountpoint)
+	mountpoint, err := mountpointPath(spec.Mountpoint)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrUnsafeMountpoint, err)
 	}
 	identity, err := a.inspect(mountpoint)
 	if err != nil {
@@ -88,6 +91,10 @@ func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesyst
 			return nil, fmt.Errorf("stale MALT FUSE mount remains at %s", mountpoint)
 		}
 	}
+	mountpoint, err = a.ready(mountpoint)
+	if err != nil {
+		return nil, err
+	}
 	if err := requireEmptyDirectory(mountpoint); err != nil {
 		return nil, err
 	}
@@ -95,7 +102,6 @@ func (a *Adapter) Mount(ctx context.Context, spec filesystemmount.Spec, filesyst
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
 			FsName: expectedSource(spec), Name: "malt", Options: []string{"ro"},
-			DisableXAttrs: true,
 		},
 		NullPermissions: true,
 		RootStableAttr:  &fs.StableAttr{Mode: fuse.S_IFDIR},
@@ -133,7 +139,7 @@ func (a *Adapter) RecoverUnmount(ctx context.Context, spec filesystemmount.Spec)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	mountpoint, err := canonicalMountpoint(spec.Mountpoint)
+	mountpoint, err := mountpointPath(spec.Mountpoint)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -173,45 +179,60 @@ func ownedMount(identity *mountIdentity, spec filesystemmount.Spec) bool {
 }
 
 func safeMountpoint(raw string) (string, error) {
-	mountpoint, err := canonicalMountpoint(raw)
+	mountpoint, err := mountpointPath(raw)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrUnsafeMountpoint, err)
+	}
+	info, err := os.Lstat(mountpoint)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnsafeMountpoint, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("%w: mountpoint must be a real directory", ErrUnsafeMountpoint)
+	}
+	resolved, err := filepath.EvalSymlinks(mountpoint)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnsafeMountpoint, err)
+	}
+	if filepath.Clean(resolved) != mountpoint {
+		return "", fmt.Errorf("%w: mountpoint path must not traverse symlinks", ErrUnsafeMountpoint)
 	}
 	return mountpoint, nil
 }
 
-func canonicalMountpoint(raw string) (string, error) {
+// mountpointPath validates only the absolute path and its parent chain. It
+// deliberately does not stat or resolve the final component: a disconnected
+// FUSE root can return ENOTCONN there and must still be recoverable by its
+// exact mount-table identity. Full final-directory checks happen only after no
+// mount remains.
+func mountpointPath(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || !filepath.IsAbs(raw) {
 		return "", fmt.Errorf("mountpoint must be absolute")
 	}
-	clean := filepath.Clean(raw)
+	clean, err := filepath.Abs(filepath.Clean(raw))
+	if err != nil {
+		return "", err
+	}
 	if filepath.Dir(clean) == clean {
 		return "", fmt.Errorf("mountpoint must not be a filesystem root")
 	}
-	info, err := os.Lstat(clean)
+	parent := filepath.Dir(clean)
+	info, err := os.Lstat(parent)
 	if err != nil {
 		return "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return "", fmt.Errorf("mountpoint must be a real directory")
+		return "", fmt.Errorf("mountpoint parent must be a real directory")
 	}
-	resolved, err := filepath.EvalSymlinks(clean)
+	resolved, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return "", err
 	}
-	resolved, err = filepath.Abs(resolved)
-	if err != nil {
-		return "", err
+	if filepath.Clean(resolved) != parent {
+		return "", fmt.Errorf("mountpoint parent path must not traverse symlinks")
 	}
-	clean, err = filepath.Abs(clean)
-	if err != nil {
-		return "", err
-	}
-	if filepath.Clean(resolved) != filepath.Clean(clean) {
-		return "", fmt.Errorf("mountpoint path must not traverse symlinks")
-	}
-	return filepath.Clean(clean), nil
+	return clean, nil
 }
 
 func requireEmptyDirectory(mountpoint string) error {

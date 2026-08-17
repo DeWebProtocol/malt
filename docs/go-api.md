@@ -380,13 +380,15 @@ WinFsp adapter is claimed by this lifecycle step.
 Package `filesystem/platform/fuse` provides the first concrete outer adapter
 on Linux, pinned to `github.com/hanwen/go-fuse/v2 v2.11.0`. It maps stat,
 lookup, readdir, open, and range reads onto the View-bound read-only port,
-returns `EROFS` for namespace and metadata mutation, refuses nonempty or
-symlinked mountpoints, and sets a per-mount `malt:<mount-id>` source identity.
-Crash recovery parses the topmost `/proc/self/mountinfo` entry and invokes
-`fusermount` only when both the FUSE type and exact MALT source match; foreign
-mounts fail closed. Unit tests exercise syscall mapping without a kernel mount,
-while the following opt-in test performs a real read-only mount when the host
-has FUSE:
+returns `EROFS` for namespace, data, xattr, and metadata mutation, refuses
+nonempty or symlinked mountpoints, and sets a per-mount `malt:<mount-id>` source
+identity. Crash recovery parses exact `/proc/self/mountinfo` entries without
+touching a possibly disconnected final FUSE root. If mounts are stacked, it
+uses `/proc/self/fdinfo` to select the currently visible mount and otherwise
+fails closed. `fusermount` runs only when both the FUSE type and exact MALT
+source match. Unit tests exercise syscall mapping without a kernel mount, while
+the following opt-in test performs a real read-only mount when the host has
+FUSE:
 
 ```sh
 MALT_FUSE_SMOKE=1 go test -run TestLinuxFUSESmoke ./filesystem/platform/fuse

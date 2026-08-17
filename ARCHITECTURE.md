@@ -248,8 +248,9 @@ it does not silently change the existing plaintext semantics of `malt add`.
   process-released lease fail closed before opening the mount registry.
 - `filesystem/platform/fuse`: Linux-only read-only FUSE syscall translation.
   It receives only the View-bound mount capability, rejects every namespace or
-  metadata mutation, and verifies `/proc/self/mountinfo` ownership before
-  recovering a stale mount. It has no trust or transport access.
+  data/metadata mutation, and verifies `/proc/self/mountinfo` ownership before
+  recovering even a disconnected stale mount. It has no trust or transport
+  access.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for

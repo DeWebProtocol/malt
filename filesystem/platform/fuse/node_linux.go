@@ -112,6 +112,12 @@ func (n *node) Setattr(context.Context, fs.FileHandle, *fuse.SetAttrIn, *fuse.At
 	return syscall.EROFS
 }
 
+func (n *node) Getxattr(context.Context, string, []byte) (uint32, syscall.Errno) {
+	return 0, syscall.ENODATA
+}
+
+func (n *node) Listxattr(context.Context, []byte) (uint32, syscall.Errno) { return 0, 0 }
+
 func (n *node) Mkdir(context.Context, string, uint32, *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	return nil, syscall.EROFS
 }
@@ -144,6 +150,20 @@ func (n *node) Setxattr(context.Context, string, []byte, uint32) syscall.Errno {
 }
 
 func (n *node) Removexattr(context.Context, string) syscall.Errno { return syscall.EROFS }
+
+func (n *node) Write(context.Context, fs.FileHandle, []byte, int64) (uint32, syscall.Errno) {
+	return 0, syscall.EROFS
+}
+
+func (n *node) Allocate(context.Context, fs.FileHandle, uint64, uint64, uint32) syscall.Errno {
+	return syscall.EROFS
+}
+
+func (n *node) CopyFileRange(
+	context.Context, fs.FileHandle, uint64, *fs.Inode, fs.FileHandle, uint64, uint64, uint64,
+) (uint32, syscall.Errno) {
+	return 0, syscall.EROFS
+}
 
 func (n *node) setAttr(out *fuse.Attr, info filesystemservice.Info, mode uint32) {
 	out.Mode = mode | permissionsForMode(mode)
@@ -209,6 +229,18 @@ func (f *fileHandle) Getattr(_ context.Context, out *fuse.AttrOut) syscall.Errno
 	return 0
 }
 
+func (f *fileHandle) Write(context.Context, []byte, int64) (uint32, syscall.Errno) {
+	return 0, syscall.EROFS
+}
+
+func (f *fileHandle) Setattr(context.Context, *fuse.SetAttrIn, *fuse.AttrOut) syscall.Errno {
+	return syscall.EROFS
+}
+
+func (f *fileHandle) Allocate(context.Context, uint64, uint64, uint32) syscall.Errno {
+	return syscall.EROFS
+}
+
 func (f *fileHandle) Release(context.Context) syscall.Errno {
 	f.once.Do(func() { f.err = f.handle.Close() })
 	return errno(f.err)
@@ -236,22 +268,30 @@ func errno(err error) syscall.Errno {
 }
 
 var (
-	_ fs.NodeGetattrer     = (*node)(nil)
-	_ fs.NodeLookuper      = (*node)(nil)
-	_ fs.NodeReaddirer     = (*node)(nil)
-	_ fs.NodeOpener        = (*node)(nil)
-	_ fs.NodeSetattrer     = (*node)(nil)
-	_ fs.NodeMkdirer       = (*node)(nil)
-	_ fs.NodeMknoder       = (*node)(nil)
-	_ fs.NodeLinker        = (*node)(nil)
-	_ fs.NodeSymlinker     = (*node)(nil)
-	_ fs.NodeCreater       = (*node)(nil)
-	_ fs.NodeUnlinker      = (*node)(nil)
-	_ fs.NodeRmdirer       = (*node)(nil)
-	_ fs.NodeRenamer       = (*node)(nil)
-	_ fs.NodeSetxattrer    = (*node)(nil)
-	_ fs.NodeRemovexattrer = (*node)(nil)
-	_ fs.FileReader        = (*fileHandle)(nil)
-	_ fs.FileGetattrer     = (*fileHandle)(nil)
-	_ fs.FileReleaser      = (*fileHandle)(nil)
+	_ fs.NodeGetattrer      = (*node)(nil)
+	_ fs.NodeLookuper       = (*node)(nil)
+	_ fs.NodeReaddirer      = (*node)(nil)
+	_ fs.NodeOpener         = (*node)(nil)
+	_ fs.NodeSetattrer      = (*node)(nil)
+	_ fs.NodeGetxattrer     = (*node)(nil)
+	_ fs.NodeListxattrer    = (*node)(nil)
+	_ fs.NodeMkdirer        = (*node)(nil)
+	_ fs.NodeMknoder        = (*node)(nil)
+	_ fs.NodeLinker         = (*node)(nil)
+	_ fs.NodeSymlinker      = (*node)(nil)
+	_ fs.NodeCreater        = (*node)(nil)
+	_ fs.NodeUnlinker       = (*node)(nil)
+	_ fs.NodeRmdirer        = (*node)(nil)
+	_ fs.NodeRenamer        = (*node)(nil)
+	_ fs.NodeSetxattrer     = (*node)(nil)
+	_ fs.NodeRemovexattrer  = (*node)(nil)
+	_ fs.NodeWriter         = (*node)(nil)
+	_ fs.NodeAllocater      = (*node)(nil)
+	_ fs.NodeCopyFileRanger = (*node)(nil)
+	_ fs.FileReader         = (*fileHandle)(nil)
+	_ fs.FileGetattrer      = (*fileHandle)(nil)
+	_ fs.FileReleaser       = (*fileHandle)(nil)
+	_ fs.FileWriter         = (*fileHandle)(nil)
+	_ fs.FileSetattrer      = (*fileHandle)(nil)
+	_ fs.FileAllocater      = (*fileHandle)(nil)
 )

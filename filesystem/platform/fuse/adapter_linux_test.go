@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,7 +46,8 @@ func TestAdapterMountsOwnedReadOnlyFilesystemAndSessionIsIdempotent(t *testing.T
 	adapter.inspect = func(string) (*mountIdentity, error) { return current, nil }
 	adapter.mount = func(got string, _ fs.InodeEmbedder, options *fs.Options) (server, error) {
 		if got != mountpoint || options.MountOptions.FsName != expectedSource(spec) || options.MountOptions.Name != "malt" ||
-			len(options.MountOptions.Options) != 1 || options.MountOptions.Options[0] != "ro" || !options.NullPermissions {
+			len(options.MountOptions.Options) != 1 || options.MountOptions.Options[0] != "ro" ||
+			options.MountOptions.DisableXAttrs || !options.NullPermissions {
 			t.Fatalf("mount options = %#v", options)
 		}
 		current = &mountIdentity{ID: 42, Mountpoint: mountpoint, Filesystem: "fuse.malt", Source: expectedSource(spec)}
@@ -69,6 +71,25 @@ func TestAdapterMountsOwnedReadOnlyFilesystemAndSessionIsIdempotent(t *testing.T
 	case <-session.Done():
 	case <-time.After(time.Second):
 		t.Fatal("session Done did not close after unmount")
+	}
+}
+
+func TestRecoverUnmountDoesNotInspectDisconnectedFinalPath(t *testing.T) {
+	mountpoint := filepath.Join(t.TempDir(), "disconnected")
+	spec := fuseTestSpec(mountpoint)
+	current := &mountIdentity{ID: 7, Mountpoint: mountpoint, Filesystem: "fuse.malt", Source: expectedSource(spec)}
+	adapter := New()
+	adapter.ready = func(string) (string, error) {
+		t.Fatal("recovery inspected the disconnected final mountpoint")
+		return "", syscall.ENOTCONN
+	}
+	adapter.inspect = func(string) (*mountIdentity, error) { return current, nil }
+	adapter.recover = func(context.Context, string, mountIdentity) error {
+		current = nil
+		return nil
+	}
+	if err := adapter.RecoverUnmount(t.Context(), spec); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -206,24 +227,24 @@ func TestAdapterRejectsUnsafeOrForeignMountpointBeforeMount(t *testing.T) {
 	}
 }
 
-func TestParseMountIdentityUsesVisibleMountIDAndDecodesFields(t *testing.T) {
+func TestParseMountIdentitiesDecodesStackedEntries(t *testing.T) {
 	table := strings.Join([]string{
 		"20 1 0:1 / /tmp/other rw - ext4 /dev/root rw",
 		"31 20 0:42 / /tmp/malt\\040mount rw,nosuid,nodev - fuse.malt malt:docs rw,user_id=1000",
 		"35 31 0:43 / /tmp/malt\\040mount rw,nosuid,nodev - fuse.malt malt:newer rw,user_id=1000",
 	}, "\n")
-	identity, err := parseMountIdentity(strings.NewReader(table), "/tmp/malt mount", 31)
+	identities, err := parseMountIdentities(strings.NewReader(table), "/tmp/malt mount")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity == nil || identity.ID != 31 || identity.Mountpoint != "/tmp/malt mount" || identity.Source != "malt:docs" {
-		t.Fatalf("identity = %#v", identity)
+	if len(identities) != 2 || identities[0].ID != 31 || identities[0].Mountpoint != "/tmp/malt mount" || identities[0].Source != "malt:docs" || identities[1].ID != 35 {
+		t.Fatalf("identities = %#v", identities)
 	}
-	if _, err := parseMountIdentity(strings.NewReader("broken"), "/tmp/malt", 1); err == nil {
+	if _, err := parseMountIdentities(strings.NewReader("broken"), "/tmp/malt"); err == nil {
 		t.Fatal("malformed mount table was accepted")
 	}
-	if identity, err := parseMountIdentity(strings.NewReader(table), "/tmp/malt mount", 99); err != nil || identity != nil {
-		t.Fatalf("unknown visible mount identity=%#v err=%v", identity, err)
+	if identities, err := parseMountIdentities(strings.NewReader(table), "/tmp/missing"); err != nil || len(identities) != 0 {
+		t.Fatalf("missing mount identities=%#v err=%v", identities, err)
 	}
 }
 
@@ -236,6 +257,25 @@ func TestParseVisibleMountIDFailsClosed(t *testing.T) {
 		if _, err := parseVisibleMountID(strings.NewReader(input)); err == nil {
 			t.Fatalf("invalid fdinfo %q was accepted", input)
 		}
+	}
+}
+
+func TestSingleMountIdentityDoesNotTouchDisconnectedMountpoint(t *testing.T) {
+	want := mountIdentity{ID: 35, Mountpoint: "/tmp/malt", Filesystem: "fuse.malt", Source: "malt:docs"}
+	identity, err := selectVisibleMountIdentity([]mountIdentity{want}, func() (uint64, error) {
+		t.Fatal("single mount identity consulted disconnected mountpoint")
+		return 0, syscall.ENOTCONN
+	})
+	if err != nil || identity == nil || *identity != want {
+		t.Fatalf("identity=%#v err=%v", identity, err)
+	}
+	stacked := []mountIdentity{{ID: 31}, {ID: 35}}
+	identity, err = selectVisibleMountIdentity(stacked, func() (uint64, error) { return 35, nil })
+	if err != nil || identity == nil || identity.ID != 35 {
+		t.Fatalf("stacked identity=%#v err=%v", identity, err)
+	}
+	if _, err := selectVisibleMountIdentity(stacked, func() (uint64, error) { return 0, syscall.ENOTCONN }); err == nil {
+		t.Fatal("ambiguous disconnected stack was accepted")
 	}
 }
 
