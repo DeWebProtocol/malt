@@ -30,7 +30,7 @@ var initCmd = &cobra.Command{
 		if _, err := keyring.Create(cfg.Backup.KeyringPath); err != nil {
 			return err
 		}
-		fmt.Printf("Initialized MALT client config: %s\n", path)
+		fmt.Printf("Initialized MALT local runtime config: %s\n", path)
 		fmt.Printf("Initialized encrypted backup keyring: %s\n", cfg.Backup.KeyringPath)
 		return nil
 	},

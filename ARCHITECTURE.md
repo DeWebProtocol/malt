@@ -234,10 +234,10 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
   Merkle-DAG compatibility applications.
 - `internal/daemon`: local Unix-socket/Windows-pipe root-control API.
-- `internal/keyring`: client-owned backup epoch keys and per-Bucket derivation.
+- `internal/keyring`: runtime-owned backup epoch keys and per-Bucket derivation.
 - `internal/durablefile`: platform-specific parent-directory synchronization
   after security-sensitive atomic state replacement.
-- `internal/filelock`: bounded cross-process locks for client-owned state
+- `internal/filelock`: bounded cross-process locks for runtime-owned state
   transitions.
 - `internal/securefile`: owner-only Unix file modes and protected
   owner-and-SYSTEM Windows file DACLs.

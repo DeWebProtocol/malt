@@ -1,6 +1,6 @@
 # Contributing
 
-Keep changes on the trusted-client, UnixFS application, and Merkle DAG
+Keep changes on the local-runtime, UnixFS application, and Merkle DAG
 compatibility side of the MALT boundary. Protocol, ProofList, commitment, CID, schema, and core algorithm
 changes belong in [DeWebProtocol/malt-core](https://github.com/DeWebProtocol/malt-core).
 ArcTable/KV/CAS persistence, managed service policy, deployment, and gateway

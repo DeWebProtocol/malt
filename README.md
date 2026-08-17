@@ -53,7 +53,7 @@ go build -o bin/malt ./cmd/malt
 
 ## Quick start
 
-Start a compatible gateway, then initialize the local client:
+Start a compatible gateway, then initialize the local runtime:
 
 ```bash
 ./bin/malt init
@@ -62,7 +62,7 @@ Start a compatible gateway, then initialize the local client:
 ./bin/malt daemon status
 ```
 
-`malt init` also creates a client-owned `0600` backup keyring. Existing
+`malt init` also creates a runtime-owned `0600` backup keyring. Existing
 installations can initialize only that missing keyring without replacing their
 configuration:
 

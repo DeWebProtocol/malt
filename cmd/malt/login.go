@@ -57,7 +57,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	if deviceName == "" {
 		deviceName, err = os.Hostname()
 		if err != nil || strings.TrimSpace(deviceName) == "" {
-			deviceName = "MALT client"
+			deviceName = "MALT runtime"
 		}
 	}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
