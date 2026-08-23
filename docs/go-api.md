@@ -4,6 +4,9 @@ This document describes the pre-release integration surface owned by the MALT
 local runtime. Its Go module still uses the
 `github.com/dewebprotocol/malt-client` namespace during the initial refactor.
 MALT protocol and ProofList schemas remain defined by the MALT Core repository.
+This module is intentionally untagged after historical runtime `v0.0.1` while
+the [runtime namespace decision](runtime-module-namespace.md) is deferred; pin
+current integrations to an exact reviewed commit.
 
 ## Public gateway transport
 

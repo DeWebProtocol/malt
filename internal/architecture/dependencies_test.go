@@ -38,6 +38,26 @@ func TestPackageBoundaries(t *testing.T) {
 	}
 }
 
+func TestRuntimeModuleNamespaceCutoverRemainsExplicit(t *testing.T) {
+	root := moduleRoot(t)
+	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := strings.SplitN(string(goMod), "\n", 2)[0]; first != "module github.com/dewebprotocol/malt-client" {
+		t.Fatalf("runtime module changed outside the dedicated namespace cutover: %q", first)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "go.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"tags: ['**']", "./scripts/verify-module-namespace.sh", "GITHUB_REF_TYPE=tag", "needs: namespace-gate"} {
+		if !strings.Contains(string(workflow), required) {
+			t.Errorf("Go workflow does not enforce namespace gate token %q", required)
+		}
+	}
+}
+
 func TestProductionPackagesDoNotImportEvaluation(t *testing.T) {
 	root := moduleRoot(t)
 	set := token.NewFileSet()
