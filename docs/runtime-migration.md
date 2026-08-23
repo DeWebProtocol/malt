@@ -1,6 +1,6 @@
 # MALT Local Runtime Migration
 
-Status: implementation plan and current-state audit, updated 2026-08-17.
+Status: implementation plan and current-state audit, updated 2026-08-23.
 
 This document records the repository migration and the incremental conversion
 of this repository, renamed from `malt-client` to `malt`, into the MALT local
@@ -22,7 +22,7 @@ network/storage topologies, not product identities.
 | Repository | Current executable responsibility | Current Core dependency |
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
-| `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
+| `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.8` (wire-compatible Map-proof performance update after the `v0.0.7` migration baseline) |
 | `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache, operation journal, platform-neutral local dirty staging, verified write-back orchestration and flat/hybrid UnixFS client-root planning, a Linux FUSE adapter with read-only default and opt-in per-dataset/branch Gateway write-back composition, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, durable local CAS, Gateway-primary hybrid CAS, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
