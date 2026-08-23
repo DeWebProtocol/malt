@@ -1072,27 +1072,21 @@ func TestSuccessfulShutdownDoesNotReportExpectedSessionExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter.lastSession.afterUnmount = func() {
-		deadline := time.Now().Add(time.Second)
-		for {
-			manager.mu.Lock()
-			_, active := manager.live[spec.ID]
-			manager.mu.Unlock()
-			if !active {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Error("session monitor did not observe shutdown")
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
+		// Let the monitor receive the expected Done while Shutdown still owns the
+		// operation gate. Shutdown, not the monitor, must finish this cleanup.
+		runtime.Gosched()
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := manager.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	manager.mu.Lock()
 	lastError := manager.errors[spec.ID]
+	_, active := manager.live[spec.ID]
 	manager.mu.Unlock()
+	if active {
+		t.Fatal("successful shutdown retained a live mount")
+	}
 	if lastError != "" {
 		t.Fatalf("successful shutdown retained LastError %q", lastError)
 	}
@@ -1170,10 +1164,22 @@ func TestManagerRetainsViewLeaseUntilReleaseRetrySucceeds(t *testing.T) {
 	filesystem := &fakeLeasedViewFilesystem{
 		fakeViewFilesystem: &fakeViewFilesystem{}, releaseErrors: []error{transient},
 	}
-	manager := newTestManager(t, store, &fakeAdapter{}, filesystem, testMountView(t, spec))
+	adapter := &fakeAdapter{}
+	manager := newTestManager(t, store, adapter, filesystem, testMountView(t, spec))
 	if _, err := manager.Mount(t.Context(), spec); err != nil {
 		t.Fatal(err)
 	}
+	adapter.mu.Lock()
+	session := adapter.lastSession
+	adapter.mu.Unlock()
+	session.mu.Lock()
+	session.afterUnmount = func() {
+		// Give the monitor a deterministic opportunity to observe Done. It must
+		// wait behind the manager operation instead of consuming releaseErrors.
+		runtime.Gosched()
+		time.Sleep(10 * time.Millisecond)
+	}
+	session.mu.Unlock()
 	if err := manager.Unmount(t.Context(), spec.ID); !errors.Is(err, transient) {
 		t.Fatalf("first Unmount error = %v, want View release failure", err)
 	}

@@ -159,6 +159,7 @@ type liveMount struct {
 	token        uint64
 	cleanupOnly  bool
 	needsUnmount bool
+	expectedDone bool
 }
 
 type Manager struct {
@@ -532,7 +533,11 @@ func (m *Manager) failureStatus(record Record, view filesystemservice.View, err 
 
 func (m *Manager) cleanupLive(ctx context.Context, id string, live liveMount) error {
 	if live.session != nil && live.needsUnmount {
+		live.expectedDone = true
+		m.markSessionDoneExpected(id, live, true)
 		if err := live.session.Unmount(ctx); err != nil {
+			live.expectedDone = false
+			m.markSessionDoneExpected(id, live, false)
 			return err
 		}
 		live.needsUnmount = false
@@ -551,6 +556,16 @@ func (m *Manager) markDetached(id string, live liveMount) {
 	if current, ok := m.live[id]; ok && current.token == live.token {
 		current.cleanupOnly = true
 		current.needsUnmount = false
+		current.expectedDone = live.expectedDone
+		m.live[id] = current
+	}
+}
+
+func (m *Manager) markSessionDoneExpected(id string, live liveMount, expected bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.live[id]; ok && current.token == live.token {
+		current.expectedDone = expected
 		m.live[id] = current
 	}
 }
@@ -584,7 +599,7 @@ func (m *Manager) retainCleanup(id string, view filesystemservice.View, session 
 	m.nextToken++
 	live := liveMount{
 		session: session, view: view, binding: binding, viewLease: viewLease, token: token,
-		cleanupOnly: true, needsUnmount: needsUnmount,
+		cleanupOnly: true, needsUnmount: needsUnmount, expectedDone: session != nil && !needsUnmount,
 	}
 	m.live[id] = live
 	m.mu.Unlock()
@@ -598,9 +613,20 @@ func (m *Manager) monitor(id string, token uint64, done <-chan error) {
 	if !open || err == nil {
 		err = fmt.Errorf("mount session ended")
 	}
+	// Serialize monitor cleanup with explicit Mount/Unmount/Restore/Shutdown.
+	// An expected Done produced by a manager-owned detach must not race that
+	// operation and consume its first retryable binding or View-release error.
+	if acquireErr := m.acquireOperation(context.Background()); acquireErr != nil {
+		return
+	}
+	defer m.releaseOperation()
 	m.mu.Lock()
 	live, ok := m.live[id]
 	if !ok || live.token != token {
+		m.mu.Unlock()
+		return
+	}
+	if live.expectedDone {
 		m.mu.Unlock()
 		return
 	}
