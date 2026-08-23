@@ -3,6 +3,7 @@ name: Go
 on:
   push:
     branches: [main]
+    tags: ['**']
   pull_request:
     branches: [main]
 
@@ -10,8 +11,36 @@ permissions:
   contents: read
 
 jobs:
+  namespace-gate:
+    name: Runtime module namespace gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify deferred namespace and block release tags
+        run: ./scripts/verify-module-namespace.sh
+      - name: Test GitHub ref classification
+        run: |
+          GITHUB_REF_TYPE=branch \
+          GITHUB_REF=refs/heads/main \
+          GITHUB_REF_NAME=main \
+            ./scripts/verify-module-namespace.sh
+          if GITHUB_REF_TYPE=tag \
+             GITHUB_REF=refs/tags/v0.1.0 \
+             GITHUB_REF_NAME=v0.1.0 \
+             ./scripts/verify-module-namespace.sh; then
+            echo 'namespace gate accepted a simulated release tag' >&2
+            exit 1
+          fi
+
   test:
     name: Test, vet, and build
+    needs: namespace-gate
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -32,6 +61,7 @@ jobs:
 
   cross-platform-build:
     name: Build (${{ matrix.goos }})
+    needs: namespace-gate
     runs-on: ubuntu-latest
     strategy:
       matrix:

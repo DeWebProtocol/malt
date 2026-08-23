@@ -10,6 +10,10 @@ This repository is now named `malt`. The product and binary are MALT; the
 background process is the MALT daemon. Its Go module deliberately remains
 `github.com/dewebprotocol/malt-client` during the initial runtime refactor so a
 repository rename cannot silently reuse Core's historical module namespace.
+An active all-tag GitHub ruleset and a defense-in-depth CI check block runtime
+release tags until the separate
+[module namespace gate](docs/runtime-module-namespace.md) is replaced by an
+approved pre-v1 cutover.
 
 The runtime owns concerns that must not be part of the application-neutral
 authentication core:

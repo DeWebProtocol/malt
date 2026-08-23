@@ -12,6 +12,11 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 
 - Do not define MALT protocol, ProofList, commitment, CID, schema, or canonical
   graph semantics here; use the `malt-core` module.
+- Keep `module github.com/dewebprotocol/malt-client` and the release-tag block
+  intact until a dedicated pre-v1 namespace-cutover PR satisfies
+  `docs/runtime-module-namespace.md`; a repository rename is not authorization
+  to reuse historical Core's module path. The active all-tag GitHub ruleset is
+  the primary control; the workflow is defense in depth, not ref protection.
 - Do not add ArcTable/KV persistence or managed gateway policy here; those
   belong in `gateway`.
 - Treat gateway responses as untrusted and verify against caller-selected
