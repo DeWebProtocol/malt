@@ -125,9 +125,21 @@ type PlanService struct {
 	roots            PlanRootPolicy
 	protected        []string
 	restoreProtected []string
+	release          func() error
 }
 
 func NewPlanService(opts PlanServiceOptions) (*PlanService, error) {
+	return newPlanService(opts, nil)
+}
+
+// NewPlanServiceWithRelease composes one plan service with an owned runtime
+// resource release. It keeps PlanServiceOptions source-compatible for existing
+// embedders while giving the local runtime deterministic transport cleanup.
+func NewPlanServiceWithRelease(opts PlanServiceOptions, release func() error) (*PlanService, error) {
+	return newPlanService(opts, release)
+}
+
+func newPlanService(opts PlanServiceOptions, release func() error) (*PlanService, error) {
 	if err := validatePlan(opts.Plan); err != nil {
 		return nil, err
 	}
@@ -143,7 +155,26 @@ func NewPlanService(opts PlanServiceOptions) (*PlanService, error) {
 		remote: opts.Remote, blocks: opts.Blocks, roots: opts.Roots,
 		protected:        append([]string(nil), opts.Protected...),
 		restoreProtected: append([]string(nil), opts.RestoreProtected...),
+		release:          release,
 	}, nil
+}
+
+// Close releases transport resources owned by this configured service after
+// all plan operations have quiesced. It is idempotent.
+func (s *PlanService) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.release == nil {
+		return nil
+	}
+	if err := s.release(); err != nil {
+		return err
+	}
+	s.release = nil
+	return nil
 }
 
 // Recover completes or rolls back interrupted sync/restore transactions before

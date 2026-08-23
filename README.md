@@ -17,8 +17,8 @@ authentication core:
 - separate observed-head, candidate-root, and accepted-root policy;
 - application-path parsing and UnixFS materialization;
 - optional IPFS-compatible Merkle DAG UnixFS import;
-- transport-mediated access to remote or local storage (currently Gateway
-  HTTP);
+- transport-mediated access to remote or local storage through Gateway HTTP,
+  a durable local CAS, or Gateway-primary/local-cache hybrid CAS policy;
 - durable managed-Bucket base/remote/stash synchronization state;
 - non-authoritative CID-bound cache metadata with explicit verified, dirty,
   pending, candidate, conflicted, offline-only, and stale states;
@@ -63,9 +63,13 @@ policy composes per-dataset/branch staging, the flat or hybrid UnixFS planner,
 MALT Core client-root computation, the untrusted Gateway remote, and local
 candidate recording. A successful remote write never accepts the candidate;
 promotion still requires the separate local root policy. The current remote
-transport is Gateway HTTP; WinFsp, local-CAS,
-P2P, and hybrid transports are staged follow-up work and are not claimed as
-implemented here. The historical `v0.0.1` tag was published for MALT Client
+executor is Gateway HTTP. A durable bounded local CAS and a Gateway-primary,
+CID-verified read-through hybrid CAS are implemented; local-only mode currently
+supports Merkle-DAG import, while native MALT managed-Bucket operations require
+Gateway or hybrid policy. The shared contract also exercises a peer-loopback
+adapter without defining a premature P2P wire format. A production P2P network
+transport and WinFsp remain follow-up work. The historical `v0.0.1` tag was
+published for MALT Client
 before the repository rename and before the staging/write-back APIs existed.
 Those current experimental Go interfaces have not appeared in any tag and may
 still make explicitly documented source-breaking changes before a tagged
@@ -436,6 +440,48 @@ persists base, observed remote head, and local stashes under a cross-process
 lock and implements stash-before-fetch push ordering. It deliberately does not
 import or mutate package `trust`.
 
+`transport/capability` also defines public single and ordered-batch CAS
+contracts plus stable not-found/corruption classification. `transport/local`
+stores bounded immutable blocks atomically in an owner-private directory and
+pins the opened store boundary with no-follow platform handles, rejects
+reparse/symlink, FIFO/socket, unreadable, non-owner-private, and multiply-linked block identities, and
+re-hashes disk bytes for both `Get` and `Has` without mutating read-path
+metadata. CID paths are sharded by the first digest byte rather than multihash
+header metadata. `Put` repairs an unsafe exact target only through a protected
+temporary file and atomic replacement. Batch inputs are completely preflighted before the
+first write; a later error may leave a verified subset, makes the returned
+results unusable, and is recovered by safely retrying the complete immutable
+batch. `transport/hybrid` keeps Gateway
+as the persistence authority: writes reach Gateway first, `Has` consults only
+Gateway, and local cache misses or corrupted bodies fall back to a CID-verified
+primary read. Cache fill failure cannot turn verified primary bytes into an
+unverified result.
+
+An unreadable shard directory is classified as corrupted state but is never
+silently chmodded or replaced: one shard may contain many unrelated valid
+blocks. Stop users of that store, restore its current-user ownership and `0700`
+mode explicitly, then retry. Exact block targets remain atomically repairable.
+On Unix, `Open` confirms both the CAS boundary contents and its complete
+descriptor-relative parent directory chain, repeating those syncs after a
+failed first creation attempt without trusting a renamed pathname.
+
+Runtime composition returns an owned CAS binding. CLI operations, backup plan
+services, writable mount bindings, and mount-manager shutdown close any local
+directory handles deterministically. A release error is surfaced; terminally
+closed `os.File` handles are never reused, while higher-level synthetic or
+service cleanup failures retain retryable ownership. The first local-CAS
+`Close` attempt disables further I/O even when it returns a diagnostic; later
+calls are cleanup-only retries. Foreground commands expose the diagnostic. A
+finalizer remains only a process-safety fallback for direct `transport/local`
+embedders.
+
+Filesystem mounts acquire one reference-counted read-side View resource lease.
+The last reference closes its verified service on unmount, failed mount,
+unexpected session exit, or shutdown; a failed release remains cleanup-only and
+is retried without accumulating per-dataset local CAS handles in the daemon.
+A release-pending route cannot be acquired by a new mount until cleanup
+finishes and a fresh service is opened.
+
 Single-value CAS `Get`/`Has` require that authenticated Bucket selection. The
 transport does not attempt the Gateway's removed public raw-CAS GET/HEAD route;
 unscoped calls fail locally without sending a request.
@@ -487,6 +533,23 @@ Default state lives under `~/.malt-client/`. The generated configuration points
 to `http://127.0.0.1:8080`; edit `gateway.base_url` to select another gateway.
 Tenant bearer credentials and device proof-of-possession authentication require
 HTTPS except for loopback development.
+
+Immutable-byte topology is selected only by the runtime composition root:
+
+```json
+{
+  "transport": {
+    "cas_policy": "gateway",
+    "local_cas_dir": "/home/user/.malt-client/local-cas"
+  }
+}
+```
+
+`cas_policy` accepts `gateway`, `local`, or `hybrid` and defaults to `gateway`
+for old configuration files. `local` permits local-only Merkle-DAG import but
+fails closed for a managed Bucket. `hybrid` keeps Gateway authoritative and
+uses `local_cas_dir` only as a verified read-through CAS. Application and trust
+packages never inspect this backend selection.
 
 ## Trust model
 

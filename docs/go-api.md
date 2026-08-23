@@ -94,6 +94,87 @@ method. Transport methods validate wire shape and CAS bytes, but generic
 resolve/read results remain untrusted until locally verified against caller
 inputs.
 
+## Local and hybrid CAS transports
+
+The local transport is a durable, bounded capability with no trust-store or
+application dependency:
+
+```go
+blocks, err := local.Open(local.Options{
+    Directory: "/home/user/.malt-client/local-cas",
+})
+var cas capability.CAS = blocks
+```
+
+Files are installed atomically below an owner-private store boundary. `Get`
+and `Has` read a bounded regular file and recompute the requested CID; local
+file presence alone is never accepted as block identity. `PutBatch` and
+`HasBatch` implement the optional `capability.BatchCAS` extension. The store
+holds platform directory handles so post-open path replacement cannot redirect
+I/O, never follows a shard/block symlink or reparse point, and rejects FIFO,
+socket, unreadable block, hard-link, wrong-owner, and non-private metadata.
+Verified reads do
+not rewrite permissions: they reject unsafe metadata, while `Put` repairs the
+exact block with a protected temporary file plus atomic replacement. Shard
+selection uses the first CID multihash digest byte, so a common hash algorithm
+does not collapse every block into one directory. An unreadable shard is
+reported as corruption without changing it; quiesce the store and explicitly
+restore current-user ownership plus `0700` mode because replacing a shard could
+discard unrelated valid blocks. A batch
+performs complete input preflight before persistence. Once
+persistence starts, an error can leave any verified subset stored and returns
+no usable result vector; retry the complete batch, which is safe because each
+write is immutable and idempotent. Long-lived embedders should call `Close`
+after quiescing operations to release the pinned handles; the product runtime
+also releases unreachable stores as a fallback. Unix `Open` confirms the CAS
+boundary and walks pinned `..` handles to sync each parent directory entry
+through the filesystem root on every attempt, so retry completes a failed
+multi-level creation sync without a pathname race.
+
+`internal/runtime.ComposeCAS` returns an owned binding instead of erasing the
+close capability. Foreground add, per-operation backup services, read-side
+filesystem routers at manager shutdown, and per-mount writable bindings all
+release owned local handles on success and construction-error paths. Gateway-
+only policy never closes the caller-supplied remote. A failed release keeps its
+ownership retryable and remains visible to foreground callers; only a confirmed
+service release makes subsequent `Close` calls idempotently successful. Go
+defines `os.File.Close` as terminal even when it returns an error: the runtime
+surfaces that diagnostic and discards the now-invalid handle instead of trying
+to reuse or re-close it. The first `transport/local.CAS.Close` attempt disables
+subsequent `Get`, `Has`, and `Put` calls; a later `Close` is cleanup-only.
+
+`filesystem/mount.Manager` detects the optional `ViewLeaseFilesystem` lifecycle
+port. It acquires one lease after local accepted-View selection and releases it
+only after platform detach and writable-binding cleanup. The Gateway router
+reference-counts exact dataset/branch services, closes the last one on normal
+unmount or rollback, and retains a failed last-reference release for retry.
+An entry in that release-pending state rejects new acquisitions; only completed
+cleanup followed by a fresh service open can serve another mount.
+
+Hybrid policy lives under `transport/hybrid`, outside application code:
+
+```go
+blocks, err := hybrid.NewCAS(hybrid.CASOptions{
+    Primary: gateway,
+    Cache:   localBlocks,
+})
+```
+
+`Primary` is the persistence authority. A write succeeds at the primary before
+cache fill, `Has` and `HasBatch` consult only the primary, and `Get` returns a
+cache body only after CID verification. Missing or corrupted cache content
+falls back to a separately verified primary read. `OnCacheError` can observe
+non-authoritative cache failures without changing returned trust semantics.
+
+The generated runtime configuration contains `transport.cas_policy` with
+`gateway`, `local`, and `hybrid` values plus `transport.local_cas_dir`. Missing
+fields default to `gateway`. Local-only mode currently supports `malt add
+--target merkle-dag`; managed native MALT backup, mount, and write-back require
+Gateway or hybrid because a local Native/Mutations executor is not yet claimed.
+The reusable `transport/capabilitytest.RunCAS` suite is run against mock,
+Gateway HTTP, local, hybrid, and peer-loopback implementations. The peer fixture
+defines no network codec, discovery rule, or wire identifier.
+
 The public transport does not expose evaluation instance tokens, bootstrap
 control, unchecked raw-CAS reads, or the selective-CAR route. Those
 capabilities are private to the pinned process adapters under

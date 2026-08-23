@@ -29,11 +29,12 @@ resolve/read/mutation protocols, ProofList verification, CID rules, and
 commitment implementations. It must not copy or redefine those contracts.
 
 The current implementation uses a Gateway for remote ArcTable materialization,
-CAS persistence, proof generation, and mutation execution. Gateway is an
+proof generation, and mutation execution. Immutable bytes may use Gateway, a
+durable local CAS, or a Gateway-primary/local-cache hybrid policy. Gateway is an
 optional untrusted executor in the target architecture, not a trust authority
-or a permanent prerequisite: local-CAS, peer, and hybrid transports must be
-able to implement the same semantic capability boundary without changing the
-application, trust, sync, or filesystem layers.
+or a permanent prerequisite. The local and hybrid CAS implementations already
+use the same semantic boundary; future peer and local MALT executors must do so
+without changing application, trust, sync, or filesystem layers.
 
 ## Data flow
 
@@ -48,7 +49,7 @@ UnixFS path / local files
   semantic transport capability
           |
           v
- current Gateway / future Peer or Local CAS
+ Gateway HTTP / Local CAS / Hybrid / future Peer
           |
           | result + ProofList + payload bytes
           v
@@ -97,7 +98,7 @@ application/backup -> add / bucketsync / unixfs narrow ports
 unixfs     -> MALT core verifier + narrow transport ports
 merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
-transport  -> HTTP only; never imports unixfs, merkledag, or trust
+transport  -> Gateway/local/hybrid adapters; never imports unixfs, merkledag, or trust
 bucketsync -> transport + independent durable synchronization metadata
 tools/evaluation/cmd -> internal/evaluation + public runtime capabilities
 ```
@@ -111,6 +112,44 @@ The public transport also does not expose evaluation instance credentials,
 bootstrap control, unchecked raw-CAS reads, or the selective-CAR route. Those
 disposable-Gateway capabilities live under `internal/evaluation` and can only
 be composed by evaluator adapters.
+
+`transport/local` is a bounded, atomic, owner-private durable CAS and verifies
+the complete body on both `Get` and `Has`. `transport/hybrid` is transport-level
+policy: Gateway is the persistence primary, a local CAS is a non-authoritative
+read-through cache, and primary bytes are independently CID-verified before
+return. Cache presence can never satisfy primary `Has`. The default runtime
+configuration remains `gateway`; `local` currently supports local-only
+Merkle-DAG import, and managed native MALT operations reject it until a local
+Native/Mutations executor exists. `transport/capabilitytest` runs the same CAS
+contract against mock, Gateway HTTP, local, hybrid, and a peer-loopback adapter;
+the loopback proves the port boundary without declaring a P2P wire profile.
+
+The local CAS pins its boundary with descriptor/handle-relative no-follow
+operations. Verified reads reject unsafe ownership, permissions, links, or
+reparse metadata and unreadable or non-regular target objects without modifying
+the inode; only an atomic protected `Put`
+can repair an exact target. Block directories are selected from the first
+multihash digest byte, not the shared multihash algorithm header. An unreadable
+shard is corruption but is not automatically chmodded or replaced because it
+may contain unrelated blocks; repair current-user ownership and `0700` mode
+offline before retrying. Runtime CAS
+creation confirms the boundary and walks descriptor-relative parent handles to
+sync every ancestor directory entry outward to the filesystem root; retries
+repeat that chain after any failed directory sync. Runtime CAS
+composition preserves explicit resource ownership: plan services and CLI
+operations close after use, writable bindings close on detach, and the read-side
+router closes during mount-manager shutdown. Failed releases remain observable
+and higher-level cleanup remains retryable. Platform `os.File.Close` calls are
+terminal even when they report an error, so invalid handles are discarded and
+never reused while the diagnostic is still surfaced. The first local-CAS
+`Close` attempt also terminally disables all later I/O; a retry may only finish
+cleanup ownership.
+Each platform mount also owns one reference-counted read-side View lease. Normal
+unmount, failed mount rollback, unexpected session exit, and shutdown release it
+after detach/write-binding cleanup; the router closes the service at the last
+reference and retains failed release ownership for retry.
+While the last release is pending, new mounts fail rather than reviving a
+partially closed service; after cleanup they open a fresh route.
 The `application` layer supplies the caller-selected root, composes verified
 UnixFS or Merkle DAG reads, records mutation results as candidates, and exposes
 explicit candidate acceptance for both CLI and daemon adapters. The `trust`
@@ -231,8 +270,10 @@ it does not silently change the existing plaintext semantics of `malt add`.
   exact durable receipt, records a candidate, and atomically completes or
   conflicts the batch. It has no accepted-root promotion method and imports no
   concrete transport.
-- `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
-  interfaces.
+- `transport`: untrusted Gateway HTTP adapter and narrow capability interfaces;
+  `transport/local` provides durable local CAS, `transport/hybrid` owns
+  Gateway-primary/read-through policy, and `transport/capabilitytest` provides
+  adapter conformance.
 - `bucketsync`: durable Bucket base/remote/stash state and push orchestration.
 - `trust`: observed, candidate, and accepted root policy plus durable local
   persistence.

@@ -27,6 +27,7 @@ type Mutations = GatewayMutations
 // CAS is the immutable byte transport. Implementations bind response bytes to
 // requested or returned CIDs before exposing them.
 type CAS = transportcap.CAS
+type BatchCAS = transportcap.BatchCAS
 
 // SemanticMutations and DatasetBranch are transport-neutral capability aliases
 // implemented by the Gateway HTTP Client and future local/peer transports.
@@ -60,6 +61,7 @@ var (
 	_ Native           = (*Client)(nil)
 	_ GatewayMutations = (*Client)(nil)
 	_ CAS              = (*Client)(nil)
+	_ BatchCAS         = (*Client)(nil)
 	_ Diagnostics      = (*Client)(nil)
 	_ MerkleDAGProfile = (*Client)(nil)
 	_ ClientRoot       = (*Client)(nil)

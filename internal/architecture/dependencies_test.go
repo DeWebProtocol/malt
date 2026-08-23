@@ -160,6 +160,30 @@ func TestSemanticTransportCapabilitiesExcludeGatewayAndTrustDependencies(t *test
 	})
 }
 
+func TestLocalAndHybridTransportPolicyStayOutsideApplications(t *testing.T) {
+	root := moduleRoot(t)
+	for _, directory := range []string{
+		filepath.Join(root, "transport", "local"),
+		filepath.Join(root, "transport", "hybrid"),
+	} {
+		checkExactImports(t, directory, []string{
+			"net/http",
+			"github.com/dewebprotocol/malt-client/application",
+			"github.com/dewebprotocol/malt-client/filesystem",
+			"github.com/dewebprotocol/malt-client/internal/config",
+			"github.com/dewebprotocol/malt-client/trust",
+			"github.com/dewebprotocol/malt-client/unixfs",
+		})
+	}
+	for _, directory := range []string{
+		filepath.Join(root, "application"),
+		filepath.Join(root, "filesystem"),
+		filepath.Join(root, "trust"),
+	} {
+		checkSourceTokens(t, directory, []string{"CASPolicyGateway", "CASPolicyLocal", "CASPolicyHybrid"})
+	}
+}
+
 func TestConcreteGatewayDTOImportsRemainCompatibilityOnly(t *testing.T) {
 	root := moduleRoot(t)
 	want := map[string]struct{}{

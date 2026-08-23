@@ -93,7 +93,7 @@ func (s *Services) PlanStore(cfg *clientconfig.Config) (*clientbackup.PlanStore,
 	return clientbackup.OpenPlanStore(cfg.Backup.PlansPath)
 }
 
-func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan) (*clientbackup.PlanService, error) {
+func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan) (service *clientbackup.PlanService, resultErr error) {
 	if s == nil {
 		return nil, fmt.Errorf("runtime services are nil")
 	}
@@ -116,6 +116,16 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 	if err != nil {
 		return nil, err
 	}
+	blocks, err := ComposeCAS(cfg, remote, true)
+	if err != nil {
+		return nil, err
+	}
+	transferredBlocks := false
+	defer func() {
+		if !transferredBlocks {
+			resultErr = errors.Join(resultErr, blocks.Close())
+		}
+	}()
 	lists, err := unixfs.NewMutationAdapter(remote)
 	if err != nil {
 		return nil, err
@@ -162,13 +172,17 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 		operationLock+".sync-transaction.json", operationLock+".restore-transaction.json",
 		operationLock+".conflicts",
 	)
-	return clientbackup.NewPlanService(clientbackup.PlanServiceOptions{
+	service, resultErr = clientbackup.NewPlanServiceWithRelease(clientbackup.PlanServiceOptions{
 		Plan: plan, TempDir: cfg.Backup.TempDir,
 		LockPath: operationLock, Keys: keys, Sync: syncer,
-		Materializer: clientbackup.NewAddPlanMaterializer(graph, remote),
-		History:      history, Remote: remote, Blocks: remote, Roots: roots,
+		Materializer: clientbackup.NewAddPlanMaterializer(graph, blocks),
+		History:      history, Remote: remote, Blocks: blocks, Roots: roots,
 		Protected: protected, RestoreProtected: restoreProtected,
-	})
+	}, blocks.Close)
+	if resultErr == nil {
+		transferredBlocks = true
+	}
+	return service, resultErr
 }
 
 func (s *Services) ProtectedPaths(cfg *clientconfig.Config) []string {
@@ -197,6 +211,7 @@ func ProtectedPaths(configPath string, cfg *clientconfig.Config) []string {
 		cfg.Filesystem.MountsPath + ".manager.lock",
 		cfg.Filesystem.CacheDir,
 		cfg.Filesystem.WritableStateDir,
+		cfg.Transport.LocalCASDir,
 	}
 }
 

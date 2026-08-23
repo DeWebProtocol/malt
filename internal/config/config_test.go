@@ -40,6 +40,9 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.Backup.KeyringPath == "" || loaded.Backup.HistoryDir == "" || loaded.Backup.TempDir == "" {
 		t.Fatalf("backup defaults missing: %#v", loaded.Backup)
 	}
+	if loaded.Transport.CASPolicy != CASPolicyGateway || loaded.Transport.LocalCASDir == "" {
+		t.Fatalf("transport defaults missing: %#v", loaded.Transport)
+	}
 	if loaded.Filesystem.MountsPath == "" || loaded.Filesystem.CacheDir == "" || loaded.Filesystem.WritableStateDir == "" ||
 		loaded.Filesystem.MaxStagedFileBytes != 256<<20 {
 		t.Fatalf("filesystem defaults missing: %#v", loaded.Filesystem)
@@ -57,8 +60,35 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 	}
 	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" ||
 		loaded.Backup.KeyringPath == "" || loaded.Filesystem.MountsPath == "" || loaded.Filesystem.CacheDir == "" ||
-		loaded.Filesystem.WritableStateDir == "" || loaded.Filesystem.MaxStagedFileBytes == 0 {
+		loaded.Filesystem.WritableStateDir == "" || loaded.Filesystem.MaxStagedFileBytes == 0 ||
+		loaded.Transport.CASPolicy != CASPolicyGateway || loaded.Transport.LocalCASDir == "" {
 		t.Fatalf("daemon defaults missing: %#v", loaded.Daemon)
+	}
+}
+
+func TestValidateTransportCASPolicy(t *testing.T) {
+	for _, policy := range []string{CASPolicyGateway, CASPolicyLocal, CASPolicyHybrid, " HYBRID "} {
+		cfg, err := Default()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Transport.CASPolicy = policy
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("policy %q: %v", policy, err)
+		}
+	}
+	for _, mutate := range []func(*Config){
+		func(cfg *Config) { cfg.Transport.CASPolicy = "peer" },
+		func(cfg *Config) { cfg.Transport.LocalCASDir = " " },
+	} {
+		cfg, err := Default()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("Validate accepted invalid transport config %#v", cfg.Transport)
+		}
 	}
 }
 

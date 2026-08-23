@@ -31,10 +31,24 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 
 - `transport/capability` owns URL-free, route-free, trust-free semantic ports
   and untrusted dataset/mutation results shared by Gateway, local, peer, and
-  hybrid implementations. The root `transport` package is the current Gateway
-  HTTP adapter plus compatibility DTOs. Neither may import `trust`, `unixfs`,
-  or `merkledag`. Do not expose evaluation instance credentials, bootstrap
-  controls, unchecked raw-CAS reads, or selective-CAR routes here.
+  hybrid implementations. `transport/capabilitytest` owns the reusable adapter
+  contract, `transport/local` owns the bounded durable local CAS, and
+  `transport/hybrid` owns Gateway-primary/read-through-CAS policy. Hybrid `Has`
+  remains primary-authoritative and every cache body is CID-verified. Local
+  CAS reads reject unsafe metadata without modifying it; runtime composition
+  must shard by digest bytes, preserve owned local directory handles, report a
+  failed release, and retry cleanup until a confirmed close. Mounts must hold
+  one read-side View lease and release the last dataset/branch reference after
+  detach and binding cleanup, including failed mounts. A release-pending route
+  must reject new acquisitions rather than revive a partially closed service.
+  `os.File.Close` errors are terminal diagnostics: discard the invalid handle
+  and never attempt I/O through it. Do not automatically chmod or replace an
+  unreadable shard directory; require explicit offline owner/`0700` repair so
+  unrelated blocks remain intact. The root
+  `transport` package is the current Gateway HTTP adapter plus compatibility
+  DTOs. None may import `trust`, `unixfs`, or `merkledag`. Do not expose
+  evaluation instance credentials, bootstrap controls, unchecked raw-CAS
+  reads, or selective-CAR routes here.
 - `trust/` is the only package that persists observed heads, locally verified
   candidates, and accepted roots. These are separate v2 state types:
   observations cannot enter the candidate path, and neither observations nor

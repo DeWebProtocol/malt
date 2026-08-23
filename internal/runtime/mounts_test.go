@@ -104,6 +104,17 @@ func (f *fakeViewFilesystem) Open(context.Context, filesystemservice.View, strin
 	return nil, fmt.Errorf("not used")
 }
 
+type closeableFakeViewFilesystem struct {
+	*fakeViewFilesystem
+	closes int
+	err    error
+}
+
+func (f *closeableFakeViewFilesystem) Close() error {
+	f.closes++
+	return f.err
+}
+
 func TestGatewayFilesystemRouterKeysServicesByDatasetAndBranch(t *testing.T) {
 	var mu sync.Mutex
 	calls := map[datasetBranch]int{}
@@ -132,6 +143,80 @@ func TestGatewayFilesystemRouterKeysServicesByDatasetAndBranch(t *testing.T) {
 	defer mu.Unlock()
 	if len(calls) != 3 || calls[datasetBranch{dataset: "one", branch: "main"}] != 1 {
 		t.Fatalf("filesystem factory calls=%v", calls)
+	}
+}
+
+func TestGatewayFilesystemRouterClosesOwnedServicesAndRetriesFailures(t *testing.T) {
+	transient := errors.New("transient close")
+	service := &closeableFakeViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{id: "verified"}, err: transient}
+	router, err := newGatewayFilesystemRouter(func(string, string) (filesystemmount.ViewFilesystem, error) {
+		return service, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := filesystemservice.View{DatasetID: "bucket", Branch: "main"}
+	if _, err := router.Stat(t.Context(), view, "docs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.Close(); !errors.Is(err, transient) || service.closes != 1 {
+		t.Fatalf("first Close = %v, calls=%d", err, service.closes)
+	}
+	service.err = nil
+	if err := router.Close(); err != nil || service.closes != 2 {
+		t.Fatalf("retry Close = %v, calls=%d", err, service.closes)
+	}
+	if err := router.Close(); err != nil || service.closes != 2 {
+		t.Fatalf("idempotent Close = %v, calls=%d", err, service.closes)
+	}
+}
+
+func TestGatewayFilesystemRouterReleasesLastMountedViewReference(t *testing.T) {
+	var services []*closeableFakeViewFilesystem
+	router, err := newGatewayFilesystemRouter(func(dataset, branch string) (filesystemmount.ViewFilesystem, error) {
+		service := &closeableFakeViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{id: dataset + "/" + branch}}
+		services = append(services, service)
+		return service, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := filesystemservice.View{DatasetID: "bucket", Branch: "main"}
+	if err := router.AcquireView(t.Context(), view); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.AcquireView(t.Context(), view); err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("shared View opened %d services, want 1", len(services))
+	}
+	if err := router.ReleaseView(view); err != nil || services[0].closes != 0 {
+		t.Fatalf("first ReleaseView = %v, closes=%d", err, services[0].closes)
+	}
+	if err := router.ReleaseView(view); err != nil || services[0].closes != 1 {
+		t.Fatalf("last ReleaseView = %v, closes=%d", err, services[0].closes)
+	}
+	if err := router.AcquireView(t.Context(), view); err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 2 {
+		t.Fatalf("released View did not reopen a fresh service: %d", len(services))
+	}
+	transient := errors.New("transient View release")
+	services[1].err = transient
+	if err := router.ReleaseView(view); !errors.Is(err, transient) || services[1].closes != 1 {
+		t.Fatalf("failed ReleaseView = %v, closes=%d", err, services[1].closes)
+	}
+	if err := router.AcquireView(t.Context(), view); err == nil || len(services) != 2 {
+		t.Fatalf("AcquireView reused a release-pending service: err=%v services=%d", err, len(services))
+	}
+	services[1].err = nil
+	if err := router.ReleaseView(view); err != nil || services[1].closes != 2 {
+		t.Fatalf("retried ReleaseView = %v, closes=%d", err, services[1].closes)
+	}
+	if err := router.AcquireView(t.Context(), view); err != nil || len(services) != 3 {
+		t.Fatalf("AcquireView after completed release = %v, services=%d", err, len(services))
 	}
 }
 

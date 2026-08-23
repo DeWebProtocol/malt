@@ -17,8 +17,53 @@ import (
 )
 
 type fakeViewFilesystem struct {
-	mu       sync.Mutex
-	lastView filesystemservice.View
+	mu          sync.Mutex
+	lastView    filesystemservice.View
+	closeErrors []error
+	closeCalls  int
+}
+
+type fakeLeasedViewFilesystem struct {
+	*fakeViewFilesystem
+	acquireCalls  int
+	releaseCalls  int
+	releaseErrors []error
+}
+
+func (f *fakeLeasedViewFilesystem) AcquireView(ctx context.Context, _ filesystemservice.View) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acquireCalls++
+	return nil
+}
+
+func (f *fakeLeasedViewFilesystem) ReleaseView(filesystemservice.View) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releaseCalls++
+	if f.releaseCalls <= len(f.releaseErrors) {
+		return f.releaseErrors[f.releaseCalls-1]
+	}
+	return nil
+}
+
+func (f *fakeLeasedViewFilesystem) leaseCalls() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.acquireCalls, f.releaseCalls
+}
+
+func (f *fakeViewFilesystem) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closeCalls++
+	if f.closeCalls <= len(f.closeErrors) {
+		return f.closeErrors[f.closeCalls-1]
+	}
+	return nil
 }
 
 type fakeWritableViewFilesystem struct {
@@ -1053,6 +1098,96 @@ func TestSuccessfulShutdownDoesNotReportExpectedSessionExit(t *testing.T) {
 	}
 	if _, err := manager.List(); !errors.Is(err, ErrManagerClosed) {
 		t.Fatalf("List after Shutdown error = %v", err)
+	}
+}
+
+func TestManagerShutdownClosesFilesystemResourcesAndRetriesFailure(t *testing.T) {
+	transient := errors.New("filesystem close unavailable")
+	filesystem := &fakeViewFilesystem{closeErrors: []error{transient}}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newTestManager(t, store, &fakeAdapter{}, filesystem, filesystemservice.View{})
+	if err := manager.Shutdown(t.Context()); !errors.Is(err, transient) {
+		t.Fatalf("first Shutdown error = %v, want close failure", err)
+	}
+	if err := manager.Shutdown(t.Context()); err != nil {
+		t.Fatalf("retry Shutdown: %v", err)
+	}
+	filesystem.mu.Lock()
+	closeCalls := filesystem.closeCalls
+	filesystem.mu.Unlock()
+	if closeCalls != 2 {
+		t.Fatalf("filesystem Close calls = %d, want 2", closeCalls)
+	}
+}
+
+func TestManagerReleasesViewLeaseOnUnmountAndFailedMount(t *testing.T) {
+	t.Run("unmount", func(t *testing.T) {
+		store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec := testSpec(t, "leased-unmount")
+		filesystem := &fakeLeasedViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+		manager := newTestManager(t, store, &fakeAdapter{}, filesystem, testMountView(t, spec))
+		if _, err := manager.Mount(t.Context(), spec); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Unmount(t.Context(), spec.ID); err != nil {
+			t.Fatal(err)
+		}
+		if acquired, released := filesystem.leaseCalls(); acquired != 1 || released != 1 {
+			t.Fatalf("View lease calls after unmount = acquire:%d release:%d", acquired, released)
+		}
+	})
+
+	t.Run("failed mount", func(t *testing.T) {
+		store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec := testSpec(t, "leased-failure")
+		filesystem := &fakeLeasedViewFilesystem{fakeViewFilesystem: &fakeViewFilesystem{}}
+		manager := newTestManager(t, store, &fakeAdapter{mountErr: errors.New("platform failure")}, filesystem, testMountView(t, spec))
+		if _, err := manager.Mount(t.Context(), spec); err == nil {
+			t.Fatal("failed platform mount succeeded")
+		}
+		if acquired, released := filesystem.leaseCalls(); acquired != 1 || released != 1 {
+			t.Fatalf("View lease calls after failed mount = acquire:%d release:%d", acquired, released)
+		}
+	})
+}
+
+func TestManagerRetainsViewLeaseUntilReleaseRetrySucceeds(t *testing.T) {
+	transient := errors.New("release View resources")
+	store, err := OpenStore(filepath.Join(t.TempDir(), "mounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := testSpec(t, "leased-release-retry")
+	filesystem := &fakeLeasedViewFilesystem{
+		fakeViewFilesystem: &fakeViewFilesystem{}, releaseErrors: []error{transient},
+	}
+	manager := newTestManager(t, store, &fakeAdapter{}, filesystem, testMountView(t, spec))
+	if _, err := manager.Mount(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Unmount(t.Context(), spec.ID); !errors.Is(err, transient) {
+		t.Fatalf("first Unmount error = %v, want View release failure", err)
+	}
+	manager.mu.Lock()
+	live, retained := manager.live[spec.ID]
+	manager.mu.Unlock()
+	if !retained || !live.cleanupOnly || live.needsUnmount {
+		t.Fatalf("failed View release was not retained as cleanup-only: %#v", live)
+	}
+	if err := manager.Unmount(t.Context(), spec.ID); err != nil {
+		t.Fatalf("retry Unmount: %v", err)
+	}
+	if acquired, released := filesystem.leaseCalls(); acquired != 1 || released != 2 {
+		t.Fatalf("View lease retry calls = acquire:%d release:%d", acquired, released)
 	}
 }
 

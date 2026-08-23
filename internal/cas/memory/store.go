@@ -19,7 +19,13 @@ type Store struct {
 // New creates an empty store.
 func New() *Store { return &Store{blocks: make(map[string][]byte)} }
 
-func (s *Store) Get(_ context.Context, c cid.Cid) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !c.Defined() {
+		return nil, fmt.Errorf("%w: undefined CID", cas.ErrCorruptedBlock)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	data, ok := s.blocks[c.String()]
@@ -29,7 +35,13 @@ func (s *Store) Get(_ context.Context, c cid.Cid) ([]byte, error) {
 	return append([]byte(nil), data...), nil
 }
 
-func (s *Store) Has(_ context.Context, c cid.Cid) (bool, error) {
+func (s *Store) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !c.Defined() {
+		return false, fmt.Errorf("%w: undefined CID", cas.ErrCorruptedBlock)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, ok := s.blocks[c.String()]
@@ -40,7 +52,10 @@ func (s *Store) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	return s.PutWithCodec(ctx, data, cid.Raw)
 }
 
-func (s *Store) PutWithCodec(_ context.Context, data []byte, codec uint64) (cid.Cid, error) {
+func (s *Store) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	if err := ctx.Err(); err != nil {
+		return cid.Undef, err
+	}
 	c, err := cas.CIDForBlock(cas.Block{Data: data, Codec: codec})
 	if err != nil {
 		return cid.Undef, err

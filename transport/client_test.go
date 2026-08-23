@@ -98,6 +98,25 @@ func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 	}
 }
 
+func TestPutClassifiesMalformedGatewayCIDAsCorruption(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/cas" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"cid": "not-a-cid"})
+	}))
+	defer server.Close()
+	transport, err := client.NewWithBaseURL(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.Put(t.Context(), []byte("payload")); !errors.Is(err, cas.ErrCorruptedBlock) {
+		t.Fatalf("Put malformed receipt error = %v, want ErrCorruptedBlock", err)
+	}
+}
+
 func TestUnscopedClientRejectsSingleValueCASReadsWithoutHTTP(t *testing.T) {
 	payloadCID := mustBlockCID(t, []byte("payload"))
 	requests := 0

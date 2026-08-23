@@ -88,28 +88,61 @@ type gatewayFilesystemRouter struct {
 	mu       sync.Mutex
 	open     viewFilesystemFactory
 	bind     writableBindingFactory
-	services map[datasetBranch]filesystemmount.ViewFilesystem
+	services map[datasetBranch]*routedFilesystem
+}
+
+type routedFilesystem struct {
+	service    filesystemmount.ViewFilesystem
+	references uint64
+	releasing  bool
+}
+
+type ownedViewFilesystem struct {
+	filesystemmount.ViewFilesystem
+	closeMu sync.Mutex
+	release func() error
+	closed  bool
+}
+
+func (f *ownedViewFilesystem) Close() error {
+	if f == nil {
+		return nil
+	}
+	f.closeMu.Lock()
+	defer f.closeMu.Unlock()
+	if f.closed {
+		return nil
+	}
+	if f.release != nil {
+		if err := f.release(); err != nil {
+			return err
+		}
+	}
+	f.closed = true
+	return nil
 }
 
 func newGatewayFilesystemRouter(open viewFilesystemFactory, bind writableBindingFactory) (*gatewayFilesystemRouter, error) {
 	if open == nil {
 		return nil, fmt.Errorf("Gateway filesystem factory is nil")
 	}
-	return &gatewayFilesystemRouter{open: open, bind: bind, services: map[datasetBranch]filesystemmount.ViewFilesystem{}}, nil
+	return &gatewayFilesystemRouter{open: open, bind: bind, services: map[datasetBranch]*routedFilesystem{}}, nil
 }
 
-func (r *gatewayFilesystemRouter) filesystem(view filesystemservice.View) (filesystemmount.ViewFilesystem, error) {
-	if r == nil || r.open == nil {
-		return nil, fmt.Errorf("Gateway filesystem router is nil")
-	}
+func filesystemRouteKey(view filesystemservice.View) (datasetBranch, error) {
 	key := datasetBranch{dataset: strings.TrimSpace(view.DatasetID), branch: strings.TrimSpace(view.Branch)}
 	if key.dataset == "" || key.branch == "" {
-		return nil, fmt.Errorf("filesystem View dataset and branch are required")
+		return datasetBranch{}, fmt.Errorf("filesystem View dataset and branch are required")
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if service := r.services[key]; !nilInterface(service) {
-		return service, nil
+	return key, nil
+}
+
+func (r *gatewayFilesystemRouter) openFilesystemLocked(key datasetBranch) (*routedFilesystem, error) {
+	if existing := r.services[key]; existing != nil && !nilInterface(existing.service) {
+		if existing.releasing {
+			return nil, fmt.Errorf("filesystem transport %s/%s release is pending", key.dataset, key.branch)
+		}
+		return existing, nil
 	}
 	service, err := r.open(key.dataset, key.branch)
 	if err != nil {
@@ -118,8 +151,75 @@ func (r *gatewayFilesystemRouter) filesystem(view filesystemservice.View) (files
 	if nilInterface(service) {
 		return nil, fmt.Errorf("Gateway filesystem factory returned nil")
 	}
-	r.services[key] = service
-	return service, nil
+	entry := &routedFilesystem{service: service}
+	r.services[key] = entry
+	return entry, nil
+}
+
+func (r *gatewayFilesystemRouter) filesystem(view filesystemservice.View) (filesystemmount.ViewFilesystem, error) {
+	if r == nil || r.open == nil {
+		return nil, fmt.Errorf("Gateway filesystem router is nil")
+	}
+	key, err := filesystemRouteKey(view)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, err := r.openFilesystemLocked(key)
+	if err != nil {
+		return nil, err
+	}
+	return entry.service, nil
+}
+
+func (r *gatewayFilesystemRouter) AcquireView(ctx context.Context, view filesystemservice.View) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r == nil || r.open == nil {
+		return fmt.Errorf("Gateway filesystem router is nil")
+	}
+	key, err := filesystemRouteKey(view)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, err := r.openFilesystemLocked(key)
+	if err != nil {
+		return err
+	}
+	entry.references++
+	return nil
+}
+
+func (r *gatewayFilesystemRouter) ReleaseView(view filesystemservice.View) error {
+	if r == nil {
+		return nil
+	}
+	key, err := filesystemRouteKey(view)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry := r.services[key]
+	if entry == nil || entry.references == 0 {
+		return nil
+	}
+	if entry.references > 1 {
+		entry.references--
+		return nil
+	}
+	entry.releasing = true
+	if closer, ok := entry.service.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			return fmt.Errorf("close filesystem transport %s/%s: %w", key.dataset, key.branch, err)
+		}
+	}
+	delete(r.services, key)
+	return nil
 }
 
 func (r *gatewayFilesystemRouter) Stat(ctx context.Context, view filesystemservice.View, path string) (filesystemservice.Info, error) {
@@ -174,6 +274,31 @@ func (r *gatewayFilesystemRouter) BindWritable(ctx context.Context, spec filesys
 	return binding, nil
 }
 
+// Close releases all read-side transport bindings after platform sessions and
+// writable bindings have stopped. Successful entries are removed so a failed
+// close can be retried without re-closing completed resources.
+func (r *gatewayFilesystemRouter) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var failures []error
+	for key, entry := range r.services {
+		closer, ok := entry.service.(interface{ Close() error })
+		if !ok {
+			delete(r.services, key)
+			continue
+		}
+		if err := closer.Close(); err != nil {
+			failures = append(failures, fmt.Errorf("close filesystem transport %s/%s: %w", key.dataset, key.branch, err))
+			continue
+		}
+		delete(r.services, key)
+	}
+	return errors.Join(failures...)
+}
+
 // NewMountManager composes the locally authoritative selector, verified
 // Gateway reader, non-authoritative cache, durable registry, and platform
 // adapter. It never observes or accepts a remote head.
@@ -211,13 +336,21 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 		if err != nil {
 			return nil, err
 		}
-		reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Verifier: verifier})
+		blocks, err := ComposeCAS(cfg, remote, true)
 		if err != nil {
 			return nil, err
 		}
-		return filesystemservice.New(filesystemservice.Options{
+		reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: blocks, Verifier: verifier})
+		if err != nil {
+			return nil, errors.Join(err, blocks.Close())
+		}
+		service, err := filesystemservice.New(filesystemservice.Options{
 			Reader: reader, Cache: payloadCache, Verifier: verifier,
 		})
+		if err != nil {
+			return nil, errors.Join(err, blocks.Close())
+		}
+		return &ownedViewFilesystem{ViewFilesystem: service, release: blocks.Close}, nil
 	}, func(ctx context.Context, spec filesystemmount.Spec, view filesystemservice.View, service filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error) {
 		options, err := requiredGatewayOptions(cfg, spec.DatasetID, spec.Branch)
 		if err != nil {
@@ -227,18 +360,27 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 		if err != nil {
 			return nil, err
 		}
-		return newGatewayWritableBinding(ctx, gatewayWritableBindingOptions{
+		blocks, err := ComposeCAS(cfg, remote, true)
+		if err != nil {
+			return nil, err
+		}
+		binding, bindErr := newGatewayWritableBinding(ctx, gatewayWritableBindingOptions{
 			Spec: spec, View: view, Base: viewFilesystemBase{filesystem: service},
-			Remote: remote, Roots: trust, WriterFactory: writerFactory,
+			Remote: remote, Blocks: blocks, Roots: trust, WriterFactory: writerFactory,
 			StateDirectory:     cfg.Filesystem.WritableStateDir,
 			MaxStagedFileBytes: cfg.Filesystem.MaxStagedFileBytes,
 			Source:             "filesystem mount " + spec.ID + " via Gateway",
+			Release:            blocks.Close,
 		})
+		if binding == nil {
+			bindErr = errors.Join(bindErr, blocks.Close())
+		}
+		return binding, bindErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	return filesystemmount.NewManager(filesystemmount.Options{
+	manager, err := filesystemmount.NewManager(filesystemmount.Options{
 		Store: registry,
 		Selector: acceptedViewSelector{
 			trust: trust, remoteSource: cfg.GatewayBaseURL(),
@@ -246,10 +388,15 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 		Filesystem: router,
 		Adapter:    adapter,
 	})
+	if err != nil {
+		return nil, errors.Join(err, router.Close())
+	}
+	return manager, nil
 }
 
 var (
 	_ filesystemmount.ViewSelector           = acceptedViewSelector{}
 	_ filesystemmount.ViewFilesystem         = (*gatewayFilesystemRouter)(nil)
+	_ filesystemmount.ViewLeaseFilesystem    = (*gatewayFilesystemRouter)(nil)
 	_ filesystemmount.WritableViewFilesystem = (*gatewayFilesystemRouter)(nil)
 )
