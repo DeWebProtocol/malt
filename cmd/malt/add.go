@@ -75,7 +75,7 @@ type addSummary struct {
 	SymlinkRoots     int    `json:"symlink_roots,omitempty"`
 }
 
-func runAdd(cmd *cobra.Command, args []string) error {
+func runAdd(cmd *cobra.Command, args []string) (resultErr error) {
 	ctx := cmd.Context()
 	opts, err := clientadd.NormalizeOptions(clientadd.Options{
 		Prefix:     addPrefixFlag,
@@ -95,10 +95,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	casClient, err := makeCASClient()
+	casClient, err := makeCASClient(opts.Target == clientadd.TargetMALT)
 	if err != nil {
 		return err
 	}
+	defer func() { resultErr = errors.Join(resultErr, casClient.Close()) }()
 
 	var remote *gatewayclient.Client
 	var materializer clientadd.Materializer

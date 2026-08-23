@@ -223,9 +223,11 @@ func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateRoot := t.TempDir()
+	releaseCalls := 0
 	binding, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: spec, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
 		Roots: trust, WriterFactory: &clientRootWriterFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
+		Release: func() error { releaseCalls++; return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -243,11 +245,16 @@ func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
 	if err := binding.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := binding.Close(); err != nil || releaseCalls != 1 {
+		t.Fatalf("idempotent binding Close = %v, release calls=%d", err, releaseCalls)
+	}
 	differentLayout := spec
 	differentLayout.LayoutPolicy = filesystemmount.LayoutHybridV1
+	partialReleaseCalls := 0
 	partial, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: differentLayout, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
 		Roots: trust, WriterFactory: &clientRootWriterFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
+		Release: func() error { partialReleaseCalls++; return nil },
 	})
 	if !errors.Is(err, ErrWritableLayoutChanged) || nilInterface(partial) {
 		t.Fatalf("changed durable layout binding=%T err=%v", partial, err)
@@ -257,6 +264,9 @@ func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
 	}
 	if err := partial.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if partialReleaseCalls != 1 {
+		t.Fatalf("partial binding release calls = %d, want 1", partialReleaseCalls)
 	}
 	reopened, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: spec, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},

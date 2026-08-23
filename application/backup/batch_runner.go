@@ -104,6 +104,9 @@ func (r *BatchRunner) run(ctx context.Context, operation string, request PlanReq
 		} else {
 			run, err = service.Backup(ctx, request.Message)
 		}
+		if closer, ok := service.(interface{ Close() error }); ok {
+			err = errors.Join(err, closer.Close())
+		}
 		if run != nil {
 			result.Runs = append(result.Runs, PlanRun{
 				PlanID: plan.ID, PlanName: plan.Name, BucketID: plan.BucketID, Branch: plan.Branch, Result: run,

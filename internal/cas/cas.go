@@ -3,9 +3,9 @@ package cas
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -13,30 +13,24 @@ import (
 // ErrNotFound reports that a requested CAS block is absent. Remote and local
 // implementations wrap this sentinel so higher layers can distinguish absence
 // from transport, cancellation, and corruption failures.
-var ErrNotFound = errors.New("cas: block not found")
+var ErrNotFound = transportcap.ErrNotFound
 
 // Block is a CAS block to write. Codec 0 means cid.Raw.
-type Block struct {
-	Data  []byte
-	Codec uint64
-}
+type Block = transportcap.Block
 
 // PutStatus describes how a block write was handled.
-type PutStatus string
+type PutStatus = transportcap.PutStatus
 
 const (
-	PutStatusStored             PutStatus = "stored"
-	PutStatusAlreadyPresent     PutStatus = "already_present"
-	PutStatusDuplicate          PutStatus = "duplicate"
-	PutStatusNewlyPersisted     PutStatus = "newly_persisted"
-	PutStatusDuplicateInRequest PutStatus = "duplicate_in_request"
+	PutStatusStored             = transportcap.PutStatusStored
+	PutStatusAlreadyPresent     = transportcap.PutStatusAlreadyPresent
+	PutStatusDuplicate          = transportcap.PutStatusDuplicate
+	PutStatusNewlyPersisted     = transportcap.PutStatusNewlyPersisted
+	PutStatusDuplicateInRequest = transportcap.PutStatusDuplicateInRequest
 )
 
 // PutResult is the ordered result for a block write.
-type PutResult struct {
-	CID    cid.Cid
-	Status PutStatus
-}
+type PutResult = transportcap.PutResult
 
 // Reader provides read-side access to content-addressable storage.
 type Reader interface {

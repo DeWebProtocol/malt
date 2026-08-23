@@ -20,10 +20,24 @@ const (
 
 type Config struct {
 	Gateway    GatewayConfig    `json:"gateway"`
+	Transport  TransportConfig  `json:"transport"`
 	Daemon     DaemonConfig     `json:"daemon"`
 	Workspace  WorkspaceConfig  `json:"workspace"`
 	Backup     BackupConfig     `json:"backup"`
 	Filesystem FilesystemConfig `json:"filesystem"`
+}
+
+const (
+	CASPolicyGateway = "gateway"
+	CASPolicyLocal   = "local"
+	CASPolicyHybrid  = "hybrid"
+)
+
+// TransportConfig selects immutable-byte topology at the runtime composition
+// boundary. Application, filesystem, and trust packages never inspect it.
+type TransportConfig struct {
+	CASPolicy   string `json:"cas_policy"`
+	LocalCASDir string `json:"local_cas_dir"`
 }
 
 type GatewayConfig struct {
@@ -71,6 +85,7 @@ func Default() (*Config, error) {
 		Gateway: GatewayConfig{
 			BaseURL: defaultGatewayURL, CredentialPath: filepath.Join(root, "device-credential.json"),
 		},
+		Transport: TransportConfig{CASPolicy: CASPolicyGateway, LocalCASDir: filepath.Join(root, "local-cas")},
 		Daemon: DaemonConfig{
 			SocketPath: filepath.Join(root, "client.sock"),
 			StatePath:  filepath.Join(root, "roots.json"),
@@ -210,6 +225,12 @@ func (c *Config) applyDefaults() {
 	if c.Gateway.CredentialPath == "" {
 		c.Gateway.CredentialPath = defaults.Gateway.CredentialPath
 	}
+	if c.Transport.CASPolicy == "" {
+		c.Transport.CASPolicy = defaults.Transport.CASPolicy
+	}
+	if c.Transport.LocalCASDir == "" {
+		c.Transport.LocalCASDir = defaults.Transport.LocalCASDir
+	}
 	if c.Daemon.SocketPath == "" {
 		c.Daemon.SocketPath = defaults.Daemon.SocketPath
 	}
@@ -248,6 +269,15 @@ func (c *Config) applyDefaults() {
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Gateway.BaseURL) == "" || strings.TrimSpace(c.Gateway.CredentialPath) == "" {
 		return fmt.Errorf("gateway base URL and device credential path are required")
+	}
+	c.Transport.CASPolicy = strings.ToLower(strings.TrimSpace(c.Transport.CASPolicy))
+	switch c.Transport.CASPolicy {
+	case CASPolicyGateway, CASPolicyLocal, CASPolicyHybrid:
+	default:
+		return fmt.Errorf("transport CAS policy must be gateway, local, or hybrid")
+	}
+	if strings.TrimSpace(c.Transport.LocalCASDir) == "" {
+		return fmt.Errorf("transport local CAS directory is required")
 	}
 	if c.Daemon.SocketPath == "" || c.Daemon.StatePath == "" {
 		return fmt.Errorf("daemon socket and state paths are required")

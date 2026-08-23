@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
@@ -36,6 +37,7 @@ var conflictListCmd = &cobra.Command{
 				return err
 			}
 			status, err := service.ConflictStatus()
+			err = errors.Join(err, service.Close())
 			if err != nil {
 				return err
 			}
@@ -97,7 +99,7 @@ var conflictResolveCmd = &cobra.Command{
 		if result != nil {
 			printJSON(result)
 		}
-		return err
+		return errors.Join(err, service.Close())
 	},
 }
 

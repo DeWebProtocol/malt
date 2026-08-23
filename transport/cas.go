@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -19,8 +20,8 @@ const (
 	MaxCASBatchBytes   = 64 << 20
 )
 
-type Block = clientcas.Block
-type PutBatchResult = clientcas.PutResult
+type Block = transportcap.Block
+type PutBatchResult = transportcap.PutResult
 
 // PutBatchMeasurement is the exact HTTP-message boundary for one CAS batch.
 // RequestWireBytes and ResponseWireBytes are kept directionally separate;
@@ -53,10 +54,14 @@ func (c *Client) PutBatch(ctx context.Context, blocks []Block) ([]PutBatchResult
 // sizes plus the HTTP round trip for evaluator phase accounting. Ordinary
 // application callers should continue to use PutBatch.
 func (c *Client) PutBatchMeasured(ctx context.Context, blocks []Block) (PutBatchMeasurement, error) {
-	if len(blocks) == 0 || len(blocks) > MaxCASBatchBlocks {
+	if len(blocks) == 0 {
+		return PutBatchMeasurement{Results: []PutBatchResult{}}, nil
+	}
+	if len(blocks) > MaxCASBatchBlocks {
 		return PutBatchMeasurement{}, fmt.Errorf("CAS batch must contain 1 to %d blocks", MaxCASBatchBlocks)
 	}
 	total := 0
+	wants := make([]cid.Cid, len(blocks))
 	wireBlocks := make([]struct {
 		Codec uint64 `json:"codec,omitempty"`
 		Data  []byte `json:"data"`
@@ -66,6 +71,11 @@ func (c *Client) PutBatchMeasured(ctx context.Context, blocks []Block) (PutBatch
 			return PutBatchMeasurement{}, fmt.Errorf("CAS batch exceeds %d decoded bytes", MaxCASBatchBytes)
 		}
 		total += len(block.Data)
+		want, err := clientcas.CIDForBlock(clientcas.Block{Data: block.Data, Codec: block.Codec})
+		if err != nil {
+			return PutBatchMeasurement{}, fmt.Errorf("compute CAS batch CID %d before persistence: %w", i, err)
+		}
+		wants[i] = want
 		wireBlocks[i].Codec = block.Codec
 		wireBlocks[i].Data = block.Data
 	}
@@ -111,27 +121,21 @@ func (c *Client) PutBatchMeasured(ctx context.Context, blocks []Block) (PutBatch
 		return PutBatchMeasurement{}, fmt.Errorf("decode Gateway CAS put-batch response: %w", err)
 	}
 	if response.Profile != CASPutBatchProfile || len(response.Results) != len(blocks) {
-		return PutBatchMeasurement{}, fmt.Errorf("invalid CAS put-batch response")
+		return PutBatchMeasurement{}, fmt.Errorf("%w: invalid CAS put-batch response", clientcas.ErrCorruptedBlock)
 	}
 	results := make([]clientcas.PutResult, len(blocks))
 	for i, raw := range response.Results {
 		got, err := cid.Parse(raw.CID)
 		if err != nil {
-			return PutBatchMeasurement{}, fmt.Errorf("decode CAS batch result %d: %w", i, err)
+			return PutBatchMeasurement{}, fmt.Errorf("%w: decode CAS batch result %d: %v", clientcas.ErrCorruptedBlock, i, err)
 		}
-		want, err := clientcas.CIDForBlock(clientcas.Block{Data: blocks[i].Data, Codec: blocks[i].Codec})
-		if err != nil {
-			return PutBatchMeasurement{}, err
-		}
+		want := wants[i]
 		if !got.Equals(want) {
-			return PutBatchMeasurement{}, fmt.Errorf("CAS batch result %d returned CID %s, want %s", i, got, want)
+			return PutBatchMeasurement{}, fmt.Errorf("%w: CAS batch result %d returned CID %s, want %s", clientcas.ErrCorruptedBlock, i, got, want)
 		}
 		status := clientcas.PutStatus(raw.Status)
-		switch status {
-		case clientcas.PutStatusStored, clientcas.PutStatusAlreadyPresent, clientcas.PutStatusDuplicate,
-			clientcas.PutStatusNewlyPersisted, clientcas.PutStatusDuplicateInRequest:
-		default:
-			return PutBatchMeasurement{}, fmt.Errorf("CAS batch result %d has unsupported status %q", i, raw.Status)
+		if !transportcap.IsValidPutStatus(status) {
+			return PutBatchMeasurement{}, fmt.Errorf("%w: CAS batch result %d has unsupported status %q", clientcas.ErrCorruptedBlock, i, raw.Status)
 		}
 		results[i] = clientcas.PutResult{CID: got, Status: status}
 	}
@@ -151,13 +155,16 @@ func casDurationNS(value time.Duration) uint64 {
 // HasBatch checks an ordered group of immutable CIDs and rejects reordered or
 // otherwise malformed gateway responses.
 func (c *Client) HasBatchDetailed(ctx context.Context, keys []cid.Cid) ([]HasBatchResult, error) {
-	if len(keys) == 0 || len(keys) > MaxCASBatchBlocks {
+	if len(keys) == 0 {
+		return []HasBatchResult{}, nil
+	}
+	if len(keys) > MaxCASBatchBlocks {
 		return nil, fmt.Errorf("CAS has batch must contain 1 to %d CIDs", MaxCASBatchBlocks)
 	}
 	rawKeys := make([]string, len(keys))
 	for i, key := range keys {
 		if !key.Defined() {
-			return nil, fmt.Errorf("CAS has batch CID %d is undefined", i)
+			return nil, fmt.Errorf("%w: CAS has batch CID %d is undefined", clientcas.ErrCorruptedBlock, i)
 		}
 		rawKeys[i] = key.String()
 	}
@@ -176,13 +183,16 @@ func (c *Client) HasBatchDetailed(ctx context.Context, keys []cid.Cid) ([]HasBat
 		return nil, err
 	}
 	if response.Profile != CASHasBatchProfile || len(response.Results) != len(keys) {
-		return nil, fmt.Errorf("invalid CAS has-batch response")
+		return nil, fmt.Errorf("%w: invalid CAS has-batch response", clientcas.ErrCorruptedBlock)
 	}
 	results := make([]HasBatchResult, len(keys))
 	for i, raw := range response.Results {
 		got, err := cid.Parse(raw.CID)
-		if err != nil || !got.Equals(keys[i]) {
-			return nil, fmt.Errorf("CAS has-batch result %d does not match requested CID", i)
+		if err != nil {
+			return nil, fmt.Errorf("%w: CAS has-batch result %d returned an invalid CID: %v", clientcas.ErrCorruptedBlock, i, err)
+		}
+		if !got.Equals(keys[i]) {
+			return nil, fmt.Errorf("%w: CAS has-batch result %d returned CID %s, want %s", clientcas.ErrCorruptedBlock, i, got, keys[i])
 		}
 		results[i] = HasBatchResult{CID: got, Present: raw.Present}
 	}

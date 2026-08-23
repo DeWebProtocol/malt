@@ -186,7 +186,7 @@ func init() {
 	rootCmd.AddCommand(backupCmd, restoreCmd)
 }
 
-func runRestore(cmd *cobra.Command, args []string) error {
+func runRestore(cmd *cobra.Command, args []string) (resultErr error) {
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
 		return err
@@ -251,6 +251,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() { resultErr = errors.Join(resultErr, service.Close()) }()
 	for attempt := 0; attempt < 3; attempt++ {
 		if discover {
 			restored, restoreErr := service.RestoreBranchTo(cmd.Context(), destination, restoreOverwrite)
@@ -262,6 +263,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 				restoredService, baselineErr := buildPlanService(cfg, restored)
 				if baselineErr == nil {
 					_, baselineErr = restoredService.RecordRestoredBaseline(cmd.Context())
+					baselineErr = errors.Join(baselineErr, restoredService.Close())
 				}
 				if baselineErr != nil {
 					return fmt.Errorf("restored and registered plaintext but could not record its local baseline: %w", baselineErr)

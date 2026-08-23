@@ -23,7 +23,7 @@ network/storage topologies, not product identities.
 | --- | --- | --- |
 | `malt-core` | Canonical values, Map/List authentication, commitments, ProofLists, Resolve/Read/mutation contracts, client-root Writer, conformance corpora, and reference WASM | none |
 | `gateway` | Optional untrusted hosted executor, persistent ArcTable/KV/CAS adapters, Bucket/Branch/account policy, proof production, managed Console, and product E2E | `malt-core v0.0.7` |
-| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache, operation journal, platform-neutral local dirty staging, verified write-back orchestration and flat/hybrid UnixFS client-root planning, a Linux FUSE adapter with read-only default and opt-in per-dataset/branch Gateway write-back composition, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
+| `malt` (formerly `malt-client`; this repository) | `malt` CLI, daemon/local IPC, local trust and key state, non-authoritative cache, operation journal, platform-neutral local dirty staging, verified write-back orchestration and flat/hybrid UnixFS client-root planning, a Linux FUSE adapter with read-only default and opt-in per-dataset/branch Gateway write-back composition, UnixFS application semantics, encrypted backup/sync/restore, conflict workspaces, Gateway HTTP transport, durable local CAS, Gateway-primary hybrid CAS, and Merkle-DAG compatibility | exact `malt-core v0.0.7`; module path intentionally remains `github.com/dewebprotocol/malt-client` |
 | `malt-evaluation` | Reproducible benchmark plans, adapters, result schemas, and provenance | exact `malt-core v0.0.7`, checksum, and release source commit |
 | `malt-web` | Public explanation, tutorials, and browser verification tools | browser verifier and provenance rebuilt from exact `malt-core v0.0.7` |
 
@@ -45,9 +45,11 @@ cmd/malt and internal/daemon
                       \               /
                        v             v
                   transport/capability
-                              ^
-                              |
-                    transport.Client (Gateway HTTP)
+                    ^          ^        ^
+                    |          |        |
+          Gateway HTTP     Local CAS   Hybrid CAS
+                    |                   |
+                    +-------------------+
                               |
                               v
                            gateway
@@ -66,8 +68,9 @@ Current boundary strengths:
   artifact before they are atomically migrated to v2.
 - `transport` does not import `application`, `trust`, or `unixfs`.
 - `transport/capability` contains no HTTP, URL, account, trust, or Gateway DTO;
-  Gateway HTTP is one adapter implementing the same Native, CAS, Mutations, and
-  DatasetBranch ports reserved for local, peer, and hybrid implementations.
+  Gateway HTTP implements Native, CAS, Mutations, and DatasetBranch; local and
+  hybrid implement the same CAS port, and the remaining ports stay ready for a
+  future local executor or peer adapter.
 - `unixfs` verifies ProofLists, resolve-to-read continuity, payload CIDs, and
   range bodies before exposing bytes.
 - Bucket workspaces separately persist base, observed remote head, and local
@@ -136,11 +139,15 @@ Current implementation gaps that still encode concrete Gateway coupling:
 - Root command handlers repeatedly open the trust store and construct
   `application.Roots`; read handlers repeatedly construct a concrete Gateway
   Gateway transport, UnixFS reader, selector, and application service.
-- Configuration has one mandatory-looking `gateway` block rather than a
-  transport/dataset binding model.
+- Native MALT dataset selection still uses the managed `gateway` block; CAS
+  topology now has an independent `transport.cas_policy`, but a full
+  transport/dataset binding model remains future work.
 - WinFsp remains follow-up work; non-Linux
   daemons keep the mount API unavailable until a native adapter is added.
-- There is no local-CAS, peer, or hybrid transport implementation yet.
+- Durable local CAS and Gateway-primary/local-cache hybrid CAS are implemented.
+  Peer readiness is covered by the shared semantic contract and loopback
+  adapter; no production P2P network or local Native/Mutations executor is
+  claimed.
 
 No code in `malt-core` owns UnixFS, Bucket, account, daemon, key persistence,
 mount, or Gateway routes. No current migration step changes the MALT wire
@@ -187,7 +194,7 @@ CLI / daemon / GUI / local API / platform mount adapters
                resolve/read | CAS | mutation | heads
                     /          |          \
                    v           v           v
-             Gateway HTTP   Local CAS   future Peer/Hybrid
+             Gateway HTTP   Local CAS   Hybrid   future Peer
 
 All proof verification, payload-CID verification, and candidate-root
 computation/validation call malt-core and cannot be bypassed by a transport.
@@ -311,7 +318,7 @@ choice and does not define network topology.
 | 9c.1 | **Completed 2026-08-17:** add the platform-neutral opt-in `write_back` mount policy, require explicit flat/hybrid layout plus preserve-local conflict behavior, create a session-owned binding from the complete Spec and accepted View, reserve at most one writer per dataset/branch, retain retryable cleanup ownership until detach and Close succeed, reject typed-nil/unclean partial bindings and Sessions plus any mount-sync accepted-root claim, capture Session completion once, bound whole-file staging to a configurable 256 MiB default before remote/local materialization, stream dirty-body recovery verification, and add atomic durable staging offset-write/truncate operations | additive pre-release mount/staging/cache Go API plus optional registry `layout_policy`; the registry remains version 1 and old read-only records remain valid, but older strict decoders reject new writable records | no | write capability exposed to read-only policy, divergent journals for one branch, leaked state lease, residual session using a closed binding, false active state after detach, unbounded restart allocation, non-atomic read-modify-write, sparse-extension corruption, or false trust/durability claims | policy persistence/default/rejection, exclusive writable-view reservation, binding inputs/typed-nil/partial-result/lifetime/Close retry, Session typed-nil/single-Done/session-plus-error/incomplete-session/detach-state retry, sync invariant, remote/local/restart staged-size preflight, streamed CID/range validation, offset overwrite/zero extension/shrink/re-extend/restart/overflow, race and architecture tests | leave CLI/FUSE/runtime composition read-only; before running an older build, unmount and remove writable registry records because it rejects `layout_policy`; retain any separately created journal/cache state for recovery |
 | 9c.2 | **Completed 2026-08-17:** map Linux FUSE create/write/truncate/mkdir/rename/unlink/rmdir and local fsync onto the opt-in writable capability; keep `ro` kernel enforcement for read-only Specs, require the matching capability before mountpoint recovery/I/O, use direct-I/O handles with fresh overlay reads and mount-locked stable logical inode paths, permanently orphan removed/overwritten nodes, prevent forgotten-node revival while retaining pre-existing handles through release, return `EBUSY` rather than retargeting an open path-based handle, close partial read handles, validate acknowledged write size, require successful capability mutations to be locally durable, keep Flush local-no-op, and reject fsync results lacking local durability or claiming accepted-root/invalid remote persistence | additive experimental Linux adapter and mount errno API; no registry or persisted-state change | no | write capability exposed by dynamic type alone, pinned pre-write reads, open-inode retargeting after unlink/overwrite or FORGET/Open races, partial-handle leak, false full-write acknowledgement, host syscall acknowledged before local durability, false fsync trust/durability, or unsupported metadata mutation | read-only widening rejection, missing capability, node/handle create/write/truncate/mkdir/rename/unlink/rmdir, write-after-read, rename-aware source handle, open-target overwrite/unlink EBUSY plus orphan/recreate isolation, forgotten-node revival and pre-existing-handle continuity, typed-nil/partial handles, malformed write result, same-path/self-subtree rename, concurrent offset write, Flush/Fsync invariants, errno, race, architecture, and opt-in read-only/writable kernel smoke tests | keep daemon/runtime binding read-only; select `read_only` or omit write policy, and reject writable mounts when capability is absent |
 | 9c.3 | **Completed 2026-08-17:** compose the explicit CLI `write_back` policy with stable per-dataset/branch staging state, a durably frozen flat/hybrid layout profile, isolated KZG/IPA Core Writer state, tenant-authenticated Gateway Bucket block/client-root capabilities, local accepted-root selection, candidate-only recording, daemon mount lifecycle, and explicit fsync outcomes; submit the complete canonical writer result rather than an evaluation-only bare bundle; complete candidate batches under the accepted-root promotion fence; return cleanup-only partial bindings after post-lease initialization failure; make Unix/Windows lease release stateful and idempotent; keep verified no-change/no-pending local-only and preserve offline/conflicted batches for exact retry | additive runtime config fields, CLI/runtime composition, and owner-private per-dataset `layout.json`, plus a source-breaking evolution of the untagged pre-v1 `application/clientroot.Remote`; no existing persisted schema or wire-profile change | no | shared state lease collision, ambiguous or over-permissive layout state, retry under a changed layout, invalid-handle release retry, leaked partial binding, bare-bundle managed submission, typed/untyped candidate substitution, accepted-root race hiding a completed batch, remote success mistaken for acceptance, false no-change remote claim, or journal loss across restart | config/default/CLI policy, exact router binding including partial-result cleanup, typed-nil rejection, per-dataset path and frozen-layout identity, duplicate-key rejection and owner-private permission restoration, real/injected unlock-close retry, accepted-root advancement after candidate observation, authenticated Bucket route and complete-result encoding, create/write/read, candidate/no-change/no-pending/offline and malicious-result invariants, restart recovery, staging Close retry, package race, full repository, Windows cross-build, Linux read-only/write FUSE smoke, and Gateway product E2E | select `read_only` or omit write policy; retain `layout.json`, the per-dataset/branch journal, and recorded candidates for recovery; use the original layout until an explicit state migration is implemented, and do not run an older strict registry decoder while writable records exist |
-| 10 | Add local-CAS transport and a peer-ready contract test implementation; reserve hybrid policy outside application code | additive transport implementation | no | backend-specific behavior leaks upward | same contract suite against mock/Gateway/local transports | select Gateway transport in config |
+| 10 | **Completed 2026-08-23:** move CAS errors/batch DTOs into public URL-free capabilities; add a bounded atomic owner-private local CAS with descriptor/handle-pinned no-follow boundaries, digest-byte sharding, non-mutating unsafe-metadata rejection, complete retryable Unix parent-chain durability, explicit retryable owned-composition and mount-View lease lifecycles, and retry-safe partial-batch semantics, Gateway-primary/CID-verified read-through hybrid policy, composition-root `gateway`/`local`/`hybrid` selection, local-only Merkle-DAG import, and one reusable contract across mock/Gateway/local/hybrid/peer-loopback adapters without defining P2P wire | additive transport packages, capability types, runtime config block, owned composition/plan-service/View-lease close APIs, and composition wiring; historical internal CAS aliases and unkeyed `PlanServiceOptions` remain source-compatible | no | local disk or cache treated as authority, blocking/unreadable/non-regular object denial, post-open path replacement or hard-link permission escape, read-path ACL mutation/write amplification, multihash-header shard collapse, unconfirmed root-parent directory entry or permission durability, per-dataset mount handle exhaustion, release-pending service revival, invalid-handle reuse or hidden Close diagnostic, local-only blocks referenced by a managed dataset, primary/cache write-order ambiguity, backend leakage, ambiguous partial batch persistence, or premature peer wire identity | shared raw/typed/missing/undefined/cancellation/batch contract; restart, digest distribution, FIFO/socket/deny-read classification and atomic repair, safe-metadata operational-error preservation, permissions rejection and inode sync, boundary/shard/target replacement, injected shard/blocks/root/ancestor fsync retry, Windows delete-sharing replacement, hard-link rejection, terminal platform Close diagnostics, last-reference mount release/release-pending acquisition rejection/failed-release cleanup, partial-persistence retry, corruption repair, malformed/reordered Gateway, verifying-wrapper and Hybrid receipts, size preflight, concurrent writes, malicious cache/primary, primary-authoritative Has, typed-nil, config/default, CLI local-only, runtime composition, architecture, race, cross-build, full repository, and Gateway E2E | set `transport.cas_policy` to `gateway`; retry a failed immutable batch or retryable service release; local CAS bytes remain immutable and may be retained or removed independently |
 | 11 | Separate pre-v1 runtime module namespace decision and release line | breaking Go import change if approved | no | collision with historical Core path | external consumer build with isolated module cache | do not tag; keep old module until cutover is proven |
 
 No PR may combine a wire-profile change with repository/module renaming. Each
@@ -343,8 +350,9 @@ migration or additive schema versions.
 
 ### Transport contracts
 
-- Run one semantic contract suite against mock, Gateway HTTP, and future local
-  transports.
+- Run one semantic CAS contract suite against mock, Gateway HTTP, local,
+  hybrid, and peer-loopback transports; a production peer adapter must run the
+  same suite when its network contract exists.
 - Assert transport packages cannot import trust/application/filesystem.
 - Assert filesystem/application packages cannot import Gateway HTTP DTOs or
   route constants.

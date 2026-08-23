@@ -2,6 +2,7 @@ package transport_test
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -146,6 +147,75 @@ func TestPutBatchMeasuredUsesManagedBucketRouteAndCredential(t *testing.T) {
 	if len(measurement.Results) != 1 || !measurement.Results[0].CID.Equals(key) ||
 		measurement.RequestWireBytes == 0 || measurement.ResponseWireBytes == 0 || measurement.RoundTripNS == 0 {
 		t.Fatalf("measurement = %#v", measurement)
+	}
+}
+
+func TestBatchCASClassifiesMalformedOrReorderedReceiptsAsCorruption(t *testing.T) {
+	blocks := []client.Block{{Data: []byte("first")}, {Data: []byte("second")}}
+	keys := make([]cid.Cid, len(blocks))
+	for index, block := range blocks {
+		var err error
+		keys[index], err = clientcas.CIDForBlock(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		name string
+		path string
+		call func(*client.Client) error
+		body map[string]any
+	}{
+		{
+			name: "put malformed CID", path: "/v1/cas/batch",
+			call: func(transport *client.Client) error { _, err := transport.PutBatch(t.Context(), blocks); return err },
+			body: map[string]any{"profile": client.CASPutBatchProfile, "results": []map[string]string{{"cid": "not-a-cid", "status": "stored"}, {"cid": keys[1].String(), "status": "stored"}}},
+		},
+		{
+			name: "has malformed CID", path: "/v1/cas/has",
+			call: func(transport *client.Client) error {
+				_, err := transport.HasBatchDetailed(t.Context(), keys)
+				return err
+			},
+			body: map[string]any{"profile": client.CASHasBatchProfile, "results": []map[string]any{{"cid": "not-a-cid", "present": true}, {"cid": keys[1].String(), "present": true}}},
+		},
+		{
+			name: "has reordered CIDs", path: "/v1/cas/has",
+			call: func(transport *client.Client) error {
+				_, err := transport.HasBatchDetailed(t.Context(), keys)
+				return err
+			},
+			body: map[string]any{"profile": client.CASHasBatchProfile, "results": []map[string]any{{"cid": keys[1].String(), "present": true}, {"cid": keys[0].String(), "present": true}}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != test.path {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(test.body)
+			}))
+			defer server.Close()
+			transport, err := client.NewWithBaseURL(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.call(transport); !errors.Is(err, clientcas.ErrCorruptedBlock) {
+				t.Fatalf("error = %v, want ErrCorruptedBlock", err)
+			}
+		})
+	}
+}
+
+func TestGatewayHasBatchClassifiesUndefinedRequestIdentityAsCorruption(t *testing.T) {
+	transport, err := client.NewWithBaseURL("https://gateway.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.HasBatch(t.Context(), []cid.Cid{cid.Undef}); !errors.Is(err, clientcas.ErrCorruptedBlock) {
+		t.Fatalf("undefined HasBatch error = %v, want ErrCorruptedBlock", err)
 	}
 }
 

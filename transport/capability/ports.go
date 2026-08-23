@@ -6,11 +6,22 @@ package capability
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
+
+// ErrNotFound reports that an immutable block is absent from a transport.
+// Implementations wrap this sentinel so callers can distinguish absence from
+// cancellation, corruption, and backend failures without depending on a
+// concrete Gateway, peer, or local-store error type.
+var ErrNotFound = errors.New("cas: block not found")
+
+// ErrCorruptedBlock reports that bytes or a write receipt do not match the CID
+// they claim. A transport must never expose mismatched bytes to its caller.
+var ErrCorruptedBlock = errors.New("cas: returned block does not match requested CID")
 
 // Native resolves and reads MALT objects. Results remain untrusted until the
 // caller verifies them against its selected root.
@@ -26,6 +37,57 @@ type CAS interface {
 	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
 	Get(context.Context, cid.Cid) ([]byte, error)
 	Has(context.Context, cid.Cid) (bool, error)
+}
+
+// Block is one immutable CAS write. Codec 0 is normalized to cid.Raw.
+type Block struct {
+	Data  []byte
+	Codec uint64
+}
+
+// PutStatus describes how one immutable write was handled. The status is
+// operational metadata only; the returned CID remains the authoritative
+// binding and must match Block.
+type PutStatus string
+
+const (
+	PutStatusStored             PutStatus = "stored"
+	PutStatusAlreadyPresent     PutStatus = "already_present"
+	PutStatusDuplicate          PutStatus = "duplicate"
+	PutStatusNewlyPersisted     PutStatus = "newly_persisted"
+	PutStatusDuplicateInRequest PutStatus = "duplicate_in_request"
+)
+
+// IsValidPutStatus reports whether status is part of the transport-neutral
+// immutable-write receipt contract. Unknown remote or adapter values are
+// malformed untrusted results and must be rejected as corruption.
+func IsValidPutStatus(status PutStatus) bool {
+	switch status {
+	case PutStatusStored, PutStatusAlreadyPresent, PutStatusDuplicate,
+		PutStatusNewlyPersisted, PutStatusDuplicateInRequest:
+		return true
+	default:
+		return false
+	}
+}
+
+// PutResult is the ordered result for one block in a batch write.
+type PutResult struct {
+	CID    cid.Cid
+	Status PutStatus
+}
+
+// BatchCAS is the optional ordered batch extension shared by Gateway, local,
+// peer, and hybrid transports. PutBatch must validate every input before it
+// starts persistence. Once persistence has begun, a cancellation or backend
+// failure may leave any verified subset stored; on error the returned results
+// are unusable. Retrying the complete batch is safe because CAS writes are
+// immutable and idempotent. Applications may use batching as an optimization
+// but must preserve the single-block CAS semantics when it is unavailable.
+type BatchCAS interface {
+	CAS
+	PutBatch(context.Context, []Block) ([]PutResult, error)
+	HasBatch(context.Context, []cid.Cid) ([]bool, error)
 }
 
 // MutationResult is an untrusted candidate produced by executing a canonical

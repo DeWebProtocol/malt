@@ -167,14 +167,14 @@ func (c *Client) PutWithCodec(ctx context.Context, data []byte, codec uint64) (c
 	}
 	got, err := cid.Parse(response.CID)
 	if err != nil {
-		return cid.Undef, fmt.Errorf("gateway returned invalid CAS CID: %w", err)
+		return cid.Undef, fmt.Errorf("%w: gateway returned invalid CAS CID: %v", cas.ErrCorruptedBlock, err)
 	}
 	want, err := cas.CIDForBlock(cas.Block{Data: data, Codec: codec})
 	if err != nil {
 		return cid.Undef, err
 	}
 	if !got.Equals(want) {
-		return cid.Undef, fmt.Errorf("gateway returned CAS CID %s, want %s", got, want)
+		return cid.Undef, fmt.Errorf("%w: gateway returned CAS CID %s, want %s", cas.ErrCorruptedBlock, got, want)
 	}
 	return got, nil
 }
@@ -190,14 +190,14 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	}
 	want, err := key.Prefix().Sum(data)
 	if err != nil || !want.Equals(key) {
-		return nil, fmt.Errorf("gateway CAS body does not match CID %s", key)
+		return nil, fmt.Errorf("%w: gateway CAS body does not match CID %s", cas.ErrCorruptedBlock, key)
 	}
 	return data, nil
 }
 
 func (c *Client) getRaw(ctx context.Context, key cid.Cid) ([]byte, error) {
 	if !key.Defined() {
-		return nil, fmt.Errorf("gateway CAS key is undefined")
+		return nil, fmt.Errorf("%w: gateway CAS key is undefined", cas.ErrCorruptedBlock)
 	}
 	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {
@@ -230,6 +230,9 @@ func (c *Client) getRaw(ctx context.Context, key cid.Cid) ([]byte, error) {
 func (c *Client) Has(ctx context.Context, key cid.Cid) (bool, error) {
 	if c == nil || c.bucketID == "" {
 		return false, fmt.Errorf("single-value CAS Has requires a configured managed Bucket")
+	}
+	if !key.Defined() {
+		return false, fmt.Errorf("%w: gateway CAS key is undefined", cas.ErrCorruptedBlock)
 	}
 	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {

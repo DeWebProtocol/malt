@@ -42,6 +42,13 @@ type batchTestService struct {
 	syncErr      error
 	calls        []string
 	merge        []bool
+	closes       int
+	closeErr     error
+}
+
+func (s *batchTestService) Close() error {
+	s.closes++
+	return s.closeErr
 }
 
 func (s *batchTestService) Backup(_ context.Context, message string) (*Result, error) {
@@ -114,6 +121,26 @@ func TestBatchRunnerSharesSelectionAndExecutionAcrossBackupAndSync(t *testing.T)
 	}
 	if !reflect.DeepEqual(one.merge, []bool{true}) || !reflect.DeepEqual(two.merge, []bool{true}) {
 		t.Fatalf("merge options were not shared across sync services: one=%v two=%v", one.merge, two.merge)
+	}
+	if one.closes != 2 || two.closes != 2 {
+		t.Fatalf("plan service closes = one:%d two:%d, want two each", one.closes, two.closes)
+	}
+}
+
+func TestBatchRunnerReportsPlanServiceCloseFailure(t *testing.T) {
+	plan := Plan{ID: "one", Name: "documents", BucketID: "bucket-one", Branch: "main"}
+	closeFailure := errors.New("release transport")
+	service := &batchTestService{backupResult: &Result{PlanID: plan.ID}, closeErr: closeFailure}
+	environment := &batchTestEnvironment{
+		plans: []Plan{plan}, services: map[string]*batchTestService{plan.ID: service}, buildErr: map[string]error{},
+	}
+	runner, err := NewBatchRunner(BatchRunnerOptions{OpenEnvironment: func() (BatchEnvironment, error) { return environment, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.BackupPlans(t.Context(), PlanRequest{})
+	if !errors.Is(err, closeFailure) || result == nil || len(result.Failures) != 1 || service.closes != 1 {
+		t.Fatalf("close failure result=%#v err=%v closes=%d", result, err, service.closes)
 	}
 }
 

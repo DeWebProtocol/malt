@@ -41,6 +41,12 @@ type gatewayWritableRemote interface {
 	SubmitClientRootResult(context.Context, clientwriter.ComputeResult) (*gatewayclient.ClientRootResponse, error)
 }
 
+type gatewayWritableBlocks interface {
+	Get(context.Context, cid.Cid) ([]byte, error)
+	Put(context.Context, []byte) (cid.Cid, error)
+	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
+}
+
 type writerFactory interface {
 	New() (*clientwriter.Runtime, error)
 }
@@ -89,11 +95,13 @@ type gatewayWritableBindingOptions struct {
 	View               filesystemservice.View
 	Base               staging.Base
 	Remote             gatewayWritableRemote
+	Blocks             gatewayWritableBlocks
 	Roots              truststore.Policy
 	WriterFactory      writerFactory
 	StateDirectory     string
 	MaxStagedFileBytes uint64
 	Source             string
+	Release            func() error
 }
 
 func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingOptions) (filesystemmount.WritableBinding, error) {
@@ -118,6 +126,10 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if nilInterface(opts.Base) || nilInterface(opts.Remote) || nilInterface(opts.Roots) || nilInterface(opts.WriterFactory) {
 		return nil, fmt.Errorf("Gateway writable binding requires base, remote, roots, and writer factory")
 	}
+	blocks := opts.Blocks
+	if nilInterface(blocks) {
+		blocks = opts.Remote
+	}
 	layout, err := unixfs.ParseLayoutKind(string(spec.LayoutPolicy))
 	if err != nil {
 		return nil, err
@@ -133,11 +145,11 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if err != nil {
 		return nil, fmt.Errorf("open filesystem write-back staging: %w", err)
 	}
-	binding := &runtimeWritableBinding{view: opts.View, staged: staged, closing: true}
+	binding := &runtimeWritableBinding{view: opts.View, staged: staged, closing: true, release: opts.Release}
 	if err := ensureWritableLayoutState(filepath.Join(filepath.Dir(journalPath), "layout.json"), spec); err != nil {
 		return binding, fmt.Errorf("bind filesystem write-back layout: %w", err)
 	}
-	planner, err := unixfsclientroot.New(layout, opts.Remote)
+	planner, err := unixfsclientroot.New(layout, blocks)
 	if err != nil {
 		return binding, err
 	}
@@ -154,7 +166,7 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 		source = gatewayWritebackSource
 	}
 	replay, err := writebackapp.New(writebackapp.Options{
-		Queue: staged, Payloads: opts.Remote, Remote: gatewayClientRootRemote{client: opts.Remote},
+		Queue: staged, Payloads: blocks, Remote: gatewayClientRootRemote{client: opts.Remote},
 		Writer: writer, Planner: planner, Roots: roots, TrustAlias: spec.TrustAlias, Source: source,
 	})
 	if err != nil {
@@ -229,6 +241,7 @@ type runtimeWritableBinding struct {
 	replay    writebackReplayer
 	closing   bool
 	closed    bool
+	release   func() error
 }
 
 func (b *runtimeWritableBinding) enter() (func(), error) {
@@ -454,6 +467,12 @@ func (b *runtimeWritableBinding) Close() error {
 	}
 	if err := b.staged.Close(); err != nil {
 		return err
+	}
+	if b.release != nil {
+		if err := b.release(); err != nil {
+			return err
+		}
+		b.release = nil
 	}
 	b.closed = true
 	return nil

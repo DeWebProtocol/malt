@@ -133,6 +133,16 @@ type ViewFilesystem interface {
 	Open(context.Context, filesystemservice.View, string) (*filesystemservice.Handle, error)
 }
 
+// ViewLeaseFilesystem optionally owns resources scoped to one mounted View.
+// Manager acquires exactly one lease per platform mount and releases it only
+// after the platform session and writable binding have closed. ReleaseView
+// must be idempotent and retryable after an error.
+type ViewLeaseFilesystem interface {
+	ViewFilesystem
+	AcquireView(context.Context, filesystemservice.View) error
+	ReleaseView(filesystemservice.View) error
+}
+
 // WritableViewFilesystem is the application-facing write capability. Manager
 // supplies the complete normalized mount policy and immutable locally accepted
 // View, then owns the returned binding for exactly one platform session.
@@ -145,6 +155,7 @@ type liveMount struct {
 	session      Session
 	view         filesystemservice.View
 	binding      *managedWritableBinding
+	viewLease    *managedViewLease
 	token        uint64
 	cleanupOnly  bool
 	needsUnmount bool
@@ -224,12 +235,17 @@ func (m *Manager) mount(ctx context.Context, spec Spec) (Status, error) {
 	if err != nil {
 		return m.failureStatus(record, filesystemservice.View{}, err), err
 	}
+	viewLease, err := acquireViewLease(ctx, m.filesystem, view)
+	if err != nil {
+		return m.failureStatus(record, view, err), err
+	}
 	var bound ReadOnlyFilesystem = boundFilesystem{service: m.filesystem, view: view}
 	var binding *managedWritableBinding
 	if record.Spec.WritePolicy == WriteBack {
 		writable, ok := m.filesystem.(WritableViewFilesystem)
 		if !ok {
 			err := fmt.Errorf("%w: filesystem does not implement write-back", ErrWritePolicyUnavailable)
+			err = errors.Join(err, m.rollbackFailedMount(ctx, record.Spec.ID, view, nil, nil, nil, viewLease))
 			return m.failureStatus(record, view, err), err
 		}
 		created, bindErr := writable.BindWritable(ctx, record.Spec, view)
@@ -239,13 +255,14 @@ func (m *Manager) mount(ctx context.Context, spec Spec) (Status, error) {
 		if bindErr != nil {
 			if created != nil {
 				binding = &managedWritableBinding{WritableBinding: created}
-				bindErr = errors.Join(bindErr, m.rollbackFailedMount(ctx, record.Spec.ID, view, nil, nil, binding))
 			}
+			bindErr = errors.Join(bindErr, m.rollbackFailedMount(ctx, record.Spec.ID, view, nil, nil, binding, viewLease))
 			err := fmt.Errorf("%w: bind write-back filesystem: %w", ErrWritePolicyUnavailable, bindErr)
 			return m.failureStatus(record, view, err), err
 		}
 		if created == nil {
 			err := fmt.Errorf("%w: binder returned nil write-back filesystem", ErrWritePolicyUnavailable)
+			err = errors.Join(err, m.rollbackFailedMount(ctx, record.Spec.ID, view, nil, nil, nil, viewLease))
 			return m.failureStatus(record, view, err), err
 		}
 		binding = &managedWritableBinding{WritableBinding: created}
@@ -260,20 +277,20 @@ func (m *Manager) mount(ctx context.Context, spec Spec) (Status, error) {
 		done = session.Done()
 	}
 	if err != nil {
-		err = errors.Join(err, m.rollbackFailedMount(ctx, record.Spec.ID, view, session, done, binding))
+		err = errors.Join(err, m.rollbackFailedMount(ctx, record.Spec.ID, view, session, done, binding, viewLease))
 		return m.failureStatus(record, view, err), err
 	}
 	if session == nil || done == nil {
 		err := errors.Join(
 			fmt.Errorf("mount adapter returned an incomplete session"),
-			m.rollbackFailedMount(ctx, record.Spec.ID, view, session, done, binding),
+			m.rollbackFailedMount(ctx, record.Spec.ID, view, session, done, binding, viewLease),
 		)
 		return m.failureStatus(record, view, err), err
 	}
 	m.mu.Lock()
 	token := m.nextToken
 	m.nextToken++
-	live := liveMount{session: session, view: view, binding: binding, token: token, needsUnmount: true}
+	live := liveMount{session: session, view: view, binding: binding, viewLease: viewLease, token: token, needsUnmount: true}
 	m.live[record.Spec.ID] = live
 	delete(m.errors, record.Spec.ID)
 	status := m.statusLocked(record, live, true)
@@ -410,6 +427,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	if len(failures) != 0 {
 		return errors.Join(failures...)
 	}
+	if closer, ok := m.filesystem.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			return fmt.Errorf("close filesystem resources: %w", err)
+		}
+	}
 	m.mu.Lock()
 	m.closed = true
 	leaseUnlock := m.leaseUnlock
@@ -517,7 +539,10 @@ func (m *Manager) cleanupLive(ctx context.Context, id string, live liveMount) er
 		live.cleanupOnly = true
 		m.markDetached(id, live)
 	}
-	return live.binding.close()
+	if err := live.binding.close(); err != nil {
+		return err
+	}
+	return live.viewLease.close()
 }
 
 func (m *Manager) markDetached(id string, live liveMount) {
@@ -533,28 +558,32 @@ func (m *Manager) markDetached(id string, live liveMount) {
 // rollbackFailedMount keeps cleanup ownership whenever either platform detach
 // or binding Close is not confirmed. A later Mount, Unmount, or Shutdown can
 // retry without exposing the binding as an active filesystem.
-func (m *Manager) rollbackFailedMount(ctx context.Context, id string, view filesystemservice.View, session Session, done <-chan error, binding *managedWritableBinding) error {
+func (m *Manager) rollbackFailedMount(ctx context.Context, id string, view filesystemservice.View, session Session, done <-chan error, binding *managedWritableBinding, viewLease *managedViewLease) error {
 	needsUnmount := session != nil
 	if needsUnmount {
 		if err := session.Unmount(ctx); err != nil {
-			m.retainCleanup(id, view, session, done, binding, true)
+			m.retainCleanup(id, view, session, done, binding, viewLease, true)
 			return fmt.Errorf("detach failed mount: %w", err)
 		}
 		needsUnmount = false
 	}
 	if err := binding.close(); err != nil {
-		m.retainCleanup(id, view, session, done, binding, needsUnmount)
+		m.retainCleanup(id, view, session, done, binding, viewLease, needsUnmount)
 		return fmt.Errorf("close failed mount binding: %w", err)
+	}
+	if err := viewLease.close(); err != nil {
+		m.retainCleanup(id, view, session, done, binding, viewLease, needsUnmount)
+		return fmt.Errorf("release failed mount view: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) retainCleanup(id string, view filesystemservice.View, session Session, done <-chan error, binding *managedWritableBinding, needsUnmount bool) {
+func (m *Manager) retainCleanup(id string, view filesystemservice.View, session Session, done <-chan error, binding *managedWritableBinding, viewLease *managedViewLease, needsUnmount bool) {
 	m.mu.Lock()
 	token := m.nextToken
 	m.nextToken++
 	live := liveMount{
-		session: session, view: view, binding: binding, token: token,
+		session: session, view: view, binding: binding, viewLease: viewLease, token: token,
 		cleanupOnly: true, needsUnmount: needsUnmount,
 	}
 	m.live[id] = live
@@ -581,6 +610,9 @@ func (m *Manager) monitor(id string, token uint64, done <-chan error) {
 	m.errors[id] = err.Error()
 	m.mu.Unlock()
 	closeErr := live.binding.close()
+	if closeErr == nil {
+		closeErr = live.viewLease.close()
+	}
 	m.mu.Lock()
 	if current, active := m.live[id]; active && current.token == token {
 		if closeErr == nil {
@@ -613,6 +645,39 @@ type managedWritableBinding struct {
 	WritableBinding
 	mu     sync.Mutex
 	closed bool
+}
+
+type managedViewLease struct {
+	mu      sync.Mutex
+	release func() error
+	closed  bool
+}
+
+func acquireViewLease(ctx context.Context, filesystem ViewFilesystem, view filesystemservice.View) (*managedViewLease, error) {
+	lifecycle, ok := filesystem.(ViewLeaseFilesystem)
+	if !ok {
+		return nil, nil
+	}
+	if err := lifecycle.AcquireView(ctx, view); err != nil {
+		return nil, fmt.Errorf("acquire filesystem View resources: %w", err)
+	}
+	return &managedViewLease{release: func() error { return lifecycle.ReleaseView(view) }}, nil
+}
+
+func (l *managedViewLease) close() error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	if err := l.release(); err != nil {
+		return err
+	}
+	l.closed = true
+	return nil
 }
 
 func (b *managedWritableBinding) close() error {

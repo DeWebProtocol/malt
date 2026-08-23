@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -13,11 +14,11 @@ import (
 // untrusted execution state (see ARCHITECTURE.md, section "Trust Model"); a
 // reader that does not verify hashes lets a compromised CAS substitute
 // arbitrary content underneath ProofList header guarantees.
-var ErrCorruptedBlock = errors.New("cas: returned block does not match requested CID")
+var ErrCorruptedBlock = transportcap.ErrCorruptedBlock
 
-// VerifyingReader wraps a CAS Reader and validates that bytes returned by Get
-// hash to the requested CID. It also forwards Has unchanged and, if the
-// underlying reader implements BatchReader, exposes HasBatch.
+// VerifyingReader wraps a CAS Reader and validates immutable-byte results and
+// receipts before exposing them. It also validates Has identities and, if the
+// underlying reader implements BatchReader, exposes a length-checked HasBatch.
 //
 // The verification is intentionally cheap: it reuses the multihash carried in
 // the requested CID, recomputes it over the returned bytes, and rejects on
@@ -68,8 +69,11 @@ func (v *VerifyingReader) Get(ctx context.Context, c cid.Cid) ([]byte, error) {
 	return data, nil
 }
 
-// Has forwards to the underlying reader.
+// Has rejects an undefined identity before invoking the untrusted reader.
 func (v *VerifyingReader) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	if !c.Defined() {
+		return false, fmt.Errorf("%w: undefined CID", ErrCorruptedBlock)
+	}
 	return v.inner.Has(ctx, c)
 }
 
@@ -77,12 +81,27 @@ func (v *VerifyingReader) Has(ctx context.Context, c cid.Cid) (bool, error) {
 // that do not implement BatchReader fall through to per-CID Has checks via
 // the cas package contract elsewhere; here we only forward the optimization.
 func (v *VerifyingReader) HasBatch(ctx context.Context, cids []cid.Cid) ([]bool, error) {
+	if len(cids) == 0 {
+		return []bool{}, nil
+	}
+	for index, c := range cids {
+		if !c.Defined() {
+			return nil, fmt.Errorf("%w: batch CID %d is undefined", ErrCorruptedBlock, index)
+		}
+	}
 	if br, ok := v.inner.(BatchReader); ok {
-		return br.HasBatch(ctx, cids)
+		results, err := br.HasBatch(ctx, cids)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) != len(cids) {
+			return nil, fmt.Errorf("%w: reader returned %d has results for %d CIDs", ErrCorruptedBlock, len(results), len(cids))
+		}
+		return results, nil
 	}
 	results := make([]bool, len(cids))
 	for i, c := range cids {
-		ok, err := v.inner.Has(ctx, c)
+		ok, err := v.Has(ctx, c)
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +233,10 @@ func verifyBatchResults(blocks []Block, results []PutResult) error {
 	}
 	for i, r := range results {
 		if _, err := verifyPutResult(r.CID, blocks[i].Data, blocks[i].Codec); err != nil {
-			return err
+			return fmt.Errorf("batch result %d: %w", i, err)
+		}
+		if !transportcap.IsValidPutStatus(r.Status) {
+			return fmt.Errorf("%w: batch result %d has unsupported status %q", ErrCorruptedBlock, i, r.Status)
 		}
 	}
 	return nil
