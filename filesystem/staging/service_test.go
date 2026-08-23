@@ -529,6 +529,44 @@ func TestCanceledMutationDoesNotCreateJournalIntent(t *testing.T) {
 	}
 }
 
+func TestCloseRetriesOnlyFailedLeaseReleasesAndPermanentlyStopsOperations(t *testing.T) {
+	transient := errors.New("transient lease release")
+	var firstCalls, secondCalls int
+	service := &Service{
+		release: []func() error{
+			func() error {
+				firstCalls++
+				if firstCalls == 1 {
+					return transient
+				}
+				return nil
+			},
+			func() error {
+				secondCalls++
+				return nil
+			},
+		},
+	}
+	if err := service.Close(); !errors.Is(err, transient) {
+		t.Fatalf("first Close error=%v", err)
+	}
+	if firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("first Close calls=(%d,%d)", firstCalls, secondCalls)
+	}
+	if _, err := service.Stat(t.Context(), filesystemservice.View{}, ""); !errors.Is(err, ErrServiceClosed) {
+		t.Fatalf("operation after failed Close error=%v", err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatalf("retry Close error=%v", err)
+	}
+	if firstCalls != 2 || secondCalls != 1 {
+		t.Fatalf("retry Close calls=(%d,%d), successful release retried", firstCalls, secondCalls)
+	}
+	if err := service.Close(); err != nil || firstCalls != 2 || secondCalls != 1 {
+		t.Fatalf("idempotent Close error=%v calls=(%d,%d)", err, firstCalls, secondCalls)
+	}
+}
+
 type failingJournal struct{ err error }
 
 func (f failingJournal) Append(journal.Intent, journal.Status) (journal.Operation, error) {

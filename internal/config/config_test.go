@@ -40,7 +40,8 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.Backup.KeyringPath == "" || loaded.Backup.HistoryDir == "" || loaded.Backup.TempDir == "" {
 		t.Fatalf("backup defaults missing: %#v", loaded.Backup)
 	}
-	if loaded.Filesystem.MountsPath == "" || loaded.Filesystem.CacheDir == "" {
+	if loaded.Filesystem.MountsPath == "" || loaded.Filesystem.CacheDir == "" || loaded.Filesystem.WritableStateDir == "" ||
+		loaded.Filesystem.MaxStagedFileBytes != 256<<20 {
 		t.Fatalf("filesystem defaults missing: %#v", loaded.Filesystem)
 	}
 }
@@ -55,8 +56,25 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" ||
-		loaded.Backup.KeyringPath == "" || loaded.Filesystem.MountsPath == "" || loaded.Filesystem.CacheDir == "" {
+		loaded.Backup.KeyringPath == "" || loaded.Filesystem.MountsPath == "" || loaded.Filesystem.CacheDir == "" ||
+		loaded.Filesystem.WritableStateDir == "" || loaded.Filesystem.MaxStagedFileBytes == 0 {
 		t.Fatalf("daemon defaults missing: %#v", loaded.Daemon)
+	}
+}
+
+func TestValidateRejectsInvalidFilesystemWritebackConfiguration(t *testing.T) {
+	for _, mutate := range []func(*Config){
+		func(cfg *Config) { cfg.Filesystem.WritableStateDir = " " },
+		func(cfg *Config) { cfg.Filesystem.MaxStagedFileBytes = ^uint64(0) },
+	} {
+		cfg, err := Default()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("Validate accepted invalid filesystem config %#v", cfg.Filesystem)
+		}
 	}
 }
 

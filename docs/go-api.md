@@ -369,10 +369,11 @@ reverifies its stored Resolve proof, and matches the exact view. List-backed
 files remain on the authenticated range path and are not cached as if their
 reconstructed bytes were one raw block.
 
-The filesystem service is composed into Linux mounts through a read-only
-runtime binding. The Linux adapter also accepts the narrow opt-in writable
-mount capability described below, but the daemon does not create that binding
-yet; existing CLI content reads remain unchanged.
+The filesystem service is composed into Linux mounts through a View-bound
+runtime binding. Read-only is the default. For an explicit write-back Spec,
+the runtime wraps the same verified service as the immutable base of a leased
+per-dataset/branch staging overlay and supplies the narrow writable mount
+capability described below. Existing CLI content reads remain unchanged.
 
 Package `filesystem/staging` is the additive platform-neutral dirty overlay.
 It accepts the same immutable `service.View` and a verified read-only base,
@@ -408,7 +409,7 @@ durable and CID-valid. It always reports remote persistence and accepted-root
 promotion as false. Restart reconciliation rejects unresolved journal writes
 with missing or corrupt bodies and removes unreferenced local cache bodies.
 This package has no transport, candidate-root, or trust-store capability and
-is not yet composed into the daemon writable binding consumed by FUSE.
+does not derive remote authority from its cache or journal.
 
 `staging.Service.PrepareUpload` freezes all replayable operations for one exact
 View before returning bytes, preserves completed operations needed to rebuild
@@ -439,12 +440,21 @@ store. The MALT Core client-root Writer then computes the candidate locally and
 verifies the exact durable receipt before the service records a candidate and
 completes the batch.
 
+The transport-neutral `application/clientroot.Remote` receives the complete
+sealed `clientwriter.ComputeResult`, not only its bundle. Evaluation adapters
+may project the bundle onto the explicit evaluation endpoint. The managed
+Gateway adapter instead serializes the canonical v2 writer result, including
+the bundle, materialization, retained next view, and diagnostic metrics, onto
+the tenant-authenticated Bucket route. A configured Bucket rejects bare-bundle
+submission locally; an unscoped client cannot submit the managed writer result.
+
 These staging/write-back interfaces did not exist in the historical `v0.0.1`
 tag and have not appeared in any later tag. The change-aware planner result and
-exact `CompleteNoChange` queue operation intentionally supersede earlier
-experimental intermediate-commit interfaces; implementers following those
-commits must update. This source change does not alter a wire profile, receipt,
-journal schema, or cache schema.
+exact `CompleteNoChange` queue operation plus complete-result remote submission
+intentionally supersede earlier experimental intermediate-commit and
+bundle-only interfaces; implementers following those commits must update. This
+source change does not alter a wire profile, receipt, journal schema, or cache
+schema.
 
 The root-policy port deliberately exposes accepted-root lookup and candidate
 recording only. `writeback.Result.RootAccepted` is therefore always false. If
@@ -457,8 +467,9 @@ claiming remote persistence. Completion executes under the same process and
 cross-process fence as every accepted-root promotion; if the root already
 advanced, the batch is preserved as a conflict. A remote success, payload
 upload, or receipt alone never changes the accepted root. The generic
-orchestrator and concrete UnixFS planner are implemented; FUSE write composition
-remains a later phase.
+orchestrator and concrete UnixFS planner are implemented; FUSE write
+composition is supplied only by the explicit runtime write-back binding
+described below.
 
 Package `unixfs/clientroot` is the concrete planner for flat-v1 and hybrid-v1.
 It first reconstructs the UnixFS tree only from the verified complete
@@ -517,8 +528,8 @@ select roots, access transport, or own the binding lifetime. Mount `Sync` can
 report local durability and a verified remote candidate but is rejected if it
 claims accepted-root promotion. The Linux adapter consumes the writable subset
 only for an explicit write-back Spec; a wider dynamic type never enables writes
-for a read-only Spec. Current daemon composition does not supply a writable
-binding, so product mounts remain read-only in this phase.
+for a read-only Spec. The runtime supplies that binding only after validating
+the complete Spec against the locally selected accepted View.
 The private daemon API exposes the same manager at `GET/POST /v1/mounts` and
 `DELETE /v1/mounts/{id}` when a manager is configured.
 
@@ -566,23 +577,46 @@ MALT_FUSE_WRITABLE_SMOKE=1 go test -run TestLinuxFUSEWritableSmoke ./filesystem/
 owner-private mount registry and cache, a selector that reads only the local
 accepted UnixFS root, and per-dataset/branch Gateway readers. Matching remote
 observations may supply cache revision metadata but never replace the accepted
-root. Nonzero encryption epochs fail closed until a local mount decryption
-layer exists. The daemon restores desired mounts on startup, preserves them
-through graceful shutdown, and serves the manager through the private local
-API. Package `localapi` supplies the reusable control client used by:
+root. For `write_back`, it derives one stable state directory from the exact
+dataset and branch, opens the leased staging cache/journal, selects the declared
+flat-v1 or hybrid-v1 planner, and composes the Gateway block/client-root ports
+with an isolated MALT Core Writer and `application.Roots`. The state directory
+also contains an owner-private `layout.json`; it is written durably before any
+replay and binds the dataset, branch, and flat-v1/hybrid-v1 profile. A mismatch
+fails closed so a frozen request identity cannot be recomputed with different
+application semantics. If composition fails after staging leases are acquired,
+the factory returns a cleanup-only partial binding for manager-owned `Close`
+retry. `Sync` first confirms local journal durability, then attempts verified
+replay. Candidate recording is followed by journal completion under the same
+accepted-root promotion fence; if the root advanced, the pending batch becomes
+a durable conflict instead of disappearing from the overlay. Offline/conflict
+errors leave the exact batch recoverable; verified change records a candidate
+without acceptance; verified no-change and no-pending results make no
+remote-persistence claim. Nonzero encryption epochs fail closed until a local
+mount decryption layer exists. The daemon restores desired mounts on startup,
+preserves them through graceful shutdown, and serves the manager through the
+private local API. Package `localapi` supplies the reusable control client used
+by:
 
 ```sh
 malt mount add <id> <dataset-id> <mountpoint> \
   --branch main --trust-alias <accepted-root-alias>
+malt mount add <id> <dataset-id> <mountpoint> \
+  --branch main --trust-alias <accepted-root-alias> \
+  --write-policy write_back --layout flat-v1
 malt mount list
 malt unmount <id>
 ```
 
 The configuration paths `filesystem.mounts_path` and
-`filesystem.cache_dir` are runtime-owned protected local state. A desired
-mount is persisted before platform I/O, so a failed mount remains visible and
-retryable until explicit `malt unmount`. No WinFsp implementation is claimed;
-on non-Linux targets the daemon keeps mount routes unconfigured and continues
+`filesystem.cache_dir` are runtime-owned protected local state.
+`filesystem.writable_state_dir` holds the separately leased per-dataset/branch
+dirty cache, journal, and frozen layout profile, while
+`filesystem.max_staged_file_bytes` bounds the current whole-file implementation
+and defaults to 256 MiB. A desired mount is
+persisted before platform I/O, so a failed mount remains visible and retryable
+until explicit `malt unmount`. No WinFsp implementation is claimed; on
+non-Linux targets the daemon keeps mount routes unconfigured and continues
 serving its other local-runtime APIs.
 
 ## Merkle DAG compatibility

@@ -15,7 +15,6 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -52,8 +51,8 @@ func (r remoteAdapter) FetchUpdateView(ctx context.Context, root cid.Cid, bounds
 	return clientrootapp.ViewEnvelope{View: response.View, WireBytes: response.WireBytes}, nil
 }
 
-func (r remoteAdapter) SubmitClientRoot(ctx context.Context, bundle mutation.ClientRootBundle) (clientrootapp.ReceiptEnvelope, error) {
-	response, err := r.client.SubmitClientRoot(ctx, bundle)
+func (r remoteAdapter) SubmitClientRoot(ctx context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
+	response, err := r.client.SubmitClientRoot(ctx, prepared.Bundle)
 	if err != nil {
 		return clientrootapp.ReceiptEnvelope{}, err
 	}

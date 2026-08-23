@@ -3,6 +3,7 @@ package writeback
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
@@ -182,6 +183,40 @@ func TestReplayPreservesConflictWhenAcceptedRootAdvancesAfterReceipt(t *testing.
 	}
 	if fixture.queue.completed != 0 || fixture.queue.conflicted != 1 || fixture.queue.conflictID == "" {
 		t.Fatalf("accepted-root race queue=%#v", fixture.queue)
+	}
+}
+
+func TestReplayPreservesConflictWhenAcceptedRootAdvancesAfterCandidateObservation(t *testing.T) {
+	fixture := newWritebackFixture(t)
+	advanced := writebackRawCID(t, []byte("advanced after candidate observation"))
+	fixture.roots.completionEntered = make(chan struct{})
+	fixture.roots.allowCompletion = make(chan struct{})
+	service := fixture.service(t)
+	type replayOutcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan replayOutcome, 1)
+	go func() {
+		result, err := service.Replay(t.Context(), fixture.view)
+		done <- replayOutcome{result: result, err: err}
+	}()
+	<-fixture.roots.completionEntered
+	fixture.roots.advanceAccepted(advanced)
+	close(fixture.roots.allowCompletion)
+	outcome := <-done
+	result, err := outcome.result, outcome.err
+	if !errors.Is(err, ErrStaleAcceptedView) {
+		t.Fatalf("post-candidate accepted-root race error=%v", err)
+	}
+	if !result.RemotePersisted || !result.CandidateRoot.Defined() || !result.CandidateStored || result.RootAccepted {
+		t.Fatalf("post-candidate accepted-root race result=%#v", result)
+	}
+	if !fixture.roots.candidate.Equals(result.CandidateRoot) || !fixture.roots.accepted.Equals(advanced) {
+		t.Fatalf("post-candidate root state=%#v", fixture.roots)
+	}
+	if fixture.queue.completed != 0 || fixture.queue.conflicted != 1 || fixture.queue.conflictID == "" {
+		t.Fatalf("post-candidate queue=%#v", fixture.queue)
 	}
 }
 
@@ -365,7 +400,8 @@ func (r *fakeClientRootRemote) FetchUpdateView(_ context.Context, root cid.Cid, 
 	return clientrootapp.ViewEnvelope{View: r.view, WireBytes: 1}, nil
 }
 
-func (r *fakeClientRootRemote) SubmitClientRoot(_ context.Context, bundle mutation.ClientRootBundle) (clientrootapp.ReceiptEnvelope, error) {
+func (r *fakeClientRootRemote) SubmitClientRoot(_ context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
+	bundle := prepared.Bundle
 	copyBundle := bundle
 	r.submitted = &copyBundle
 	digest, err := bundle.Digest()
@@ -384,17 +420,29 @@ func (r *fakeClientRootRemote) SubmitClientRoot(_ context.Context, bundle mutati
 }
 
 type fakeRootPolicy struct {
-	accepted         cid.Cid
-	candidate        cid.Cid
-	advanceOnObserve cid.Cid
-	advanceOnRecheck cid.Cid
+	mu                sync.Mutex
+	accepted          cid.Cid
+	candidate         cid.Cid
+	advanceOnObserve  cid.Cid
+	advanceOnRecheck  cid.Cid
+	completionEntered chan struct{}
+	allowCompletion   chan struct{}
+	completionOnce    sync.Once
 }
 
 func (p *fakeRootPolicy) AcceptedRoot(string) (cid.Cid, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.accepted, nil
 }
 
 func (p *fakeRootPolicy) CompleteIfAccepted(_ string, expected cid.Cid, operation func() error) (bool, error) {
+	if p.completionEntered != nil {
+		p.completionOnce.Do(func() { close(p.completionEntered) })
+		<-p.allowCompletion
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.advanceOnRecheck.Defined() {
 		p.accepted = p.advanceOnRecheck
 	}
@@ -405,6 +453,8 @@ func (p *fakeRootPolicy) CompleteIfAccepted(_ string, expected cid.Cid, operatio
 }
 
 func (p *fakeRootPolicy) ObserveCandidate(_ string, candidate, base cid.Cid, _ string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if !base.Equals(p.accepted) {
 		return errors.New("candidate base is stale")
 	}
@@ -414,6 +464,12 @@ func (p *fakeRootPolicy) ObserveCandidate(_ string, candidate, base cid.Cid, _ s
 	}
 	p.candidate = candidate
 	return nil
+}
+
+func (p *fakeRootPolicy) advanceAccepted(root cid.Cid) {
+	p.mu.Lock()
+	p.accepted = root
+	p.mu.Unlock()
 }
 
 func writebackRawCID(t *testing.T, body []byte) cid.Cid {

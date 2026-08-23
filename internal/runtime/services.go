@@ -196,6 +196,7 @@ func ProtectedPaths(configPath string, cfg *clientconfig.Config) []string {
 		cfg.Filesystem.MountsPath + ".lock",
 		cfg.Filesystem.MountsPath + ".manager.lock",
 		cfg.Filesystem.CacheDir,
+		cfg.Filesystem.WritableStateDir,
 	}
 }
 

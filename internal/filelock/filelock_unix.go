@@ -35,12 +35,8 @@ func acquire(path string, timeout time.Duration) (func() error, error) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return func() error {
-		unlockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		closeErr := file.Close()
-		if unlockErr != nil {
-			return unlockErr
-		}
-		return closeErr
-	}, nil
+	return retryableUnlockClose(
+		func() error { return syscall.Flock(int(file.Fd()), syscall.LOCK_UN) },
+		file.Close,
+	), nil
 }

@@ -39,9 +39,10 @@ authentication core:
 - a crash-recoverable mount registry and daemon/local-API lifecycle contract
   that keeps platform drivers outside trust and transport code;
 - daemon-managed Linux FUSE mounts selected from local accepted roots, with
-  lazy verified Gateway reads and a non-authoritative local cache; the adapter
-  has an opt-in writable syscall boundary while current daemon composition
-  still supplies only the read-only capability;
+  lazy verified Gateway reads, a non-authoritative local cache, and an
+  explicitly selected write-back binding that durably journals locally,
+  computes the candidate locally, verifies remote persistence, and never
+  promotes it implicitly;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
@@ -56,13 +57,12 @@ separate explicit acceptance path.
 This is an experimental, pre-v1 local runtime. It currently provides the
 `malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, a
 UnixFS application adapter, a platform-neutral verified filesystem service,
-and daemon-managed Linux read-only FUSE mounts controlled by `malt mount` and
-`malt unmount`. The cache, operation journal, and platform-neutral dirty
-staging overlay, generic verified write-back orchestrator, and concrete UnixFS
-client-root planner are available as runtime substrate. The Linux FUSE adapter
-now maps an explicit write-back capability to create, write, truncate,
-namespace mutation, and local fsync, but daemon write-binding composition is
-not implemented yet, so `malt mount` remains read-only. The current remote
+and daemon-managed Linux FUSE mounts controlled by `malt mount` and
+`malt unmount`. Mounts remain read-only by default. An explicit `write_back`
+policy composes per-dataset/branch staging, the flat or hybrid UnixFS planner,
+MALT Core client-root computation, the untrusted Gateway remote, and local
+candidate recording. A successful remote write never accepts the candidate;
+promotion still requires the separate local root policy. The current remote
 transport is Gateway HTTP; WinFsp, local-CAS,
 P2P, and hybrid transports are staged follow-up work and are not claimed as
 implemented here. The historical `v0.0.1` tag was published for MALT Client
@@ -70,7 +70,10 @@ before the repository rename and before the staging/write-back APIs existed.
 Those current experimental Go interfaces have not appeared in any tag and may
 still make explicitly documented source-breaking changes before a tagged
 release includes them; build the current runtime from a pinned commit. These
-changes do not imply a wire-format or persisted-state migration.
+changes do not imply a Core or Gateway wire-format migration. An opt-in
+write-back mount creates an additive owner-private `layout.json` beside its
+per-dataset/branch journal and refuses to reuse that state with a different
+flat/hybrid profile; read-only state and older runtime data remain unchanged.
 The checked-in `go.mod` is the dependency source of truth; evaluation campaigns
 must record the exact runtime and dependency revisions they build.
 
@@ -146,6 +149,31 @@ with the base captured before materialization. The Gateway may fast-forward,
 auto-merge independent map changes, or return a preserved conflict branch.
 Bucket heads remain untrusted observations and are never promoted in
 `roots.json` by this workflow.
+
+On Linux, an already accepted UnixFS root can be exposed as a read-only mount,
+or as an explicitly opt-in write-back mount with a fixed layout:
+
+```bash
+./bin/malt mount add docs <bucket-id> /mnt/docs \
+  --trust-alias docs --branch main
+./bin/malt mount add working <bucket-id> /mnt/working \
+  --trust-alias docs --branch main \
+  --write-policy write_back --layout hybrid-v1
+./bin/malt mount list
+./bin/malt unmount working
+```
+
+Every successful filesystem mutation is first durable in the local journal.
+`fsync` then attempts the complete verified client-root write-back. Network or
+conflict failures are reported to the application while the exact local batch
+remains recoverable for retry. Remote success records a candidate root only;
+candidate recording and journal completion are fenced against concurrent
+accepted-root promotion. The mounted accepted view does not advance until an
+explicit local acceptance decision and remount. The dataset/branch state also
+freezes the selected layout, so changing flat-v1 to hybrid-v1 (or vice versa)
+fails closed until an explicit state migration exists. The current whole-file
+staging limit defaults to 256 MiB and is configurable with
+`filesystem.max_staged_file_bytes`.
 
 ## Encrypted backup and restore
 

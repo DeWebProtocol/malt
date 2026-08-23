@@ -113,7 +113,7 @@ func TestGatewayFilesystemRouterKeysServicesByDatasetAndBranch(t *testing.T) {
 		key := datasetBranch{dataset: dataset, branch: branch}
 		calls[key]++
 		return &fakeViewFilesystem{id: dataset + "/" + branch}, nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +132,94 @@ func TestGatewayFilesystemRouterKeysServicesByDatasetAndBranch(t *testing.T) {
 	defer mu.Unlock()
 	if len(calls) != 3 || calls[datasetBranch{dataset: "one", branch: "main"}] != 1 {
 		t.Fatalf("filesystem factory calls=%v", calls)
+	}
+}
+
+func TestGatewayFilesystemRouterBindsOnlyExactWriteBackSpecAndView(t *testing.T) {
+	wantErr := errors.New("binding sentinel")
+	var gotSpec filesystemmount.Spec
+	var gotView filesystemservice.View
+	var gotFilesystem filesystemmount.ViewFilesystem
+	service := &fakeViewFilesystem{id: "verified"}
+	router, err := newGatewayFilesystemRouter(
+		func(string, string) (filesystemmount.ViewFilesystem, error) { return service, nil },
+		func(_ context.Context, spec filesystemmount.Spec, view filesystemservice.View, filesystem filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error) {
+			gotSpec, gotView, gotFilesystem = spec, view, filesystem
+			return nil, wantErr
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := filesystemmount.Spec{
+		ID: "docs", DatasetID: "bucket", Branch: "main", Mountpoint: "/mnt/docs", TrustAlias: "docs",
+		CachePolicy: filesystemmount.CacheVerified, WritePolicy: filesystemmount.WriteBack,
+		LayoutPolicy: filesystemmount.LayoutFlatV1, ConflictPolicy: filesystemmount.ConflictPreserveLocal,
+	}
+	view := filesystemservice.View{DatasetID: "bucket", Branch: "main", Root: runtimeTestCID(t, "accepted")}
+	if _, err := router.BindWritable(t.Context(), spec, view); !errors.Is(err, wantErr) {
+		t.Fatalf("BindWritable error=%v", err)
+	}
+	if gotSpec != spec || gotView != view || gotFilesystem != service {
+		t.Fatalf("binding inputs spec=%#v view=%#v filesystem=%T", gotSpec, gotView, gotFilesystem)
+	}
+	partial := &runtimeWritableBinding{}
+	partialRouter, err := newGatewayFilesystemRouter(
+		func(string, string) (filesystemmount.ViewFilesystem, error) { return service, nil },
+		func(context.Context, filesystemmount.Spec, filesystemservice.View, filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error) {
+			return partial, wantErr
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPartial, err := partialRouter.BindWritable(t.Context(), spec, view)
+	if !errors.Is(err, wantErr) || gotPartial != partial {
+		t.Fatalf("partial BindWritable binding=%T err=%v", gotPartial, err)
+	}
+
+	mismatched := view
+	mismatched.Branch = "feature"
+	if _, err := router.BindWritable(t.Context(), spec, mismatched); err == nil {
+		t.Fatal("mismatched write-back Spec and View were accepted")
+	}
+	readOnly := spec
+	readOnly.WritePolicy = filesystemmount.WriteReadOnly
+	readOnly.LayoutPolicy = ""
+	readOnly.ConflictPolicy = filesystemmount.ConflictFailReadOnly
+	if _, err := router.BindWritable(t.Context(), readOnly, view); err == nil {
+		t.Fatal("read-only Spec received a writable binding")
+	}
+
+	withoutBinding, err := newGatewayFilesystemRouter(func(string, string) (filesystemmount.ViewFilesystem, error) { return service, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := withoutBinding.BindWritable(t.Context(), spec, view); err == nil {
+		t.Fatal("router without binding capability accepted write-back")
+	}
+
+	var nilFilesystem *fakeViewFilesystem
+	typedNilRouter, err := newGatewayFilesystemRouter(func(string, string) (filesystemmount.ViewFilesystem, error) {
+		return nilFilesystem, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := typedNilRouter.Stat(t.Context(), view, ""); err == nil {
+		t.Fatal("typed-nil verified filesystem was accepted")
+	}
+	typedNilBinding, err := newGatewayFilesystemRouter(
+		func(string, string) (filesystemmount.ViewFilesystem, error) { return service, nil },
+		func(context.Context, filesystemmount.Spec, filesystemservice.View, filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error) {
+			return (*runtimeWritableBinding)(nil), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := typedNilBinding.BindWritable(t.Context(), spec, view); err == nil {
+		t.Fatal("typed-nil writable binding was accepted")
 	}
 }
 

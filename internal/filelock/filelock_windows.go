@@ -32,12 +32,8 @@ func acquire(path string, timeout time.Duration) (func() error, error) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return func() error {
-		unlockErr := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped)
-		closeErr := file.Close()
-		if unlockErr != nil {
-			return unlockErr
-		}
-		return closeErr
-	}, nil
+	return retryableUnlockClose(
+		func() error { return windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped) },
+		file.Close,
+	), nil
 }
