@@ -62,7 +62,6 @@ type BackupConfig struct {
 	KeyringPath string `json:"keyring_path"`
 	HistoryDir  string `json:"history_dir"`
 	PlansPath   string `json:"plans_path"`
-	TempDir     string `json:"temp_dir,omitempty"`
 }
 
 // FilesystemConfig owns non-authoritative cache, durable local mount intent,
@@ -95,7 +94,6 @@ func Default() (*Config, error) {
 			KeyringPath: filepath.Join(root, "backup-keys.json"),
 			HistoryDir:  filepath.Join(root, "backup-history"),
 			PlansPath:   filepath.Join(root, "backup-plans.json"),
-			TempDir:     filepath.Join(root, "staging"),
 		},
 		Filesystem: FilesystemConfig{
 			MountsPath:         filepath.Join(root, "mounts.json"),
@@ -249,9 +247,6 @@ func (c *Config) applyDefaults() {
 	if c.Backup.PlansPath == "" {
 		c.Backup.PlansPath = defaults.Backup.PlansPath
 	}
-	if c.Backup.TempDir == "" {
-		c.Backup.TempDir = defaults.Backup.TempDir
-	}
 	if c.Filesystem.MountsPath == "" {
 		c.Filesystem.MountsPath = defaults.Filesystem.MountsPath
 	}
@@ -285,8 +280,8 @@ func (c *Config) Validate() error {
 	if c.Workspace.StatePath == "" {
 		return fmt.Errorf("Bucket workspace state path is required")
 	}
-	if c.Backup.KeyringPath == "" || c.Backup.HistoryDir == "" || c.Backup.PlansPath == "" || c.Backup.TempDir == "" {
-		return fmt.Errorf("backup keyring, history directory, plans, and staging paths are required")
+	if c.Backup.KeyringPath == "" || c.Backup.HistoryDir == "" || c.Backup.PlansPath == "" {
+		return fmt.Errorf("backup keyring, history directory, and plans paths are required")
 	}
 	if strings.TrimSpace(c.Filesystem.MountsPath) == "" || strings.TrimSpace(c.Filesystem.CacheDir) == "" ||
 		strings.TrimSpace(c.Filesystem.WritableStateDir) == "" {

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,8 +11,6 @@ import (
 	"github.com/dewebprotocol/malt-client/bucketsync"
 	cid "github.com/ipfs/go-cid"
 )
-
-const restoreRangeSize = uint64(4 << 20)
 
 var (
 	ErrPendingWorkspace = errors.New("Bucket has pending or branched local work")
@@ -40,7 +39,7 @@ type Result struct {
 	PlanName            string                 `json:"plan_name,omitempty"`
 	Branch              string                 `json:"branch,omitempty"`
 	Source              string                 `json:"source"`
-	RemotePath          string                 `json:"remote_path"`
+	Profile             string                 `json:"profile"`
 	KeyEpoch            uint32                 `json:"key_epoch"`
 	EncryptedBytes      int64                  `json:"encrypted_bytes"`
 	SourceFingerprint   string                 `json:"source_fingerprint"`
@@ -54,6 +53,28 @@ type Result struct {
 	CompletedAt         time.Time              `json:"completed_at"`
 	RetriedPending      bool                   `json:"retried_pending,omitempty"`
 	ReconciledPending   bool                   `json:"reconciled_pending,omitempty"`
+}
+
+// UnmarshalJSON accepts the pre-release remote_path result field. That value
+// identified the removed archive location; current results identify the
+// application profile instead.
+func (r *Result) UnmarshalJSON(data []byte) error {
+	type resultAlias Result
+	wire := struct {
+		resultAlias
+		LegacyRemotePath string `json:"remote_path"`
+	}{}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Profile != "" && wire.LegacyRemotePath != "" && wire.Profile != wire.LegacyRemotePath {
+		return fmt.Errorf("backup result profile conflicts with legacy remote_path")
+	}
+	if wire.Profile == "" {
+		wire.Profile = wire.LegacyRemotePath
+	}
+	*r = Result(wire.resultAlias)
+	return nil
 }
 
 func ValidateSource(source string, protected []string) error {

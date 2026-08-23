@@ -14,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
+	encryptedfs "github.com/dewebprotocol/malt-client/unixfs/encrypted"
 )
 
 type PlanState struct {
@@ -38,13 +39,15 @@ type historyFile struct {
 // It lets a later daemon or CLI process reuse the already staged candidate and
 // its frozen Bucket push request after a timeout or lost response.
 type PendingBackup struct {
-	BucketID  string    `json:"bucket_id"`
-	PlanID    string    `json:"plan_id"`
-	Message   string    `json:"message"`
-	StashID   string    `json:"stash_id,omitempty"`
-	PushID    string    `json:"push_id,omitempty"`
-	Result    Result    `json:"result"`
-	CreatedAt time.Time `json:"created_at"`
+	BucketID          string    `json:"bucket_id"`
+	PlanID            string    `json:"plan_id"`
+	Message           string    `json:"message"`
+	StashID           string    `json:"stash_id,omitempty"`
+	PushID            string    `json:"push_id,omitempty"`
+	CandidateBase     string    `json:"candidate_base,omitempty"`
+	CandidateRecorded bool      `json:"candidate_recorded,omitempty"`
+	Result            Result    `json:"result"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type BindingConflict struct {
@@ -74,7 +77,7 @@ type History struct {
 }
 
 func NewHistory(path string) (*History, error) {
-	if strings.TrimSpace(path) == "" {
+	if path == "" {
 		return nil, fmt.Errorf("backup history path is empty")
 	}
 	h := &History{path: path}
@@ -140,6 +143,9 @@ func (h *History) SetPending(pending PendingBackup) error {
 		pending.PlanID != pending.Result.PlanID || strings.TrimSpace(pending.Result.Source) == "" ||
 		strings.TrimSpace(pending.Result.CandidateRoot) == "" || pending.CreatedAt.IsZero() {
 		return fmt.Errorf("pending backup journal is incomplete")
+	}
+	if pending.Result.Profile == encryptedfs.ProfileID && !pending.CandidateRecorded {
+		return fmt.Errorf("encrypted filesystem pending backup lacks a recorded local candidate")
 	}
 	return h.mutate(func(value *historyFile) error {
 		if value.Pending != nil {

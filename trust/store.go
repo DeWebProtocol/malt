@@ -279,13 +279,19 @@ func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, err
 
 func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, error) {
 	alias = normalizeAlias(alias)
+	if alias == "" {
+		return Record{}, fmt.Errorf("candidate alias is empty")
+	}
 	canonicalRoot, err := canonicalCID(root)
 	if err != nil {
 		return Record{}, fmt.Errorf("invalid candidate root: %w", err)
 	}
-	canonicalBaseRoot, err := canonicalCID(baseRoot)
-	if err != nil {
-		return Record{}, fmt.Errorf("invalid candidate base root: %w", err)
+	canonicalBaseRoot := ""
+	if strings.TrimSpace(baseRoot) != "" {
+		canonicalBaseRoot, err = canonicalCID(baseRoot)
+		if err != nil {
+			return Record{}, fmt.Errorf("invalid candidate base root: %w", err)
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,17 +303,16 @@ func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, erro
 	if err := s.prepareMigrationLocked(migrated); err != nil {
 		return Record{}, err
 	}
-	value, ok := s.state.Roots[alias]
-	if !ok {
-		return Record{}, ErrNotFound
-	}
+	value := s.state.Roots[alias]
+	value.Alias = alias
 	if value.Accepted == nil {
-		return Record{}, ErrNoAcceptedRoot
+		if canonicalBaseRoot != "" {
+			return Record{}, fmt.Errorf("%w: bootstrap candidate has unexpected base %s", ErrStaleCandidate, canonicalBaseRoot)
+		}
+	} else if canonicalBaseRoot != value.Accepted.Root {
+		return Record{}, fmt.Errorf("%w: candidate base %q, accepted root %s", ErrStaleCandidate, canonicalBaseRoot, value.Accepted.Root)
 	}
-	if canonicalBaseRoot != value.Accepted.Root {
-		return Record{}, fmt.Errorf("%w: candidate base %s, accepted root %s", ErrStaleCandidate, canonicalBaseRoot, value.Accepted.Root)
-	}
-	if canonicalRoot == value.Accepted.Root {
+	if value.Accepted != nil && canonicalRoot == value.Accepted.Root {
 		return recordFromState(value), nil
 	}
 	value.Candidates = removeCandidate(value.Candidates, canonicalRoot)
@@ -374,9 +379,6 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 	if !ok {
 		return Record{}, ErrNotFound
 	}
-	if value.Accepted == nil {
-		return Record{}, ErrNoAcceptedRoot
-	}
 	var candidate CandidateRoot
 	found := false
 	for _, item := range value.Candidates {
@@ -389,7 +391,11 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 	if !found {
 		return Record{}, ErrCandidateNotFound
 	}
-	if candidate.BaseRoot == "" || candidate.BaseRoot != value.Accepted.Root {
+	if value.Accepted == nil {
+		if candidate.BaseRoot != "" {
+			return Record{}, fmt.Errorf("%w: bootstrap candidate base %q", ErrStaleCandidate, candidate.BaseRoot)
+		}
+	} else if candidate.BaseRoot == "" || candidate.BaseRoot != value.Accepted.Root {
 		return Record{}, fmt.Errorf("%w: candidate base %q, accepted root %s", ErrStaleCandidate, candidate.BaseRoot, value.Accepted.Root)
 	}
 	acceptRoot(&value, canonicalRoot, source, time.Now().UTC())
@@ -680,10 +686,13 @@ func normalizeRootState(alias string, value RootState) (RootState, error) {
 		if err != nil {
 			return RootState{}, fmt.Errorf("trusted-root alias %q candidate %d has invalid base root: %w", alias, i, err)
 		}
-		if value.Accepted == nil {
-			return RootState{}, fmt.Errorf("trusted-root alias %q has a candidate without an accepted root", alias)
+		if value.Accepted == nil && candidate.BaseRoot != "" {
+			return RootState{}, fmt.Errorf("trusted-root alias %q bootstrap candidate has a base root", alias)
 		}
-		if candidate.Root == value.Accepted.Root {
+		if value.Accepted != nil && candidate.BaseRoot == "" {
+			return RootState{}, fmt.Errorf("trusted-root alias %q candidate has no accepted base root", alias)
+		}
+		if value.Accepted != nil && candidate.Root == value.Accepted.Root {
 			continue
 		}
 		candidates = append(removeCandidate(candidates, candidate.Root), candidate)
@@ -705,8 +714,8 @@ func normalizeRootState(alias string, value RootState) (RootState, error) {
 		}
 	}
 	value.ObservedHeads = observations
-	if value.Accepted == nil && len(value.ObservedHeads) == 0 {
-		return RootState{}, fmt.Errorf("trusted-root alias %q has neither an accepted root nor an observation", alias)
+	if value.Accepted == nil && len(value.Candidates) == 0 && len(value.ObservedHeads) == 0 {
+		return RootState{}, fmt.Errorf("trusted-root alias %q has no accepted root, candidate, or observation", alias)
 	}
 	return value, nil
 }
@@ -769,6 +778,7 @@ func sortObservations(values []ObservedHead) {
 
 func acceptRoot(value *RootState, root, source string, acceptedAt time.Time) {
 	previous := ""
+	bootstrap := value.Accepted == nil
 	if value.Accepted != nil && value.Accepted.Root != root {
 		previous = value.Accepted.Root
 	} else if value.Accepted != nil {
@@ -777,7 +787,11 @@ func acceptRoot(value *RootState, root, source string, acceptedAt time.Time) {
 	value.Accepted = &AcceptedRootState{
 		Root: root, PreviousRoot: previous, Source: source, AcceptedAt: acceptedAt,
 	}
-	value.Candidates = removeCandidate(value.Candidates, root)
+	if bootstrap {
+		value.Candidates = nil
+	} else {
+		value.Candidates = removeCandidate(value.Candidates, root)
+	}
 }
 
 func normalizeAlias(alias string) string { return strings.TrimSpace(alias) }

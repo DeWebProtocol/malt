@@ -124,7 +124,7 @@ func Open(path string) (*Keyring, error) {
 func (k *Keyring) ActiveEpoch() uint32 { return k.data.ActiveEpoch }
 
 // Rotate creates a new active master key while retaining old epochs for
-// restore. Existing remote archives are not re-encrypted.
+// restore. Existing encrypted filesystem roots are not rewritten.
 func (k *Keyring) Rotate() (uint32, error) {
 	if k == nil || strings.TrimSpace(k.path) == "" {
 		return 0, fmt.Errorf("backup keyring is nil")

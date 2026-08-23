@@ -157,8 +157,10 @@ func (r *Roots) Trust(alias, root, profile, gateway, source string) (trust.Recor
 	return r.policy.Trust(alias, root, profile, gateway, source)
 }
 
-// RecordCandidate records an untrusted mutation result without accepting it.
-// The policy verifies that baseRoot is still the alias's accepted root.
+// RecordCandidate records an untrusted locally computed result without
+// accepting it. A defined base must still be the alias's accepted root. An
+// undefined base denotes a bootstrap candidate and is valid only while the
+// alias has no accepted root.
 func (r *Roots) RecordCandidate(alias string, candidateRoot, baseRoot cid.Cid, source string) (trust.Record, error) {
 	if r == nil || r.policy == nil {
 		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
@@ -166,10 +168,14 @@ func (r *Roots) RecordCandidate(alias string, candidateRoot, baseRoot cid.Cid, s
 	if strings.TrimSpace(alias) == "" {
 		return trust.Record{}, fmt.Errorf("candidate alias is empty")
 	}
-	if !candidateRoot.Defined() || !baseRoot.Defined() {
-		return trust.Record{}, fmt.Errorf("candidate and base roots must be defined")
+	if !candidateRoot.Defined() {
+		return trust.Record{}, fmt.Errorf("candidate root must be defined")
 	}
-	return r.policy.AddCandidate(alias, candidateRoot.String(), baseRoot.String(), source)
+	base := ""
+	if baseRoot.Defined() {
+		base = baseRoot.String()
+	}
+	return r.policy.AddCandidate(alias, candidateRoot.String(), base, source)
 }
 
 // ObserveCandidate records an untrusted root while exposing only an error
@@ -177,6 +183,32 @@ func (r *Roots) RecordCandidate(alias string, candidateRoot, baseRoot cid.Cid, s
 func (r *Roots) ObserveCandidate(alias string, candidateRoot, baseRoot cid.Cid, source string) error {
 	_, err := r.RecordCandidate(alias, candidateRoot, baseRoot, source)
 	return err
+}
+
+// HasCandidate confirms exact durable candidate provenance without creating or
+// rebasing candidate state. An undefined base denotes a bootstrap candidate.
+func (r *Roots) HasCandidate(alias string, candidateRoot, baseRoot cid.Cid) (bool, error) {
+	if r == nil || r.policy == nil || !candidateRoot.Defined() {
+		return false, fmt.Errorf("candidate inspection request is incomplete")
+	}
+	policy, ok := r.policy.(trust.ObservationPolicy)
+	if !ok {
+		return false, fmt.Errorf("trusted-root policy does not support candidate-state inspection")
+	}
+	state, err := policy.GetState(alias)
+	if err != nil {
+		return false, err
+	}
+	base := ""
+	if baseRoot.Defined() {
+		base = baseRoot.String()
+	}
+	for _, candidate := range state.Candidates {
+		if candidate.Root == candidateRoot.String() && candidate.BaseRoot == base {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ObserveHead records an untrusted remote dataset head without creating a

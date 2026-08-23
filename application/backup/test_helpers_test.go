@@ -114,6 +114,8 @@ func (s *fakeSync) Push(_ context.Context, candidate cid.Cid, _ cid.Cid, _ strin
 			break
 		}
 	}
+	s.workspace.Base.Root = candidate.String()
+	s.workspace.Remote.Root = candidate.String()
 	return bucketsync.PushOutcome{Workspace: s.workspace}, nil
 }
 

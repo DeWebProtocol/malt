@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
@@ -36,14 +37,41 @@ type Plan struct {
 	UpdatedAt  time.Time     `json:"updated_at"`
 }
 
-// Binding maps one local directory to one opaque internal path in a Plan.
-// The remote path is not a public restore selector.
+// Binding maps one local directory to one user-visible path name and one
+// opaque authenticated token in a Plan. The token is derived at snapshot time
+// and never persisted as authority in this local configuration.
 type Binding struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Source      string    `json:"source"`
-	ArchiveName string    `json:"archive_name"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Source    string    `json:"source"`
+	PathName  string    `json:"path_name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// UnmarshalJSON accepts the pre-release archive_name field so existing local
+// Plan configuration can cross the data-model cutover without implying that
+// new snapshots are archives.
+func (b *Binding) UnmarshalJSON(data []byte) error {
+	type bindingWire struct {
+		ID                string    `json:"id"`
+		Name              string    `json:"name"`
+		Source            string    `json:"source"`
+		PathName          string    `json:"path_name"`
+		LegacyArchiveName string    `json:"archive_name"`
+		CreatedAt         time.Time `json:"created_at"`
+	}
+	var wire bindingWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.PathName != "" && wire.LegacyArchiveName != "" && wire.PathName != wire.LegacyArchiveName {
+		return fmt.Errorf("backup binding path_name conflicts with legacy archive_name")
+	}
+	if wire.PathName == "" {
+		wire.PathName = wire.LegacyArchiveName
+	}
+	*b = Binding{ID: wire.ID, Name: wire.Name, Source: wire.Source, PathName: wire.PathName, CreatedAt: wire.CreatedAt}
+	return nil
 }
 
 type planFile struct {
@@ -56,7 +84,6 @@ type PlanStore struct {
 }
 
 func OpenPlanStore(path string) (*PlanStore, error) {
-	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, fmt.Errorf("backup plan store path is empty")
 	}
@@ -175,7 +202,7 @@ type BindRequest struct {
 	Branch      string
 	BindingName string
 	Source      string
-	ArchiveName string
+	PathName    string
 	Merge       bool
 }
 
@@ -184,7 +211,6 @@ func (s *PlanStore) Bind(request BindRequest) (Plan, Binding, error) {
 	request.BucketID = strings.TrimSpace(request.BucketID)
 	request.BucketName = strings.TrimSpace(request.BucketName)
 	request.BindingName = strings.TrimSpace(request.BindingName)
-	request.ArchiveName = strings.TrimSpace(request.ArchiveName)
 	branch, err := normalizePlanBranch(request.Branch)
 	if err != nil {
 		return Plan{}, Binding{}, err
@@ -192,7 +218,10 @@ func (s *PlanStore) Bind(request BindRequest) (Plan, Binding, error) {
 	if request.BucketID == "" {
 		return Plan{}, Binding{}, fmt.Errorf("backup binding Bucket ID is empty")
 	}
-	source, err := filepath.Abs(strings.TrimSpace(request.Source))
+	if request.Source == "" {
+		return Plan{}, Binding{}, fmt.Errorf("backup binding source is empty")
+	}
+	source, err := filepath.Abs(request.Source)
 	if err != nil {
 		return Plan{}, Binding{}, fmt.Errorf("resolve backup binding source: %w", err)
 	}
@@ -206,13 +235,13 @@ func (s *PlanStore) Bind(request BindRequest) (Plan, Binding, error) {
 	if request.BindingName == "" {
 		request.BindingName = filepath.Base(source)
 	}
-	if request.ArchiveName == "" {
-		request.ArchiveName = request.BindingName
+	if request.PathName == "" {
+		request.PathName = request.BindingName
 	}
 	if err := validateDisplayName(request.BindingName, "binding"); err != nil {
 		return Plan{}, Binding{}, err
 	}
-	if err := validateArchiveName(request.ArchiveName); err != nil {
+	if err := validatePathName(request.PathName); err != nil {
 		return Plan{}, Binding{}, err
 	}
 	now := time.Now().UTC()
@@ -268,8 +297,8 @@ func (s *PlanStore) Bind(request BindRequest) (Plan, Binding, error) {
 			if existing.Name == request.BindingName {
 				return fmt.Errorf("backup binding name %q is already used in this plan", request.BindingName)
 			}
-			if existing.ArchiveName == request.ArchiveName {
-				return fmt.Errorf("backup archive entry %q is already used in this plan", request.ArchiveName)
+			if existing.PathName == request.PathName {
+				return fmt.Errorf("backup path name %q is already used in this plan", request.PathName)
 			}
 		}
 		bindingID, err := randomPlanID("binding")
@@ -278,7 +307,7 @@ func (s *PlanStore) Bind(request BindRequest) (Plan, Binding, error) {
 		}
 		binding = Binding{
 			ID: bindingID, Name: request.BindingName, Source: source,
-			ArchiveName: request.ArchiveName, CreatedAt: now,
+			PathName: request.PathName, CreatedAt: now,
 		}
 		plan.Bindings = append(plan.Bindings, binding)
 		sort.Slice(plan.Bindings, func(i, j int) bool { return plan.Bindings[i].Name < plan.Bindings[j].Name })
@@ -503,9 +532,9 @@ func validatePlan(plan Plan) error {
 	}
 	seenNames := map[string]struct{}{}
 	seenSources := map[string]struct{}{}
-	seenArchiveNames := map[string]struct{}{}
+	seenPathNames := map[string]struct{}{}
 	for _, binding := range plan.Bindings {
-		if binding.ID == "" || binding.Name == "" || binding.Source == "" || binding.ArchiveName == "" || binding.CreatedAt.IsZero() {
+		if binding.ID == "" || binding.Name == "" || binding.Source == "" || binding.PathName == "" || binding.CreatedAt.IsZero() {
 			return fmt.Errorf("binding is incomplete")
 		}
 		if err := validateOpaqueID(binding.ID, "binding"); err != nil {
@@ -517,12 +546,12 @@ func validatePlan(plan Plan) error {
 		if _, ok := seenSources[binding.Source]; ok {
 			return fmt.Errorf("duplicate binding source %q", binding.Source)
 		}
-		if _, ok := seenArchiveNames[binding.ArchiveName]; ok {
-			return fmt.Errorf("duplicate archive entry %q", binding.ArchiveName)
+		if _, ok := seenPathNames[binding.PathName]; ok {
+			return fmt.Errorf("duplicate backup path name %q", binding.PathName)
 		}
 		seenNames[binding.Name] = struct{}{}
 		seenSources[binding.Source] = struct{}{}
-		seenArchiveNames[binding.ArchiveName] = struct{}{}
+		seenPathNames[binding.PathName] = struct{}{}
 	}
 	for i := range plan.Bindings {
 		for j := i + 1; j < len(plan.Bindings); j++ {
@@ -558,7 +587,7 @@ func bindingSourcesOverlap(left, right string) (bool, error) {
 }
 
 func validateOpaqueID(value, kind string) error {
-	if strings.TrimSpace(value) != value || value == "" || len(value) > 128 ||
+	if !utf8.ValidString(value) || strings.TrimSpace(value) != value || value == "" || len(value) > 128 ||
 		strings.ContainsAny(value, `/\`) || strings.ContainsAny(value, " \t\r\n\x00") {
 		return fmt.Errorf("invalid backup %s ID", kind)
 	}
@@ -570,6 +599,9 @@ func normalizePlanBranch(raw string) (string, error) {
 }
 
 func validateDisplayName(value, kind string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("invalid backup %s name", kind)
+	}
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 128 || strings.ContainsAny(value, "\r\n\x00") {
 		return fmt.Errorf("invalid backup %s name", kind)
@@ -577,12 +609,10 @@ func validateDisplayName(value, kind string) error {
 	return nil
 }
 
-func validateArchiveName(value string) error {
-	if err := validateDisplayName(value, "archive entry"); err != nil {
-		return err
-	}
-	if value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
-		return fmt.Errorf("backup archive entry must be one portable path segment")
+func validatePathName(value string) error {
+	if !utf8.ValidString(value) || value == "" || len(value) > 128 || value == "." || value == ".." ||
+		strings.HasPrefix(value, "@") || strings.ContainsAny(value, "/\\\x00") {
+		return fmt.Errorf("backup path name must be one portable path segment")
 	}
 	return nil
 }

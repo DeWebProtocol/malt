@@ -113,6 +113,30 @@ func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	}
 }
 
+func TestBootstrapCandidateRequiresExplicitCandidateAcceptance(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.AddCandidate("fresh", candidateRoot, "", "local-genesis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != "" || len(record.Candidates) != 1 || record.Candidates[0].BaseRoot != "" {
+		t.Fatalf("bootstrap candidate record = %#v", record)
+	}
+	if _, _, err := AcceptedRoot(store, "fresh"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bootstrap candidate became accepted: %v", err)
+	}
+	record, err = store.AcceptCandidate("fresh", candidateRoot, "explicit-bootstrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != candidateRoot || len(record.Candidates) != 0 {
+		t.Fatalf("accepted bootstrap candidate = %#v", record)
+	}
+}
+
 func TestCIDRepresentationsAreCanonicalizedAcrossTrustWorkflow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
 	store, err := Open(path)
@@ -594,7 +618,7 @@ func TestObservedOnlyAliasRequiresExplicitObservationAcceptance(t *testing.T) {
 	if _, _, err := AcceptedRoot(store, "docs"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("observed-only alias accepted-root error = %v", err)
 	}
-	if _, err := store.AddCandidate("docs", candidateRoot, testRoot, "local-write"); !errors.Is(err, ErrNoAcceptedRoot) {
+	if _, err := store.AddCandidate("docs", candidateRoot, testRoot, "local-write"); !errors.Is(err, ErrStaleCandidate) {
 		t.Fatalf("observed-only alias accepted candidate: %v", err)
 	}
 	if _, err := store.AcceptObserved("docs", candidateRoot, "unixfs", "https://gateway.example", "manual"); !errors.Is(err, ErrObservationNotFound) {

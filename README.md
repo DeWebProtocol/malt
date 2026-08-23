@@ -59,7 +59,8 @@ separate explicit acceptance path.
 ## Status
 
 This is an experimental, pre-v1 local runtime. It currently provides the
-`malt` CLI, a local trusted-root daemon, encrypted backup/sync/restore, a
+`malt` CLI, a local trusted-root daemon, MALT-native encrypted
+backup/sync/restore, a
 UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux FUSE mounts controlled by `malt mount` and
 `malt unmount`. Mounts remain read-only by default. An explicit `write_back`
@@ -72,7 +73,9 @@ CID-verified read-through hybrid CAS are implemented; local-only mode currently
 supports Merkle-DAG import, while native MALT managed-Bucket operations require
 Gateway or hybrid policy. The shared contract also exercises a peer-loopback
 adapter without defining a premature P2P wire format. A production P2P network
-transport and WinFsp remain follow-up work. The historical `v0.0.1` tag was
+transport, encrypted-profile routing through FUSE, and WinFsp remain follow-up
+work; the encrypted profile already exposes verified directory and range-read
+capabilities for those adapters. The historical `v0.0.1` tag was
 published for MALT Client
 before the repository rename and before the staging/write-back APIs existed.
 Those current experimental Go interfaces have not appeared in any tag and may
@@ -201,12 +204,23 @@ plan:
 ./bin/malt sync
 ```
 
-`malt backup` snapshots every changed binding before observing a newer remote
-head and then pushes all selected plans. Each binding is a separate encrypted
-object under an opaque random ID. The encrypted manifest and binding layout
-let the Gateway auto-merge changes to different bindings; concurrent changes
-to the same binding produce a preserved conflict branch and an actionable
-error. One failed plan does not prevent other selected plans from completing.
+`malt backup` first recovers the selected Plan's stale ciphertext snapshot
+spool under its operation lock, rejects pending/conflicted workspace state,
+then prepares every changed binding in that Plan-exclusive owner-local CAS
+before publishing any bytes. Snapshot cleanup failures are returned to the
+caller rather than hidden. It writes the directory directly as
+the runtime-owned `malt.encrypted-unixfs/v1` application profile: directories
+and files are MALT Maps, directory listings are encrypted manifests, Map keys
+are stable opaque tokens, and file ciphertext is stored as a raw block or a
+MALT List of independently authenticated chunks. There is no tar/gzip archive.
+Every Map/List Root is computed locally with MALT Core; the Gateway must return
+the exact same block CIDs and graph Roots before the candidate can be staged.
+Unchanged bindings are reused only from a locally accepted, fully verified
+base dataset.
+The root manifest omits child targets, so changes to different bindings remain
+independently mergeable; concurrent changes to the same binding produce a
+preserved conflict branch and an actionable error. One failed plan does not
+prevent other selected plans from completing.
 
 `malt sync` first performs that same local snapshot and push workflow, then
 pulls the final latest branch and atomically installs every binding in the
@@ -230,10 +244,10 @@ separate from every binding, so filenames and suffixes are never rewritten:
 # or choose --keep-local / --keep-remote
 ```
 
-There is no `bucket/path` restore selector. `malt restore <plan> <destination>`
-restores the entire branch plan under its manifest archive names. On a new
-device, the encrypted manifest can reconstruct the Plan without a local plan
-record:
+There is no unverified `bucket/path` restore selector. `malt restore <plan>
+<destination>` restores the entire branch plan under its encrypted manifest
+path names. On a new device, the verified and decrypted dataset manifest can
+reconstruct the Plan without a local plan record:
 
 ```bash
 ./bin/malt restore documents ./restored-documents
@@ -241,25 +255,28 @@ record:
 ```
 
 Original file and directory names, binding display names, and Plan display name
-exist only inside encrypted archives. The Gateway necessarily sees the account
-and Bucket display name, Bucket ID, selected branch, ACL and membership
-metadata, fixed application prefixes, opaque binding IDs, ciphertext sizes,
-timing, and access patterns. It cannot read archive plaintext without the local
-keyring.
+exist only inside encrypted manifests. Given a plaintext path, an authorized
+runtime or browser decrypts its parent manifest, derives the next opaque token,
+and resolves that exact token under the locally selected root. The Gateway
+necessarily sees the account and Bucket display name, Bucket ID, selected
+branch, ACL and membership metadata, reserved `@payload`/`@content` bindings,
+opaque tokens, ciphertext sizes, timing, and access patterns. It cannot recover
+plaintext names or file bytes without the local keyring.
 
-The initial archive profile preserves regular files, directories, permission
-bits, modification times, and safe relative symlinks. It does not yet preserve
+The encrypted filesystem profile preserves regular files, directories,
+permission bits, modification times, and safe relative symlinks. It does not yet preserve
 xattrs, ACLs, hard-link identity, sparse-file layout, or device nodes.
 
 This encryption profile applies to `malt backup`; the general-purpose
 `malt add` command retains its existing plaintext UnixFS semantics.
 
-The archive intentionally has no AEAD authentication tag. Restore first
-verifies the caller-selected MALT root and path ProofList, then verifies every
-returned ciphertext block against its authenticated CID, and only then
-decrypts. The CID is calculated normally over the encrypted bytes. Archive
-decoding failure under a wrong key or epoch is an operational validity check,
-not a replacement for MALT/CID integrity.
+Every manifest and file chunk uses XChaCha20-Poly1305 with a fresh nonce and
+domain-separated associated data. Reads first verify the caller-selected MALT
+root and every path ProofList, then verify each returned ciphertext block
+against its authenticated CID, and only then decrypt. Neither a cache hit nor a
+successful Gateway response can bypass those checks. The same manifest reader
+is suitable for the daemon, host-filesystem adapter, local API, and an
+authorized browser consumer.
 
 `malt backup --foreground [plan...]` and `malt sync --foreground [plan...]`
 are embedded bypasses when the daemon is
@@ -298,8 +315,10 @@ epoch contains byte-identical key material; it never replaces conflicting
 keys. This permits another device to import later rotations safely. Losing both
 the keyring and recovery bundle makes the encrypted backups unrecoverable.
 `malt backup key-rotate`
-activates a new epoch for future snapshots while retaining old restore keys; it
-does not re-encrypt existing archives. The Gateway never receives these keys.
+activates a new content-encryption epoch for future snapshots while retaining
+old restore keys; it does not rewrite existing encrypted filesystem roots. The
+epoch-1 namespace key keeps opaque path tokens stable across content-key
+rotation. The Gateway never receives these keys.
 
 This version supports one account across multiple authorized devices, but does
 not implement cryptographic sharing of a Bucket with another user. A Gateway
@@ -313,14 +332,14 @@ file cannot prevent another principal with parent-directory replacement rights
 from deleting and replacing it. Do not place these paths in a shared
 directory.
 
-If the configured staging directory is inside the selected backup source, the
-runtime uses the system temporary directory instead. It rejects the operation
-when no staging root exists outside the source, and the archive writer
-independently refuses to archive its own output, including through a symlinked
-staging path. Backup sources containing the configured MALT keyring, config,
-workspace, trust store, backup history, or daemon endpoint are rejected rather
-than silently omitted or self-encrypted. Keep device enrollment/recovery
-copies through the separate secure channel described above.
+Backup sources containing the configured MALT keyring, config, workspace,
+trust store, backup history, cache, journal, or daemon endpoint are rejected
+rather than silently omitted or self-encrypted. The snapshot builder walks the
+source through pinned rooted handles and refuses non-directory binding roots,
+escaping symlinks, invalid UTF-8 names, identity-changing path replacements,
+and unsupported filesystem objects. Restore writes use the same rooted
+boundary. Keep device enrollment/recovery copies
+through the separate secure channel described above.
 
 The old single-directory `backup.jobs` model and its history schema are not
 migrated. This Plan-only implementation rejects that configuration explicitly
@@ -568,7 +587,9 @@ packages never inspect this backend selection.
    or an independent publication mechanism establishes trust.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for repository boundaries.
-See [docs/go-api.md](./docs/go-api.md) for the public API and CLI contracts.
+See [the encrypted filesystem profile](./docs/encrypted-unixfs.md) for its
+manifest, token, encryption, browser-consumer, and compatibility contract, and
+[docs/go-api.md](./docs/go-api.md) for the public API and CLI contracts.
 The [v0.0.5 migration matrix](./docs/v0.0.5-parity.md) records which former
 core application capabilities moved here and which were deliberately re-homed.
 
