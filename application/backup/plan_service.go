@@ -2,7 +2,7 @@ package backup
 
 import (
 	"context"
-	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,23 +15,16 @@ import (
 	"sync"
 	"time"
 
-	clientadd "github.com/dewebprotocol/malt-client/application/add"
 	"github.com/dewebprotocol/malt-client/bucketsync"
-	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
-	"github.com/dewebprotocol/malt-client/unixfs"
+	encryptedfs "github.com/dewebprotocol/malt-client/unixfs/encrypted"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
-const (
-	remoteManifestPrefix = "malt-backup-manifest"
-	remoteManifestPath   = remoteManifestPrefix + "/manifest"
-	remoteBindingPrefix  = "malt-backup-binding-"
-)
-
-const installTransactionVersion = 1
+const installTransactionVersion = 2
 
 type PlanRootPolicy interface {
 	AcceptedRoot(alias string) (cid.Cid, error)
@@ -42,86 +35,34 @@ type planHeadObserver interface {
 	ObserveHead(alias, source, datasetID, branch, commitID string, root cid.Cid, revision uint64) error
 }
 
-type PlanMaterializer interface {
-	MaterializeManifest(context.Context, string, cid.Cid) (*clientadd.Result, error)
-	MaterializeBinding(context.Context, string, string, cid.Cid) (*clientadd.Result, error)
-}
-
-type AddPlanMaterializer struct {
-	// Gateway is retained for source compatibility. Its type is a deprecated
-	// alias of clientadd.Materializer; new composition should use
-	// NewAddPlanMaterializer so it does not name a network topology.
-	Gateway clientadd.Gateway
-	CAS     clientadd.CAS
-}
-
-// NewAddPlanMaterializer composes a transport-neutral graph materializer and
-// immutable block capability while preserving the legacy two-field struct.
-func NewAddPlanMaterializer(graph clientadd.Materializer, blocks clientadd.CAS) AddPlanMaterializer {
-	return AddPlanMaterializer{Gateway: graph, CAS: blocks}
-}
-
-func (m AddPlanMaterializer) MaterializeManifest(ctx context.Context, archivePath string, base cid.Cid) (*clientadd.Result, error) {
-	return m.materialize(ctx, archivePath, remoteManifestPrefix, base)
-}
-
-func (m AddPlanMaterializer) MaterializeBinding(ctx context.Context, archivePath, bindingID string, base cid.Cid) (*clientadd.Result, error) {
-	if _, err := remoteBindingPath(bindingID); err != nil {
-		return nil, err
-	}
-	return m.materialize(ctx, archivePath, remoteBindingPrefix+bindingID, base)
-}
-
-func (m AddPlanMaterializer) materialize(ctx context.Context, archivePath, prefix string, base cid.Cid) (*clientadd.Result, error) {
-	root := ""
-	if base.Defined() {
-		root = base.String()
-	}
-	execution, err := clientadd.Run(ctx, nil, m.Gateway, m.CAS, clientadd.Request{
-		Inputs: []string{archivePath},
-		Root:   root,
-		Options: clientadd.Options{
-			Prefix: prefix,
-			Target: clientadd.TargetMALT,
-			Model:  clientadd.ModelUnixFS,
-			Layout: clientadd.LayoutHybrid,
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return execution.Result, nil
+type planCandidateInspector interface {
+	HasCandidate(alias string, candidateRoot, baseRoot cid.Cid) (bool, error)
 }
 
 type PlanServiceOptions struct {
 	Plan             Plan
-	TempDir          string
 	LockPath         string
 	Keys             KeySource
 	Sync             Sync
-	Materializer     PlanMaterializer
+	Filesystem       PlanFilesystem
 	History          *History
-	Remote           unixfs.Remote
-	Blocks           unixfs.BlockGetter
 	Roots            PlanRootPolicy
 	Protected        []string
 	RestoreProtected []string
 }
 
 // PlanService publishes and synchronizes one Bucket branch. Different
-// bindings occupy different internal MALT paths, allowing the Gateway to
-// merge independent binding updates while same-binding changes conflict.
+// bindings occupy different opaque MALT Map tokens, allowing the Gateway to
+// merge independent binding updates without learning their path names while
+// same-binding changes conflict.
 type PlanService struct {
 	mu               sync.Mutex
 	plan             Plan
-	tempDir          string
 	lockPath         string
 	keys             KeySource
 	sync             Sync
-	materializer     PlanMaterializer
+	filesystem       PlanFilesystem
 	history          *History
-	remote           unixfs.Remote
-	blocks           unixfs.BlockGetter
 	roots            PlanRootPolicy
 	protected        []string
 	restoreProtected []string
@@ -133,8 +74,9 @@ func NewPlanService(opts PlanServiceOptions) (*PlanService, error) {
 }
 
 // NewPlanServiceWithRelease composes one plan service with an owned runtime
-// resource release. It keeps PlanServiceOptions source-compatible for existing
-// embedders while giving the local runtime deterministic transport cleanup.
+// resource release and gives the local runtime deterministic transport cleanup.
+// The encrypted-filesystem migration intentionally changes the pre-release
+// PlanServiceOptions capability set.
 func NewPlanServiceWithRelease(opts PlanServiceOptions, release func() error) (*PlanService, error) {
 	return newPlanService(opts, release)
 }
@@ -143,16 +85,16 @@ func newPlanService(opts PlanServiceOptions, release func() error) (*PlanService
 	if err := validatePlan(opts.Plan); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(opts.TempDir) == "" || strings.TrimSpace(opts.LockPath) == "" {
-		return nil, fmt.Errorf("backup plan staging directory and lock are required")
+	if opts.LockPath == "" {
+		return nil, fmt.Errorf("backup plan lock is required")
 	}
-	if opts.Keys == nil || opts.Sync == nil || opts.Materializer == nil || opts.History == nil {
-		return nil, fmt.Errorf("backup plan keys, synchronization, materializer, and history are required")
+	if opts.Keys == nil || opts.Sync == nil || opts.Filesystem == nil || opts.History == nil || opts.Roots == nil {
+		return nil, fmt.Errorf("backup plan keys, synchronization, encrypted filesystem, history, and trusted-root policy are required")
 	}
 	return &PlanService{
-		plan: clonePlan(opts.Plan), tempDir: opts.TempDir, lockPath: opts.LockPath,
-		keys: opts.Keys, sync: opts.Sync, materializer: opts.Materializer, history: opts.History,
-		remote: opts.Remote, blocks: opts.Blocks, roots: opts.Roots,
+		plan: clonePlan(opts.Plan), lockPath: opts.LockPath,
+		keys: opts.Keys, sync: opts.Sync, filesystem: opts.Filesystem, history: opts.History,
+		roots:            opts.Roots,
 		protected:        append([]string(nil), opts.Protected...),
 		restoreProtected: append([]string(nil), opts.RestoreProtected...),
 		release:          release,
@@ -197,7 +139,7 @@ func (s *PlanService) Recover() error {
 // network, key, or materialization dependencies. Recovery needs only the
 // authenticated local journal path and plan identity.
 func RecoverPlanTransactions(plan Plan, lockPath string) error {
-	if strings.TrimSpace(plan.ID) == "" || strings.TrimSpace(lockPath) == "" {
+	if strings.TrimSpace(plan.ID) == "" || lockPath == "" {
 		return fmt.Errorf("backup plan ID and operation lock path are required for recovery")
 	}
 	service := &PlanService{plan: clonePlan(plan), lockPath: lockPath}
@@ -208,7 +150,6 @@ func RecoverPlanTransactions(plan Plan, lockPath string) error {
 // branch-only restores that crashed before Plan registration are recovered as
 // well as already registered Plans.
 func RecoverTransactionJournals(directory string) error {
-	directory = strings.TrimSpace(directory)
 	if directory == "" {
 		return fmt.Errorf("backup transaction journal directory is empty")
 	}
@@ -272,7 +213,7 @@ func PlanRootAlias(bucketID, branch string) string {
 	return "backup:" + strings.TrimSpace(bucketID) + ":" + strings.TrimSpace(branch)
 }
 
-func (s *PlanService) Backup(ctx context.Context, message string) (*Result, error) {
+func (s *PlanService) Backup(ctx context.Context, message string) (backupResult *Result, resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := filelock.Acquire(s.lockPath, 10*time.Second)
@@ -281,6 +222,9 @@ func (s *PlanService) Backup(ctx context.Context, message string) (*Result, erro
 	}
 	defer func() { _ = unlock() }()
 
+	if err := s.filesystem.RecoverSnapshots(ctx, s.snapshotDirectory()); err != nil {
+		return nil, fmt.Errorf("recover local encrypted filesystem snapshots: %w", err)
+	}
 	if err := s.recoverInstallTransaction(s.syncTransactionPath()); err != nil {
 		return nil, err
 	}
@@ -311,7 +255,7 @@ func (s *PlanService) Backup(ctx context.Context, message string) (*Result, erro
 		if stash := firstBranchedStash(workspace); stash != nil {
 			result := &Result{
 				PlanID: s.plan.ID, PlanName: s.plan.Name, Branch: s.plan.Branch,
-				Source: s.plan.ID, RemotePath: remoteBindingPrefix,
+				Source: s.plan.ID, Profile: encryptedfs.ProfileID,
 				Base: stash.Base, CandidateRoot: stash.CandidateRoot,
 			}
 			return result, &ConflictError{Plan: s.plan.Name, Branch: stash.Branch}
@@ -319,7 +263,7 @@ func (s *PlanService) Backup(ctx context.Context, message string) (*Result, erro
 		now := time.Now().UTC()
 		result := &Result{
 			PlanID: s.plan.ID, PlanName: s.plan.Name, Branch: s.plan.Branch,
-			Source: s.plan.ID, RemotePath: remoteBindingPrefix,
+			Source: s.plan.ID, Profile: encryptedfs.ProfileID,
 			SourceFingerprint: combinedFingerprint(before), BindingFingerprints: before,
 			ManifestFingerprint: manifestFingerprint, Skipped: true, CompletedAt: now,
 		}
@@ -327,65 +271,6 @@ func (s *PlanService) Backup(ctx context.Context, message string) (*Result, erro
 			return result, err
 		}
 		return result, nil
-	}
-
-	stagingRoot, err := s.planStagingRoot()
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(stagingRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("create backup plan staging root: %w", err)
-	}
-	staging, err := os.MkdirTemp(stagingRoot, "plan-"+safeID(s.plan.ID)+"-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(staging)
-
-	epoch := s.keys.ActiveEpoch()
-	bucketKey, err := s.keys.BucketKey(epoch, s.plan.BucketID)
-	if err != nil {
-		return nil, err
-	}
-	type stagedBinding struct {
-		binding Binding
-		path    string
-		info    ArchiveInfo
-	}
-	staged := make([]stagedBinding, 0, len(changed))
-	var encryptedBytes int64
-	manifestArchive := ""
-	if manifestChanged {
-		var manifestInfo ArchiveInfo
-		manifestArchive, manifestInfo, err = s.createManifestArchive(ctx, staging, epoch, bucketKey)
-		if err != nil {
-			return nil, err
-		}
-		encryptedBytes += manifestInfo.Bytes
-	}
-	for _, binding := range changed {
-		if err := ValidateSource(binding.Source, s.protected); err != nil {
-			return nil, fmt.Errorf("binding %s: %w", binding.Name, err)
-		}
-		dir := filepath.Join(staging, safeID(binding.ID))
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, err
-		}
-		archivePath := filepath.Join(dir, "snapshot")
-		key := deriveBindingKey(bucketKey, s.plan.Branch, binding.ID)
-		info, err := CreateBindingArchive(ctx, binding.Source, archivePath, epoch, key)
-		if err != nil {
-			return nil, fmt.Errorf("archive binding %s: %w", binding.Name, err)
-		}
-		after, err := FingerprintSource(ctx, binding.Source)
-		if err != nil {
-			return nil, err
-		}
-		if after != before[binding.ID] {
-			return nil, fmt.Errorf("binding %s changed while its encrypted snapshot was being created; retry", binding.Name)
-		}
-		staged = append(staged, stagedBinding{binding: binding, path: archivePath, info: info})
-		encryptedBytes += info.Bytes
 	}
 
 	workspace, err := s.sync.Status()
@@ -408,56 +293,177 @@ func (s *PlanService) Backup(ctx context.Context, message string) (*Result, erro
 	if err != nil {
 		return nil, err
 	}
+	alias := PlanRootAlias(s.plan.BucketID, s.plan.Branch)
+	accepted, acceptedErr := s.roots.AcceptedRoot(alias)
+	acceptedBase := baseCID.Defined() && acceptedErr == nil && accepted.Equals(baseCID)
+	needsUnchangedBindings := len(changed) != len(s.plan.Bindings)
+	if needsUnchangedBindings && !acceptedBase {
+		return nil, &UnacceptedRootError{
+			Plan: s.plan.Name, Alias: alias, Observed: baseCID, Accepted: accepted, Cause: acceptedErr,
+		}
+	}
+	backend := maltcid.BackendKindUnknown
+	if baseCID.Defined() {
+		backend = maltcid.BackendKindOf(baseCID)
+		if maltcid.SemanticKindOf(baseCID) != maltcid.SemanticKindMap ||
+			(backend != maltcid.BackendKindKZG && backend != maltcid.BackendKindIPA) {
+			return nil, fmt.Errorf("backup plan base is not a supported typed MALT Map")
+		}
+	} else {
+		backend, err = s.filesystem.DefaultBackend(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("select encrypted filesystem commitment backend: %w", err)
+		}
+		if backend != maltcid.BackendKindKZG && backend != maltcid.BackendKindIPA {
+			return nil, fmt.Errorf("encrypted filesystem commitment backend %q is unsupported", backend)
+		}
+	}
 	base, err := s.sync.CurrentBase(baseCID)
 	if err != nil {
 		return nil, err
 	}
-	candidate := baseCID
-	if manifestArchive != "" {
-		materializedManifest, err := s.materializer.MaterializeManifest(ctx, manifestArchive, candidate)
-		if err != nil {
-			return nil, fmt.Errorf("materialize backup plan manifest: %w", err)
+	var baseDataset *PlanDataset
+	if needsUnchangedBindings || (!manifestChanged && acceptedBase) {
+		if !baseCID.Defined() {
+			return nil, fmt.Errorf("encrypted filesystem base root is required to reuse unchanged data")
 		}
-		if materializedManifest == nil {
-			return nil, fmt.Errorf("backup plan manifest materializer returned an empty result")
-		}
-		candidate, err = cid.Parse(materializedManifest.NewRoot)
+		baseDataset, err = s.loadDataset(ctx, baseCID)
 		if err != nil {
-			return nil, fmt.Errorf("decode backup plan manifest candidate root: %w", err)
+			return nil, fmt.Errorf("load encrypted filesystem base root %s: %w", baseCID, err)
+		}
+		if err := validateDatasetIdentity(baseDataset.manifest, s.plan); err != nil {
+			return nil, err
+		}
+		if err := validateDatasetForPlan(baseDataset.manifest, s.plan); err != nil {
+			return nil, err
 		}
 	}
-	for _, item := range staged {
-		materialized, err := s.materializer.MaterializeBinding(ctx, item.path, item.binding.ID, candidate)
-		if err != nil {
-			return nil, fmt.Errorf("materialize binding %s: %w", item.binding.Name, err)
-		}
-		if materialized == nil {
-			return nil, fmt.Errorf("binding %s materializer returned an empty result", item.binding.Name)
-		}
-		candidate, err = cid.Parse(materialized.NewRoot)
-		if err != nil {
-			return nil, fmt.Errorf("decode binding %s candidate root: %w", item.binding.Name, err)
-		}
+	epoch := s.keys.ActiveEpoch()
+	bucketKey, err := s.keys.BucketKey(epoch, s.plan.BucketID)
+	if err != nil {
+		return nil, err
 	}
+	indexKey, err := s.keys.BucketKey(encryptedfs.NamespaceKeyEpoch, s.plan.BucketID)
+	if err != nil {
+		return nil, fmt.Errorf("load encrypted filesystem namespace key: %w", err)
+	}
+	snapshot, err := s.filesystem.BeginSnapshot(ctx, backend, s.snapshotDirectory())
+	if err != nil {
+		return nil, fmt.Errorf("begin local encrypted filesystem snapshot: %w", err)
+	}
+	defer func() {
+		if err := snapshot.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("clean local encrypted filesystem snapshot: %w", err))
+		}
+	}()
+	preparedByID := make(map[string]encryptedfs.PreparedBinding, len(changed))
+	var encryptedBytes int64
+	for _, binding := range changed {
+		if err := ValidateSource(binding.Source, s.protected); err != nil {
+			return nil, fmt.Errorf("binding %s: %w", binding.Name, err)
+		}
+		sourceRoot, displayName, err := openPinnedSource(binding.Source)
+		if err != nil {
+			return nil, fmt.Errorf("pin binding %s: %w", binding.Name, err)
+		}
+		defer sourceRoot.Close()
+		pinnedBefore, err := fingerprintPinnedSource(ctx, sourceRoot, displayName)
+		if err != nil {
+			return nil, fmt.Errorf("fingerprint pinned binding %s: %w", binding.Name, err)
+		}
+		if pinnedBefore != before[binding.ID] {
+			return nil, fmt.Errorf("binding %s changed before its encrypted MALT-native snapshot was pinned; retry", binding.Name)
+		}
+		prepared, err := snapshot.PrepareBinding(ctx, encryptedfs.BindingSource{
+			DatasetID: s.plan.BucketID, DatasetName: s.plan.Name, Branch: s.plan.Branch,
+			BindingID: binding.ID, BindingName: binding.Name, PathName: binding.PathName,
+			Source: binding.Source, Root: sourceRoot,
+			Epoch: epoch, BucketKey: bucketKey, IndexKey: indexKey,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build local encrypted MALT-native binding %s: %w", binding.Name, err)
+		}
+		if prepared.SourceFingerprint != pinnedBefore {
+			return nil, fmt.Errorf("binding %s changed while its bytes were encrypted; retry", binding.Name)
+		}
+		after, err := fingerprintPinnedSource(ctx, sourceRoot, displayName)
+		if err != nil {
+			return nil, err
+		}
+		if after != before[binding.ID] {
+			return nil, fmt.Errorf("binding %s changed while its encrypted MALT-native snapshot was being created; retry", binding.Name)
+		}
+		preparedByID[binding.ID] = prepared
+		encryptedBytes += prepared.EncryptedBytes
+	}
+	prepared := make([]encryptedfs.PreparedBinding, 0, len(s.plan.Bindings))
+	for _, binding := range s.plan.Bindings {
+		if value, ok := preparedByID[binding.ID]; ok {
+			prepared = append(prepared, value)
+			continue
+		}
+		baseBinding, ok := baseDataset.Binding(binding.ID)
+		if !ok {
+			return nil, fmt.Errorf("encrypted filesystem base root has no unchanged binding %q", binding.Name)
+		}
+		prepared = append(prepared, encryptedfs.PreparedBinding{
+			Manifest: encryptedfs.BindingManifest{
+				ID: binding.ID, Name: binding.Name, PathName: binding.PathName,
+				Token: baseBinding.Manifest.Token,
+			},
+			Root: baseBinding.Root,
+		})
+	}
+	request := PlanDatasetBuildRequest{
+		Request: encryptedfs.DatasetBuildRequest{
+			DatasetID: s.plan.BucketID, PlanID: s.plan.ID, DatasetName: s.plan.Name,
+			Branch: s.plan.Branch, Epoch: epoch, BucketKey: bucketKey, IndexKey: indexKey,
+			Bindings: prepared,
+		},
+	}
+	if !manifestChanged && baseDataset != nil {
+		request.ReuseManifest = baseDataset
+	}
+	built, err := snapshot.BuildDataset(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("build encrypted MALT-native dataset: %w", err)
+	}
+	candidate := built.Root
+	encryptedBytes += built.EncryptedBytes
 	if !candidate.Defined() {
 		return nil, fmt.Errorf("backup plan produced no candidate root")
+	}
+	if err := snapshot.Publish(ctx); err != nil {
+		return nil, fmt.Errorf("publish locally verified encrypted MALT-native snapshot: %w", err)
+	}
+	candidateBase := cid.Undef
+	if acceptedErr == nil && accepted.Defined() {
+		candidateBase = accepted
+	}
+	if err := s.roots.ObserveCandidate(alias, candidate, candidateBase, "encrypted-backup:"+s.plan.ID); err != nil {
+		return nil, fmt.Errorf("record locally verified encrypted filesystem candidate %s: %w", candidate, err)
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
 		message = strings.TrimSpace(s.plan.Message)
 	}
 	if message == "" {
-		message = "encrypted backup " + s.plan.Name
+		message = "encrypted MALT-native backup"
 	}
 	result := &Result{
 		PlanID: s.plan.ID, PlanName: s.plan.Name, Branch: s.plan.Branch,
-		Source: s.plan.ID, RemotePath: remoteBindingPrefix, KeyEpoch: epoch,
+		Source: s.plan.ID, Profile: encryptedfs.ProfileID, KeyEpoch: epoch,
 		EncryptedBytes: encryptedBytes, SourceFingerprint: combinedFingerprint(before),
 		BindingFingerprints: cloneFingerprints(before), ChangedBindings: bindingNames(changed),
 		ManifestFingerprint: manifestFingerprint, Base: base, CandidateRoot: candidate.String(),
 	}
+	candidateBaseText := ""
+	if candidateBase.Defined() {
+		candidateBaseText = candidateBase.String()
+	}
 	pending := PendingBackup{
 		BucketID: s.plan.BucketID, PlanID: s.plan.ID, Message: message,
+		CandidateBase: candidateBaseText, CandidateRecorded: true,
 		Result: *result, CreatedAt: time.Now().UTC(),
 	}
 	if err := s.history.SetPending(pending); err != nil {
@@ -497,29 +503,9 @@ type planManifest struct {
 }
 
 type manifestBinding struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	ArchiveName string `json:"archive_name"`
-}
-
-func (s *PlanService) createManifestArchive(ctx context.Context, staging string, epoch uint32, bucketKey [32]byte) (string, ArchiveInfo, error) {
-	source := filepath.Join(staging, "manifest-source")
-	if err := os.MkdirAll(source, 0o700); err != nil {
-		return "", ArchiveInfo{}, err
-	}
-	data, err := s.manifestData()
-	if err != nil {
-		return "", ArchiveInfo{}, err
-	}
-	if err := os.WriteFile(filepath.Join(source, "manifest.json"), data, 0o600); err != nil {
-		return "", ArchiveInfo{}, err
-	}
-	archive := filepath.Join(staging, "manifest")
-	info, err := CreateBindingArchive(ctx, source, archive, epoch, deriveManifestKey(bucketKey, s.plan.Branch))
-	if err != nil {
-		return "", ArchiveInfo{}, err
-	}
-	return archive, info, nil
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	PathName string `json:"path_name"`
 }
 
 func (s *PlanService) manifestData() ([]byte, error) {
@@ -528,9 +514,46 @@ func (s *PlanService) manifestData() ([]byte, error) {
 		Bindings: make([]manifestBinding, len(s.plan.Bindings)),
 	}
 	for i, binding := range s.plan.Bindings {
-		manifest.Bindings[i] = manifestBinding{ID: binding.ID, Name: binding.Name, ArchiveName: binding.ArchiveName}
+		manifest.Bindings[i] = manifestBinding{ID: binding.ID, Name: binding.Name, PathName: binding.PathName}
 	}
 	return json.Marshal(manifest)
+}
+
+func (s *PlanService) keyResolver() encryptedfs.KeyResolver {
+	return func(epoch uint32) ([32]byte, error) {
+		return s.keys.BucketKey(epoch, s.plan.BucketID)
+	}
+}
+
+func (s *PlanService) loadDataset(ctx context.Context, root cid.Cid) (*PlanDataset, error) {
+	return s.filesystem.LoadDataset(ctx, root, s.plan.BucketID, s.plan.Branch, s.keyResolver())
+}
+
+func planManifestFromDataset(manifest encryptedfs.DatasetManifest) planManifest {
+	result := planManifest{
+		Version: 1, PlanID: manifest.PlanID, PlanName: manifest.DatasetName,
+		Branch: manifest.Branch, Bindings: make([]manifestBinding, len(manifest.Bindings)),
+	}
+	for index, binding := range manifest.Bindings {
+		result.Bindings[index] = manifestBinding{
+			ID: binding.ID, Name: binding.Name, PathName: binding.PathName,
+		}
+	}
+	return result
+}
+
+func validateDatasetForPlan(manifest encryptedfs.DatasetManifest, plan Plan) error {
+	if err := validateDatasetIdentity(manifest, plan); err != nil {
+		return err
+	}
+	return validatePlanManifest(planManifestFromDataset(manifest), plan)
+}
+
+func validateDatasetIdentity(manifest encryptedfs.DatasetManifest, plan Plan) error {
+	if manifest.DatasetID != plan.BucketID || manifest.PlanID != plan.ID || manifest.Branch != plan.Branch {
+		return fmt.Errorf("remote encrypted filesystem does not match the selected local plan")
+	}
+	return nil
 }
 
 func (s *PlanService) manifestFingerprint() (string, error) {
@@ -543,12 +566,42 @@ func (s *PlanService) manifestFingerprint() (string, error) {
 }
 
 func (s *PlanService) retryPending(ctx context.Context, pending PendingBackup) (*Result, error) {
+	if pending.Result.Profile != encryptedfs.ProfileID {
+		result := pending.Result
+		return &result, fmt.Errorf(
+			"%w; pending backup uses removed profile %q; use the previous MALT runtime to complete or discard that pending publication before upgrading",
+			ErrPendingWorkspace, pending.Result.Profile,
+		)
+	}
 	if pending.BucketID != s.plan.BucketID || pending.PlanID != s.plan.ID || pending.Result.PlanID != s.plan.ID {
 		return nil, fmt.Errorf("%w; pending work belongs to another backup plan", ErrPendingWorkspace)
 	}
 	candidate, err := cid.Parse(pending.Result.CandidateRoot)
 	if err != nil {
 		return nil, err
+	}
+	if !pending.CandidateRecorded {
+		result := pending.Result
+		return &result, fmt.Errorf("%w; encrypted filesystem pending backup has no durable local-candidate record", ErrPendingWorkspace)
+	}
+	candidateBase, err := rootCID(pending.CandidateBase)
+	if err != nil {
+		return nil, fmt.Errorf("decode pending backup candidate base: %w", err)
+	}
+	alias := PlanRootAlias(s.plan.BucketID, s.plan.Branch)
+	accepted, acceptedErr := s.roots.AcceptedRoot(alias)
+	if acceptedErr != nil || !accepted.Equals(candidate) {
+		inspector, ok := s.roots.(planCandidateInspector)
+		if !ok {
+			return nil, fmt.Errorf("%w; trusted-root policy cannot validate pending candidate provenance", ErrPendingWorkspace)
+		}
+		found, err := inspector.HasCandidate(alias, candidate, candidateBase)
+		if err != nil {
+			return nil, fmt.Errorf("validate locally verified pending candidate %s: %w", candidate, err)
+		}
+		if !found {
+			return nil, fmt.Errorf("%w; durable trust state has no exact pending candidate %s", ErrPendingWorkspace, candidate)
+		}
 	}
 	result := pending.Result
 	result.RetriedPending = true
@@ -649,10 +702,14 @@ func (s *PlanService) SyncWithOptions(ctx context.Context, message string, opts 
 		return result, err
 	}
 	defer func() { _ = unlock() }()
-	if s.remote == nil || s.blocks == nil {
-		return result, fmt.Errorf("backup plan remote reader is not configured")
+	localCandidate := cid.Undef
+	if result != nil && strings.TrimSpace(result.CandidateRoot) != "" {
+		localCandidate, err = cid.Parse(result.CandidateRoot)
+		if err != nil {
+			return result, fmt.Errorf("decode locally verified backup candidate: %w", err)
+		}
 	}
-	root, err := s.acceptedObservedRoot(ctx)
+	root, err := s.acceptedObservedRoot(ctx, localCandidate)
 	if err != nil {
 		return result, err
 	}
@@ -686,10 +743,10 @@ func (s *PlanService) acceptedObservedRootWithLock(ctx context.Context) (cid.Cid
 		return cid.Undef, err
 	}
 	defer func() { _ = unlock() }()
-	return s.acceptedObservedRoot(ctx)
+	return s.acceptedObservedRoot(ctx, cid.Undef)
 }
 
-func (s *PlanService) mergeBranchedCandidate(ctx context.Context, remoteRoot cid.Cid) error {
+func (s *PlanService) mergeBranchedCandidate(ctx context.Context, remoteRoot cid.Cid) (resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := filelock.Acquire(s.lockPath, 10*time.Second)
@@ -750,7 +807,7 @@ func (s *PlanService) mergeBranchedCandidate(ctx context.Context, remoteRoot cid
 	cleanupEntries := true
 	defer func() {
 		if cleanupEntries {
-			cleanupInstallStaging(entries)
+			resultErr = errors.Join(resultErr, cleanupInstallError(nil, entries))
 		}
 	}()
 	bindingConflicts := make([]BindingConflict, 0)
@@ -779,21 +836,16 @@ func (s *PlanService) mergeBranchedCandidate(ctx context.Context, remoteRoot cid
 		if err != nil {
 			return err
 		}
-		parent := filepath.Dir(binding.Source)
-		staging, err := os.MkdirTemp(parent, ".malt-sync-*")
+		entry, err := prepareInstallEntry(binding.Name, binding.Source, ".malt-sync-")
 		if err != nil {
 			return err
 		}
 		expectedFingerprint, err := FingerprintSource(ctx, binding.Source)
 		if err != nil {
-			_ = os.RemoveAll(staging)
-			return err
+			return cleanupInstallError(err, []installTransactionEntry{entry})
 		}
-		entry := installTransactionEntry{
-			Name: binding.Name, Destination: binding.Source, Staging: staging,
-			Next: filepath.Join(staging, "next"), Rollback: filepath.Join(staging, "previous"),
-			ExpectedFingerprint: expectedFingerprint, HadCurrent: true, Phase: installPhasePrepared,
-		}
+		entry.ExpectedFingerprint = expectedFingerprint
+		entry.HadCurrent = true
 		entries = append(entries, entry)
 		if !unchanged {
 			bindingConflicts = append(bindingConflicts, BindingConflict{
@@ -813,7 +865,9 @@ func (s *PlanService) mergeBranchedCandidate(ctx context.Context, remoteRoot cid
 		}
 	}
 	if len(bindingConflicts) != 0 {
-		cleanupInstallStaging(entries)
+		if err := cleanupInstallStaging(entries); err != nil {
+			return fmt.Errorf("clean prepared conflict installation: %w", err)
+		}
 		cleanupEntries = false
 		checkoutPath := filepath.Join(conflictRoot, safeID(stash.ID))
 		if _, err := os.Lstat(checkoutPath); err == nil {
@@ -837,10 +891,10 @@ func (s *PlanService) mergeBranchedCandidate(ctx context.Context, remoteRoot cid
 		}
 		return &ManualMergeError{Checkout: checkout}
 	}
+	cleanupEntries = false
 	if err := s.installPrepared(ctx, s.syncTransactionPath(), entries); err != nil {
 		return err
 	}
-	cleanupEntries = false
 	if pending, err := s.history.Pending(); err != nil {
 		return err
 	} else if pending != nil {
@@ -870,22 +924,18 @@ func (s *PlanService) restoreBindingVersion(
 		}
 		return fmt.Errorf("binding %s snapshot root is undefined", binding.Name)
 	}
-	remotePath, err := remoteBindingPath(binding.ID)
-	if err != nil {
-		return err
+	dataset, err := s.loadDataset(ctx, root)
+	if allowMissing && errors.Is(err, encryptedfs.ErrNotFound) {
+		return os.MkdirAll(destination, 0o700)
 	}
-	err = fetchAndRestoreBinding(ctx, s.remote, s.blocks, root, remotePath, destination, s.tempDir, func(epoch uint32) ([32]byte, error) {
-		bucketKey, err := s.keys.BucketKey(epoch, s.plan.BucketID)
-		if err != nil {
-			return [32]byte{}, err
-		}
-		return deriveBindingKey(bucketKey, s.plan.Branch, binding.ID), nil
-	})
-	if allowMissing && (errors.Is(err, unixfs.ErrNotFound) || errors.Is(err, clientcas.ErrNotFound)) {
+	if err == nil {
+		err = s.filesystem.RestoreBinding(ctx, dataset, binding.ID, destination, s.keyResolver())
+	}
+	if allowMissing && errors.Is(err, encryptedfs.ErrNotFound) {
 		return os.MkdirAll(destination, 0o700)
 	}
 	if err != nil {
-		return fmt.Errorf("restore %s snapshot at %s: %w", binding.Name, root, err)
+		return fmt.Errorf("restore encrypted filesystem binding %s at %s: %w", binding.Name, root, err)
 	}
 	return nil
 }
@@ -991,7 +1041,7 @@ func (s *PlanService) ResolveConflict(
 		}
 		result := &Result{
 			PlanID: s.plan.ID, PlanName: s.plan.Name, Branch: s.plan.Branch,
-			Source: s.plan.ID, RemotePath: remoteBindingPrefix,
+			Source: s.plan.ID, Profile: encryptedfs.ProfileID,
 			SourceFingerprint:   combinedFingerprint(fingerprints),
 			BindingFingerprints: fingerprints, ManifestFingerprint: manifestFingerprint,
 			CompletedAt: time.Now().UTC(),
@@ -1004,7 +1054,7 @@ func (s *PlanService) ResolveConflict(
 	return s.Backup(ctx, message)
 }
 
-func (s *PlanService) installManualConflictCheckout(ctx context.Context) error {
+func (s *PlanService) installManualConflictCheckout(ctx context.Context) (resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := filelock.Acquire(s.lockPath, 10*time.Second)
@@ -1028,7 +1078,7 @@ func (s *PlanService) installManualConflictCheckout(ctx context.Context) error {
 	cleanupEntries := true
 	defer func() {
 		if cleanupEntries {
-			cleanupInstallStaging(entries)
+			resultErr = errors.Join(resultErr, cleanupInstallError(nil, entries))
 		}
 	}()
 	for _, binding := range s.plan.Bindings {
@@ -1052,20 +1102,14 @@ func (s *PlanService) installManualConflictCheckout(ctx context.Context) error {
 				binding.Name, mergedPath,
 			)
 		}
-		parent := filepath.Dir(binding.Source)
-		staging, err := os.MkdirTemp(parent, ".malt-sync-*")
+		entry, err := prepareInstallEntry(binding.Name, binding.Source, ".malt-sync-")
 		if err != nil {
 			return err
 		}
-		entry := installTransactionEntry{
-			Name: binding.Name, Destination: binding.Source, Staging: staging,
-			Next: filepath.Join(staging, "next"), Rollback: filepath.Join(staging, "previous"),
-			HadCurrent: true, Phase: installPhasePrepared,
-		}
+		entry.HadCurrent = true
 		entry.ExpectedFingerprint, err = FingerprintSource(ctx, binding.Source)
 		if err != nil {
-			_ = os.RemoveAll(staging)
-			return err
+			return cleanupInstallError(err, []installTransactionEntry{entry})
 		}
 		entries = append(entries, entry)
 		if err := copyPlaintextTree(ctx, mergedPath, entry.Next); err != nil {
@@ -1075,10 +1119,10 @@ func (s *PlanService) installManualConflictCheckout(ctx context.Context) error {
 	if len(entries) == 0 {
 		return nil
 	}
+	cleanupEntries = false
 	if err := s.installPrepared(ctx, s.syncTransactionPath(), entries); err != nil {
 		return err
 	}
-	cleanupEntries = false
 	return nil
 }
 
@@ -1134,7 +1178,7 @@ func (s *PlanService) clearConflictState() error {
 }
 
 // RestoreTo restores the entire remote plan into one destination. Every
-// binding is placed below its encrypted manifest archive name; callers cannot
+// binding is placed below its encrypted manifest path name; callers cannot
 // select a remote subpath.
 func (s *PlanService) RestoreTo(ctx context.Context, destination string, overwrite bool) error {
 	return s.restoreTo(ctx, destination, overwrite, nil)
@@ -1180,7 +1224,7 @@ func (s *PlanService) RecordRestoredBaseline(ctx context.Context) (*Result, erro
 	now := time.Now().UTC()
 	result := &Result{
 		PlanID: s.plan.ID, PlanName: s.plan.Name, Branch: s.plan.Branch,
-		Source: s.plan.ID, RemotePath: remoteBindingPrefix, CandidateRoot: root.String(),
+		Source: s.plan.ID, Profile: encryptedfs.ProfileID, CandidateRoot: root.String(),
 		SourceFingerprint:   combinedFingerprint(fingerprints),
 		BindingFingerprints: fingerprints, ManifestFingerprint: manifestFingerprint,
 		CompletedAt: now,
@@ -1191,7 +1235,7 @@ func (s *PlanService) RecordRestoredBaseline(ctx context.Context) (*Result, erro
 	return result, nil
 }
 
-func (s *PlanService) restoreTo(ctx context.Context, destination string, overwrite bool, restored *Plan) error {
+func (s *PlanService) restoreTo(ctx context.Context, destination string, overwrite bool, restored *Plan) (resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := filelock.Acquire(s.lockPath, 10*time.Second)
@@ -1199,60 +1243,39 @@ func (s *PlanService) restoreTo(ctx context.Context, destination string, overwri
 		return err
 	}
 	defer func() { _ = unlock() }()
-	if s.remote == nil || s.blocks == nil {
-		return fmt.Errorf("backup plan remote reader is not configured")
-	}
 	if err := s.recoverInstallTransaction(s.restoreTransactionPath()); err != nil {
 		return err
 	}
-	root, err := s.acceptedObservedRoot(ctx)
+	root, err := s.acceptedObservedRoot(ctx, cid.Undef)
 	if err != nil {
 		return err
 	}
-	destination, err = filepath.Abs(strings.TrimSpace(destination))
+	dataset, err := s.loadDataset(ctx, root)
 	if err != nil {
-		return fmt.Errorf("resolve restore destination: %w", err)
+		return fmt.Errorf("load encrypted filesystem for restore: %w", err)
 	}
+	manifest := planManifestFromDataset(dataset.manifest)
 	if destination == "" {
 		return fmt.Errorf("restore destination is empty")
+	}
+	destination, err = filepath.Abs(destination)
+	if err != nil {
+		return fmt.Errorf("resolve restore destination: %w", err)
 	}
 	protected := append(append([]string(nil), s.protected...), s.restoreProtected...)
 	if err := validateRestoreDestination(destination, protected, s.plan.Bindings); err != nil {
 		return err
 	}
-	parent := filepath.Dir(destination)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return err
-	}
-	staging, err := os.MkdirTemp(parent, ".malt-restore-*")
+	entry, err := prepareInstallEntry(s.plan.Name, destination, ".malt-restore-")
 	if err != nil {
 		return err
 	}
 	cleanupStaging := true
 	defer func() {
 		if cleanupStaging {
-			_ = os.RemoveAll(staging)
+			resultErr = errors.Join(resultErr, cleanupInstallError(nil, []installTransactionEntry{entry}))
 		}
 	}()
-	next := filepath.Join(staging, "next")
-	manifestDir := filepath.Join(staging, "manifest")
-	if err := fetchAndRestoreBinding(ctx, s.remote, s.blocks, root, remoteManifestPath, manifestDir, s.tempDir, func(epoch uint32) ([32]byte, error) {
-		bucketKey, err := s.keys.BucketKey(epoch, s.plan.BucketID)
-		if err != nil {
-			return [32]byte{}, err
-		}
-		return deriveManifestKey(bucketKey, s.plan.Branch), nil
-	}); err != nil {
-		return fmt.Errorf("restore backup plan manifest: %w", err)
-	}
-	data, err := os.ReadFile(filepath.Join(manifestDir, "manifest.json"))
-	if err != nil {
-		return err
-	}
-	var manifest planManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("decode backup plan manifest: %w", err)
-	}
 	if len(s.plan.Bindings) == 0 {
 		if restored == nil {
 			return fmt.Errorf("branch-only restore must return its reconstructed backup plan")
@@ -1263,26 +1286,47 @@ func (s *PlanService) restoreTo(ctx context.Context, destination string, overwri
 	} else if err := validatePlanManifest(manifest, s.plan); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(next, 0o700); err != nil {
+	parent, err := openInstallRoot(entry)
+	if err != nil {
+		return err
+	}
+	if err := parent.root.Mkdir(parent.next, 0o700); err != nil {
+		_ = parent.Close()
+		return err
+	}
+	nextRoot, err := parent.root.OpenRoot(parent.next)
+	if err != nil {
+		_ = parent.Close()
+		return err
+	}
+	if err := parent.Close(); err != nil {
+		_ = nextRoot.Close()
 		return err
 	}
 	for _, binding := range manifest.Bindings {
-		remotePath, err := remoteBindingPath(binding.ID)
+		target := filepath.FromSlash(binding.PathName)
+		if err := nextRoot.Mkdir(target, 0o700); err != nil {
+			_ = nextRoot.Close()
+			return fmt.Errorf("create rooted restore binding %s: %w", binding.Name, err)
+		}
+		bindingRoot, err := nextRoot.OpenRoot(target)
 		if err != nil {
+			_ = nextRoot.Close()
 			return err
 		}
-		target := filepath.Join(next, binding.ArchiveName)
-		if err := fetchAndRestoreBinding(ctx, s.remote, s.blocks, root, remotePath, target, s.tempDir, func(epoch uint32) ([32]byte, error) {
-			bucketKey, err := s.keys.BucketKey(epoch, s.plan.BucketID)
-			if err != nil {
-				return [32]byte{}, err
+		restoreErr := s.filesystem.RestoreBindingRoot(ctx, dataset, binding.ID, bindingRoot, s.keyResolver())
+		closeErr := bindingRoot.Close()
+		if restoreErr != nil || closeErr != nil {
+			_ = nextRoot.Close()
+			if restoreErr == nil {
+				restoreErr = closeErr
 			}
-			return deriveBindingKey(bucketKey, s.plan.Branch, binding.ID), nil
-		}); err != nil {
-			return fmt.Errorf("restore binding %s: %w", binding.Name, err)
+			return fmt.Errorf("restore binding %s: %w", binding.Name, restoreErr)
 		}
 	}
-	rollback := filepath.Join(staging, "previous")
+	if err := nextRoot.Close(); err != nil {
+		return err
+	}
 	current := false
 	if info, err := os.Lstat(destination); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -1296,11 +1340,8 @@ func (s *PlanService) restoreTo(ctx context.Context, destination string, overwri
 		return err
 	}
 	cleanupStaging = false
-	if err := s.installPrepared(ctx, s.restoreTransactionPath(), []installTransactionEntry{{
-		Name:        s.plan.Name,
-		Destination: destination, Staging: staging, Next: next, Rollback: rollback,
-		HadCurrent: current, Phase: installPhasePrepared,
-	}}); err != nil {
+	entry.HadCurrent = current
+	if err := s.installPrepared(ctx, s.restoreTransactionPath(), []installTransactionEntry{entry}); err != nil {
 		return err
 	}
 	if restored != nil {
@@ -1309,8 +1350,8 @@ func (s *PlanService) restoreTo(ctx context.Context, destination string, overwri
 		for i, binding := range manifest.Bindings {
 			restoredBindings[i] = Binding{
 				ID: binding.ID, Name: binding.Name,
-				Source:      filepath.Join(destination, binding.ArchiveName),
-				ArchiveName: binding.ArchiveName, CreatedAt: now,
+				Source:   filepath.Join(destination, binding.PathName),
+				PathName: binding.PathName, CreatedAt: now,
 			}
 		}
 		*restored = Plan{
@@ -1323,7 +1364,10 @@ func (s *PlanService) restoreTo(ctx context.Context, destination string, overwri
 }
 
 func validateRestoreDestination(destination string, protected []string, bindings []Binding) error {
-	destination, err := filepath.Abs(strings.TrimSpace(destination))
+	if destination == "" {
+		return fmt.Errorf("restore destination is empty")
+	}
+	destination, err := filepath.Abs(destination)
 	if err != nil {
 		return err
 	}
@@ -1364,7 +1408,7 @@ func validateRestoreDestination(destination string, protected []string, bindings
 	return nil
 }
 
-func (s *PlanService) acceptedObservedRoot(ctx context.Context) (cid.Cid, error) {
+func (s *PlanService) acceptedObservedRoot(ctx context.Context, localCandidate cid.Cid) (cid.Cid, error) {
 	if s.roots == nil {
 		return cid.Undef, fmt.Errorf("backup plan trusted-root policy is not configured")
 	}
@@ -1399,7 +1443,8 @@ func (s *PlanService) acceptedObservedRoot(ctx context.Context) (cid.Cid, error)
 	accepted, err := s.roots.AcceptedRoot(alias)
 	if err != nil {
 		return cid.Undef, &UnacceptedRootError{
-			Plan: s.plan.Name, Alias: alias, Observed: observed, Cause: err,
+			Plan: s.plan.Name, Alias: alias, Observed: observed,
+			CandidateRecorded: localCandidate.Defined() && observed.Equals(localCandidate), Cause: err,
 		}
 	}
 	if observed.Equals(accepted) {
@@ -1407,6 +1452,7 @@ func (s *PlanService) acceptedObservedRoot(ctx context.Context) (cid.Cid, error)
 	}
 	return cid.Undef, &UnacceptedRootError{
 		Plan: s.plan.Name, Alias: alias, Observed: observed, Accepted: accepted,
+		CandidateRecorded: localCandidate.Defined() && observed.Equals(localCandidate),
 	}
 }
 
@@ -1415,7 +1461,8 @@ func observationSource(datasetID string) string {
 }
 
 func validatePlanManifest(manifest planManifest, local Plan) error {
-	if manifest.Version != 1 || manifest.PlanID != local.ID || manifest.Branch != local.Branch || len(manifest.Bindings) == 0 {
+	if manifest.Version != 1 || manifest.PlanID != local.ID || manifest.PlanName != local.Name ||
+		manifest.Branch != local.Branch || len(manifest.Bindings) == 0 {
 		return fmt.Errorf("remote backup plan manifest does not match the selected local plan")
 	}
 	localBindings := make(map[string]Binding, len(local.Bindings))
@@ -1425,16 +1472,16 @@ func validatePlanManifest(manifest planManifest, local Plan) error {
 	seenNames := map[string]struct{}{}
 	for _, binding := range manifest.Bindings {
 		localBinding, ok := localBindings[binding.ID]
-		if !ok || binding.Name != localBinding.Name || binding.ArchiveName != localBinding.ArchiveName {
+		if !ok || binding.Name != localBinding.Name || binding.PathName != localBinding.PathName {
 			return fmt.Errorf("remote backup plan binding %q does not match local plan metadata", binding.Name)
 		}
-		if err := validateArchiveName(binding.ArchiveName); err != nil {
+		if err := validatePathName(binding.PathName); err != nil {
 			return err
 		}
-		if _, ok := seenNames[binding.ArchiveName]; ok {
-			return fmt.Errorf("remote backup plan has duplicate archive names")
+		if _, ok := seenNames[binding.PathName]; ok {
+			return fmt.Errorf("remote backup plan has duplicate path names")
 		}
-		seenNames[binding.ArchiveName] = struct{}{}
+		seenNames[binding.PathName] = struct{}{}
 	}
 	if len(manifest.Bindings) != len(localBindings) {
 		return fmt.Errorf("remote backup plan binding count does not match local plan metadata")
@@ -1455,7 +1502,7 @@ func validateDiscoveredPlanManifest(manifest planManifest, branch string) error 
 	}
 	seenIDs := map[string]struct{}{}
 	seenNames := map[string]struct{}{}
-	seenArchives := map[string]struct{}{}
+	seenPaths := map[string]struct{}{}
 	for _, binding := range manifest.Bindings {
 		if err := validateOpaqueID(binding.ID, "binding"); err != nil {
 			return err
@@ -1463,7 +1510,7 @@ func validateDiscoveredPlanManifest(manifest planManifest, branch string) error 
 		if err := validateDisplayName(binding.Name, "binding"); err != nil {
 			return err
 		}
-		if err := validateArchiveName(binding.ArchiveName); err != nil {
+		if err := validatePathName(binding.PathName); err != nil {
 			return err
 		}
 		if _, ok := seenIDs[binding.ID]; ok {
@@ -1472,12 +1519,12 @@ func validateDiscoveredPlanManifest(manifest planManifest, branch string) error 
 		if _, ok := seenNames[binding.Name]; ok {
 			return fmt.Errorf("remote backup plan has duplicate binding names")
 		}
-		if _, ok := seenArchives[binding.ArchiveName]; ok {
-			return fmt.Errorf("remote backup plan has duplicate archive names")
+		if _, ok := seenPaths[binding.PathName]; ok {
+			return fmt.Errorf("remote backup plan has duplicate path names")
 		}
 		seenIDs[binding.ID] = struct{}{}
 		seenNames[binding.Name] = struct{}{}
-		seenArchives[binding.ArchiveName] = struct{}{}
+		seenPaths[binding.PathName] = struct{}{}
 	}
 	return nil
 }
@@ -1524,16 +1571,22 @@ type UnacceptedRootError struct {
 }
 
 func (e *UnacceptedRootError) Error() string {
+	if e.CandidateRecorded {
+		if e.Accepted.Defined() {
+			return fmt.Sprintf(
+				"remote root %s for plan %s differs from accepted root %s; it matches a locally verified candidate—inspect it, run `malt root accept %s %s`, then rerun",
+				e.Observed, e.Plan, e.Accepted, e.Alias, e.Observed,
+			)
+		}
+		return fmt.Sprintf(
+			"remote root %s for plan %s matches a locally verified bootstrap candidate; inspect it, run `malt root accept %s %s`, then rerun",
+			e.Observed, e.Plan, e.Alias, e.Observed,
+		)
+	}
 	if !e.Accepted.Defined() {
 		return fmt.Sprintf(
 			"remote root %s for plan %s is not locally accepted; inspect it, run `malt root accept-observed %s %s`, then rerun",
 			e.Observed, e.Plan, e.Alias, e.Observed,
-		)
-	}
-	if e.CandidateRecorded {
-		return fmt.Sprintf(
-			"remote root %s for plan %s differs from accepted root %s; it was recorded as a candidate—inspect it, run `malt root accept %s %s`, then rerun",
-			e.Observed, e.Plan, e.Accepted, e.Alias, e.Observed,
 		)
 	}
 	return fmt.Sprintf(
@@ -1565,31 +1618,10 @@ func (s *PlanService) lastFingerprints() (map[string]string, string, error) {
 		return nil, "", err
 	}
 	state := states[s.plan.ID]
-	if state.LastResult == nil {
+	if state.LastResult == nil || state.LastResult.Profile != encryptedfs.ProfileID {
 		return map[string]string{}, "", nil
 	}
 	return cloneFingerprints(state.LastResult.BindingFingerprints), state.LastResult.ManifestFingerprint, nil
-}
-
-func (s *PlanService) planStagingRoot() (string, error) {
-	candidates := []string{s.tempDir, os.TempDir()}
-	for _, candidate := range candidates {
-		inside := false
-		for _, binding := range s.plan.Bindings {
-			value, err := resolvedPathWithin(binding.Source, candidate)
-			if err != nil {
-				return "", err
-			}
-			if value {
-				inside = true
-				break
-			}
-		}
-		if !inside {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("no backup staging root is outside every binding in plan %s", s.plan.Name)
 }
 
 const (
@@ -1614,6 +1646,8 @@ type installTransactionEntry struct {
 	Staging              string `json:"staging"`
 	Next                 string `json:"next"`
 	Rollback             string `json:"rollback"`
+	ParentPin            string `json:"parent_pin"`
+	ParentToken          string `json:"parent_token"`
 	ExpectedFingerprint  string `json:"expected_fingerprint,omitempty"`
 	OriginalFingerprint  string `json:"original_fingerprint,omitempty"`
 	InstalledFingerprint string `json:"installed_fingerprint"`
@@ -1621,15 +1655,233 @@ type installTransactionEntry struct {
 	Phase                string `json:"phase"`
 }
 
+type installRoot struct {
+	root        *os.Root
+	destination string
+	staging     string
+	next        string
+	rollback    string
+	quarantine  string
+}
+
+func prepareInstallEntry(name, destination, stagingPrefix string) (installTransactionEntry, error) {
+	if destination == "" {
+		return installTransactionEntry{}, fmt.Errorf("filesystem installation destination is empty")
+	}
+	destination, err := filepath.Abs(destination)
+	if err != nil {
+		return installTransactionEntry{}, fmt.Errorf("resolve filesystem installation destination: %w", err)
+	}
+	parent := filepath.Dir(destination)
+	if err := mkdirAllDurable(parent, 0o700); err != nil {
+		return installTransactionEntry{}, err
+	}
+	root, _, err := openPinnedSource(parent)
+	if err != nil {
+		return installTransactionEntry{}, fmt.Errorf("pin filesystem installation parent: %w", err)
+	}
+	defer root.Close()
+	random := make([]byte, 24)
+	if _, err := rand.Read(random); err != nil {
+		return installTransactionEntry{}, err
+	}
+	id := hex.EncodeToString(random)
+	stagingName := stagingPrefix + id[:24]
+	parentPin := ".malt-install-pin-" + id[24:]
+	if err := root.Mkdir(stagingName, 0o700); err != nil {
+		return installTransactionEntry{}, err
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		_ = root.RemoveAll(stagingName)
+		return installTransactionEntry{}, err
+	}
+	token := hex.EncodeToString(tokenBytes)
+	pin, err := root.OpenFile(parentPin, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = root.RemoveAll(stagingName)
+		return installTransactionEntry{}, err
+	}
+	_, writeErr := pin.Write([]byte(token))
+	syncErr := pin.Sync()
+	closeErr := pin.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		_ = root.Remove(parentPin)
+		_ = root.RemoveAll(stagingName)
+		return installTransactionEntry{}, err
+	}
+	if err := syncRoot(root); err != nil {
+		_ = root.Remove(parentPin)
+		_ = root.RemoveAll(stagingName)
+		return installTransactionEntry{}, err
+	}
+	staging := filepath.Join(parent, stagingName)
+	return installTransactionEntry{
+		Name: name, Destination: destination, Staging: staging,
+		Next: filepath.Join(staging, "next"), Rollback: filepath.Join(staging, "previous"),
+		ParentPin: parentPin, ParentToken: token, Phase: installPhasePrepared,
+	}, nil
+}
+
+// mkdirAllDurable creates a directory chain and persists each newly reachable
+// directory plus its parent entry before installation state is journaled.
+func mkdirAllDurable(path string, perm os.FileMode) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	missing := make([]string, 0)
+	current := abs
+	for {
+		info, statErr := os.Stat(current)
+		if statErr == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("filesystem installation parent is not a directory: %s", current)
+			}
+			break
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		missing = append(missing, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			return statErr
+		}
+		current = parent
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(abs, perm); err != nil {
+		return err
+	}
+	for _, directory := range missing {
+		if err := durablefile.SyncParent(filepath.Join(directory, ".malt-directory-sync")); err != nil {
+			return fmt.Errorf("persist created filesystem directory %s: %w", directory, err)
+		}
+		if err := durablefile.SyncParent(directory); err != nil {
+			return fmt.Errorf("persist created filesystem directory entry %s: %w", directory, err)
+		}
+	}
+	return nil
+}
+
+func openInstallRoot(entry installTransactionEntry) (*installRoot, error) {
+	parent := filepath.Dir(entry.Destination)
+	root, _, err := openPinnedSource(parent)
+	if err != nil {
+		return nil, err
+	}
+	closeWith := func(err error) (*installRoot, error) {
+		_ = root.Close()
+		return nil, err
+	}
+	pin, err := root.ReadFile(entry.ParentPin)
+	if err != nil {
+		return closeWith(fmt.Errorf("filesystem installation parent pin is unavailable: %w", err))
+	}
+	if string(pin) != entry.ParentToken {
+		return closeWith(fmt.Errorf("filesystem installation parent identity changed"))
+	}
+	staging := filepath.Base(entry.Staging)
+	return &installRoot{
+		root: root, destination: filepath.Base(entry.Destination), staging: staging,
+		next: filepath.Join(staging, "next"), rollback: filepath.Join(staging, "previous"),
+		quarantine: staging + "-recovery",
+	}, nil
+}
+
+func (r *installRoot) Close() error {
+	if r == nil || r.root == nil {
+		return nil
+	}
+	return r.root.Close()
+}
+
+func syncRoot(root *os.Root) error {
+	file, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	return errors.Join(syncErr, closeErr)
+}
+
+// syncInstallTree persists a prepared installation subtree bottom-up. Symlink
+// entries have no independently fsync-able handle; their containing directory
+// is synced after every child has been visited.
+func syncInstallTree(root *os.Root, name string) error {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	if info.IsDir() {
+		childRoot, err := root.OpenRoot(name)
+		if err != nil {
+			return err
+		}
+		opened, err := childRoot.Open(".")
+		if err != nil {
+			_ = childRoot.Close()
+			return err
+		}
+		openedInfo, statErr := opened.Stat()
+		if statErr == nil && (!openedInfo.IsDir() || !os.SameFile(info, openedInfo)) {
+			statErr = fmt.Errorf("prepared installation directory changed before it was persisted: %s", name)
+		}
+		entries, readErr := opened.ReadDir(-1)
+		closeErr := opened.Close()
+		if err := errors.Join(statErr, readErr, closeErr); err != nil {
+			_ = childRoot.Close()
+			return err
+		}
+		for _, entry := range entries {
+			if err := syncInstallTree(childRoot, entry.Name()); err != nil {
+				_ = childRoot.Close()
+				return err
+			}
+		}
+		syncErr := syncRoot(childRoot)
+		closeRootErr := childRoot.Close()
+		return errors.Join(syncErr, closeRootErr)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("prepared installation contains unsupported file type: %s", name)
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return err
+	}
+	openedInfo, statErr := file.Stat()
+	if statErr == nil && (!openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo)) {
+		statErr = fmt.Errorf("prepared installation file changed before it was persisted: %s", name)
+	}
+	var syncErr error
+	if statErr == nil {
+		syncErr = file.Sync()
+	}
+	closeErr := file.Close()
+	return errors.Join(statErr, syncErr, closeErr)
+}
+
 func (s *PlanService) syncTransactionPath() string {
 	return s.lockPath + ".sync-transaction.json"
+}
+
+func (s *PlanService) snapshotDirectory() string {
+	return s.lockPath + ".encrypted-snapshots"
 }
 
 func (s *PlanService) restoreTransactionPath() string {
 	return s.lockPath + ".restore-transaction.json"
 }
 
-func (s *PlanService) installBindings(ctx context.Context, root cid.Cid, expectedFingerprints map[string]string) error {
+func (s *PlanService) installBindings(ctx context.Context, root cid.Cid, expectedFingerprints map[string]string) (resultErr error) {
 	journalPath := s.syncTransactionPath()
 	if err := s.recoverInstallTransaction(journalPath); err != nil {
 		return err
@@ -1638,42 +1890,45 @@ func (s *PlanService) installBindings(ctx context.Context, root cid.Cid, expecte
 	cleanupStaging := true
 	defer func() {
 		if cleanupStaging {
-			cleanupInstallStaging(entries)
+			resultErr = errors.Join(resultErr, cleanupInstallError(nil, entries))
 		}
 	}()
 
-	bucketKeyCache := map[uint32][32]byte{}
+	dataset, err := s.loadDataset(ctx, root)
+	if err != nil {
+		return fmt.Errorf("load encrypted filesystem for synchronization: %w", err)
+	}
+	if err := validateDatasetForPlan(dataset.manifest, s.plan); err != nil {
+		return err
+	}
 	for _, binding := range s.plan.Bindings {
-		remotePath, err := remoteBindingPath(binding.ID)
+		entry, err := prepareInstallEntry(binding.Name, binding.Source, ".malt-sync-")
 		if err != nil {
 			return err
 		}
-		parent := filepath.Dir(binding.Source)
-		if err := os.MkdirAll(parent, 0o700); err != nil {
-			return err
-		}
-		staging, err := os.MkdirTemp(parent, ".malt-sync-*")
-		if err != nil {
-			return err
-		}
-		entry := installTransactionEntry{
-			Name: binding.Name, Destination: binding.Source, Staging: staging,
-			Next: filepath.Join(staging, "next"), Rollback: filepath.Join(staging, "previous"),
-			ExpectedFingerprint: expectedFingerprints[binding.ID], Phase: installPhasePrepared,
-		}
+		entry.ExpectedFingerprint = expectedFingerprints[binding.ID]
 		entries = append(entries, entry)
-		if err := fetchAndRestoreBinding(ctx, s.remote, s.blocks, root, remotePath, entry.Next, s.tempDir, func(epoch uint32) ([32]byte, error) {
-			bucketKey, ok := bucketKeyCache[epoch]
-			if !ok {
-				bucketKey, err = s.keys.BucketKey(epoch, s.plan.BucketID)
-				if err != nil {
-					return [32]byte{}, err
-				}
-				bucketKeyCache[epoch] = bucketKey
+		parent, err := openInstallRoot(entry)
+		if err != nil {
+			return err
+		}
+		if err := parent.root.Mkdir(parent.next, 0o700); err != nil {
+			_ = parent.Close()
+			return err
+		}
+		nextRoot, err := parent.root.OpenRoot(parent.next)
+		if err != nil {
+			_ = parent.Close()
+			return err
+		}
+		_ = parent.Close()
+		restoreErr := s.filesystem.RestoreBindingRoot(ctx, dataset, binding.ID, nextRoot, s.keyResolver())
+		closeErr := nextRoot.Close()
+		if restoreErr != nil || closeErr != nil {
+			if restoreErr == nil {
+				restoreErr = closeErr
 			}
-			return deriveBindingKey(bucketKey, s.plan.Branch, binding.ID), nil
-		}); err != nil {
-			return fmt.Errorf("prepare synchronized binding %s: %w", binding.Name, err)
+			return fmt.Errorf("prepare synchronized binding %s: %w", binding.Name, restoreErr)
 		}
 	}
 
@@ -1696,33 +1951,49 @@ func (s *PlanService) installBindings(ctx context.Context, root cid.Cid, expecte
 }
 
 func (s *PlanService) installPrepared(ctx context.Context, journalPath string, entries []installTransactionEntry) error {
+	failBeforeJournal := func(operationErr error) error {
+		return cleanupInstallError(operationErr, entries)
+	}
 	for i := range entries {
+		parent, err := openInstallRoot(entries[i])
+		if err != nil {
+			return failBeforeJournal(fmt.Errorf("pin prepared installation %s: %w", entries[i].Name, err))
+		}
 		if entries[i].HadCurrent {
-			fingerprint, err := plaintextContentFingerprint(ctx, entries[i].Destination)
+			fingerprint, err := plaintextContentFingerprintRoot(ctx, parent.root, parent.destination)
 			if err != nil {
-				cleanupInstallStaging(entries)
-				return fmt.Errorf("fingerprint original %s: %w", entries[i].Name, err)
+				_ = parent.Close()
+				return failBeforeJournal(fmt.Errorf("fingerprint original %s: %w", entries[i].Name, err))
 			}
 			entries[i].OriginalFingerprint = fingerprint
 		}
-		fingerprint, err := plaintextContentFingerprint(ctx, entries[i].Next)
+		fingerprint, err := plaintextContentFingerprintRoot(ctx, parent.root, parent.next)
 		if err != nil {
-			cleanupInstallStaging(entries)
-			return fmt.Errorf("fingerprint prepared %s: %w", entries[i].Name, err)
+			_ = parent.Close()
+			return failBeforeJournal(fmt.Errorf("fingerprint prepared %s: %w", entries[i].Name, err))
 		}
 		entries[i].InstalledFingerprint = fingerprint
+		if err := syncInstallTree(parent.root, parent.staging); err != nil {
+			_ = parent.Close()
+			return failBeforeJournal(fmt.Errorf("persist prepared %s: %w", entries[i].Name, err))
+		}
+		if err := syncRoot(parent.root); err != nil {
+			_ = parent.Close()
+			return failBeforeJournal(fmt.Errorf("persist prepared installation parent for %s: %w", entries[i].Name, err))
+		}
+		if err := parent.Close(); err != nil {
+			return failBeforeJournal(err)
+		}
 	}
 	transaction := installTransaction{
 		Version: installTransactionVersion, PlanID: s.plan.ID,
 		State: installStatePrepared, Entries: append([]installTransactionEntry(nil), entries...),
 	}
 	if err := validateInstallTransaction(transaction); err != nil {
-		cleanupInstallStaging(entries)
-		return err
+		return failBeforeJournal(err)
 	}
 	if err := writeInstallTransaction(journalPath, transaction); err != nil {
-		cleanupInstallStaging(entries)
-		return fmt.Errorf("journal prepared filesystem installation: %w", err)
+		return failBeforeJournal(fmt.Errorf("journal prepared filesystem installation: %w", err))
 	}
 	fail := func(operationErr error) error {
 		recoveryErr := s.recoverInstallTransaction(journalPath)
@@ -1733,45 +2004,63 @@ func (s *PlanService) installPrepared(ctx context.Context, journalPath string, e
 	}
 	for i := range transaction.Entries {
 		entry := &transaction.Entries[i]
+		parent, err := openInstallRoot(*entry)
+		if err != nil {
+			return fail(fmt.Errorf("pin installation parent for %s: %w", entry.Name, err))
+		}
 		if entry.HadCurrent {
 			if entry.ExpectedFingerprint != "" {
-				actual, err := FingerprintSource(ctx, entry.Destination)
+				actual, err := fingerprintRootedDirectory(ctx, parent.root, parent.destination, filepath.Base(entry.Destination))
 				if err != nil {
+					_ = parent.Close()
 					return fail(fmt.Errorf("recheck %s before installation: %w", entry.Name, err))
 				}
 				if actual != entry.ExpectedFingerprint {
+					_ = parent.Close()
 					return fail(fmt.Errorf("%s changed after backup; its synchronized snapshot was not installed", entry.Name))
 				}
 			}
-			currentFingerprint, err := plaintextContentFingerprint(ctx, entry.Destination)
+			currentFingerprint, err := plaintextContentFingerprintRoot(ctx, parent.root, parent.destination)
 			if err != nil {
+				_ = parent.Close()
 				return fail(fmt.Errorf("fingerprint %s before installation: %w", entry.Name, err))
 			}
 			if currentFingerprint != entry.OriginalFingerprint {
+				_ = parent.Close()
 				return fail(fmt.Errorf("%s changed while synchronization was being prepared; its snapshot was not installed", entry.Name))
 			}
-			info, err := os.Lstat(entry.Destination)
+			info, err := parent.root.Lstat(parent.destination)
 			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				_ = parent.Close()
 				return fail(fmt.Errorf("binding destination changed during installation: %s", entry.Destination))
 			}
-			if err := os.Rename(entry.Destination, entry.Rollback); err != nil {
+			if err := parent.root.Rename(parent.destination, parent.rollback); err != nil {
+				_ = parent.Close()
 				return fail(fmt.Errorf("preserve %s before installation: %w", entry.Name, err))
 			}
-			if err := syncInstallParents(*entry); err != nil {
+			if err := syncRoot(parent.root); err != nil {
+				_ = parent.Close()
 				return fail(fmt.Errorf("persist preserved %s: %w", entry.Name, err))
 			}
 			entry.Phase = installPhasePreserved
 			if err := writeInstallTransaction(journalPath, transaction); err != nil {
+				_ = parent.Close()
 				return fail(fmt.Errorf("journal preserved %s: %w", entry.Name, err))
 			}
-		} else if _, err := os.Lstat(entry.Destination); !errors.Is(err, os.ErrNotExist) {
+		} else if _, err := parent.root.Lstat(parent.destination); !errors.Is(err, os.ErrNotExist) {
+			_ = parent.Close()
 			return fail(fmt.Errorf("binding destination appeared during installation: %s", entry.Destination))
 		}
-		if err := os.Rename(entry.Next, entry.Destination); err != nil {
+		if err := parent.root.Rename(parent.next, parent.destination); err != nil {
+			_ = parent.Close()
 			return fail(fmt.Errorf("install %s: %w", entry.Name, err))
 		}
-		if err := syncInstallParents(*entry); err != nil {
+		if err := syncRoot(parent.root); err != nil {
+			_ = parent.Close()
 			return fail(fmt.Errorf("persist installed %s: %w", entry.Name, err))
+		}
+		if err := parent.Close(); err != nil {
+			return fail(fmt.Errorf("close installation parent for %s: %w", entry.Name, err))
 		}
 		entry.Phase = installPhaseInstalled
 		if err := writeInstallTransaction(journalPath, transaction); err != nil {
@@ -1796,6 +2085,9 @@ func (s *PlanService) recoverInstallTransaction(journalPath string) error {
 	if transaction.PlanID != s.plan.ID {
 		return fmt.Errorf("filesystem installation journal belongs to another backup plan")
 	}
+	if transaction.Version != installTransactionVersion {
+		return fmt.Errorf("filesystem installation journal uses legacy path-based format v%d; recover it with the previous MALT runtime before upgrading", transaction.Version)
+	}
 	if err := validateInstallTransaction(transaction); err != nil {
 		return fmt.Errorf("unsafe filesystem installation journal: %w", err)
 	}
@@ -1805,21 +2097,29 @@ func (s *PlanService) recoverInstallTransaction(journalPath string) error {
 	var quarantined []string
 	for i := len(transaction.Entries) - 1; i >= 0; i-- {
 		entry := transaction.Entries[i]
-		destinationExists, err := pathExists(entry.Destination)
+		parent, err := openInstallRoot(entry)
 		if err != nil {
+			return fmt.Errorf("pin recovery parent for %s: %w", entry.Name, err)
+		}
+		destinationExists, err := pathExistsRoot(parent.root, parent.destination)
+		if err != nil {
+			_ = parent.Close()
 			return err
 		}
-		rollbackExists, err := pathExists(entry.Rollback)
+		rollbackExists, err := pathExistsRoot(parent.root, parent.rollback)
 		if err != nil {
+			_ = parent.Close()
 			return err
 		}
-		nextExists, err := pathExists(entry.Next)
+		nextExists, err := pathExistsRoot(parent.root, parent.next)
 		if err != nil {
+			_ = parent.Close()
 			return err
 		}
 		quarantinePath := entry.Staging + "-recovery"
-		quarantineExists, err := pathExists(quarantinePath)
+		quarantineExists, err := pathExistsRoot(parent.root, parent.quarantine)
 		if err != nil {
+			_ = parent.Close()
 			return err
 		}
 		if entry.HadCurrent {
@@ -1828,43 +2128,59 @@ func (s *PlanService) recoverInstallTransaction(journalPath string) error {
 					quarantined = append(quarantined, quarantinePath)
 				}
 				if destinationExists {
-					quarantine, err := preserveChangedInstallation(entry, quarantinePath)
+					quarantine, err := preserveChangedInstallation(entry, quarantinePath, parent)
 					if err != nil {
+						_ = parent.Close()
 						return err
 					}
 					if quarantine != "" {
 						quarantined = append(quarantined, quarantine)
 					}
 				}
-				if err := os.Rename(entry.Rollback, entry.Destination); err != nil {
+				if err := parent.root.Rename(parent.rollback, parent.destination); err != nil {
+					_ = parent.Close()
 					return fmt.Errorf("restore preserved %s: %w", entry.Name, err)
 				}
-				if err := syncInstallParents(entry); err != nil {
+				if err := syncRoot(parent.root); err != nil {
+					_ = parent.Close()
 					return err
 				}
+				_ = parent.Close()
 				continue
 			}
-			if quarantineExists && destinationExists {
-				fingerprint, err := plaintextContentFingerprint(context.Background(), entry.Destination)
+			if destinationExists {
+				fingerprint, err := plaintextContentFingerprintRoot(context.Background(), parent.root, parent.destination)
 				if err != nil {
+					_ = parent.Close()
 					return err
 				}
 				if fingerprint == entry.OriginalFingerprint {
-					quarantined = append(quarantined, quarantinePath)
+					if quarantineExists {
+						quarantined = append(quarantined, quarantinePath)
+					}
+					_ = parent.Close()
 					continue
 				}
 			}
+			if quarantineExists {
+				_ = parent.Close()
+				return fmt.Errorf("cannot safely recover original %s while recovery quarantine exists at %s", entry.Name, quarantinePath)
+			}
 			if !destinationExists || !nextExists || entry.Phase != installPhasePrepared {
+				_ = parent.Close()
 				return fmt.Errorf("cannot safely recover original %s from interrupted installation", entry.Name)
 			}
+			_ = parent.Close()
 			continue
 		}
 		if destinationExists {
 			if nextExists && entry.Phase == installPhasePrepared {
+				_ = parent.Close()
 				return fmt.Errorf("cannot remove unexpected destination while recovering %s", entry.Name)
 			}
-			quarantine, err := preserveChangedInstallation(entry, quarantinePath)
+			quarantine, err := preserveChangedInstallation(entry, quarantinePath, parent)
 			if err != nil {
+				_ = parent.Close()
 				return err
 			}
 			if quarantine != "" {
@@ -1873,9 +2189,15 @@ func (s *PlanService) recoverInstallTransaction(journalPath string) error {
 		} else if quarantineExists {
 			quarantined = append(quarantined, quarantinePath)
 		}
+		_ = parent.Close()
 	}
-	cleanupInstallStaging(transaction.Entries)
+	if err := removeInstallStaging(transaction.Entries); err != nil {
+		return err
+	}
 	if err := removeInstallTransaction(journalPath); err != nil {
+		return err
+	}
+	if err := removeInstallPins(transaction.Entries); err != nil {
 		return err
 	}
 	if len(quarantined) != 0 {
@@ -1885,26 +2207,26 @@ func (s *PlanService) recoverInstallTransaction(journalPath string) error {
 	return nil
 }
 
-func preserveChangedInstallation(entry installTransactionEntry, quarantinePath string) (string, error) {
-	fingerprint, err := plaintextContentFingerprint(context.Background(), entry.Destination)
+func preserveChangedInstallation(entry installTransactionEntry, quarantinePath string, parent *installRoot) (string, error) {
+	fingerprint, err := plaintextContentFingerprintRoot(context.Background(), parent.root, parent.destination)
 	if err != nil {
 		return "", err
 	}
 	if fingerprint == entry.InstalledFingerprint {
-		if err := os.RemoveAll(entry.Destination); err != nil {
+		if err := parent.root.RemoveAll(parent.destination); err != nil {
 			return "", fmt.Errorf("remove interrupted installation %s: %w", entry.Name, err)
 		}
-		return "", durablefile.SyncParent(entry.Destination)
+		return "", syncRoot(parent.root)
 	}
-	if _, err := os.Lstat(quarantinePath); err == nil {
+	if _, err := parent.root.Lstat(parent.quarantine); err == nil {
 		return "", fmt.Errorf("recovery quarantine already exists for %s: %s", entry.Name, quarantinePath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	if err := os.Rename(entry.Destination, quarantinePath); err != nil {
+	if err := parent.root.Rename(parent.destination, parent.quarantine); err != nil {
 		return "", fmt.Errorf("quarantine edits made after interrupted installation of %s: %w", entry.Name, err)
 	}
-	if err := durablefile.SyncParent(entry.Destination); err != nil {
+	if err := syncRoot(parent.root); err != nil {
 		return "", err
 	}
 	return quarantinePath, nil
@@ -1933,6 +2255,9 @@ func validateInstallTransaction(transaction installTransaction) error {
 		if strings.TrimSpace(entry.Name) == "" || !filepath.IsAbs(entry.Destination) || !filepath.IsAbs(entry.Staging) ||
 			entry.Next != filepath.Join(entry.Staging, "next") || entry.Rollback != filepath.Join(entry.Staging, "previous") ||
 			filepath.Dir(entry.Destination) != filepath.Dir(entry.Staging) ||
+			filepath.Base(entry.Destination) == "." || filepath.Base(entry.Destination) == string(filepath.Separator) ||
+			filepath.Base(entry.ParentPin) != entry.ParentPin || !strings.HasPrefix(entry.ParentPin, ".malt-install-pin-") ||
+			len(entry.ParentToken) != 64 || strings.Trim(entry.ParentToken, "0123456789abcdef") != "" ||
 			(!strings.HasPrefix(filepath.Base(entry.Staging), ".malt-sync-") &&
 				!strings.HasPrefix(filepath.Base(entry.Staging), ".malt-restore-")) ||
 			(entry.Phase != installPhasePrepared && entry.Phase != installPhasePreserved && entry.Phase != installPhaseInstalled) {
@@ -2013,18 +2338,26 @@ func readInstallTransaction(path string) (installTransaction, bool, error) {
 
 func finalizeCommittedInstall(journalPath string, transaction installTransaction) error {
 	for _, entry := range transaction.Entries {
-		info, err := os.Lstat(entry.Destination)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		parent, err := openInstallRoot(entry)
+		if err != nil {
+			return fmt.Errorf("pin committed installation parent for %s: %w", entry.Name, err)
+		}
+		info, err := parent.root.Lstat(parent.destination)
+		closeErr := parent.Close()
+		if err != nil || closeErr != nil {
+			return fmt.Errorf("committed installation destination is unavailable: %s: %w", entry.Destination, errors.Join(err, closeErr))
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 			return fmt.Errorf("committed installation destination is unavailable: %s", entry.Destination)
 		}
-		if err := os.RemoveAll(entry.Staging); err != nil {
-			return fmt.Errorf("remove installation staging for %s: %w", entry.Name, err)
-		}
-		if err := durablefile.SyncParent(entry.Destination); err != nil {
-			return err
-		}
 	}
-	return removeInstallTransaction(journalPath)
+	if err := removeInstallStaging(transaction.Entries); err != nil {
+		return err
+	}
+	if err := removeInstallTransaction(journalPath); err != nil {
+		return err
+	}
+	return removeInstallPins(transaction.Entries)
 }
 
 func removeInstallTransaction(path string) error {
@@ -2034,17 +2367,77 @@ func removeInstallTransaction(path string) error {
 	return durablefile.SyncParent(path)
 }
 
-func cleanupInstallStaging(entries []installTransactionEntry) {
-	for _, entry := range entries {
-		_ = os.RemoveAll(entry.Staging)
-	}
-}
-
-func syncInstallParents(entry installTransactionEntry) error {
-	if err := durablefile.SyncParent(entry.Destination); err != nil {
+func cleanupInstallStaging(entries []installTransactionEntry) error {
+	if err := removeInstallStaging(entries); err != nil {
 		return err
 	}
-	return durablefile.SyncParent(entry.Rollback)
+	return removeInstallPins(entries)
+}
+
+func cleanupInstallError(operationErr error, entries []installTransactionEntry) error {
+	cleanupErr := cleanupInstallStaging(entries)
+	if cleanupErr == nil {
+		return operationErr
+	}
+	cleanupErr = fmt.Errorf("clean prepared filesystem installation: %w", cleanupErr)
+	return errors.Join(operationErr, cleanupErr)
+}
+
+func removeInstallStaging(entries []installTransactionEntry) error {
+	for _, entry := range entries {
+		parent, err := openPinnedInstallParent(entry)
+		if err != nil {
+			return fmt.Errorf("pin installation cleanup parent for %s: %w", entry.Name, err)
+		}
+		removeErr := parent.RemoveAll(filepath.Base(entry.Staging))
+		var syncErr error
+		if removeErr == nil {
+			syncErr = syncRoot(parent)
+		}
+		closeErr := parent.Close()
+		if err := errors.Join(removeErr, syncErr, closeErr); err != nil {
+			return fmt.Errorf("remove installation staging for %s: %w", entry.Name, err)
+		}
+	}
+	return nil
+}
+
+func removeInstallPins(entries []installTransactionEntry) error {
+	for _, entry := range entries {
+		parent, err := openPinnedInstallParent(entry)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("pin installation marker parent for %s: %w", entry.Name, err)
+		}
+		removeErr := parent.Remove(entry.ParentPin)
+		var syncErr error
+		if removeErr == nil {
+			syncErr = syncRoot(parent)
+		}
+		closeErr := parent.Close()
+		if err := errors.Join(removeErr, syncErr, closeErr); err != nil {
+			return fmt.Errorf("remove installation parent marker for %s: %w", entry.Name, err)
+		}
+	}
+	return nil
+}
+
+func openPinnedInstallParent(entry installTransactionEntry) (*os.Root, error) {
+	root, _, err := openPinnedSource(filepath.Dir(entry.Destination))
+	if err != nil {
+		return nil, err
+	}
+	pin, err := root.ReadFile(entry.ParentPin)
+	if err != nil || string(pin) != entry.ParentToken {
+		_ = root.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("filesystem installation parent identity changed")
+	}
+	return root, nil
 }
 
 func pathExists(path string) (bool, error) {
@@ -2058,91 +2451,15 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-func fetchAndRestoreBinding(
-	ctx context.Context,
-	remote unixfs.Remote,
-	blocks unixfs.BlockGetter,
-	root cid.Cid,
-	remotePath, destination, tempDir string,
-	keyForEpoch func(uint32) ([32]byte, error),
-) error {
-	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: blocks})
-	if err != nil {
-		return err
+func pathExistsRoot(root *os.Root, path string) (bool, error) {
+	_, err := root.Lstat(path)
+	if err == nil {
+		return true, nil
 	}
-	if err := os.MkdirAll(tempDir, 0o700); err != nil {
-		return err
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	file, err := os.CreateTemp(tempDir, "binding-*.malt-backup")
-	if err != nil {
-		return err
-	}
-	archivePath := file.Name()
-	defer os.Remove(archivePath)
-	stat, err := reader.Stat(ctx, root, remotePath)
-	if err != nil {
-		_ = file.Close()
-		return err
-	}
-	if stat.Kind != unixfs.StagedKindFile {
-		_ = file.Close()
-		return fmt.Errorf("authenticated binding snapshot is not a file")
-	}
-	for offset := uint64(0); offset < stat.Size; {
-		length := restoreRangeSize
-		if remaining := stat.Size - offset; remaining < length {
-			length = remaining
-		}
-		part, err := reader.ReadFileRange(ctx, root, remotePath, offset, length)
-		if err != nil {
-			_ = file.Close()
-			return err
-		}
-		if uint64(len(part.Body)) != length || part.Offset != offset || part.TotalSize != stat.Size {
-			_ = file.Close()
-			return fmt.Errorf("verified binding range has inconsistent length")
-		}
-		if _, err := file.Write(part.Body); err != nil {
-			_ = file.Close()
-			return err
-		}
-		offset += length
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return restoreArchive(ctx, archivePath, destination, keyForEpoch, false)
-}
-
-func deriveBindingKey(bucketKey [32]byte, branch, bindingID string) [32]byte {
-	mac := hmac.New(sha256.New, bucketKey[:])
-	_, _ = mac.Write([]byte("malt-backup-binding-v1\x00"))
-	_, _ = mac.Write([]byte(branch))
-	_, _ = mac.Write([]byte{0})
-	_, _ = mac.Write([]byte(bindingID))
-	var result [32]byte
-	copy(result[:], mac.Sum(nil))
-	return result
-}
-
-func deriveManifestKey(bucketKey [32]byte, branch string) [32]byte {
-	mac := hmac.New(sha256.New, bucketKey[:])
-	_, _ = mac.Write([]byte("malt-backup-manifest-v1\x00"))
-	_, _ = mac.Write([]byte(branch))
-	var result [32]byte
-	copy(result[:], mac.Sum(nil))
-	return result
-}
-
-func remoteBindingPath(bindingID string) (string, error) {
-	if bindingID == "" || strings.ContainsAny(bindingID, `/\`) || strings.ContainsAny(bindingID, " \t\r\n") {
-		return "", fmt.Errorf("invalid backup binding ID")
-	}
-	return remoteBindingPrefix + bindingID + "/snapshot", nil
+	return false, err
 }
 
 func rootCID(raw string) (cid.Cid, error) {

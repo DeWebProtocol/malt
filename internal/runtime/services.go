@@ -21,6 +21,7 @@ import (
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 // Services is the process-independent composition root for local runtime
@@ -30,6 +31,25 @@ import (
 type Services struct {
 	configPath string
 	plans      *clientbackup.BatchRunner
+}
+
+type gatewayBackupProfile struct {
+	client *gatewayclient.Client
+}
+
+func (p gatewayBackupProfile) DefaultBackend(ctx context.Context) (maltcid.BackendKind, error) {
+	if p.client == nil {
+		return maltcid.BackendKindUnknown, fmt.Errorf("Gateway commitment profile client is nil")
+	}
+	health, err := p.client.Health(ctx)
+	if err != nil {
+		return maltcid.BackendKindUnknown, err
+	}
+	backend := maltcid.BackendKind(strings.ToLower(strings.TrimSpace(health.CommitmentProfile)))
+	if backend != maltcid.BackendKindKZG && backend != maltcid.BackendKindIPA {
+		return maltcid.BackendKindUnknown, fmt.Errorf("Gateway returned unsupported default commitment backend %q", health.CommitmentProfile)
+	}
+	return backend, nil
 }
 
 func NewServices(configPath string) (*Services, error) {
@@ -134,6 +154,10 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 	if err != nil {
 		return nil, err
 	}
+	filesystem, err := clientbackup.NewPlanFilesystem(graph, remote, blocks, gatewayBackupProfile{client: remote})
+	if err != nil {
+		return nil, err
+	}
 	syncer, err := bucketsync.OpenRemoteBranch(cfg.Workspace.StatePath, remote, plan.BucketID, plan.Branch)
 	if err != nil {
 		return nil, err
@@ -170,13 +194,11 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 		s.ProtectedPaths(cfg),
 		statePath, statePath+".lock", operationLock,
 		operationLock+".sync-transaction.json", operationLock+".restore-transaction.json",
-		operationLock+".conflicts",
+		operationLock+".conflicts", operationLock+".encrypted-snapshots",
 	)
 	service, resultErr = clientbackup.NewPlanServiceWithRelease(clientbackup.PlanServiceOptions{
-		Plan: plan, TempDir: cfg.Backup.TempDir,
-		LockPath: operationLock, Keys: keys, Sync: syncer,
-		Materializer: clientbackup.NewAddPlanMaterializer(graph, blocks),
-		History:      history, Remote: remote, Blocks: blocks, Roots: roots,
+		Plan: plan, LockPath: operationLock, Keys: keys, Sync: syncer,
+		Filesystem: filesystem, History: history, Roots: roots,
 		Protected: protected, RestoreProtected: restoreProtected,
 	}, blocks.Close)
 	if resultErr == nil {

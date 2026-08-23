@@ -27,6 +27,60 @@ func TestValidateSourceRejectsProtectedPathInEitherDirection(t *testing.T) {
 	}
 }
 
+func TestBindingMigratesLegacyArchiveNameToPathName(t *testing.T) {
+	created := time.Now().UTC().Format(time.RFC3339Nano)
+	var binding Binding
+	if err := json.Unmarshal([]byte(`{"id":"binding","name":"Documents","source":"/tmp/documents","archive_name":"Documents","created_at":"`+created+`"}`), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.PathName != "Documents" {
+		t.Fatalf("migrated path name = %q", binding.PathName)
+	}
+	data, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "archive_name") || !strings.Contains(string(data), `"path_name":"Documents"`) {
+		t.Fatalf("migrated binding JSON = %s", data)
+	}
+	if err := json.Unmarshal([]byte(`{"path_name":"one","archive_name":"two"}`), &binding); err == nil {
+		t.Fatal("conflicting legacy and current path names were accepted")
+	}
+}
+
+func TestResultMigratesLegacyRemotePathToProfile(t *testing.T) {
+	var result Result
+	if err := json.Unmarshal([]byte(`{"source":"plan","remote_path":"malt-backup/","candidate_root":"bafkqaaa"}`), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Profile != "malt-backup/" {
+		t.Fatalf("migrated result profile = %q", result.Profile)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "remote_path") || !strings.Contains(string(data), `"profile":"malt-backup/"`) {
+		t.Fatalf("migrated result JSON = %s", data)
+	}
+}
+
+func TestResultLegacyProfileMigrationRejectsAmbiguityAndResetsReceiver(t *testing.T) {
+	var result Result
+	if err := json.Unmarshal([]byte(`{"profile":"malt.encrypted-unixfs/v1"}`), &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"remote_path":"malt-backup/"}`), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Profile != "malt-backup/" {
+		t.Fatalf("reused result profile = %q", result.Profile)
+	}
+	if err := json.Unmarshal([]byte(`{"profile":"malt.encrypted-unixfs/v1","remote_path":"malt-backup/"}`), &result); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("ambiguous result fields error = %v", err)
+	}
+}
+
 func TestPlanStoreRequiresExplicitMergeAndRejectsOverlappingBindings(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "first")
@@ -69,6 +123,34 @@ func TestPlanStoreRequiresExplicitMergeAndRejectsOverlappingBindings(t *testing.
 		Source: nested, Merge: true, BindingName: "nested",
 	}); err == nil || !strings.Contains(err.Error(), "overlaps") {
 		t.Fatalf("overlapping binding error = %v", err)
+	}
+}
+
+func TestPlanStorePreservesWhitespaceInSourceAndPathName(t *testing.T) {
+	parent := t.TempDir()
+	spaced := filepath.Join(parent, "notes ")
+	plain := filepath.Join(parent, "notes")
+	for _, path := range []string{spaced, plain} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := OpenPlanStore(filepath.Join(t.TempDir(), "plans.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, binding, err := store.Bind(BindRequest{
+		BucketID: "bucket-a", BucketName: "documents", Branch: "main",
+		BindingName: "Notes", Source: spaced, PathName: "   ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.Source != spaced || binding.PathName != "   " {
+		t.Fatalf("binding paths = source %q path_name %q", binding.Source, binding.PathName)
+	}
+	if binding.Source == plain {
+		t.Fatal("whitespace-bearing source was redirected to its adjacent plain path")
 	}
 }
 

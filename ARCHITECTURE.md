@@ -94,7 +94,7 @@ The dependency direction is deliberate:
 ```text
 cmd/malt and internal/daemon -> application use cases
 application -> unixfs / merkledag / trust narrow ports
-application/backup -> add / bucketsync / unixfs narrow ports
+application/backup -> bucketsync / unixfs/encrypted / trusted-root narrow ports
 unixfs     -> MALT core verifier + narrow transport ports
 merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
@@ -222,36 +222,43 @@ No browser-facing loopback TCP service is opened. A future Web or native GUI
 may use the private management API, but it must not own backup, trust, or key
 policy.
 
-## Encrypted backup boundary
+## Encrypted filesystem backup boundary
 
-The backup application stores one opaque snapshot at
-`malt-backup/snapshot`. It tar/gzip encodes the source tree before applying
-XChaCha20 with a fresh 192-bit nonce. The format contains a small cleartext
-version/epoch/nonce header and no AEAD tag.
+The backup application stores the source tree directly as the runtime-owned
+`malt.encrypted-unixfs/v1` application profile. Dataset, directory, and file
+nodes are MALT Maps. Their `@payload` bindings authenticate encrypted
+manifests; regular file roots additionally authenticate `@content`, which is a
+raw ciphertext block or a MALT List of fixed-size ciphertext chunks. Directory
+Map keys are HMAC-derived opaque tokens. Plaintext names live only in the
+encrypted parent manifest, which is the shared `readdir` description for the
+daemon, filesystem adapter, local API, and authorized browser code.
 
-This construction is valid only under the enforced restore sequence:
+The enforced read sequence is:
 
 ```text
 caller-selected accepted/explicit root
     -> locally verified path ProofList
-    -> authenticated target/list and chunk CIDs
-    -> CID-verified encrypted archive bytes
-    -> XChaCha20 decryption
-    -> safe archive extraction
+    -> authenticated opaque-token target and payload CID
+    -> CID-verified encrypted manifest or file chunk
+    -> XChaCha20-Poly1305 decryption with bound context
+    -> verified directory view, file range, or safe materialization
 ```
 
-Consequently the stream cipher does not claim to authenticate remote bytes:
-MALT proofs and CIDs do that. Archive decoding detects an unavailable/wrong
-epoch as an operational error. An untrusted Gateway head, unchecked raw-CAS
-read, or decryption before CID verification must never enter this path.
+MALT proofs authenticate the selected relation, CIDs bind the returned
+ciphertext bytes, and AEAD rejects a wrong key, nonce, context, or modified
+ciphertext. An untrusted Gateway head, unchecked raw-CAS read, cache-presence
+shortcut, or decryption before ProofList/CID verification must never enter this
+path.
 
 The local keyring stores one master key per epoch with mode `0600`. A
 domain-separated HMAC-SHA-256 derivation produces a per-Bucket key in memory.
 Plaintext tree fingerprints used for automatic change detection remain in
-local history and are never uploaded. Original source names are inside the
-encrypted archive, although ciphertext size, update timing, the fixed remote
-path, and access patterns remain visible. This is a backup application profile;
-it does not silently change the existing plaintext semantics of `malt add`.
+local history and are never uploaded. Original source names are inside
+encrypted manifests, although ciphertext size, update timing, opaque-token
+relations, and access patterns remain visible. The epoch-1 namespace key keeps
+tokens stable across later content-key rotations. This is a runtime application
+profile; it does not change MALT Core or the existing plaintext semantics of
+`malt add`.
 
 ## Packages
 
@@ -260,7 +267,7 @@ it does not silently change the existing plaintext semantics of `malt add`.
   names and wire contracts are campaign inputs, not supported user CLI.
 - `application`: reusable trusted-root, UnixFS, and Merkle DAG use cases shared
   by command and daemon adapters.
-- `application/backup`: encrypted archive, local fingerprint, Bucket
+- `application/backup`: encrypted MALT-native filesystem, local fingerprint, Bucket
   publication, verified restore, history, and automatic scheduling use cases.
 - `application/add`: reusable ignore-aware local-input staging, symlink policy,
   hybrid MALT materialization, Merkle DAG import, and candidate recording.
@@ -370,6 +377,11 @@ it does not silently change the existing plaintext semantics of `malt add`.
 - `unixfs/model`: UnixFS application values and path rules.
 - `unixfs`: verified UnixFS reader/writer facade, staging, materialization,
   and payload verification.
+- `unixfs/encrypted`: runtime-owned encrypted dataset/directory/file manifest
+  profile, opaque namespace tokens, AEAD chunking, owner-local snapshot CAS,
+  local KZG/IPA Map/List computation, exact remote-publication checks,
+  verified full/range reads, and rooted plaintext materialization; it imports
+  no trust or concrete transport package.
 - `unixfs/clientroot`: flat-v1/hybrid-v1 filesystem-intent projection over a
   verified complete update view. It reconstructs and validates the existing
   manifest/tree projection, applies ordered journal intent, uploads canonical
@@ -380,7 +392,7 @@ it does not silently change the existing plaintext semantics of `malt add`.
 The `internal` packages are not compatibility promises. The public
 `application`, `application/writeback`, `bucketsync`, `cache`, `filesystem/service`,
 `filesystem/staging`, `filesystem/mount`, `journal`, `localapi`, `transport`,
-`trust`, `unixfs`, `unixfs/clientroot`, and
+`trust`, `unixfs`, `unixfs/encrypted`, `unixfs/clientroot`, and
 `merkledag` packages are the intended pre-release integration surface; their
 profiles remain experimental until a release policy is published.
 Architecture tests fail if production packages import evaluation support, if

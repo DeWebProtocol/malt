@@ -37,7 +37,7 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.Gateway.APIKey != "secret" || loaded.Gateway.Bucket != "bkt_one" || loaded.Workspace.StatePath == "" {
 		t.Fatalf("managed Gateway config = %#v, workspace = %#v", loaded.Gateway, loaded.Workspace)
 	}
-	if loaded.Backup.KeyringPath == "" || loaded.Backup.HistoryDir == "" || loaded.Backup.TempDir == "" {
+	if loaded.Backup.KeyringPath == "" || loaded.Backup.HistoryDir == "" || loaded.Backup.PlansPath == "" {
 		t.Fatalf("backup defaults missing: %#v", loaded.Backup)
 	}
 	if loaded.Transport.CASPolicy != CASPolicyGateway || loaded.Transport.LocalCASDir == "" {
@@ -63,6 +63,27 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 		loaded.Filesystem.WritableStateDir == "" || loaded.Filesystem.MaxStagedFileBytes == 0 ||
 		loaded.Transport.CASPolicy != CASPolicyGateway || loaded.Transport.LocalCASDir == "" {
 		t.Fatalf("daemon defaults missing: %#v", loaded.Daemon)
+	}
+}
+
+func TestLoadDropsLegacyBackupArchiveTempDirectoryOnRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"gateway":{"base_url":"http://127.0.0.1:9090"},"backup":{"temp_dir":"/legacy/archive-staging"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "temp_dir") || strings.Contains(string(data), "archive-staging") {
+		t.Fatalf("rewritten runtime config retained obsolete archive staging: %s", data)
 	}
 }
 

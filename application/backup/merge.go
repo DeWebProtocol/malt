@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -128,7 +129,7 @@ func mergePlaintextTrees(ctx context.Context, base, local, remote, destination s
 
 func scanPlaintextTree(ctx context.Context, root string) (map[string]*treeNode, error) {
 	result := map[string]*treeNode{}
-	if strings.TrimSpace(root) == "" {
+	if root == "" {
 		return result, nil
 	}
 	info, err := os.Lstat(root)
@@ -240,6 +241,100 @@ func plaintextContentFingerprint(ctx context.Context, root string) (string, erro
 	if err != nil {
 		return "", err
 	}
+	return plaintextNodeFingerprint(nodes), nil
+}
+
+func plaintextContentFingerprintRoot(ctx context.Context, parent *os.Root, relative string) (string, error) {
+	if parent == nil || relative == "" {
+		return "", fmt.Errorf("rooted plaintext fingerprint request is incomplete")
+	}
+	root, err := parent.OpenRoot(relative)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	nodes, err := scanPlaintextRoot(ctx, root)
+	if err != nil {
+		return "", err
+	}
+	return plaintextNodeFingerprint(nodes), nil
+}
+
+func scanPlaintextRoot(ctx context.Context, root *os.Root) (map[string]*treeNode, error) {
+	result := map[string]*treeNode{}
+	var walk func(string) error
+	walk = func(directoryPath string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		name := directoryPath
+		if name == "" {
+			name = "."
+		}
+		directory, err := root.Open(name)
+		if err != nil {
+			return err
+		}
+		children, readErr := directory.ReadDir(-1)
+		closeErr := directory.Close()
+		if readErr != nil || closeErr != nil {
+			return errors.Join(readErr, closeErr)
+		}
+		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
+		for _, child := range children {
+			relative := child.Name()
+			if directoryPath != "" {
+				relative = filepath.Join(directoryPath, relative)
+			}
+			info, err := root.Lstat(relative)
+			if err != nil {
+				return err
+			}
+			node := &treeNode{Mode: info.Mode()}
+			switch {
+			case info.IsDir():
+				node.Kind = "dir"
+				if err := walk(relative); err != nil {
+					return err
+				}
+			case info.Mode().IsRegular():
+				node.Kind = "file"
+				file, err := root.Open(relative)
+				if err != nil {
+					return err
+				}
+				opened, statErr := file.Stat()
+				if statErr != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+					_ = file.Close()
+					if statErr != nil {
+						return statErr
+					}
+					return fmt.Errorf("plaintext tree file changed while opened: %s", relative)
+				}
+				hash := sha256.New()
+				_, copyErr := io.Copy(hash, &contextReader{ctx: ctx, reader: file})
+				closeErr := file.Close()
+				if copyErr != nil || closeErr != nil {
+					return errors.Join(copyErr, closeErr)
+				}
+				node.Digest = hex.EncodeToString(hash.Sum(nil))
+			case info.Mode()&os.ModeSymlink != 0:
+				node.Kind = "symlink"
+				node.Link, err = root.Readlink(relative)
+				if err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("unsupported filesystem object in rooted plaintext tree: %s", relative)
+			}
+			result[relative] = node
+		}
+		return nil
+	}
+	return result, walk("")
+}
+
+func plaintextNodeFingerprint(nodes map[string]*treeNode) string {
 	paths := make([]string, 0, len(nodes))
 	for path := range nodes {
 		paths = append(paths, path)
@@ -256,7 +351,7 @@ func plaintextContentFingerprint(ctx context.Context, root string) (string, erro
 		writeMergeField(hash, []byte(node.Digest))
 		writeMergeField(hash, []byte(node.Link))
 	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
 func writeMergeField(writer io.Writer, value []byte) {

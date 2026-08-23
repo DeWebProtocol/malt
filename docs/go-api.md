@@ -253,24 +253,34 @@ capability and CAS; Cobra and concrete Gateway DTOs are not part of this
 package. `GraphGateway`, `Gateway`, and `NewGateway` remain deprecated aliases
 for one pre-release migration window.
 
-`application/backup` composes encrypted snapshot creation with those add and
-Bucket synchronization ports. `PlanStore` persists complete Branch plans and
-their disjoint local bindings. `PlanService.Backup` snapshots every changed
-binding before remote observation, stages before push, and returns the exact
-fast-forward, merge, or conflict-branch outcome. `PlanService.Sync` then
+`application/backup` composes the runtime-owned encrypted filesystem profile
+with Bucket synchronization ports. `PlanStore` persists complete Branch plans
+and their disjoint local bindings. Under the Plan operation lock,
+`PlanService.Backup` first recovers its Plan-exclusive ciphertext snapshot
+namespace, rejects pending or conflicted workspace state, then stages encrypted
+blocks in its owner-local CAS, computes Map/List roots with MALT Core, and
+requires exact Gateway CID/root equality before Bucket stage and push. Normal
+cleanup failures are returned and crash leftovers are retried on the next
+invocation. Unchanged bindings and manifest ciphertext are reused only from a
+locally accepted, fully verified base. It returns the exact fast-forward, merge,
+or conflict-branch outcome. `PlanService.Sync` then
 verifies and atomically installs every binding from the final remote root.
-`PlanService.RestoreTo` restores the complete encrypted manifest; it does not
-accept a remote subpath selector. `RestoreBranchTo` reconstructs a Plan from
-that encrypted manifest for a new device. The old single-snapshot Service,
-Restore, Job, and Scheduler model has been removed rather than retained as a
-second compatibility path.
+`PlanService.RestoreTo` restores the complete encrypted dataset; it does not
+accept an unverified remote subpath selector. `RestoreBranchTo` reconstructs a
+Plan from the verified encrypted dataset manifest for a new device. The old
+tar/gzip snapshot, single-snapshot Service, Restore, Job, and Scheduler models
+are removed rather than retained as parallel compatibility paths.
 
-The archive uses XChaCha20 without an AEAD tag because authenticated
-MALT/CID commitments are the integrity layer for this profile. The direct
-archive-decryption helper is package-private, so the exported restore path
-accepts only untrusted transport/CAS capabilities and constructs the standard
-local verifier internally; callers cannot inject a pretrusted reader or a
-permissive verifier to bypass trusted-root and verified-range checks.
+`unixfs/encrypted` owns `malt.encrypted-unixfs/v1`. Its local snapshot builder emits encrypted
+dataset/directory/file manifests, opaque HMAC-derived Map tokens, and
+XChaCha20-Poly1305 file chunks stored as raw blocks or fixed MALT Lists. The
+snapshot publisher compares every untrusted remote result with the locally
+computed CID or Root before it can become a Bucket candidate. Its
+reader accepts only untrusted Resolve/CAS capabilities, verifies each ProofList
+and ciphertext CID locally, then decrypts manifests or requested chunks. The
+API exposes dataset loading, directory enumeration, file open/full/range read,
+and safe binding materialization, so daemon, mount, local API, and browser
+adapters can share one manifest model without Gateway route types.
 `FingerprintSource` provides local-only plaintext change detection, while
 `History` implements durable exact-candidate push retries without importing
 configuration or transport implementations.
@@ -676,8 +686,10 @@ accepted-root promotion fence; if the root advanced, the pending batch becomes
 a durable conflict instead of disappearing from the overlay. Offline/conflict
 errors leave the exact batch recoverable; verified change records a candidate
 without acceptance; verified no-change and no-pending results make no
-remote-persistence claim. Nonzero encryption epochs fail closed until a local
-mount decryption layer exists. The daemon restores desired mounts on startup,
+remote-persistence claim. `unixfs/encrypted.Reader` now supplies the verified
+decryption capability, but nonzero encryption epochs still fail closed until
+that capability is routed through `filesystem/service` and the mount factory.
+The daemon restores desired mounts on startup,
 preserves them through graceful shutdown, and serves the manager through the
 private local API. Package `localapi` supplies the reusable control client used
 by:

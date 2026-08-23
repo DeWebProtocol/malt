@@ -17,10 +17,15 @@ response accepted without binding it to the uploaded block bytes.
 
 Encrypted-backup reports should include decryption before root/ProofList/CID
 verification, nonce reuse, keyring permission or replacement failures,
-plaintext path/fingerprint disclosure to the Gateway, unsafe tar extraction,
-symlink traversal, or automatic trust of a pushed Bucket head. The backup
-profile intentionally uses XChaCha20 without an AEAD tag; its remote integrity
-claim is valid only through the documented authenticated-root restore path.
+plaintext path/fingerprint disclosure to the Gateway, opaque-token derivation
+or enumeration failures, unsafe materialization, symlink traversal, or
+automatic trust of a pushed Bucket head. Every encrypted filesystem manifest
+and file chunk uses XChaCha20-Poly1305, but AEAD does not replace locally
+verifying the selected-root ProofList and ciphertext CID before decryption.
+Backup publication also computes Map/List Roots locally and rejects any remote
+CID or Root substitution. Unchanged remote bindings are never imported from an
+observed-only base, and local snapshot/restore traversal stays within pinned
+filesystem roots.
 
 Configurable local state and key paths must be placed in a dedicated
 owner-only directory. MALT applies owner-only file protection, including a

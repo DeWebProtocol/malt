@@ -24,7 +24,6 @@ func TestServicesOwnConfigurationAndPlanCompositionPaths(t *testing.T) {
 	cfg.Backup.KeyringPath = filepath.Join(root, "keys.json")
 	cfg.Backup.HistoryDir = filepath.Join(root, "history")
 	cfg.Backup.PlansPath = filepath.Join(root, "plans.json")
-	cfg.Backup.TempDir = filepath.Join(root, "staging")
 	cfg.Filesystem.MountsPath = filepath.Join(root, "mounts.json")
 	cfg.Filesystem.CacheDir = filepath.Join(root, "filesystem-cache")
 	cfg.Filesystem.WritableStateDir = filepath.Join(root, "filesystem-writeback")

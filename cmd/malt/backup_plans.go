@@ -112,7 +112,7 @@ func runBackupBind(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	source, err := filepath.Abs(strings.TrimSpace(args[0]))
+	source, err := resolveBackupBindingSource(args[0])
 	if err != nil {
 		return fmt.Errorf("resolve backup binding source: %w", err)
 	}
@@ -163,6 +163,17 @@ func runBackupBind(cmd *cobra.Command, args []string) error {
 	}
 	printJSON(map[string]any{"plan": plan, "binding": binding})
 	return nil
+}
+
+func resolveBackupBindingSource(raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("backup binding source is empty")
+	}
+	source, err := filepath.Abs(raw)
+	if err != nil {
+		return "", fmt.Errorf("resolve backup binding source: %w", err)
+	}
+	return source, nil
 }
 
 func resolveBucket(ctx context.Context, client *gatewayclient.Client, selector string) (gatewayclient.Bucket, error) {
@@ -361,9 +372,13 @@ func prepareSyncRetryWithConfirm(
 			continue
 		}
 		observed[failure.TrustAlias] = failure.ObservedRoot
+		rootKind := "observed remote root"
+		if failure.CandidateRecorded {
+			rootKind = "locally verified candidate root"
+		}
 		accepted, err := confirm(fmt.Sprintf(
-			"Plan %s observed remote root %s. Accept it for %s and continue sync?",
-			failure.PlanName, failure.ObservedRoot, failure.TrustAlias,
+			"Plan %s has %s %s. Accept it for %s and continue sync?",
+			failure.PlanName, rootKind, failure.ObservedRoot, failure.TrustAlias,
 		))
 		if err != nil || !accepted {
 			return false, err
@@ -382,11 +397,17 @@ func prepareSyncRetryWithConfirm(
 		if err != nil {
 			return false, err
 		}
-		if _, err := roots.AcceptObserved(
-			failure.TrustAlias, observedRoot, "unixfs",
-			cfg.GatewayBaseURL(), "explicit-malt-sync",
-		); err != nil {
-			return false, err
+		if failure.CandidateRecorded {
+			if _, err := roots.AcceptCandidate(failure.TrustAlias, observedRoot, "explicit-malt-sync"); err != nil {
+				return false, err
+			}
+		} else {
+			if _, err := roots.AcceptObserved(
+				failure.TrustAlias, observedRoot, "unixfs",
+				cfg.GatewayBaseURL(), "explicit-malt-sync",
+			); err != nil {
+				return false, err
+			}
 		}
 		trusted = true
 	}
