@@ -329,6 +329,12 @@ func TestRunFailsClosedForCapabilityAndFrozenWorkloadViolations(t *testing.T) {
 
 func TestCapabilityDocumentsFailClosedBoundaries(t *testing.T) {
 	capability := Capability()
+	if got, want := capability.SafetyLimits.MaximumJSONLRecordBytes, 512<<20; got != want {
+		t.Fatalf("maximum JSONL record bytes = %d, want %d", got, want)
+	}
+	if got, want := capability.SafetyLimits.MaximumDecodedPayloadBytes, 256<<20; got != want {
+		t.Fatalf("maximum decoded payload bytes = %d, want %d", got, want)
+	}
 	want := map[string]bool{
 		"directory_subtree_mutation": false,
 		"physical_backend_bytes":     false,

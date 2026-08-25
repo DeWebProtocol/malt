@@ -9,7 +9,7 @@ const (
 	runResultSchema      = "malt-rq3-malt-run-result/v1"
 	capabilityID         = "rq3.malt-kzg-public-ledger.v1"
 	systemMALTKZG        = "malt-kzg"
-	maxWorkerLineBytes   = 64 << 20
+	maxWorkerLineBytes   = rq3baseline.MaximumJSONLRecordBytes
 	maxWorkerRequests    = 2
 )
 
