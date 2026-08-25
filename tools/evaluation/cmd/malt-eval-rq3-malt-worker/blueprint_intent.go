@@ -41,6 +41,13 @@ func blueprintIntent(view mutation.UpdateView, oldGraph *hybridGraph, old, next 
 	slices.Sort(oldIDs)
 	oldByDigest := make(map[string]arcset.TargetRef, len(oldIDs))
 	for _, logicalID := range oldIDs {
+		// The top object identity must be consumed by the top transition because
+		// its OldRoot is the verified BaseRoot. If the same structure becomes a
+		// child in the next DAG, that child needs its own transition/output identity
+		// instead of reusing the base root that the top transition will replace.
+		if logicalID == old.topID {
+			continue
+		}
 		blueprint := old.objects[logicalID]
 		graphObject := oldGraph.objects[logicalID]
 		if blueprint == nil || graphObject == nil {
@@ -64,6 +71,7 @@ func blueprintIntent(view mutation.UpdateView, oldGraph *hybridGraph, old, next 
 	}
 
 	resolved := make(map[string]blueprintResolution, len(next.objects))
+	retainedOldRoots := make(map[string]struct{})
 	nextIDs := make([]string, 0, len(next.objects))
 	for logicalID := range next.objects {
 		nextIDs = append(nextIDs, logicalID)
@@ -77,6 +85,7 @@ func blueprintIntent(view mutation.UpdateView, oldGraph *hybridGraph, old, next 
 		if target, reusable := oldByDigest[blueprint.digest]; reusable {
 			copy := target
 			resolved[logicalID] = blueprintResolution{target: &copy}
+			retainedOldRoots[target.CID().KeyString()] = struct{}{}
 		}
 	}
 
@@ -119,7 +128,13 @@ func blueprintIntent(view mutation.UpdateView, oldGraph *hybridGraph, old, next 
 			}
 		} else if previous := oldGraph.objects[logicalID]; previous != nil {
 			candidate, ok := viewByRoot[previous.root.KeyString()]
-			if ok {
+			// Multiple logical objects may converge to one authenticated root. If
+			// any desired object still reuses that root, preserve its sole retained
+			// object identity and allocate a fresh identity for this transition.
+			// Consuming the shared identity would leave the next top object pointing
+			// at a semantic child that no longer exists in the retained view.
+			_, retained := retainedOldRoots[previous.root.KeyString()]
+			if ok && !retained {
 				if _, claimed := claimedViewObject[candidate.ObjectID]; !claimed {
 					source = candidate
 				}

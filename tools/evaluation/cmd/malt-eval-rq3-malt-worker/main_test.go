@@ -226,6 +226,150 @@ func TestOutputFreeBlueprintComputesSnapshotAndIncrementalRootsOnce(t *testing.T
 	}
 }
 
+func TestOutputFreeBlueprintRetainsSharedRootForPartiallyChangedAliases(t *testing.T) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
+	emptyState := map[string]logicalFile{}
+	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyBlueprint, err := buildBlueprint(emptyState, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := logicalFile{data: []byte("same"), mode: 0o644, digest: strings.Repeat("1", 64)}
+	snapshotState := map[string]logicalFile{"a.txt": shared, "b.txt": shared}
+	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := clientwriter.NewRuntime(
+		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot-shared", verified, snapshotIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
+	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
+		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
+	}
+
+	nextState := cloneLogicalState(snapshotState)
+	prior := nextState["a.txt"]
+	next := logicalFile{data: []byte("diff"), mode: 0o644, digest: strings.Repeat("2", 64)}
+	nextState["a.txt"] = next
+	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{{
+		path: "a.txt", before: &prior, after: &next,
+	}}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextIntent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "partial-shared-change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextComputed, err := runtime.ComputeBundle(t.Context(), "partial-shared-change", nextVerified, nextIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
+	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
+		t.Fatalf("incremental candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
+	}
+}
+
+func TestOutputFreeBlueprintRebuildsDemotedTopRootAsChild(t *testing.T) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
+	emptyState := map[string]logicalFile{}
+	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyBlueprint, err := buildBlueprint(emptyState, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := logicalFile{data: []byte("same"), mode: 0o644, digest: strings.Repeat("1", 64)}
+	snapshotState := map[string]logicalFile{"x": file}
+	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot-top-demotion")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := clientwriter.NewRuntime(
+		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot-top-demotion", verified, snapshotIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
+	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
+		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
+	}
+
+	nextState := map[string]logicalFile{"d/x": file}
+	prior := snapshotState["x"]
+	next := nextState["d/x"]
+	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{
+		{path: "x", before: &prior},
+		{path: "d/x", after: &next},
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextIntent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "top-demotion")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextComputed, err := runtime.ComputeBundle(t.Context(), "top-demotion", nextVerified, nextIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
+	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
+		t.Fatalf("incremental candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
+	}
+}
+
 func TestSubtreeRenameUpdatesAllBindingsIncrementallyAndMatchesFullOracle(t *testing.T) {
 	digest := func(value []byte) string {
 		sum := sha256.Sum256(value)
