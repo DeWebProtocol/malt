@@ -16,7 +16,7 @@ const (
 	maxFiles           = 10_000
 	maxCommits         = 4_096
 	maxMutations       = 65_536
-	maxPayloadBytes    = 32 << 20
+	maxPayloadBytes    = 256 << 20
 	maxChunkSizeBytes  = 16 << 20
 	maxProjectedChunks = 250_000
 	maxPathBytes       = 4_096

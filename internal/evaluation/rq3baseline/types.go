@@ -9,7 +9,7 @@ const (
 	WorkerResponseSchema    = "malt-rq3-hash-worker-response/v1"
 	RunResultSchema         = "malt-rq3-hash-run-result/v1"
 	CapabilitySchema        = "malt-rq3-hash-capability/v1"
-	MaximumJSONLRecordBytes = 64 << 20
+	MaximumJSONLRecordBytes = 512 << 20
 
 	OperationCapabilities = "capabilities"
 	OperationRun          = "run"
