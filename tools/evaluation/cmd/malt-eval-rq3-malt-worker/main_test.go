@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
@@ -17,6 +18,40 @@ import (
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
+
+func TestClassifiedCASBatchesRespectBackendTransactionEnvelope(t *testing.T) {
+	blocks := []classifiedBlock{
+		{block: clientcas.Block{Data: make([]byte, 4)}},
+		{block: clientcas.Block{Data: make([]byte, 4)}},
+		{block: clientcas.Block{Data: make([]byte, 1)}},
+	}
+	end, err := nextClassifiedBlockBatchEnd(blocks, 0, 3, 8, 16)
+	if err != nil || end != 2 {
+		t.Fatalf("first batch end = %d, %v; want 2", end, err)
+	}
+	end, err = nextClassifiedBlockBatchEnd(blocks, end, 3, 8, 16)
+	if err != nil || end != 3 {
+		t.Fatalf("second batch end = %d, %v; want 3", end, err)
+	}
+	end, err = nextClassifiedBlockBatchEnd(blocks, 0, 1, 8, 16)
+	if err != nil || end != 1 {
+		t.Fatalf("block-count batch end = %d, %v; want 1", end, err)
+	}
+	if _, err := nextClassifiedBlockBatchEnd(blocks, 2, 3, 0, 16); err == nil {
+		t.Fatal("non-positive byte bound was accepted")
+	}
+	large := []classifiedBlock{
+		{block: clientcas.Block{Data: make([]byte, 9)}},
+		{block: clientcas.Block{Data: make([]byte, 1)}},
+	}
+	if end, err := nextClassifiedBlockBatchEnd(large, 0, 2, 8, 16); err != nil || end != 1 {
+		t.Fatalf("large single-block batch end = %d, %v; want 1", end, err)
+	}
+	oversized := []classifiedBlock{{block: clientcas.Block{Data: make([]byte, 17)}}}
+	if _, err := nextClassifiedBlockBatchEnd(oversized, 0, 1, 8, 16); err == nil {
+		t.Fatal("oversized block was accepted")
+	}
+}
 
 func TestParseFlagsRequiresDistinctBootstrapAuthorization(t *testing.T) {
 	instanceToken := strings.Repeat("1", 64)
