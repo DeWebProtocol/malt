@@ -261,6 +261,90 @@ func TestOutputFreeBlueprintComputesSnapshotAndIncrementalRootsOnce(t *testing.T
 	}
 }
 
+func TestOutputFreeBlueprintRebuildsFixedListWhenTotalSizeChanges(t *testing.T) {
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
+	emptyState := map[string]logicalFile{}
+	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyBlueprint, err := buildBlueprint(emptyState, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotState := map[string]logicalFile{
+		"file.bin": {data: []byte("abc"), mode: 0o644, digest: strings.Repeat("1", 64)},
+	}
+	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot-size-change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := clientwriter.NewRuntime(
+		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot-size-change", verified, snapshotIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
+	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
+		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
+	}
+
+	nextState := cloneLogicalState(snapshotState)
+	prior := nextState["file.bin"]
+	next := prior
+	next.data = []byte("wxyz")
+	next.digest = strings.Repeat("2", 64)
+	nextState["file.bin"] = next
+	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{{
+		path: "file.bin", before: &prior, after: &next,
+	}}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "replace-size-change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundFreshFile := false
+	for _, transition := range intent.Transitions {
+		if transition.Commit.FixedList != nil && transition.Commit.FixedList.TotalSize == 4 {
+			foundFreshFile = !transition.OldRoot.Defined()
+		}
+	}
+	if !foundFreshFile {
+		t.Fatal("size-changing fixed list did not receive a fresh object identity")
+	}
+	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextComputed, err := runtime.ComputeBundle(t.Context(), "replace-size-change", nextVerified, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
+	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
+		t.Fatalf("size-change candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
+	}
+}
+
 func TestOutputFreeBlueprintRetainsSharedRootForPartiallyChangedAliases(t *testing.T) {
 	scheme, err := kzg.NewScheme()
 	if err != nil {
