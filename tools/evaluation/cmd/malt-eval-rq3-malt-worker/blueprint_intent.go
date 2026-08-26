@@ -126,7 +126,7 @@ func blueprintIntent(view mutation.UpdateView, oldGraph *hybridGraph, old, next 
 			if !ok {
 				return mutation.SemanticIntent{}, fmt.Errorf("verified view omits its top object")
 			}
-		} else if previous := oldGraph.objects[logicalID]; previous != nil {
+		} else if previous := oldGraph.objects[logicalID]; previous != nil && blueprintSupportsInPlaceTransition(old.objects[logicalID], desired) {
 			candidate, ok := viewByRoot[previous.root.KeyString()]
 			// Multiple logical objects may converge to one authenticated root. If
 			// any desired object still reuses that root, preserve its sole retained
@@ -254,6 +254,38 @@ func blueprintIntent(view mutation.UpdateView, oldGraph *hybridGraph, old, next 
 		Transitions: transitions, TopOutputID: top,
 	}
 	return mutation.NormalizeSemanticIntent(view, intent)
+}
+
+// blueprintSupportsInPlaceTransition mirrors Core's authenticated fixed-list
+// update rules. Incompatible geometry receives a fresh semantic object; its
+// parent transition then replaces the child root without claiming an invalid
+// in-place list update.
+func blueprintSupportsInPlaceTransition(before, after *semanticBlueprint) bool {
+	if before == nil || after == nil || before.kind != after.kind {
+		return false
+	}
+	if before.kind != arcset.KindList {
+		return true
+	}
+	oldFixed, newFixed := before.commit.FixedList, after.commit.FixedList
+	if (oldFixed == nil) != (newFixed == nil) {
+		return false
+	}
+	if oldFixed == nil {
+		return true
+	}
+	if oldFixed.ChunkSize == 0 || oldFixed.ChunkSize != newFixed.ChunkSize {
+		return false
+	}
+	oldCount, newCount := uint64(len(before.entries)), uint64(len(after.entries))
+	switch {
+	case newCount < oldCount:
+		return false
+	case newCount == oldCount:
+		return oldFixed.TotalSize == newFixed.TotalSize
+	default:
+		return oldFixed.TotalSize%oldFixed.ChunkSize == 0 && newFixed.TotalSize > oldFixed.TotalSize
+	}
 }
 
 func unusedBlueprintObjectID(existing map[string]struct{}, commitID, logicalID, digest string) string {
