@@ -27,6 +27,11 @@ const (
 	gatewayAccountingProfile = "gateway.client-root-write-accounting/v1"
 	gatewayByteMethod        = "logical-kv-key-plus-value-bytes/v1"
 	canonicalEmptySetupCause = "canonical-empty-setup:"
+
+	// The formal evaluation Gateway uses Badger's default 64 MiB memtable,
+	// whose atomic transaction ceiling is 15% of that size. Keep the decoded
+	// CAS payload below that ceiling after keys and size sidecars are added.
+	maximumEvaluationGatewayCASBatchBytes = 8 << 20
 )
 
 var gatewayCategories = []string{"semantic-materialization", "arctable-records", "root-version-metadata"}
@@ -243,17 +248,9 @@ func attributeCanonicalEmptySetup(result, setup *runResult, firstCommitID string
 
 func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commitID string, blocks []classifiedBlock, roles map[string]string, result *runResult) error {
 	for start := 0; start < len(blocks); {
-		end, bytes := start, 0
-		for end < len(blocks) && end-start < transport.MaxCASBatchBlocks {
-			length := len(blocks[end].block.Data)
-			if end > start && bytes > transport.MaxCASBatchBytes-length {
-				break
-			}
-			if length > transport.MaxCASBatchBytes {
-				return fmt.Errorf("CAS block exceeds transport batch byte bound")
-			}
-			bytes += length
-			end++
+		end, err := nextClassifiedBlockBatchEnd(blocks, start, transport.MaxCASBatchBlocks, maximumEvaluationGatewayCASBatchBytes, transport.MaxCASBatchBytes)
+		if err != nil {
+			return err
 		}
 		batch := make([]transport.Block, end-start)
 		for index := range batch {
@@ -303,6 +300,34 @@ func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commi
 		start = end
 	}
 	return nil
+}
+
+func nextClassifiedBlockBatchEnd(blocks []classifiedBlock, start, maximumBlocks, maximumBatchBytes, maximumSingleBlockBytes int) (int, error) {
+	if start < 0 || start >= len(blocks) {
+		return 0, fmt.Errorf("CAS batch start %d is outside %d blocks", start, len(blocks))
+	}
+	if maximumBlocks <= 0 || maximumBatchBytes <= 0 || maximumSingleBlockBytes < maximumBatchBytes {
+		return 0, fmt.Errorf("CAS batch bounds must be positive and the single-block bound must cover the aggregate bound")
+	}
+	end, bytes := start, 0
+	for end < len(blocks) && end-start < maximumBlocks {
+		length := len(blocks[end].block.Data)
+		if length > maximumSingleBlockBytes {
+			return 0, fmt.Errorf("CAS block exceeds transport batch byte bound")
+		}
+		// Badger stores a large value through a value pointer, so one legal
+		// transport block may exceed the conservative aggregate payload bound.
+		// Send that block alone and never combine it with neighboring blocks.
+		if end == start && length > maximumBatchBytes {
+			return start + 1, nil
+		}
+		if length > maximumBatchBytes || bytes > maximumBatchBytes-length {
+			break
+		}
+		bytes += length
+		end++
+	}
+	return end, nil
 }
 
 func signedNet(gross, reclaimed uint64) (int64, error) {
