@@ -121,15 +121,16 @@ func (w *campaignWorker) validateHealth(ctx context.Context) error {
 		return fmt.Errorf("Gateway health: %w", err)
 	}
 	if health.Status != "ok" || health.EvaluationInstanceToken != w.config.instanceToken ||
-		health.BlobBackend != "embedded" || health.KVBackend != "fs" || health.ArcTableMode != "versioned" ||
+		health.BlobBackend != "filesystem" || health.KVBackend != "fs" || health.ArcTableMode != "versioned" ||
 		health.CommitmentProfile != "kzg" || health.CommitmentBackends != "ipa,kzg" ||
 		health.EvaluationCASWriteAccounting != healthCASAccounting || health.EvaluationCASWriteIsolation != healthCASIsolation ||
-		health.ClientRootWriteAccounting != gatewayAccountingProfile ||
+		health.ClientRootExactAcceptance != "false" || health.ClientRootWriteAccounting != "" ||
+		health.EvaluationClientRootBootstrap != "" ||
 		health.EvaluationRQ3FlatMap != gatewaytransport.FlatMapProfile ||
 		health.EvaluationRQ3FlatMapStorageScope != "arctable-arcset-key-plus-value-only/v1" ||
 		health.EvaluationRQ3FlatMapCheckpoint != "false" ||
 		health.EvaluationRQ3FlatMapMaterializationCache != "none" {
-		return fmt.Errorf("Gateway health does not expose the exact disposable embedded/versioned/KZG evaluation boundary")
+		return fmt.Errorf("Gateway health does not expose the exact disposable FSKV-ArcTable/filesystem-CAS/KZG evaluation boundary")
 	}
 	return nil
 }
