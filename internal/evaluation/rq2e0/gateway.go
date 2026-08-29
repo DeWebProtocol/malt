@@ -202,8 +202,8 @@ func (g *ConformanceGateway) handleClientRoot(response http.ResponseWriter, requ
 		response.Header().Set(name, value)
 	}
 	accounting, _ := json.Marshal(map[string]any{
-		"profile": "gateway.client-root-write-accounting/v1", "available": false,
-		"unavailable_reason": "writer-conformance-e0", "byte_method": "logical-kv-key-plus-value-bytes/v1", "categories": []any{},
+		"profile": "gateway.client-root-write-accounting/v2", "available": false,
+		"unavailable_reason": "writer-conformance-e0", "byte_method": "durable-kv-key-plus-value-bytes/v2", "categories": []any{},
 	})
 	response.Header().Set("X-Malt-Client-Root-Write-Accounting", base64.RawURLEncoding.EncodeToString(accounting))
 	_ = json.NewEncoder(response).Encode(wireReceipt)

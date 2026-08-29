@@ -219,10 +219,10 @@ func setWriteAccountingHeader(t *testing.T, header http.Header) {
 
 func validWriteAccounting() client.ClientRootWriteAccounting {
 	accounting := client.ClientRootWriteAccounting{
-		Profile: "gateway.client-root-write-accounting/v1", Available: true,
-		ByteMethod: "logical-kv-key-plus-value-bytes/v1", ObjectLedgerSHA256: strings.Repeat("a", 64),
+		Profile: "gateway.client-root-write-accounting/v2", Available: true,
+		ByteMethod: "durable-kv-key-plus-value-bytes/v2", ObjectLedgerSHA256: strings.Repeat("a", 64),
 	}
-	for _, category := range []string{"semantic-materialization", "arctable-records", "root-version-metadata"} {
+	for _, category := range []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"} {
 		accounting.Categories = append(accounting.Categories, client.ClientRootWriteCategoryAccounting{
 			Category: category, AttemptedWrites: 1, AttemptedBytes: 2, AttemptedNewWrites: 1, AttemptedNewBytes: 2,
 			NewlyPersistedWrites: 1, GrossNewBytes: 2, NewWrites: 1, NewBytes: 2, NetBytes: 2,
@@ -258,7 +258,7 @@ func TestClientRootTransportRejectsHostileWriteAccounting(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string][]byte{
-		"duplicate key":       bytes.Replace(validRaw, []byte(`{"profile":`), []byte(`{"profile":"gateway.client-root-write-accounting/v1","profile":`), 1),
+		"duplicate key":       bytes.Replace(validRaw, []byte(`{"profile":`), []byte(`{"profile":"gateway.client-root-write-accounting/v2","profile":`), 1),
 		"unknown field":       bytes.Replace(validRaw, []byte(`{"profile":`), []byte(`{"surprise":1,"profile":`), 1),
 		"inconsistent totals": inconsistentRaw,
 	}

@@ -36,11 +36,11 @@ const (
 	defaultMaxBlobResponseBytes  int64 = 64 << 20
 	defaultMaxErrorResponseBytes int64 = 1 << 20
 
-	clientRootWriteAccountingProfile = "gateway.client-root-write-accounting/v1"
-	clientRootWriteByteMethod        = "logical-kv-key-plus-value-bytes/v1"
+	clientRootWriteAccountingProfile = "gateway.client-root-write-accounting/v2"
+	clientRootWriteByteMethod        = "durable-kv-key-plus-value-bytes/v2"
 )
 
-var clientRootWriteCategories = []string{"semantic-materialization", "arctable-records", "root-version-metadata"}
+var clientRootWriteCategories = []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"}
 
 type Options struct {
 	BaseURL               string
@@ -65,18 +65,22 @@ type Client struct {
 // Health is the strict evaluation projection of Gateway health. The public
 // transport health value deliberately omits these evaluator-only capabilities.
 type Health struct {
-	Status                        string `json:"status"`
-	EvaluationInstanceToken       string `json:"evaluation_instance_token,omitempty"`
-	KVBackend                     string `json:"kv_backend,omitempty"`
-	BlobBackend                   string `json:"blob_backend,omitempty"`
-	ArcTableMode                  string `json:"arctable_mode,omitempty"`
-	CommitmentProfile             string `json:"default_commitment_backend,omitempty"`
-	CommitmentBackends            string `json:"commitment_backends,omitempty"`
-	EvaluationCASWriteAccounting  string `json:"evaluation_cas_write_accounting,omitempty"`
-	EvaluationCASWriteIsolation   string `json:"evaluation_cas_write_isolation,omitempty"`
-	ClientRootWriteAccounting     string `json:"client_root_write_accounting,omitempty"`
-	ClientRootExactAcceptance     string `json:"client_root_exact_acceptance,omitempty"`
-	EvaluationClientRootBootstrap string `json:"evaluation_client_root_bootstrap,omitempty"`
+	Status                                   string `json:"status"`
+	EvaluationInstanceToken                  string `json:"evaluation_instance_token,omitempty"`
+	KVBackend                                string `json:"kv_backend,omitempty"`
+	BlobBackend                              string `json:"blob_backend,omitempty"`
+	ArcTableMode                             string `json:"arctable_mode,omitempty"`
+	CommitmentProfile                        string `json:"default_commitment_backend,omitempty"`
+	CommitmentBackends                       string `json:"commitment_backends,omitempty"`
+	EvaluationCASWriteAccounting             string `json:"evaluation_cas_write_accounting,omitempty"`
+	EvaluationCASWriteIsolation              string `json:"evaluation_cas_write_isolation,omitempty"`
+	ClientRootWriteAccounting                string `json:"client_root_write_accounting,omitempty"`
+	ClientRootExactAcceptance                string `json:"client_root_exact_acceptance,omitempty"`
+	EvaluationClientRootBootstrap            string `json:"evaluation_client_root_bootstrap,omitempty"`
+	EvaluationRQ3FlatMap                     string `json:"evaluation_rq3_flat_map,omitempty"`
+	EvaluationRQ3FlatMapStorageScope         string `json:"evaluation_rq3_flat_map_storage_scope,omitempty"`
+	EvaluationRQ3FlatMapCheckpoint           string `json:"evaluation_rq3_flat_map_checkpoint,omitempty"`
+	EvaluationRQ3FlatMapMaterializationCache string `json:"evaluation_rq3_flat_map_materialization_cache,omitempty"`
 }
 
 type BootstrapEntry struct {

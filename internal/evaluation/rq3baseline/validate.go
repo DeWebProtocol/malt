@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	maxFiles           = 10_000
+	maxFiles           = 1_000_000
 	maxCommits         = 4_096
 	maxMutations       = 65_536
 	maxPayloadBytes    = 256 << 20
@@ -61,6 +62,148 @@ type logicalFile struct {
 	data []byte
 	mode uint32
 	hash string
+	size int
+}
+
+// ValidationStreamSession performs only strict frozen-source validation and
+// accounting. It retains the live logical tree, but creates no UnixFS Editor
+// and no historical CAS, so another adapter can prevalidate without warming or
+// duplicating a baseline implementation.
+type ValidationStreamSession struct {
+	spec        RunSpec
+	state       map[string]logicalFile
+	seenCommits map[string]struct{}
+	payloads    *payloadStore
+	failed      bool
+}
+
+func StartValidationStream(spec RunSpec) (_ *ValidationStreamSession, _ SourceCommitAccounting, returnErr error) {
+	if spec.Commits == nil || len(spec.Commits) != 0 {
+		return nil, SourceCommitAccounting{}, fmt.Errorf("validation stream start requires an explicit empty commit chunk")
+	}
+	payloads, err := newPayloadStore()
+	if err != nil {
+		return nil, SourceCommitAccounting{}, err
+	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			returnErr = errors.Join(returnErr, retryCleanup(payloads.close))
+		}
+	}()
+	state, source, err := prepareStreamSnapshot(spec, payloads)
+	if err != nil {
+		return nil, SourceCommitAccounting{}, err
+	}
+	if err := payloads.reconcile(state); err != nil {
+		return nil, SourceCommitAccounting{}, fmt.Errorf("reconcile validation snapshot payloads: %w", err)
+	}
+	minimal := RunSpec{System: spec.System, Layout: spec.Layout}
+	succeeded = true
+	return &ValidationStreamSession{spec: minimal, state: state, seenCommits: map[string]struct{}{spec.Snapshot.CommitID: {}}, payloads: payloads}, source, nil
+}
+
+// prepareStreamSnapshot validates and spills one initial snapshot without
+// ever retaining a preparedRun containing all decoded file bodies. The input
+// request still owns its encoded corpus, while live semantic state contains
+// only path/mode/digest/size metadata backed by the private payload store.
+func prepareStreamSnapshot(spec RunSpec, payloads *payloadStore) (map[string]logicalFile, SourceCommitAccounting, error) {
+	if payloads == nil {
+		return nil, SourceCommitAccounting{}, fmt.Errorf("stream snapshot payload store is nil")
+	}
+	if err := validateLayout(spec.System, spec.Layout); err != nil {
+		return nil, SourceCommitAccounting{}, err
+	}
+	if err := validateCommitID("snapshot commit_id", spec.Snapshot.CommitID); err != nil {
+		return nil, SourceCommitAccounting{}, err
+	}
+	if spec.Snapshot.Files == nil {
+		return nil, SourceCommitAccounting{}, fmt.Errorf("snapshot files must be an explicit array")
+	}
+	if len(spec.Snapshot.Files) == 0 {
+		return nil, SourceCommitAccounting{}, &UnsupportedError{Gap: "empty_snapshot", Message: "empty snapshot is unsupported because the current Editor cannot materialize or resume an empty directory root"}
+	}
+	if len(spec.Snapshot.Files) > maxFiles {
+		return nil, SourceCommitAccounting{}, fmt.Errorf("snapshot has %d files; maximum is %d", len(spec.Snapshot.Files), maxFiles)
+	}
+	if spec.Commits == nil || len(spec.Commits) != 0 {
+		return nil, SourceCommitAccounting{}, fmt.Errorf("stream start commits must be an explicit empty array")
+	}
+
+	state := make(map[string]logicalFile, len(spec.Snapshot.Files))
+	totalPayload, totalProjectedChunks := 0, 0
+	previousPath := ""
+	for index, file := range spec.Snapshot.Files {
+		if err := validateFileKind(fmt.Sprintf("snapshot files[%d].file_kind", index), file.FileKind); err != nil {
+			return nil, SourceCommitAccounting{}, err
+		}
+		if err := validateCanonicalPath(fmt.Sprintf("snapshot files[%d].path", index), file.Path); err != nil {
+			return nil, SourceCommitAccounting{}, err
+		}
+		if index > 0 && file.Path <= previousPath {
+			return nil, SourceCommitAccounting{}, fmt.Errorf("snapshot files must be strictly sorted by path; %q follows %q", file.Path, previousPath)
+		}
+		previousPath = file.Path
+		mode, err := validateMode(fmt.Sprintf("snapshot files[%d].mode", index), file.Mode)
+		if err != nil {
+			return nil, SourceCommitAccounting{}, err
+		}
+		data, err := decodePayload(fmt.Sprintf("snapshot files[%d]", index), file.PayloadBase64, file.PayloadSHA256)
+		if err != nil {
+			return nil, SourceCommitAccounting{}, err
+		}
+		totalPayload += len(data)
+		if totalPayload > maxPayloadBytes {
+			return nil, SourceCommitAccounting{}, fmt.Errorf("decoded payload bytes exceed %d", maxPayloadBytes)
+		}
+		totalProjectedChunks += projectedChunks(len(data), spec.Layout.Chunking.SizeBytes)
+		if totalProjectedChunks > maxProjectedChunks {
+			return nil, SourceCommitAccounting{}, fmt.Errorf("projected payload chunks exceed %d", maxProjectedChunks)
+		}
+		if conflict := conflictingPath(state, file.Path, ""); conflict != "" {
+			return nil, SourceCommitAccounting{}, fmt.Errorf("snapshot path %q conflicts with file path %q", file.Path, conflict)
+		}
+		retained, err := retainLogicalFile(data, mode, file.PayloadSHA256, payloads)
+		if err != nil {
+			return nil, SourceCommitAccounting{}, err
+		}
+		state[file.Path] = retained
+	}
+	return state, SourceCommitAccounting{
+		CommitID: spec.Snapshot.CommitID, LogicalObjectsChanged: len(state), LogicalBindingsChanged: len(state),
+		AdapterPayloadInputBytes: int64(totalPayload),
+	}, nil
+}
+
+func (s *ValidationStreamSession) ApplyChunk(commits []Commit) ([]SourceCommitAccounting, error) {
+	if s == nil || s.failed {
+		return nil, fmt.Errorf("validation stream is not active")
+	}
+	_, nextState, nextSeen, source, err := prepareStreamChunk(s.spec, s.state, s.seenCommits, commits, s.payloads)
+	if err != nil {
+		s.failed = true
+		return nil, err
+	}
+	if err := s.payloads.reconcile(nextState); err != nil {
+		s.failed = true
+		return nil, fmt.Errorf("reconcile validation chunk payloads: %w", err)
+	}
+	s.state, s.seenCommits = nextState, nextSeen
+	return source, nil
+}
+
+// Close releases the disk-backed live checkout retained for semantic checks.
+func (s *ValidationStreamSession) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.failed = true
+	s.state = nil
+	err := s.payloads.close()
+	if err == nil {
+		s.payloads = nil
+	}
+	return err
 }
 
 // ValidateAndAccountSource validates the entire frozen workload without
@@ -162,7 +305,7 @@ func prepare(spec RunSpec) (*preparedRun, error) {
 		if conflict := conflictingPath(state, file.Path, ""); conflict != "" {
 			return nil, fmt.Errorf("snapshot path %q conflicts with file path %q", file.Path, conflict)
 		}
-		state[file.Path] = logicalFile{data: cloneBytes(data), mode: mode, hash: file.PayloadSHA256}
+		state[file.Path] = logicalFile{data: cloneBytes(data), mode: mode, hash: file.PayloadSHA256, size: len(data)}
 		preparedSnapshot = append(preparedSnapshot, preparedFile{path: file.Path, data: data, mode: mode, hash: file.PayloadSHA256})
 	}
 
@@ -177,8 +320,8 @@ func prepare(spec RunSpec) (*preparedRun, error) {
 			return nil, fmt.Errorf("duplicate commit_id %q", commit.CommitID)
 		}
 		seenCommits[commit.CommitID] = struct{}{}
-		if commit.Mutations == nil || len(commit.Mutations) == 0 {
-			return nil, fmt.Errorf("commit %q must contain at least one mutation", commit.CommitID)
+		if commit.Mutations == nil {
+			return nil, fmt.Errorf("commit %q mutations must be an explicit array", commit.CommitID)
 		}
 		mutationCount += len(commit.Mutations)
 		if mutationCount > maxMutations {
@@ -186,7 +329,7 @@ func prepare(spec RunSpec) (*preparedRun, error) {
 		}
 		prepared := preparedCommit{id: commit.CommitID, mutations: make([]preparedMutation, 0, len(commit.Mutations))}
 		for mutationIndex, mutation := range commit.Mutations {
-			decoded, addedPayload, err := validateAndApplyMutation(state, commit.CommitID, mutationIndex, mutation)
+			decoded, addedPayload, err := validateAndApplyMutation(state, commit.CommitID, mutationIndex, mutation, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -255,7 +398,7 @@ func validateLayout(system string, layout LayoutSpec) error {
 	return nil
 }
 
-func validateAndApplyMutation(state map[string]logicalFile, commitID string, index int, mutation Mutation) ([]byte, int, error) {
+func validateAndApplyMutation(state map[string]logicalFile, commitID string, index int, mutation Mutation, store *payloadStore) ([]byte, int, error) {
 	label := fmt.Sprintf("commit %q mutation[%d]", commitID, index)
 	if err := validateFileKind(label+".file_kind", mutation.FileKind); err != nil {
 		return nil, 0, err
@@ -283,7 +426,11 @@ func validateAndApplyMutation(state map[string]logicalFile, commitID string, ind
 		if err != nil {
 			return nil, 0, err
 		}
-		state[mutation.Path] = logicalFile{data: cloneBytes(data), mode: mode, hash: mutation.PayloadSHA256}
+		retained, err := retainLogicalFile(data, mode, mutation.PayloadSHA256, store)
+		if err != nil {
+			return nil, 0, err
+		}
+		state[mutation.Path] = retained
 		return data, len(data), nil
 
 	case MutationReplace, MutationAppend:
@@ -306,11 +453,22 @@ func validateAndApplyMutation(state map[string]logicalFile, commitID string, ind
 			return nil, 0, err
 		}
 		if mutation.Kind == MutationAppend {
-			if len(data) <= len(old.data) || !bytes.Equal(data[:len(old.data)], old.data) {
+			oldData, err := store.read(old)
+			if store == nil {
+				oldData, err = old.data, nil
+			}
+			if err != nil {
+				return nil, 0, fmt.Errorf("%s read old append payload: %w", label, err)
+			}
+			if len(data) <= len(oldData) || !bytes.Equal(data[:len(oldData)], oldData) {
 				return nil, 0, fmt.Errorf("%s append payload must strictly extend the old payload", label)
 			}
 		}
-		state[mutation.Path] = logicalFile{data: cloneBytes(data), mode: mode, hash: mutation.PayloadSHA256}
+		retained, err := retainLogicalFile(data, mode, mutation.PayloadSHA256, store)
+		if err != nil {
+			return nil, 0, err
+		}
+		state[mutation.Path] = retained
 		return data, len(data), nil
 
 	case MutationModeChange:
@@ -331,7 +489,8 @@ func validateAndApplyMutation(state map[string]logicalFile, commitID string, ind
 		if mode == expectedMode {
 			return nil, 0, fmt.Errorf("%s mode-change must change the mode", label)
 		}
-		state[mutation.Path] = logicalFile{data: cloneBytes(old.data), mode: mode, hash: old.hash}
+		old.mode = mode
+		state[mutation.Path] = old
 		return nil, 0, nil
 
 	case MutationDelete:
@@ -385,7 +544,7 @@ func validateAndApplyMutation(state map[string]logicalFile, commitID string, ind
 			return nil, 0, fmt.Errorf("%s destination conflicts with file %q", label, conflict)
 		}
 		delete(state, mutation.Path)
-		state[mutation.Destination] = logicalFile{data: cloneBytes(old.data), mode: old.mode, hash: old.hash}
+		state[mutation.Destination] = old
 		return nil, 0, nil
 
 	default:

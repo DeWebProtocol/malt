@@ -1,5 +1,5 @@
-// Command malt-eval-rq3-malt-worker executes the paper RQ3 MALT-KZG hybrid
-// write path against one disposable, token-bound Gateway.
+// Command malt-eval-rq3-malt-worker executes the paper RQ3 MALT-flat-KZG
+// path-to-blob write path against one disposable, token-bound Gateway.
 package main
 
 import (
@@ -68,7 +68,7 @@ func parseFlags(arguments []string) (workerConfig, error) {
 	}, nil
 }
 
-func runWorker(ctx context.Context, input io.Reader, output io.Writer, worker *campaignWorker) error {
+func runWorker(ctx context.Context, input io.Reader, output io.Writer, worker *campaignWorker) (returnErr error) {
 	if worker == nil {
 		return fmt.Errorf("RQ3 MALT worker is nil")
 	}
@@ -78,10 +78,23 @@ func runWorker(ctx context.Context, input io.Reader, output io.Writer, worker *c
 	encoder.SetEscapeHTML(false)
 	requests := 0
 	capabilityPassed := false
+	var stream *flatDirectStream
+	closeStream := func() error {
+		if stream == nil {
+			return nil
+		}
+		err := stream.close()
+		if err == nil {
+			stream = nil
+		}
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeStream()) }()
+	terminal := false
 	for scanner.Scan() {
 		requests++
 		if requests > maxWorkerRequests {
-			return fmt.Errorf("RQ3 MALT worker accepts exactly two request records")
+			return fmt.Errorf("RQ3 MALT worker exceeds %d-request process limit", maxWorkerRequests)
 		}
 		if err := ctx.Err(); err != nil {
 			return err
@@ -89,8 +102,16 @@ func runWorker(ctx context.Context, input io.Reader, output io.Writer, worker *c
 		request, err := decodeWorkerRequest(scanner.Bytes())
 		var response workerResponse
 		if err != nil {
+			if stream != nil {
+				err = errors.Join(err, closeStream())
+				terminal = true
+			}
 			response = failedResponse("", "invalid_request", err)
 		} else if err := validateRequestEnvelope(request, requests, capabilityPassed); err != nil {
+			if stream != nil {
+				err = errors.Join(err, closeStream())
+				terminal = true
+			}
 			response = failedResponse(request.RequestID, "invalid_request", err)
 		} else if request.Operation == "capabilities" {
 			capability := supportedCapability()
@@ -106,14 +127,51 @@ func runWorker(ctx context.Context, input io.Reader, output io.Writer, worker *c
 					SchemaVersion: workerResponseSchema, RequestID: request.RequestID, OK: true, Capability: &capability,
 				}
 			}
+		} else if terminal {
+			response = failedResponse(request.RequestID, "invalid_request", fmt.Errorf("worker run is already complete"))
 		} else {
-			result, err := worker.run(ctx, *request.Run)
-			if err != nil {
-				response = failedResponse(request.RequestID, "invalid_or_failed_run", err)
-			} else {
-				response = workerResponse{
-					SchemaVersion: workerResponseSchema, RequestID: request.RequestID, OK: true, Result: result,
+			switch request.Operation {
+			case operationRun:
+				terminal = true
+				result, err := worker.run(ctx, *request.Run)
+				if err != nil {
+					response = failedResponse(request.RequestID, "invalid_or_failed_run", err)
+				} else {
+					terminal = true
+					response = workerResponse{SchemaVersion: workerResponseSchema, RequestID: request.RequestID, OK: true, Result: result}
 				}
+			case operationStreamStart:
+				started, result, err := worker.startFlatDirectStream(ctx, *request.Run)
+				if err != nil {
+					terminal = true
+					response = failedResponse(request.RequestID, "invalid_or_failed_stream_start", err)
+				} else {
+					stream = started
+					response = workerResponse{SchemaVersion: workerResponseSchema, RequestID: request.RequestID, OK: true, Result: result}
+				}
+			case operationStreamChunk:
+				if stream == nil {
+					response = failedResponse(request.RequestID, "invalid_request", fmt.Errorf("stream is not active"))
+				} else if result, err := stream.applyChunk(ctx, *request.Run); err != nil {
+					err = errors.Join(err, closeStream())
+					terminal = true
+					response = failedResponse(request.RequestID, "invalid_or_failed_stream_chunk", err)
+				} else {
+					response = workerResponse{SchemaVersion: workerResponseSchema, RequestID: request.RequestID, OK: true, Result: result}
+				}
+			case operationStreamFinish:
+				if stream == nil {
+					response = failedResponse(request.RequestID, "invalid_request", fmt.Errorf("stream is not active"))
+				} else if status, err := stream.finish(ctx); err != nil {
+					err = errors.Join(err, closeStream())
+					terminal = true
+					response = failedResponse(request.RequestID, "invalid_or_failed_stream_finish", err)
+				} else {
+					stream, terminal = nil, true
+					response = workerResponse{SchemaVersion: workerResponseSchema, RequestID: request.RequestID, OK: true, Stream: &status}
+				}
+			default:
+				panic("validated operation is not handled")
 			}
 		}
 		if err := encoder.Encode(response); err != nil {
@@ -123,12 +181,14 @@ func runWorker(ctx context.Context, input io.Reader, output io.Writer, worker *c
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read bounded worker JSONL: %w", err)
 	}
-	if requests != maxWorkerRequests {
-		return fmt.Errorf("RQ3 MALT worker received %d request records, want exactly two", requests)
+	if stream != nil {
+		return fmt.Errorf("RQ3 MALT worker ended before stream-finish")
+	}
+	if requests < 2 || !terminal {
+		return fmt.Errorf("RQ3 MALT worker ended before a complete run")
 	}
 	return nil
 }
-
 func decodeWorkerRequest(line []byte) (workerRequest, error) {
 	if len(bytes.TrimSpace(line)) == 0 {
 		return workerRequest{}, fmt.Errorf("JSONL record is empty")
@@ -165,20 +225,27 @@ func validateRequestEnvelope(request workerRequest, sequence int, capabilityPass
 		}
 	}
 	switch request.Operation {
-	case "capabilities":
+	case operationCapabilities:
 		if sequence != 1 || request.Run != nil {
 			return fmt.Errorf("capabilities must be the first request and omit run")
 		}
-	case "run":
+	case operationRun, operationStreamStart:
 		if sequence != 2 || !capabilityPassed || request.Run == nil {
-			return fmt.Errorf("run must follow a successful capability preflight and include run")
+			return fmt.Errorf("%s must follow capability preflight and include run", request.Operation)
+		}
+	case operationStreamChunk:
+		if sequence < 3 || !capabilityPassed || request.Run == nil {
+			return fmt.Errorf("stream-chunk must follow stream-start and include run")
+		}
+	case operationStreamFinish:
+		if sequence < 3 || !capabilityPassed || request.Run != nil {
+			return fmt.Errorf("stream-finish must follow stream-start and omit run")
 		}
 	default:
 		return fmt.Errorf("unsupported operation %q", request.Operation)
 	}
 	return nil
 }
-
 func failedResponse(requestID, code string, err error) workerResponse {
 	return workerResponse{
 		SchemaVersion: workerResponseSchema, RequestID: requestID, OK: false,

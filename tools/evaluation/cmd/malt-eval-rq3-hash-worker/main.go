@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 
@@ -55,12 +56,18 @@ func run(ctx context.Context, arguments []string, input io.Reader, output io.Wri
 	return runWorker(ctx, input, output)
 }
 
-func runWorker(ctx context.Context, input io.Reader, output io.Writer) error {
+func runWorker(ctx context.Context, input io.Reader, output io.Writer) (returnErr error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64<<10), maxJSONLRecordBytes)
 	encoder := json.NewEncoder(output)
 	encoder.SetEscapeHTML(false)
 	requests := 0
+	handler := workerHandler{}
+	defer func() {
+		if handler.stream != nil {
+			returnErr = errors.Join(returnErr, handler.stream.Close())
+		}
+	}()
 	for scanner.Scan() {
 		requests++
 		if requests > maxWorkerRequests {
@@ -69,7 +76,7 @@ func runWorker(ctx context.Context, input io.Reader, output io.Writer) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		response := handleLine(ctx, scanner.Bytes())
+		response := handler.handleLine(ctx, scanner.Bytes())
 		if err := encoder.Encode(response); err != nil {
 			return fmt.Errorf("encode worker response: %w", err)
 		}
@@ -77,20 +84,55 @@ func runWorker(ctx context.Context, input io.Reader, output io.Writer) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read JSONL request (maximum record %d bytes): %w", maxJSONLRecordBytes, err)
 	}
+	if handler.stream != nil {
+		return fmt.Errorf("RQ3 hash worker ended before stream-finish")
+	}
+	if requests < 2 || !handler.terminal {
+		return fmt.Errorf("RQ3 hash worker ended before a complete run")
+	}
 	return nil
 }
 
+type workerHandler struct {
+	stream           *rq3baseline.StreamSession
+	system           string
+	layout           rq3baseline.LayoutSpec
+	applied          uint32
+	requests         int
+	capabilityPassed bool
+	terminal         bool
+}
+
 func handleLine(ctx context.Context, line []byte) rq3baseline.WorkerResponse {
+	return (&workerHandler{}).handleLine(ctx, line)
+}
+
+func (h *workerHandler) handleLine(ctx context.Context, line []byte) rq3baseline.WorkerResponse {
+	h.requests++
 	request, err := decodeRequest(line)
 	if err != nil {
+		if h.stream != nil {
+			err = errors.Join(err, h.poison())
+		}
 		return errorResponse("", "invalid_request", err, "")
 	}
 	if err := validateEnvelope(request); err != nil {
+		if h.stream != nil {
+			err = errors.Join(err, h.poison())
+		}
 		return errorResponse(request.RequestID, "invalid_request", err, "")
+	}
+	if h.terminal {
+		return errorResponse(request.RequestID, "invalid_request", errors.New("worker run is already complete or poisoned"), "")
 	}
 	switch request.Operation {
 	case rq3baseline.OperationCapabilities:
+		if h.requests != 1 || h.capabilityPassed {
+			h.terminal = true
+			return errorResponse(request.RequestID, "invalid_request", errors.New("capabilities must be the first request"), "")
+		}
 		capability := rq3baseline.Capability()
+		h.capabilityPassed = true
 		return rq3baseline.WorkerResponse{
 			SchemaVersion: rq3baseline.WorkerResponseSchema,
 			RequestID:     request.RequestID,
@@ -98,6 +140,10 @@ func handleLine(ctx context.Context, line []byte) rq3baseline.WorkerResponse {
 			Capability:    &capability,
 		}
 	case rq3baseline.OperationRun:
+		if !h.capabilityPassed || h.requests != 2 || h.stream != nil {
+			return errorResponse(request.RequestID, "invalid_request", errors.New("one-shot run cannot overlap a stream"), "")
+		}
+		h.terminal = true
 		result, err := rq3baseline.Run(ctx, *request.Run)
 		if err != nil {
 			var unsupported *rq3baseline.UnsupportedError
@@ -112,9 +158,71 @@ func handleLine(ctx context.Context, line []byte) rq3baseline.WorkerResponse {
 			OK:            true,
 			Result:        result,
 		}
+	case rq3baseline.OperationStreamStart:
+		if !h.capabilityPassed || h.requests != 2 || h.stream != nil {
+			return errorResponse(request.RequestID, "invalid_request", errors.New("hash stream is already active"), "")
+		}
+		session, record, err := rq3baseline.StartStream(ctx, *request.Run)
+		if err != nil {
+			h.terminal = true
+			return errorResponse(request.RequestID, "invalid_or_failed_stream_start", err, "")
+		}
+		h.stream, h.system, h.layout, h.applied = session, request.Run.System, request.Run.Layout, 1
+		return rq3baseline.WorkerResponse{SchemaVersion: rq3baseline.WorkerResponseSchema, RequestID: request.RequestID, OK: true, Stream: &rq3baseline.StreamResult{System: h.system, Layout: h.layout, Records: []rq3baseline.CommitRecord{record}, Root: session.Root(), CommitsApplied: h.applied}}
+	case rq3baseline.OperationStreamChunk:
+		if !h.capabilityPassed || h.stream == nil || request.Run.System != h.system || !reflect.DeepEqual(request.Run.Layout, h.layout) || request.Run.Snapshot.CommitID != "" || request.Run.Snapshot.Files != nil {
+			if h.stream != nil {
+				return errorResponse(request.RequestID, "invalid_request", errors.Join(errors.New("hash stream chunk does not bind the active system/layout or carries a snapshot"), h.poison()), "")
+			}
+			return errorResponse(request.RequestID, "invalid_request", errors.New("hash stream chunk does not bind the active system/layout or carries a snapshot"), "")
+		}
+		records, err := h.stream.ApplyChunk(ctx, request.Run.Commits)
+		if err != nil {
+			closeErr := h.stream.Close()
+			if closeErr == nil {
+				h.stream = nil
+			}
+			h.terminal = true
+			return errorResponse(request.RequestID, "invalid_or_failed_stream_chunk", errors.Join(err, closeErr), "")
+		}
+		h.applied += uint32(len(records))
+		return rq3baseline.WorkerResponse{SchemaVersion: rq3baseline.WorkerResponseSchema, RequestID: request.RequestID, OK: true, Stream: &rq3baseline.StreamResult{System: h.system, Layout: h.layout, Records: records, Root: h.stream.Root(), CommitsApplied: h.applied}}
+	case rq3baseline.OperationStreamFinish:
+		if !h.capabilityPassed || h.stream == nil {
+			return errorResponse(request.RequestID, "invalid_request", errors.New("hash stream is not active"), "")
+		}
+		commitListSHA256, err := h.stream.CommitListSHA256()
+		if err != nil {
+			closeErr := h.stream.Close()
+			if closeErr == nil {
+				h.stream = nil
+			}
+			h.terminal = true
+			return errorResponse(request.RequestID, "invalid_or_failed_stream_finish", errors.Join(err, closeErr), "")
+		}
+		stream := &rq3baseline.StreamResult{System: h.system, Layout: h.layout, Records: []rq3baseline.CommitRecord{}, Root: h.stream.Root(), CommitsApplied: h.applied, Complete: true, CommitListSHA256: commitListSHA256}
+		if err := h.stream.Close(); err != nil {
+			h.terminal = true
+			return errorResponse(request.RequestID, "invalid_or_failed_stream_finish", err, "")
+		}
+		h.stream = nil
+		h.terminal = true
+		return rq3baseline.WorkerResponse{SchemaVersion: rq3baseline.WorkerResponseSchema, RequestID: request.RequestID, OK: true, Stream: stream}
 	default:
 		panic("validated operation is not handled")
 	}
+}
+
+func (h *workerHandler) poison() error {
+	var err error
+	if h.stream != nil {
+		err = h.stream.Close()
+		if err == nil {
+			h.stream = nil
+		}
+	}
+	h.terminal = true
+	return err
 }
 
 func decodeRequest(line []byte) (rq3baseline.WorkerRequest, error) {
@@ -210,9 +318,13 @@ func validateEnvelope(request rq3baseline.WorkerRequest) error {
 		if request.Run != nil {
 			return fmt.Errorf("capabilities request must not include run")
 		}
-	case rq3baseline.OperationRun:
+	case rq3baseline.OperationRun, rq3baseline.OperationStreamStart, rq3baseline.OperationStreamChunk:
 		if request.Run == nil {
-			return fmt.Errorf("run request must include run")
+			return fmt.Errorf("%s request must include run", request.Operation)
+		}
+	case rq3baseline.OperationStreamFinish:
+		if request.Run != nil {
+			return fmt.Errorf("stream-finish request must omit run")
 		}
 	default:
 		return fmt.Errorf("unsupported operation %q", request.Operation)
