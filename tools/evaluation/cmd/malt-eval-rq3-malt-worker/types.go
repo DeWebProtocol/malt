@@ -7,7 +7,7 @@ const (
 	workerResponseSchema         = "malt-rq3-malt-worker-response/v2"
 	capabilitySchema             = "malt-rq3-malt-boundary-capability/v2"
 	runResultSchema              = "malt-rq3-malt-run-result/v2"
-	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v3"
+	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v4"
 	systemMALTFlat               = "malt-flat"
 	operationCapabilities        = "capabilities"
 	operationRun                 = "run"
@@ -183,7 +183,7 @@ func supportedCapability() capability {
 		ArcTablePersistence: "fskv-versioned-delta-only-append/v1", CheckpointEnabled: false, MaterializationCache: "none",
 		Boundary: []string{
 			"MALT-flat one-map canonical-path to whole-file-CID layout using current Core radix Map with fixed KZG",
-			"Gateway embedded CAS exact batch dispositions",
+			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
 			"Gateway FSKV exact delta-only ArcTable accounting of canonical ArcSet key-plus-value bytes; checkpoints disabled; no materialization cache",
 		},
 		Supported: true,

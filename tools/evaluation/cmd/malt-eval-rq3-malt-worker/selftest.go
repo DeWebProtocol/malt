@@ -399,7 +399,7 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 func maltAdapterV5ExpectedCapability() capability {
 	return capability{
 		SchemaVersion:        "malt-rq3-malt-boundary-capability/v2",
-		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v3",
+		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v4",
 		LayoutProfile:        "malt-flat-canonical-path-map/v1",
 		CommitmentBackend:    "kzg",
 		KVBackend:            "fs",
@@ -409,7 +409,7 @@ func maltAdapterV5ExpectedCapability() capability {
 		System:               "malt-flat",
 		Boundary: []string{
 			"MALT-flat one-map canonical-path to whole-file-CID layout using current Core radix Map with fixed KZG",
-			"Gateway embedded CAS exact batch dispositions",
+			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
 			"Gateway FSKV exact delta-only ArcTable accounting of canonical ArcSet key-plus-value bytes; checkpoints disabled; no materialization cache",
 		},
 		Supported: true,
