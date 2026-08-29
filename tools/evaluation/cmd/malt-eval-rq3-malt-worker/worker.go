@@ -17,9 +17,6 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
-	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt-core/protocol"
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -42,7 +39,13 @@ type workerConfig struct {
 type campaignWorker struct {
 	config     workerConfig
 	remote     *transport.Client
-	evaluation *gatewaytransport.Client
+	evaluation evaluationGateway
+}
+
+type evaluationGateway interface {
+	Health(context.Context) (*gatewaytransport.Health, error)
+	BootstrapEvaluationObject(context.Context, string, gatewaytransport.BootstrapObject) (gatewaytransport.BootstrapResult, error)
+	ApplyEvaluationFlatMap(context.Context, string, gatewaytransport.FlatMapMutation) (gatewaytransport.FlatMapResult, error)
 }
 
 type clientRootRemote struct{ client *transport.Client }
@@ -118,11 +121,14 @@ func (w *campaignWorker) validateHealth(ctx context.Context) error {
 		return fmt.Errorf("Gateway health: %w", err)
 	}
 	if health.Status != "ok" || health.EvaluationInstanceToken != w.config.instanceToken ||
-		health.BlobBackend != "embedded" || health.ArcTableMode != "versioned" ||
+		health.BlobBackend != "embedded" || health.KVBackend != "fs" || health.ArcTableMode != "versioned" ||
 		health.CommitmentProfile != "kzg" || health.CommitmentBackends != "ipa,kzg" ||
 		health.EvaluationCASWriteAccounting != healthCASAccounting || health.EvaluationCASWriteIsolation != healthCASIsolation ||
-		health.ClientRootWriteAccounting != gatewayAccountingProfile || health.ClientRootExactAcceptance != "true" ||
-		health.EvaluationClientRootBootstrap != gatewaytransport.BootstrapProfile {
+		health.ClientRootWriteAccounting != gatewayAccountingProfile ||
+		health.EvaluationRQ3FlatMap != gatewaytransport.FlatMapProfile ||
+		health.EvaluationRQ3FlatMapStorageScope != "arctable-arcset-key-plus-value-only/v1" ||
+		health.EvaluationRQ3FlatMapCheckpoint != "false" ||
+		health.EvaluationRQ3FlatMapMaterializationCache != "none" {
 		return fmt.Errorf("Gateway health does not expose the exact disposable embedded/versioned/KZG evaluation boundary")
 	}
 	return nil
@@ -135,6 +141,9 @@ func (w *campaignWorker) run(ctx context.Context, spec runSpec) (*runResult, err
 	if err := validateWorkloadIdentity(spec.Workload); err != nil {
 		return nil, err
 	}
+	if spec.CommitManifest != nil {
+		return nil, fmt.Errorf("one-shot run must not carry a stream commit manifest")
+	}
 	if err := validateFrozenCommitListBinding(spec); err != nil {
 		return nil, err
 	}
@@ -144,222 +153,13 @@ func (w *campaignWorker) run(ctx context.Context, spec runSpec) (*runResult, err
 	if spec.InitialRoot != "" {
 		return nil, fmt.Errorf("nonempty initial_root cannot fairly account the frozen snapshot; a clean disposable Gateway is required")
 	}
+	if err := prevalidateMALTFlatRun(spec); err != nil {
+		return nil, err
+	}
 	if err := w.validateHealth(ctx); err != nil {
 		return nil, err
 	}
-
-	baselineSpec := rq3baseline.RunSpec{
-		System: rq3baseline.SystemMerkleDAGUnixFS,
-		Layout: rq3baseline.LayoutSpec{
-			Model: "unixfs", FileLayout: "balanced", DirectoryLayout: "basic",
-			Chunking:   rq3baseline.ChunkingSpec{Algorithm: "fixed", SizeBytes: int(spec.Workload.ChunkBytes)},
-			HAMTFanout: 0, RawFileLeaf: boolPointer(true),
-		},
-		Snapshot: spec.Snapshot, Commits: spec.Commits,
-	}
-	sourceAccounting, err := rq3baseline.ValidateAndAccountSource(baselineSpec)
-	if err != nil {
-		return nil, fmt.Errorf("frozen workload semantic prevalidation: %w", err)
-	}
-	if len(sourceAccounting) != len(spec.Commits)+1 {
-		return nil, fmt.Errorf("semantic prevalidation returned mismatched source accounting")
-	}
-
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		return nil, fmt.Errorf("initialize local KZG: %w", err)
-	}
-	setupBuilder := graphBuilder{chunkBytes: spec.Workload.ChunkBytes, scheme: scheme, store: materializermemory.New(true)}
-	oracleBuilder := graphBuilder{chunkBytes: spec.Workload.ChunkBytes, scheme: scheme, store: materializermemory.New(true)}
-	runtime, err := clientwriter.NewRuntime(
-		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
-	)
-	if err != nil {
-		return nil, err
-	}
-	session, err := clientrootapp.New(clientRootRemote{client: w.remote}, runtime)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &runResult{
-		SchemaVersion: runResultSchema, CapabilityID: capabilityID, System: systemMALTKZG,
-		PassMode: spec.PassMode, RunPhase: spec.RunPhase, ClusterID: spec.ClusterID, RunIndex: spec.RunIndex,
-		Workload: spec.Workload, Commits: make([]commitRecord, 0, len(sourceAccounting)), WriteEvents: []writeEvent{},
-	}
-	roles := make(map[string]string)
-
-	// A single canonical empty top object is the evaluator-only setup needed to
-	// obtain an authenticated base. It is not a separately timed workload
-	// operation: the frozen snapshot below is the first real operation and uses
-	// the same client-root product path as every subsequent commit. Its durable
-	// allocations are nevertheless real state in the clean Gateway directory,
-	// so the accounting pass attributes them to the first snapshot commit and
-	// marks their causes as canonical-empty setup. This keeps the logical ledger
-	// reconcilable with physical state without contaminating snapshot latency.
-	setupState := map[string]logicalFile{}
-	setupBlueprint, err := buildBlueprint(setupState, spec.Workload.ChunkBytes)
-	if err != nil {
-		return nil, fmt.Errorf("build canonical empty setup blueprint: %w", err)
-	}
-	setupGraph, err := setupBuilder.build(ctx, setupState)
-	if err != nil {
-		return nil, fmt.Errorf("build canonical empty setup root: %w", err)
-	}
-	setupObject := setupGraph.objects[setupGraph.topID]
-	if len(setupGraph.objects) != 1 || len(setupGraph.order) != 1 || setupGraph.order[0] != setupGraph.topID ||
-		len(setupBlueprint.objects) != 1 || len(setupBlueprint.order) != 1 || setupBlueprint.order[0] != setupBlueprint.topID ||
-		setupGraph.topID != setupBlueprint.topID || setupObject == nil || !setupGraph.root.Equals(setupObject.root) {
-		return nil, fmt.Errorf("canonical empty setup must contain exactly one authenticated top object")
-	}
-	setupSink := &runResult{PassMode: spec.PassMode, WriteEvents: []writeEvent{}}
-	if err := uploadClassifiedBlocks(ctx, w.remote, spec.Snapshot.CommitID, sortedManifestBlocks(setupGraph), roles, setupSink); err != nil {
-		return nil, fmt.Errorf("upload canonical empty setup metadata: %w", err)
-	}
-	if _, _, err := w.bootstrapGraph(ctx, spec.Snapshot.CommitID, setupGraph, setupSink); err != nil {
-		return nil, fmt.Errorf("bootstrap canonical empty setup root: %w", err)
-	}
-	attributeCanonicalEmptySetup(result, setupSink, spec.Snapshot.CommitID)
-
-	snapshotStarted := time.Now()
-	_, err = session.Load(ctx, setupGraph.root, evaluationBounds())
-	if err != nil {
-		return nil, fmt.Errorf("load canonical empty setup root: %w", err)
-	}
-	state, snapshotBlocks, err := initialLogicalState(spec.Snapshot, spec.Workload.ChunkBytes)
-	if err != nil {
-		return nil, err
-	}
-	snapshotBlueprint, err := buildBlueprint(state, spec.Workload.ChunkBytes)
-	if err != nil {
-		return nil, fmt.Errorf("plan output-free snapshot blueprint: %w", err)
-	}
-	view, err := session.SnapshotView()
-	if err != nil {
-		return nil, err
-	}
-	snapshotIntent, err := blueprintIntent(view, setupGraph, setupBlueprint, snapshotBlueprint, spec.Snapshot.CommitID)
-	if err != nil {
-		return nil, fmt.Errorf("plan output-free snapshot intent: %w", err)
-	}
-	snapshotBlocks = append(snapshotBlocks, blueprintManifestChanges(setupBlueprint, snapshotBlueprint)...)
-	if err := uploadClassifiedBlocks(ctx, w.remote, spec.Snapshot.CommitID, snapshotBlocks, roles, result); err != nil {
-		return nil, err
-	}
-	snapshotOperation, err := session.Execute(ctx, operationID(spec.Snapshot.CommitID, 0), snapshotIntent)
-	if err != nil {
-		return nil, fmt.Errorf("execute exact snapshot client root: %w", err)
-	}
-	snapshotClientNS := durationNanos(time.Since(snapshotStarted))
-	if snapshotOperation.Idempotent || !snapshotOperation.Receipt.Candidate.Equals(snapshotOperation.Candidate) {
-		return nil, fmt.Errorf("snapshot Gateway receipt does not match the locally computed candidate")
-	}
-	if spec.PassMode == "accounting" {
-		if err := result.appendGatewayAccounting(spec.Snapshot.CommitID, accountingFromApplication(snapshotOperation.Metrics.WriteAccounting)); err != nil {
-			return nil, err
-		}
-	}
-	replayNS, err := evaluatorNanos(snapshotOperation.Metrics.Gateway.GatewayReplayNS)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot Gateway replay duration: %w", err)
-	}
-	persistNS, err := evaluatorNanos(snapshotOperation.Metrics.Gateway.PersistNS)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot Gateway persist duration: %w", err)
-	}
-	snapshotOracle, err := oracleBuilder.build(ctx, state)
-	if err != nil || !snapshotOracle.root.Equals(snapshotOperation.Candidate) {
-		if err == nil {
-			err = fmt.Errorf("candidate %s differs from independent oracle %s", snapshotOperation.Candidate, snapshotOracle.root)
-		}
-		return nil, fmt.Errorf("untimed independent snapshot oracle: %w", err)
-	}
-	logical := sourceAccounting[0]
-	result.Commits = append(result.Commits, commitRecord{
-		Order: 0, CommitID: spec.Snapshot.CommitID, Root: snapshotOperation.Candidate.String(), HistoryRootsRetained: 1,
-		NonWorkloadSetupRootsRetained: 1,
-		LogicalObjectsChanged:         logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged,
-		LogicalPayloadBytes: logical.AdapterPayloadInputBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes,
-		ClientComputeWallNS: snapshotClientNS,
-		GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS,
-		OracleUnmeasured: true,
-	})
-	graph := snapshotOracle
-	blueprint := snapshotBlueprint
-	changedChunksOnly := spec.Workload.Kind == "git-first-parent" || isControlledListHistory(spec)
-	for index, commit := range spec.Commits {
-		operationStarted := time.Now()
-		blocks, canonicalPayloadBytes, changes, err := applyFrozenCommit(state, commit, spec.Workload.ChunkBytes, changedChunksOnly)
-		if err != nil {
-			return nil, err
-		}
-		nextBlueprint, err := buildBlueprintNext(blueprint, state, changes, spec.Workload.ChunkBytes)
-		if err != nil {
-			return nil, err
-		}
-		view, err := session.SnapshotView()
-		if err != nil {
-			return nil, err
-		}
-		intent, err := blueprintIntent(view, graph, blueprint, nextBlueprint, commit.CommitID)
-		if err != nil {
-			return nil, err
-		}
-		blocks = append(blocks, blueprintManifestChanges(blueprint, nextBlueprint)...)
-		if err := uploadClassifiedBlocks(ctx, w.remote, commit.CommitID, blocks, roles, result); err != nil {
-			return nil, err
-		}
-		operation, err := session.Execute(ctx, operationID(commit.CommitID, uint32(index+1)), intent)
-		if err != nil {
-			return nil, fmt.Errorf("execute exact client root for %q: %w", commit.CommitID, err)
-		}
-		clientNS := durationNanos(time.Since(operationStarted))
-		if operation.Idempotent || !operation.Receipt.Candidate.Equals(operation.Candidate) {
-			return nil, fmt.Errorf("Gateway receipt for %q does not match the locally computed candidate", commit.CommitID)
-		}
-		if spec.PassMode == "accounting" {
-			if err := result.appendGatewayAccounting(commit.CommitID, accountingFromApplication(operation.Metrics.WriteAccounting)); err != nil {
-				return nil, err
-			}
-		}
-		gatewayReplayNS, err := evaluatorNanos(operation.Metrics.Gateway.GatewayReplayNS)
-		if err != nil {
-			return nil, fmt.Errorf("Gateway replay duration for %q: %w", commit.CommitID, err)
-		}
-		gatewayPersistNS, err := evaluatorNanos(operation.Metrics.Gateway.PersistNS)
-		if err != nil {
-			return nil, fmt.Errorf("Gateway persist duration for %q: %w", commit.CommitID, err)
-		}
-		logical = sourceAccounting[index+1]
-		oracleGraph, err := oracleBuilder.build(ctx, state)
-		if err != nil {
-			return nil, fmt.Errorf("untimed full-build oracle for %q: %w", commit.CommitID, err)
-		}
-		if !oracleGraph.root.Equals(operation.Candidate) {
-			return nil, fmt.Errorf("single-compute candidate for %q does not match the untimed independent full-build oracle", commit.CommitID)
-		}
-		result.Commits = append(result.Commits, commitRecord{
-			Order: uint32(index + 1), CommitID: commit.CommitID, ParentRoot: graph.root.String(), Root: operation.Candidate.String(),
-			HistoryRootsRetained: uint32(index + 2), NonWorkloadSetupRootsRetained: 1,
-			LogicalObjectsChanged:  logical.LogicalObjectsChanged,
-			LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: canonicalPayloadBytes,
-			AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes,
-			ClientComputeWallNS:      clientNS, GatewayReplayWallNS: gatewayReplayNS,
-			GatewayPersistWallNS: gatewayPersistNS, OracleUnmeasured: true,
-		})
-		graph = oracleGraph
-		blueprint = nextBlueprint
-	}
-	if err := session.Audit(ctx); err != nil {
-		return nil, fmt.Errorf("audit retained client-root session: %w", err)
-	}
-	if spec.PassMode == "timing" && len(result.WriteEvents) != 0 {
-		return nil, fmt.Errorf("timing pass retained byte-accounting events")
-	}
-	if err := postMeasurementBaselineConformance(ctx, baselineSpec, result, rq3baseline.Run); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return w.runFlatDirect(ctx, spec)
 }
 
 // validateFrozenCommitListBinding closes the last source-to-worker identity
@@ -372,6 +172,23 @@ func validateFrozenCommitListBinding(spec runSpec) error {
 	for _, commit := range spec.Commits {
 		commitIDs = append(commitIDs, commit.CommitID)
 	}
+	return validateCommitManifest(spec.Workload, commitIDs)
+}
+
+func validateCommitManifest(workload workloadIdentity, commitIDs []string) error {
+	if len(commitIDs) == 0 || len(commitIDs) > maximumMALTCommitManifest {
+		return fmt.Errorf("frozen commit manifest requires 1..%d entries", maximumMALTCommitManifest)
+	}
+	seen := make(map[string]struct{}, len(commitIDs))
+	for index, commitID := range commitIDs {
+		if commitID == "" || len(commitID) > 256 {
+			return fmt.Errorf("frozen commit manifest entry %d is invalid", index)
+		}
+		if _, duplicate := seen[commitID]; duplicate {
+			return fmt.Errorf("frozen commit manifest repeats commit_id %q", commitID)
+		}
+		seen[commitID] = struct{}{}
+	}
 	encoded, err := json.Marshal(struct {
 		Commits []string `json:"commits"`
 	}{Commits: commitIDs})
@@ -379,7 +196,7 @@ func validateFrozenCommitListBinding(spec runSpec) error {
 		return fmt.Errorf("encode frozen commit-list binding: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
-	if hex.EncodeToString(digest[:]) != spec.Workload.CommitListSHA256 {
+	if hex.EncodeToString(digest[:]) != workload.CommitListSHA256 {
 		return fmt.Errorf("frozen snapshot/commit sequence does not match workload commit_list_sha256")
 	}
 	return nil
@@ -457,7 +274,7 @@ func (w *campaignWorker) bootstrapGraph(ctx context.Context, commitID string, gr
 			Entries: entries, Commit: object.commit,
 		})
 		if err != nil {
-			return 0, 0, fmt.Errorf("bootstrap hybrid object %q: %w", logicalID, err)
+			return 0, 0, fmt.Errorf("bootstrap flat object %q: %w", logicalID, err)
 		}
 		if result.PassMode == "accounting" {
 			if err := result.appendGatewayAccounting(commitID, accountingFromTransport(bootstrap.WriteAccounting)); err != nil {

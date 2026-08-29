@@ -395,7 +395,7 @@ func validBootstrapMapObject(t *testing.T) gatewaytransport.BootstrapObject {
 
 func validWriteAccounting() transport.ClientRootWriteAccounting {
 	categories := make([]transport.ClientRootWriteCategoryAccounting, 0, 3)
-	for _, category := range []string{"semantic-materialization", "arctable-records", "root-version-metadata"} {
+	for _, category := range []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"} {
 		categories = append(categories, transport.ClientRootWriteCategoryAccounting{
 			Category: category, AttemptedWrites: 1, AttemptedBytes: 2,
 			AttemptedNewWrites: 1, AttemptedNewBytes: 2,
@@ -404,8 +404,8 @@ func validWriteAccounting() transport.ClientRootWriteAccounting {
 		})
 	}
 	return transport.ClientRootWriteAccounting{
-		Profile: "gateway.client-root-write-accounting/v1", Available: true,
-		ByteMethod:         "logical-kv-key-plus-value-bytes/v1",
+		Profile: "gateway.client-root-write-accounting/v2", Available: true,
+		ByteMethod:         "durable-kv-key-plus-value-bytes/v2",
 		ObjectLedgerSHA256: strings.Repeat("c", 64), Categories: categories,
 	}
 }

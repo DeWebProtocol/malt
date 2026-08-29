@@ -3,7 +3,12 @@ package rq3baseline
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -23,15 +28,12 @@ const (
 	statusDuplicateInCommit = "duplicate_in_commit"
 )
 
-type storedBlock struct {
-	codec uint64
-	data  []byte
-}
-
 type accountingStore struct {
 	mu sync.Mutex
 
-	blocks map[string]storedBlock
+	root    string
+	initErr error
+	closed  bool
 
 	phaseAttempts map[string]struct{}
 	events        []CASWriteEvent
@@ -42,7 +44,8 @@ type accountingStore struct {
 }
 
 func newAccountingStore() *accountingStore {
-	return &accountingStore{blocks: make(map[string]storedBlock)}
+	root, err := os.MkdirTemp("", "malt-rq3-logical-cas-")
+	return &accountingStore{root: root, initErr: err}
 }
 
 func (s *accountingStore) beginPhase() {
@@ -62,20 +65,33 @@ func (s *accountingStore) Get(ctx context.Context, key cid.Cid) ([]byte, error) 
 		return nil, err
 	}
 	s.mu.Lock()
-	block, ok := s.blocks[key.String()]
-	if ok {
+	if s.initErr != nil {
+		err := s.initErr
+		s.mu.Unlock()
+		return nil, err
+	}
+	if s.closed {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("evaluator CAS is closed")
+	}
+	data, err := os.ReadFile(s.blockPath(key))
+	if err == nil {
 		s.readObjects++
-		s.readBytes += int64(len(block.data))
+		s.readBytes += int64(len(data))
 	}
 	s.getNanos += time.Since(started).Nanoseconds()
 	s.mu.Unlock()
-	if !ok {
+	if os.IsNotExist(err) {
 		return nil, fmt.Errorf("%w: %s", clientcas.ErrNotFound, key)
 	}
-	if block.codec != key.Type() {
-		return nil, fmt.Errorf("stored block codec %d does not match CID codec %d", block.codec, key.Type())
+	if err != nil {
+		return nil, err
 	}
-	return cloneBytes(block.data), nil
+	computed, err := clientcas.CIDForBlock(clientcas.Block{Data: data, Codec: key.Type()})
+	if err != nil || !computed.Equals(key) {
+		return nil, fmt.Errorf("disk-backed evaluator CAS block does not match CID %s", key)
+	}
+	return data, nil
 }
 
 func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
@@ -98,13 +114,20 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	defer func() { s.putNanos += time.Since(started).Nanoseconds() }()
+	if s.initErr != nil {
+		return cid.Undef, s.initErr
+	}
+	if s.closed {
+		return cid.Undef, fmt.Errorf("evaluator CAS is closed")
+	}
 	if s.phaseAttempts == nil {
 		return cid.Undef, fmt.Errorf("CAS accounting phase is not active")
 	}
 	keyString := key.String()
 	status := statusNewlyPersisted
-	if existing, exists := s.blocks[keyString]; exists {
-		if existing.codec != codec || !bytes.Equal(existing.data, data) {
+	objectPath := s.blockPath(key)
+	if existing, readErr := os.ReadFile(objectPath); readErr == nil {
+		if !bytes.Equal(existing, data) {
 			return cid.Undef, fmt.Errorf("CID collision for %s", key)
 		}
 		if _, attempted := s.phaseAttempts[keyString]; attempted {
@@ -112,8 +135,21 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 		} else {
 			status = statusAlreadyPresent
 		}
+	} else if !os.IsNotExist(readErr) {
+		return cid.Undef, readErr
 	} else {
-		s.blocks[keyString] = storedBlock{codec: codec, data: cloneBytes(data)}
+		if err := os.MkdirAll(filepath.Dir(objectPath), 0o700); err != nil {
+			return cid.Undef, err
+		}
+		file, err := os.OpenFile(objectPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return cid.Undef, err
+		}
+		_, writeErr := file.Write(data)
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			return cid.Undef, cleanupFailedPayloadFile(objectPath, writeErr, closeErr, os.Remove)
+		}
 	}
 	s.phaseAttempts[keyString] = struct{}{}
 	s.events = append(s.events, CASWriteEvent{
@@ -129,11 +165,51 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 	return key, nil
 }
 
+func (s *accountingStore) blockPath(key cid.Cid) string {
+	digest := sha256.Sum256(key.Bytes())
+	name := hex.EncodeToString(digest[:])
+	return filepath.Join(s.root, name[:2], name[2:4], name[4:])
+}
+
+func (s *accountingStore) close() error {
+	s.mu.Lock()
+	s.closed = true
+	root := s.root
+	s.mu.Unlock()
+	if root == "" {
+		return nil
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.root == root {
+		s.root = ""
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// retryCleanup gives one-shot and construction-failure paths a second owner
+// attempt while close retains its path on failure. Active streams additionally
+// keep their store handle for caller-driven retries.
+func retryCleanup(close func() error) error {
+	if close == nil {
+		return nil
+	}
+	if err := close(); err != nil {
+		if retryErr := close(); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
+	}
+	return nil
+}
+
 func (s *accountingStore) finishPhase() (CASAccounting, int64, int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	accounting := CASAccounting{
-		Events: append([]CASWriteEvent(nil), s.events...),
+		Events: append([]CASWriteEvent{}, s.events...),
 		Reads:  CASReadAccounting{Objects: s.readObjects, Bytes: s.readBytes},
 	}
 	for _, event := range accounting.Events {

@@ -80,8 +80,8 @@ func TestWorkerRejectsUnknownAndTrailingJSONButContinues(t *testing.T) {
 	if responses[2].OK || responses[2].Error == nil || !strings.Contains(responses[2].Error.Message, "duplicate JSON key") {
 		t.Fatalf("duplicate-key response = %#v", responses[2])
 	}
-	if !responses[3].OK || responses[3].RequestID != "good" {
-		t.Fatalf("worker did not continue: %#v", responses[3])
+	if responses[3].OK || responses[3].Error == nil || responses[3].RequestID != "good" {
+		t.Fatalf("worker did not fail closed: %#v", responses[3])
 	}
 }
 
@@ -94,7 +94,15 @@ func TestWorkerReportsFailClosedCapabilityGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := handleLine(t.Context(), encoded)
+	handler := new(workerHandler)
+	capability, err := json.Marshal(rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := handler.handleLine(t.Context(), capability); !response.OK {
+		t.Fatalf("capability response = %#v", response)
+	}
+	response := handler.handleLine(t.Context(), encoded)
 	if response.OK || response.Error == nil || response.Error.Code != "unsupported_capability" || response.Error.CapabilityGap != "symlink_and_special_file_mutation" {
 		t.Fatalf("response = %#v", response)
 	}

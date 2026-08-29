@@ -18,10 +18,10 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 )
 
-const hashAdapterSelfTestCorpusSchema = "malt-eval-rq3-hash-adapter-self-test/v1"
+const hashAdapterSelfTestCorpusSchema = "malt-eval-rq3-hash-adapter-self-test/v3"
 
 var hashAdapterSelfTestProfile = e0selftest.Profile{
-	ProfileID: "rq3-hash-adapters-positive-hostile-v1",
+	ProfileID: "rq3-hash-adapters-positive-hostile-v3",
 	PositiveCases: []string{
 		"execute-controlled-merkledag",
 		"execute-controlled-hamt",
@@ -32,6 +32,10 @@ var hashAdapterSelfTestProfile = e0selftest.Profile{
 		"reject-malformed-request",
 		"reject-tampered-payload",
 		"reject-stale-before-value",
+		"detect-commit-list-digest-mismatch",
+		"reject-unfinished-stream",
+		"reject-failed-stream-reuse",
+		"reject-active-stream-binding-reuse",
 	},
 }
 
@@ -130,7 +134,7 @@ func (c hashAdapterSelfTestCorpus) validate() error {
 			return fmt.Errorf("controlled hash adapter case %q carries a trace binding", testCase.ID)
 		}
 	}
-	wantKinds := []string{"malformed-request", "tampered-payload", "stale-before-value"}
+	wantKinds := []string{"malformed-request", "tampered-payload", "stale-before-value", "commit-list-digest-mismatch", "unfinished-stream", "failed-stream-reuse", "active-stream-binding-reuse"}
 	for index, testCase := range c.HostileCases {
 		if testCase.ID != hashAdapterSelfTestProfile.HostileCases[index] || testCase.Kind != wantKinds[index] {
 			return fmt.Errorf("hash adapter hostile case %d does not match the compiled contract", index)
@@ -140,21 +144,37 @@ func (c hashAdapterSelfTestCorpus) validate() error {
 }
 
 func executeHashPositiveCase(ctx context.Context, testCase hashAdapterSelfTestPositiveCase) error {
-	request := rq3baseline.WorkerRequest{
-		SchemaVersion: rq3baseline.WorkerRequestSchema,
-		RequestID:     testCase.ID,
-		Operation:     rq3baseline.OperationRun,
-		Run:           &testCase.Run,
+	handler := new(workerHandler)
+	if response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: testCase.ID + "-cap", Operation: rq3baseline.OperationCapabilities}); err != nil || !response.OK {
+		return fmt.Errorf("production hash capability preflight: response=%#v err=%w", response, err)
 	}
-	encoded, err := json.Marshal(request)
-	if err != nil {
-		return err
+	start := testCase.Run
+	start.Commits = []rq3baseline.Commit{}
+	response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: testCase.ID + "-start", Operation: rq3baseline.OperationStreamStart, Run: &start})
+	if err != nil || !response.OK || response.Stream == nil || len(response.Stream.Records) != 1 {
+		return fmt.Errorf("production hash stream start: response=%#v err=%w", response, err)
 	}
-	response := handleLine(ctx, encoded)
-	if !response.OK || response.Result == nil || response.Error != nil || response.Result.System != testCase.Run.System || len(response.Result.Records) != len(testCase.Run.Commits)+1 {
-		return fmt.Errorf("production hash worker did not execute the exact frozen run: %#v", response)
+	records := append([]rq3baseline.CommitRecord{}, response.Stream.Records...)
+	for index, commit := range testCase.Run.Commits {
+		chunk := rq3baseline.RunSpec{System: testCase.Run.System, Layout: testCase.Run.Layout, Commits: []rq3baseline.Commit{commit}}
+		response, err = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: fmt.Sprintf("%s-chunk-%d", testCase.ID, index), Operation: rq3baseline.OperationStreamChunk, Run: &chunk})
+		if err != nil || !response.OK || response.Stream == nil || len(response.Stream.Records) != 1 {
+			return fmt.Errorf("production hash stream chunk %d: response=%#v err=%w", index, response, err)
+		}
+		records = append(records, response.Stream.Records...)
 	}
-	for index, record := range response.Result.Records {
+	response, err = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: testCase.ID + "-finish", Operation: rq3baseline.OperationStreamFinish})
+	wantDigest, digestErr := hashCommitListDigest(append([]string{testCase.Run.Snapshot.CommitID}, func() []string {
+		values := make([]string, len(testCase.Run.Commits))
+		for i := range testCase.Run.Commits {
+			values[i] = testCase.Run.Commits[i].CommitID
+		}
+		return values
+	}()...))
+	if err != nil || digestErr != nil || !response.OK || response.Stream == nil || !response.Stream.Complete || response.Stream.CommitsApplied != uint32(len(records)) || response.Stream.CommitListSHA256 != wantDigest {
+		return fmt.Errorf("production hash stream finish: response=%#v err=%w", response, err)
+	}
+	for index, record := range records {
 		want := testCase.Run.Snapshot.CommitID
 		if index > 0 {
 			want = testCase.Run.Commits[index-1].CommitID
@@ -162,14 +182,31 @@ func executeHashPositiveCase(ctx context.Context, testCase hashAdapterSelfTestPo
 		if record.CommitID != want || record.Root == "" {
 			return fmt.Errorf("hash result record %d does not bind commit %q", index, want)
 		}
+		if index > 0 && len(testCase.Run.Commits[index-1].Mutations) == 0 &&
+			(record.Root != record.ParentRoot || record.LogicalObjectsChanged != 0 || record.LogicalBindingsChanged != 0 || record.LogicalPayloadBytes != 0 || record.AdapterPayloadInputBytes != 0 ||
+				record.CAS.Total.AttemptedObjects != 0 || record.CAS.Total.AttemptedBytes != 0 || record.CAS.Total.NewlyPersistedObjects != 0 || record.CAS.Total.NewlyPersistedBytes != 0) {
+			return fmt.Errorf("hash no-op commit %q changed the root or emitted writes", want)
+		}
 	}
 	return nil
+}
+
+func sendHashSelfTestRequest(ctx context.Context, handler *workerHandler, request rq3baseline.WorkerRequest) (rq3baseline.WorkerResponse, error) {
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return rq3baseline.WorkerResponse{}, err
+	}
+	return handler.handleLine(ctx, encoded), nil
 }
 
 func executeHashHostileCase(ctx context.Context, testCase hashAdapterSelfTestHostileCase, positives []hashAdapterSelfTestPositiveCase) error {
 	switch testCase.Kind {
 	case "malformed-request":
-		response := handleLine(ctx, []byte(`{"schema_version":"malt-rq3-hash-worker-request/v1","request_id":"malformed","operation":"run","unknown":true}`))
+		handler := new(workerHandler)
+		if response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities}); err != nil || !response.OK {
+			return errors.New("production hash capability preflight failed")
+		}
+		response := handler.handleLine(ctx, []byte(`{"schema_version":"malt-rq3-hash-worker-request/v1","request_id":"malformed","operation":"stream-start","unknown":true}`))
 		if response.OK || response.Error == nil || response.Error.Code != "invalid_request" {
 			return errors.New("production hash request decoder accepted an unknown field")
 		}
@@ -180,13 +217,11 @@ func executeHashHostileCase(ctx context.Context, testCase hashAdapterSelfTestHos
 			return err
 		}
 		run.Snapshot.Files[0].PayloadBase64 = "dGFtcGVyZWQ="
-		request := rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "tampered", Operation: rq3baseline.OperationRun, Run: &run}
-		encoded, err := json.Marshal(request)
-		if err != nil {
-			return err
-		}
-		response := handleLine(ctx, encoded)
-		if response.OK || response.Error == nil || response.Error.Code != "invalid_or_failed_run" {
+		run.Commits = []rq3baseline.Commit{}
+		handler := new(workerHandler)
+		_, _ = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities})
+		response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "tampered", Operation: rq3baseline.OperationStreamStart, Run: &run})
+		if err != nil || response.OK || response.Error == nil || response.Error.Code != "invalid_or_failed_stream_start" {
 			return errors.New("production hash adapter accepted a payload whose bytes do not match its SHA-256 binding")
 		}
 		return nil
@@ -196,19 +231,106 @@ func executeHashHostileCase(ctx context.Context, testCase hashAdapterSelfTestHos
 			return err
 		}
 		run.Commits[0].Mutations[0].ExpectedOldSHA256 = strings.Repeat("0", 64)
-		request := rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "stale-before", Operation: rq3baseline.OperationRun, Run: &run}
-		encoded, err := json.Marshal(request)
+		start := run
+		start.Commits = []rq3baseline.Commit{}
+		handler := new(workerHandler)
+		_, _ = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities})
+		started, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "start", Operation: rq3baseline.OperationStreamStart, Run: &start})
+		if err != nil || !started.OK {
+			return errors.New("production hash hostile stream failed to start")
+		}
+		chunk := rq3baseline.RunSpec{System: run.System, Layout: run.Layout, Commits: []rq3baseline.Commit{run.Commits[0]}}
+		response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "stale-before", Operation: rq3baseline.OperationStreamChunk, Run: &chunk})
+		if err != nil || response.OK || response.Error == nil || response.Error.Code != "invalid_or_failed_stream_chunk" {
+			return errors.New("production hash adapter accepted a stale expected-old value")
+		}
+		return nil
+	case "commit-list-digest-mismatch":
+		testCase := positives[2]
+		handler := new(workerHandler)
+		if response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities}); err != nil || !response.OK {
+			return errors.New("production hash capability preflight failed")
+		}
+		start := testCase.Run
+		start.Commits = []rq3baseline.Commit{}
+		if response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "start", Operation: rq3baseline.OperationStreamStart, Run: &start}); err != nil || !response.OK {
+			return errors.New("production hash digest-mismatch stream failed to start")
+		}
+		for index, commit := range testCase.Run.Commits {
+			chunk := rq3baseline.RunSpec{System: testCase.Run.System, Layout: testCase.Run.Layout, Commits: []rq3baseline.Commit{commit}}
+			if response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: fmt.Sprintf("chunk-%d", index), Operation: rq3baseline.OperationStreamChunk, Run: &chunk}); err != nil || !response.OK {
+				return errors.New("production hash digest-mismatch stream chunk failed")
+			}
+		}
+		response, err := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "finish", Operation: rq3baseline.OperationStreamFinish})
+		if err != nil || !response.OK || response.Stream == nil || response.Stream.CommitListSHA256 != testCase.TraceBinding.CommitListSHA256 || response.Stream.CommitListSHA256 == strings.Repeat("0", 64) {
+			return errors.New("production hash worker did not expose the actual commit-list digest for evaluator mismatch detection")
+		}
+		return nil
+	case "unfinished-stream":
+		run := positives[0].Run
+		start := run
+		start.Commits = []rq3baseline.Commit{}
+		input, err := encodeHashSelfTestRequests([]rq3baseline.WorkerRequest{
+			{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities},
+			{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "start", Operation: rq3baseline.OperationStreamStart, Run: &start},
+		})
 		if err != nil {
 			return err
 		}
-		response := handleLine(ctx, encoded)
-		if response.OK || response.Error == nil || response.Error.Code != "invalid_or_failed_run" {
-			return errors.New("production hash adapter accepted a stale expected-old value")
+		if err := runWorker(ctx, bytes.NewReader(input), io.Discard); err == nil || !strings.Contains(err.Error(), "before stream-finish") {
+			return fmt.Errorf("production hash worker accepted EOF with an unfinished stream: %v", err)
+		}
+		return nil
+	case "failed-stream-reuse":
+		run, err := cloneHashRun(positives[0].Run)
+		if err != nil {
+			return err
+		}
+		run.Commits[0].Mutations[0].ExpectedOldSHA256 = strings.Repeat("0", 64)
+		start := run
+		start.Commits = []rq3baseline.Commit{}
+		handler := new(workerHandler)
+		_, _ = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities})
+		_, _ = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "start", Operation: rq3baseline.OperationStreamStart, Run: &start})
+		chunk := rq3baseline.RunSpec{System: run.System, Layout: run.Layout, Commits: []rq3baseline.Commit{run.Commits[0]}}
+		failed, _ := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "fail", Operation: rq3baseline.OperationStreamChunk, Run: &chunk})
+		reused, _ := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "reuse", Operation: rq3baseline.OperationStreamFinish})
+		if failed.OK || failed.Error == nil || reused.OK || reused.Error == nil || !strings.Contains(reused.Error.Message, "poisoned") {
+			return errors.New("production hash worker allowed reuse after a failed stream chunk")
+		}
+		return nil
+	case "active-stream-binding-reuse":
+		run := positives[0].Run
+		start := run
+		start.Commits = []rq3baseline.Commit{}
+		handler := new(workerHandler)
+		_, _ = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "cap", Operation: rq3baseline.OperationCapabilities})
+		_, _ = sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "start", Operation: rq3baseline.OperationStreamStart, Run: &start})
+		wrongLayout := run.Layout
+		wrongLayout.FileLayout = "trickle"
+		chunk := rq3baseline.RunSpec{System: run.System, Layout: wrongLayout, Commits: []rq3baseline.Commit{run.Commits[0]}}
+		failed, _ := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "wrong-binding", Operation: rq3baseline.OperationStreamChunk, Run: &chunk})
+		reused, _ := sendHashSelfTestRequest(ctx, handler, rq3baseline.WorkerRequest{SchemaVersion: rq3baseline.WorkerRequestSchema, RequestID: "reuse", Operation: rq3baseline.OperationStreamFinish})
+		if failed.OK || failed.Error == nil || reused.OK || reused.Error == nil || !strings.Contains(reused.Error.Message, "poisoned") {
+			return errors.New("production hash worker allowed reuse after an active-stream binding failure")
 		}
 		return nil
 	default:
 		return fmt.Errorf("unsupported hostile kind %q", testCase.Kind)
 	}
+}
+
+func encodeHashSelfTestRequests(requests []rq3baseline.WorkerRequest) ([]byte, error) {
+	var input bytes.Buffer
+	encoder := json.NewEncoder(&input)
+	encoder.SetEscapeHTML(false)
+	for _, request := range requests {
+		if err := encoder.Encode(request); err != nil {
+			return nil, err
+		}
+	}
+	return input.Bytes(), nil
 }
 
 func validateHashSelfTestInputs(corpusPath string, boundWorkloads, gitExecutables []string) error {
@@ -243,7 +365,7 @@ func validateBoundWorkload(path string) error {
 	if err := decoder.Decode(&identity); err != nil {
 		return err
 	}
-	if identity.SchemaVersion != "malt-rq3-controlled-workload/v1" && identity.SchemaVersion != "malt-eval-git-trace/v1" {
+	if identity.SchemaVersion != "malt-rq3-controlled-workload/v1" && identity.SchemaVersion != "malt-eval-git-trace-request/v1" {
 		return fmt.Errorf("unsupported production workload schema %q", identity.SchemaVersion)
 	}
 	return nil

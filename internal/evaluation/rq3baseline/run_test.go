@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -14,6 +16,57 @@ import (
 	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
 	cid "github.com/ipfs/go-cid"
 )
+
+func TestCleanupFailedPayloadFileReturnsCloseAndRemoveFailures(t *testing.T) {
+	primary := errors.New("write failed")
+	closeErr := errors.New("close failed")
+	removeErr := errors.New("remove failed")
+	got := cleanupFailedPayloadFile("payload", primary, closeErr, func(path string) error {
+		if path != "payload" {
+			t.Fatalf("remove path = %q", path)
+		}
+		return removeErr
+	})
+	for _, want := range []error{primary, closeErr, removeErr} {
+		if !errors.Is(got, want) {
+			t.Fatalf("cleanup error %v does not include %v", got, want)
+		}
+	}
+	if got := cleanupFailedPayloadFile("payload", primary, nil, func(string) error { return os.ErrNotExist }); !errors.Is(got, primary) || errors.Is(got, os.ErrNotExist) {
+		t.Fatalf("not-exist cleanup should retain only the primary failure: %v", got)
+	}
+}
+
+func TestPayloadStoreReconcileRetainsOnlyLiveCheckout(t *testing.T) {
+	store, err := newPayloadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.close(); err != nil {
+			t.Errorf("close payload store: %v", err)
+		}
+	})
+	oldData, liveData := []byte("historical"), []byte("live")
+	oldSum, liveSum := sha256.Sum256(oldData), sha256.Sum256(liveData)
+	oldDigest, liveDigest := hex.EncodeToString(oldSum[:]), hex.EncodeToString(liveSum[:])
+	if err := store.put(oldDigest, oldData); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.put(liveDigest, liveData); err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]logicalFile{"file": {hash: liveDigest, size: len(liveData)}}
+	if err := store.reconcile(live); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.read(logicalFile{hash: oldDigest, size: len(oldData)}); !os.IsNotExist(err) {
+		t.Fatalf("historical payload read error = %v, want not-exist", err)
+	}
+	if got, err := store.read(live["file"]); err != nil || string(got) != string(liveData) {
+		t.Fatalf("live payload = %q, %v", got, err)
+	}
+}
 
 func TestRunBasicUnixFSEmitsRootPerCommitAndExactDedupAccounting(t *testing.T) {
 	old := []byte("same-data")
@@ -107,6 +160,145 @@ func TestRunBasicUnixFSEmitsRootPerCommitAndExactDedupAccounting(t *testing.T) {
 	for i := range result.Records {
 		if result.Records[i].Root != second.Records[i].Root || !reflect.DeepEqual(result.Records[i].CAS, second.Records[i].CAS) {
 			t.Fatalf("deterministic result mismatch at record %d", i)
+		}
+	}
+}
+
+func TestStreamSessionMatchesSingleRunAcrossChunks(t *testing.T) {
+	payload := []byte("same-data")
+	spec := baseSpec(SystemMerkleDAGUnixFS, "basic", 0, []FrozenFile{
+		frozenFile("docs/a.txt", payload),
+		frozenFile("docs/b.txt", payload),
+	})
+	spec.Commits = []Commit{
+		{CommitID: "c2-replace", Mutations: []Mutation{replaceMutation("docs/a.txt", payload, []byte("next"))}},
+		{CommitID: "c3-rename", Mutations: []Mutation{pathMutation(MutationRename, "docs/b.txt", "docs/c.txt", payload)}},
+		{CommitID: "c4-delete", Mutations: []Mutation{pathMutation(MutationDelete, "docs/c.txt", "", payload)}},
+	}
+
+	want, err := Run(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamSpec := spec
+	streamSpec.Commits = []Commit{}
+	session, snapshot, err := StartStream(t.Context(), streamSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close stream session: %v", err)
+		}
+	})
+	for _, path := range []string{"docs/a.txt", "docs/b.txt"} {
+		if session.state[path].data != nil || session.validationState[path].data != nil {
+			t.Fatalf("stream retained %q payload bytes in live heap state", path)
+		}
+		stored, err := session.payloads.read(session.state[path])
+		if err != nil || !reflect.DeepEqual(stored, payload) {
+			t.Fatalf("stream disk payload %q = %q, %v", path, stored, err)
+		}
+	}
+	first, err := session.ApplyChunk(t.Context(), spec.Commits[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := session.ApplyChunk(t.Context(), spec.Commits[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := append([]CommitRecord{snapshot}, first...)
+	got = append(got, second...)
+	if len(got) != len(want.Records) {
+		t.Fatalf("stream records = %d, want %d", len(got), len(want.Records))
+	}
+	for index := range got {
+		got[index].ClientPhases = ClientPhases{}
+		want.Records[index].ClientPhases = ClientPhases{}
+		if !reflect.DeepEqual(got[index], want.Records[index]) {
+			t.Fatalf("stream record[%d] differs from single run:\n got: %#v\nwant: %#v", index, got[index], want.Records[index])
+		}
+	}
+	if session.Root() != got[len(got)-1].Root {
+		t.Fatalf("stream root = %q, want final record root %q", session.Root(), got[len(got)-1].Root)
+	}
+}
+
+func TestStreamSessionRejectsDuplicateCommitAcrossChunksWithoutAdvancing(t *testing.T) {
+	payload := []byte("payload")
+	spec := baseSpec(SystemMerkleDAGUnixFS, "basic", 0, []FrozenFile{frozenFile("file", payload)})
+	session, _, err := StartStream(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := Commit{CommitID: "c2", Mutations: []Mutation{replaceMutation("file", payload, []byte("next"))}}
+	if _, err := session.ApplyChunk(t.Context(), []Commit{commit}); err != nil {
+		t.Fatal(err)
+	}
+	root := session.Root()
+	if _, err := session.ApplyChunk(t.Context(), []Commit{commit}); err == nil || !strings.Contains(err.Error(), "duplicate commit_id") {
+		t.Fatalf("duplicate commit error = %v", err)
+	}
+	if session.Root() != root {
+		t.Fatalf("duplicate commit advanced root from %q to %q", root, session.Root())
+	}
+}
+
+func TestOneShotAppendDirectlyAfterSnapshotCountsOnlySuffix(t *testing.T) {
+	old := []byte("base")
+	next := []byte("base-suffix")
+	spec := baseSpec(SystemMerkleDAGUnixFS, "basic", 0, []FrozenFile{frozenFile("file", old)})
+	spec.Commits = []Commit{{CommitID: "append", Mutations: []Mutation{appendMutation("file", old, next)}}}
+	result, err := Run(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.Records[1].LogicalPayloadBytes, int64(len(next)-len(old)); got != want {
+		t.Fatalf("direct snapshot append logical bytes = %d, want suffix %d", got, want)
+	}
+}
+
+func TestModeChangePreservesDiskBackedSizeAcrossAppendAndRename(t *testing.T) {
+	old := []byte("base")
+	next := []byte("base-suffix")
+	oldMode, newMode := uint32(0o644), uint32(0o755)
+	appendAfterMode := appendMutation("file", old, next)
+	appendAfterMode.ExpectedOldMode, appendAfterMode.Mode = &newMode, &newMode
+	renameAfterMode := pathMutation(MutationRename, "file", "renamed", next)
+	renameAfterMode.ExpectedOldMode, renameAfterMode.Mode = &newMode, &newMode
+	spec := baseSpec(SystemMerkleDAGUnixFS, "basic", 0, []FrozenFile{frozenFile("file", old)})
+	spec.Commits = []Commit{
+		{CommitID: "chmod", Mutations: []Mutation{{Kind: MutationModeChange, Path: "file", FileKind: FileKindRegular, ExpectedOldSHA256: digest(old), ExpectedOldMode: &oldMode, Mode: &newMode}}},
+		{CommitID: "append", Mutations: []Mutation{appendAfterMode}},
+		{CommitID: "rename", Mutations: []Mutation{renameAfterMode}},
+	}
+	oneShot, err := Run(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := oneShot.Records[2].LogicalPayloadBytes, int64(len(next)-len(old)); got != want {
+		t.Fatalf("one-shot append after mode-change logical bytes = %d, want %d", got, want)
+	}
+
+	streamSpec := spec
+	streamSpec.Commits = []Commit{}
+	session, _, err := StartStream(t.Context(), streamSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close mode-change stream: %v", err)
+		}
+	})
+	for index, commit := range spec.Commits {
+		records, err := session.ApplyChunk(t.Context(), []Commit{commit})
+		if err != nil {
+			t.Fatalf("stream commit %d (%s): %v", index, commit.CommitID, err)
+		}
+		if commit.CommitID == "append" && records[0].LogicalPayloadBytes != int64(len(next)-len(old)) {
+			t.Fatalf("stream append after mode-change logical bytes = %d", records[0].LogicalPayloadBytes)
 		}
 	}
 }

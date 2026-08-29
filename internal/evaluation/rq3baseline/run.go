@@ -2,6 +2,7 @@ package rq3baseline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"time"
@@ -11,13 +12,14 @@ import (
 
 // Run validates the complete frozen workload before creating any CAS state,
 // then executes it through the current incremental UnixFS Editor.
-func Run(ctx context.Context, spec RunSpec) (*RunResult, error) {
+func Run(ctx context.Context, spec RunSpec) (_ *RunResult, returnErr error) {
 	prepared, err := prepare(spec)
 	if err != nil {
 		return nil, err
 	}
 	sourceAccounting := accountPreparedSource(prepared)
 	store := newAccountingStore()
+	defer func() { returnErr = errors.Join(returnErr, retryCleanup(store.close)) }()
 	editor, err := merkledagimport.NewEditor(store, importerOptions(prepared.spec))
 	if err != nil {
 		return nil, fmt.Errorf("create UnixFS editor: %w", err)
@@ -44,7 +46,7 @@ func Run(ctx context.Context, spec RunSpec) (*RunResult, error) {
 		if err := editor.PutFile(ctx, file.path, file.data, fs.FileMode(file.mode)); err != nil {
 			return nil, fmt.Errorf("snapshot commit %q put %q: %w", prepared.spec.Snapshot.CommitID, file.path, err)
 		}
-		state[file.path] = logicalFile{data: cloneBytes(file.data), mode: file.mode, hash: file.hash}
+		state[file.path] = logicalFile{data: cloneBytes(file.data), mode: file.mode, hash: file.hash, size: len(file.data)}
 		snapshotPayloadBytes += int64(len(file.data))
 		snapshotMutations = append(snapshotMutations, MutationExecution{
 			Index:                  index,
@@ -87,7 +89,7 @@ func Run(ctx context.Context, spec RunSpec) (*RunResult, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			execution, err := executeMutation(ctx, editor, state, index, mutation)
+			execution, err := executeMutation(ctx, editor, state, index, mutation, nil)
 			if err != nil {
 				return nil, fmt.Errorf("commit %q mutation[%d]: %w", commit.id, index, err)
 			}
@@ -130,7 +132,7 @@ func importerOptions(spec RunSpec) merkledagimport.Options {
 	}
 }
 
-func executeMutation(ctx context.Context, editor *merkledagimport.Editor, state map[string]logicalFile, index int, prepared preparedMutation) (MutationExecution, error) {
+func executeMutation(ctx context.Context, editor *merkledagimport.Editor, state map[string]logicalFile, index int, prepared preparedMutation, payloads *payloadStore) (MutationExecution, error) {
 	mutation := prepared.mutation
 	execution := MutationExecution{
 		Index:                 index,
@@ -144,7 +146,11 @@ func executeMutation(ctx context.Context, editor *merkledagimport.Editor, state 
 		if err := editor.PutFile(ctx, mutation.Path, prepared.data, fs.FileMode(*mutation.Mode)); err != nil {
 			return MutationExecution{}, err
 		}
-		state[mutation.Path] = logicalFile{data: cloneBytes(prepared.data), mode: *mutation.Mode, hash: mutation.PayloadSHA256}
+		retained, err := retainLogicalFile(prepared.data, *mutation.Mode, mutation.PayloadSHA256, payloads)
+		if err != nil {
+			return MutationExecution{}, err
+		}
+		state[mutation.Path] = retained
 		execution.Translation = "put_file"
 		execution.LogicalBindingsChanged = 1
 		execution.LogicalPayloadBytes = int64(len(prepared.data))
@@ -153,7 +159,11 @@ func executeMutation(ctx context.Context, editor *merkledagimport.Editor, state 
 		if err := editor.PutFile(ctx, mutation.Path, prepared.data, fs.FileMode(*mutation.Mode)); err != nil {
 			return MutationExecution{}, err
 		}
-		state[mutation.Path] = logicalFile{data: cloneBytes(prepared.data), mode: *mutation.Mode, hash: mutation.PayloadSHA256}
+		retained, err := retainLogicalFile(prepared.data, *mutation.Mode, mutation.PayloadSHA256, payloads)
+		if err != nil {
+			return MutationExecution{}, err
+		}
+		state[mutation.Path] = retained
 		execution.Translation = "put_file_replace"
 		execution.LogicalBindingsChanged = 1
 		execution.LogicalPayloadBytes = int64(len(prepared.data))
@@ -163,17 +173,29 @@ func executeMutation(ctx context.Context, editor *merkledagimport.Editor, state 
 		if err := editor.PutFile(ctx, mutation.Path, prepared.data, fs.FileMode(*mutation.Mode)); err != nil {
 			return MutationExecution{}, err
 		}
-		state[mutation.Path] = logicalFile{data: cloneBytes(prepared.data), mode: *mutation.Mode, hash: mutation.PayloadSHA256}
+		retained, err := retainLogicalFile(prepared.data, *mutation.Mode, mutation.PayloadSHA256, payloads)
+		if err != nil {
+			return MutationExecution{}, err
+		}
+		state[mutation.Path] = retained
 		execution.Translation = "put_file_full_result"
 		execution.LogicalBindingsChanged = 1
-		execution.LogicalPayloadBytes = int64(len(prepared.data) - len(old.data))
+		execution.LogicalPayloadBytes = int64(len(prepared.data) - old.size)
 
 	case MutationModeChange:
 		old := state[mutation.Path]
-		if err := editor.PutFile(ctx, mutation.Path, old.data, fs.FileMode(*mutation.Mode)); err != nil {
+		oldData, err := payloads.read(old)
+		if payloads == nil {
+			oldData, err = old.data, nil
+		}
+		if err != nil {
 			return MutationExecution{}, err
 		}
-		state[mutation.Path] = logicalFile{data: old.data, mode: *mutation.Mode, hash: old.hash}
+		if err := editor.PutFile(ctx, mutation.Path, oldData, fs.FileMode(*mutation.Mode)); err != nil {
+			return MutationExecution{}, err
+		}
+		old.mode = *mutation.Mode
+		state[mutation.Path] = old
 		execution.Translation = "put_file_mode_change"
 		execution.LogicalBindingsChanged = 1
 
@@ -187,10 +209,17 @@ func executeMutation(ctx context.Context, editor *merkledagimport.Editor, state 
 
 	case MutationRename, MutationMove:
 		old := state[mutation.Path]
+		oldData, err := payloads.read(old)
+		if payloads == nil {
+			oldData, err = old.data, nil
+		}
+		if err != nil {
+			return MutationExecution{}, err
+		}
 		if err := editor.RemoveFile(ctx, mutation.Path); err != nil {
 			return MutationExecution{}, err
 		}
-		if err := editor.PutFile(ctx, mutation.Destination, old.data, fs.FileMode(old.mode)); err != nil {
+		if err := editor.PutFile(ctx, mutation.Destination, oldData, fs.FileMode(old.mode)); err != nil {
 			return MutationExecution{}, err
 		}
 		delete(state, mutation.Path)

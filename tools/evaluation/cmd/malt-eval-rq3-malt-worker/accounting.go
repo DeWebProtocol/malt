@@ -24,17 +24,17 @@ const (
 	casNew           = "new"
 	casSameValue     = "same-value"
 
-	gatewayAccountingProfile = "gateway.client-root-write-accounting/v1"
-	gatewayByteMethod        = "logical-kv-key-plus-value-bytes/v1"
+	gatewayAccountingProfile = "gateway.client-root-write-accounting/v2"
+	gatewayByteMethod        = "durable-kv-key-plus-value-bytes/v2"
 	canonicalEmptySetupCause = "canonical-empty-setup:"
 
-	// The formal evaluation Gateway uses Badger's default 64 MiB memtable,
-	// whose atomic transaction ceiling is 15% of that size. Keep the decoded
+	// Keep each evaluator request bounded independently of the selected durable
+	// filesystem KV implementation. Keep the decoded
 	// CAS payload below that ceiling after keys and size sidecars are added.
 	maximumEvaluationGatewayCASBatchBytes = 8 << 20
 )
 
-var gatewayCategories = []string{"semantic-materialization", "arctable-records", "root-version-metadata"}
+var gatewayCategories = []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"}
 
 type exactAccounting struct {
 	profile    string
@@ -315,8 +315,8 @@ func nextClassifiedBlockBatchEnd(blocks []classifiedBlock, start, maximumBlocks,
 		if length > maximumSingleBlockBytes {
 			return 0, fmt.Errorf("CAS block exceeds transport batch byte bound")
 		}
-		// Badger stores a large value through a value pointer, so one legal
-		// transport block may exceed the conservative aggregate payload bound.
+		// One legal transport block may exceed the conservative aggregate
+		// payload bound regardless of the selected persistence backend.
 		// Send that block alone and never combine it with neighboring blocks.
 		if end == start && length > maximumBatchBytes {
 			return start + 1, nil

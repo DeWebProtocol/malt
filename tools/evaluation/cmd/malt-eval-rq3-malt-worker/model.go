@@ -32,9 +32,11 @@ const (
 )
 
 type logicalFile struct {
-	data   []byte
-	mode   uint32
-	digest string
+	data    []byte
+	mode    uint32
+	digest  string
+	size    int64
+	payload cid.Cid
 }
 
 type classifiedBlock struct {
@@ -104,7 +106,7 @@ type fileChange struct {
 	after  *logicalFile
 }
 
-func initialLogicalState(snapshot rq3baseline.Snapshot, chunkBytes uint64) (map[string]logicalFile, []classifiedBlock, error) {
+func initialLogicalState(snapshot rq3baseline.Snapshot, chunkBytes uint64, payloads *logicalPayloadStore) (map[string]logicalFile, []classifiedBlock, error) {
 	state := make(map[string]logicalFile, len(snapshot.Files))
 	blocks := make([]classifiedBlock, 0)
 	for _, file := range snapshot.Files {
@@ -112,9 +114,14 @@ func initialLogicalState(snapshot rq3baseline.Snapshot, chunkBytes uint64) (map[
 		if err != nil || file.Mode == nil {
 			return nil, nil, fmt.Errorf("decode prevalidated snapshot file %q: %w", file.Path, err)
 		}
-		value := logicalFile{data: data, mode: *file.Mode, digest: file.PayloadSHA256}
+		value, err := payloads.retain(data, *file.Mode, file.PayloadSHA256)
+		if err != nil {
+			return nil, nil, fmt.Errorf("retain snapshot file %q: %w", file.Path, err)
+		}
 		state[file.Path] = value
-		fileBlocks, err := fileCASBlocks(value, true, chunkBytes)
+		materialized := value
+		materialized.data = data
+		fileBlocks, err := fileCASBlocks(materialized, true, chunkBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("normalize snapshot file %q: %w", file.Path, err)
 		}
@@ -126,7 +133,7 @@ func initialLogicalState(snapshot rq3baseline.Snapshot, chunkBytes uint64) (map[
 // applyFrozenCommit executes the already baseline-validated source semantics
 // in their frozen order. CAS attempts retain intermediate full-result payloads
 // even though one client root closes the complete commit.
-func applyFrozenCommit(state map[string]logicalFile, commit rq3baseline.Commit, chunkBytes uint64, changedChunksOnly bool) ([]classifiedBlock, int64, []fileChange, error) {
+func applyFrozenCommit(state map[string]logicalFile, commit rq3baseline.Commit, chunkBytes uint64, changedChunksOnly bool, payloads *logicalPayloadStore) ([]classifiedBlock, int64, []fileChange, error) {
 	blocks := make([]classifiedBlock, 0)
 	var logicalPayloadBytes int64
 	before := make(map[string]*logicalFile)
@@ -136,7 +143,6 @@ func applyFrozenCommit(state map[string]logicalFile, commit rq3baseline.Commit, 
 		}
 		if file, exists := state[path]; exists {
 			copy := file
-			copy.data = append([]byte(nil), file.data...)
 			before[path] = &copy
 		} else {
 			before[path] = nil
@@ -154,9 +160,14 @@ func applyFrozenCommit(state map[string]logicalFile, commit rq3baseline.Commit, 
 			if err != nil || change.Mode == nil {
 				return nil, 0, nil, fmt.Errorf("mutation[%d] decode payload: %w", index, err)
 			}
-			next := logicalFile{data: data, mode: *change.Mode, digest: change.PayloadSHA256}
+			next, err := payloads.retain(data, *change.Mode, change.PayloadSHA256)
+			if err != nil {
+				return nil, 0, nil, fmt.Errorf("mutation[%d] retain payload: %w", index, err)
+			}
 			includeMode := change.Kind == rq3baseline.MutationInsert || old.mode != next.mode
-			fileBlocks, err := fileCASBlocks(next, includeMode, chunkBytes)
+			materialized := next
+			materialized.data = data
+			fileBlocks, err := fileCASBlocks(materialized, includeMode, chunkBytes)
 			if err != nil {
 				return nil, 0, nil, fmt.Errorf("mutation[%d] normalize file: %w", index, err)
 			}
@@ -164,14 +175,18 @@ func applyFrozenCommit(state map[string]logicalFile, commit rq3baseline.Commit, 
 			var changed int64
 			switch change.Kind {
 			case rq3baseline.MutationInsert:
-				changed = int64(len(next.data))
+				changed = int64(len(data))
 			case rq3baseline.MutationAppend:
-				changed = int64(len(next.data) - len(old.data))
+				changed = int64(len(data)) - old.size
 			case rq3baseline.MutationReplace:
 				if changedChunksOnly {
-					changed, err = changedFixedChunkBytes(old.data, next.data, chunkBytes)
+					oldData, readErr := payloads.read(old)
+					if readErr != nil {
+						return nil, 0, nil, fmt.Errorf("mutation[%d] read old payload: %w", index, readErr)
+					}
+					changed, err = changedFixedChunkBytes(oldData, data, chunkBytes)
 				} else {
-					changed = int64(len(next.data))
+					changed = int64(len(data))
 				}
 			}
 			if err != nil {
@@ -216,7 +231,6 @@ func applyFrozenCommit(state map[string]logicalFile, commit rq3baseline.Commit, 
 		var after *logicalFile
 		if file, exists := state[path]; exists {
 			copy := file
-			copy.data = append([]byte(nil), file.data...)
 			after = &copy
 		}
 		if logicalFileEqual(before[path], after) {
@@ -231,7 +245,7 @@ func logicalFileEqual(a, b *logicalFile) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.mode == b.mode && a.digest == b.digest && slices.Equal(a.data, b.data)
+	return a.mode == b.mode && a.digest == b.digest && a.size == b.size && a.payload.Equals(b.payload)
 }
 
 func changedFixedChunkBytes(before, after []byte, chunkBytes uint64) (int64, error) {
@@ -264,18 +278,12 @@ func decodeFrozenPayload(encoded string) ([]byte, error) {
 
 func fileCASBlocks(file logicalFile, includeMode bool, chunkBytes uint64) ([]classifiedBlock, error) {
 	if chunkBytes == 0 {
-		// The snapshot caller fills its registered chunk size after decoding the
-		// run envelope; zero here is only a construction guard.
 		return nil, fmt.Errorf("fixed chunk size is zero")
 	}
-	result := make([]classifiedBlock, 0, (len(file.data)+int(chunkBytes)-1)/int(chunkBytes)+1)
-	for offset := 0; offset < len(file.data); offset += int(chunkBytes) {
-		end := min(len(file.data), offset+int(chunkBytes))
-		result = append(result, classifiedBlock{
-			block:    transport.Block{Codec: cid.Raw, Data: append([]byte(nil), file.data[offset:end]...)},
-			category: categoryLogicalPayload, cause: "fixed-width-file-chunk", suffix: "payload",
-		})
-	}
+	result := []classifiedBlock{{
+		block:    transport.Block{Codec: cid.Raw, Data: append([]byte(nil), file.data...)},
+		category: categoryLogicalPayload, cause: "flat-whole-file-blob", suffix: "payload",
+	}}
 	if includeMode {
 		mode, err := modeCASBlock(file.mode)
 		if err != nil {
@@ -297,7 +305,7 @@ func modeCASBlock(mode uint32) (classifiedBlock, error) {
 		return classifiedBlock{}, err
 	}
 	return classifiedBlock{
-		block: transport.Block{Codec: cid.Raw, Data: raw}, category: categoryCASMetadata,
+		block: transport.Block{Codec: cid.DagJSON, Data: raw}, category: categoryCASMetadata,
 		cause: "file-mode-sidecar", suffix: "mode-sidecar",
 	}, nil
 }

@@ -29,11 +29,11 @@ const (
 	clientRootDurableHeader          = "X-Malt-Client-Root-Durable-Boundary"
 	clientRootIdempotent             = "X-Malt-Client-Root-Idempotent"
 	clientRootWriteAccounting        = "X-Malt-Client-Root-Write-Accounting"
-	clientRootWriteAccountingProfile = "gateway.client-root-write-accounting/v1"
-	clientRootWriteByteMethod        = "logical-kv-key-plus-value-bytes/v1"
+	clientRootWriteAccountingProfile = "gateway.client-root-write-accounting/v2"
+	clientRootWriteByteMethod        = "durable-kv-key-plus-value-bytes/v2"
 )
 
-var clientRootWriteCategories = []string{"semantic-materialization", "arctable-records", "root-version-metadata"}
+var clientRootWriteCategories = []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"}
 
 // ClientRootPhaseMetrics are Gateway-observed phase durations. They are
 // diagnostics, not part of the exact-root receipt or a local trust decision.

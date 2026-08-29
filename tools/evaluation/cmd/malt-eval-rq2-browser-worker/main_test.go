@@ -541,8 +541,8 @@ func (g *testBrowserGateway) handleClientRoot(response http.ResponseWriter, requ
 		response.Header().Set(name, value)
 	}
 	accounting, _ := json.Marshal(map[string]any{
-		"profile": "gateway.client-root-write-accounting/v1", "available": false,
-		"unavailable_reason": "integration-test", "byte_method": "logical-kv-key-plus-value-bytes/v1",
+		"profile": "gateway.client-root-write-accounting/v2", "available": false,
+		"unavailable_reason": "integration-test", "byte_method": "durable-kv-key-plus-value-bytes/v2",
 		"categories": []any{},
 	})
 	response.Header().Set("X-Malt-Client-Root-Write-Accounting", base64.RawURLEncoding.EncodeToString(accounting))

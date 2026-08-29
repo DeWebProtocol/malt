@@ -15,31 +15,41 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/e0selftest"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
+	cid "github.com/ipfs/go-cid"
 )
 
 const (
-	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v1"
-	controllerRequestSchema         = "malt-rq3-gateway-controller-request/v2"
+	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v5"
+	controllerRequestSchema         = "malt-rq3-gateway-controller-request/v3"
 	controllerResponseSchema        = "malt-rq3-gateway-controller-response/v2"
 	controllerCapabilityID          = "rq3.gateway-lifecycle-controller.v1"
 	directoryIdentityProfile        = "physical-directory-posix-device-inode/v1"
 )
 
 var maltAdapterSelfTestProfile = e0selftest.Profile{
-	ProfileID: "rq3-malt-adapter-positive-hostile-v1",
+	ProfileID: "rq3-malt-adapter-positive-hostile-v5",
 	PositiveCases: []string{
-		"execute-controlled-malt-kzg",
-		"execute-git-first-parent-malt-kzg",
+		"execute-controlled-malt-flat",
+		"execute-git-first-parent-malt-flat",
 	},
 	HostileCases: []string{
 		"reject-malformed-request",
 		"reject-tampered-payload",
 		"reject-stale-before-value",
+		"reject-commit-list-digest-mismatch",
+		"reject-commit-manifest-before-gateway-side-effects",
+		"reject-valid-wrong-gateway-root-immediately",
+		"reject-unfinished-stream",
+		"reject-failed-stream-reuse",
+		"reject-active-stream-binding-reuse",
 	},
 }
 
@@ -71,6 +81,40 @@ type maltAdapterSelfTestPositiveCase struct {
 	ID         string  `json:"id"`
 	SourceKind string  `json:"source_kind"`
 	Run        runSpec `json:"run"`
+}
+
+type observingEvaluationGateway struct {
+	base               evaluationGateway
+	healthCalls        int
+	bootstrapCalls     int
+	flatMapCalls       int
+	corruptFlatMapCall int
+	firstFlatRoot      cid.Cid
+}
+
+func (g *observingEvaluationGateway) Health(ctx context.Context) (*gatewaytransport.Health, error) {
+	g.healthCalls++
+	return g.base.Health(ctx)
+}
+
+func (g *observingEvaluationGateway) BootstrapEvaluationObject(ctx context.Context, authorization string, object gatewaytransport.BootstrapObject) (gatewaytransport.BootstrapResult, error) {
+	g.bootstrapCalls++
+	return g.base.BootstrapEvaluationObject(ctx, authorization, object)
+}
+
+func (g *observingEvaluationGateway) ApplyEvaluationFlatMap(ctx context.Context, authorization string, mutation gatewaytransport.FlatMapMutation) (gatewaytransport.FlatMapResult, error) {
+	g.flatMapCalls++
+	result, err := g.base.ApplyEvaluationFlatMap(ctx, authorization, mutation)
+	if err != nil {
+		return result, err
+	}
+	if g.flatMapCalls == 1 {
+		g.firstFlatRoot = result.Root
+	}
+	if g.corruptFlatMapCall == g.flatMapCalls && g.firstFlatRoot.Defined() {
+		result.Root = g.firstFlatRoot
+	}
+	return result, nil
 }
 
 type maltAdapterSelfTestHostileCase struct {
@@ -159,7 +203,7 @@ type controllerResponseError struct {
 	Message string `json:"message"`
 }
 
-type badgerOptionsIdentity struct {
+type fskvOptionsIdentity struct {
 	SchemaVersion        string `json:"schema_version"`
 	Engine               string `json:"engine"`
 	Module               string `json:"module"`
@@ -199,7 +243,7 @@ func parseMALTSelfTestFlags(arguments []string) (maltSelfTestConfig, error) {
 	corpus := flags.String("self-test-corpus", "", "formal E0 MALT adapter corpus")
 	controller := flags.String("gateway-controller", "", "pinned disposable Gateway controller")
 	clean := flags.String("clean-snapshot", "", "pinned empty Gateway snapshot descriptor")
-	options := flags.String("badger-options", "", "pinned synchronous Badger options descriptor")
+	options := flags.String("fskv-options", "", "pinned synchronous FSKV options descriptor")
 	timeout := flags.Duration("request-timeout", 2*time.Minute, "per-request self-test timeout")
 	var boundWorkloads, gitExecutables repeatedPathFlag
 	flags.Var(&boundWorkloads, "bound-workload", "production RQ3 workload artifact bound by formal E0 (repeatable)")
@@ -208,7 +252,7 @@ func parseMALTSelfTestFlags(arguments []string) (maltSelfTestConfig, error) {
 		return maltSelfTestConfig{}, err
 	}
 	if flags.NArg() != 0 || *corpus == "" || *controller == "" || *clean == "" || *options == "" || *timeout <= 0 || *timeout > 10*time.Minute {
-		return maltSelfTestConfig{}, errors.New("formal E0 self-test requires -self-test-corpus, -gateway-controller, -clean-snapshot, -badger-options, and a bounded positive -request-timeout")
+		return maltSelfTestConfig{}, errors.New("formal E0 self-test requires -self-test-corpus, -gateway-controller, -clean-snapshot, -fskv-options, and a bounded positive -request-timeout")
 	}
 	for _, path := range []string{*corpus, *controller, *clean, *options} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
@@ -238,16 +282,16 @@ func runMALTAdapterSelfTest(ctx context.Context, config maltSelfTestConfig, outp
 	}
 	optionsPin, err := describeControllerArtifact(config.optionsPath)
 	if err != nil {
-		return fmt.Errorf("Badger options input: %w", err)
+		return fmt.Errorf("FSKV options input: %w", err)
 	}
-	var options badgerOptionsIdentity
+	var options fskvOptionsIdentity
 	if err := decodeMALTSelfTestFile(config.optionsPath, 1<<20, &options); err != nil {
-		return fmt.Errorf("Badger options identity: %w", err)
+		return fmt.Errorf("FSKV options identity: %w", err)
 	}
-	if options.SchemaVersion != "gateway-badger-options/v1" || options.Engine != "badger" || options.Module != "github.com/dgraph-io/badger/v4" || strings.TrimSpace(options.Version) == "" ||
-		options.OptionsSource != "badger.DefaultOptions" || options.DirectoryPolicy != "campaign-empty-directory" || options.ValueDirectoryPolicy != "same-as-directory" || !options.SyncWrites || options.Logger != "disabled" ||
-		options.WALPolicy != "value-log-default-fixed" || options.LSMPolicy != "default-options-fixed" || options.CompactionPolicy != "close-before-scan-no-extra-compaction" || options.GCPolicy != "disabled" {
-		return errors.New("Badger options input has an invalid identity")
+	if options.SchemaVersion != "gateway-fskv-options/v2" || options.Engine != "fs" || options.Module != "gateway/internal/kv/fs" || options.Version != "v2" ||
+		options.OptionsSource != "fs.NewEvaluation" || options.DirectoryPolicy != "campaign-empty-directory" || options.ValueDirectoryPolicy != "immutable-content-addressed-objects" || !options.SyncWrites || options.Logger != "not-applicable" ||
+		options.WALPolicy != "none" || options.LSMPolicy != "none" || options.CompactionPolicy != "none" || options.GCPolicy != "strict-orphan-reclamation-on-open-and-quiesce" {
+		return errors.New("FSKV options input has an invalid identity")
 	}
 
 	results := make([]e0selftest.CaseResult, 0, len(corpus.PositiveCases)+len(corpus.HostileCases))
@@ -290,7 +334,7 @@ func (c maltAdapterSelfTestCorpus) validate() error {
 			return fmt.Errorf("MALT adapter positive case %q commit-list binding: %w", testCase.ID, err)
 		}
 	}
-	wantKinds := []string{"malformed-request", "tampered-payload", "stale-before-value"}
+	wantKinds := []string{"malformed-request", "tampered-payload", "stale-before-value", "commit-list-digest-mismatch", "commit-manifest-before-gateway-side-effects", "valid-wrong-gateway-root", "unfinished-stream", "failed-stream-reuse", "active-stream-binding-reuse"}
 	for index, testCase := range c.HostileCases {
 		if testCase.ID != maltAdapterSelfTestProfile.HostileCases[index] || testCase.Kind != wantKinds[index] {
 			return fmt.Errorf("MALT adapter hostile case %d does not match the compiled contract", index)
@@ -301,31 +345,164 @@ func (c maltAdapterSelfTestCorpus) validate() error {
 
 func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cleanPin, optionsPin controllerArtifactPin, version string, testCase maltAdapterSelfTestPositiveCase) error {
 	return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, testCase.Run, func(worker *campaignWorker) error {
-		result, err := worker.run(ctx, testCase.Run)
+		requests := maltStreamRequests(testCase.ID, testCase.Run)
+		responses, err := runMALTSelfTestWorker(ctx, worker, requests)
 		if err != nil {
 			return err
 		}
-		if result.CapabilityID != capabilityID || result.System != systemMALTKZG || result.Workload != testCase.Run.Workload || len(result.Commits) != len(testCase.Run.Commits)+1 || len(result.WriteEvents) == 0 {
-			return errors.New("production MALT worker returned an incomplete exact-ledger result")
+		wantCapability := maltAdapterV5ExpectedCapability()
+		if len(responses) != len(requests) || !responses[0].OK || responses[0].Capability == nil || !reflect.DeepEqual(*responses[0].Capability, wantCapability) || !responses[len(responses)-1].OK || responses[len(responses)-1].Stream == nil || !responses[len(responses)-1].Stream.Complete {
+			return errors.New("production MALT streaming worker returned an incomplete envelope sequence")
 		}
-		for index, record := range result.Commits {
+		var records []commitRecord
+		writeEventsByCommit := make(map[string]int)
+		writeEvents := 0
+		for index, response := range responses[1 : len(responses)-1] {
+			wantScope := resultScopeStreamChunk
+			if index == 0 {
+				wantScope = resultScopeStreamStart
+			}
+			if !response.OK || response.Result == nil || response.Result.CapabilityID != capabilityID || response.Result.System != systemMALTFlat || response.Result.ResultScope != wantScope || !reflect.DeepEqual(response.Result.Workload, testCase.Run.Workload) {
+				return fmt.Errorf("production MALT stream response is incomplete: %#v", response)
+			}
+			records = append(records, response.Result.Commits...)
+			writeEvents += len(response.Result.WriteEvents)
+			for _, event := range response.Result.WriteEvents {
+				writeEventsByCommit[event.CommitID]++
+			}
+		}
+		if len(records) != len(testCase.Run.Commits)+1 || writeEvents == 0 || responses[len(responses)-1].Stream.CommitsApplied != uint32(len(records)) {
+			return errors.New("production MALT streaming worker returned an incomplete exact-ledger result")
+		}
+		for index, record := range records {
 			want := testCase.Run.Snapshot.CommitID
 			if index > 0 {
 				want = testCase.Run.Commits[index-1].CommitID
 			}
-			if record.CommitID != want || record.Root == "" || record.HistoryRootsRetained != uint32(index+1) ||
-				record.NonWorkloadSetupRootsRetained != 1 {
+			if record.CommitID != want || record.Root == "" || record.HistoryRootsRetained != uint32(index+1) || !record.OracleUnmeasured ||
+				record.NonWorkloadSetupRootsRetained != 0 {
 				return fmt.Errorf("MALT commit record %d does not bind the retained history", index)
+			}
+			if index > 0 && len(testCase.Run.Commits[index-1].Mutations) == 0 &&
+				(record.Root != record.ParentRoot || record.LogicalObjectsChanged != 0 || record.LogicalBindingsChanged != 0 || record.LogicalPayloadBytes != 0 || record.AdapterPayloadInputBytes != 0 || writeEventsByCommit[record.CommitID] != 0) {
+				return fmt.Errorf("MALT no-op commit %q changed the root or emitted writes", want)
 			}
 		}
 		return nil
 	})
 }
 
+// maltAdapterV5ExpectedCapability is deliberately independent of
+// supportedCapability. These literals freeze the E0 v5 contract so a
+// production layout, commitment, persistence, or accounting change cannot
+// silently update both the implementation and its expected self-test value.
+func maltAdapterV5ExpectedCapability() capability {
+	return capability{
+		SchemaVersion:        "malt-rq3-malt-boundary-capability/v2",
+		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v3",
+		LayoutProfile:        "malt-flat-canonical-path-map/v1",
+		CommitmentBackend:    "kzg",
+		KVBackend:            "fs",
+		ArcTablePersistence:  "fskv-versioned-delta-only-append/v1",
+		CheckpointEnabled:    false,
+		MaterializationCache: "none",
+		System:               "malt-flat",
+		Boundary: []string{
+			"MALT-flat one-map canonical-path to whole-file-CID layout using current Core radix Map with fixed KZG",
+			"Gateway embedded CAS exact batch dispositions",
+			"Gateway FSKV exact delta-only ArcTable accounting of canonical ArcSet key-plus-value bytes; checkpoints disabled; no materialization cache",
+		},
+		Supported: true,
+		ExactCategories: []string{
+			"arctable-arcset-records",
+			"arctable-lineage-metadata",
+			"cas-structural-metadata",
+			"logical-changed-payload",
+			"root-version-metadata",
+		},
+		AttemptedVsPersisted:     true,
+		ReplacementByteFlow:      true,
+		SameValueAttempts:        true,
+		OneRootPerCommit:         true,
+		HistoryRetention:         "all-roots",
+		GatewayAccountingProfile: "gateway.client-root-write-accounting/v2",
+		GatewayByteMethod:        "durable-kv-key-plus-value-bytes/v2",
+		AggregateKeyBinding:      "object-ledger-sha256/category/disposition/v1",
+		DeleteLifecycle:          true,
+		MissingCategories:        []string{},
+		MissingMetrics:           []string{},
+		GapsFailClosed:           true,
+		MaximumWholeFileBytes:    67_108_864,
+		MaximumSnapshotFiles:     32_767,
+		MaximumMutationsPerChunk: 32_768,
+		MaximumFlatMapChanges:    65_536,
+	}
+}
+
+func maltStreamRequests(prefix string, run runSpec) []workerRequest {
+	requests := []workerRequest{{SchemaVersion: workerRequestSchema, RequestID: prefix + "-cap", Operation: operationCapabilities}}
+	start := run
+	start.Commits = []rq3baseline.Commit{}
+	start.CommitManifest = make([]string, 0, len(run.Commits)+1)
+	start.CommitManifest = append(start.CommitManifest, run.Snapshot.CommitID)
+	for _, commit := range run.Commits {
+		start.CommitManifest = append(start.CommitManifest, commit.CommitID)
+	}
+	requests = append(requests, workerRequest{SchemaVersion: workerRequestSchema, RequestID: prefix + "-start", Operation: operationStreamStart, Run: &start})
+	for index, commit := range run.Commits {
+		chunk := runSpec{PassMode: run.PassMode, RunPhase: run.RunPhase, ClusterID: run.ClusterID, RunIndex: run.RunIndex, Workload: run.Workload, Snapshot: rq3baseline.Snapshot{}, Commits: []rq3baseline.Commit{commit}}
+		requests = append(requests, workerRequest{SchemaVersion: workerRequestSchema, RequestID: fmt.Sprintf("%s-chunk-%d", prefix, index), Operation: operationStreamChunk, Run: &chunk})
+	}
+	return append(requests, workerRequest{SchemaVersion: workerRequestSchema, RequestID: prefix + "-finish", Operation: operationStreamFinish})
+}
+
+func bindMALTSelfTestCommitList(run *runSpec) error {
+	commitIDs := make([]string, 0, len(run.Commits)+1)
+	commitIDs = append(commitIDs, run.Snapshot.CommitID)
+	for _, commit := range run.Commits {
+		commitIDs = append(commitIDs, commit.CommitID)
+	}
+	encoded, err := json.Marshal(struct {
+		Commits []string `json:"commits"`
+	}{Commits: commitIDs})
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(encoded)
+	run.Workload.CommitListSHA256 = hex.EncodeToString(digest[:])
+	return nil
+}
+
+func runMALTSelfTestWorker(ctx context.Context, worker *campaignWorker, requests []workerRequest) ([]workerResponse, error) {
+	var input bytes.Buffer
+	for _, request := range requests {
+		encoded, err := json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
+		input.Write(encoded)
+		input.WriteByte('\n')
+	}
+	var output bytes.Buffer
+	runErr := runWorker(ctx, &input, &output, worker)
+	decoder := json.NewDecoder(&output)
+	responses := make([]workerResponse, 0, len(requests))
+	for {
+		var response workerResponse
+		if err := decoder.Decode(&response); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, errors.Join(runErr, err)
+		}
+		responses = append(responses, response)
+	}
+	return responses, runErr
+}
+
 func executeMALTHostileCase(ctx context.Context, config maltSelfTestConfig, cleanPin, optionsPin controllerArtifactPin, version string, testCase maltAdapterSelfTestHostileCase, positives []maltAdapterSelfTestPositiveCase) error {
 	switch testCase.Kind {
 	case "malformed-request":
-		if _, err := decodeWorkerRequest([]byte(`{"schema_version":"malt-rq3-malt-worker-request/v1","request_id":"malformed","operation":"run","unknown":true}`)); err == nil {
+		if _, err := decodeWorkerRequest([]byte(`{"schema_version":"malt-rq3-malt-worker-request/v2","request_id":"malformed","operation":"run","unknown":true}`)); err == nil {
 			return errors.New("production MALT request decoder accepted an unknown field")
 		}
 		return nil
@@ -336,8 +513,10 @@ func executeMALTHostileCase(ctx context.Context, config maltSelfTestConfig, clea
 		}
 		run.Snapshot.Files[0].PayloadBase64 = "dGFtcGVyZWQ="
 		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
-			if _, err := worker.run(ctx, run); err == nil || !strings.Contains(strings.ToLower(err.Error()), "payload sha-256 mismatch") {
-				return fmt.Errorf("production MALT worker did not reject a tampered payload binding: %v", err)
+			requests := maltStreamRequests(testCase.ID, run)[:2]
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if runErr != nil || len(responses) != 2 || responses[1].OK || responses[1].Error == nil || !strings.Contains(strings.ToLower(responses[1].Error.Message), "payload sha-256 mismatch") {
+				return fmt.Errorf("production MALT stream did not reject a tampered payload binding: responses=%#v err=%v", responses, runErr)
 			}
 			return nil
 		})
@@ -348,8 +527,126 @@ func executeMALTHostileCase(ctx context.Context, config maltSelfTestConfig, clea
 		}
 		run.Commits[0].Mutations[0].ExpectedOldSHA256 = strings.Repeat("0", 64)
 		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
-			if _, err := worker.run(ctx, run); err == nil || !strings.Contains(strings.ToLower(err.Error()), "old payload digest mismatch") {
-				return fmt.Errorf("production MALT worker did not reject a stale expected-old value: %v", err)
+			requests := maltStreamRequests(testCase.ID, run)[:3]
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if runErr != nil || len(responses) != 3 || responses[2].OK || responses[2].Error == nil || !strings.Contains(strings.ToLower(responses[2].Error.Message), "old payload digest mismatch") {
+				return fmt.Errorf("production MALT stream did not reject a stale expected-old value: responses=%#v err=%v", responses, runErr)
+			}
+			return nil
+		})
+	case "commit-list-digest-mismatch":
+		run, err := cloneMALTSelfTestRun(positives[1].Run)
+		if err != nil {
+			return err
+		}
+		run.Workload.CommitListSHA256 = strings.Repeat("0", 64)
+		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
+			requests := maltStreamRequests(testCase.ID, run)
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if len(responses) == 0 {
+				return fmt.Errorf("production MALT stream returned no response for a mismatched commit-list digest: err=%v", runErr)
+			}
+			if runErr != nil || len(responses) != len(requests) || responses[1].OK || responses[1].Error == nil || !strings.Contains(responses[1].Error.Message, "commit_list_sha256") {
+				return fmt.Errorf("production MALT stream accepted a mismatched commit-list digest: responses=%#v err=%v", responses, runErr)
+			}
+			for _, response := range responses[2:] {
+				if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "already complete") {
+					return fmt.Errorf("production MALT worker allowed reuse after rejecting a mismatched commit-list digest: responses=%#v", responses)
+				}
+			}
+			return nil
+		})
+	case "commit-manifest-before-gateway-side-effects":
+		run, err := cloneMALTSelfTestRun(positives[0].Run)
+		if err != nil {
+			return err
+		}
+		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
+			observed := &observingEvaluationGateway{base: worker.evaluation}
+			worker.evaluation = observed
+			requests := maltStreamRequests(testCase.ID, run)[:2]
+			requests[1].Run.CommitManifest[1] = "commit-not-bound-by-the-frozen-digest"
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if runErr != nil || len(responses) != 2 || !responses[0].OK || responses[1].OK || responses[1].Error == nil || !strings.Contains(responses[1].Error.Message, "commit_list_sha256") {
+				return fmt.Errorf("production MALT stream accepted an invalid preflight commit manifest: responses=%#v err=%v", responses, runErr)
+			}
+			if observed.healthCalls != 1 || observed.bootstrapCalls != 0 || observed.flatMapCalls != 0 {
+				return fmt.Errorf("invalid commit manifest crossed the Gateway side-effect boundary: health=%d bootstrap=%d flat-map=%d", observed.healthCalls, observed.bootstrapCalls, observed.flatMapCalls)
+			}
+			return nil
+		})
+	case "valid-wrong-gateway-root":
+		run, err := cloneMALTSelfTestRun(positives[1].Run)
+		if err != nil {
+			return err
+		}
+		second := run.Commits[0].Mutations[0]
+		secondPayload := []byte("v3\n")
+		secondDigest := sha256.Sum256(secondPayload)
+		second.PayloadBase64 = "djMK"
+		second.PayloadSHA256 = hex.EncodeToString(secondDigest[:])
+		second.ExpectedOldSHA256 = run.Commits[0].Mutations[0].PayloadSHA256
+		run.Commits = append(run.Commits, rq3baseline.Commit{CommitID: "4444444444444444444444444444444444444444", Mutations: []rq3baseline.Mutation{second}})
+		if err := bindMALTSelfTestCommitList(&run); err != nil {
+			return err
+		}
+		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
+			observed := &observingEvaluationGateway{base: worker.evaluation, corruptFlatMapCall: 2}
+			worker.evaluation = observed
+			requests := maltStreamRequests(testCase.ID, run)
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if runErr != nil || len(responses) != len(requests) || !responses[0].OK || !responses[1].OK || responses[2].OK || responses[2].Error == nil || !strings.Contains(responses[2].Error.Message, "independent per-commit flat oracle") {
+				return fmt.Errorf("production MALT stream accepted a different valid Gateway root: responses=%#v err=%v", responses, runErr)
+			}
+			if observed.flatMapCalls != 2 {
+				return fmt.Errorf("worker performed Gateway mutations after the first wrong root: flat-map calls=%d", observed.flatMapCalls)
+			}
+			for _, response := range responses[3:] {
+				if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "already complete") {
+					return fmt.Errorf("worker did not terminate after the first wrong root: responses=%#v", responses)
+				}
+			}
+			return nil
+		})
+	case "unfinished-stream":
+		run, err := cloneMALTSelfTestRun(positives[0].Run)
+		if err != nil {
+			return err
+		}
+		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, maltStreamRequests(testCase.ID, run)[:2])
+			if runErr == nil || len(responses) != 2 || !strings.Contains(runErr.Error(), "before stream-finish") {
+				return fmt.Errorf("production MALT worker accepted EOF with an unfinished stream: responses=%#v err=%v", responses, runErr)
+			}
+			return nil
+		})
+	case "failed-stream-reuse":
+		run, err := cloneMALTSelfTestRun(positives[0].Run)
+		if err != nil {
+			return err
+		}
+		run.Commits[0].Mutations[0].ExpectedOldSHA256 = strings.Repeat("0", 64)
+		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
+			requests := maltStreamRequests(testCase.ID, run)[:3]
+			requests = append(requests, workerRequest{SchemaVersion: workerRequestSchema, RequestID: testCase.ID + "-reuse", Operation: operationStreamFinish})
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if runErr != nil || len(responses) != 4 || responses[2].OK || responses[2].Error == nil || responses[3].OK || responses[3].Error == nil || !strings.Contains(responses[3].Error.Message, "already complete") {
+				return fmt.Errorf("production MALT worker allowed reuse after a failed stream: responses=%#v err=%v", responses, runErr)
+			}
+			return nil
+		})
+	case "active-stream-binding-reuse":
+		run, err := cloneMALTSelfTestRun(positives[0].Run)
+		if err != nil {
+			return err
+		}
+		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
+			requests := maltStreamRequests(testCase.ID, run)[:3]
+			requests[2].Run.PassMode = "timing"
+			requests = append(requests, workerRequest{SchemaVersion: workerRequestSchema, RequestID: testCase.ID + "-reuse", Operation: operationStreamFinish})
+			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
+			if runErr != nil || len(responses) != 4 || responses[2].OK || responses[2].Error == nil || responses[3].OK || responses[3].Error == nil || !strings.Contains(responses[3].Error.Message, "already complete") {
+				return fmt.Errorf("production MALT worker allowed reuse after an active-stream binding failure: responses=%#v err=%v", responses, runErr)
 			}
 			return nil
 		})
@@ -403,7 +700,7 @@ func validateMALTBoundWorkload(path string) error {
 	if err := decoder.Decode(&identity); err != nil {
 		return err
 	}
-	if identity.SchemaVersion != "malt-rq3-controlled-workload/v1" && identity.SchemaVersion != "malt-eval-git-trace/v1" {
+	if identity.SchemaVersion != "malt-rq3-controlled-workload/v1" && identity.SchemaVersion != "malt-eval-git-trace-request/v1" {
 		return fmt.Errorf("unsupported production workload schema %q", identity.SchemaVersion)
 	}
 	return nil
@@ -445,15 +742,15 @@ func withDisposableSelfTestGateway(ctx context.Context, config maltSelfTestConfi
 	instanceToken := selfTestToken("instance", caseID)
 	bootstrapToken := selfTestToken("bootstrap", caseID)
 	binding := controllerStartBinding{
-		System: systemMALTKZG, WorkloadID: run.Workload.ID, PassMode: run.PassMode, RunPhase: run.RunPhase,
+		System: systemMALTFlat, WorkloadID: run.Workload.ID, PassMode: run.PassMode, RunPhase: run.RunPhase,
 		ClusterID: run.ClusterID, RunIndex: run.RunIndex, Directory: stateDirectory, DirectoryID: "e0-" + caseID,
 		DirectoryIdentity: directoryLease.Identity(),
 		BaseURL:           baseURL, InstanceToken: instanceToken, BootstrapAuthorizationToken: bootstrapToken,
 		InitialRoot: "", CleanSnapshot: cleanPin, OptionsArtifact: optionsPin,
 		EngineConfiguration: controllerEngineConfiguration{
-			Engine: "badger", Version: version, OptionsArtifactSHA256: optionsPin.SHA256, SyncWrites: true,
-			WALPolicy: "value-log-default-fixed", LSMPolicy: "default-options-fixed",
-			CompactionPolicy: "close-before-scan-no-extra-compaction", GCPolicy: "disabled",
+			Engine: "fs", Version: version, OptionsArtifactSHA256: optionsPin.SHA256, SyncWrites: true,
+			WALPolicy: "none", LSMPolicy: "none",
+			CompactionPolicy: "none", GCPolicy: "strict-orphan-reclamation-on-open-and-quiesce",
 		},
 		Disposable: true, RequireInitiallyEmpty: true, EmptyOperationLog: true,
 	}

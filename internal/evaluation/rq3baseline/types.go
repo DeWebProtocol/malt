@@ -13,6 +13,9 @@ const (
 
 	OperationCapabilities = "capabilities"
 	OperationRun          = "run"
+	OperationStreamStart  = "stream-start"
+	OperationStreamChunk  = "stream-chunk"
+	OperationStreamFinish = "stream-finish"
 
 	SystemMerkleDAGUnixFS = "merkledag-unixfs"
 	SystemHAMTUnixFS      = "hamt-unixfs"
@@ -43,6 +46,17 @@ type WorkerResponse struct {
 	Capability    *Capabilities `json:"capability,omitempty"`
 	Result        *RunResult    `json:"result,omitempty"`
 	Error         *WorkerError  `json:"error,omitempty"`
+	Stream        *StreamResult `json:"stream,omitempty"`
+}
+
+type StreamResult struct {
+	System           string         `json:"system"`
+	Layout           LayoutSpec     `json:"layout"`
+	Records          []CommitRecord `json:"records"`
+	Root             string         `json:"root"`
+	CommitsApplied   uint32         `json:"commits_applied"`
+	Complete         bool           `json:"complete"`
+	CommitListSHA256 string         `json:"commit_list_sha256,omitempty"`
 }
 
 type WorkerError struct {

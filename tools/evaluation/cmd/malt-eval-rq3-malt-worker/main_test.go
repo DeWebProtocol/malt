@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +21,28 @@ import (
 	"github.com/dewebprotocol/malt-core/mutation"
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	cid "github.com/ipfs/go-cid"
 )
+
+func TestCleanupFailedPayloadFileReturnsCloseAndRemoveFailures(t *testing.T) {
+	primary := errors.New("write failed")
+	closeErr := errors.New("close failed")
+	removeErr := errors.New("remove failed")
+	got := cleanupFailedPayloadFile("payload", primary, closeErr, func(path string) error {
+		if path != "payload" {
+			t.Fatalf("remove path = %q", path)
+		}
+		return removeErr
+	})
+	for _, want := range []error{primary, closeErr, removeErr} {
+		if !errors.Is(got, want) {
+			t.Fatalf("cleanup error %v does not include %v", got, want)
+		}
+	}
+	if got := cleanupFailedPayloadFile("payload", primary, nil, func(string) error { return os.ErrNotExist }); !errors.Is(got, primary) || errors.Is(got, os.ErrNotExist) {
+		t.Fatalf("not-exist cleanup should retain only the primary failure: %v", got)
+	}
+}
 
 func TestClassifiedCASBatchesRespectBackendTransactionEnvelope(t *testing.T) {
 	blocks := []classifiedBlock{
@@ -50,6 +75,126 @@ func TestClassifiedCASBatchesRespectBackendTransactionEnvelope(t *testing.T) {
 	oversized := []classifiedBlock{{block: clientcas.Block{Data: make([]byte, 17)}}}
 	if _, err := nextClassifiedBlockBatchEnd(oversized, 0, 1, 8, 16); err == nil {
 		t.Fatal("oversized block was accepted")
+	}
+}
+
+func TestLogicalPayloadStoreKeepsLiveStateDiskBacked(t *testing.T) {
+	store, err := newLogicalPayloadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.close(); err != nil {
+			t.Errorf("close logical payload store: %v", err)
+		}
+	})
+	payload := []byte("disk-backed-payload")
+	digest := sha256.Sum256(payload)
+	file, err := store.retain(payload, 0o644, hex.EncodeToString(digest[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.data != nil {
+		t.Fatalf("logical payload store retained %d live heap bytes", len(file.data))
+	}
+	stored, err := store.read(file)
+	if err != nil || !slices.Equal(stored, payload) {
+		t.Fatalf("disk-backed payload = %q, %v", stored, err)
+	}
+}
+
+func TestLogicalPayloadStoreReconcileRetainsOnlyLiveCheckout(t *testing.T) {
+	store, err := newLogicalPayloadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.close(); err != nil {
+			t.Errorf("close logical payload store: %v", err)
+		}
+	})
+	oldData, liveData := []byte("historical"), []byte("live")
+	oldSum, liveSum := sha256.Sum256(oldData), sha256.Sum256(liveData)
+	oldFile, err := store.retain(oldData, 0o644, hex.EncodeToString(oldSum[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveFile, err := store.retain(liveData, 0o644, hex.EncodeToString(liveSum[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcile(map[string]logicalFile{"file": liveFile}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.read(oldFile); !os.IsNotExist(err) {
+		t.Fatalf("historical payload read error = %v, want not-exist", err)
+	}
+	if got, err := store.read(liveFile); err != nil || string(got) != string(liveData) {
+		t.Fatalf("live payload = %q, %v", got, err)
+	}
+}
+
+func TestLogicalPayloadOverlayDoesNotWarmMeasuredStore(t *testing.T) {
+	measured, err := newLogicalPayloadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := measured.close(); err != nil {
+			t.Errorf("close measured payload store: %v", err)
+		}
+	})
+	base := []byte("base")
+	baseSum := sha256.Sum256(base)
+	baseFile, err := measured.retain(base, 0o644, hex.EncodeToString(baseSum[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlay, err := newLogicalPayloadOverlay(measured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := []byte("updated")
+	updatedSum := sha256.Sum256(updated)
+	updatedFile, err := overlay.retain(updated, 0o644, hex.EncodeToString(updatedSum[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := overlay.read(baseFile); err != nil || string(got) != string(base) {
+		t.Fatalf("overlay fallback payload = %q, %v", got, err)
+	}
+	if err := overlay.close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := measured.read(updatedFile); !os.IsNotExist(err) {
+		t.Fatalf("prevalidated payload leaked into measured store: %v", err)
+	}
+}
+
+func TestDiskBackedFlatInsertCountsFullLogicalPayload(t *testing.T) {
+	store, err := newLogicalPayloadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.close(); err != nil {
+			t.Errorf("close logical payload store: %v", err)
+		}
+	})
+	payload := []byte("new-file")
+	digest := sha256.Sum256(payload)
+	mode := uint32(0o644)
+	commit := rq3baseline.Commit{CommitID: "insert", Mutations: []rq3baseline.Mutation{{
+		Kind: rq3baseline.MutationInsert, Path: "new.txt", FileKind: rq3baseline.FileKindRegular,
+		PayloadBase64: "bmV3LWZpbGU=", PayloadSHA256: hex.EncodeToString(digest[:]), Mode: &mode,
+	}}}
+	state := map[string]logicalFile{}
+	_, logicalBytes, _, err := applyFrozenCommit(state, commit, 4, true, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logicalBytes != int64(len(payload)) || state["new.txt"].data != nil {
+		t.Fatalf("disk-backed insert logical bytes=%d state=%#v", logicalBytes, state["new.txt"])
 	}
 }
 
@@ -519,7 +664,7 @@ func TestSubtreeRenameUpdatesAllBindingsIncrementallyAndMatchesFullOracle(t *tes
 		{Kind: rq3baseline.MutationRename, Path: "old/nested/b", Destination: "new/nested/b", FileKind: rq3baseline.FileKindRegular, ExpectedOldSHA256: digest([]byte("bbbbbbbb")), ExpectedOldMode: &mode, Mode: &mode},
 		{Kind: rq3baseline.MutationRename, Path: "old/nested/c", Destination: "new/nested/c", FileKind: rq3baseline.FileKindRegular, ExpectedOldSHA256: digest([]byte("cccc")), ExpectedOldMode: &mode, Mode: &mode},
 	}}
-	_, payloadBytes, changes, err := applyFrozenCommit(state, commit, 4, false)
+	_, payloadBytes, changes, err := applyFrozenCommit(state, commit, 4, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,8 +759,8 @@ func TestCanonicalEmptySetupAccountingIsAttributedToFirstSnapshot(t *testing.T) 
 	setup := &runResult{PassMode: "accounting", WriteEvents: []writeEvent{
 		{
 			Sequence: 99, CommitID: "setup-empty-top", Stage: stageAttempted,
-			Category: categoryCASMetadata, Cause: "directory-manifest",
-			Disposition: dispositionNew, ObjectKey: "bafy/setup-directory-manifest",
+			Category: categoryCASMetadata, Cause: flatSentinelCause,
+			Disposition: dispositionNew, ObjectKey: "bafy/setup-flat-layout-sentinel",
 			Count: 1, Bytes: 12, CASClassification: casNew,
 		},
 		{
@@ -649,7 +794,7 @@ func TestCanonicalEmptySetupAccountingIsAttributedToFirstSnapshot(t *testing.T) 
 	if result.WriteEvents[1].ObjectKey != setup.WriteEvents[0].ObjectKey || result.WriteEvents[2].ObjectKey != setup.WriteEvents[1].ObjectKey {
 		t.Fatal("setup attribution changed exact lifecycle object keys")
 	}
-	if setup.WriteEvents[0].CommitID != "setup-empty-top" || setup.WriteEvents[0].Cause != "directory-manifest" {
+	if setup.WriteEvents[0].CommitID != "setup-empty-top" || setup.WriteEvents[0].Cause != flatSentinelCause {
 		t.Fatal("setup attribution mutated its input sink")
 	}
 
@@ -679,8 +824,8 @@ func TestGatewayAggregateRejectsCounterOverflow(t *testing.T) {
 
 func TestStrictWorkerRequestRejectsDuplicateKeysAndTrailingJSON(t *testing.T) {
 	for _, raw := range []string{
-		`{"schema_version":"malt-rq3-malt-worker-request/v1","request_id":"one","request_id":"two","operation":"capabilities"}`,
-		`{"schema_version":"malt-rq3-malt-worker-request/v1","request_id":"one","operation":"capabilities"} {}`,
+		`{"schema_version":"malt-rq3-malt-worker-request/v2","request_id":"one","request_id":"two","operation":"capabilities"}`,
+		`{"schema_version":"malt-rq3-malt-worker-request/v2","request_id":"one","operation":"capabilities"} {}`,
 	} {
 		if _, err := decodeWorkerRequest([]byte(raw)); err == nil {
 			t.Fatalf("hostile JSON accepted: %s", raw)
@@ -696,7 +841,7 @@ func TestControlledListPayloadAccountingUsesChangedFixedChunks(t *testing.T) {
 		PayloadBase64: "YWJjZFdYWVo=", PayloadSHA256: strings.Repeat("a", 64),
 		ExpectedOldSHA256: strings.Repeat("b", 64), ExpectedOldMode: &mode, Mode: &mode,
 	}}}
-	_, payloadBytes, _, err := applyFrozenCommit(state, commit, 4, true)
+	_, payloadBytes, _, err := applyFrozenCommit(state, commit, 4, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,33 +884,126 @@ func TestUnixFSConformanceRunsOnlyAfterAllMALTCommitMeasurements(t *testing.T) {
 	}
 }
 
-func TestHybridGraphRepresentsEmptyRegularFileAsMeasuredList(t *testing.T) {
+func TestFlatGraphRepresentsEmptyRegularFileAsWholeBlobBinding(t *testing.T) {
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatal(err)
 	}
 	builder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	graph, err := builder.build(t.Context(), map[string]logicalFile{
+	graph, err := builder.buildFlat(t.Context(), map[string]logicalFile{
 		"empty.txt": {data: []byte{}, mode: 0o644, digest: strings.Repeat("e", 64)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := graph.objects[objectLogicalID("file", "empty.txt")]
-	if file == nil || file.kind != "list" || file.entries.Len() != 0 || file.commit.FixedList == nil ||
-		file.commit.FixedList.TotalSize != 0 || file.commit.FixedList.ChunkSize != 4 {
-		t.Fatalf("empty file object = %#v", file)
+	if graph.objects[graph.topID] == nil || graph.objects[graph.topID].kind != "map" || graph.objects[graph.topID].entries.Len() != 3 {
+		t.Fatalf("empty-file flat object = %#v", graph.objects[graph.topID])
 	}
 	blocks, err := fileCASBlocks(logicalFile{data: []byte{}, mode: 0o644}, true, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) != 1 || blocks[0].cause != "file-mode-sidecar" {
+	if len(blocks) != 2 || blocks[0].cause != "flat-whole-file-blob" || len(blocks[0].block.Data) != 0 || blocks[1].cause != "file-mode-sidecar" {
 		t.Fatalf("empty file CAS blocks = %#v", blocks)
 	}
 }
 
-func TestGitReplacementToZeroBytesHasNoChangedAfterChunks(t *testing.T) {
+func TestFlatMetadataCodecSeparatesEqualBytesFromRawPayloads(t *testing.T) {
+	mode, err := modeCASBlock(0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, metadata := range []classifiedBlock{flatSentinelBlock(), mode} {
+		if metadata.block.Codec != cid.DagJSON || !json.Valid(metadata.block.Data) {
+			t.Fatalf("metadata block %q is not valid DAG-JSON-domain JSON: %#v", metadata.cause, metadata.block)
+		}
+		metadataCID, err := clientcas.CIDForBlock(metadata.block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloadCID, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: append([]byte(nil), metadata.block.Data...)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metadataCID.Equals(payloadCID) {
+			t.Fatalf("metadata %q collides with an equal-byte raw payload: %s", metadata.cause, metadataCID)
+		}
+	}
+}
+
+func TestFlatGraphNamespacesUserPathsAwayFromInternalMetadata(t *testing.T) {
+	files := map[string]logicalFile{
+		"-eval/layout":       {data: []byte("layout-name"), mode: 0o644},
+		"other":              {data: []byte("other"), mode: 0o644},
+		"-eval/mode/b3RoZXI": {data: []byte("mode-name"), mode: 0o644},
+	}
+	blueprint, err := buildFlatBlueprint(files, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(blueprint.objects[blueprint.topID].entries); got != 1+2*len(files) {
+		t.Fatalf("flat entries = %d, want %d", got, 1+2*len(files))
+	}
+	next, err := buildFlatBlueprintNext(blueprint, []fileChange{{path: "-eval/layout", before: &logicalFile{data: []byte("layout-name"), mode: 0o644}, after: &logicalFile{data: []byte("updated"), mode: 0o644}}}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(next.objects[next.topID].entries); got != 1+2*len(files) {
+		t.Fatalf("incremental flat entries = %d, want %d", got, 1+2*len(files))
+	}
+}
+
+func TestFlatRootOracleMatchesFullRootAndRejectsDifferentGatewayRoot(t *testing.T) {
+	digest := func(value []byte) string {
+		sum := sha256.Sum256(value)
+		return hex.EncodeToString(sum[:])
+	}
+	state := map[string]logicalFile{
+		"file": {data: []byte("base"), mode: 0o644},
+	}
+	initial, err := directFlatSnapshotChanges(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracle, err := newFlatRootOracle(t.Context(), initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := uint32(0o644)
+	commit := rq3baseline.Commit{CommitID: "replace", Mutations: []rq3baseline.Mutation{{
+		Kind: rq3baseline.MutationReplace, Path: "file", FileKind: rq3baseline.FileKindRegular,
+		PayloadBase64: base64.StdEncoding.EncodeToString([]byte("next")), PayloadSHA256: digest([]byte("next")),
+		ExpectedOldSHA256: digest([]byte("base")), ExpectedOldMode: &mode, Mode: &mode,
+	}}}
+	_, _, logicalChanges, err := applyFrozenCommit(state, commit, 4, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := directFlatDeltaChanges(logicalChanges)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := oracle.apply(t.Context(), changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheme, err := kzg.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).buildFlat(t.Context(), state)
+	if err != nil || !expected.Equals(full.root) {
+		t.Fatalf("incremental root=%s full=%v err=%v", expected, full, err)
+	}
+	if err := verifyFlatGatewayRoot("test", expected, expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFlatGatewayRoot("test", expected, cid.Undef); err == nil {
+		t.Fatal("different Gateway root was accepted")
+	}
+}
+
+func TestGitReplacementToZeroBytesPersistsEmptyFlatBlob(t *testing.T) {
 	mode := uint32(0o644)
 	state := map[string]logicalFile{
 		"file.txt": {data: []byte("x"), mode: mode, digest: strings.Repeat("1", 64)},
@@ -775,11 +1013,11 @@ func TestGitReplacementToZeroBytesHasNoChangedAfterChunks(t *testing.T) {
 		PayloadBase64: "", PayloadSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ExpectedOldSHA256: strings.Repeat("1", 64), ExpectedOldMode: &mode, Mode: &mode,
 	}}}
-	blocks, payloadBytes, _, err := applyFrozenCommit(state, commit, 4, true)
+	blocks, payloadBytes, _, err := applyFrozenCommit(state, commit, 4, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payloadBytes != 0 || len(blocks) != 0 || len(state["file.txt"].data) != 0 {
+	if payloadBytes != 0 || len(blocks) != 1 || blocks[0].cause != "flat-whole-file-blob" || len(blocks[0].block.Data) != 0 || len(state["file.txt"].data) != 0 {
 		t.Fatalf("zero-byte Git replace: payload=%d blocks=%#v state=%#v", payloadBytes, blocks, state["file.txt"])
 	}
 }
@@ -802,6 +1040,30 @@ func TestWorkloadIdentityRejectsNoncanonicalControlledCoordinates(t *testing.T) 
 	identity.ControlledCoordinate.PathDepth = 0
 	if err := validateWorkloadIdentity(identity); err == nil {
 		t.Fatal("zero coordinate axis was accepted")
+	}
+}
+
+func TestCommitManifestBindsCompleteOrderBeforeStreaming(t *testing.T) {
+	commits := []string{"snapshot", "commit-a", "commit-b"}
+	encoded, err := json.Marshal(struct {
+		Commits []string `json:"commits"`
+	}{Commits: commits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded)
+	identity := workloadIdentity{CommitListSHA256: hex.EncodeToString(digest[:])}
+	if err := validateCommitManifest(identity, commits); err != nil {
+		t.Fatal(err)
+	}
+	wrong := append([]string(nil), commits...)
+	wrong[1], wrong[2] = wrong[2], wrong[1]
+	if err := validateCommitManifest(identity, wrong); err == nil {
+		t.Fatal("reordered stream commit manifest was accepted")
+	}
+	duplicate := []string{"snapshot", "commit-a", "commit-a"}
+	if err := validateCommitManifest(identity, duplicate); err == nil {
+		t.Fatal("duplicate stream commit manifest was accepted")
 	}
 }
 
