@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v6"
+	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v7"
 	controllerRequestSchema         = "malt-rq3-gateway-controller-request/v3"
 	controllerResponseSchema        = "malt-rq3-gateway-controller-response/v2"
 	controllerCapabilityID          = "rq3.gateway-lifecycle-controller.v2"
@@ -35,7 +35,7 @@ const (
 )
 
 var maltAdapterSelfTestProfile = e0selftest.Profile{
-	ProfileID: "rq3-malt-adapter-positive-hostile-v6",
+	ProfileID: "rq3-malt-adapter-positive-hostile-v7",
 	PositiveCases: []string{
 		"execute-controlled-malt-flat",
 		"execute-git-first-parent-malt-flat",
@@ -357,7 +357,7 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 		if err != nil {
 			return err
 		}
-		wantCapability := maltAdapterV6ExpectedCapability()
+		wantCapability := maltAdapterV7ExpectedCapability()
 		if len(responses) != len(requests) || !responses[0].OK || responses[0].Capability == nil || !reflect.DeepEqual(*responses[0].Capability, wantCapability) || !responses[len(responses)-1].OK || responses[len(responses)-1].Stream == nil || !responses[len(responses)-1].Stream.Complete {
 			return errors.New("production MALT streaming worker returned an incomplete envelope sequence")
 		}
@@ -399,25 +399,27 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 	})
 }
 
-// maltAdapterV6ExpectedCapability is deliberately independent of
-// supportedCapability. These literals freeze the E0 v6 contract so a
+// maltAdapterV7ExpectedCapability is deliberately independent of
+// supportedCapability. These literals freeze the E0 v7 contract so a
 // production layout, commitment, persistence, or accounting change cannot
 // silently update both the implementation and its expected self-test value.
-func maltAdapterV6ExpectedCapability() capability {
+func maltAdapterV7ExpectedCapability() capability {
 	return capability{
-		SchemaVersion:        "malt-rq3-malt-boundary-capability/v2",
-		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v5",
+		SchemaVersion:        "malt-rq3-malt-boundary-capability/v3",
+		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v6",
 		LayoutProfile:        "malt-flat-canonical-path-map/v1",
 		CommitmentBackend:    "kzg",
 		KVBackend:            "fs",
 		ArcTablePersistence:  "fskv-incremental-generations-bounded-index/v2",
 		CheckpointEnabled:    false,
 		MaterializationCache: "none",
+		CASRoleIndex:         "process-temporary-leveldb-bounded-memory-unmeasured/v1",
 		System:               "malt-flat",
 		Boundary: []string{
 			"MALT-flat one-map canonical-path to whole-file-CID layout; KZG is fixed as a control and is not an independent evaluation variable",
 			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
 			"Gateway primary FSKV stores and accounts canonical ArcSet key-plus-value bytes; its bounded process-temporary lookup index is rebuildable and unmeasured; checkpoints disabled; no materialization cache",
+			"Worker cross-category CAS validation uses bounded-memory LevelDB; temporary disk grows O(unique CIDs), is removed on close, and its storage and I/O time are unmeasured",
 		},
 		Supported: true,
 		ExactCategories: []string{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
 	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
@@ -246,11 +247,12 @@ func attributeCanonicalEmptySetup(result, setup *runResult, firstCommitID string
 	}
 }
 
-func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commitID string, blocks []classifiedBlock, roles map[string]string, result *runResult) error {
+func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commitID string, blocks []classifiedBlock, roles *blockRoleIndex, result *runResult) (time.Duration, error) {
+	var roleIndexElapsed time.Duration
 	for start := 0; start < len(blocks); {
 		end, err := nextClassifiedBlockBatchEnd(blocks, start, transport.MaxCASBatchBlocks, maximumEvaluationGatewayCASBatchBytes, transport.MaxCASBatchBytes)
 		if err != nil {
-			return err
+			return roleIndexElapsed, err
 		}
 		batch := make([]transport.Block, end-start)
 		for index := range batch {
@@ -258,15 +260,24 @@ func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commi
 		}
 		statuses, err := remote.PutBatch(ctx, batch)
 		if err != nil {
-			return fmt.Errorf("put exact CAS accounting batch: %w", err)
+			return roleIndexElapsed, fmt.Errorf("put exact CAS accounting batch: %w", err)
+		}
+		if len(statuses) != len(batch) {
+			return roleIndexElapsed, fmt.Errorf("Gateway returned %d CAS dispositions for %d blocks", len(statuses), len(batch))
+		}
+		roleBatch := make([]blockRole, len(statuses))
+		for index, status := range statuses {
+			roleBatch[index] = blockRole{key: status.CID.String(), category: blocks[start+index].category}
+		}
+		roleStarted := time.Now()
+		roleErr := roles.checkAndRecordBatch(roleBatch)
+		roleIndexElapsed += time.Since(roleStarted)
+		if roleErr != nil {
+			return roleIndexElapsed, roleErr
 		}
 		for index, status := range statuses {
 			classified := blocks[start+index]
 			key := status.CID.String()
-			if previous := roles[key]; previous != "" && previous != classified.category {
-				return fmt.Errorf("CAS object %s crosses mutually exclusive categories %q and %q", key, previous, classified.category)
-			}
-			roles[key] = classified.category
 			length := uint64(len(classified.block.Data))
 			objectKey := key + "/" + classified.suffix
 			collectAccounting := result.PassMode == "accounting"
@@ -294,12 +305,12 @@ func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commi
 					})
 				}
 			default:
-				return fmt.Errorf("Gateway returned non-evaluation CAS disposition %q", status.Status)
+				return roleIndexElapsed, fmt.Errorf("Gateway returned non-evaluation CAS disposition %q", status.Status)
 			}
 		}
 		start = end
 	}
-	return nil
+	return roleIndexElapsed, nil
 }
 
 func nextClassifiedBlockBatchEnd(blocks []classifiedBlock, start, maximumBlocks, maximumBatchBytes, maximumSingleBlockBytes int) (int, error) {

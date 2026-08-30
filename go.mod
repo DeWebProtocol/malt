@@ -17,6 +17,7 @@ require (
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
+	github.com/syndtr/goleveldb v1.0.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.44.0
@@ -32,6 +33,7 @@ require (
 	github.com/gammazero/deque v1.2.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

@@ -24,7 +24,7 @@ type flatDirectStream struct {
 	base           runSpec
 	source         *rq3baseline.ValidationStreamSession
 	state          map[string]logicalFile
-	roles          map[string]string
+	roles          *blockRoleIndex
 	root           cid.Cid
 	oracle         *flatRootOracle
 	nextOrder      uint32
@@ -72,14 +72,17 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 	if err != nil {
 		return nil, nil, errors.Join(err, retryMALTCleanup(source.Close))
 	}
+	roles, err := newBlockRoleIndex()
+	if err != nil {
+		return nil, nil, errors.Join(err, retryMALTCleanup(source.Close), retryMALTCleanup(payloads.close))
+	}
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			returnErr = errors.Join(returnErr, retryMALTCleanup(source.Close), retryMALTCleanup(payloads.close))
+			returnErr = errors.Join(returnErr, retryMALTCleanup(source.Close), retryMALTCleanup(payloads.close), retryMALTCleanup(roles.close))
 		}
 	}()
 	result := &runResult{SchemaVersion: runResultSchema, CapabilityID: capabilityID, System: systemMALTFlat, ResultScope: resultScopeStreamStart, PassMode: spec.PassMode, RunPhase: spec.RunPhase, ClusterID: spec.ClusterID, RunIndex: spec.RunIndex, Workload: spec.Workload, Commits: make([]commitRecord, 0, 1), WriteEvents: []writeEvent{}}
-	roles := make(map[string]string)
 	started := time.Now()
 	state, blocks, err := initialLogicalState(spec.Snapshot, spec.Workload.ChunkBytes, payloads)
 	if err != nil {
@@ -89,7 +92,8 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 		return nil, nil, fmt.Errorf("reconcile streamed MALT-flat snapshot payloads: %w", err)
 	}
 	blocks = append(blocks, flatSentinelBlock())
-	if err := uploadClassifiedBlocks(ctx, w.remote, spec.Snapshot.CommitID, blocks, roles, result); err != nil {
+	roleIndexElapsed, err := uploadClassifiedBlocks(ctx, w.remote, spec.Snapshot.CommitID, blocks, roles, result)
+	if err != nil {
 		return nil, nil, err
 	}
 	changes, err := directFlatSnapshotChanges(state)
@@ -122,7 +126,7 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 	if err != nil {
 		return nil, nil, err
 	}
-	result.Commits = append(result.Commits, commitRecord{Order: 0, CommitID: spec.Snapshot.CommitID, Root: applied.Root.String(), HistoryRootsRetained: 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: logical.AdapterPayloadInputBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed), GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
+	result.Commits = append(result.Commits, commitRecord{Order: 0, CommitID: spec.Snapshot.CommitID, Root: applied.Root.String(), HistoryRootsRetained: 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: logical.AdapterPayloadInputBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed), GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
 	base := spec
 	base.Snapshot.Files = nil
 	base.Commits = nil
@@ -190,7 +194,8 @@ func (s *flatDirectStream) applyChunk(ctx context.Context, spec runSpec) (*runRe
 		if err := verifyFlatGatewayRoot("stream pre-commit", expectedRoot, s.oracle.root); err != nil {
 			return nil, err
 		}
-		if err := uploadClassifiedBlocks(ctx, s.worker.remote, commit.CommitID, blocks, s.roles, result); err != nil {
+		roleIndexElapsed, err := uploadClassifiedBlocks(ctx, s.worker.remote, commit.CommitID, blocks, s.roles, result)
+		if err != nil {
 			s.failed = true
 			return nil, err
 		}
@@ -224,7 +229,7 @@ func (s *flatDirectStream) applyChunk(ctx context.Context, spec runSpec) (*runRe
 			return nil, err
 		}
 		logical := logicalRecords[index]
-		result.Commits = append(result.Commits, commitRecord{Order: s.nextOrder, CommitID: commit.CommitID, ParentRoot: s.root.String(), Root: nextRoot.String(), HistoryRootsRetained: s.nextOrder + 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: canonicalPayloadBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed), GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
+		result.Commits = append(result.Commits, commitRecord{Order: s.nextOrder, CommitID: commit.CommitID, ParentRoot: s.root.String(), Root: nextRoot.String(), HistoryRootsRetained: s.nextOrder + 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: canonicalPayloadBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed), GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
 		s.root = nextRoot
 		s.nextOrder++
 		s.commitIDs = append(s.commitIDs, commit.CommitID)
@@ -287,8 +292,15 @@ func (s *flatDirectStream) close() error {
 			s.payloads = nil
 		}
 	}
+	var rolesErr error
+	if s.roles != nil {
+		rolesErr = s.roles.close()
+		if rolesErr == nil {
+			s.roles = nil
+		}
+	}
 	s.failed = true
-	return errors.Join(sourceErr, payloadErr)
+	return errors.Join(sourceErr, payloadErr, rolesErr)
 }
 
 func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *runResult, returnErr error) {
@@ -296,7 +308,13 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 	if err != nil {
 		return nil, err
 	}
-	defer func() { returnErr = errors.Join(returnErr, retryMALTCleanup(payloads.close)) }()
+	roles, err := newBlockRoleIndex()
+	if err != nil {
+		return nil, errors.Join(err, retryMALTCleanup(payloads.close))
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, retryMALTCleanup(payloads.close), retryMALTCleanup(roles.close))
+	}()
 	baselineSpec := rq3baseline.RunSpec{
 		System: rq3baseline.SystemMerkleDAGUnixFS,
 		Layout: rq3baseline.LayoutSpec{
@@ -316,7 +334,6 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 		PassMode:    spec.PassMode, RunPhase: spec.RunPhase, ClusterID: spec.ClusterID, RunIndex: spec.RunIndex,
 		Workload: spec.Workload, Commits: make([]commitRecord, 0, len(source)), WriteEvents: []writeEvent{},
 	}
-	roles := make(map[string]string)
 	started := time.Now()
 	state, blocks, err := initialLogicalState(spec.Snapshot, spec.Workload.ChunkBytes, payloads)
 	if err != nil {
@@ -326,7 +343,8 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 		return nil, fmt.Errorf("reconcile direct MALT-flat snapshot payloads: %w", err)
 	}
 	blocks = append(blocks, flatSentinelBlock())
-	if err := uploadClassifiedBlocks(ctx, w.remote, spec.Snapshot.CommitID, blocks, roles, result); err != nil {
+	roleIndexElapsed, err := uploadClassifiedBlocks(ctx, w.remote, spec.Snapshot.CommitID, blocks, roles, result)
+	if err != nil {
 		return nil, err
 	}
 	changes, err := directFlatSnapshotChanges(state)
@@ -348,7 +366,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 	if err := verifyFlatGatewayRoot("snapshot", rootOracle.root, applied.Root); err != nil {
 		return nil, err
 	}
-	clientNS := durationNanos(time.Since(started) - oracleElapsed)
+	clientNS := durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed)
 	if spec.PassMode == "accounting" {
 		if err := result.appendGatewayAccounting(spec.Snapshot.CommitID, accountingFromTransport(applied.WriteAccounting)); err != nil {
 			return nil, err
@@ -392,7 +410,8 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 				return nil, err
 			}
 		}
-		if err := uploadClassifiedBlocks(ctx, w.remote, commit.CommitID, blocks, roles, result); err != nil {
+		roleIndexElapsed, err := uploadClassifiedBlocks(ctx, w.remote, commit.CommitID, blocks, roles, result)
+		if err != nil {
 			return nil, err
 		}
 		nextRoot := root
@@ -424,7 +443,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 		} else if err := verifyFlatGatewayRoot("unchanged commit "+commit.CommitID, expectedRoot, nextRoot); err != nil {
 			return nil, err
 		}
-		clientNS = durationNanos(time.Since(started) - oracleElapsed)
+		clientNS = durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed)
 		logical := source[index+1]
 		result.Commits = append(result.Commits, commitRecord{
 			Order: uint32(index + 1), CommitID: commit.CommitID, ParentRoot: root.String(), Root: nextRoot.String(),
