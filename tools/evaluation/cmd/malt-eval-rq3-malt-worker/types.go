@@ -186,7 +186,7 @@ func supportedCapability() capability {
 			"MALT-flat one-map canonical-path to whole-file-CID layout; KZG is fixed as a control and is not an independent evaluation variable",
 			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
 			"Gateway primary FSKV stores and accounts canonical ArcSet key-plus-value bytes; its bounded process-temporary lookup index is rebuildable and unmeasured; checkpoints disabled; no materialization cache",
-			"Worker cross-category CAS validation uses a bounded process-temporary LevelDB index that is removed on close and excluded from measured storage",
+			"Worker cross-category CAS validation uses bounded-memory LevelDB; temporary disk grows O(unique CIDs), is removed on close, and its storage and I/O time are unmeasured",
 		},
 		Supported: true,
 		ExactCategories: []string{
