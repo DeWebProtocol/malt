@@ -17,10 +17,14 @@ func TestValidateHealthRequiresSeparatedFilesystemCAS(t *testing.T) {
 		KVBackend: "fs", BlobBackend: "filesystem", ArcTableMode: "versioned",
 		CommitmentProfile: "kzg", CommitmentBackends: "ipa,kzg",
 		EvaluationCASWriteAccounting: healthCASAccounting, EvaluationCASWriteIsolation: healthCASIsolation,
-		ClientRootExactAcceptance:        "false",
-		EvaluationRQ3FlatMap:             gatewaytransport.FlatMapProfile,
-		EvaluationRQ3FlatMapStorageScope: "arctable-arcset-key-plus-value-only/v1",
-		EvaluationRQ3FlatMapCheckpoint:   "false", EvaluationRQ3FlatMapMaterializationCache: "none",
+		ClientRootExactAcceptance:               "false",
+		EvaluationRQ3FlatMap:                    gatewaytransport.FlatMapProfile,
+		EvaluationRQ3FlatMapLayout:              healthFlatLayout,
+		EvaluationRQ3FlatMapStorageScope:        healthFlatStorageScope,
+		EvaluationRQ3FlatMapLookupIndex:         healthFlatLookupIndex,
+		EvaluationRQ3FlatMapCommitmentTreatment: healthCommitmentTreatment,
+		EvaluationRQ3FlatMapFSKVMode:            healthFlatFSKVMode,
+		EvaluationRQ3FlatMapCheckpoint:          "false", EvaluationRQ3FlatMapMaterializationCache: "none",
 	}
 	worker := &campaignWorker{
 		config:     workerConfig{instanceToken: token, requestTimeout: time.Second},
@@ -40,6 +44,14 @@ func TestValidateHealthRequiresSeparatedFilesystemCAS(t *testing.T) {
 			value.EvaluationClientRootBootstrap = "gateway.evaluation-client-root-bootstrap-object/v1"
 		}},
 		{name: "missing-flat-map", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMap = "" }},
+		{name: "wrong-layout", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapLayout = "malt-hamt/v1" }},
+		{name: "unbounded-lookup-index", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapLookupIndex = "in-memory-unbounded" }},
+		{name: "variable-commitment", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapCommitmentTreatment = "variable" }},
+		{name: "legacy-fskv", mutate: func(value *gatewaytransport.Health) {
+			value.EvaluationRQ3FlatMapFSKVMode = "evaluation-incremental-generations/v1"
+		}},
+		{name: "checkpoint-enabled", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapCheckpoint = "true" }},
+		{name: "materialization-cache", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapMaterializationCache = "disk" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
