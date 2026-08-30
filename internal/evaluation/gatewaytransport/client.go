@@ -78,7 +78,11 @@ type Health struct {
 	ClientRootExactAcceptance                string `json:"client_root_exact_acceptance,omitempty"`
 	EvaluationClientRootBootstrap            string `json:"evaluation_client_root_bootstrap,omitempty"`
 	EvaluationRQ3FlatMap                     string `json:"evaluation_rq3_flat_map,omitempty"`
+	EvaluationRQ3FlatMapLayout               string `json:"evaluation_rq3_flat_map_layout,omitempty"`
 	EvaluationRQ3FlatMapStorageScope         string `json:"evaluation_rq3_flat_map_storage_scope,omitempty"`
+	EvaluationRQ3FlatMapLookupIndex          string `json:"evaluation_rq3_flat_map_lookup_index,omitempty"`
+	EvaluationRQ3FlatMapCommitmentTreatment  string `json:"evaluation_rq3_flat_map_commitment_treatment,omitempty"`
+	EvaluationRQ3FlatMapFSKVMode             string `json:"evaluation_rq3_flat_map_fskv_mode,omitempty"`
 	EvaluationRQ3FlatMapCheckpoint           string `json:"evaluation_rq3_flat_map_checkpoint,omitempty"`
 	EvaluationRQ3FlatMapMaterializationCache string `json:"evaluation_rq3_flat_map_materialization_cache,omitempty"`
 }

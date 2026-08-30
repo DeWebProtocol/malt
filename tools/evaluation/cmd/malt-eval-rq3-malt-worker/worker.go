@@ -24,8 +24,13 @@ import (
 )
 
 const (
-	healthCASAccounting = "cas.put-batch-disposition/v1"
-	healthCASIsolation  = "gateway-process-serialized"
+	healthCASAccounting       = "cas.put-batch-disposition/v1"
+	healthCASIsolation        = "gateway-process-serialized"
+	healthFlatLayout          = "malt-flat/v1"
+	healthFlatStorageScope    = "arctable-arcset-key-plus-value-only/v1"
+	healthFlatLookupIndex     = "process-temporary-badger-rebuildable-unmeasured/v1"
+	healthCommitmentTreatment = "fixed-kzg-control-not-independent-variable/v1"
+	healthFlatFSKVMode        = "evaluation-incremental-generations-bounded-index/v2"
 )
 
 type workerConfig struct {
@@ -127,7 +132,11 @@ func (w *campaignWorker) validateHealth(ctx context.Context) error {
 		health.ClientRootExactAcceptance != "false" || health.ClientRootWriteAccounting != "" ||
 		health.EvaluationClientRootBootstrap != "" ||
 		health.EvaluationRQ3FlatMap != gatewaytransport.FlatMapProfile ||
-		health.EvaluationRQ3FlatMapStorageScope != "arctable-arcset-key-plus-value-only/v1" ||
+		health.EvaluationRQ3FlatMapLayout != healthFlatLayout ||
+		health.EvaluationRQ3FlatMapStorageScope != healthFlatStorageScope ||
+		health.EvaluationRQ3FlatMapLookupIndex != healthFlatLookupIndex ||
+		health.EvaluationRQ3FlatMapCommitmentTreatment != healthCommitmentTreatment ||
+		health.EvaluationRQ3FlatMapFSKVMode != healthFlatFSKVMode ||
 		health.EvaluationRQ3FlatMapCheckpoint != "false" ||
 		health.EvaluationRQ3FlatMapMaterializationCache != "none" {
 		return fmt.Errorf("Gateway health does not expose the exact disposable FSKV-ArcTable/filesystem-CAS/KZG evaluation boundary")

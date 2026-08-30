@@ -7,7 +7,7 @@ const (
 	workerResponseSchema         = "malt-rq3-malt-worker-response/v2"
 	capabilitySchema             = "malt-rq3-malt-boundary-capability/v2"
 	runResultSchema              = "malt-rq3-malt-run-result/v2"
-	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v4"
+	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v5"
 	systemMALTFlat               = "malt-flat"
 	operationCapabilities        = "capabilities"
 	operationRun                 = "run"
@@ -180,11 +180,11 @@ func supportedCapability() capability {
 	return capability{
 		SchemaVersion: capabilitySchema, CapabilityID: capabilityID, System: systemMALTFlat,
 		LayoutProfile: "malt-flat-canonical-path-map/v1", CommitmentBackend: "kzg", KVBackend: "fs",
-		ArcTablePersistence: "fskv-versioned-delta-only-append/v1", CheckpointEnabled: false, MaterializationCache: "none",
+		ArcTablePersistence: "fskv-incremental-generations-bounded-index/v2", CheckpointEnabled: false, MaterializationCache: "none",
 		Boundary: []string{
-			"MALT-flat one-map canonical-path to whole-file-CID layout using current Core radix Map with fixed KZG",
+			"MALT-flat one-map canonical-path to whole-file-CID layout; KZG is fixed as a control and is not an independent evaluation variable",
 			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
-			"Gateway FSKV exact delta-only ArcTable accounting of canonical ArcSet key-plus-value bytes; checkpoints disabled; no materialization cache",
+			"Gateway primary FSKV stores and accounts canonical ArcSet key-plus-value bytes; its bounded process-temporary lookup index is rebuildable and unmeasured; checkpoints disabled; no materialization cache",
 		},
 		Supported: true,
 		ExactCategories: []string{

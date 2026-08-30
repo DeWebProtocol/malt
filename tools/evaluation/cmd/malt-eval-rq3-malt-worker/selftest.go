@@ -27,15 +27,15 @@ import (
 )
 
 const (
-	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v5"
+	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v6"
 	controllerRequestSchema         = "malt-rq3-gateway-controller-request/v3"
 	controllerResponseSchema        = "malt-rq3-gateway-controller-response/v2"
-	controllerCapabilityID          = "rq3.gateway-lifecycle-controller.v1"
+	controllerCapabilityID          = "rq3.gateway-lifecycle-controller.v2"
 	directoryIdentityProfile        = "physical-directory-posix-device-inode/v1"
 )
 
 var maltAdapterSelfTestProfile = e0selftest.Profile{
-	ProfileID: "rq3-malt-adapter-positive-hostile-v5",
+	ProfileID: "rq3-malt-adapter-positive-hostile-v6",
 	PositiveCases: []string{
 		"execute-controlled-malt-flat",
 		"execute-git-first-parent-malt-flat",
@@ -137,6 +137,8 @@ type controllerEngineConfiguration struct {
 	LSMPolicy             string `json:"lsm_policy"`
 	CompactionPolicy      string `json:"compaction_policy"`
 	GCPolicy              string `json:"gc_policy"`
+	PrimaryStorageScope   string `json:"primary_storage_scope"`
+	LookupIndexProfile    string `json:"lookup_index_profile"`
 }
 
 type controllerStartBinding struct {
@@ -204,19 +206,23 @@ type controllerResponseError struct {
 }
 
 type fskvOptionsIdentity struct {
-	SchemaVersion        string `json:"schema_version"`
-	Engine               string `json:"engine"`
-	Module               string `json:"module"`
-	Version              string `json:"version"`
-	OptionsSource        string `json:"options_source"`
-	DirectoryPolicy      string `json:"directory_policy"`
-	ValueDirectoryPolicy string `json:"value_directory_policy"`
-	SyncWrites           bool   `json:"sync_writes"`
-	Logger               string `json:"logger"`
-	WALPolicy            string `json:"wal_policy"`
-	LSMPolicy            string `json:"lsm_policy"`
-	CompactionPolicy     string `json:"compaction_policy"`
-	GCPolicy             string `json:"gc_policy"`
+	SchemaVersion         string `json:"schema_version"`
+	Engine                string `json:"engine"`
+	Module                string `json:"module"`
+	Version               string `json:"version"`
+	OptionsSource         string `json:"options_source"`
+	DirectoryPolicy       string `json:"directory_policy"`
+	ValueDirectoryPolicy  string `json:"value_directory_policy"`
+	SyncWrites            bool   `json:"sync_writes"`
+	Logger                string `json:"logger"`
+	WALPolicy             string `json:"wal_policy"`
+	LSMPolicy             string `json:"lsm_policy"`
+	CompactionPolicy      string `json:"compaction_policy"`
+	GCPolicy              string `json:"gc_policy"`
+	PrimaryStorageScope   string `json:"primary_storage_scope"`
+	LookupIndexProfile    string `json:"lookup_index_profile"`
+	LookupIndexSyncWrites bool   `json:"lookup_index_sync_writes"`
+	LookupIndexLifecycle  string `json:"lookup_index_lifecycle"`
 }
 
 type selfTestGatewayController struct {
@@ -288,9 +294,10 @@ func runMALTAdapterSelfTest(ctx context.Context, config maltSelfTestConfig, outp
 	if err := decodeMALTSelfTestFile(config.optionsPath, 1<<20, &options); err != nil {
 		return fmt.Errorf("FSKV options identity: %w", err)
 	}
-	if options.SchemaVersion != "gateway-fskv-options/v2" || options.Engine != "fs" || options.Module != "gateway/internal/kv/fs" || options.Version != "v2" ||
+	if options.SchemaVersion != "gateway-fskv-options/v3" || options.Engine != "fs" || options.Module != "gateway/internal/kv/fs" || options.Version != "v3" ||
 		options.OptionsSource != "fs.NewEvaluation" || options.DirectoryPolicy != "campaign-empty-directory" || options.ValueDirectoryPolicy != "immutable-content-addressed-objects" || !options.SyncWrites || options.Logger != "not-applicable" ||
-		options.WALPolicy != "none" || options.LSMPolicy != "none" || options.CompactionPolicy != "none" || options.GCPolicy != "strict-orphan-reclamation-on-open-and-quiesce" {
+		options.WALPolicy != "none" || options.LSMPolicy != "none" || options.CompactionPolicy != "none" || options.GCPolicy != "strict-orphan-reclamation-on-open-and-quiesce" ||
+		options.PrimaryStorageScope != "head-generations-and-content-addressed-objects/v1" || options.LookupIndexProfile != healthFlatLookupIndex || options.LookupIndexSyncWrites || options.LookupIndexLifecycle != "rebuild-on-open-remove-on-close/v1" {
 		return errors.New("FSKV options input has an invalid identity")
 	}
 
@@ -350,7 +357,7 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 		if err != nil {
 			return err
 		}
-		wantCapability := maltAdapterV5ExpectedCapability()
+		wantCapability := maltAdapterV6ExpectedCapability()
 		if len(responses) != len(requests) || !responses[0].OK || responses[0].Capability == nil || !reflect.DeepEqual(*responses[0].Capability, wantCapability) || !responses[len(responses)-1].OK || responses[len(responses)-1].Stream == nil || !responses[len(responses)-1].Stream.Complete {
 			return errors.New("production MALT streaming worker returned an incomplete envelope sequence")
 		}
@@ -392,25 +399,25 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 	})
 }
 
-// maltAdapterV5ExpectedCapability is deliberately independent of
-// supportedCapability. These literals freeze the E0 v5 contract so a
+// maltAdapterV6ExpectedCapability is deliberately independent of
+// supportedCapability. These literals freeze the E0 v6 contract so a
 // production layout, commitment, persistence, or accounting change cannot
 // silently update both the implementation and its expected self-test value.
-func maltAdapterV5ExpectedCapability() capability {
+func maltAdapterV6ExpectedCapability() capability {
 	return capability{
 		SchemaVersion:        "malt-rq3-malt-boundary-capability/v2",
-		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v4",
+		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v5",
 		LayoutProfile:        "malt-flat-canonical-path-map/v1",
 		CommitmentBackend:    "kzg",
 		KVBackend:            "fs",
-		ArcTablePersistence:  "fskv-versioned-delta-only-append/v1",
+		ArcTablePersistence:  "fskv-incremental-generations-bounded-index/v2",
 		CheckpointEnabled:    false,
 		MaterializationCache: "none",
 		System:               "malt-flat",
 		Boundary: []string{
-			"MALT-flat one-map canonical-path to whole-file-CID layout using current Core radix Map with fixed KZG",
+			"MALT-flat one-map canonical-path to whole-file-CID layout; KZG is fixed as a control and is not an independent evaluation variable",
 			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
-			"Gateway FSKV exact delta-only ArcTable accounting of canonical ArcSet key-plus-value bytes; checkpoints disabled; no materialization cache",
+			"Gateway primary FSKV stores and accounts canonical ArcSet key-plus-value bytes; its bounded process-temporary lookup index is rebuildable and unmeasured; checkpoints disabled; no materialization cache",
 		},
 		Supported: true,
 		ExactCategories: []string{
@@ -751,6 +758,8 @@ func withDisposableSelfTestGateway(ctx context.Context, config maltSelfTestConfi
 			Engine: "fs", Version: version, OptionsArtifactSHA256: optionsPin.SHA256, SyncWrites: true,
 			WALPolicy: "none", LSMPolicy: "none",
 			CompactionPolicy: "none", GCPolicy: "strict-orphan-reclamation-on-open-and-quiesce",
+			PrimaryStorageScope: "head-generations-and-content-addressed-objects/v1",
+			LookupIndexProfile:  healthFlatLookupIndex,
 		},
 		Disposable: true, RequireInitiallyEmpty: true, EmptyOperationLog: true,
 	}
