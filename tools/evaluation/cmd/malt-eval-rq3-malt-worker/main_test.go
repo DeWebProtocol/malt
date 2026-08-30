@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"slices"
@@ -14,7 +15,9 @@ import (
 	"testing"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
+	"github.com/dewebprotocol/malt-core/auth/arcset"
 	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
@@ -1000,6 +1003,39 @@ func TestFlatRootOracleMatchesFullRootAndRejectsDifferentGatewayRoot(t *testing.
 	}
 	if err := verifyFlatGatewayRoot("test", expected, cid.Undef); err == nil {
 		t.Fatal("different Gateway root was accepted")
+	}
+}
+
+func TestFlatRootOracleReclaimsHistoricalNodeCaches(t *testing.T) {
+	blockCID := func(value string) cid.Cid {
+		key, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: []byte(value)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	path := arcset.CanonicalizePath("rq3/files/file")
+	current := blockCID("initial")
+	oracle, err := newFlatRootOracle(t.Context(), []gatewaytransport.FlatMapChange{{Path: path, After: current}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 128; index++ {
+		next := blockCID(fmt.Sprintf("version-%d", index))
+		if _, err := oracle.apply(t.Context(), []gatewaytransport.FlatMapChange{{Path: path, Before: current, After: next}}); err != nil {
+			t.Fatal(err)
+		}
+		current = next
+	}
+	state, err := oracle.store.ExportState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Scopes) != 1 || state.Scopes[0].Scope != flatNamespace {
+		t.Fatalf("oracle scopes = %#v", state.Scopes)
+	}
+	if got := len(state.Scopes[0].NodeRoots); got != 1 {
+		t.Fatalf("oracle retained %d radix node roots after 128 replacements, want 1 current root", got)
 	}
 }
 

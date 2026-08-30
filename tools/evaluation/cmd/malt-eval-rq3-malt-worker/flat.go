@@ -28,6 +28,7 @@ const (
 // is submitted.
 type flatRootOracle struct {
 	semantic *mappingradix.Map
+	store    *materializermemory.Store
 	root     cid.Cid
 }
 
@@ -39,9 +40,10 @@ func newFlatRootOracle(ctx context.Context, initial []gatewaytransport.FlatMapCh
 	if err != nil {
 		return nil, fmt.Errorf("initialize flat root oracle KZG: %w", err)
 	}
-	// Non-branching keeps only the current oracle root/node cache. Historical
-	// roots are retained by the measured Gateway, not duplicated in worker heap.
-	semantic, err := mappingradix.NewMap(scheme, materializermemory.New(false))
+	// Non-branching replaces logical snapshots; retainCurrentRoot below also
+	// reclaims historical radix node caches from the unmeasured worker heap.
+	store := materializermemory.New(false)
+	semantic, err := mappingradix.NewMap(scheme, store)
 	if err != nil {
 		return nil, fmt.Errorf("initialize flat root oracle map: %w", err)
 	}
@@ -59,11 +61,13 @@ func newFlatRootOracle(ctx context.Context, initial []gatewaytransport.FlatMapCh
 	if err != nil {
 		return nil, fmt.Errorf("commit flat root oracle initial view: %w", err)
 	}
-	return &flatRootOracle{semantic: semantic, root: root}, nil
+	oracle := &flatRootOracle{semantic: semantic, store: store, root: root}
+	oracle.retainCurrentRoot()
+	return oracle, nil
 }
 
 func (o *flatRootOracle) apply(ctx context.Context, changes []gatewaytransport.FlatMapChange) (cid.Cid, error) {
-	if o == nil || o.semantic == nil || !o.root.Defined() {
+	if o == nil || o.semantic == nil || o.store == nil || !o.root.Defined() {
 		return cid.Undef, fmt.Errorf("flat root oracle is not initialized")
 	}
 	updates := make([]mapping.BatchUpdate, len(changes))
@@ -75,7 +79,16 @@ func (o *flatRootOracle) apply(ctx context.Context, changes []gatewaytransport.F
 		return cid.Undef, fmt.Errorf("apply flat root oracle update: %w", err)
 	}
 	o.root = next
+	o.retainCurrentRoot()
 	return next, nil
+}
+
+// retainCurrentRoot bounds the output-independent oracle by the current radix
+// tree. The measured Gateway retains every historical ArcTable root; keeping
+// those unmeasured node caches in the worker would make heap use grow with the
+// replay length and could prevent a full repository history from completing.
+func (o *flatRootOracle) retainCurrentRoot() {
+	o.store.RetainRoots(map[string][]cid.Cid{flatNamespace: {o.root}})
 }
 
 func verifyFlatGatewayRoot(operation string, expected, observed cid.Cid) error {
