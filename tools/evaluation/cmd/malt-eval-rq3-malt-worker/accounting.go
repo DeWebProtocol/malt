@@ -246,7 +246,7 @@ func attributeCanonicalEmptySetup(result, setup *runResult, firstCommitID string
 	}
 }
 
-func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commitID string, blocks []classifiedBlock, roles map[string]string, result *runResult) error {
+func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commitID string, blocks []classifiedBlock, roles *blockRoleIndex, result *runResult) error {
 	for start := 0; start < len(blocks); {
 		end, err := nextClassifiedBlockBatchEnd(blocks, start, transport.MaxCASBatchBlocks, maximumEvaluationGatewayCASBatchBytes, transport.MaxCASBatchBytes)
 		if err != nil {
@@ -263,10 +263,9 @@ func uploadClassifiedBlocks(ctx context.Context, remote *transport.Client, commi
 		for index, status := range statuses {
 			classified := blocks[start+index]
 			key := status.CID.String()
-			if previous := roles[key]; previous != "" && previous != classified.category {
-				return fmt.Errorf("CAS object %s crosses mutually exclusive categories %q and %q", key, previous, classified.category)
+			if err := roles.checkAndRecord(key, classified.category); err != nil {
+				return err
 			}
-			roles[key] = classified.category
 			length := uint64(len(classified.block.Data))
 			objectKey := key + "/" + classified.suffix
 			collectAccounting := result.PassMode == "accounting"

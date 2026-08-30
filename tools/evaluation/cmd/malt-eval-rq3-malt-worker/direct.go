@@ -24,7 +24,7 @@ type flatDirectStream struct {
 	base           runSpec
 	source         *rq3baseline.ValidationStreamSession
 	state          map[string]logicalFile
-	roles          map[string]string
+	roles          *blockRoleIndex
 	root           cid.Cid
 	oracle         *flatRootOracle
 	nextOrder      uint32
@@ -72,14 +72,17 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 	if err != nil {
 		return nil, nil, errors.Join(err, retryMALTCleanup(source.Close))
 	}
+	roles, err := newBlockRoleIndex()
+	if err != nil {
+		return nil, nil, errors.Join(err, retryMALTCleanup(source.Close), retryMALTCleanup(payloads.close))
+	}
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			returnErr = errors.Join(returnErr, retryMALTCleanup(source.Close), retryMALTCleanup(payloads.close))
+			returnErr = errors.Join(returnErr, retryMALTCleanup(source.Close), retryMALTCleanup(payloads.close), retryMALTCleanup(roles.close))
 		}
 	}()
 	result := &runResult{SchemaVersion: runResultSchema, CapabilityID: capabilityID, System: systemMALTFlat, ResultScope: resultScopeStreamStart, PassMode: spec.PassMode, RunPhase: spec.RunPhase, ClusterID: spec.ClusterID, RunIndex: spec.RunIndex, Workload: spec.Workload, Commits: make([]commitRecord, 0, 1), WriteEvents: []writeEvent{}}
-	roles := make(map[string]string)
 	started := time.Now()
 	state, blocks, err := initialLogicalState(spec.Snapshot, spec.Workload.ChunkBytes, payloads)
 	if err != nil {
@@ -287,8 +290,15 @@ func (s *flatDirectStream) close() error {
 			s.payloads = nil
 		}
 	}
+	var rolesErr error
+	if s.roles != nil {
+		rolesErr = s.roles.close()
+		if rolesErr == nil {
+			s.roles = nil
+		}
+	}
 	s.failed = true
-	return errors.Join(sourceErr, payloadErr)
+	return errors.Join(sourceErr, payloadErr, rolesErr)
 }
 
 func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *runResult, returnErr error) {
@@ -296,7 +306,13 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 	if err != nil {
 		return nil, err
 	}
-	defer func() { returnErr = errors.Join(returnErr, retryMALTCleanup(payloads.close)) }()
+	roles, err := newBlockRoleIndex()
+	if err != nil {
+		return nil, errors.Join(err, retryMALTCleanup(payloads.close))
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, retryMALTCleanup(payloads.close), retryMALTCleanup(roles.close))
+	}()
 	baselineSpec := rq3baseline.RunSpec{
 		System: rq3baseline.SystemMerkleDAGUnixFS,
 		Layout: rq3baseline.LayoutSpec{
@@ -316,7 +332,6 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 		PassMode:    spec.PassMode, RunPhase: spec.RunPhase, ClusterID: spec.ClusterID, RunIndex: spec.RunIndex,
 		Workload: spec.Workload, Commits: make([]commitRecord, 0, len(source)), WriteEvents: []writeEvent{},
 	}
-	roles := make(map[string]string)
 	started := time.Now()
 	state, blocks, err := initialLogicalState(spec.Snapshot, spec.Workload.ChunkBytes, payloads)
 	if err != nil {

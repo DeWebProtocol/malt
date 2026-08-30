@@ -5,9 +5,9 @@ import "github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 const (
 	workerRequestSchema          = "malt-rq3-malt-worker-request/v2"
 	workerResponseSchema         = "malt-rq3-malt-worker-response/v2"
-	capabilitySchema             = "malt-rq3-malt-boundary-capability/v2"
+	capabilitySchema             = "malt-rq3-malt-boundary-capability/v3"
 	runResultSchema              = "malt-rq3-malt-run-result/v2"
-	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v5"
+	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v6"
 	systemMALTFlat               = "malt-flat"
 	operationCapabilities        = "capabilities"
 	operationRun                 = "run"
@@ -101,6 +101,7 @@ type capability struct {
 	ArcTablePersistence      string   `json:"arctable_persistence"`
 	CheckpointEnabled        bool     `json:"checkpoint_enabled"`
 	MaterializationCache     string   `json:"materialization_cache"`
+	CASRoleIndex             string   `json:"cas_role_index"`
 	System                   string   `json:"system"`
 	Boundary                 []string `json:"boundary"`
 	Supported                bool     `json:"supported"`
@@ -180,11 +181,12 @@ func supportedCapability() capability {
 	return capability{
 		SchemaVersion: capabilitySchema, CapabilityID: capabilityID, System: systemMALTFlat,
 		LayoutProfile: "malt-flat-canonical-path-map/v1", CommitmentBackend: "kzg", KVBackend: "fs",
-		ArcTablePersistence: "fskv-incremental-generations-bounded-index/v2", CheckpointEnabled: false, MaterializationCache: "none",
+		ArcTablePersistence: "fskv-incremental-generations-bounded-index/v2", CheckpointEnabled: false, MaterializationCache: "none", CASRoleIndex: casRoleIndexProfile,
 		Boundary: []string{
 			"MALT-flat one-map canonical-path to whole-file-CID layout; KZG is fixed as a control and is not an independent evaluation variable",
 			"Gateway controller-owned filesystem CAS exact batch dispositions; payload bytes and product ACL/quota metadata remain outside measured FSKV",
 			"Gateway primary FSKV stores and accounts canonical ArcSet key-plus-value bytes; its bounded process-temporary lookup index is rebuildable and unmeasured; checkpoints disabled; no materialization cache",
+			"Worker cross-category CAS validation uses a bounded process-temporary LevelDB index that is removed on close and excluded from measured storage",
 		},
 		Supported: true,
 		ExactCategories: []string{
