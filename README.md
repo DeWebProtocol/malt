@@ -90,7 +90,7 @@ must record the exact runtime and dependency revisions they build.
 
 ## Build
 
-Go 1.25.7 or newer is required.
+Go 1.26.0 or newer is required.
 
 ```bash
 go test ./...
