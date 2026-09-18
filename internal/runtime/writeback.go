@@ -18,6 +18,7 @@ import (
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsclientroot "github.com/dewebprotocol/malt-client/unixfs/clientroot"
@@ -25,6 +26,8 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -165,10 +168,37 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if source == "" {
 		source = gatewayWritebackSource
 	}
-	replay, err := writebackapp.New(writebackapp.Options{
+	replayOptions := writebackapp.Options{
 		Queue: staged, Payloads: blocks, Remote: gatewayClientRootRemote{client: opts.Remote},
 		Writer: writer, Planner: planner, Roots: roots, TrustAlias: spec.TrustAlias, Source: source,
-	})
+	}
+	if layout == unixfs.LayoutRootedV1 {
+		remote, ok := opts.Remote.(transportcap.AuthenticationWriter)
+		if !ok {
+			return binding, fmt.Errorf("rooted writeback needs authentication transport")
+		}
+		profiles := engine.NewRegistry()
+		k, err := kzg.NewScheme()
+		if err != nil {
+			return binding, err
+		}
+		if err = profiles.Register(k); err != nil {
+			return binding, err
+		}
+		i, err := ipa.NewCommitterScheme(ipa.ProfileCompact)
+		if err != nil {
+			return binding, err
+		}
+		if err = profiles.Register(i); err != nil {
+			return binding, err
+		}
+		planner, err := unixfsclientroot.NewAuthentication(blocks, remote, engine.New(input.DefaultRegistry(), profiles))
+		if err != nil {
+			return binding, err
+		}
+		replayOptions.Authentication = &writebackapp.AuthenticationOptions{Planner: planner, Remote: remote}
+	}
+	replay, err := writebackapp.New(replayOptions)
 	if err != nil {
 		return binding, err
 	}

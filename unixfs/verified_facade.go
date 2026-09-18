@@ -12,9 +12,12 @@ import (
 	"slices"
 	"strings"
 
+	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	malt "github.com/dewebprotocol/malt-core"
+	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
+	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
 	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -52,39 +55,42 @@ type BlockStore interface {
 // the caller-selected trusted root and UnixFS segments; Result is untrusted
 // gateway data that has passed local verification.
 type Resolution struct {
-	Request protocol.ResolveRequest `json:"request"`
-	Result  protocol.ResolveResult  `json:"result"`
-	Target  cid.Cid                 `json:"target"`
+	Authentication *protocol.AuthenticationVerification `json:"authentication,omitempty"`
+	Request        protocol.ResolveRequest              `json:"request"`
+	Result         protocol.ResolveResult               `json:"result"`
+	Target         cid.Cid                              `json:"target"`
 }
 
 // Stat is the verified UnixFS projection of one path.
 type Stat struct {
-	Kind           string                       `json:"kind"`
-	NodeRoot       cid.Cid                      `json:"node_root"`
-	Payload        cid.Cid                      `json:"payload"`
-	StorageKind    string                       `json:"storage_kind"`
-	PayloadKind    string                       `json:"payload_kind"`
-	Size           uint64                       `json:"size,omitempty"`
-	ChunkSize      uint64                       `json:"chunk_size,omitempty"`
-	Entries        []unixfsmodel.DirectoryEntry `json:"entries,omitempty"`
-	Resolution     Resolution                   `json:"resolution"`
-	PayloadBinding *Resolution                  `json:"payload_binding,omitempty"`
-	MetadataRead   *protocol.ReadResult         `json:"metadata_read,omitempty"`
-	rawBody        []byte
-	rawBodyLoaded  bool
+	AuthenticationMetadata *protocol.AuthenticationVerification `json:"authentication_metadata,omitempty"`
+	Kind                   string                               `json:"kind"`
+	NodeRoot               cid.Cid                              `json:"node_root"`
+	Payload                cid.Cid                              `json:"payload"`
+	StorageKind            string                               `json:"storage_kind"`
+	PayloadKind            string                               `json:"payload_kind"`
+	Size                   uint64                               `json:"size,omitempty"`
+	ChunkSize              uint64                               `json:"chunk_size,omitempty"`
+	Entries                []unixfsmodel.DirectoryEntry         `json:"entries,omitempty"`
+	Resolution             Resolution                           `json:"resolution"`
+	PayloadBinding         *Resolution                          `json:"payload_binding,omitempty"`
+	MetadataRead           *protocol.ReadResult                 `json:"metadata_read,omitempty"`
+	rawBody                []byte
+	rawBodyLoaded          bool
 }
 
 // ReadResult contains only bytes that have been bound to locally verified
 // MALT evidence and authenticated payload CIDs.
 type ReadResult struct {
-	Body       []byte               `json:"-"`
-	Target     cid.Cid              `json:"target"`
-	Offset     uint64               `json:"offset"`
-	End        uint64               `json:"end"`
-	TotalSize  uint64               `json:"total_size"`
-	ChunkSize  uint64               `json:"chunk_size,omitempty"`
-	Resolution *Resolution          `json:"resolution,omitempty"`
-	Read       *protocol.ReadResult `json:"read,omitempty"`
+	Authentication *protocol.AuthenticationVerification `json:"authentication,omitempty"`
+	Body           []byte                               `json:"-"`
+	Target         cid.Cid                              `json:"target"`
+	Offset         uint64                               `json:"offset"`
+	End            uint64                               `json:"end"`
+	TotalSize      uint64                               `json:"total_size"`
+	ChunkSize      uint64                               `json:"chunk_size,omitempty"`
+	Resolution     *Resolution                          `json:"resolution,omitempty"`
+	Read           *protocol.ReadResult                 `json:"read,omitempty"`
 }
 
 // RemoveResult identifies an independently checked candidate root. Accepted
@@ -142,6 +148,7 @@ type Writer interface {
 }
 
 type ReaderOptions struct {
+	Layout   LayoutKind
 	Remote   Remote
 	Blocks   BlockGetter
 	Verifier LocalVerifier
@@ -159,11 +166,14 @@ type WriterOptions struct {
 }
 
 type verifiedReader struct {
-	remote            Remote
-	blocks            BlockGetter
-	verifier          LocalVerifier
-	stagedResolutions map[stagedProjectionCacheKey]*Resolution
-	stagedManifests   map[stagedProjectionCacheKey]stagedManifestProjection
+	automaticAuthentication bool
+	authentication          transportcap.Authentication
+	authenticationVerifier  *engine.Engine
+	remote                  Remote
+	blocks                  BlockGetter
+	verifier                LocalVerifier
+	stagedResolutions       map[stagedProjectionCacheKey]*Resolution
+	stagedManifests         map[stagedProjectionCacheKey]stagedManifestProjection
 }
 
 type stagedProjectionCacheKey struct {
@@ -204,7 +214,29 @@ func NewReader(opts ReaderOptions) (Reader, error) {
 			return nil, fmt.Errorf("initialize local MALT verifier: %w", err)
 		}
 	}
-	return &verifiedReader{remote: opts.Remote, blocks: opts.Blocks, verifier: verifier}, nil
+	if opts.Layout != "" {
+		if _, err := ParseLayoutKind(string(opts.Layout)); err != nil {
+			return nil, err
+		}
+	}
+	reader := &verifiedReader{remote: opts.Remote, blocks: opts.Blocks, verifier: verifier}
+	if opts.Layout == LayoutRootedV1 || opts.Layout == "" {
+		remote, ok := opts.Remote.(transportcap.Authentication)
+		if !ok {
+			if opts.Layout == "" {
+				return reader, nil
+			}
+			return nil, fmt.Errorf("rooted-v1 requires typed authentication transport")
+		}
+		engine, err := authverifier.New(nil)
+		if err != nil {
+			return nil, err
+		}
+		reader.automaticAuthentication = opts.Layout == ""
+		reader.authentication = remote
+		reader.authenticationVerifier = engine
+	}
+	return reader, nil
 }
 
 // NewStagedPathStatter constructs the lightweight verified projection used to
@@ -221,7 +253,9 @@ func NewStagedPathStatter(opts ReaderOptions) (StagedPathStatter, error) {
 
 func (r *verifiedReader) newStagedPathSession(blocks BlockGetter) StagedPathStatter {
 	return &verifiedReader{
-		remote:            r.remote,
+		remote:                  r.remote,
+		automaticAuthentication: r.automaticAuthentication,
+		authentication:          r.authentication, authenticationVerifier: r.authenticationVerifier,
 		blocks:            blocks,
 		verifier:          r.verifier,
 		stagedResolutions: make(map[stagedProjectionCacheKey]*Resolution),
@@ -239,7 +273,33 @@ func stagedProjectionKey(root cid.Cid, segments []string) stagedProjectionCacheK
 // NewWriter constructs a verified reader plus the narrowly scoped immutable
 // block/root capabilities required to materialize write candidates.
 func NewWriter(opts WriterOptions) (Writer, error) {
-	reader, err := NewReader(ReaderOptions{Remote: opts.Remote, Blocks: opts.Blocks, Verifier: opts.Verifier})
+	kind := LayoutHybridV1
+	if opts.Layout != nil {
+		kind = opts.Layout.Kind()
+	}
+	if kind == LayoutRootedV1 {
+		remote, ok := opts.Remote.(transportcap.AuthenticationWriter)
+		if !ok {
+			return nil, fmt.Errorf("rooted-v1 requires typed writer transport")
+		}
+		adapter, err := NewAuthenticationAdapter(remote, nil, maltcid.KZG4096)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := opts.Roots.(interface {
+			UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error)
+			CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
+		}); !ok {
+			opts.Roots = adapter
+			opts.Lists = adapter
+		} else if opts.Lists == nil {
+			if lists, ok := opts.Roots.(FixedListPayloadWriter); ok {
+				opts.Lists = lists
+			}
+		}
+
+	}
+	reader, err := NewReader(ReaderOptions{Remote: opts.Remote, Blocks: opts.Blocks, Verifier: opts.Verifier, Layout: kind})
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +350,9 @@ func (r *verifiedReader) Resolve(ctx context.Context, trustedRoot cid.Cid, rawPa
 }
 
 func (r *verifiedReader) resolveSegments(ctx context.Context, trustedRoot cid.Cid, segments []string) (*Resolution, error) {
+	if r.useAuthentication(trustedRoot) {
+		return r.resolveTypedSegments(ctx, trustedRoot, segments)
+	}
 	request, err := protocol.NewResolveRequest(malt.ResolveRequest{Root: trustedRoot, Segments: append([]string(nil), segments...)})
 	if err != nil {
 		return nil, err
@@ -466,6 +529,16 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 	}
 	switch stat.PayloadKind {
 	case "list":
+		if stat.Resolution.Authentication != nil {
+			proof, meta, err := r.readTypedMetadata(ctx, stat.Payload)
+			if err != nil {
+				return nil, err
+			}
+			stat.Size = meta.TotalSize
+			stat.ChunkSize = meta.ChunkSize
+			stat.AuthenticationMetadata = proof
+			return stat, nil
+		}
 		metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, stat.Payload)
 		if err != nil {
 			return nil, err
@@ -623,6 +696,14 @@ func (r *verifiedReader) readStatFile(ctx context.Context, stat *Stat, offset ui
 	}
 	switch stat.PayloadKind {
 	case "list":
+		if stat.Resolution.Authentication != nil {
+			result, err := r.readTypedRange(ctx, stat.Payload, offset, length, stat.AuthenticationMetadata)
+			if err != nil {
+				return nil, err
+			}
+			result.Resolution = resolution
+			return result, nil
+		}
 		result, err := r.readListPayloadWithMetadata(
 			ctx,
 			stat.Payload,
@@ -682,6 +763,9 @@ func (r *verifiedReader) ReadListPayloadRange(ctx context.Context, trustedListRo
 }
 
 func (r *verifiedReader) readListPayload(ctx context.Context, root cid.Cid, offset uint64, length *uint64) (*ReadResult, error) {
+	if r.useAuthentication(root) {
+		return r.readTypedRange(ctx, root, offset, length, nil)
+	}
 	metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, root)
 	if err != nil {
 		return nil, err
@@ -1095,3 +1179,16 @@ var _ Reader = (*verifiedReader)(nil)
 var _ Writer = (*verifiedWriter)(nil)
 var _ StagedPathStatter = (*verifiedReader)(nil)
 var _ StagedPathStatter = (*verifiedWriter)(nil)
+
+// Automatic readers identify rooted-v1 from its authenticated AA2 descriptor.
+// Explicit layout selection still wins; no remote metadata chooses semantics.
+func (r *verifiedReader) useAuthentication(root cid.Cid) bool {
+	if r.authentication == nil {
+		return false
+	}
+	if !r.automaticAuthentication {
+		return true
+	}
+	d, _, err := maltcid.ParseRoot(root)
+	return err == nil && (d.Layout == maltcid.Positional || d.InputRule == 2)
+}

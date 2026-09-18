@@ -44,6 +44,7 @@ const (
 	WriteBack             WritePolicy    = "write_back"
 	ConflictFailReadOnly  ConflictPolicy = "fail_read_only"
 	ConflictPreserveLocal ConflictPolicy = "preserve_local"
+	LayoutRootedV1        LayoutPolicy   = "rooted-v1"
 	LayoutFlatV1          LayoutPolicy   = "flat-v1"
 	LayoutHybridV1        LayoutPolicy   = "hybrid-v1"
 )
@@ -412,8 +413,8 @@ func normalizeSpec(spec Spec) (_ Spec, err error) {
 		if spec.ConflictPolicy != ConflictPreserveLocal {
 			return Spec{}, fmt.Errorf("write-back mount requires preserve-local conflict policy")
 		}
-		if spec.LayoutPolicy != LayoutFlatV1 && spec.LayoutPolicy != LayoutHybridV1 {
-			return Spec{}, fmt.Errorf("write-back mount requires flat-v1 or hybrid-v1 layout policy")
+		if spec.LayoutPolicy != LayoutFlatV1 && spec.LayoutPolicy != LayoutHybridV1 && spec.LayoutPolicy != LayoutRootedV1 {
+			return Spec{}, fmt.Errorf("write-back mount requires flat-v1, hybrid-v1 or rooted-v1 layout policy")
 		}
 	default:
 		return Spec{}, fmt.Errorf("mount write policy %q is unsupported", spec.WritePolicy)

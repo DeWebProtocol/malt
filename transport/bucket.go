@@ -23,6 +23,7 @@ type Identity struct {
 type BucketLayout string
 
 const (
+	BucketLayoutRootedV1 BucketLayout = "rooted-v1"
 	BucketLayoutFlatV1   BucketLayout = "flat-v1"
 	BucketLayoutHybridV1 BucketLayout = "hybrid-v1"
 )
@@ -166,7 +167,7 @@ func validateBucket(value Bucket) error {
 		return fmt.Errorf("required metadata is missing")
 	}
 	switch value.Layout {
-	case BucketLayoutFlatV1, BucketLayoutHybridV1:
+	case BucketLayoutFlatV1, BucketLayoutHybridV1, BucketLayoutRootedV1:
 		return nil
 	default:
 		return fmt.Errorf("unsupported layout %q", value.Layout)

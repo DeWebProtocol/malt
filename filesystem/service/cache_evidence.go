@@ -12,6 +12,8 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
 )
 
 const cacheEvidenceProfile = "malt.filesystem.path-proof/v1"
@@ -59,6 +61,36 @@ func newCacheProofVerifier(local unixfs.LocalVerifier, view View, path string, s
 		if stored.Version != 1 || stored.DatasetID != binding.DatasetID || stored.Branch != binding.Branch ||
 			stored.Revision != binding.Revision || stored.EncryptionEpoch != binding.EncryptionEpoch || stored.Path != path {
 			return fmt.Errorf("filesystem cache evidence does not match the selected view")
+		}
+
+		if expected.Authentication != nil {
+			wire := stored.Resolution.Authentication
+			if wire == nil {
+				return fmt.Errorf("cached typed proof is missing")
+			}
+			expectedJSON, _ := json.Marshal(expected.Authentication.Request)
+			actualJSON, _ := json.Marshal(wire.Request)
+			if !bytes.Equal(expectedJSON, actualJSON) || wire.Request.Root != binding.Root.String() || wire.Result.Resolved != binding.CID.String() || !stored.Resolution.Target.Equals(binding.CID) {
+				return fmt.Errorf("cached typed proof changed selected query")
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			verifier, err := authverifier.New(nil)
+			if err != nil {
+				return err
+			}
+			valid, err := authentication.Verify(verifier, wire.Request, wire.Result)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				return fmt.Errorf("invalid cached typed proof")
+			}
+			return nil
+		}
+		if stored.Resolution.Authentication != nil {
+			return fmt.Errorf("unexpected typed proof")
 		}
 		if stored.Resolution.Request.Root != binding.Root.String() ||
 			stored.Resolution.Result.Target != binding.CID.String() || !stored.Resolution.Target.Equals(binding.CID) ||

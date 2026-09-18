@@ -3,6 +3,7 @@ package unixfs
 import (
 	"context"
 	"fmt"
+	cid "github.com/ipfs/go-cid"
 	"strings"
 )
 
@@ -12,6 +13,7 @@ type LayoutKind string
 
 const (
 	LayoutFlatV1   LayoutKind = "flat-v1"
+	LayoutRootedV1 LayoutKind = "rooted-v1"
 	LayoutHybridV1 LayoutKind = "hybrid-v1"
 )
 
@@ -28,7 +30,7 @@ type Layout interface {
 func ParseLayoutKind(raw string) (LayoutKind, error) {
 	kind := LayoutKind(strings.ToLower(strings.TrimSpace(raw)))
 	switch kind {
-	case LayoutFlatV1, LayoutHybridV1:
+	case LayoutFlatV1, LayoutHybridV1, LayoutRootedV1:
 		return kind, nil
 	default:
 		return "", fmt.Errorf("unsupported MALT UnixFS layout %q", raw)
@@ -38,6 +40,8 @@ func ParseLayoutKind(raw string) (LayoutKind, error) {
 // NewLayout returns the application implementation selected by kind.
 func NewLayout(kind LayoutKind) (Layout, error) {
 	switch kind {
+	case LayoutRootedV1:
+		return rootedLayout{}, nil
 	case LayoutFlatV1:
 		return flatLayout{}, nil
 	case LayoutHybridV1:
@@ -61,4 +65,17 @@ func (hybridLayout) Kind() LayoutKind { return LayoutHybridV1 }
 
 func (hybridLayout) Materialize(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	return materializeHybridDirectory(ctx, roots, blocks, node)
+}
+
+type rootedLayout struct{}
+
+func (rootedLayout) Kind() LayoutKind { return LayoutRootedV1 }
+func (rootedLayout) Materialize(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+	if _, ok := roots.(interface {
+		UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error)
+		CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
+	}); !ok {
+		return nil, fmt.Errorf("rooted-v1 requires the typed authentication adapter")
+	}
+	return materializeDirectoryProjection(ctx, roots, blocks, node, false)
 }

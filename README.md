@@ -596,3 +596,23 @@ core application capabilities moved here and which were deliberately re-homed.
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+### Rooted ArcSet UnixFS
+
+The explicit `rooted-v1` application layout stores one Prefix ArcSet per
+UnixFS directory: AA2 name inputs address immediate children and a typed system
+payload binds the directory manifest. Chunked files use measured Positional
+ArcSets without system payloads. Parent rebinding follows application directory
+boundaries; no root-relative descendant aliases are emitted.
+
+Use `malt add --layout rooted-v1`, and select the same layout for `malt stat`,
+`malt cat`, and `malt rm`. Managed Buckets retain their declared layout;
+write-back mounts can select `rooted-v1`. Generic readers identify this schema
+from the authenticated V=0 AA2 descriptor. Existing flat/hybrid data retain
+their compatibility readers and writers.
+
+Writers compute and verify complete typed candidates locally, submit children
+before parents, and reject a receipt for any different Root. Filesystem replay
+uploads only final referenced staged bodies and uses the accepted-root fence
+for completion. None of these operations accepts a candidate automatically.
+The candidate API is a complete-view workflow, not a stateless transition proof.

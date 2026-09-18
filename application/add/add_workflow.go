@@ -41,6 +41,13 @@ func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient
 	if remote == nil {
 		return nil, fmt.Errorf("graph materialization capability is required")
 	}
+	if opts.Layout == addLayoutRootedV1 {
+		typed, err := newRootedMaterializer(remote)
+		if err != nil {
+			return nil, err
+		}
+		remote = typed
+	}
 	staged, err := buildAddStagingTree(ctx, casClient, remote, rawInputs, opts)
 	if err != nil {
 		return nil, err

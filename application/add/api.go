@@ -20,6 +20,7 @@ const (
 	LayoutHybrid    = addLayoutHybrid
 	LayoutHybridV1  = addLayoutHybridV1
 	LayoutFlatV1    = addLayoutFlatV1
+	LayoutRootedV1  = addLayoutRootedV1
 
 	FileLayoutBalanced = addFileLayoutBalanced
 	FileLayoutTrickle  = addFileLayoutTrickle

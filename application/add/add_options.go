@@ -18,6 +18,7 @@ const (
 
 	addLayoutHybrid   = "hybrid"
 	addLayoutHybridV1 = "hybrid-v1"
+	addLayoutRootedV1 = "rooted-v1"
 	addLayoutFlatV1   = "flat-v1"
 
 	addFileLayoutBalanced = "balanced"
@@ -63,7 +64,7 @@ func normalizeAddBuildOptions(opts addBuildOptions) (addBuildOptions, error) {
 		if opts.Layout == "" {
 			opts.Layout = addLayoutHybrid
 		}
-		if opts.Layout != addLayoutHybrid && opts.Layout != addLayoutHybridV1 && opts.Layout != addLayoutFlatV1 {
+		if opts.Layout != addLayoutHybrid && opts.Layout != addLayoutHybridV1 && opts.Layout != addLayoutFlatV1 && opts.Layout != addLayoutRootedV1 {
 			return opts, fmt.Errorf(
 				"unsupported malt unixfs layout %q: supported layouts are %q and %q",
 				opts.Layout,
@@ -97,6 +98,9 @@ func normalizeAddBuildOptions(opts addBuildOptions) (addBuildOptions, error) {
 }
 
 func unixFSLayoutKind(raw string) unixfs.LayoutKind {
+	if raw == addLayoutRootedV1 {
+		return unixfs.LayoutRootedV1
+	}
 	if raw == addLayoutFlatV1 {
 		return unixfs.LayoutFlatV1
 	}

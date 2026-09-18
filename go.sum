@@ -26,6 +26,8 @@ github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 h1:5RVFMOWjMyRy8cARdy79nAmgYw3h
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1/go.mod h1:ZXNYxsqcloTdSy/rNShjYzMhyjf0LaoftYK0p+A3h40=
 github.com/dewebprotocol/malt-core v0.0.9-RC.1 h1:4hkLq3qwBtfVg664moD36rCDljj9bjveCL4e706irkk=
 github.com/dewebprotocol/malt-core v0.0.9-RC.1/go.mod h1:o6L8K9vJp5hyrVo3fUtSsj0rvNpcboOcOb3nQwnR/gs=
+github.com/dewebprotocol/malt-core v0.0.9-RC.1.0.20260918152704-14ffc41ee51d h1:UUPrQLnDpuV7GRHuLh+7Ly6oJsNppocOFNeWqgjAD88=
+github.com/dewebprotocol/malt-core v0.0.9-RC.1.0.20260918152704-14ffc41ee51d/go.mod h1:o6L8K9vJp5hyrVo3fUtSsj0rvNpcboOcOb3nQwnR/gs=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=
 github.com/dlclark/regexp2 v1.11.0/go.mod h1:DHkYz0B9wPfa6wondMfaivmHpzrQ3v9q8cnmRbL6yW8=
 github.com/filecoin-project/go-clock v0.1.0 h1:SFbYIM75M8NnFm1yMHhN9Ahy3W5bEZV9gd6MPfXbKVU=

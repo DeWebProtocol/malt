@@ -14,9 +14,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bytes"
 	"github.com/dewebprotocol/malt-client/cache"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
@@ -401,6 +403,25 @@ func validateStat(view View, segments []string, stat *unixfs.Stat) error {
 }
 
 func validateResolution(root cid.Cid, segments []string, resolution unixfs.Resolution, target cid.Cid) error {
+	if wire := resolution.Authentication; wire != nil {
+		q := wire.Request
+		r := wire.Result
+		if q.Validate() != nil || q.Profile != protocol.AuthenticationPathProfile || q.Root != root.String() || q.Operation != "resolve" || r.Resolved != target.String() || r.AbsentStep != nil || !resolution.Target.Equals(target) || len(q.Steps) != len(segments) {
+			return fmt.Errorf("typed resolution does not match selected Root/path")
+		}
+		for i, segment := range segments {
+			expected := input.LabelValue([]byte(segment))
+			if segment == "@payload" && i == len(segments)-1 {
+				expected = input.SystemValue(input.Payload)
+			}
+			got := q.Steps[i]
+			if got.Kind != expected.Kind || got.Number != expected.Number || !bytes.Equal(got.Data, expected.Data) {
+				return fmt.Errorf("typed resolution changed path selector")
+			}
+		}
+		return nil
+	}
+
 	if resolution.Request.Profile != protocol.ResolveProfile || resolution.Result.Profile != protocol.ResolveProfile ||
 		resolution.Request.Root != root.String() || !slices.Equal(resolution.Request.Segments, segments) ||
 		!resolution.Target.Equals(target) || resolution.Result.Target != target.String() {
