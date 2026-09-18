@@ -430,3 +430,29 @@ func TestBucketOptionsRequireTokenAndSecureRemoteTransport(t *testing.T) {
 		t.Fatal("client accepted a tenant token over non-loopback HTTP")
 	}
 }
+
+func TestCreateBucketWithLayoutBindsRequestedLayout(t *testing.T) {
+	layout := client.BucketLayoutRootedV1
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if request["layout"] != "rooted-v1" {
+			t.Errorf("layout=%q", request["layout"])
+		}
+		_ = json.NewEncoder(w).Encode(client.Bucket{ID: "bkt_one", TenantID: "tenant_one", Name: "One", State: "active", Role: "owner", CreatedBy: "alice", Layout: layout})
+	}))
+	defer server.Close()
+	remote, err := client.New(client.Options{BaseURL: server.URL, TenantBearerToken: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.CreateBucketWithLayout(t.Context(), "One", client.BucketLayoutRootedV1); err != nil {
+		t.Fatal(err)
+	}
+	layout = client.BucketLayoutFlatV1
+	if _, err = remote.CreateBucketWithLayout(t.Context(), "One", client.BucketLayoutRootedV1); err == nil {
+		t.Fatal("accepted substituted layout")
+	}
+}

@@ -135,12 +135,30 @@ func (c *Client) ListBuckets(ctx context.Context) ([]Bucket, error) {
 }
 
 func (c *Client) CreateBucket(ctx context.Context, name string) (*Bucket, error) {
+	return c.CreateBucketWithLayout(ctx, name, "")
+}
+
+// CreateBucketWithLayout selects an application layout explicitly. Empty keeps
+// the service default for existing callers.
+func (c *Client) CreateBucketWithLayout(ctx context.Context, name string, layout BucketLayout) (*Bucket, error) {
+	request := map[string]string{"name": name}
+	if layout != "" {
+		switch layout {
+		case BucketLayoutFlatV1, BucketLayoutHybridV1, BucketLayoutRootedV1:
+		default:
+			return nil, fmt.Errorf("unsupported Bucket layout %q", layout)
+		}
+		request["layout"] = string(layout)
+	}
 	var result Bucket
-	if err := c.doTenant(ctx, http.MethodPost, "/v1/buckets", map[string]string{"name": name}, &result); err != nil {
+	if err := c.doTenant(ctx, http.MethodPost, "/v1/buckets", request, &result); err != nil {
 		return nil, err
 	}
 	if err := validateBucket(result); err != nil {
 		return nil, fmt.Errorf("gateway returned an invalid Bucket: %w", err)
+	}
+	if layout != "" && result.Layout != layout {
+		return nil, fmt.Errorf("gateway changed requested Bucket layout")
 	}
 	return &result, nil
 }

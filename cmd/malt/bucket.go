@@ -51,7 +51,8 @@ var bucketCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		value, err := gateway.CreateBucket(cmd.Context(), args[0])
+		layout, _ := cmd.Flags().GetString("layout")
+		value, err := gateway.CreateBucketWithLayout(cmd.Context(), args[0], client.BucketLayout(layout))
 		if err != nil {
 			return err
 		}
@@ -202,6 +203,7 @@ var bucketBranchCreateCmd = &cobra.Command{
 }
 
 func init() {
+	bucketCreateCmd.Flags().String("layout", "", "Bucket application layout: flat-v1, hybrid-v1, or rooted-v1")
 	bucketStageCmd.Flags().StringVar(&bucketStageBaseCommit, "base-commit", "", "Original base commit ID")
 	bucketStageCmd.Flags().StringVar(&bucketStageBaseRoot, "base-root", "", "Original base root CID")
 	bucketStageCmd.Flags().Uint64Var(&bucketStageBaseRevision, "base-revision", 0, "Original base head revision")

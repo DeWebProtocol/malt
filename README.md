@@ -616,3 +616,13 @@ before parents, and reject a receipt for any different Root. Filesystem replay
 uploads only final referenced staged bodies and uses the accepted-root fence
 for completion. None of these operations accepts a candidate automatically.
 The candidate API is a complete-view workflow, not a stateless transition proof.
+
+Evaluation tooling can export bounded file snapshots with
+`go run ./tools/evaluation/cmd/malt-eval-rooted-file-trace --input snapshots.json`.
+The input is an array of complete versions, each containing `files` (canonical
+relative paths mapped to base64 bytes) and `queries` (canonical paths).
+`--backend ipa` and `--chunk-size` select the commitment and file chunk geometry.
+The tool calls the production rooted-v1 schema/materializers, retains historical
+Roots, and emits `malt.rooted-trace/v1` for the sibling evaluator. These are
+**authentication-only** traces: payload construction is outside measurement,
+and no CAS-transfer latency or full-file read measurement is claimed.
