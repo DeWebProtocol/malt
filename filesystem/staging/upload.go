@@ -31,14 +31,14 @@ type UploadPayload struct {
 
 // UploadBatch freezes the replay identity for unfinished operations while
 // retaining completed operations needed to rebuild the complete overlay from
-// the same accepted base. OperationID is deterministic for this exact intent
+// the same accepted base. TransactionID is deterministic for this exact intent
 // snapshot and is suitable for the MALT Core client-root workflow.
 type UploadBatch struct {
-	View        filesystemservice.View
-	OperationID string
-	Operations  []journal.Operation
-	Pending     []journal.Operation
-	Payloads    []UploadPayload
+	View          filesystemservice.View
+	TransactionID string
+	Operations    []journal.Operation
+	Pending       []journal.Operation
+	Payloads      []UploadPayload
 }
 
 // PrepareUpload atomically freezes every replayable operation for view before
@@ -95,7 +95,7 @@ func (s *Service) PrepareUpload(ctx context.Context, view filesystemservice.View
 		}
 	}
 	return UploadBatch{
-		View: view, OperationID: uploadOperationID(view, operations),
+		View: view, TransactionID: uploadTransactionID(view, operations),
 		Operations: cloneJournalOperations(operations), Pending: cloneJournalOperations(pending),
 		Payloads: payloads,
 	}, nil
@@ -289,7 +289,7 @@ func validateUploadBatch(batch UploadBatch) error {
 	if err := validateView(batch.View); err != nil {
 		return fmt.Errorf("%w: %v", ErrUploadBatch, err)
 	}
-	if len(batch.Operations) == 0 || len(batch.Pending) == 0 || batch.OperationID != uploadOperationID(batch.View, batch.Operations) {
+	if len(batch.Operations) == 0 || len(batch.Pending) == 0 || batch.TransactionID != uploadTransactionID(batch.View, batch.Operations) {
 		return ErrUploadBatch
 	}
 	byID := make(map[string]journal.Operation, len(batch.Operations))
@@ -361,7 +361,7 @@ func operationIDs(operations []journal.Operation) []string {
 	return ids
 }
 
-func uploadOperationID(view filesystemservice.View, operations []journal.Operation) string {
+func uploadTransactionID(view filesystemservice.View, operations []journal.Operation) string {
 	hash := sha256.New()
 	writeUploadString(hash, view.DatasetID)
 	writeUploadString(hash, view.Branch)

@@ -626,3 +626,12 @@ The tool calls the production rooted-v1 schema/materializers, retains historical
 Roots, and emits `malt.rooted-trace/v1` for the sibling evaluator. These are
 **authentication-only** traces: payload construction is outside measurement,
 and no CAS-transfer latency or full-file read measurement is claimed.
+
+### Writeback transaction identity
+
+An upload batch and its writeback result expose `TransactionID`. The batch
+contains individually journaled filesystem operations, whose `OperationID`
+identifies an intent rather than a Delta transaction. Core client-root bundles
+and receipts use `transaction_id` with `/v2` profiles, without old-field
+compatibility; writer results use `/v3`. A candidate receipt does not publish
+a Bucket head or promote an accepted root.

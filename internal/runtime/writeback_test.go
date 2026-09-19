@@ -167,7 +167,7 @@ func (r *replayingGatewayWritableRemote) SubmitClientRootResult(_ context.Contex
 	copyBundle := bundle
 	r.submitted = &copyBundle
 	return &gatewayclient.ClientRootResponse{Receipt: mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
 		DurableBoundary: "test-gateway-atomic-v1",
 	}}, nil

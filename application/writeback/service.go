@@ -99,7 +99,7 @@ type Service struct {
 // trusted-root acceptance. RootAccepted is always false here.
 type Result struct {
 	Profile               string
-	OperationID           string
+	TransactionID         string
 	BaseRoot              cid.Cid
 	CandidateRoot         cid.Cid
 	Completed             []journal.Operation
@@ -172,7 +172,7 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{Profile: ResultProfile, OperationID: batch.OperationID, BaseRoot: view.Root}
+	result := Result{Profile: ResultProfile, TransactionID: batch.TransactionID, BaseRoot: view.Root}
 	if err := validateAvailablePayloads(batch.Payloads); err != nil {
 		return result, err
 	}
@@ -253,7 +253,7 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 			return result, fmt.Errorf("payload store substituted CID %s for %s", stored, payload.CID)
 		}
 	}
-	executed, err := session.Execute(ctx, batch.OperationID, intent)
+	executed, err := session.Execute(ctx, batch.TransactionID, intent)
 	if err != nil {
 		return result, fmt.Errorf("execute verified client-root write-back: %w", err)
 	}

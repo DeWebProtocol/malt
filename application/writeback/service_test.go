@@ -287,7 +287,7 @@ func newWritebackFixture(t *testing.T) *writebackFixture {
 	}
 	view := filesystemservice.View{DatasetID: "dataset", Branch: "main", Root: oldRoot, Revision: 7}
 	batch := staging.UploadBatch{
-		View: view, OperationID: "fs-writeback-one", Operations: []journal.Operation{operation},
+		View: view, TransactionID: "fs-writeback-one", Operations: []journal.Operation{operation},
 		Pending: []journal.Operation{operation}, Payloads: []staging.UploadPayload{{CID: newPayload, Body: newBody}},
 	}
 	return &writebackFixture{
@@ -336,7 +336,7 @@ func (q *fakeQueue) PrepareUpload(_ context.Context, view filesystemservice.View
 }
 
 func (q *fakeQueue) CompleteUpload(_ context.Context, batch staging.UploadBatch, candidate cid.Cid) ([]journal.Operation, error) {
-	if batch.OperationID != q.batch.OperationID {
+	if batch.TransactionID != q.batch.TransactionID {
 		return nil, errors.New("wrong completion batch")
 	}
 	q.completed++
@@ -354,7 +354,7 @@ func (q *fakeQueue) CompleteNoChange(_ context.Context, batch staging.UploadBatc
 }
 
 func (q *fakeQueue) MarkUploadConflicted(_ context.Context, batch staging.UploadBatch, conflictID string) ([]journal.Operation, error) {
-	if batch.OperationID != q.batch.OperationID {
+	if batch.TransactionID != q.batch.TransactionID {
 		return nil, errors.New("wrong conflict batch")
 	}
 	q.conflicted++
@@ -413,7 +413,7 @@ func (r *fakeClientRootRemote) SubmitClientRoot(_ context.Context, prepared clie
 		candidate = bundle.View.BaseRoot
 	}
 	return clientrootapp.ReceiptEnvelope{Receipt: mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 		BaseRoot: bundle.View.BaseRoot, Candidate: candidate, BundleDigest: digest,
 		DurableBoundary: "test-atomic-v1",
 	}}, nil

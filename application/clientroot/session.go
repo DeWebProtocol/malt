@@ -216,7 +216,7 @@ func (s *Session) SnapshotView() (mutation.UpdateView, error) {
 // Execute computes and submits exactly one candidate. Failure at any point
 // leaves the session base unchanged. Success advances only the retained writer
 // state after validating the exact durable receipt.
-func (s *Session) Execute(ctx context.Context, operationID string, intent mutation.SemanticIntent) (OperationResult, error) {
+func (s *Session) Execute(ctx context.Context, transactionID string, intent mutation.SemanticIntent) (OperationResult, error) {
 	if s == nil {
 		return OperationResult{}, fmt.Errorf("client-root session is nil")
 	}
@@ -230,7 +230,7 @@ func (s *Session) Execute(ctx context.Context, operationID string, intent mutati
 		return OperationResult{}, fmt.Errorf("semantic intent base %s is stale; writer base is %s", intent.BaseRoot, base)
 	}
 	computeStart := time.Now()
-	prepared, err := s.writer.Prepare(ctx, operationID, intent)
+	prepared, err := s.writer.Prepare(ctx, transactionID, intent)
 	computeDuration := time.Since(computeStart)
 	if err != nil {
 		return OperationResult{}, fmt.Errorf("compute client root: %w", err)

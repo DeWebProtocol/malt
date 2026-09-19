@@ -106,14 +106,14 @@ func (p *Planner) Plan(ctx context.Context, view mutation.UpdateView, operations
 	if err := applyOperations(root, operations); err != nil {
 		return mutation.SemanticIntent{}, false, err
 	}
-	operationID := batchOperationID(operations)
+	transactionID := batchTransactionID(operations)
 
 	var intent mutation.SemanticIntent
 	switch p.layout {
 	case unixfs.LayoutFlatV1:
-		intent, err = p.planFlat(ctx, canonical, root, top, operationID)
+		intent, err = p.planFlat(ctx, canonical, root, top, transactionID)
 	case unixfs.LayoutHybridV1:
-		intent, err = p.planHybrid(ctx, canonical, root, objectsByID, operationID)
+		intent, err = p.planHybrid(ctx, canonical, root, objectsByID, transactionID)
 	}
 	if err != nil {
 		return mutation.SemanticIntent{}, false, err
@@ -284,7 +284,7 @@ func (p *Planner) storeManifest(ctx context.Context, node *treeNode) error {
 	return nil
 }
 
-func (p *Planner) planFlat(ctx context.Context, view mutation.UpdateView, root *treeNode, top *mutation.UpdateObject, operationID string) (mutation.SemanticIntent, error) {
+func (p *Planner) planFlat(ctx context.Context, view mutation.UpdateView, root *treeNode, top *mutation.UpdateObject, transactionID string) (mutation.SemanticIntent, error) {
 	if err := p.prepareFlatManifests(ctx, root); err != nil {
 		return mutation.SemanticIntent{}, err
 	}
@@ -297,7 +297,7 @@ func (p *Planner) planFlat(ctx context.Context, view mutation.UpdateView, root *
 	if len(changes) == 0 {
 		return mutation.SemanticIntent{}, nil
 	}
-	transitionID := stableID("unixfs-flat", operationID)
+	transitionID := stableID("unixfs-flat", transactionID)
 	return mutation.SemanticIntent{
 		Profile: mutation.SemanticIntentProfile, BaseRoot: view.BaseRoot, TopOutputID: transitionID,
 		Transitions: []mutation.IntentTransition{{
@@ -325,11 +325,11 @@ func (p *Planner) prepareFlatManifests(ctx context.Context, node *treeNode) erro
 	return nil
 }
 
-func (p *Planner) planHybrid(ctx context.Context, view mutation.UpdateView, root *treeNode, objectIDs map[string]struct{}, operationID string) (mutation.SemanticIntent, error) {
+func (p *Planner) planHybrid(ctx context.Context, view mutation.UpdateView, root *treeNode, objectIDs map[string]struct{}, transactionID string) (mutation.SemanticIntent, error) {
 	topBackend := maltcid.BackendKindOf(view.BaseRoot)
 	transitions := make([]mutation.IntentTransition, 0)
 	state := hybridPlanState{usedOldObjects: map[string]bool{}, sharedOutputs: map[string]string{}}
-	if err := p.buildHybridTransitions(ctx, root, "", topBackend, operationID, objectIDs, &state, &transitions); err != nil {
+	if err := p.buildHybridTransitions(ctx, root, "", topBackend, transactionID, objectIDs, &state, &transitions); err != nil {
 		return mutation.SemanticIntent{}, err
 	}
 	if root.outputID == "" {
@@ -362,7 +362,7 @@ type hybridPlanState struct {
 	sharedOutputs  map[string]string
 }
 
-func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, nodePath string, backend maltcid.BackendKind, operationID string, objectIDs map[string]struct{}, state *hybridPlanState, transitions *[]mutation.IntentTransition) error {
+func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, nodePath string, backend maltcid.BackendKind, transactionID string, objectIDs map[string]struct{}, state *hybridPlanState, transitions *[]mutation.IntentTransition) error {
 	for _, name := range sortedChildNames(node) {
 		child := node.children[name]
 		if child.kind != unixfsmodel.DirectoryEntryTypeDir || !child.dirty {
@@ -372,7 +372,7 @@ func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, no
 		if nodePath != "" {
 			childPath = path.Join(nodePath, name)
 		}
-		if err := p.buildHybridTransitions(ctx, child, childPath, backend, operationID, objectIDs, state, transitions); err != nil {
+		if err := p.buildHybridTransitions(ctx, child, childPath, backend, transactionID, objectIDs, state, transitions); err != nil {
 			return err
 		}
 	}
@@ -402,7 +402,7 @@ func (p *Planner) buildHybridTransitions(ctx context.Context, node *treeNode, no
 		node.outputID = ""
 		return nil
 	}
-	seed := operationID + "\x00" + nodePath
+	seed := transactionID + "\x00" + nodePath
 	transitionID := stableID("unixfs-dir", seed)
 	objectID := ""
 	oldRoot := cid.Undef
@@ -758,7 +758,7 @@ func sortedChildNames(node *treeNode) []string {
 	return names
 }
 
-func batchOperationID(operations []journal.Operation) string {
+func batchTransactionID(operations []journal.Operation) string {
 	digest := sha256.New()
 	for _, operation := range operations {
 		_, _ = digest.Write([]byte(operation.OperationID))

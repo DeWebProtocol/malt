@@ -36,7 +36,7 @@ func TestClientRootTransportStrictlyBindsViewBundleReceiptAndMetrics(t *testing.
 		t.Fatal(err)
 	}
 	receipt := mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
 		DurableBoundary: "gateway-client-root-atomic-v1",
 	}
@@ -67,7 +67,7 @@ func TestClientRootTransportStrictlyBindsViewBundleReceiptAndMetrics(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !core.Candidate.Equals(bundle.Candidate) || core.OperationID != bundle.OperationID {
+			if !core.Candidate.Equals(bundle.Candidate) || core.TransactionID != bundle.TransactionID {
 				t.Fatalf("submitted bundle = %#v", core)
 			}
 			response.Header().Set("X-Malt-Client-Root-Old-State-Validation-Nanos", "11")
@@ -124,7 +124,7 @@ func TestClientRootTransportUsesAuthenticatedBucketRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
 		DurableBoundary: "gateway-client-root-atomic-v1",
 	}
@@ -238,7 +238,7 @@ func TestClientRootTransportRejectsHostileWriteAccounting(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
 		DurableBoundary: "gateway-client-root-atomic-v1",
 	}
@@ -311,7 +311,7 @@ func TestClientRootTransportRejectsCacheableOrIncompleteResponses(t *testing.T) 
 	t.Run("missing phase metric", func(t *testing.T) {
 		digest, _ := bundle.Digest()
 		wireReceipt, _ := protocol.NewMaterializationReceipt(mutation.MaterializationReceipt{
-			Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+			Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 			BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
 			DurableBoundary: "gateway-client-root-atomic-v1",
 		}, bundle)

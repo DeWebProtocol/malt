@@ -163,7 +163,7 @@ func (g *ConformanceGateway) handleClientRoot(response http.ResponseWriter, requ
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	recomputed, err := g.runtime.ComputeBundle(request.Context(), bundle.OperationID, verified, bundle.Intent)
+	recomputed, err := g.runtime.ComputeBundle(request.Context(), bundle.TransactionID, verified, bundle.Intent)
 	if err != nil || !recomputed.Bundle.Candidate.Equals(bundle.Candidate) {
 		http.Error(response, "client-root recomputation mismatch", http.StatusBadRequest)
 		return
@@ -181,7 +181,7 @@ func (g *ConformanceGateway) handleClientRoot(response http.ResponseWriter, requ
 	g.views[bundle.Candidate.String()] = recomputed.NextView
 	g.operations++
 	receipt := mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: bundleDigest,
 		DurableBoundary: "gateway-client-root-atomic-v1",
 	}
