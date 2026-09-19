@@ -69,35 +69,37 @@ type acceptedRootCompleter interface {
 }
 
 type Options struct {
-	Queue      Queue
-	Payloads   PayloadStore
-	Remote     clientrootapp.Remote
-	Writer     *clientwriter.Runtime
-	Planner    Planner
-	Roots      RootPolicy
-	TrustAlias string
-	Source     string
-	ViewBounds protocol.UpdateViewBounds
+	Authentication *AuthenticationOptions
+	Queue          Queue
+	Payloads       PayloadStore
+	Remote         clientrootapp.Remote
+	Writer         *clientwriter.Runtime
+	Planner        Planner
+	Roots          RootPolicy
+	TrustAlias     string
+	Source         string
+	ViewBounds     protocol.UpdateViewBounds
 }
 
 type Service struct {
-	gate       chan struct{}
-	queue      Queue
-	payloads   PayloadStore
-	remote     clientrootapp.Remote
-	writer     *clientwriter.Runtime
-	planner    Planner
-	roots      RootPolicy
-	trustAlias string
-	source     string
-	bounds     protocol.UpdateViewBounds
+	authentication *AuthenticationOptions
+	gate           chan struct{}
+	queue          Queue
+	payloads       PayloadStore
+	remote         clientrootapp.Remote
+	writer         *clientwriter.Runtime
+	planner        Planner
+	roots          RootPolicy
+	trustAlias     string
+	source         string
+	bounds         protocol.UpdateViewBounds
 }
 
 // Result distinguishes an exact durable remote materialization from local
 // trusted-root acceptance. RootAccepted is always false here.
 type Result struct {
 	Profile               string
-	OperationID           string
+	TransactionID         string
 	BaseRoot              cid.Cid
 	CandidateRoot         cid.Cid
 	Completed             []journal.Operation
@@ -109,11 +111,14 @@ type Result struct {
 }
 
 func New(opts Options) (*Service, error) {
-	if opts.Queue == nil || opts.Payloads == nil || opts.Remote == nil || opts.Writer == nil || opts.Planner == nil || opts.Roots == nil {
+	if opts.Queue == nil || opts.Payloads == nil || (opts.Authentication == nil && (opts.Remote == nil || opts.Writer == nil || opts.Planner == nil)) || opts.Roots == nil {
 		return nil, fmt.Errorf("filesystem write-back requires queue, payload, remote, writer, planner, and root-policy capabilities")
 	}
 	if _, ok := opts.Roots.(acceptedRootCompleter); !ok {
 		return nil, fmt.Errorf("filesystem write-back root policy does not support accepted-root fenced completion")
+	}
+	if opts.Authentication != nil && (opts.Authentication.Planner == nil || opts.Authentication.Remote == nil) {
+		return nil, fmt.Errorf("typed writeback capabilities are required")
 	}
 	alias := strings.TrimSpace(opts.TrustAlias)
 	if alias == "" {
@@ -131,8 +136,9 @@ func New(opts Options) (*Service, error) {
 		return nil, fmt.Errorf("filesystem write-back view bounds must all be positive or all omitted")
 	}
 	service := &Service{
-		gate:  make(chan struct{}, 1),
-		queue: opts.Queue, payloads: opts.Payloads, remote: opts.Remote,
+		authentication: opts.Authentication,
+		gate:           make(chan struct{}, 1),
+		queue:          opts.Queue, payloads: opts.Payloads, remote: opts.Remote,
 		writer: opts.Writer, planner: opts.Planner, roots: opts.Roots,
 		trustAlias: alias, source: source, bounds: bounds,
 	}
@@ -166,9 +172,12 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{Profile: ResultProfile, OperationID: batch.OperationID, BaseRoot: view.Root}
+	result := Result{Profile: ResultProfile, TransactionID: batch.TransactionID, BaseRoot: view.Root}
 	if err := validateAvailablePayloads(batch.Payloads); err != nil {
 		return result, err
+	}
+	if s.authentication != nil {
+		return s.replayAuthentication(ctx, view, batch, result)
 	}
 	session, err := clientrootapp.New(s.remote, s.writer)
 	if err != nil {
@@ -244,17 +253,21 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 			return result, fmt.Errorf("payload store substituted CID %s for %s", stored, payload.CID)
 		}
 	}
-	executed, err := session.Execute(ctx, batch.OperationID, intent)
+	executed, err := session.Execute(ctx, batch.TransactionID, intent)
 	if err != nil {
 		return result, fmt.Errorf("execute verified client-root write-back: %w", err)
 	}
 	result.CandidateRoot = executed.Candidate
 	result.Receipt = executed.Receipt
 	result.RemotePersisted = true
-	if err := s.roots.ObserveCandidate(s.trustAlias, executed.Candidate, view.Root, s.source); err != nil {
+	return s.completeCandidate(ctx, view, batch, result)
+}
+
+func (s *Service) completeCandidate(ctx context.Context, view filesystemservice.View, batch staging.UploadBatch, result Result) (Result, error) {
+	if err := s.roots.ObserveCandidate(s.trustAlias, result.CandidateRoot, view.Root, s.source); err != nil {
 		current, currentErr := s.roots.AcceptedRoot(s.trustAlias)
 		if currentErr == nil && !current.Equals(view.Root) {
-			conflictID := acceptedRootConflictID(view.Root, current, executed.Candidate)
+			conflictID := acceptedRootConflictID(view.Root, current, result.CandidateRoot)
 			if _, conflictErr := s.queue.MarkUploadConflicted(ctx, batch, conflictID); conflictErr != nil {
 				return result, errors.Join(
 					fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current),
@@ -270,7 +283,7 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 	var completed []journal.Operation
 	matched, completeErr := roots.CompleteIfAccepted(s.trustAlias, view.Root, func() error {
 		var err error
-		completed, err = s.queue.CompleteUpload(ctx, batch, executed.Candidate)
+		completed, err = s.queue.CompleteUpload(ctx, batch, result.CandidateRoot)
 		return err
 	})
 	if completeErr != nil {
@@ -281,7 +294,7 @@ func (s *Service) Replay(ctx context.Context, view filesystemservice.View) (Resu
 		if currentErr != nil {
 			return result, fmt.Errorf("read advanced accepted root: %w", currentErr)
 		}
-		conflictID := acceptedRootConflictID(view.Root, current, executed.Candidate)
+		conflictID := acceptedRootConflictID(view.Root, current, result.CandidateRoot)
 		if _, conflictErr := s.queue.MarkUploadConflicted(ctx, batch, conflictID); conflictErr != nil {
 			return result, errors.Join(
 				fmt.Errorf("%w: accepted root advanced to %s", ErrStaleAcceptedView, current),

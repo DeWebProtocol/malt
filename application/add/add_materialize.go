@@ -15,7 +15,11 @@ func loadExistingCurrentTree(ctx context.Context, gateway unixfs.Remote, casClie
 	if err != nil {
 		return nil, fmt.Errorf("initialize local verifier: %w", err)
 	}
-	statter, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{
+	kind := unixfs.LayoutHybridV1
+	if _, ok := gateway.(*rootedMaterializer); ok {
+		kind = unixfs.LayoutRootedV1
+	}
+	statter, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{Layout: kind,
 		Remote: gateway, Blocks: casClient, Verifier: verifier,
 	})
 	if err != nil {
@@ -25,6 +29,9 @@ func loadExistingCurrentTree(ctx context.Context, gateway unixfs.Remote, casClie
 }
 
 func materializeDirectory(ctx context.Context, gateway unixfs.StagedRootCreator, casClient addCASClient, node *unixfs.StagedNode, kind unixfs.LayoutKind) (*addMaterializeResult, error) {
+	if _, ok := gateway.(*rootedMaterializer); ok {
+		kind = unixfs.LayoutRootedV1
+	}
 	layout, err := unixfs.NewLayout(kind)
 	if err != nil {
 		return nil, err

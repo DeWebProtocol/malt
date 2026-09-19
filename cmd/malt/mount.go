@@ -146,7 +146,7 @@ func init() {
 	mountAddCmd.Flags().StringVar(&mountTrustAlias, "trust-alias", "", "local accepted-root alias (defaults to mount id)")
 	mountAddCmd.Flags().Uint32Var(&mountEncryptionEpoch, "encryption-epoch", 0, "local encryption epoch (nonzero requires decryption support)")
 	mountAddCmd.Flags().StringVar(&mountWritePolicy, "write-policy", string(filesystemmount.WriteReadOnly), "mount write policy: read_only or write_back")
-	mountAddCmd.Flags().StringVar(&mountLayoutPolicy, "layout", "", "write-back UnixFS layout: flat-v1 or hybrid-v1")
+	mountAddCmd.Flags().StringVar(&mountLayoutPolicy, "layout", "", "write-back UnixFS layout: flat-v1, hybrid-v1, or rooted-v1")
 	mountCmd.AddCommand(mountAddCmd, mountListCmd)
 	rootCmd.AddCommand(mountCmd, unmountCmd)
 }

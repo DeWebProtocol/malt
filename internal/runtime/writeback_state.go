@@ -81,7 +81,7 @@ func readWritableLayoutState(path string) (writableLayoutState, error) {
 		return writableLayoutState{}, fmt.Errorf("decode filesystem write-back layout state: %w", err)
 	}
 	if state.Version != writableLayoutStateVersion || state.DatasetID == "" || state.Branch == "" ||
-		(state.LayoutPolicy != filesystemmount.LayoutFlatV1 && state.LayoutPolicy != filesystemmount.LayoutHybridV1) {
+		(state.LayoutPolicy != filesystemmount.LayoutFlatV1 && state.LayoutPolicy != filesystemmount.LayoutHybridV1 && state.LayoutPolicy != filesystemmount.LayoutRootedV1) {
 		return writableLayoutState{}, fmt.Errorf("filesystem write-back layout state is invalid")
 	}
 	return state, nil

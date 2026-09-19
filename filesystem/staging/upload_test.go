@@ -28,7 +28,7 @@ func TestUploadBatchFreezesRetryIdentityCompletesCandidateAndRetainsHistory(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retry.OperationID != batch.OperationID || retry.Pending[0].RetryID != batch.Pending[0].RetryID {
+	if retry.TransactionID != batch.TransactionID || retry.Pending[0].RetryID != batch.Pending[0].RetryID {
 		t.Fatalf("retry identity changed: first=%#v retry=%#v", batch, retry)
 	}
 	firstCandidate := stagingTestCID(t, []byte("first candidate"))
@@ -48,7 +48,7 @@ func TestUploadBatchFreezesRetryIdentityCompletesCandidateAndRetainsHistory(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.OperationID == batch.OperationID || len(next.Operations) != 2 || next.Operations[0].OperationID != first.OperationID || next.Operations[0].Status != journal.StatusCompleted || len(next.Pending) != 1 || next.Pending[0].OperationID != second.OperationID || len(next.Payloads) != 2 {
+	if next.TransactionID == batch.TransactionID || len(next.Operations) != 2 || next.Operations[0].OperationID != first.OperationID || next.Operations[0].Status != journal.StatusCompleted || len(next.Pending) != 1 || next.Pending[0].OperationID != second.OperationID || len(next.Payloads) != 2 {
 		t.Fatalf("next upload batch=%#v", next)
 	}
 	secondCandidate := stagingTestCID(t, []byte("second candidate"))

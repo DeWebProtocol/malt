@@ -62,6 +62,9 @@ func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, bl
 // directory tree and returns its map root. Unchanged staged directories keep
 // their existing Key while changed directories are committed bottom-up.
 func materializeHybridDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+	return materializeDirectoryProjection(ctx, roots, blocks, node, true)
+}
+func materializeDirectoryProjection(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode, includeDescendants bool) (*StagedMaterializeResult, error) {
 	if node == nil || node.Kind != StagedKindDirectory {
 		return nil, fmt.Errorf("MaterializeStagedDirectory requires a directory node")
 	}
@@ -88,7 +91,7 @@ func materializeHybridDirectory(ctx context.Context, roots StagedRootCreator, bl
 			continue
 		}
 		if child.Kind == StagedKindDirectory {
-			mat, err := materializeHybridDirectory(ctx, roots, blocks, child)
+			mat, err := materializeDirectoryProjection(ctx, roots, blocks, child, includeDescendants)
 			if err != nil {
 				return nil, err
 			}
@@ -152,8 +155,19 @@ func materializeHybridDirectory(ctx context.Context, roots StagedRootCreator, bl
 		}
 	}
 
-	bindings := unixfsmodel.DirectoryRootBindings(payloadCID, childKeys, desc)
-	rootCID, err := roots.CreateStagedRoot(ctx, bindings)
+	aliases := desc
+	if !includeDescendants {
+		aliases = nil
+	}
+	bindings := unixfsmodel.DirectoryRootBindings(payloadCID, childKeys, aliases)
+	var rootCID cid.Cid
+	if updater, ok := roots.(interface {
+		UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error)
+	}); ok {
+		rootCID, err = updater.UpdateStagedRoot(ctx, node.Key, bindings)
+	} else {
+		rootCID, err = roots.CreateStagedRoot(ctx, bindings)
+	}
 	if err != nil {
 		return nil, err
 	}

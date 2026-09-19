@@ -98,6 +98,11 @@ func MaterializeFixedListPayload(ctx context.Context, blocks StagedBlockStore, w
 		}
 	}
 
+	if typed, ok := writer.(interface {
+		CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
+	}); ok {
+		return typed.CreateMeasuredPayload(ctx, chunks, totalSize, uint64(chunkSize))
+	}
 	baseRoot, err := writer.CreateFixedListBaseRoot(ctx)
 	if err != nil {
 		return cid.Undef, err

@@ -51,7 +51,7 @@ func TestSessionAdvancesOnlyAfterExactDurableReceipt(t *testing.T) {
 	}
 	if remote.submitted.Materialization.Profile != mutation.ClientRootMaterializationProfile ||
 		!remote.submitted.NextView.BaseRoot.Equals(result.Candidate) ||
-		remote.submitted.Bundle.OperationID != "native-map-replace" {
+		remote.submitted.Bundle.TransactionID != "native-map-replace" {
 		t.Fatalf("remote did not receive the complete writer result: %#v", remote.submitted)
 	}
 	wantViewDigest, err := view.Digest()
@@ -137,7 +137,7 @@ func (r *sessionRemote) SubmitClientRoot(_ context.Context, prepared clientwrite
 	}
 	return ReceiptEnvelope{
 		Receipt: mutation.MaterializationReceipt{
-			Profile: mutation.MaterializationReceiptProfile, OperationID: bundle.OperationID,
+			Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
 			BaseRoot: bundle.View.BaseRoot, Candidate: candidate, BundleDigest: digest,
 			DurableBoundary: "gateway-client-root-atomic-v1",
 		},

@@ -34,6 +34,9 @@ var rmCmd = &cobra.Command{
 func init() {
 	catCmd.Flags().Uint64("offset", 0, "range start in bytes (requires --length)")
 	catCmd.Flags().Uint64("length", 0, "range length in bytes (requires --offset)")
+	statCmd.Flags().String("layout", string(unixfs.LayoutHybridV1), "UnixFS application layout (hybrid-v1, flat-v1, rooted-v1)")
+	catCmd.Flags().String("layout", string(unixfs.LayoutHybridV1), "UnixFS application layout (hybrid-v1, flat-v1, rooted-v1)")
+	rmCmd.Flags().String("layout", string(unixfs.LayoutHybridV1), "UnixFS application layout (hybrid-v1, flat-v1, rooted-v1)")
 	rootCmd.AddCommand(statCmd, catCmd, rmCmd)
 }
 
@@ -65,7 +68,12 @@ func runStat(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	path := optionalPath(args)
-	reader, err := newUnixFSReader(remote)
+	layoutText, _ := cmd.Flags().GetString("layout")
+	layout, err := unixfs.ParseLayoutKind(layoutText)
+	if err != nil {
+		return err
+	}
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Layout: layout})
 	if err != nil {
 		return err
 	}
@@ -95,7 +103,12 @@ func runCat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	reader, err := newUnixFSReader(remote)
+	layoutText, _ := cmd.Flags().GetString("layout")
+	layout, err := unixfs.ParseLayoutKind(layoutText)
+	if err != nil {
+		return err
+	}
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Layout: layout})
 	if err != nil {
 		return err
 	}
@@ -138,6 +151,17 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	bucketSyncer, bucketBase, bucketLayout, err := prepareBucketCandidate(cmd.Context(), remote, selected.Root)
 	if err != nil {
 		return err
+	}
+	if bucketSyncer == nil || cmd.Flags().Changed("layout") {
+		value, _ := cmd.Flags().GetString("layout")
+		selected, parseErr := unixfs.ParseLayoutKind(value)
+		if parseErr != nil {
+			return parseErr
+		}
+		if bucketSyncer != nil && selected != bucketLayout {
+			return fmt.Errorf("--layout conflicts with selected Bucket layout")
+		}
+		bucketLayout = selected
 	}
 	writer, err := newUnixFSWriter(remote, bucketLayout)
 	if err != nil {

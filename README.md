@@ -596,3 +596,42 @@ core application capabilities moved here and which were deliberately re-homed.
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+### Rooted ArcSet UnixFS
+
+The explicit `rooted-v1` application layout stores one Prefix ArcSet per
+UnixFS directory: AA2 name inputs address immediate children and a typed system
+payload binds the directory manifest. Chunked files use measured Positional
+ArcSets without system payloads. Parent rebinding follows application directory
+boundaries; no root-relative descendant aliases are emitted.
+
+Use `malt add --layout rooted-v1`, and select the same layout for `malt stat`,
+`malt cat`, and `malt rm`. Managed Buckets retain their declared layout;
+write-back mounts can select `rooted-v1`. Generic readers identify this schema
+from the authenticated V=0 AA2 descriptor. Existing flat/hybrid data retain
+their compatibility readers and writers.
+
+Writers compute and verify complete typed candidates locally, submit children
+before parents, and reject a receipt for any different Root. Filesystem replay
+uploads only final referenced staged bodies and uses the accepted-root fence
+for completion. None of these operations accepts a candidate automatically.
+The candidate API is a complete-view workflow, not a stateless transition proof.
+
+Evaluation tooling can export bounded file snapshots with
+`go run ./tools/evaluation/cmd/malt-eval-rooted-file-trace --input snapshots.json`.
+The input is an array of complete versions, each containing `files` (canonical
+relative paths mapped to base64 bytes) and `queries` (canonical paths).
+`--backend ipa` and `--chunk-size` select the commitment and file chunk geometry.
+The tool calls the production rooted-v1 schema/materializers, retains historical
+Roots, and emits `malt.rooted-trace/v1` for the sibling evaluator. These are
+**authentication-only** traces: payload construction is outside measurement,
+and no CAS-transfer latency or full-file read measurement is claimed.
+
+### Writeback transaction identity
+
+An upload batch and its writeback result expose `TransactionID`. The batch
+contains individually journaled filesystem operations, whose `OperationID`
+identifies an intent rather than a Delta transaction. Core client-root bundles
+and receipts use `transaction_id` with `/v2` profiles, without old-field
+compatibility; writer results use `/v3`. A candidate receipt does not publish
+a Bucket head or promote an accepted root.

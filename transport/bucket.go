@@ -23,6 +23,7 @@ type Identity struct {
 type BucketLayout string
 
 const (
+	BucketLayoutRootedV1 BucketLayout = "rooted-v1"
 	BucketLayoutFlatV1   BucketLayout = "flat-v1"
 	BucketLayoutHybridV1 BucketLayout = "hybrid-v1"
 )
@@ -134,12 +135,30 @@ func (c *Client) ListBuckets(ctx context.Context) ([]Bucket, error) {
 }
 
 func (c *Client) CreateBucket(ctx context.Context, name string) (*Bucket, error) {
+	return c.CreateBucketWithLayout(ctx, name, "")
+}
+
+// CreateBucketWithLayout selects an application layout explicitly. Empty keeps
+// the service default for existing callers.
+func (c *Client) CreateBucketWithLayout(ctx context.Context, name string, layout BucketLayout) (*Bucket, error) {
+	request := map[string]string{"name": name}
+	if layout != "" {
+		switch layout {
+		case BucketLayoutFlatV1, BucketLayoutHybridV1, BucketLayoutRootedV1:
+		default:
+			return nil, fmt.Errorf("unsupported Bucket layout %q", layout)
+		}
+		request["layout"] = string(layout)
+	}
 	var result Bucket
-	if err := c.doTenant(ctx, http.MethodPost, "/v1/buckets", map[string]string{"name": name}, &result); err != nil {
+	if err := c.doTenant(ctx, http.MethodPost, "/v1/buckets", request, &result); err != nil {
 		return nil, err
 	}
 	if err := validateBucket(result); err != nil {
 		return nil, fmt.Errorf("gateway returned an invalid Bucket: %w", err)
+	}
+	if layout != "" && result.Layout != layout {
+		return nil, fmt.Errorf("gateway changed requested Bucket layout")
 	}
 	return &result, nil
 }
@@ -166,7 +185,7 @@ func validateBucket(value Bucket) error {
 		return fmt.Errorf("required metadata is missing")
 	}
 	switch value.Layout {
-	case BucketLayoutFlatV1, BucketLayoutHybridV1:
+	case BucketLayoutFlatV1, BucketLayoutHybridV1, BucketLayoutRootedV1:
 		return nil
 	default:
 		return fmt.Errorf("unsupported layout %q", value.Layout)
