@@ -27,6 +27,7 @@ import (
 	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 type runtimeWritebackBase struct {
@@ -571,20 +572,16 @@ func TestRuntimeWritableBindingRejectsInvalidRemoteTrustClaims(t *testing.T) {
 	}
 }
 
-func TestValidCandidateRootAllowsLegacyEvidenceToAdvanceToCurrentWireVersion(t *testing.T) {
-	commitment := make([]byte, maltcid.KZGCommitmentSize)
-	for index := range commitment {
-		commitment[index] = byte(index + 1)
-	}
-	legacy, err := maltcid.NewTypedCIDForVersion(
-		maltcid.LegacyMALTVersionID, maltcid.SemanticKindMap, maltcid.BackendKindKZG, commitment,
-	)
+func TestValidCandidateRootRejectsHistoricalEvidence(t *testing.T) {
+	// Historical V2 Map/KZG roots used codec 0x302101 and raw commitment bytes.
+	digest, err := mh.Encode(make([]byte, maltcid.KZGCommitmentSize), mh.IDENTITY)
 	if err != nil {
 		t.Fatal(err)
 	}
+	historical := cid.NewCidV1(0x302101, digest)
 	current := runtimeMALTMapRoot(t, maltcid.BackendKindKZG, 9)
-	if !validCandidateRoot(legacy, current) {
-		t.Fatalf("current candidate %s was rejected for legacy evidence %s", current, legacy)
+	if validCandidateRoot(historical, current) {
+		t.Fatalf("current candidate %s accepted historical evidence %s", current, historical)
 	}
 }
 

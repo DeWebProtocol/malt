@@ -16,7 +16,6 @@ import (
 	runtimegraph "github.com/dewebprotocol/malt-core/graph/runtime"
 	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -702,7 +701,7 @@ func TestVerifiedReaderRejectsAuthenticatedUnknownTargetCodec(t *testing.T) {
 	// The codec claims to be a map/KZG root, but the non-identity multihash
 	// makes it an invalid typed root. A valid parent proof may authenticate this
 	// opaque value, but the UnixFS runtime must not reinterpret it as raw bytes.
-	unknown := cid.NewCidV1(maltcid.CodecMaltMapKZG, digest)
+	unknown := cid.NewCidV1(0x300101, digest)
 	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{"file.txt": unknown.String()})
 	if err != nil {
 		t.Fatal(err)
