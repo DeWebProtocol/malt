@@ -222,7 +222,7 @@ func TestRootedWriterPreservesInjectedIPA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.graph.Authentication().Profiles.Register(scheme); err != nil {
+	if err := remote.graph.Authentication().Tree.Profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
 	adapter, err := unixfs.NewAuthenticationAdapter(remote, remote.graph.Authentication(), maltcid.IPA256)

@@ -5,6 +5,7 @@ import (
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/graph/traversal"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	"net/http"
@@ -27,7 +28,7 @@ func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testi
 			if err := raw.Decode(&observed); err != nil {
 				t.Error(err)
 			}
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationProfile, Resolved: root.String(), Traversal: engine.Traversal{}})
+			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationProfile, Resolved: root.String(), Traversal: traversal.Traversal{}})
 		case "/v1/authentication/candidates":
 			_ = json.NewEncoder(w).Encode(map[string]string{"profile": protocol.AuthenticationProfile, "root": "bafkqaaa"})
 		default:

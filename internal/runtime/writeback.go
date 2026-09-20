@@ -483,10 +483,8 @@ func validCandidateRoot(base, candidate cid.Cid) bool {
 	if err != nil || next.Layout != maltcid.Prefix {
 		return false
 	}
-	if old, _, err := maltcid.ParseRoot(base); err == nil {
-		return old == next
-	}
-	return maltcid.SemanticKindOf(base) == maltcid.SemanticKindMap && maltcid.BackendKindOf(base) == maltcid.BackendKindOf(candidate) && next.InputRule == 1
+	old, _, err := maltcid.ParseRoot(base)
+	return err == nil && old == next
 }
 
 func (b *runtimeWritableBinding) Close() error {

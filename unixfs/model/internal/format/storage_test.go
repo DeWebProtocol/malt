@@ -9,11 +9,11 @@ import (
 )
 
 func TestStorageKindFromCIDUsesMALTSemanticKind(t *testing.T) {
-	mapRoot, err := maltcid.NewMapKZGCid(make([]byte, maltcid.KZGCommitmentSize))
+	mapRoot, err := maltcid.NewSemanticRoot(maltcid.SemanticKindMap, maltcid.BackendKindKZG, make([]byte, maltcid.KZGCommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	listRoot, err := maltcid.NewListIPACid(make([]byte, maltcid.IPACommitmentSize))
+	listRoot, err := maltcid.NewSemanticRoot(maltcid.SemanticKindList, maltcid.BackendKindIPA, make([]byte, maltcid.IPACommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}
