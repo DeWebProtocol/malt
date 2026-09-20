@@ -304,11 +304,15 @@ func (s *PlanService) Backup(ctx context.Context, message string) (backupResult 
 	}
 	backend := maltcid.BackendKindUnknown
 	if baseCID.Defined() {
-		backend = maltcid.BackendKindOf(baseCID)
-		if maltcid.SemanticKindOf(baseCID) != maltcid.SemanticKindMap ||
-			(backend != maltcid.BackendKindKZG && backend != maltcid.BackendKindIPA) {
-			return nil, fmt.Errorf("backup plan base is not a supported typed MALT Map")
+		descriptor, _, parseErr := maltcid.ParseRoot(baseCID)
+		if parseErr != nil || descriptor.Layout != maltcid.Prefix || descriptor.InputRule != 1 {
+			return nil, fmt.Errorf("backup plan base is not a supported Prefix Root with byte-label inputs")
 		}
+		profile, profileErr := maltcid.Profile(descriptor.Profile)
+		if profileErr != nil {
+			return nil, profileErr
+		}
+		backend = profile.Algorithm
 	} else {
 		backend, err = s.filesystem.DefaultBackend(ctx)
 		if err != nil {

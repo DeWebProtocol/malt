@@ -13,9 +13,11 @@ import (
 
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	malt "github.com/dewebprotocol/malt-core"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
-	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -29,13 +31,13 @@ type KeyResolver func(epoch uint32) ([32]byte, error)
 type ReaderOptions struct {
 	Remote   unixfs.Remote
 	Blocks   unixfs.BlockGetter
-	Verifier unixfs.LocalVerifier
+	Verifier *engine.Engine
 }
 
 type Reader struct {
 	remote   unixfs.Remote
 	blocks   unixfs.BlockGetter
-	verifier unixfs.LocalVerifier
+	verifier *engine.Engine
 	lists    unixfs.Reader
 }
 
@@ -94,7 +96,7 @@ func NewReader(opts ReaderOptions) (*Reader, error) {
 	verifier := opts.Verifier
 	if verifier == nil {
 		var err error
-		verifier, err = clientverifier.NewDefault()
+		verifier, err = authverifier.New(nil)
 		if err != nil {
 			return nil, fmt.Errorf("initialize encrypted UnixFS verifier: %w", err)
 		}
@@ -665,7 +667,13 @@ func (r *Reader) openFileAt(ctx context.Context, datasetID, branch, bindingID, r
 		if err != nil {
 			return nil, fmt.Errorf("resolve encrypted UnixFS file content: %w", err)
 		}
-		if unixfsmodel.StorageKindFromCID(content) != manifest.Storage {
+		// The encrypted application profile names its multi-chunk storage "list";
+		// the authentication layout that binds those chunks is Positional.
+		expectedLayout := "raw"
+		if manifest.Storage == StorageList {
+			expectedLayout = "positional"
+		}
+		if unixfsmodel.StorageKindFromCID(content) != expectedLayout {
 			return nil, fmt.Errorf("encrypted UnixFS file storage kind does not match its authenticated content")
 		}
 		view.Content = content
@@ -690,11 +698,11 @@ func (r *Reader) readChunk(ctx context.Context, file FileView, index uint64, key
 		if offsetErr != nil {
 			return nil, offsetErr
 		}
-		part, readErr := r.lists.ReadListPayloadRange(ctx, file.Content, offset, length)
+		part, readErr := r.lists.ReadPositionalPayloadRange(ctx, file.Content, offset, length)
 		if readErr != nil {
 			return nil, readErr
 		}
-		if part.Offset != offset || uint64(len(part.Body)) != length || part.TotalSize != file.Manifest.CiphertextSize {
+		if part.Offset != offset || uint64(len(part.Body)) != length || part.TotalSize != file.Manifest.CiphertextSize || part.ChunkSize != file.Manifest.CiphertextChunkSize {
 			return nil, fmt.Errorf("verified encrypted UnixFS List range has inconsistent geometry")
 		}
 		sealed = part.Body
@@ -737,23 +745,37 @@ func (r *Reader) readChunk(ctx context.Context, file FileView, index uint64, key
 }
 
 func (r *Reader) resolve(ctx context.Context, root cid.Cid, segments []string) (cid.Cid, error) {
-	request, err := protocol.NewResolveRequest(malt.ResolveRequest{Root: root, Segments: append([]string(nil), segments...)})
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return cid.Undef, err
 	}
-	result, err := r.remote.Resolve(ctx, request)
+	steps := make([]input.Value, len(segments))
+	for i, segment := range segments {
+		steps[i] = input.LabelValue([]byte(segment))
+		if segment == "@payload" {
+			steps[i] = input.SystemValue(input.Payload)
+		}
+	}
+	request := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: steps, Operation: "resolve"}
+	result, err := r.remote.Authenticate(ctx, request)
 	if err != nil {
 		return cid.Undef, err
 	}
 	if result == nil {
-		return cid.Undef, fmt.Errorf("untrusted executor returned a nil resolve result")
+		return cid.Undef, fmt.Errorf("untrusted executor returned a nil authentication result")
 	}
-	if err := r.verifier.VerifyResolve(ctx, protocol.ResolveVerification{Request: request, Result: *result}); err != nil {
-		return cid.Undef, fmt.Errorf("verify encrypted UnixFS resolve locally: %w", err)
-	}
-	target, err := cid.Parse(result.Target)
+	valid, err := authentication.Verify(r.verifier, request, *result)
 	if err != nil {
-		return cid.Undef, fmt.Errorf("decode encrypted UnixFS resolve target: %w", err)
+		return cid.Undef, fmt.Errorf("verify encrypted UnixFS authentication locally: %w", err)
+	}
+	if !valid {
+		return cid.Undef, fmt.Errorf("verify encrypted UnixFS authentication locally: proof changed selected Root/query")
+	}
+	if result.AbsentStep != nil {
+		return cid.Undef, ErrNotFound
+	}
+	target, err := cid.Parse(result.Resolved)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("decode encrypted UnixFS authenticated Target: %w", err)
 	}
 	return target, nil
 }

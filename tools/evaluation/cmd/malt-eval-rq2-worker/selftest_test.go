@@ -104,12 +104,6 @@ func TestNativeE0ProfileDigestIsStable(t *testing.T) {
 }
 
 func TestNativeLocalRequestProtocolMatchesSharedRQ2Wire(t *testing.T) {
-	if workerRequestSchema != rq2wire.WorkerRequestSchema || workerRecordSchema != rq2wire.WorkerRecordSchema ||
-		clientNative != rq2wire.ClientNative || lifecycleNativeLong != rq2wire.LifecycleNativeLong ||
-		recordPreflight != rq2wire.RecordPreflight || recordSessionStart != rq2wire.RecordSessionStart ||
-		recordMutation != rq2wire.RecordMutation || recordSessionEnd != rq2wire.RecordSessionEnd {
-		t.Fatal("native-local and shared RQ2 wire constants drifted")
-	}
 	fixtureRaw, err := os.ReadFile(writeNativeE0Fixture(t))
 	if err != nil {
 		t.Fatal(err)

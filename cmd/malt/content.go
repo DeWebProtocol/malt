@@ -45,10 +45,6 @@ func newUnixFSReader(remote *client.Client) (unixfs.Reader, error) {
 }
 
 func newUnixFSWriter(remote *client.Client, kind unixfs.LayoutKind) (unixfs.Writer, error) {
-	lists, err := unixfs.NewMutationAdapter(remote)
-	if err != nil {
-		return nil, err
-	}
 	layout, err := unixfs.NewLayout(kind)
 	if err != nil {
 		return nil, err
@@ -56,8 +52,6 @@ func newUnixFSWriter(remote *client.Client, kind unixfs.LayoutKind) (unixfs.Writ
 	return unixfs.NewWriter(unixfs.WriterOptions{
 		Remote: remote,
 		Blocks: remote,
-		Roots:  remote,
-		Lists:  lists,
 		Layout: layout,
 	})
 }

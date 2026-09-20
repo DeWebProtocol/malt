@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 func TestExplicitCIDContentCommandsDoNotOpenBrokenTrustStore(t *testing.T) {
@@ -44,7 +45,11 @@ func TestExplicitCIDContentCommandsDoNotOpenBrokenTrustStore(t *testing.T) {
 	catCmd.SetContext(t.Context())
 	rmCmd.SetContext(t.Context())
 
-	root := mustParseCID(t, "bafkqaaa").String()
+	selected, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, make([]byte, 48))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := selected.String()
 	tests := []struct {
 		name string
 		run  func() error

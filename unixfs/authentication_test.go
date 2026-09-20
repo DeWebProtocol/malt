@@ -8,14 +8,13 @@ import (
 	"github.com/dewebprotocol/malt-client/cache"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/journal"
-	unixfsclientroot "github.com/dewebprotocol/malt-client/unixfs/clientroot"
-	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
+	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
+	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
-	materialmemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
@@ -23,30 +22,23 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-type typedRemote struct {
-	*realRemote
-	nodes        *materialmemory.Nodes
-	candidates   map[string]protocol.AuthenticationCandidate
-	wrongReceipt bool
-}
-
-func newTypedRemote(t *testing.T) *typedRemote {
-	return &typedRemote{realRemote: newRealRemote(t), nodes: materialmemory.NewNodes(), candidates: map[string]protocol.AuthenticationCandidate{}}
-}
-func (r *typedRemote) Authenticate(ctx context.Context, q protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
-	result, err := authentication.Execute(ctx, r.graph.Authentication(), q, r.nodes)
+func (r *realRemote) Authenticate(ctx context.Context, q protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
+	if q.Operation != "resolve" {
+		r.reads = append(r.reads, q)
+	}
+	result, err := authentication.Execute(ctx, r.engine, q, r.nodes)
 	return &result, err
 }
-func (r *typedRemote) AuthenticationCandidate(ctx context.Context, root cid.Cid) (*protocol.AuthenticationCandidate, error) {
+func (r *realRemote) AuthenticationCandidate(ctx context.Context, root cid.Cid) (*protocol.AuthenticationCandidate, error) {
 	candidate, ok := r.candidates[root.KeyString()]
 	if !ok {
 		return nil, errors.New("candidate absent")
 	}
-	exported, err := authentication.Export(ctx, r.graph.Authentication(), root, candidate.State, r.nodes)
+	exported, err := authentication.Export(ctx, r.engine, root, candidate.State, r.nodes)
 	return &exported, err
 }
-func (r *typedRemote) MaterializeAuthentication(ctx context.Context, c protocol.AuthenticationCandidate) (cid.Cid, error) {
-	if err := authentication.Materialize(ctx, r.graph.Authentication(), c, r.nodes); err != nil {
+func (r *realRemote) MaterializeAuthentication(ctx context.Context, c protocol.AuthenticationCandidate) (cid.Cid, error) {
+	if err := authentication.Materialize(ctx, r.engine, c, r.nodes); err != nil {
 		return cid.Undef, err
 	}
 	root := cid.MustParse(c.Root)
@@ -56,9 +48,15 @@ func (r *typedRemote) MaterializeAuthentication(ctx context.Context, c protocol.
 	}
 	return root, nil
 }
-func TestRootedUnixFSWritesReadsAndPreservesHistory(t *testing.T) {
-	remote := newTypedRemote(t)
-	layout, err := unixfs.NewLayout(unixfs.LayoutRootedV1)
+func TestTypedUnixFSWritesReadsAndPreservesHistory(t *testing.T) {
+	for _, kind := range []unixfs.LayoutKind{unixfs.LayoutFlatV1, unixfs.LayoutHybridV1, unixfs.LayoutRootedV1} {
+		t.Run(string(kind), func(t *testing.T) { testTypedUnixFSWritesReadsAndPreservesHistory(t, kind) })
+	}
+}
+
+func testTypedUnixFSWritesReadsAndPreservesHistory(t *testing.T, kind unixfs.LayoutKind) {
+	remote := newRealRemote(t)
+	layout, err := unixfs.NewLayout(kind)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +88,7 @@ func TestRootedUnixFSWritesReadsAndPreservesHistory(t *testing.T) {
 		t.Fatal("wrong typed range")
 	}
 	for _, entry := range remote.candidates[file.CandidateRoot.KeyString()].State.Entries {
-		if strings.Contains(string(entry.Input.Data), "/") {
+		if kind == unixfs.LayoutRootedV1 && strings.Contains(string(entry.Input.Data), "/") {
 			t.Fatal("rooted directory included flattened aliases")
 		}
 	}
@@ -114,8 +112,8 @@ func TestRootedUnixFSWritesReadsAndPreservesHistory(t *testing.T) {
 	}
 }
 func TestRootedRangeRejectsAuthenticatedIncorrectChunkLengths(t *testing.T) {
-	remote := newTypedRemote(t)
-	adapter, err := unixfs.NewAuthenticationAdapter(remote, remote.graph.Authentication(), maltcid.KZG4096)
+	remote := newRealRemote(t)
+	adapter, err := unixfs.NewAuthenticationAdapter(unixfs.LayoutRootedV1, remote, remote.engine, maltcid.KZG4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +129,13 @@ func TestRootedRangeRejectsAuthenticatedIncorrectChunkLengths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reader.ReadListPayloadRange(t.Context(), root, 0, 4); err == nil || !strings.Contains(err.Error(), "chunk length") {
+	if _, err := reader.ReadPositionalPayloadRange(t.Context(), root, 0, 4); err == nil || !strings.Contains(err.Error(), "chunk length") {
 		t.Fatalf("accepted incompatible payload: %v", err)
 	}
 }
 
 func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
-	remote := newTypedRemote(t)
+	remote := newRealRemote(t)
 	layout, _ := unixfs.NewLayout(unixfs.LayoutRootedV1)
 	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Layout: layout})
 	if err != nil {
@@ -160,11 +158,11 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 		intent.BaseRoot = empty.CandidateRoot.String()
 		operations = append(operations, journal.Operation{Intent: intent, Sequence: uint64(i + 1), Status: journal.StatusPendingUpload, CreatedAt: time.Now(), UpdatedAt: time.Now()})
 	}
-	planner, err := unixfsclientroot.NewAuthentication(remote, remote, remote.graph.Authentication())
+	planner, err := unixfsplanner.New(unixfs.LayoutRootedV1, remote, remote, remote.engine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, required, root, err := planner.PlanRooted(t.Context(), empty.CandidateRoot, operations)
+	candidates, required, root, err := planner.Plan(t.Context(), empty.CandidateRoot, operations)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +178,7 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := clientverifier.NewDefault()
+	local, err := authverifier.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +205,7 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 	}
 	// A frozen write followed by unlink must return the exact original Root.
 	operations = append(operations, journal.Operation{Intent: journal.Intent{OperationID: "delete", RetryID: "retry-delete", DatasetID: "dataset", Branch: "main", BaseRoot: empty.CandidateRoot.String(), Kind: journal.KindUnlink, Path: "docs/file"}, Sequence: 3, Status: journal.StatusPendingUpload, CreatedAt: time.Now(), UpdatedAt: time.Now()}, journal.Operation{Intent: journal.Intent{OperationID: "rmdir", RetryID: "retry-rmdir", DatasetID: "dataset", Branch: "main", BaseRoot: empty.CandidateRoot.String(), Kind: journal.KindUnlink, Path: "docs"}, Sequence: 4, Status: journal.StatusPendingUpload, CreatedAt: time.Now(), UpdatedAt: time.Now()})
-	_, required, again, err := planner.PlanRooted(t.Context(), empty.CandidateRoot, operations)
+	_, required, again, err := planner.Plan(t.Context(), empty.CandidateRoot, operations)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,48 +214,52 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 	}
 }
 
-func TestRootedWriterPreservesInjectedIPA(t *testing.T) {
-	remote := newTypedRemote(t)
-	scheme, err := ipa.NewCommitterScheme(ipa.ProfileCompact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := remote.graph.Authentication().Tree.Profiles.Register(scheme); err != nil {
-		t.Fatal(err)
-	}
-	adapter, err := unixfs.NewAuthenticationAdapter(remote, remote.graph.Authentication(), maltcid.IPA256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	layout, _ := unixfs.NewLayout(unixfs.LayoutRootedV1)
-	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Layout: layout, Roots: adapter, Lists: adapter})
-	if err != nil {
-		t.Fatal(err)
-	}
-	empty, err := writer.EmptyDirectory(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if maltcid.BackendKindOf(empty.CandidateRoot) != maltcid.BackendKindIPA {
-		t.Fatal("injected IPA was replaced")
-	}
-	next, err := writer.AddFile(t.Context(), empty.CandidateRoot, "file", []byte("ipa"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if maltcid.BackendKindOf(next.CandidateRoot) != maltcid.BackendKindIPA {
-		t.Fatal("update changed VC profile")
-	}
-	// The default adapter can update an existing IPA directory without migration.
-	defaultWriter, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Layout: layout})
-	if err != nil {
-		t.Fatal(err)
-	}
-	removed, err := defaultWriter.RemovePath(t.Context(), next.CandidateRoot, "file")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !removed.CandidateRoot.Equals(empty.CandidateRoot) {
-		t.Fatal("remove changed original descriptor")
+func TestWriterPreservesExistingIPAProfile(t *testing.T) {
+	for _, kind := range []unixfs.LayoutKind{unixfs.LayoutFlatV1, unixfs.LayoutHybridV1, unixfs.LayoutRootedV1} {
+		t.Run(string(kind), func(t *testing.T) {
+			remote := newRealRemote(t)
+			scheme, err := ipa.NewCommitterScheme(ipa.ProfileCompact)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := remote.engine.Tree.Profiles.Register(scheme); err != nil {
+				t.Fatal(err)
+			}
+			adapter, err := unixfs.NewAuthenticationAdapter(kind, remote, nil, maltcid.IPA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			layout, _ := unixfs.NewLayout(kind)
+			writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Layout: layout, Roots: adapter, Payloads: adapter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			empty, err := writer.EmptyDirectory(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if maltcid.BackendKindOf(empty.CandidateRoot) != maltcid.BackendKindIPA {
+				t.Fatal("injected IPA was replaced")
+			}
+			next, err := writer.AddFile(t.Context(), empty.CandidateRoot, "file", []byte("ipa"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if maltcid.BackendKindOf(next.CandidateRoot) != maltcid.BackendKindIPA {
+				t.Fatal("update changed VC profile")
+			}
+			// The default adapter can update an existing IPA directory without migration.
+			defaultWriter, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Layout: layout})
+			if err != nil {
+				t.Fatal(err)
+			}
+			removed, err := defaultWriter.RemovePath(t.Context(), next.CandidateRoot, "file")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !removed.CandidateRoot.Equals(empty.CandidateRoot) {
+				t.Fatal("remove changed original descriptor")
+			}
+		})
 	}
 }

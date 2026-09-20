@@ -12,8 +12,9 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
 	client "github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/proof/prooflist"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -37,6 +38,9 @@ func TestClientExposesFixedMerkleDAGRoutesWithoutArbitraryProfileEscapeHatch(t *
 		"PostMerkleDAGCARRead",
 		"GetRawForLocalCIDVerification",
 		"BootstrapEvaluationObject",
+		"Resolve", "ResolveContract", "Read", "ReadContract", "DiagnoseResolve", "DiagnoseRead",
+		"FetchUpdateView", "SubmitClientRoot", "SubmitClientRootResult", "ApplySemanticMutation",
+		"ApplyRootSemanticMutation", "CreateRootStructure", "CreateStagedRoot",
 	} {
 		if _, ok := typ.MethodByName(name); ok {
 			t.Fatalf("public transport client exposes forbidden capability %s", name)
@@ -50,21 +54,21 @@ func TestClientExposesFixedMerkleDAGRoutesWithoutArbitraryProfileEscapeHatch(t *
 }
 
 func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
-	root := mustBlockCID(t, []byte("root"))
+	root := testAuthenticationRoot(t)
 	target := mustBlockCID(t, []byte("target"))
 	payload := []byte("payload")
 	payloadCID := mustBlockCID(t, payload)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/resolve":
-			var request protocol.ResolveRequest
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/authentication/query":
+			var request protocol.AuthenticationRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Root != root.String() || len(request.Segments) != 1 || request.Segments[0] != "name" {
+			if request.Root != root.String() || request.Operation != "binding" || request.Input == nil || string(request.Input.Data) != "name" {
 				t.Fatalf("resolve request = %#v", request)
 			}
-			_ = json.NewEncoder(w).Encode(protocol.ResolveResult{Profile: protocol.ResolveProfile, Target: target.String(), ProofList: prooflist.ProofList{Root: root}})
+			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String()})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/cas":
 			body, _ := io.ReadAll(r.Body)
 			if string(body) != string(payload) {
@@ -82,12 +86,12 @@ func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := transport.Resolve(t.Context(), protocol.ResolveRequest{Profile: protocol.ResolveProfile, Root: root.String(), Segments: []string{"name"}})
+	result, err := transport.Authenticate(t.Context(), testAuthenticationQuery(root, "name"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Target != target.String() {
-		t.Fatalf("target = %q, want %q", result.Target, target)
+	if result.Resolved != target.String() {
+		t.Fatalf("target = %q, want %q", result.Resolved, target)
 	}
 	put, err := transport.Put(t.Context(), payload)
 	if err != nil {
@@ -149,7 +153,7 @@ func TestClientRejectsOversizedAndTrailingResponses(t *testing.T) {
 			_, _ = io.WriteString(w, `{"status":"ok","evaluation_instance_token":"`+strings.Repeat("a", 64)+`"}{"trailing":true}`)
 		case "/v1/buckets/bkt_one/cas/" + payloadCID.String():
 			_, _ = w.Write(bytesOf('x', 17))
-		case "/v1/buckets/bkt_one/resolve":
+		case "/v1/buckets/bkt_one/authentication/query":
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write(bytesOf('e', 9))
 		default:
@@ -170,8 +174,8 @@ func TestClientRejectsOversizedAndTrailingResponses(t *testing.T) {
 	if _, err := transport.Get(t.Context(), payloadCID); err == nil {
 		t.Fatal("client accepted an oversized CAS body")
 	}
-	root := mustBlockCID(t, []byte("root"))
-	_, err = transport.Resolve(t.Context(), protocol.ResolveRequest{Profile: protocol.ResolveProfile, Root: root.String(), Segments: []string{"name"}})
+	root := testAuthenticationRoot(t)
+	_, err = transport.Authenticate(t.Context(), testAuthenticationQuery(root, "name"))
 	var apiErr *client.Error
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || apiErr.Message == "" {
 		t.Fatalf("oversized error response = %T %v", err, err)
@@ -309,4 +313,17 @@ func (a *recordingAuthorizer) Authorize(request *http.Request) error {
 	a.calls++
 	request.Header.Set("Authorization", "MaltDevice key_test")
 	return nil
+}
+
+func testAuthenticationRoot(t *testing.T) cid.Cid {
+	t.Helper()
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.IPA256}, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+func testAuthenticationQuery(root cid.Cid, label string) protocol.AuthenticationRequest {
+	value := input.LabelValue([]byte(label))
+	return protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Operation: "binding", Input: &value}
 }

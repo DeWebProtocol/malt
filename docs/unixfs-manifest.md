@@ -5,7 +5,7 @@ add a node kind, storage kind, or expansion rule to MALT Core.
 
 ## V2
 
-Each directory Map binds `@payload` to a manifest CID using codec `0x310002`
+Each directory Prefix binds the typed system payload selector to a manifest CID using codec `0x310002`
 (`malt-unixfs-directory-manifest-json-v2`). The payload records each immediate
 child's UnixFS projection:
 
@@ -14,16 +14,16 @@ child's UnixFS projection:
 ```
 
 `type` controls only UnixFS presentation and traversal. It does not constrain
-the child's MALT semantic kind or payload representation. A `file` may target
-a Map containing `@payload`, `@comments`, or other explicit arcs. Those arcs
+the child's MALT layout or payload representation. A `file` may target
+a Prefix containing a system payload selector and other explicit bindings. Those arcs
 remain available to graph applications, but UnixFS does not traverse through
 the file as though it were a directory.
 
-A `dir` may be a Map whose `@payload` targets the manifest, or it may target
+A `dir` may be a Prefix whose system payload selector targets the manifest, or it may target
 the manifest CID directly. In the direct form the node and payload CID are the
 same and there is no payload-binding step; descendant path bindings may still
-be retained by an authenticated ancestor Map. This permits an empty directory
-projection without manufacturing a child Map solely to label it as expandable.
+be retained by an authenticated ancestor Prefix. This permits an empty directory
+projection without manufacturing a child Prefix solely to label it as expandable.
 
 V2 uses these canonical encoding rules:
 
@@ -39,10 +39,7 @@ V2 uses these canonical encoding rules:
   `"`, `\`, backspace, form feed, newline, carriage return, and tab, and other
   controls use lower-case `\u00xx`.
 
-Readers reject non-canonical V2 bytes after decoding and re-encoding them. The
-codec, rather than a duplicated JSON version field, distinguishes V2 from V1;
-this is significant because both versions encode an empty directory as
-`{"entries":[]}`.
+Readers reject non-canonical V2 bytes after decoding and re-encoding them. No name-only or raw-codec fallback is accepted.
 
 The shared empty V2 manifest CID is:
 
@@ -56,19 +53,10 @@ The cross-implementation golden vector above has CID:
 bagbibrabciqkfloqxwbi2arag4vedouzjjh4tiwninbyrjp7n5reg5wup7f4fla
 ```
 
-## V1 compatibility
+## Rejected historical encodings
 
-V1 uses codec `0x310001` and name-only entries:
-
-```json
-{"entries":["docs","report.docx"]}
-```
-
-Early native writers also stored those same bytes under the raw codec, so
-readers accept raw-CID manifests as V1. V1 has no authenticated projection
-field; only while reading V1 does the UnixFS runtime apply its historical rule:
-a Map target is a directory, while a List or CAS target is a file.
-
-Readers apply the same lossless UnixFS segment rules to V1 names so historical
-bytes cannot collapse into aliases such as `.` or `..` during traversal.
-Writers always emit V2. V1 is a read-only compatibility format.
+Only codec `0x310002` with canonical V2 bytes is accepted. Name-only V1
+manifests, their `0x310001` codec, and the early raw-CID fallback are removed.
+The runtime does not infer file/directory type from a target Root layout.
+Experimental old trees must be rebuilt from their original application data;
+changing a CID prefix does not authenticate a V2 manifest.

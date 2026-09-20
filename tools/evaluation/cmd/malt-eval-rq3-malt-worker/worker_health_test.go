@@ -17,14 +17,14 @@ func TestValidateHealthRequiresSeparatedFilesystemCAS(t *testing.T) {
 		KVBackend: "fs", BlobBackend: "filesystem", ArcTableMode: "versioned",
 		CommitmentProfile: "kzg", CommitmentBackends: "ipa,kzg",
 		EvaluationCASWriteAccounting: healthCASAccounting, EvaluationCASWriteIsolation: healthCASIsolation,
-		ClientRootExactAcceptance:               "false",
-		EvaluationRQ3FlatMap:                    gatewaytransport.FlatMapProfile,
-		EvaluationRQ3FlatMapLayout:              healthFlatLayout,
-		EvaluationRQ3FlatMapStorageScope:        healthFlatStorageScope,
-		EvaluationRQ3FlatMapLookupIndex:         healthFlatLookupIndex,
-		EvaluationRQ3FlatMapCommitmentTreatment: healthCommitmentTreatment,
-		EvaluationRQ3FlatMapFSKVMode:            healthFlatFSKVMode,
-		EvaluationRQ3FlatMapCheckpoint:          "false", EvaluationRQ3FlatMapMaterializationCache: "none",
+		AuthenticationExactAcceptance:              "false",
+		EvaluationRQ3FlatPrefix:                    gatewaytransport.FlatPrefixProfile,
+		EvaluationRQ3FlatPrefixLayout:              healthFlatLayout,
+		EvaluationRQ3FlatPrefixStorageScope:        healthFlatStorageScope,
+		EvaluationRQ3FlatPrefixLookupIndex:         healthFlatLookupIndex,
+		EvaluationRQ3FlatPrefixCommitmentTreatment: healthCommitmentTreatment,
+		EvaluationRQ3FlatPrefixFSKVMode:            healthFlatFSKVMode,
+		EvaluationRQ3FlatPrefixCheckpoint:          "false", EvaluationRQ3FlatPrefixMaterializationCache: "none",
 	}
 	worker := &campaignWorker{
 		config:     workerConfig{instanceToken: token, requestTimeout: time.Second},
@@ -38,20 +38,20 @@ func TestValidateHealthRequiresSeparatedFilesystemCAS(t *testing.T) {
 		mutate func(*gatewaytransport.Health)
 	}{
 		{name: "embedded-payload-cas", mutate: func(value *gatewaytransport.Health) { value.BlobBackend = "embedded" }},
-		{name: "exact-client-root-acceptance", mutate: func(value *gatewaytransport.Health) { value.ClientRootExactAcceptance = "true" }},
-		{name: "client-root-write-accounting", mutate: func(value *gatewaytransport.Health) { value.ClientRootWriteAccounting = gatewayAccountingProfile }},
+		{name: "exact-client-root-acceptance", mutate: func(value *gatewaytransport.Health) { value.AuthenticationExactAcceptance = "true" }},
+		{name: "client-root-write-accounting", mutate: func(value *gatewaytransport.Health) { value.AuthenticationWriteAccounting = gatewayAccountingProfile }},
 		{name: "bootstrap-capability", mutate: func(value *gatewaytransport.Health) {
-			value.EvaluationClientRootBootstrap = "gateway.evaluation-client-root-bootstrap-object/v1"
+			value.EvaluationAuthenticationBootstrap = "gateway.evaluation-client-root-bootstrap-object/v1"
 		}},
-		{name: "missing-flat-map", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMap = "" }},
-		{name: "wrong-layout", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapLayout = "malt-hamt/v1" }},
-		{name: "unbounded-lookup-index", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapLookupIndex = "in-memory-unbounded" }},
-		{name: "variable-commitment", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapCommitmentTreatment = "variable" }},
+		{name: "missing-flat-prefix", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatPrefix = "" }},
+		{name: "wrong-layout", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatPrefixLayout = "malt-hamt/v1" }},
+		{name: "unbounded-lookup-index", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatPrefixLookupIndex = "in-memory-unbounded" }},
+		{name: "variable-commitment", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatPrefixCommitmentTreatment = "variable" }},
 		{name: "legacy-fskv", mutate: func(value *gatewaytransport.Health) {
-			value.EvaluationRQ3FlatMapFSKVMode = "evaluation-incremental-generations/v1"
+			value.EvaluationRQ3FlatPrefixFSKVMode = "evaluation-incremental-generations/v1"
 		}},
-		{name: "checkpoint-enabled", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapCheckpoint = "true" }},
-		{name: "materialization-cache", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatMapMaterializationCache = "disk" }},
+		{name: "checkpoint-enabled", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatPrefixCheckpoint = "true" }},
+		{name: "materialization-cache", mutate: func(value *gatewaytransport.Health) { value.EvaluationRQ3FlatPrefixMaterializationCache = "disk" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -77,12 +77,8 @@ func (g fixedHealthGateway) Health(context.Context) (*gatewaytransport.Health, e
 	return &copy, nil
 }
 
-func (fixedHealthGateway) BootstrapEvaluationObject(context.Context, string, gatewaytransport.BootstrapObject) (gatewaytransport.BootstrapResult, error) {
-	return gatewaytransport.BootstrapResult{}, errors.New("unexpected bootstrap")
-}
-
-func (fixedHealthGateway) ApplyEvaluationFlatMap(context.Context, string, gatewaytransport.FlatMapMutation) (gatewaytransport.FlatMapResult, error) {
-	return gatewaytransport.FlatMapResult{}, errors.New("unexpected flat map")
+func (fixedHealthGateway) ApplyEvaluationFlatPrefix(context.Context, string, gatewaytransport.FlatPrefixMutation) (gatewaytransport.FlatPrefixResult, error) {
+	return gatewaytransport.FlatPrefixResult{}, errors.New("unexpected flat map")
 }
 
 var _ evaluationGateway = fixedHealthGateway{}

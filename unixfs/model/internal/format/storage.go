@@ -5,21 +5,24 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// StorageKindFromCID projects a MALT or raw payload CID into the UnixFS model's
-// storage-kind vocabulary.
+// StorageKindFromCID reports the typed layout or raw application payload.
 func StorageKindFromCID(c cid.Cid) string {
 	if !c.Defined() {
 		return ""
 	}
 	switch c.Prefix().Codec {
-	case cid.Raw, CodecMaltManifestV1, CodecMaltManifestV2:
+	case cid.Raw, CodecMaltManifestV2:
 		return "raw"
 	}
-	switch maltcid.SemanticKindOf(c) {
-	case maltcid.SemanticKindList:
-		return "list"
-	case maltcid.SemanticKindMap:
-		return "map"
+	descriptor, _, err := maltcid.ParseRoot(c)
+	if err != nil {
+		return ""
+	}
+	switch descriptor.Layout {
+	case maltcid.Prefix:
+		return "prefix"
+	case maltcid.Positional:
+		return "positional"
 	default:
 		return ""
 	}

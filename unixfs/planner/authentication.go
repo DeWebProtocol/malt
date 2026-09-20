@@ -1,8 +1,9 @@
-package clientroot
+package planner
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-client/unixfs"
@@ -15,26 +16,36 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// AuthenticationPlanner projects rooted-v1 filesystem changes to complete
+// Planner projects filesystem changes in the selected UnixFS layout to complete
 // typed candidates. It reads and verifies every before-image locally, emits
 // children before parents, and never persists or accepts candidate Roots.
-type AuthenticationPlanner struct {
+type Planner struct {
+	layout unixfs.LayoutKind
 	blocks BlockStore
 	remote CandidateSource
 	engine *engine.Engine
 }
 
-func NewAuthentication(blocks BlockStore, remote CandidateSource, e *engine.Engine) (*AuthenticationPlanner, error) {
+func New(layout unixfs.LayoutKind, blocks BlockStore, remote CandidateSource, e *engine.Engine) (*Planner, error) {
+	if _, err := unixfs.NewLayout(layout); err != nil {
+		return nil, err
+	}
 	if blocks == nil || remote == nil || e == nil {
 		return nil, fmt.Errorf("typed planner capabilities are required")
 	}
-	return &AuthenticationPlanner{blocks, remote, e}, nil
+	return &Planner{layout, blocks, remote, e}, nil
 }
-func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, operations []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error) {
+func (p *Planner) Plan(ctx context.Context, base cid.Cid, operations []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error) {
+	if p == nil || p.blocks == nil || p.remote == nil || p.engine == nil || ctx == nil {
+		return nil, nil, cid.Undef, fmt.Errorf("typed planner and context are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, cid.Undef, err
+	}
 	if err := validateOperations(base, operations); err != nil {
 		return nil, nil, cid.Undef, err
 	}
-	legacy := &Planner{blocks: p.blocks}
+	manifests := &manifestStore{blocks: p.blocks}
 	bases := map[string]protocol.AuthenticationCandidate{}
 	visiting := map[string]bool{}
 	objects, entries := 0, 0
@@ -42,10 +53,10 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 	load = func(root cid.Cid, depth int) (*treeNode, error) {
 		objects++
 		if objects > 4096 || depth > 256 {
-			return nil, fmt.Errorf("rooted directory traversal bound exceeded")
+			return nil, fmt.Errorf("directory traversal bound exceeded")
 		}
 		if visiting[root.KeyString()] {
-			return nil, fmt.Errorf("cyclic rooted directory")
+			return nil, fmt.Errorf("cyclic directory")
 		}
 		visiting[root.KeyString()] = true
 		defer delete(visiting, root.KeyString())
@@ -62,11 +73,15 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 		}
 		entries += len(candidate.State.Entries)
 		if entries > 65536 {
-			return nil, fmt.Errorf("rooted entry bound exceeded")
+			return nil, fmt.Errorf("directory entry bound exceeded")
 		}
 		d := candidate.State.Descriptor
-		if d.Layout != maltcid.Prefix || d.InputRule != uint8(input.UnixFSNameSHA256) {
-			return nil, fmt.Errorf("directory does not use rooted-v1 schema")
+		rule := uint8(input.BytesSHA256)
+		if p.layout == unixfs.LayoutRootedV1 {
+			rule = uint8(input.UnixFSNameSHA256)
+		}
+		if d.Layout != maltcid.Prefix || d.InputRule != rule {
+			return nil, fmt.Errorf("directory input rule differs from selected layout")
 		}
 		if err := authentication.ValidateCandidate(ctx, p.engine, *candidate); err != nil {
 			return nil, err
@@ -84,20 +99,27 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 			case input.Label:
 				name := string(binding.Input.Data)
 				parts, err := unixfs.ParseCanonicalStagedPath(name)
-				if err != nil || len(parts) != 1 || parts[0] != name {
-					return nil, fmt.Errorf("invalid directory component")
+				if err != nil || len(parts) == 0 || strings.Join(parts, "/") != name || (p.layout == unixfs.LayoutRootedV1 && len(parts) != 1) {
+					return nil, fmt.Errorf("invalid directory label")
 				}
 				targets[name] = binding.Target
 			default:
 				return nil, fmt.Errorf("unexpected directory selector")
 			}
 		}
-		manifest, err := legacy.readManifest(ctx, payload)
+		if p.layout == unixfs.LayoutFlatV1 {
+			node := &treeNode{kind: unixfsmodel.DirectoryEntryTypeDir, key: root, manifest: payload, children: map[string]*treeNode{}}
+			if err := loadFlatDirectory(ctx, manifests, node, "", targets, depth, &objects); err != nil {
+				return nil, err
+			}
+			if err := requireAuthenticationBindings(node, p.layout, targets); err != nil {
+				return nil, err
+			}
+			return node, nil
+		}
+		manifest, err := manifests.readManifest(ctx, payload)
 		if err != nil {
 			return nil, err
-		}
-		if len(manifest.Entries) != len(targets) {
-			return nil, fmt.Errorf("directory manifest and ArcSet differ")
 		}
 		node := &treeNode{kind: unixfsmodel.DirectoryEntryTypeDir, key: root, manifest: payload, children: map[string]*treeNode{}}
 		for _, entry := range manifest.Entries {
@@ -117,6 +139,9 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 				return nil, fmt.Errorf("unsupported directory entry type")
 			}
 		}
+		if err := requireAuthenticationBindings(node, p.layout, targets); err != nil {
+			return nil, err
+		}
 		return node, nil
 	}
 	tree, err := load(base, 0)
@@ -128,6 +153,7 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 	}
 	descriptor := bases[base.KeyString()].State.Descriptor
 	candidates := []protocol.AuthenticationCandidate{}
+	produced := map[string]bool{}
 	required := []cid.Cid{}
 	var build func(*treeNode) error
 	build = func(node *treeNode) error {
@@ -145,13 +171,14 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 		if !node.dirty {
 			return nil
 		}
-		if err := legacy.storeManifest(ctx, node); err != nil {
+		if err := manifests.storeManifest(ctx, node); err != nil {
 			return err
 		}
-		state := engine.State{Descriptor: descriptor, Entries: []engine.Entry{{Input: input.SystemValue(input.Payload), Target: node.manifest}}}
-		for _, name := range sortedChildNames(node) {
-			state.Entries = append(state.Entries, engine.Entry{Input: input.LabelValue([]byte(name)), Target: node.children[name].key})
+		if p.layout == unixfs.LayoutFlatV1 && node != tree {
+			node.key = node.manifest
+			return nil
 		}
+		state := engine.State{Descriptor: descriptor, Entries: authenticationEntries(node, p.layout)}
 		var candidate protocol.AuthenticationCandidate
 		var err error
 		if old, ok := bases[node.key.KeyString()]; ok {
@@ -167,8 +194,9 @@ func (p *AuthenticationPlanner) PlanRooted(ctx context.Context, base cid.Cid, op
 		if err != nil {
 			return err
 		}
-		if !root.Equals(node.key) {
+		if !root.Equals(node.key) && !produced[root.KeyString()] {
 			candidates = append(candidates, candidate)
+			produced[root.KeyString()] = true
 		}
 		node.key = root
 		return nil

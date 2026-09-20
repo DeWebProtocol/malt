@@ -87,15 +87,14 @@ Defaults are 96 MiB, 64 MiB, and 1 MiB respectively. Limits apply after HTTP
 decompression; oversized and trailing JSON responses are rejected before their
 contents are trusted or returned.
 
-The transport exposes generic `Resolve` and `Read`, immutable CAS ingest
-`Put`, bounded `PutBatch`/`HasBatch`, root creation, semantic mutation, typed
-diagnostic metrics, diagnostic verifier calls, and two fixed Merkle DAG
-compatibility methods. Single-value CAS `Get`/`Has` are available only when a
-managed Bucket is selected, and fail locally instead of attempting the removed
-public raw-CAS read route. It intentionally has no arbitrary profile-route
-method. Transport methods validate wire shape and CAS bytes, but generic
-resolve/read results remain untrusted until locally verified against caller
-inputs.
+The transport exposes `Authenticate`, `AuthenticationCandidate`,
+`MaterializeAuthentication`, and `MaterializeAuthenticationBatch`, immutable
+CAS ingest and bounded batches, metrics, and isolated Merkle DAG capabilities.
+Authentication results are untrusted until verified locally against the
+caller-selected Root and exact typed query. Old Resolve/Read, generic semantic
+mutation, client-root, and diagnostic verifier methods are removed. No arbitrary
+profile-route method is exposed. Managed CAS reads preserve Bucket ownership
+and payload CID checks.
 
 ## Local and hybrid CAS transports
 
@@ -173,7 +172,7 @@ The generated runtime configuration contains `transport.cas_policy` with
 `gateway`, `local`, and `hybrid` values plus `transport.local_cas_dir`. Missing
 fields default to `gateway`. Local-only mode currently supports `malt add
 --target merkle-dag`; managed native MALT backup, mount, and write-back require
-Gateway or hybrid because a local Native/Mutations executor is not yet claimed.
+Gateway or hybrid because a local authentication materializer is not yet claimed.
 The reusable `transport/capabilitytest.RunCAS` suite is run against mock,
 Gateway HTTP, local, hybrid, and peer-loopback implementations. The peer fixture
 defines no network codec, discovery rule, or wire identifier.
@@ -196,9 +195,7 @@ No exported signature contains a type from `internal/`.
 
 Package `bucketsync` provides the durable runtime workflow used by the CLI.
 New code constructs it with `OpenRemote` or `OpenRemoteBranch` and a
-`capability.DatasetBranch`. The former `Open`/`OpenBranch` Gateway-DTO surface
-is retained as a deprecated compatibility adapter during the pre-release
-migration.
+`capability.DatasetBranch`. The former `Open`/`OpenBranch` Gateway-DTO adapter is removed.
 Call `CurrentBase` before materializing local work, then `Stage` the candidate
 against that captured commit/root/revision. `Push` refuses unstaged candidates,
 calls `ObserveHead` without changing the stash, leaves it pending across network
@@ -248,17 +245,16 @@ routes or representing CID/link evidence as a ProofList.
 Bulk local-input import is reusable through `application/add`. `add.Run` owns
 option normalization, ignore and symlink policy, native layout-aware staging,
 Merkle DAG import, accepted-alias selection, and unaccepted candidate
-recording. The caller injects a narrow `add.Materializer` graph/fixed-list
+recording. The caller injects a narrow `add.Materializer` typed authentication and creation-profile
 capability and CAS; Cobra and concrete Gateway DTOs are not part of this
-package. `GraphGateway`, `Gateway`, and `NewGateway` remain deprecated aliases
-for one pre-release migration window.
+package. The superseded Gateway DTO aliases and constructors are removed.
 
 `application/backup` composes the runtime-owned encrypted filesystem profile
 with Bucket synchronization ports. `PlanStore` persists complete Branch plans
 and their disjoint local bindings. Under the Plan operation lock,
 `PlanService.Backup` first recovers its Plan-exclusive ciphertext snapshot
 namespace, rejects pending or conflicted workspace state, then stages encrypted
-blocks in its owner-local CAS, computes Map/List roots with MALT Core, and
+blocks in its owner-local CAS, computes Prefix/Positional Roots with MALT Core, and
 requires exact Gateway CID/root equality before Bucket stage and push. Normal
 cleanup failures are returned and crash leftovers are retried on the next
 invocation. Unchanged bindings and manifest ciphertext are reused only from a
@@ -272,11 +268,11 @@ tar/gzip snapshot, single-snapshot Service, Restore, Job, and Scheduler models
 are removed rather than retained as parallel compatibility paths.
 
 `unixfs/encrypted` owns `malt.encrypted-unixfs/v1`. Its local snapshot builder emits encrypted
-dataset/directory/file manifests, opaque HMAC-derived Map tokens, and
-XChaCha20-Poly1305 file chunks stored as raw blocks or fixed MALT Lists. The
+dataset/directory/file manifests, opaque HMAC-derived Prefix tokens, and
+XChaCha20-Poly1305 file chunks stored as raw blocks or fixed Positional ArcSets. The
 snapshot publisher compares every untrusted remote result with the locally
 computed CID or Root before it can become a Bucket candidate. Its
-reader accepts only untrusted Resolve/CAS capabilities, verifies each ProofList
+reader accepts only untrusted typed authentication/CAS capabilities, verifies each query
 and ciphertext CID locally, then decrypts manifests or requested chunks. The
 API exposes dataset loading, directory enumeration, file open/full/range read,
 and safe binding materialization, so daemon, mount, local API, and browser
@@ -297,23 +293,20 @@ reader, err := unixfs.NewReader(unixfs.ReaderOptions{
 result, err := reader.ReadFile(ctx, trustedRoot, "docs/readme.md")
 ```
 
-For writing through any semantic mutation implementation, adapt its typed
-candidate result inside the UnixFS application boundary:
+For writing, use the current application adapter with an injected Core engine
+and exact profile:
 
 ```go
-lists, err := unixfs.NewMutationAdapter(remote)
+adapter, err := unixfs.NewAuthenticationAdapter(kind, remote, engine, profile)
+layout, err := unixfs.NewLayout(kind)
 writer, err := unixfs.NewWriter(unixfs.WriterOptions{
-    Remote: remote,
-    Blocks: remote,
-    Roots:  remote,
-    Lists:  lists,
-    Layout:  layout,
+    Remote: remote, Blocks: remote, Roots: adapter, Payloads: adapter, Layout: layout,
 })
 ```
 
-`NewGatewayMutationAdapter` and its legacy DTO port remain as a deprecated
-compatibility adapter. The canonical `MutationAdapter` does not import Gateway
-HTTP response DTOs.
+This is the typed application projection, not a forwarding Map/List or old
+mutation adapter. `NewMutationAdapter` and `NewGatewayMutationAdapter` are
+removed. The caller must check construction errors before using the writer.
 
 `unixfs.NewLayout(unixfs.LayoutFlatV1)` and
 `unixfs.NewLayout(unixfs.LayoutHybridV1)` return implementations of the
@@ -323,14 +316,9 @@ pass the Bucket's persisted layout explicitly; the layout is not encoded in a
 MALT root CID and does not alter Core proof or commitment contracts.
 
 `unixfs.NewStagedPathStatter` constructs the locally verified, lightweight
-projection used when rebuilding an existing staged tree. It verifies Resolve
+projection used when rebuilding an existing staged tree. It verifies typed traversal
 proofs and parent directory manifests but does not fetch retained raw file
 payloads or issue List metadata reads.
-
-The public `unixfs.MutationTransport` returns
-`unixfs.CandidateRootReceipt`, not a Gateway HTTP response type. Fixed-list base
-creation and mutation-result decoding live in `GatewayMutationAdapter`, not in
-generic transport.
 
 The public operations are:
 
@@ -338,20 +326,20 @@ The public operations are:
 - `Stat(ctx, trustedRoot, path)`;
 - `ReadFile(ctx, trustedRoot, path)`;
 - `ReadFileRange(ctx, trustedRoot, path, offset, length)`;
-- `ReadListPayloadRange(ctx, trustedListRoot, offset, length)`; and
+- `ReadPositionalPayloadRange(ctx, trustedListRoot, offset, length)`; and
 - `EmptyDirectory`, `AddDirectory`, `AddFile`, `AddFileStream`,
   `AddFileSized`, and `RemovePath` on a writer.
 
 Read results retain their resolve and primitive-read evidence. Raw file and
 directory-manifest bytes are rehashed against authenticated CIDs. Measured-list
-reads locally verify the exact list-range ProofList, every segment CID, the
-resolve-to-read root transition, and the assembled byte body.
+reads locally verify the exact Positional range evidence, every segment CID, the
+traversal-to-range Root binding, and the assembled byte body.
 
 `Stat.Entries` contains the parent-authenticated `name` and `type` (`dir` or
 `file`) for immediate children. `Stat.StorageKind` continues to describe the
-resolved node's MALT/CAS kind for compatibility, while `Stat.PayloadKind`
+resolved node's MALT/CAS kind as Prefix/Positional/raw, while `Stat.PayloadKind`
 describes the actual raw or measured-list payload. These fields are
-independent: in particular, a manifest may project a Map-backed node as a file.
+independent: in particular, a manifest may project a Prefix-backed node as a file.
 `Resolve`, `Stat`, and file reads validate every UnixFS path segment against
 the relevant parent manifest and refuse to traverse through an entry projected
 as a file.
@@ -521,34 +509,15 @@ I/O, compute a root, or accept one.
 
 ## Verified filesystem write-back orchestration
 
-Package `application/writeback` composes the staging queue with narrow payload,
-client-root remote, canonical planner, and local root-policy capabilities.
-`Service.Replay` checks that the selected View still equals the locally
-accepted root before freezing a batch, locally validates all available staged
-bodies, loads and verifies a bounded complete update view, and normalizes the
-planner's semantic intent before publishing file payloads. Only staged raw CIDs
-that survive as `After` bindings in that final intent are uploaded, and every
-payload store result must equal its staged CID. Intermediate writes later
-overwritten or deleted by the same frozen batch are never sent to the payload
-store. The MALT Core client-root Writer then computes the candidate locally and
-verifies the exact durable receipt before the service records a candidate and
-completes the batch.
-
-The transport-neutral `application/clientroot.Remote` receives the complete
-sealed `clientwriter.ComputeResult`, not only its bundle. Evaluation adapters
-may project the bundle onto the explicit evaluation endpoint. The managed
-Gateway adapter instead serializes the canonical v2 writer result, including
-the bundle, materialization, retained next view, and diagnostic metrics, onto
-the tenant-authenticated Bucket route. A configured Bucket rejects bare-bundle
-submission locally; an unscoped client cannot submit the managed writer result.
-
-These staging/write-back interfaces did not exist in the historical `v0.0.1`
-tag and have not appeared in any later tag. The change-aware planner result and
-exact `CompleteNoChange` queue operation plus complete-result remote submission
-intentionally supersede earlier experimental intermediate-commit and
-bundle-only interfaces; implementers following those commits must update. This
-source change does not alter a wire profile, receipt, journal schema, or cache
-schema.
+Package `application/writeback` composes the staging queue with payload,
+exact batch materialization, planner, and local root-policy capabilities.
+`Service.Replay` checks its accepted View, freezes ordered intent, validates
+staged bodies, and asks the typed UnixFS planner for complete exact candidates.
+Only final referenced raw payload CIDs are uploaded. It submits one
+`AuthenticationBatch`, checks the exact receipt, records only a candidate,
+and completes under the accepted-root fence. No old UpdateView, semantic
+intent, client-root bundle, ComputeResult, or application/clientroot.Remote
+remains. See [migration](typed-authentication-migration.md).
 
 The root-policy port deliberately exposes accepted-root lookup and candidate
 recording only. `writeback.Result.RootAccepted` is therefore always false. If
@@ -565,26 +534,18 @@ orchestrator and concrete UnixFS planner are implemented; FUSE write
 composition is supplied only by the explicit runtime write-back binding
 described below.
 
-Package `unixfs/clientroot` is the concrete planner for flat-v1 and hybrid-v1.
-It first reconstructs the UnixFS tree only from the verified complete
-`mutation.UpdateView` and CID-checked manifest blocks, and rejects any mismatch
-between manifest projection and authenticated Map bindings. Ordered completed
-plus pending journal operations are then replayed against that immutable base.
+Package `unixfs/planner` plans flat-v1, hybrid-v1, and rooted-v1 updates
+from bounded complete typed candidates and CID-checked manifests. It verifies
+the exact selected Root, reconstructs the application projection, and rejects
+manifest/binding mismatches before applying ordered journal operations.
 
-For flat-v1 the planner emits one exact top-Map transition. For hybrid-v1 it
-emits new or changed directory Maps child-before-parent and uses semantic output
-references wherever an ancestor consumes a locally computed child root,
-including flattened descendant bindings. New directories inherit the accepted
-top root's commitment backend; existing directories retain their verified
-backend and object identity. When multiple paths share one authenticated
-directory root, equal resulting projections reuse one output while divergent
-edits deterministically copy-on-write the additional branches as complete new
-objects. Canonical V2 manifests are stored through a narrow block capability,
-and a returned CID must equal the locally computed manifest CID. A manifest
-that re-encodes to its existing CID is not published again, so a verified
-no-change batch performs no block-store write. The planner supports both KZG
-and IPA roots and does not call a Gateway, record a candidate, or accept a
-root. Platform composition remains separate.
+Flat planning produces the exact top Prefix candidate; hybrid/rooted planning
+emits changed children before parents. New children inherit the selected
+profile; existing children retain their verified descriptor. Equal shared
+projections reuse one result, while divergent edits copy on write. Canonical
+V2 manifest CIDs are checked locally; unchanged manifests are not stored again.
+The planner returns exact Core candidates and final payload requirements for
+write-back batching, with no trust, HTTP, or concrete transport dependency.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,
@@ -673,7 +634,7 @@ accepted UnixFS root, and per-dataset/branch Gateway readers. Matching remote
 observations may supply cache revision metadata but never replace the accepted
 root. For `write_back`, it derives one stable state directory from the exact
 dataset and branch, opens the leased staging cache/journal, selects the declared
-flat-v1 or hybrid-v1 planner, and composes the Gateway block/client-root ports
+flat-v1, hybrid-v1, or rooted-v1 planner, and composes the Gateway block/authentication batch ports
 with an isolated MALT Core Writer and `application.Roots`. The state directory
 also contains an owner-private `layout.json`; it is written durably before any
 replay and binds the dataset, branch, and flat-v1/hybrid-v1 profile. A mismatch

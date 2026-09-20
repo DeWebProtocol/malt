@@ -8,23 +8,23 @@ import (
 	"testing"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
 func TestDecodeAndOracleBindExactSource(t *testing.T) {
 	fixture, view, raw := testFixture(t)
-	if err := fixture.ValidateInitialView(view, "kzg"); err != nil {
+	if err := fixture.ValidateInitialGraph(view, "kzg"); err != nil {
 		t.Fatal(err)
 	}
 	hostile := fixture.InitialSource()
 	hostile["document.txt"][0] ^= 0xff
-	if err := fixture.ValidateViewAgainstSource(view, "kzg", hostile); err == nil {
+	if err := fixture.ValidateGraphAgainstSource(view, "kzg", hostile); err == nil {
 		t.Fatal("source bytes unrelated to the authenticated CID passed the oracle")
 	}
 
@@ -58,7 +58,7 @@ func TestDocumentEditUsesRetainedExactPostImage(t *testing.T) {
 	}
 }
 
-func testFixture(t *testing.T) (*Fixture, mutation.UpdateView, []byte) {
+func testFixture(t *testing.T) (*Fixture, authenticationgraph.View, []byte) {
 	t.Helper()
 	data := []byte("document bytes")
 	key, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: data})
@@ -69,24 +69,16 @@ func testFixture(t *testing.T) (*Fixture, mutation.UpdateView, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapper, err := mappingradix.NewMap(scheme, materializermemory.New(true))
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := authentication.Prepare(context.Background(), engine.New(input.DefaultRegistry(), profiles), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("document.txt")), Target: key}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := mapper.Commit(context.Background(), "root", mapping.NewViewFrom(map[string]cid.Cid{"document.txt": key}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	coordinate, _ := arcset.NewMapCoordinate("document.txt")
-	entries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{{Coordinate: coordinate, Target: arcset.NewCASTarget(key)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	view := mutation.UpdateView{
-		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile, BaseRoot: root,
-		Bounds:  mutation.UpdateViewBounds{MaxObjects: 2, MaxTotalEntries: 8, MaxDepth: 2},
-		Objects: []mutation.UpdateObject{{ObjectID: "root", Root: root, Kind: arcset.KindMap, Entries: entries}},
-	}
+	root, _ := cid.Parse(candidate.Root)
+	view := authenticationgraph.View{Root: root, States: map[string]engine.State{root.String(): candidate.State}}
 	seed := sha256.Sum256([]byte("fixture seed"))
 	value := Fixture{
 		SchemaVersion: SchemaVersion, FixtureID: "fixture", MutationSeedSHA256: hex.EncodeToString(seed[:]),

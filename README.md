@@ -35,10 +35,10 @@ authentication core:
   publication, uploads only final CID-bound staged bodies referenced by the
   normalized intent, locally computes and verifies a MALT candidate root, and
   records it without accepting it;
-- flat-v1 and hybrid-v1 UnixFS client-root planning from a verified complete
-  view, with locally CID-verified manifest reads and writes;
+- flat-v1, hybrid-v1, and rooted-v1 UnixFS planning from verified complete
+  typed candidates, with locally CID-verified manifest reads and writes;
 - a platform-neutral read-only filesystem service pinned to an exact accepted
-  dataset view, with verified lazy List ranges and proof-revalidated raw cache
+  dataset view, with verified lazy Positional ranges and proof-revalidated raw cache
   hits;
 - a crash-recoverable mount registry and daemon/local-API lifecycle contract
   that keeps platform drivers outside trust and transport code;
@@ -47,7 +47,7 @@ authentication core:
   explicitly selected write-back binding that durably journals locally,
   computes the candidate locally, verifies remote persistence, and never
   promotes it implicitly;
-- local verification of resolve/read proofs and returned payload bytes;
+- local verification of typed authentication proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
 
@@ -64,8 +64,8 @@ backup/sync/restore, a
 UnixFS application adapter, a platform-neutral verified filesystem service,
 and daemon-managed Linux FUSE mounts controlled by `malt mount` and
 `malt unmount`. Mounts remain read-only by default. An explicit `write_back`
-policy composes per-dataset/branch staging, the flat or hybrid UnixFS planner,
-MALT Core client-root computation, the untrusted Gateway remote, and local
+policy composes per-dataset/branch staging, the selected UnixFS planner,
+MALT Core typed candidate computation, the untrusted Gateway remote, and local
 candidate recording. A successful remote write never accepts the candidate;
 promotion still requires the separate local root policy. The current remote
 executor is Gateway HTTP. A durable bounded local CAS and a Gateway-primary,
@@ -80,8 +80,8 @@ published for MALT Client
 before the repository rename and before the staging/write-back APIs existed.
 Those current experimental Go interfaces have not appeared in any tag and may
 still make explicitly documented source-breaking changes before a tagged
-release includes them; build the current runtime from a pinned commit. These
-changes do not imply a Core or Gateway wire-format migration. An opt-in
+release includes them; build the current runtime from a pinned commit. The [typed authentication migration](docs/typed-authentication-migration.md)
+requires coordinated Core/Gateway source and release adoption. An opt-in
 write-back mount creates an additive owner-private `layout.json` beside its
 per-dataset/branch journal and refuses to reuse that state with a different
 flat/hybrid profile; read-only state and older runtime data remain unchanged.
@@ -175,7 +175,7 @@ or as an explicitly opt-in write-back mount with a fixed layout:
 ```
 
 Every successful filesystem mutation is first durable in the local journal.
-`fsync` then attempts the complete verified client-root write-back. Network or
+`fsync` then attempts the complete verified typed batch write-back. Network or
 conflict failures are reported to the application while the exact local batch
 remains recoverable for retry. Remote success records a candidate root only;
 candidate recording and journal completion are fenced against concurrent
@@ -210,10 +210,10 @@ then prepares every changed binding in that Plan-exclusive owner-local CAS
 before publishing any bytes. Snapshot cleanup failures are returned to the
 caller rather than hidden. It writes the directory directly as
 the runtime-owned `malt.encrypted-unixfs/v1` application profile: directories
-and files are MALT Maps, directory listings are encrypted manifests, Map keys
+and files are MALT Prefix Roots, directory listings are encrypted manifests, Map keys
 are stable opaque tokens, and file ciphertext is stored as a raw block or a
-MALT List of independently authenticated chunks. There is no tar/gzip archive.
-Every Map/List Root is computed locally with MALT Core; the Gateway must return
+MALT Positional Root of independently authenticated chunks. There is no tar/gzip archive.
+Every Prefix/Positional Root is computed locally with MALT Core; the Gateway must return
 the exact same block CIDs and graph Roots before the candidate can be staged.
 Unchanged bindings are reused only from a locally accepted, fully verified
 base dataset.
@@ -376,37 +376,33 @@ Read verified native UnixFS content and materialize a removal candidate:
 ./bin/malt root accept my-data <candidate-root-from-rm>
 ```
 
-`stat` emits JSON including locally verified resolve/read evidence. `cat`
+`stat` emits JSON including locally verified typed authentication evidence. `cat`
 writes only verified file bytes to stdout. `rm` never changes the accepted root:
 it emits `accepted: false` and, when given an alias, records the result as a
 candidate for a later explicit `root accept` command.
 
-The native MALT target exposes two versioned UnixFS application layouts:
+The native MALT target exposes three UnixFS application layouts:
 
-- `flat-v1` stores the root manifest, every directory manifest, and every file
-  target as root-relative bindings in one authenticated MALT Map. A write
-  updates one semantic Map object even when several ancestor manifests change.
-- `hybrid-v1` keeps one authenticated Map per directory and also retains
-  descendant root-relative bindings in ancestor Maps.
+- `flat-v1` stores the root manifest, directory manifests and file targets as
+  whole-path label bindings under one Prefix Root.
+- `hybrid-v1` keeps a Prefix Root per directory and retains descendant
+  whole-path bindings in ancestor Roots.
+- `rooted-v1` keeps immediate-child bindings in each directory Prefix Root,
+  with explicit component traversal between directories.
 
-`malt add` retains `hybrid` as its compatibility default outside managed
-Bucket mode and accepts it as an alias of `hybrid-v1`. When a Bucket is
-selected, `malt add` and `malt rm` fetch and strictly validate its persisted
-layout before materialization; an explicit `--layout` must match that fixed
-value. Select the flat implementation explicitly for non-Bucket roots with
-`--layout flat-v1`. The removed bare `flat` and `hierarchical` pre-release
-aliases remain invalid. Flat bulk add rejects followed directory symlinks
-before uploading any blocks because an opaque nested Map root would violate
-the single-Map layout invariant.
+`malt add` defaults to `hybrid` (the short spelling of `hybrid-v1`) outside
+managed Bucket mode. With a Bucket selected, add and remove strictly validate
+its persisted layout; an explicit `--layout` must match. Flat bulk add rejects
+followed directory symlinks before uploading blocks because an opaque child
+Root would violate the single-Prefix layout.
 
-UnixFS file/directory projection is authenticated by each parent directory's
-typed V2 manifest rather than inferred from a child's MALT semantic kind. A
-Map-backed object can therefore be a UnixFS file with an `@payload` arc and
-other application arcs such as `@comments`; UnixFS path traversal still stops
-at that file. Historical V1 manifests remain readable with their locked
-Map-to-directory and List/CAS-to-file fallback. See
-[the UnixFS manifest format](./docs/unixfs-manifest.md) for the wire and
-compatibility rules.
+UnixFS file/directory projection comes from each parent's canonical V2
+manifest. A file may target a Prefix Root whose typed system payload selector
+binds its bytes; a flat path may target the payload or manifest directly.
+UnixFS traversal stops at a file regardless of other application bindings.
+Name-only V1 manifests, raw-codec fallback and layout-based type inference are
+removed. See [the manifest format](./docs/unixfs-manifest.md) for canonical V2
+encoding and rejected historical forms.
 
 The same runtime can materialize one local file or directory as an
 IPFS-compatible Merkle DAG while reusing the gateway CAS:
@@ -452,10 +448,10 @@ lookup, even when the alias text happens to be CID-shaped.
 Package `transport` is an untrusted gateway transport. Package `trust` owns
 separate observed/candidate/accepted root policy. Package `unixfs`
 composes it into verified `Resolve`, `Stat`, `ReadFile`, `ReadFileRange`,
-`ReadListPayloadRange`, `EmptyDirectory`, `AddDirectory`, `AddFile`, streaming
+`ReadPositionalPayloadRange`, `EmptyDirectory`, `AddDirectory`, `AddFile`, streaming
 file writes, and `RemovePath` operations. The UnixFS facade requires
-a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
-continuity, and verifies raw, manifest, and measured-list payload bytes.
+a caller-selected root, verifies typed evidence locally, enforces path-to-range
+continuity, and verifies raw, manifest, and measured Positional payload bytes.
 
 With `transport.Options{TenantBearerToken: ..., BucketID: ...}`, native
 MALT/CAS calls use the authenticated Bucket routes. Package `bucketsync`
@@ -608,8 +604,8 @@ boundaries; no root-relative descendant aliases are emitted.
 Use `malt add --layout rooted-v1`, and select the same layout for `malt stat`,
 `malt cat`, and `malt rm`. Managed Buckets retain their declared layout;
 write-back mounts can select `rooted-v1`. Generic readers identify this schema
-from the authenticated V=0 AA2 descriptor. Existing flat/hybrid data retain
-their compatibility readers and writers.
+from the authenticated V=0 AA2 descriptor. Flat, hybrid and rooted remain supported application layouts, all using the
+same current typed authentication reader and planner.
 
 Writers compute and verify complete typed candidates locally, submit children
 before parents, and reject a receipt for any different Root. Filesystem replay
@@ -631,7 +627,6 @@ and no CAS-transfer latency or full-file read measurement is claimed.
 
 An upload batch and its writeback result expose `TransactionID`. The batch
 contains individually journaled filesystem operations, whose `OperationID`
-identifies an intent rather than a Delta transaction. Core client-root bundles
-and receipts use `transaction_id` with `/v2` profiles, without old-field
-compatibility; writer results use `/v3`. A candidate receipt does not publish
+identifies an intent rather than a Delta transaction. Core authentication batches and receipts use `transaction_id` with
+`malt.authentication-batch/0` and `malt.authentication-receipt/0`. A candidate receipt does not publish
 a Bucket head or promote an accepted root.

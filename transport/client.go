@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
-	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -254,100 +253,6 @@ func (c *Client) Has(ctx context.Context, key cid.Cid) (bool, error) {
 		return false, c.responseError(resp)
 	}
 	return true, nil
-}
-
-// Resolve executes the transport-neutral resolve contract. The caller must
-// locally verify the returned result against the original request.
-func (c *Client) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
-	var result protocol.ResolveResult
-	if err := c.doNative(ctx, http.MethodPost, "/v1/resolve", nil, request, &result); err != nil {
-		return nil, err
-	}
-	if err := result.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid resolve result: %w", err)
-	}
-	return &result, nil
-}
-
-// ResolveContract is a compatibility spelling for Resolve.
-func (c *Client) ResolveContract(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	return c.Resolve(ctx, request)
-}
-
-// Read executes one transport-neutral primitive map/list read contract. The
-// caller must locally verify the returned result against the original request.
-func (c *Client) Read(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
-	var result protocol.ReadResult
-	if err := c.doNative(ctx, http.MethodPost, "/v1/read", nil, request, &result); err != nil {
-		return nil, err
-	}
-	if err := result.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid read result: %w", err)
-	}
-	return &result, nil
-}
-
-// ReadContract is a compatibility spelling for Read.
-func (c *Client) ReadContract(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
-	return c.Read(ctx, request)
-}
-
-// DiagnoseResolve asks the gateway to run its verifier for diagnostics only.
-func (c *Client) DiagnoseResolve(ctx context.Context, value protocol.ResolveVerification) (*protocol.VerificationResult, error) {
-	var result protocol.VerificationResult
-	if err := c.do(ctx, http.MethodPost, "/v1/verify/resolve", nil, value, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// DiagnoseRead asks the gateway to run its verifier for diagnostics only.
-func (c *Client) DiagnoseRead(ctx context.Context, value protocol.ReadVerification) (*protocol.VerificationResult, error) {
-	var result protocol.VerificationResult
-	if err := c.do(ctx, http.MethodPost, "/v1/verify/read", nil, value, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ApplyRootSemanticMutation asks the untrusted gateway to materialize a
-// semantic mutation. The returned root is always a candidate.
-func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, request *SemanticMutationRequest) (*SemanticMutationResponse, error) {
-	var response SemanticMutationResponse
-	if err := c.doNative(ctx, http.MethodPost, "/v1/roots/"+url.PathEscape(root)+"/mutations", nil, request, &response); err != nil {
-		return nil, err
-	}
-	return &response, nil
-}
-
-// CreateRootStructure materializes a map from canonical bindings. The returned
-// root is a candidate until independently accepted by the caller.
-func (c *Client) CreateRootStructure(ctx context.Context, arcs map[string]string) (*CreateStructureResponse, error) {
-	var response CreateStructureResponse
-	request := CreateStructureRequest{Arcs: arcs}
-	if err := c.doNative(ctx, http.MethodPost, "/v1/roots", nil, &request, &response); err != nil {
-		return nil, err
-	}
-	return &response, nil
-}
-
-// CreateStagedRoot implements the UnixFS transport-neutral root creation port.
-func (c *Client) CreateStagedRoot(ctx context.Context, arcs map[string]string) (cid.Cid, error) {
-	response, err := c.CreateRootStructure(ctx, arcs)
-	if err != nil {
-		return cid.Undef, err
-	}
-	root, err := cid.Parse(response.Root)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("gateway returned invalid created root: %w", err)
-	}
-	return root, nil
 }
 
 func (c *Client) endpoint(route string) (*url.URL, error) {

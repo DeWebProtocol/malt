@@ -17,13 +17,7 @@ import (
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
-	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/mutation"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -268,375 +262,6 @@ func TestControllerResponseMustEchoExactDirectoryIdentity(t *testing.T) {
 	}
 }
 
-func TestHybridGraphIntentComputesExactNestedKZGRoot(t *testing.T) {
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatal(err)
-	}
-	builder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	oldState := map[string]logicalFile{
-		"a/b/file.bin": {data: []byte("abcdefgh"), mode: 0o644, digest: strings.Repeat("1", 64)},
-		"a/peer.txt":   {data: []byte("peer"), mode: 0o644, digest: strings.Repeat("2", 64)},
-	}
-	oldGraph, err := builder.build(t.Context(), oldState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view := graphUpdateView(t, oldGraph)
-	nextState := cloneLogicalState(oldState)
-	changed := nextState["a/b/file.bin"]
-	changed.data = []byte("abcdWXYZ")
-	changed.mode = 0o755
-	nextState["a/b/file.bin"] = changed
-	changedFile := nextState["a/b/file.bin"]
-	priorFile := oldState["a/b/file.bin"]
-	nextGraph, err := builder.buildNext(t.Context(), oldGraph, nextState, []fileChange{{
-		path: "a/b/file.bin", before: &priorFile, after: &changedFile,
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(nextGraph.order, objectLogicalID("file", "a/peer.txt")) || nextGraph.objects[objectLogicalID("file", "a/peer.txt")] != oldGraph.objects[objectLogicalID("file", "a/peer.txt")] {
-		t.Fatal("incremental planner rebuilt the unaffected peer file")
-	}
-	oracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
-	if err != nil || !oracle.root.Equals(nextGraph.root) {
-		t.Fatalf("incremental/full oracle mismatch: root=%s oracle=%v err=%v", nextGraph.root, oracle, err)
-	}
-	intent, err := graphIntent(view, oldGraph, nextGraph, "nested-replace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(intent.Transitions) < 4 {
-		t.Fatalf("transitions = %d, want file plus three directory levels", len(intent.Transitions))
-	}
-	runtime, err := clientwriter.NewRuntime(
-		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := runtime.VerifyUpdateView(t.Context(), view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	computed, err := runtime.ComputeBundle(t.Context(), "rq3-test", verified, intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !computed.Bundle.Candidate.Equals(nextGraph.root) {
-		t.Fatalf("candidate = %s, want locally rebuilt %s", computed.Bundle.Candidate, nextGraph.root)
-	}
-}
-
-func TestOutputFreeBlueprintComputesSnapshotAndIncrementalRootsOnce(t *testing.T) {
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	emptyState := map[string]logicalFile{}
-	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	emptyBlueprint, err := buildBlueprint(emptyState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotState := map[string]logicalFile{
-		"a/b/file.bin": {data: []byte("abcdefgh"), mode: 0o644, digest: strings.Repeat("1", 64)},
-		"peer.txt":     {data: []byte("peer"), mode: 0o644, digest: strings.Repeat("2", 64)},
-	}
-	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := clientwriter.NewRuntime(
-		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot", verified, snapshotIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
-	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
-		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
-	}
-
-	nextState := cloneLogicalState(snapshotState)
-	prior := nextState["a/b/file.bin"]
-	next := prior
-	next.data = []byte("abcdWXYZ")
-	next.digest = strings.Repeat("3", 64)
-	nextState["a/b/file.bin"] = next
-	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{{
-		path: "a/b/file.bin", before: &prior, after: &next,
-	}}, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(nextBlueprint.order, objectLogicalID("file", "peer.txt")) ||
-		nextBlueprint.objects[objectLogicalID("file", "peer.txt")] != snapshotBlueprint.objects[objectLogicalID("file", "peer.txt")] {
-		t.Fatal("incremental blueprint rebuilt an unaffected peer")
-	}
-	nextIntent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "replace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextComputed, err := runtime.ComputeBundle(t.Context(), "replace", nextVerified, nextIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
-	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
-		t.Fatalf("incremental candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
-	}
-}
-
-func TestOutputFreeBlueprintRebuildsFixedListWhenTotalSizeChanges(t *testing.T) {
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	emptyState := map[string]logicalFile{}
-	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	emptyBlueprint, err := buildBlueprint(emptyState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotState := map[string]logicalFile{
-		"file.bin": {data: []byte("abc"), mode: 0o644, digest: strings.Repeat("1", 64)},
-	}
-	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot-size-change")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := clientwriter.NewRuntime(
-		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot-size-change", verified, snapshotIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
-	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
-		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
-	}
-
-	nextState := cloneLogicalState(snapshotState)
-	prior := nextState["file.bin"]
-	next := prior
-	next.data = []byte("wxyz")
-	next.digest = strings.Repeat("2", 64)
-	nextState["file.bin"] = next
-	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{{
-		path: "file.bin", before: &prior, after: &next,
-	}}, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	intent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "replace-size-change")
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundFreshFile := false
-	for _, transition := range intent.Transitions {
-		if transition.Commit.FixedList != nil && transition.Commit.FixedList.TotalSize == 4 {
-			foundFreshFile = !transition.OldRoot.Defined()
-		}
-	}
-	if !foundFreshFile {
-		t.Fatal("size-changing fixed list did not receive a fresh object identity")
-	}
-	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextComputed, err := runtime.ComputeBundle(t.Context(), "replace-size-change", nextVerified, intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
-	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
-		t.Fatalf("size-change candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
-	}
-}
-
-func TestOutputFreeBlueprintRetainsSharedRootForPartiallyChangedAliases(t *testing.T) {
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	emptyState := map[string]logicalFile{}
-	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	emptyBlueprint, err := buildBlueprint(emptyState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	shared := logicalFile{data: []byte("same"), mode: 0o644, digest: strings.Repeat("1", 64)}
-	snapshotState := map[string]logicalFile{"a.txt": shared, "b.txt": shared}
-	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot-shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := clientwriter.NewRuntime(
-		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot-shared", verified, snapshotIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
-	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
-		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
-	}
-
-	nextState := cloneLogicalState(snapshotState)
-	prior := nextState["a.txt"]
-	next := logicalFile{data: []byte("diff"), mode: 0o644, digest: strings.Repeat("2", 64)}
-	nextState["a.txt"] = next
-	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{{
-		path: "a.txt", before: &prior, after: &next,
-	}}, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextIntent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "partial-shared-change")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextComputed, err := runtime.ComputeBundle(t.Context(), "partial-shared-change", nextVerified, nextIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
-	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
-		t.Fatalf("incremental candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
-	}
-}
-
-func TestOutputFreeBlueprintRebuildsDemotedTopRootAsChild(t *testing.T) {
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oracleBuilder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	emptyState := map[string]logicalFile{}
-	emptyGraph, err := oracleBuilder.build(t.Context(), emptyState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	emptyBlueprint, err := buildBlueprint(emptyState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	file := logicalFile{data: []byte("same"), mode: 0o644, digest: strings.Repeat("1", 64)}
-	snapshotState := map[string]logicalFile{"x": file}
-	snapshotBlueprint, err := buildBlueprint(snapshotState, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotIntent, err := blueprintIntent(graphUpdateView(t, emptyGraph), emptyGraph, emptyBlueprint, snapshotBlueprint, "snapshot-top-demotion")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := clientwriter.NewRuntime(
-		materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := runtime.VerifyUpdateView(t.Context(), graphUpdateView(t, emptyGraph))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotComputed, err := runtime.ComputeBundle(t.Context(), "snapshot-top-demotion", verified, snapshotIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshotOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), snapshotState)
-	if err != nil || !snapshotComputed.Bundle.Candidate.Equals(snapshotOracle.root) {
-		t.Fatalf("snapshot candidate=%s oracle=%v err=%v", snapshotComputed.Bundle.Candidate, snapshotOracle, err)
-	}
-
-	nextState := map[string]logicalFile{"d/x": file}
-	prior := snapshotState["x"]
-	next := nextState["d/x"]
-	nextBlueprint, err := buildBlueprintNext(snapshotBlueprint, nextState, []fileChange{
-		{path: "x", before: &prior},
-		{path: "d/x", after: &next},
-	}, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextIntent, err := blueprintIntent(snapshotComputed.NextView, snapshotOracle, snapshotBlueprint, nextBlueprint, "top-demotion")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextVerified, err := runtime.VerifyUpdateView(t.Context(), snapshotComputed.NextView)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextComputed, err := runtime.ComputeBundle(t.Context(), "top-demotion", nextVerified, nextIntent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextOracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), nextState)
-	if err != nil || !nextComputed.Bundle.Candidate.Equals(nextOracle.root) {
-		t.Fatalf("incremental candidate=%s oracle=%v err=%v", nextComputed.Bundle.Candidate, nextOracle, err)
-	}
-}
-
 func TestSubtreeRenameUpdatesAllBindingsIncrementallyAndMatchesFullOracle(t *testing.T) {
 	digest := func(value []byte) string {
 		sum := sha256.Sum256(value)
@@ -652,12 +277,11 @@ func TestSubtreeRenameUpdatesAllBindingsIncrementallyAndMatchesFullOracle(t *tes
 		"old/nested/c": file("cccc"),
 		"peer/file":    file("peer"),
 	}
-	scheme, err := kzg.NewScheme()
+	initial, err := directFlatSnapshotChanges(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	builder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	oldGraph, err := builder.build(t.Context(), state)
+	rootOracle, err := newFlatRootOracle(t.Context(), initial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -674,20 +298,27 @@ func TestSubtreeRenameUpdatesAllBindingsIncrementallyAndMatchesFullOracle(t *tes
 	if payloadBytes != 0 || len(changes) != 6 {
 		t.Fatalf("subtree rename payload=%d changes=%#v", payloadBytes, changes)
 	}
-	nextGraph, err := builder.buildNext(t.Context(), oldGraph, state, changes)
+	delta, err := directFlatDeltaChanges(changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range delta {
+		if string(change.Input.Data) == "rq3/files/peer/file" || string(change.Input.Data) == "rq3/modes/peer/file" {
+			t.Fatal("rename included unaffected peer binding")
+		}
+	}
+	next, err := rootOracle.apply(t.Context(), delta)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, exists := state["old/a"]; exists || string(state["new/nested/b"].data) != "bbbbbbbb" {
-		t.Fatalf("subtree rename state = %#v", state)
+		t.Fatal("subtree rename source differs")
 	}
-	if nextGraph.objects[objectLogicalID("file", "peer/file")] != oldGraph.objects[objectLogicalID("file", "peer/file")] {
-		t.Fatal("subtree rename rebuilt an unaffected peer file")
+	full, err := fullFlatRoot(t.Context(), state)
+	if err != nil || !next.Equals(full) {
+		t.Fatalf("incremental/full subtree rename: %s %s %v", next, full, err)
 	}
-	oracle, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).build(t.Context(), state)
-	if err != nil || !oracle.root.Equals(nextGraph.root) {
-		t.Fatalf("subtree incremental/full oracle mismatch: root=%s oracle=%v err=%v", nextGraph.root, oracle, err)
-	}
+
 }
 
 func TestGatewayDeleteAccountingPreservesAttemptAndReclamation(t *testing.T) {
@@ -768,7 +399,7 @@ func TestCanonicalEmptySetupAccountingIsAttributedToFirstSnapshot(t *testing.T) 
 		},
 		{
 			Sequence: 100, CommitID: "setup-empty-top", Stage: stageCommitted,
-			Category: gatewayCategories[2], Cause: "gateway-client-root-object-ledger",
+			Category: gatewayCategories[2], Cause: "gateway-authentication-object-ledger",
 			Disposition: dispositionNew, ObjectKey: "gateway-accounting/" + strings.Repeat("d", 64) + "/root-version-metadata/new",
 			Count: 1, Bytes: 20, GrossNewBytes: 20, NetBytes: 20, CASClassification: casNotApplicable,
 		},
@@ -888,19 +519,22 @@ func TestUnixFSConformanceRunsOnlyAfterAllMALTCommitMeasurements(t *testing.T) {
 }
 
 func TestFlatGraphRepresentsEmptyRegularFileAsWholeBlobBinding(t *testing.T) {
-	scheme, err := kzg.NewScheme()
+	initial, err := directFlatSnapshotChanges(map[string]logicalFile{"empty.txt": {data: []byte{}, mode: 0o644, digest: strings.Repeat("e", 64)}})
+	if err != nil || len(initial) != 3 {
+		t.Fatalf("empty-file bindings: %+v %v", initial, err)
+	}
+	empty, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: []byte{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	builder := graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}
-	graph, err := builder.buildFlat(t.Context(), map[string]logicalFile{
-		"empty.txt": {data: []byte{}, mode: 0o644, digest: strings.Repeat("e", 64)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	found := false
+	for _, change := range initial {
+		if string(change.Input.Data) == "rq3/files/empty.txt" {
+			found = change.After.Equals(empty)
+		}
 	}
-	if graph.objects[graph.topID] == nil || graph.objects[graph.topID].kind != "map" || graph.objects[graph.topID].entries.Len() != 3 {
-		t.Fatalf("empty-file flat object = %#v", graph.objects[graph.topID])
+	if !found {
+		t.Fatal("empty file is not bound to the empty raw CID")
 	}
 	blocks, err := fileCASBlocks(logicalFile{data: []byte{}, mode: 0o644}, true, 4)
 	if err != nil {
@@ -940,20 +574,35 @@ func TestFlatGraphNamespacesUserPathsAwayFromInternalMetadata(t *testing.T) {
 		"other":              {data: []byte("other"), mode: 0o644},
 		"-eval/mode/b3RoZXI": {data: []byte("mode-name"), mode: 0o644},
 	}
-	blueprint, err := buildFlatBlueprint(files, 4)
+	initial, err := directFlatSnapshotChanges(files)
+	if err != nil || len(initial) != 1+2*len(files) {
+		t.Fatalf("flat namespace: %+v %v", initial, err)
+	}
+	oracle, err := newFlatRootOracle(t.Context(), initial)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(blueprint.objects[blueprint.topID].entries); got != 1+2*len(files) {
-		t.Fatalf("flat entries = %d, want %d", got, 1+2*len(files))
-	}
-	next, err := buildFlatBlueprintNext(blueprint, []fileChange{{path: "-eval/layout", before: &logicalFile{data: []byte("layout-name"), mode: 0o644}, after: &logicalFile{data: []byte("updated"), mode: 0o644}}}, 4)
+	before := files["-eval/layout"]
+	after := logicalFile{data: []byte("updated"), mode: 0o644}
+	changes, err := directFlatDeltaChanges([]fileChange{{path: "-eval/layout", before: &before, after: &after}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(next.objects[next.topID].entries); got != 1+2*len(files) {
-		t.Fatalf("incremental flat entries = %d, want %d", got, 1+2*len(files))
+	for _, change := range changes {
+		if string(change.Input.Data) == "@malt-eval/layout" {
+			t.Fatal("user path changed internal sentinel")
+		}
 	}
+	next, err := oracle.apply(t.Context(), changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["-eval/layout"] = after
+	full, err := fullFlatRoot(t.Context(), files)
+	if err != nil || !full.Equals(next) {
+		t.Fatal("flat namespace update differs from complete rebuild")
+	}
+
 }
 
 func TestFlatRootOracleMatchesFullRootAndRejectsDifferentGatewayRoot(t *testing.T) {
@@ -990,13 +639,9 @@ func TestFlatRootOracleMatchesFullRootAndRejectsDifferentGatewayRoot(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		t.Fatal(err)
-	}
-	full, err := (graphBuilder{chunkBytes: 4, scheme: scheme, store: materializermemory.New(true)}).buildFlat(t.Context(), state)
-	if err != nil || !expected.Equals(full.root) {
-		t.Fatalf("incremental root=%s full=%v err=%v", expected, full, err)
+	full, err := fullFlatRoot(t.Context(), state)
+	if err != nil || !expected.Equals(full) {
+		t.Fatalf("incremental=%s full=%s err=%v", expected, full, err)
 	}
 	if err := verifyFlatGatewayRoot("test", expected, expected); err != nil {
 		t.Fatal(err)
@@ -1006,7 +651,7 @@ func TestFlatRootOracleMatchesFullRootAndRejectsDifferentGatewayRoot(t *testing.
 	}
 }
 
-func TestFlatRootOracleReclaimsHistoricalNodeCaches(t *testing.T) {
+func TestFlatRootOracleExportsOnlyCurrentMaterialization(t *testing.T) {
 	blockCID := func(value string) cid.Cid {
 		key, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: []byte(value)})
 		if err != nil {
@@ -1014,29 +659,27 @@ func TestFlatRootOracleReclaimsHistoricalNodeCaches(t *testing.T) {
 		}
 		return key
 	}
-	path := arcset.CanonicalizePath("rq3/files/file")
+	path := input.LabelValue([]byte("rq3/files/file"))
 	current := blockCID("initial")
-	oracle, err := newFlatRootOracle(t.Context(), []gatewaytransport.FlatMapChange{{Path: path, After: current}})
+	oracle, err := newFlatRootOracle(t.Context(), []gatewaytransport.FlatPrefixChange{{Input: path, After: current}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for index := 0; index < 128; index++ {
 		next := blockCID(fmt.Sprintf("version-%d", index))
-		if _, err := oracle.apply(t.Context(), []gatewaytransport.FlatMapChange{{Path: path, Before: current, After: next}}); err != nil {
+		if _, err := oracle.apply(t.Context(), []gatewaytransport.FlatPrefixChange{{Input: path, Before: current, After: next}}); err != nil {
 			t.Fatal(err)
 		}
 		current = next
 	}
-	state, err := oracle.store.ExportState()
+	candidate, err := oracle.writer.Export(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Scopes) != 1 || state.Scopes[0].Scope != flatNamespace {
-		t.Fatalf("oracle scopes = %#v", state.Scopes)
+	if len(candidate.State.Entries) != 1 || len(candidate.Nodes) != 1 || !candidate.State.Entries[0].Target.Equals(current) {
+		t.Fatal("flat oracle retained obsolete entries or exported historical roots")
 	}
-	if got := len(state.Scopes[0].NodeRoots); got != 1 {
-		t.Fatalf("oracle retained %d radix node roots after 128 replacements, want 1 current root", got)
-	}
+
 }
 
 func TestGitReplacementToZeroBytesPersistsEmptyFlatBlob(t *testing.T) {
@@ -1101,34 +744,4 @@ func TestCommitManifestBindsCompleteOrderBeforeStreaming(t *testing.T) {
 	if err := validateCommitManifest(identity, duplicate); err == nil {
 		t.Fatal("duplicate stream commit manifest was accepted")
 	}
-}
-
-func graphUpdateView(t *testing.T, graph *hybridGraph) mutation.UpdateView {
-	t.Helper()
-	objects := make([]mutation.UpdateObject, 0, len(graph.objects))
-	for _, object := range graph.objects {
-		objects = append(objects, mutation.UpdateObject{
-			ObjectID: object.logicalID, Root: object.root, Kind: object.kind,
-			Entries: object.entries, Commit: object.commit,
-		})
-	}
-	view := mutation.UpdateView{
-		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
-		BaseRoot: graph.root, Bounds: mutation.UpdateViewBounds{MaxObjects: 100, MaxTotalEntries: 10_000, MaxDepth: 32},
-		Objects: objects,
-	}
-	normalized, err := mutation.NormalizeUpdateView(view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return normalized
-}
-
-func cloneLogicalState(value map[string]logicalFile) map[string]logicalFile {
-	result := make(map[string]logicalFile, len(value))
-	for key, file := range value {
-		file.data = append([]byte(nil), file.data...)
-		result[key] = file
-	}
-	return result
 }

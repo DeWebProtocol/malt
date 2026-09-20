@@ -42,6 +42,6 @@ func runResolve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return daemonCommandError(err)
 	}
-	printJSON(&resolution.Result)
+	printJSON(resolution.Authentication)
 	return nil
 }

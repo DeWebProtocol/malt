@@ -1,7 +1,6 @@
 package gatewaytransport_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,11 +14,11 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/merkledag"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -194,10 +193,10 @@ func TestHealthAllowsUnrelatedGatewayCapabilities(t *testing.T) {
 }
 
 func TestBootstrapUsesDistinctAuthorizationAndBindsRootAccounting(t *testing.T) {
-	object := validBootstrapMapObject(t)
+	object := validBootstrapCandidate(t)
 	bootstrapToken := strings.Repeat("b", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/v1/evaluation/client-root/bootstrap-object" {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/evaluation/authentication/bootstrap" {
 			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
 		}
 		if request.Header.Get(gatewaytransport.BootstrapAuthorizationTokenHeader) != bootstrapToken ||
@@ -206,32 +205,23 @@ func TestBootstrapUsesDistinctAuthorizationAndBindsRootAccounting(t *testing.T) 
 			t.Fatalf("request headers = %#v", request.Header)
 		}
 		var body struct {
-			Profile      string `json:"profile"`
-			OperationID  string `json:"operation_id"`
-			Kind         string `json:"kind"`
-			Backend      string `json:"backend"`
-			ExpectedRoot string `json:"expected_root"`
-			Entries      []struct {
-				Path   *string `json:"path"`
-				Target string  `json:"target"`
-			} `json:"entries"`
+			Profile     string                           `json:"profile"`
+			OperationID string                           `json:"operation_id"`
+			Candidate   protocol.AuthenticationCandidate `json:"candidate"`
 		}
 		decoder := json.NewDecoder(request.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Profile != gatewaytransport.BootstrapProfile || body.OperationID != object.OperationID ||
-			body.Kind != string(object.Kind) || body.Backend != string(object.Backend) ||
-			body.ExpectedRoot != object.ExpectedRoot.String() || len(body.Entries) != 1 ||
-			body.Entries[0].Path == nil || *body.Entries[0].Path != "payload" {
+		if body.Profile != gatewaytransport.BootstrapProfile || body.OperationID != object.OperationID || body.Candidate.Root != object.Candidate.Root || len(body.Candidate.State.Entries) != 1 || string(body.Candidate.State.Entries[0].Input.Data) != "payload" {
 			t.Fatalf("bootstrap request = %#v", body)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		response.Header().Set("Cache-Control", "private, no-store")
 		_ = json.NewEncoder(response).Encode(map[string]any{
-			"profile": gatewaytransport.BootstrapProfile, "root": object.ExpectedRoot.String(),
-			"replay_nanos": uint64(11), "persist_nanos": uint64(22),
+			"profile": gatewaytransport.BootstrapProfile, "root": object.Candidate.Root,
+			"validation_and_stage_nanos": uint64(11), "persist_nanos": uint64(22),
 			"write_accounting": validWriteAccounting(),
 		})
 	}))
@@ -241,14 +231,14 @@ func TestBootstrapUsesDistinctAuthorizationAndBindsRootAccounting(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Root.Equals(object.ExpectedRoot) || result.ReplayNanos != 11 || result.PersistNanos != 22 ||
+	if !result.Root.Equals(cid.MustParse(object.Candidate.Root)) || result.ValidationAndStageNanos != 11 || result.PersistNanos != 22 ||
 		!result.WriteAccounting.Available {
 		t.Fatalf("bootstrap result = %#v", result)
 	}
 }
 
 func TestBootstrapRejectsRedirectWithoutLeakingAuthorization(t *testing.T) {
-	object := validBootstrapMapObject(t)
+	object := validBootstrapCandidate(t)
 	bootstrapToken := strings.Repeat("b", 64)
 	var targetRequests atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -371,40 +361,36 @@ func newEvaluationClient(t *testing.T, baseURL string, maxBlob int64) *gatewaytr
 	return client
 }
 
-func validBootstrapMapObject(t *testing.T) gatewaytransport.BootstrapObject {
+func validBootstrapCandidate(t *testing.T) gatewaytransport.BootstrapObject {
 	t.Helper()
-	target := mustRawCID(t, "bootstrap-target")
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatal(err)
 	}
-	semanticMap, err := mappingradix.NewMap(scheme, materializermemory.New(true))
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(input.DefaultRegistry(), profiles)
+	candidate, err := authentication.Prepare(t.Context(), e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("payload")), Target: mustRawCID(t, "bootstrap-target")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := "payload"
-	root, err := semanticMap.Commit(context.Background(), "bootstrap-map", mapping.NewViewFrom(map[string]cid.Cid{path: target}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return gatewaytransport.BootstrapObject{
-		OperationID: "bootstrap-1", Kind: arcset.KindMap, Backend: maltcid.BackendKindKZG, ExpectedRoot: root,
-		Entries: []gatewaytransport.BootstrapEntry{{Path: &path, Target: target}},
-	}
+	return gatewaytransport.BootstrapObject{OperationID: "bootstrap-1", Candidate: candidate}
 }
 
-func validWriteAccounting() transport.ClientRootWriteAccounting {
-	categories := make([]transport.ClientRootWriteCategoryAccounting, 0, 3)
+func validWriteAccounting() gatewaytransport.WriteAccounting {
+	categories := make([]gatewaytransport.WriteCategoryAccounting, 0, 3)
 	for _, category := range []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"} {
-		categories = append(categories, transport.ClientRootWriteCategoryAccounting{
+		categories = append(categories, gatewaytransport.WriteCategoryAccounting{
 			Category: category, AttemptedWrites: 1, AttemptedBytes: 2,
 			AttemptedNewWrites: 1, AttemptedNewBytes: 2,
 			NewlyPersistedWrites: 1, GrossNewBytes: 2,
 			NewWrites: 1, NewBytes: 2, NetBytes: 2,
 		})
 	}
-	return transport.ClientRootWriteAccounting{
-		Profile: "gateway.client-root-write-accounting/v2", Available: true,
+	return gatewaytransport.WriteAccounting{
+		Profile: "gateway.authentication-write-accounting/0", Available: true,
 		ByteMethod:         "durable-kv-key-plus-value-bytes/v2",
 		ObjectLedgerSHA256: strings.Repeat("c", 64), Categories: categories,
 	}

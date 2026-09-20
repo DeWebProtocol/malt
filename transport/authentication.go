@@ -70,3 +70,21 @@ func (c *Client) MaterializeAuthentication(ctx context.Context, candidate protoc
 	}
 	return root, nil
 }
+
+func (c *Client) MaterializeAuthenticationBatch(ctx context.Context, batch protocol.AuthenticationBatch) (protocol.AuthenticationReceipt, error) {
+	if err := batch.Validate(); err != nil {
+		return protocol.AuthenticationReceipt{}, err
+	}
+	var raw json.RawMessage
+	if err := c.doNative(ctx, http.MethodPost, "/v1/authentication/batches", nil, batch, &raw); err != nil {
+		return protocol.AuthenticationReceipt{}, err
+	}
+	receipt, err := protocol.DecodeAuthenticationReceipt(raw)
+	if err != nil {
+		return protocol.AuthenticationReceipt{}, err
+	}
+	if err := receipt.Validate(batch); err != nil {
+		return protocol.AuthenticationReceipt{}, err
+	}
+	return receipt, nil
+}

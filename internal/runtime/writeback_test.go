@@ -13,18 +13,13 @@ import (
 	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
-	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -95,9 +90,9 @@ func (f writebackReplayFunc) Replay(ctx context.Context, view filesystemservice.
 	return f(ctx, view)
 }
 
-type writerFactoryFunc func() (*clientwriter.Runtime, error)
+type writerFactoryFunc func() (*engine.Engine, error)
 
-func (f writerFactoryFunc) New() (*clientwriter.Runtime, error) { return f() }
+func (f writerFactoryFunc) New() (*engine.Engine, error) { return f() }
 
 type inertGatewayWritableRemote struct{}
 
@@ -113,18 +108,19 @@ func (inertGatewayWritableRemote) PutWithCodec(_ context.Context, body []byte, c
 	return cid.Prefix{Version: 1, Codec: codec, MhType: 0x12, MhLength: -1}.Sum(body)
 }
 
-func (inertGatewayWritableRemote) FetchUpdateView(context.Context, cid.Cid, *protocol.UpdateViewBounds) (*gatewayclient.UpdateViewResponse, error) {
-	return nil, errors.New("unexpected FetchUpdateView")
+func (inertGatewayWritableRemote) AuthenticationCandidate(context.Context, cid.Cid) (*protocol.AuthenticationCandidate, error) {
+	return nil, errors.New("unexpected AuthenticationCandidate")
 }
 
-func (inertGatewayWritableRemote) SubmitClientRootResult(context.Context, clientwriter.ComputeResult) (*gatewayclient.ClientRootResponse, error) {
-	return nil, errors.New("unexpected SubmitClientRoot")
+func (inertGatewayWritableRemote) MaterializeAuthenticationBatch(context.Context, protocol.AuthenticationBatch) (protocol.AuthenticationReceipt, error) {
+	return protocol.AuthenticationReceipt{}, errors.New("unexpected MaterializeAuthenticationBatch")
 }
 
 type replayingGatewayWritableRemote struct {
-	blocks    map[string][]byte
-	view      mutation.UpdateView
-	submitted *mutation.ClientRootBundle
+	blocks     map[string][]byte
+	engine     *engine.Engine
+	candidates map[string]protocol.AuthenticationCandidate
+	submitted  *protocol.AuthenticationBatch
 }
 
 func (r *replayingGatewayWritableRemote) Get(_ context.Context, key cid.Cid) ([]byte, error) {
@@ -148,68 +144,28 @@ func (r *replayingGatewayWritableRemote) PutWithCodec(_ context.Context, body []
 	return key, nil
 }
 
-func (r *replayingGatewayWritableRemote) FetchUpdateView(_ context.Context, root cid.Cid, _ *protocol.UpdateViewBounds) (*gatewayclient.UpdateViewResponse, error) {
-	if !root.Equals(r.view.BaseRoot) {
-		return nil, fmt.Errorf("unexpected update-view root %s", root)
+func (r *replayingGatewayWritableRemote) AuthenticationCandidate(_ context.Context, root cid.Cid) (*protocol.AuthenticationCandidate, error) {
+	candidate, ok := r.candidates[root.KeyString()]
+	if !ok {
+		return nil, fmt.Errorf("candidate %s missing", root)
 	}
-	return &gatewayclient.UpdateViewResponse{View: r.view, WireBytes: 1}, nil
+	return &candidate, nil
 }
 
-func (r *replayingGatewayWritableRemote) SubmitClientRootResult(_ context.Context, prepared clientwriter.ComputeResult) (*gatewayclient.ClientRootResponse, error) {
-	bundle := prepared.Bundle
-	if prepared.Materialization.Profile != mutation.ClientRootMaterializationProfile ||
-		!prepared.NextView.BaseRoot.Equals(bundle.Candidate) {
-		return nil, errors.New("incomplete local writer result")
+func (r *replayingGatewayWritableRemote) MaterializeAuthenticationBatch(ctx context.Context, batch protocol.AuthenticationBatch) (protocol.AuthenticationReceipt, error) {
+	if err := authentication.ValidateBatch(ctx, r.engine, batch); err != nil {
+		return protocol.AuthenticationReceipt{}, err
 	}
-	digest, err := bundle.Digest()
+	digest, err := batch.Digest()
 	if err != nil {
-		return nil, err
+		return protocol.AuthenticationReceipt{}, err
 	}
-	copyBundle := bundle
-	r.submitted = &copyBundle
-	return &gatewayclient.ClientRootResponse{Receipt: mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
-		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: digest,
-		DurableBoundary: "test-gateway-atomic-v1",
-	}}, nil
-}
-
-type runtimeRootCreator struct {
-	scheme  commitment.IndexCommitment
-	store   *materializermemory.Store
-	objects []mutation.UpdateObject
-}
-
-func (c *runtimeRootCreator) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	objectID := fmt.Sprintf("runtime-directory-%03d", len(c.objects)+1)
-	entries := make([]arcset.ArcEntry, 0, len(bindings))
-	values := make(map[arcset.Path]cid.Cid, len(bindings))
-	for name, raw := range bindings {
-		key, err := cid.Parse(raw)
-		if err != nil {
-			return cid.Undef, err
-		}
-		coordinate, err := arcset.NewMapCoordinate(name)
-		if err != nil {
-			return cid.Undef, err
-		}
-		entries = append(entries, arcset.ArcEntry{Coordinate: coordinate, Target: runtimeTarget(key)})
-		values[arcset.CanonicalizePath(name)] = key
+	for _, candidate := range batch.Candidates {
+		r.candidates[cid.MustParse(candidate.Root).KeyString()] = candidate
 	}
-	canonical, err := arcset.NewCanonicalArcSet(arcset.KindMap, entries)
-	if err != nil {
-		return cid.Undef, err
-	}
-	semantics, err := mappingradix.NewMap(c.scheme, c.store)
-	if err != nil {
-		return cid.Undef, err
-	}
-	root, err := semantics.Commit(ctx, "client-root/v1/"+objectID, mapping.NewViewFromPaths(values))
-	if err != nil {
-		return cid.Undef, err
-	}
-	c.objects = append(c.objects, mutation.UpdateObject{ObjectID: objectID, Root: root, Kind: arcset.KindMap, Entries: canonical})
-	return root, nil
+	copyBatch := batch
+	r.submitted = &copyBatch
+	return protocol.AuthenticationReceipt{Profile: protocol.AuthenticationReceiptProfile, TransactionID: batch.TransactionID, Base: batch.Base, Root: batch.Root, Digest: digest, DurableBoundary: "test-gateway-atomic"}, nil
 }
 
 func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
@@ -227,7 +183,7 @@ func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
 	releaseCalls := 0
 	binding, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: spec, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
-		Roots: trust, WriterFactory: &clientRootWriterFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
+		Roots: trust, WriterFactory: &authenticationEngineFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
 		Release: func() error { releaseCalls++; return nil },
 	})
 	if err != nil {
@@ -254,7 +210,7 @@ func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
 	partialReleaseCalls := 0
 	partial, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: differentLayout, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
-		Roots: trust, WriterFactory: &clientRootWriterFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
+		Roots: trust, WriterFactory: &authenticationEngineFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
 		Release: func() error { partialReleaseCalls++; return nil },
 	})
 	if !errors.Is(err, ErrWritableLayoutChanged) || nilInterface(partial) {
@@ -271,7 +227,7 @@ func TestNewGatewayWritableBindingComposesPerDatasetState(t *testing.T) {
 	}
 	reopened, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: spec, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
-		Roots: trust, WriterFactory: &clientRootWriterFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
+		Roots: trust, WriterFactory: &authenticationEngineFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
 	})
 	if err != nil {
 		t.Fatalf("reopen with frozen layout: %v", err)
@@ -302,7 +258,7 @@ func TestNewGatewayWritableBindingReturnsCleanupOnlyBindingAfterLeaseAcquisition
 	initializationFailure := errors.New("writer initialization failed")
 	partial, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: spec, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
-		Roots: trust, WriterFactory: writerFactoryFunc(func() (*clientwriter.Runtime, error) { return nil, initializationFailure }),
+		Roots: trust, WriterFactory: writerFactoryFunc(func() (*engine.Engine, error) { return nil, initializationFailure }),
 		StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
 	})
 	if !errors.Is(err, initializationFailure) || nilInterface(partial) {
@@ -316,7 +272,7 @@ func TestNewGatewayWritableBindingReturnsCleanupOnlyBindingAfterLeaseAcquisition
 	}
 	complete, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 		Spec: spec, View: view, Base: runtimeWritebackBaseFor(t, view.Root), Remote: inertGatewayWritableRemote{},
-		Roots: trust, WriterFactory: &clientRootWriterFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
+		Roots: trust, WriterFactory: &authenticationEngineFactory{}, StateDirectory: stateRoot, MaxStagedFileBytes: 1024,
 	})
 	if err != nil {
 		t.Fatalf("released partial binding kept dataset lease: %v", err)
@@ -331,7 +287,11 @@ func TestGatewayWritableBindingReplaysFlatUnixFSAndSurvivesRemount(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote := &replayingGatewayWritableRemote{blocks: map[string][]byte{}}
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		t.Fatal(err)
+	}
+	remote := &replayingGatewayWritableRemote{blocks: map[string][]byte{}, candidates: map[string]protocol.AuthenticationCandidate{}, engine: engine.New(input.DefaultRegistry(), profiles)}
 	oldBody := []byte("old remote body")
 	oldPayload, err := remote.Put(t.Context(), oldBody)
 	if err != nil {
@@ -345,16 +305,11 @@ func TestGatewayWritableBindingReplaysFlatUnixFSAndSurvivesRemount(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	creator := &runtimeRootCreator{scheme: scheme, store: materializermemory.New(true)}
-	materialized, err := layout.Materialize(t.Context(), creator, remote, rootNode)
+	creator, err := unixfs.NewAuthenticationAdapter(unixfs.LayoutFlatV1, remote, remote.engine, maltcid.KZG4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote.view, err = mutation.NormalizeUpdateView(mutation.UpdateView{
-		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
-		BaseRoot: materialized.Key, Bounds: mutation.UpdateViewBounds{MaxObjects: 64, MaxTotalEntries: 4096, MaxDepth: 32},
-		Objects: append([]mutation.UpdateObject(nil), creator.objects...),
-	})
+	materialized, err := layout.Materialize(t.Context(), creator, remote, rootNode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +334,7 @@ func TestGatewayWritableBindingReplaysFlatUnixFSAndSurvivesRemount(t *testing.T)
 		LayoutPolicy: filesystemmount.LayoutFlatV1, ConflictPolicy: filesystemmount.ConflictPreserveLocal,
 	}
 	stateRoot := t.TempDir()
-	factory := &clientRootWriterFactory{}
+	factory := &authenticationEngineFactory{}
 	open := func() filesystemmount.WritableBinding {
 		binding, err := newGatewayWritableBinding(t.Context(), gatewayWritableBindingOptions{
 			Spec: spec, View: view, Base: base, Remote: remote, Roots: trust, WriterFactory: factory,
@@ -406,7 +361,7 @@ func TestGatewayWritableBindingReplaysFlatUnixFSAndSurvivesRemount(t *testing.T)
 	if !result.LocalDurable || !result.RemotePersisted || result.CandidateRoot == "" || result.RootAccepted {
 		t.Fatalf("Sync result=%#v", result)
 	}
-	if remote.submitted == nil || remote.submitted.Candidate.String() != result.CandidateRoot {
+	if remote.submitted == nil || remote.submitted.Root != result.CandidateRoot {
 		t.Fatalf("submitted bundle=%#v result=%#v", remote.submitted, result)
 	}
 	record, err := trust.Get("docs")
@@ -680,17 +635,6 @@ func runtimeMALTMapRoot(t *testing.T, backend maltcid.BackendKind, marker byte) 
 	return root
 }
 
-func runtimeTarget(key cid.Cid) arcset.TargetRef {
-	switch maltcid.SemanticKindOf(key) {
-	case maltcid.SemanticKindMap:
-		return arcset.NewMapTarget(key)
-	case maltcid.SemanticKindList:
-		return arcset.NewListTarget(key)
-	default:
-		return arcset.NewCASTarget(key)
-	}
-}
-
 func writebackParent(value string) string {
 	parent := path.Dir(value)
 	if parent == "." {
@@ -700,3 +644,12 @@ func writebackParent(value string) string {
 }
 
 var _ filesystemmount.WritableBinding = (*runtimeWritableBinding)(nil)
+
+func (r *replayingGatewayWritableRemote) MaterializeAuthentication(ctx context.Context, candidate protocol.AuthenticationCandidate) (cid.Cid, error) {
+	if err := authentication.ValidateCandidate(ctx, r.engine, candidate); err != nil {
+		return cid.Undef, err
+	}
+	root := cid.MustParse(candidate.Root)
+	r.candidates[root.KeyString()] = candidate
+	return root, nil
+}

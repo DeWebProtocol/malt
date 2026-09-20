@@ -11,12 +11,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2wire"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +56,7 @@ type worker struct {
 	config       workerConfig
 	fixture      *rq2fixture.Fixture
 	remote       *transport.Client
+	evaluation   *gatewaytransport.Client
 	native       *nativeSession
 	sessionID    string
 	fixtureID    string
@@ -116,7 +117,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	w := &worker{config: config, fixture: sourceFixture, remote: remote, state: recordPreflight}
+	w := &worker{config: config, fixture: sourceFixture, remote: remote, evaluation: evaluation, state: rq2wire.RecordPreflight}
 	defer func() {
 		if w.native != nil {
 			_ = w.native.close()
@@ -143,7 +144,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if err := encoder.Encode(record); err != nil {
 			return err
 		}
-		if request.RecordKind == recordSessionEnd {
+		if request.RecordKind == rq2wire.RecordSessionEnd {
 			if scanner.Scan() {
 				return fmt.Errorf("RQ2 worker received input after session-end")
 			}
@@ -208,11 +209,11 @@ func parseFlags(args []string, stderr io.Writer) (workerConfig, error) {
 	if config.backend != "kzg" && config.backend != "ipa" {
 		return workerConfig{}, fmt.Errorf("-backend must be kzg or ipa")
 	}
-	if config.clientKind == clientNative && config.lifecycle != lifecycleNativeLong ||
-		config.clientKind == clientBrowserWASM && config.lifecycle != lifecycleBrowserCold && config.lifecycle != lifecycleBrowserSteady {
+	if config.clientKind == rq2wire.ClientNative && config.lifecycle != rq2wire.LifecycleNativeLong ||
+		config.clientKind == rq2wire.ClientBrowserWASM && config.lifecycle != rq2wire.LifecycleBrowserCold && config.lifecycle != rq2wire.LifecycleBrowserSteady {
 		return workerConfig{}, fmt.Errorf("client kind and lifecycle do not match")
 	}
-	if config.clientKind != clientNative && config.clientKind != clientBrowserWASM {
+	if config.clientKind != rq2wire.ClientNative && config.clientKind != rq2wire.ClientBrowserWASM {
 		return workerConfig{}, fmt.Errorf("unsupported -client-kind %q", config.clientKind)
 	}
 	if config.requestTimeout <= 0 || config.requestTimeout > 24*time.Hour {
@@ -266,21 +267,21 @@ func readFixture(path string) ([]byte, error) {
 	return data, nil
 }
 
-func decodeWorkerRequest(raw []byte) (workerRequest, error) {
+func decodeWorkerRequest(raw []byte) (rq2wire.WorkerRequest, error) {
 	if err := rejectDuplicateRequestKeys(raw); err != nil {
-		return workerRequest{}, fmt.Errorf("decode RQ2 request: %w", err)
+		return rq2wire.WorkerRequest{}, fmt.Errorf("decode RQ2 request: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	var request workerRequest
+	var request rq2wire.WorkerRequest
 	if err := decoder.Decode(&request); err != nil {
-		return workerRequest{}, fmt.Errorf("decode RQ2 request: %w", err)
+		return rq2wire.WorkerRequest{}, fmt.Errorf("decode RQ2 request: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return workerRequest{}, fmt.Errorf("RQ2 request must contain exactly one JSON object")
+		return rq2wire.WorkerRequest{}, fmt.Errorf("RQ2 request must contain exactly one JSON object")
 	}
-	if err := request.validate(); err != nil {
-		return workerRequest{}, err
+	if err := request.Validate(); err != nil {
+		return rq2wire.WorkerRequest{}, err
 	}
 	return request, nil
 }
@@ -344,31 +345,7 @@ func scanRequestJSONValue(decoder *json.Decoder, path string) error {
 	}
 }
 
-func (r workerRequest) validate() error {
-	if r.SchemaVersion != workerRequestSchema || !identityPattern.MatchString(r.WorkerID) || !identityPattern.MatchString(r.RequestID) ||
-		!identityPattern.MatchString(r.SessionID) || !identityPattern.MatchString(r.PlatformID) || !identityPattern.MatchString(r.FixtureID) {
-		return fmt.Errorf("invalid RQ2 request identity")
-	}
-	switch r.RecordKind {
-	case recordPreflight:
-		if r.Operation != "" || r.Measured || r.ExpectedAcceptedRoot != "" {
-			return fmt.Errorf("preflight request contains mutation state")
-		}
-	case recordSessionStart, recordSessionEnd:
-		if r.Operation != "" || r.Measured || r.ExpectedAcceptedRoot == "" {
-			return fmt.Errorf("session request is incomplete")
-		}
-	case recordMutation:
-		if !identityPattern.MatchString(r.Operation) || r.ExpectedAcceptedRoot == "" {
-			return fmt.Errorf("mutation request is incomplete")
-		}
-	default:
-		return fmt.Errorf("unsupported RQ2 record kind %q", r.RecordKind)
-	}
-	return nil
-}
-
-func (w *worker) bindRequest(request workerRequest) error {
+func (w *worker) bindRequest(request rq2wire.WorkerRequest) error {
 	if request.WorkerID != w.config.workerID || request.PlatformID != w.config.platformID || request.ClientKind != w.config.clientKind ||
 		request.Backend != w.config.backend || request.Lifecycle != w.config.lifecycle {
 		return fmt.Errorf("RQ2 request does not bind configured worker coordinate")
@@ -382,61 +359,49 @@ func (w *worker) bindRequest(request workerRequest) error {
 	if w.fixture == nil || request.FixtureID != w.fixture.FixtureID {
 		return fmt.Errorf("RQ2 request fixture identity does not match the pinned source fixture")
 	}
-	if request.RecordKind != w.state && !(w.state == recordMutation && request.RecordKind == recordSessionEnd) {
+	if request.RecordKind != w.state && !(w.state == rq2wire.RecordMutation && request.RecordKind == rq2wire.RecordSessionEnd) {
 		return fmt.Errorf("RQ2 request kind %q is out of order; want %q", request.RecordKind, w.state)
 	}
 	return nil
 }
 
-func (w *worker) exchange(request workerRequest) workerRecord {
+func (w *worker) exchange(request rq2wire.WorkerRequest) rq2wire.WorkerRecord {
 	switch request.RecordKind {
-	case recordPreflight:
+	case rq2wire.RecordPreflight:
 		return w.preflight(request)
-	case recordSessionStart:
+	case rq2wire.RecordSessionStart:
 		return w.startSession(request)
-	case recordMutation:
+	case rq2wire.RecordMutation:
 		return w.mutate(request)
-	case recordSessionEnd:
+	case rq2wire.RecordSessionEnd:
 		return w.endSession(request)
 	default:
-		return failedRecord(request, "input_invalid", fmt.Errorf("unsupported request kind"))
+		return rq2wire.FailedRecord(request, "input_invalid", fmt.Errorf("unsupported request kind"))
 	}
 }
 
-func (w *worker) preflight(request workerRequest) workerRecord {
-	if w.config.clientKind == clientBrowserWASM {
-		w.state = recordSessionStart
-		return failedRecord(request, "capability_unavailable", fmt.Errorf("real browser/WASM execution is not provided by the native worker; use a pinned browser worker"))
+func (w *worker) preflight(request rq2wire.WorkerRequest) rq2wire.WorkerRecord {
+	if w.config.clientKind == rq2wire.ClientBrowserWASM {
+		w.state = rq2wire.RecordSessionStart
+		return rq2wire.FailedRecord(request, "capability_unavailable", fmt.Errorf("real browser/WASM execution is not provided by the native worker; use a pinned browser worker"))
 	}
 	if w.config.lowPowerARM && runtime.GOARCH != "arm" && runtime.GOARCH != "arm64" {
-		w.state = recordSessionStart
-		return failedRecord(request, "platform_mismatch", fmt.Errorf("low-power ARM registration cannot run on %s", runtime.GOARCH))
+		w.state = rq2wire.RecordSessionStart
+		return rq2wire.FailedRecord(request, "platform_mismatch", fmt.Errorf("low-power ARM registration cannot run on %s", runtime.GOARCH))
 	}
-	native, err := newNativeSession(w.config, w.remote, w.fixture)
+	native, err := newNativeSession(w.config, w.remote, w.evaluation, w.fixture)
 	if err != nil {
-		w.state = recordSessionStart
-		return failedRecord(request, "capability_unavailable", err)
+		w.state = rq2wire.RecordSessionStart
+		return rq2wire.FailedRecord(request, "capability_unavailable", err)
 	}
 	w.native = native
-	record := baseRecord(request)
+	record := rq2wire.BaseRecord(request)
 	record.Success = true
-	record.Capabilities = requiredCapabilities(w.config.clientKind, w.config.backend)
-	record.Runtime = &runtimeEvidence{
+	record.Capabilities = rq2wire.RequiredCapabilities(w.config.clientKind, w.config.backend)
+	record.Runtime = &rq2wire.RuntimeEvidence{
 		OS: runtime.GOOS, Architecture: runtime.GOARCH, LowPowerARM: w.config.lowPowerARM,
 		MachineDescriptorID: w.config.machine.Descriptor.ID, MachineDescriptorSHA256: w.config.machine.SHA256,
 	}
-	w.state = recordSessionStart
+	w.state = rq2wire.RecordSessionStart
 	return record
-}
-
-func requiredCapabilities(clientKind, backend string) []string {
-	values := []string{"client-root-bundle-v1", "exact-root-receipt-v1", "phase-metrics-v1", "update-view-v1"}
-	if clientKind == clientNative {
-		values = append(values, "long-lived-session-v1", "native-writer-v1")
-	} else {
-		values = append(values, "wasm-cold-start-v1", "wasm-steady-session-v1", "wasm-writer-v1")
-	}
-	values = append(values, "commitment-"+backend+"-v1")
-	slices.Sort(values)
-	return values
 }

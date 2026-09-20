@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"slices"
 
 	"github.com/dewebprotocol/malt-client/cache"
 	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
 )
 
 const cacheEvidenceProfile = "malt.filesystem.path-proof/v1"
@@ -37,11 +35,14 @@ func marshalCacheEvidence(view View, path string, stat *unixfs.Stat) ([]byte, er
 	})
 }
 
-func newCacheProofVerifier(local unixfs.LocalVerifier, view View, path string, stat *unixfs.Stat) (cache.ProofVerifier, error) {
+func newCacheProofVerifier(local *engine.Engine, view View, path string, stat *unixfs.Stat) (cache.ProofVerifier, error) {
 	if local == nil {
 		return nil, fmt.Errorf("filesystem local verifier is nil")
 	}
 	expected := payloadResolution(stat)
+	if expected.Authentication == nil {
+		return nil, fmt.Errorf("filesystem authentication evidence is missing")
+	}
 	return cache.ProofVerifierFunc(func(ctx context.Context, binding cache.Binding, evidence cache.VerificationEvidence) error {
 		if evidence.Profile != cacheEvidenceProfile {
 			return fmt.Errorf("unsupported filesystem cache evidence profile %q", evidence.Profile)
@@ -63,45 +64,24 @@ func newCacheProofVerifier(local unixfs.LocalVerifier, view View, path string, s
 			return fmt.Errorf("filesystem cache evidence does not match the selected view")
 		}
 
-		if expected.Authentication != nil {
-			wire := stored.Resolution.Authentication
-			if wire == nil {
-				return fmt.Errorf("cached typed proof is missing")
-			}
-			expectedJSON, _ := json.Marshal(expected.Authentication.Request)
-			actualJSON, _ := json.Marshal(wire.Request)
-			if !bytes.Equal(expectedJSON, actualJSON) || wire.Request.Root != binding.Root.String() || wire.Result.Resolved != binding.CID.String() || !stored.Resolution.Target.Equals(binding.CID) {
-				return fmt.Errorf("cached typed proof changed selected query")
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			verifier, err := authverifier.New(nil)
-			if err != nil {
-				return err
-			}
-			valid, err := authentication.Verify(verifier, wire.Request, wire.Result)
-			if err != nil {
-				return err
-			}
-			if !valid {
-				return fmt.Errorf("invalid cached typed proof")
-			}
-			return nil
+		wire := stored.Resolution.Authentication
+		if wire == nil {
+			return fmt.Errorf("cached typed proof is missing")
 		}
-		if stored.Resolution.Authentication != nil {
-			return fmt.Errorf("unexpected typed proof")
+		expectedJSON, _ := json.Marshal(expected.Authentication.Request)
+		actualJSON, _ := json.Marshal(wire.Request)
+		if !bytes.Equal(expectedJSON, actualJSON) || wire.Request.Root != binding.Root.String() || wire.Result.Resolved != binding.CID.String() || !stored.Resolution.Target.Equals(binding.CID) {
+			return fmt.Errorf("cached typed proof changed selected query")
 		}
-		if stored.Resolution.Request.Root != binding.Root.String() ||
-			stored.Resolution.Result.Target != binding.CID.String() || !stored.Resolution.Target.Equals(binding.CID) ||
-			stored.Resolution.Request.Root != expected.Request.Root ||
-			!slices.Equal(stored.Resolution.Request.Segments, expected.Request.Segments) {
-			return fmt.Errorf("filesystem cache evidence does not match the payload binding")
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if err := local.VerifyResolve(ctx, protocol.ResolveVerification{
-			Request: stored.Resolution.Request, Result: stored.Resolution.Result,
-		}); err != nil {
-			return fmt.Errorf("verify cached filesystem path proof: %w", err)
+		valid, err := authentication.Verify(local, wire.Request, wire.Result)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return fmt.Errorf("invalid cached typed proof")
 		}
 		return nil
 	}), nil

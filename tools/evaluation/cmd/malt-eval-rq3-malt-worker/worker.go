@@ -8,19 +8,11 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"slices"
-	"strconv"
 	"time"
 
-	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
-	cid "github.com/ipfs/go-cid"
 )
 
 const (
@@ -49,55 +41,7 @@ type campaignWorker struct {
 
 type evaluationGateway interface {
 	Health(context.Context) (*gatewaytransport.Health, error)
-	BootstrapEvaluationObject(context.Context, string, gatewaytransport.BootstrapObject) (gatewaytransport.BootstrapResult, error)
-	ApplyEvaluationFlatMap(context.Context, string, gatewaytransport.FlatMapMutation) (gatewaytransport.FlatMapResult, error)
-}
-
-type clientRootRemote struct{ client *transport.Client }
-
-func (r clientRootRemote) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *protocol.UpdateViewBounds) (clientrootapp.ViewEnvelope, error) {
-	response, err := r.client.FetchUpdateView(ctx, root, bounds)
-	if err != nil {
-		return clientrootapp.ViewEnvelope{}, err
-	}
-	return clientrootapp.ViewEnvelope{View: response.View, WireBytes: response.WireBytes}, nil
-}
-
-func (r clientRootRemote) SubmitClientRoot(ctx context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
-	response, err := r.client.SubmitClientRoot(ctx, prepared.Bundle)
-	if err != nil {
-		return clientrootapp.ReceiptEnvelope{}, err
-	}
-	accounting := clientrootapp.GatewayWriteAccounting{
-		Profile: response.WriteAccounting.Profile, Available: response.WriteAccounting.Available,
-		UnavailableReason: response.WriteAccounting.UnavailableReason, ByteMethod: response.WriteAccounting.ByteMethod,
-		ObjectLedgerSHA256: response.WriteAccounting.ObjectLedgerSHA256, WireBytes: response.WriteAccountingWireBytes,
-		Categories: make([]clientrootapp.GatewayWriteCategoryAccounting, len(response.WriteAccounting.Categories)),
-	}
-	for index, category := range response.WriteAccounting.Categories {
-		accounting.Categories[index] = clientrootapp.GatewayWriteCategoryAccounting{
-			Category: category.Category, AttemptedWrites: category.AttemptedWrites, AttemptedBytes: category.AttemptedBytes,
-			AttemptedNewWrites: category.AttemptedNewWrites, AttemptedNewBytes: category.AttemptedNewBytes,
-			AttemptedReplacementWrites: category.AttemptedReplacementWrites, AttemptedReplacementBytes: category.AttemptedReplacementBytes,
-			AttemptedSameValueWrites: category.AttemptedSameValueWrites, AttemptedSameValueBytes: category.AttemptedSameValueBytes,
-			AttemptedDeleteWrites: category.AttemptedDeleteWrites, AttemptedDeleteBytes: category.AttemptedDeleteBytes,
-			NewlyPersistedWrites: category.NewlyPersistedWrites, GrossNewBytes: category.GrossNewBytes,
-			NewWrites: category.NewWrites, NewBytes: category.NewBytes, ReplacedWrites: category.ReplacedWrites,
-			ReplacementNewBytes: category.ReplacementNewBytes, ReplacementReclaimedBytes: category.ReplacementReclaimedBytes,
-			SameValueWrites: category.SameValueWrites, DeletedWrites: category.DeletedWrites,
-			DeletedReclaimedBytes: category.DeletedReclaimedBytes, ReclaimedBytes: category.ReclaimedBytes, NetBytes: category.NetBytes,
-		}
-	}
-	return clientrootapp.ReceiptEnvelope{
-		Receipt: response.Receipt, RequestWireBytes: response.RequestWireBytes, ResponseWireBytes: response.ResponseWireBytes,
-		RequestEncodingNS: response.RequestEncodingNS, ResponseVerifyNS: response.ResponseVerifyNS,
-		Idempotent: response.Idempotent,
-		Gateway: clientrootapp.GatewayPhaseMetrics{
-			OldStateValidationNS: response.Gateway.OldStateValidationNS, GatewayReplayNS: response.Gateway.GatewayReplayNS,
-			PersistNS: response.Gateway.PersistNS, ReceiptNS: response.Gateway.ReceiptNS,
-		},
-		WriteAccounting: accounting,
-	}, nil
+	ApplyEvaluationFlatPrefix(context.Context, string, gatewaytransport.FlatPrefixMutation) (gatewaytransport.FlatPrefixResult, error)
 }
 
 func newCampaignWorker(config workerConfig) (*campaignWorker, error) {
@@ -129,16 +73,16 @@ func (w *campaignWorker) validateHealth(ctx context.Context) error {
 		health.BlobBackend != "filesystem" || health.KVBackend != "fs" || health.ArcTableMode != "versioned" ||
 		health.CommitmentProfile != "kzg" || health.CommitmentBackends != "ipa,kzg" ||
 		health.EvaluationCASWriteAccounting != healthCASAccounting || health.EvaluationCASWriteIsolation != healthCASIsolation ||
-		health.ClientRootExactAcceptance != "false" || health.ClientRootWriteAccounting != "" ||
-		health.EvaluationClientRootBootstrap != "" ||
-		health.EvaluationRQ3FlatMap != gatewaytransport.FlatMapProfile ||
-		health.EvaluationRQ3FlatMapLayout != healthFlatLayout ||
-		health.EvaluationRQ3FlatMapStorageScope != healthFlatStorageScope ||
-		health.EvaluationRQ3FlatMapLookupIndex != healthFlatLookupIndex ||
-		health.EvaluationRQ3FlatMapCommitmentTreatment != healthCommitmentTreatment ||
-		health.EvaluationRQ3FlatMapFSKVMode != healthFlatFSKVMode ||
-		health.EvaluationRQ3FlatMapCheckpoint != "false" ||
-		health.EvaluationRQ3FlatMapMaterializationCache != "none" {
+		health.AuthenticationExactAcceptance != "false" || health.AuthenticationWriteAccounting != "" ||
+		health.EvaluationAuthenticationBootstrap != "" ||
+		health.EvaluationRQ3FlatPrefix != gatewaytransport.FlatPrefixProfile ||
+		health.EvaluationRQ3FlatPrefixLayout != healthFlatLayout ||
+		health.EvaluationRQ3FlatPrefixStorageScope != healthFlatStorageScope ||
+		health.EvaluationRQ3FlatPrefixLookupIndex != healthFlatLookupIndex ||
+		health.EvaluationRQ3FlatPrefixCommitmentTreatment != healthCommitmentTreatment ||
+		health.EvaluationRQ3FlatPrefixFSKVMode != healthFlatFSKVMode ||
+		health.EvaluationRQ3FlatPrefixCheckpoint != "false" ||
+		health.EvaluationRQ3FlatPrefixMaterializationCache != "none" {
 		return fmt.Errorf("Gateway health does not expose the exact disposable FSKV-ArcTable/filesystem-CAS/KZG evaluation boundary")
 	}
 	return nil
@@ -255,67 +199,6 @@ func isControlledListHistory(spec runSpec) bool {
 	return spec.Workload.Kind == "controlled" && spec.Workload.ControlledStructure == "list"
 }
 
-func (w *campaignWorker) bootstrapGraph(ctx context.Context, commitID string, graph *hybridGraph, result *runResult) (int64, int64, error) {
-	seenRoots := make(map[string]struct{}, len(graph.objects))
-	var replayTotal, persistTotal uint64
-	for order, logicalID := range graph.order {
-		object := graph.objects[logicalID]
-		if _, duplicate := seenRoots[object.root.KeyString()]; duplicate {
-			continue
-		}
-		seenRoots[object.root.KeyString()] = struct{}{}
-		entries := make([]gatewaytransport.BootstrapEntry, object.entries.Len())
-		for index, entry := range object.entries.Entries() {
-			entries[index].Target = entry.Target.CID()
-			if object.kind == arcset.KindMap {
-				coordinate := entry.Coordinate.String()
-				entries[index].Path = &coordinate
-			} else {
-				coordinate, err := listIndex(entry)
-				if err != nil {
-					return 0, 0, err
-				}
-				entries[index].Index = &coordinate
-			}
-		}
-		bootstrap, err := w.evaluation.BootstrapEvaluationObject(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.BootstrapObject{
-			OperationID: operationID(commitID+"-bootstrap-"+strconv.Itoa(order), uint32(order)),
-			Kind:        object.kind, Backend: maltcid.BackendKindKZG, ExpectedRoot: object.root,
-			Entries: entries, Commit: object.commit,
-		})
-		if err != nil {
-			return 0, 0, fmt.Errorf("bootstrap flat object %q: %w", logicalID, err)
-		}
-		if result.PassMode == "accounting" {
-			if err := result.appendGatewayAccounting(commitID, accountingFromTransport(bootstrap.WriteAccounting)); err != nil {
-				return 0, 0, err
-			}
-		}
-		if replayTotal > math.MaxUint64-bootstrap.ReplayNanos || persistTotal > math.MaxUint64-bootstrap.PersistNanos {
-			return 0, 0, fmt.Errorf("bootstrap phase duration overflow")
-		}
-		replayTotal += bootstrap.ReplayNanos
-		persistTotal += bootstrap.PersistNanos
-	}
-	if replayTotal > math.MaxInt64 || persistTotal > math.MaxInt64 {
-		return 0, 0, fmt.Errorf("bootstrap phase duration exceeds evaluator range")
-	}
-	return int64(replayTotal), int64(persistTotal), nil
-}
-
-func sortedManifestBlocks(graph *hybridGraph) []classifiedBlock {
-	paths := make([]string, 0, len(graph.manifests))
-	for value := range graph.manifests {
-		paths = append(paths, value)
-	}
-	slices.Sort(paths)
-	result := make([]classifiedBlock, len(paths))
-	for index, value := range paths {
-		result[index] = graph.manifests[value]
-	}
-	return result
-}
-
 func validateWorkloadIdentity(value workloadIdentity) error {
 	if !canonicalEvaluatorID(value.ID) || (value.Kind != "controlled" && value.Kind != "git-first-parent") ||
 		!canonicalSHA256(value.ArtifactSHA256) || !canonicalSHA256(value.SemanticSHA256) ||
@@ -358,15 +241,9 @@ func lowerAlphaNumeric(value byte) bool {
 	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
 }
 
-func evaluationBounds() *protocol.UpdateViewBounds {
-	return &protocol.UpdateViewBounds{
-		MaxObjects: protocol.MaxClientRootObjects, MaxTotalEntries: protocol.MaxClientRootEntries,
-		MaxDepth: protocol.MaxClientRootDepth,
-	}
-}
-
 func operationID(commitID string, order uint32) string {
-	return stableIntentID("rq3", fmt.Sprintf("%d\x00%s", order, commitID))
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s", order, commitID)))
+	return "rq3-" + hex.EncodeToString(digest[:16])
 }
 
 func durationNanos(value time.Duration) int64 {

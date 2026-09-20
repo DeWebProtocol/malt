@@ -12,12 +12,11 @@ import (
 
 	client "github.com/dewebprotocol/malt-client/transport"
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
-	"github.com/dewebprotocol/malt-core/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt-core/protocol"
 )
 
 func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
-	root := mustBlockCID(t, []byte("root"))
+	root := testAuthenticationRoot(t)
 	target := mustBlockCID(t, []byte("target"))
 	baseText, err := root.StringOfBase('z') // base58btc instead of CID's default base32
 	if err != nil {
@@ -34,10 +33,8 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 			t.Fatalf("Authorization = %q", got)
 		}
 		switch r.URL.Path {
-		case "/v1/buckets/bkt_one/resolve":
-			_ = json.NewEncoder(w).Encode(protocol.ResolveResult{
-				Profile: protocol.ResolveProfile, Target: target.String(), ProofList: prooflist.ProofList{Root: root},
-			})
+		case "/v1/buckets/bkt_one/authentication/query":
+			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String()})
 		case "/v1/buckets/bkt_one/head":
 			_ = json.NewEncoder(w).Encode(client.BucketRef{
 				BucketID: "bkt_one", Name: "main", Kind: "main", State: "open",
@@ -90,8 +87,8 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := transport.Resolve(t.Context(), protocol.ResolveRequest{Profile: protocol.ResolveProfile, Root: root.String(), Segments: []string{"docs"}})
-	if err != nil || resolved.Target != target.String() {
+	resolved, err := transport.Authenticate(t.Context(), testAuthenticationQuery(root, "docs"))
+	if err != nil || resolved.Resolved != target.String() {
 		t.Fatalf("resolve result=%#v err=%v", resolved, err)
 	}
 	if head, err := transport.BucketHead(t.Context()); err != nil || head.Revision != 2 {
@@ -229,7 +226,7 @@ func TestBucketClientRejectsSelectedBucketIdentityMismatch(t *testing.T) {
 }
 
 func TestBucketHeadRejectsNonMainRef(t *testing.T) {
-	root := mustBlockCID(t, []byte("root"))
+	root := testAuthenticationRoot(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(client.BucketRef{
 			BucketID: "bkt_one", Name: "heads/other", Kind: "explicit", State: "open",

@@ -146,7 +146,7 @@ func SetStagedMapDirectory(root *StagedNode, p string, key cid.Cid) error {
 	name := segments[len(segments)-1]
 	parent.Children[name] = &StagedNode{
 		Kind:        StagedKindMapDirectory,
-		StorageKind: "map",
+		StorageKind: "prefix",
 		Key:         key,
 		Changed:     true,
 	}

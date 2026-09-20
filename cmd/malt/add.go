@@ -108,14 +108,7 @@ func runAdd(cmd *cobra.Command, args []string) (resultErr error) {
 		if err != nil {
 			return err
 		}
-		lists, err := unixfs.NewMutationAdapter(remote)
-		if err != nil {
-			return err
-		}
-		materializer, err = clientadd.NewMaterializer(remote, lists)
-		if err != nil {
-			return err
-		}
+		materializer = remote
 	}
 	var roots *application.Roots
 	if strings.TrimSpace(addAliasFlag) != "" {

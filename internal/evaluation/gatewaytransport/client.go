@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,26 +22,24 @@ import (
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/merkledag"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	"github.com/dewebprotocol/malt-core/mutation"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
 
 const (
 	InstanceTokenHeader               = "X-Malt-Evaluation-Instance-Token"
 	BootstrapAuthorizationTokenHeader = "X-Malt-Evaluation-Bootstrap-Authorization"
-	BootstrapProfile                  = "gateway.evaluation-client-root-bootstrap-object/v1"
+	BootstrapProfile                  = "gateway.evaluation-authentication-bootstrap/0"
 
 	defaultMaxJSONResponseBytes  int64 = 96 << 20
 	defaultMaxBlobResponseBytes  int64 = 64 << 20
 	defaultMaxErrorResponseBytes int64 = 1 << 20
 
-	clientRootWriteAccountingProfile = "gateway.client-root-write-accounting/v2"
-	clientRootWriteByteMethod        = "durable-kv-key-plus-value-bytes/v2"
+	WriteAccountingProfile = "gateway.authentication-write-accounting/0"
+	WriteByteMethod        = "durable-kv-key-plus-value-bytes/v2"
 )
 
-var clientRootWriteCategories = []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"}
+var writeCategories = []string{"arctable-arcset-records", "arctable-lineage-metadata", "root-version-metadata"}
 
 type Options struct {
 	BaseURL               string
@@ -65,48 +64,37 @@ type Client struct {
 // Health is the strict evaluation projection of Gateway health. The public
 // transport health value deliberately omits these evaluator-only capabilities.
 type Health struct {
-	Status                                   string `json:"status"`
-	EvaluationInstanceToken                  string `json:"evaluation_instance_token,omitempty"`
-	KVBackend                                string `json:"kv_backend,omitempty"`
-	BlobBackend                              string `json:"blob_backend,omitempty"`
-	ArcTableMode                             string `json:"arctable_mode,omitempty"`
-	CommitmentProfile                        string `json:"default_commitment_backend,omitempty"`
-	CommitmentBackends                       string `json:"commitment_backends,omitempty"`
-	EvaluationCASWriteAccounting             string `json:"evaluation_cas_write_accounting,omitempty"`
-	EvaluationCASWriteIsolation              string `json:"evaluation_cas_write_isolation,omitempty"`
-	ClientRootWriteAccounting                string `json:"client_root_write_accounting,omitempty"`
-	ClientRootExactAcceptance                string `json:"client_root_exact_acceptance,omitempty"`
-	EvaluationClientRootBootstrap            string `json:"evaluation_client_root_bootstrap,omitempty"`
-	EvaluationRQ3FlatMap                     string `json:"evaluation_rq3_flat_map,omitempty"`
-	EvaluationRQ3FlatMapLayout               string `json:"evaluation_rq3_flat_map_layout,omitempty"`
-	EvaluationRQ3FlatMapStorageScope         string `json:"evaluation_rq3_flat_map_storage_scope,omitempty"`
-	EvaluationRQ3FlatMapLookupIndex          string `json:"evaluation_rq3_flat_map_lookup_index,omitempty"`
-	EvaluationRQ3FlatMapCommitmentTreatment  string `json:"evaluation_rq3_flat_map_commitment_treatment,omitempty"`
-	EvaluationRQ3FlatMapFSKVMode             string `json:"evaluation_rq3_flat_map_fskv_mode,omitempty"`
-	EvaluationRQ3FlatMapCheckpoint           string `json:"evaluation_rq3_flat_map_checkpoint,omitempty"`
-	EvaluationRQ3FlatMapMaterializationCache string `json:"evaluation_rq3_flat_map_materialization_cache,omitempty"`
-}
-
-type BootstrapEntry struct {
-	Path   *string
-	Index  *uint64
-	Target cid.Cid
+	Status                                      string `json:"status"`
+	EvaluationInstanceToken                     string `json:"evaluation_instance_token,omitempty"`
+	KVBackend                                   string `json:"kv_backend,omitempty"`
+	BlobBackend                                 string `json:"blob_backend,omitempty"`
+	ArcTableMode                                string `json:"arctable_mode,omitempty"`
+	CommitmentProfile                           string `json:"default_commitment_backend,omitempty"`
+	CommitmentBackends                          string `json:"commitment_backends,omitempty"`
+	EvaluationCASWriteAccounting                string `json:"evaluation_cas_write_accounting,omitempty"`
+	EvaluationCASWriteIsolation                 string `json:"evaluation_cas_write_isolation,omitempty"`
+	AuthenticationWriteAccounting               string `json:"evaluation_authentication_write_accounting,omitempty"`
+	AuthenticationExactAcceptance               string `json:"evaluation_authentication_exact_acceptance,omitempty"`
+	EvaluationAuthenticationBootstrap           string `json:"evaluation_authentication_bootstrap,omitempty"`
+	EvaluationRQ3FlatPrefix                     string `json:"evaluation_rq3_flat_prefix,omitempty"`
+	EvaluationRQ3FlatPrefixLayout               string `json:"evaluation_rq3_flat_prefix_layout,omitempty"`
+	EvaluationRQ3FlatPrefixStorageScope         string `json:"evaluation_rq3_flat_prefix_storage_scope,omitempty"`
+	EvaluationRQ3FlatPrefixLookupIndex          string `json:"evaluation_rq3_flat_prefix_lookup_index,omitempty"`
+	EvaluationRQ3FlatPrefixCommitmentTreatment  string `json:"evaluation_rq3_flat_prefix_commitment_treatment,omitempty"`
+	EvaluationRQ3FlatPrefixFSKVMode             string `json:"evaluation_rq3_flat_prefix_fskv_mode,omitempty"`
+	EvaluationRQ3FlatPrefixCheckpoint           string `json:"evaluation_rq3_flat_prefix_checkpoint,omitempty"`
+	EvaluationRQ3FlatPrefixMaterializationCache string `json:"evaluation_rq3_flat_prefix_materialization_cache,omitempty"`
 }
 
 type BootstrapObject struct {
-	OperationID  string
-	Kind         arcset.Kind
-	Backend      maltcid.BackendKind
-	ExpectedRoot cid.Cid
-	Entries      []BootstrapEntry
-	Commit       mutation.CommitDescriptor
+	OperationID string
+	Candidate   protocol.AuthenticationCandidate
 }
-
 type BootstrapResult struct {
-	Root            cid.Cid
-	ReplayNanos     uint64
-	PersistNanos    uint64
-	WriteAccounting transport.ClientRootWriteAccounting
+	Root                    cid.Cid
+	ValidationAndStageNanos uint64
+	PersistNanos            uint64
+	WriteAccounting         WriteAccounting
 }
 
 // RawCASGetter adapts the evaluator-only raw endpoint to merkledag.BlockGetter.
@@ -164,7 +152,7 @@ func New(options Options) (*Client, error) {
 
 // InstanceHTTPClient returns a copy of the no-redirect HTTP client that injects
 // the evaluation instance token. Evaluation adapters pass it to the ordinary
-// untrusted transport so update-view, client-root, and CAS requests are bound
+// untrusted transport so current authentication and CAS requests are bound
 // to the same disposable Gateway instance.
 func (c *Client) InstanceHTTPClient() *http.Client {
 	if c == nil || c.instanceHTTP == nil {
@@ -186,56 +174,33 @@ func (c *Client) Health(ctx context.Context) (*Health, error) {
 	return &health, nil
 }
 
-// BootstrapEvaluationObject installs one first-campaign semantic object with
+// BootstrapEvaluationObject installs one first-campaign typed candidate with
 // the controller-only bootstrap secret. It intentionally uses plainHTTP, so
 // the instance token is not attached to this distinct authorization boundary.
 func (c *Client) BootstrapEvaluationObject(ctx context.Context, bootstrapAuthorizationToken string, value BootstrapObject) (BootstrapResult, error) {
 	if !canonicalLowerSHA256(bootstrapAuthorizationToken) {
 		return BootstrapResult{}, fmt.Errorf("evaluation bootstrap authorization token must be a canonical SHA-256")
 	}
-	emptyMeasuredList := value.Kind == arcset.KindList && len(value.Entries) == 0 && value.Commit.FixedList != nil &&
-		value.Commit.FixedList.TotalSize == 0 && value.Commit.FixedList.ChunkSize > 0
-	if value.OperationID == "" || (value.Kind != arcset.KindMap && value.Kind != arcset.KindList) ||
-		(value.Backend != maltcid.BackendKindKZG && value.Backend != maltcid.BackendKindIPA) ||
-		!value.ExpectedRoot.Defined() || len(value.Entries) == 0 && !emptyMeasuredList {
-		return BootstrapResult{}, fmt.Errorf("evaluation bootstrap object is incomplete")
+	if value.OperationID == "" || value.Candidate.Previous != "" {
+		return BootstrapResult{}, fmt.Errorf("bootstrap requires a fresh candidate and operation ID")
 	}
-	type wireEntry struct {
-		Path   *string `json:"path,omitempty"`
-		Index  *uint64 `json:"index,omitempty"`
-		Target string  `json:"target"`
+	if err := value.Candidate.Validate(); err != nil {
+		return BootstrapResult{}, err
 	}
-	type fixedList struct {
-		TotalSize uint64 `json:"total_size"`
-		ChunkSize uint64 `json:"chunk_size"`
+	expectedRoot, err := cid.Decode(value.Candidate.Root)
+	if err != nil {
+		return BootstrapResult{}, err
 	}
 	requestBody := struct {
-		Profile      string      `json:"profile"`
-		OperationID  string      `json:"operation_id"`
-		Kind         string      `json:"kind"`
-		Backend      string      `json:"backend"`
-		ExpectedRoot string      `json:"expected_root"`
-		Entries      []wireEntry `json:"entries"`
-		FixedList    *fixedList  `json:"fixed_list,omitempty"`
-	}{
-		Profile: BootstrapProfile, OperationID: value.OperationID, Kind: string(value.Kind),
-		Backend: string(value.Backend), ExpectedRoot: value.ExpectedRoot.String(), Entries: make([]wireEntry, len(value.Entries)),
-	}
-	for index, entry := range value.Entries {
-		if !entry.Target.Defined() || (value.Kind == arcset.KindMap && (entry.Path == nil || entry.Index != nil)) ||
-			(value.Kind == arcset.KindList && (entry.Path != nil || entry.Index == nil)) {
-			return BootstrapResult{}, fmt.Errorf("evaluation bootstrap entry %d is invalid", index)
-		}
-		requestBody.Entries[index] = wireEntry{Path: entry.Path, Index: entry.Index, Target: entry.Target.String()}
-	}
-	if value.Commit.FixedList != nil {
-		requestBody.FixedList = &fixedList{TotalSize: value.Commit.FixedList.TotalSize, ChunkSize: value.Commit.FixedList.ChunkSize}
-	}
+		Profile     string                           `json:"profile"`
+		OperationID string                           `json:"operation_id"`
+		Candidate   protocol.AuthenticationCandidate `json:"candidate"`
+	}{BootstrapProfile, value.OperationID, value.Candidate}
 	encoded, err := json.Marshal(requestBody)
 	if err != nil {
 		return BootstrapResult{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint("/v1/evaluation/client-root/bootstrap-object"), bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint("/v1/evaluation/authentication/bootstrap"), bytes.NewReader(encoded))
 	if err != nil {
 		return BootstrapResult{}, err
 	}
@@ -260,27 +225,25 @@ func (c *Client) BootstrapEvaluationObject(ctx context.Context, bootstrapAuthori
 		return BootstrapResult{}, fmt.Errorf("Gateway evaluation bootstrap response: %w", err)
 	}
 	var wire struct {
-		Profile         string                              `json:"profile"`
-		Root            string                              `json:"root"`
-		ReplayNanos     uint64                              `json:"replay_nanos"`
-		PersistNanos    uint64                              `json:"persist_nanos"`
-		WriteAccounting transport.ClientRootWriteAccounting `json:"write_accounting"`
+		Profile                 string          `json:"profile"`
+		Root                    string          `json:"root"`
+		ValidationAndStageNanos uint64          `json:"validation_and_stage_nanos"`
+		PersistNanos            uint64          `json:"persist_nanos"`
+		WriteAccounting         WriteAccounting `json:"write_accounting"`
 	}
 	if err := decodeStrict(raw, &wire); err != nil {
 		return BootstrapResult{}, fmt.Errorf("decode Gateway evaluation bootstrap response: %w", err)
 	}
 	root, err := cid.Parse(wire.Root)
-	if err != nil || !root.Equals(value.ExpectedRoot) || wire.Profile != BootstrapProfile || maltcid.BackendKindOf(root) != value.Backend ||
-		(value.Kind == arcset.KindMap && maltcid.SemanticKindOf(root) != maltcid.SemanticKindMap) ||
-		(value.Kind == arcset.KindList && maltcid.SemanticKindOf(root) != maltcid.SemanticKindList) {
-		return BootstrapResult{}, fmt.Errorf("Gateway evaluation bootstrap returned a mismatched semantic root")
+	if err != nil || !root.Equals(expectedRoot) || wire.Profile != BootstrapProfile {
+		return BootstrapResult{}, fmt.Errorf("Gateway evaluation bootstrap returned a mismatched exact Root")
 	}
 	if err := validateWriteAccounting(wire.WriteAccounting); err != nil || !wire.WriteAccounting.Available ||
 		strings.TrimSpace(wire.WriteAccounting.UnavailableReason) != "" {
 		return BootstrapResult{}, fmt.Errorf("Gateway evaluation bootstrap returned invalid exact write accounting")
 	}
 	return BootstrapResult{
-		Root: root, ReplayNanos: wire.ReplayNanos, PersistNanos: wire.PersistNanos, WriteAccounting: wire.WriteAccounting,
+		Root: root, ValidationAndStageNanos: wire.ValidationAndStageNanos, PersistNanos: wire.PersistNanos, WriteAccounting: wire.WriteAccounting,
 	}, nil
 }
 
@@ -452,29 +415,27 @@ func requireJSONNoStore(response *http.Response) error {
 	return fmt.Errorf("Gateway evaluation bootstrap response is missing Cache-Control: no-store")
 }
 
-func validateWriteAccounting(accounting transport.ClientRootWriteAccounting) error {
-	if accounting.Profile != clientRootWriteAccountingProfile || accounting.ByteMethod != clientRootWriteByteMethod {
-		return fmt.Errorf("Gateway client-root write accounting has unsupported profile/method")
+func validateWriteAccounting(accounting WriteAccounting) error {
+	if accounting.Profile != WriteAccountingProfile || accounting.ByteMethod != WriteByteMethod {
+		return fmt.Errorf("Gateway authentication write accounting has unsupported profile/method")
 	}
 	if !accounting.Available {
 		if accounting.UnavailableReason == "" || accounting.ObjectLedgerSHA256 != "" || len(accounting.Categories) != 0 {
-			return fmt.Errorf("unavailable Gateway client-root write accounting carries measurements")
+			return fmt.Errorf("unavailable Gateway authentication write accounting carries measurements")
 		}
 		return nil
 	}
 	if accounting.UnavailableReason != "" || !canonicalLowerSHA256(accounting.ObjectLedgerSHA256) ||
-		len(accounting.Categories) != len(clientRootWriteCategories) {
-		return fmt.Errorf("available Gateway client-root write accounting is incomplete")
+		len(accounting.Categories) != len(writeCategories) {
+		return fmt.Errorf("available Gateway authentication write accounting is incomplete")
 	}
 	for index, category := range accounting.Categories {
-		attempts := category.AttemptedNewWrites + category.AttemptedReplacementWrites + category.AttemptedSameValueWrites + category.AttemptedDeleteWrites
-		attemptBytes := category.AttemptedNewBytes + category.AttemptedReplacementBytes + category.AttemptedSameValueBytes + category.AttemptedDeleteBytes
-		if category.Category != clientRootWriteCategories[index] || category.AttemptedWrites != attempts ||
-			category.AttemptedBytes != attemptBytes || category.NetBytes != int64(category.GrossNewBytes)-int64(category.ReclaimedBytes) ||
-			category.NewlyPersistedWrites != category.NewWrites+category.ReplacedWrites ||
-			category.GrossNewBytes != category.NewBytes+category.ReplacementNewBytes ||
-			category.ReclaimedBytes != category.ReplacementReclaimedBytes+category.DeletedReclaimedBytes {
-			return fmt.Errorf("Gateway client-root write accounting category %d is inconsistent", index)
+		if category.Category != writeCategories[index] || !sumAmounts(category.AttemptedWrites, category.AttemptedNewWrites, category.AttemptedReplacementWrites, category.AttemptedSameValueWrites, category.AttemptedDeleteWrites) ||
+			!sumAmounts(category.AttemptedBytes, category.AttemptedNewBytes, category.AttemptedReplacementBytes, category.AttemptedSameValueBytes, category.AttemptedDeleteBytes) || category.GrossNewBytes > math.MaxInt64 || category.ReclaimedBytes > math.MaxInt64 || category.NetBytes != int64(category.GrossNewBytes)-int64(category.ReclaimedBytes) ||
+			!sumAmounts(category.NewlyPersistedWrites, category.NewWrites, category.ReplacedWrites) ||
+			!sumAmounts(category.GrossNewBytes, category.NewBytes, category.ReplacementNewBytes) ||
+			!sumAmounts(category.ReclaimedBytes, category.ReplacementReclaimedBytes, category.DeletedReclaimedBytes) {
+			return fmt.Errorf("Gateway authentication write accounting category %d is inconsistent", index)
 		}
 	}
 	return nil

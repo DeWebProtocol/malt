@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
-	"github.com/dewebprotocol/malt-core/mutation"
-	cid "github.com/ipfs/go-cid"
 )
 
 // DatasetBinding identifies the logical dataset selected by this Gateway HTTP
@@ -32,7 +30,7 @@ func (c *Client) ObserveHead(ctx context.Context) (*transportcap.ObservedHead, e
 }
 
 // ApplyCandidate implements the transport-neutral dataset capability. The
-// existing Bucket DTO methods remain as compatibility HTTP-adapter APIs.
+// Bucket-specific fields remain inside the HTTP adapter.
 func (c *Client) ApplyCandidate(ctx context.Context, request transportcap.ApplyRequest) (*transportcap.ApplyResult, error) {
 	request, err := transportcap.NormalizeApplyRequest(c.SelectedBucketBranch(), request)
 	if err != nil {
@@ -55,48 +53,6 @@ func (c *Client) ApplyCandidate(ctx context.Context, request transportcap.ApplyR
 		return nil, err
 	}
 	return &result, nil
-}
-
-// ApplyMutation converts the Gateway HTTP receipt into a typed, untrusted
-// candidate result.
-func (c *Client) ApplyMutation(ctx context.Context, mut mutation.SemanticMutation) (transportcap.MutationResult, error) {
-	value, err := c.ApplySemanticMutation(ctx, mut)
-	if err != nil {
-		return transportcap.MutationResult{}, err
-	}
-	if value == nil {
-		return transportcap.MutationResult{}, fmt.Errorf("gateway returned a nil semantic mutation receipt")
-	}
-	base, err := cid.Parse(value.BaseRoot)
-	if err != nil {
-		return transportcap.MutationResult{}, fmt.Errorf("decode gateway mutation base root: %w", err)
-	}
-	candidate, err := cid.Parse(value.NewRoot)
-	if err != nil {
-		return transportcap.MutationResult{}, fmt.Errorf("decode gateway candidate root: %w", err)
-	}
-	return transportcap.MutationResult{
-		BaseRoot: base, CandidateRoot: candidate,
-		DeltaCount: value.DeltaCount, ArcCount: value.ArcCount,
-		MALTObjectCount: value.MALTObjectCount, MapCount: value.MapCount, ListCount: value.ListCount,
-	}, nil
-}
-
-// CreateStructureCandidate returns a typed candidate root from the Gateway
-// structure-creation route.
-func (c *Client) CreateStructureCandidate(ctx context.Context, arcs map[string]string) (cid.Cid, error) {
-	value, err := c.CreateRootStructure(ctx, arcs)
-	if err != nil {
-		return cid.Undef, err
-	}
-	if value == nil {
-		return cid.Undef, fmt.Errorf("gateway returned a nil structure receipt")
-	}
-	root, err := cid.Parse(value.Root)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode gateway structure candidate root: %w", err)
-	}
-	return root, nil
 }
 
 func observedHeadFromBucketRef(value BucketRef) transportcap.ObservedHead {
@@ -135,7 +91,5 @@ func applyResultFromBucketPush(value BucketPushResult) transportcap.ApplyResult 
 	return result
 }
 
-var _ transportcap.Native = (*Client)(nil)
 var _ transportcap.CAS = (*Client)(nil)
-var _ transportcap.Mutations = (*Client)(nil)
 var _ transportcap.DatasetBranch = (*Client)(nil)

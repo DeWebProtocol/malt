@@ -41,27 +41,24 @@ func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient
 	if remote == nil {
 		return nil, fmt.Errorf("graph materialization capability is required")
 	}
-	if opts.Layout == addLayoutRootedV1 {
-		typed, err := newRootedMaterializer(remote)
-		if err != nil {
-			return nil, err
-		}
-		remote = typed
+	projection, err := newProjectionWriter(ctx, remote, unixFSLayoutKind(opts.Layout))
+	if err != nil {
+		return nil, err
 	}
-	staged, err := buildAddStagingTree(ctx, casClient, remote, rawInputs, opts)
+	staged, err := buildAddStagingTree(ctx, casClient, projection, rawInputs, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	rootNode := staged.Root
 	if strings.TrimSpace(root) != "" {
-		existing, err := loadExistingCurrentTree(ctx, remote, casClient, root)
+		existing, err := loadExistingCurrentTree(ctx, remote, casClient, root, unixFSLayoutKind(opts.Layout))
 		if err != nil {
 			return nil, err
 		}
 		rootNode = unixfs.MergeStagedNodes(existing, staged.Root)
 	}
-	mat, err := materializeDirectory(ctx, remote, casClient, rootNode, unixFSLayoutKind(opts.Layout))
+	mat, err := materializeDirectory(ctx, projection, casClient, rootNode, unixFSLayoutKind(opts.Layout))
 	if err != nil {
 		return nil, err
 	}

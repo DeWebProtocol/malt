@@ -118,17 +118,14 @@ func loadStagedCurrentDirRecursive(ctx context.Context, statter StagedPathStatte
 		if err != nil {
 			return nil, err
 		}
-		projectedKind := childStat.Kind
-		if entry.Type != unixfsmodel.DirectoryEntryTypeUnknown {
-			projectedKind = string(entry.Type)
-			if childStat.Kind != projectedKind {
-				return nil, fmt.Errorf(
-					"authenticated directory manifest declares %q as %q, stat returned %q",
-					childPath,
-					projectedKind,
-					childStat.Kind,
-				)
-			}
+		projectedKind := string(entry.Type)
+		if childStat.Kind != projectedKind {
+			return nil, fmt.Errorf(
+				"authenticated directory manifest declares %q as %q, stat returned %q",
+				childPath,
+				projectedKind,
+				childStat.Kind,
+			)
 		}
 		switch projectedKind {
 		case StagedKindDirectory:

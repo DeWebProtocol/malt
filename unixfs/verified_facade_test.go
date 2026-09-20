@@ -4,28 +4,33 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
 	materialmemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/execution"
-	runtimegraph "github.com/dewebprotocol/malt-core/graph/runtime"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
+	"math"
+	"sort"
 )
 
 type realRemote struct {
-	scope  string
-	graph  *runtimegraph.RuntimeGraph
-	exec   *execution.Executor
-	blocks *casmemory.Store
-	reads  []protocol.ReadRequest
+	engine       *engine.Engine
+	nodes        *materialmemory.Nodes
+	candidates   map[string]protocol.AuthenticationCandidate
+	blocks       *casmemory.Store
+	reads        []protocol.AuthenticationRequest
+	wrongReceipt bool
 }
 
 type countingWriterRemote struct {
@@ -34,16 +39,6 @@ type countingWriterRemote struct {
 	blockCalls    int
 	rootCalls     int
 	mutationCalls int
-}
-
-func (r *countingWriterRemote) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	r.remoteCalls++
-	return r.inner.Resolve(ctx, request)
-}
-
-func (r *countingWriterRemote) Read(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
-	r.remoteCalls++
-	return r.inner.Read(ctx, request)
 }
 
 func (r *countingWriterRemote) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
@@ -61,19 +56,9 @@ func (r *countingWriterRemote) PutWithCodec(ctx context.Context, data []byte, co
 	return r.inner.PutWithCodec(ctx, data, codec)
 }
 
-func (r *countingWriterRemote) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
+func (r *countingWriterRemote) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
 	r.rootCalls++
-	return r.inner.CreateStagedRoot(ctx, bindings)
-}
-
-func (r *countingWriterRemote) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	r.mutationCalls++
-	return r.inner.CreateFixedListBaseRoot(ctx)
-}
-
-func (r *countingWriterRemote) ApplyFixedListPayloadMutation(ctx context.Context, value mutation.SemanticMutation) (cid.Cid, error) {
-	r.mutationCalls++
-	return r.inner.ApplyFixedListPayloadMutation(ctx, value)
+	return r.inner.UpdateStagedRoot(ctx, previous, bindings)
 }
 
 func (r *countingWriterRemote) reset() {
@@ -89,43 +74,15 @@ func (r *countingWriterRemote) calls() int {
 
 func newRealRemote(t *testing.T) *realRemote {
 	t.Helper()
-	const scope = "verified-unixfs-test"
-	graph, err := runtimegraph.NewGraph(scope, materialmemory.New(true), runtimegraph.WithNamespace(scope))
+	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor, err := execution.NewExecutor(execution.Options{Scope: scope, Resolver: graph, Maps: graph.Semantic(), Lists: graph.ListSemantic(), Writer: graph.Writer()})
-	if err != nil {
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	return &realRemote{scope: scope, graph: graph, exec: executor, blocks: casmemory.New()}
-}
-
-func (r *realRemote) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	core, err := request.Core()
-	if err != nil {
-		return nil, err
-	}
-	result, err := r.exec.Resolve(ctx, core)
-	if err != nil {
-		return nil, err
-	}
-	wire, err := protocol.NewResolveResult(result)
-	return &wire, err
-}
-
-func (r *realRemote) Read(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
-	r.reads = append(r.reads, request)
-	core, err := request.Core()
-	if err != nil {
-		return nil, err
-	}
-	result, err := r.exec.Read(ctx, core)
-	if err != nil {
-		return nil, err
-	}
-	wire, err := protocol.NewReadResult(result)
-	return &wire, err
+	return &realRemote{engine: engine.New(input.DefaultRegistry(), profiles), nodes: materialmemory.NewNodes(), candidates: map[string]protocol.AuthenticationCandidate{}, blocks: casmemory.New()}
 }
 
 func (r *realRemote) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
@@ -140,36 +97,29 @@ func (r *realRemote) PutWithCodec(ctx context.Context, data []byte, codec uint64
 	return r.blocks.PutWithCodec(ctx, data, codec)
 }
 
-func (r *realRemote) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	values := make(map[string]cid.Cid, len(bindings))
-	for path, raw := range bindings {
-		value, err := cid.Parse(raw)
+func (r *realRemote) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.KZG4096}}
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		target, err := cid.Decode(bindings[name])
 		if err != nil {
 			return cid.Undef, err
 		}
-		values[path] = value
+		selector := input.LabelValue([]byte(name))
+		if name == "@payload" {
+			selector = input.SystemValue(input.Payload)
+		}
+		state.Entries = append(state.Entries, engine.Entry{Input: selector, Target: target})
 	}
-	set, err := arcset.NewArcSet(values)
+	candidate, err := authentication.Prepare(ctx, r.engine, state)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return r.graph.StructureCreator().CreateStructure(ctx, r.scope, set)
-}
-
-func (r *realRemote) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	empty, err := cid.Parse("bafkqaaa")
-	if err != nil {
-		return cid.Undef, err
-	}
-	return r.CreateStagedRoot(ctx, map[string]string{"@payload": empty.String()})
-}
-
-func (r *realRemote) ApplyFixedListPayloadMutation(ctx context.Context, value mutation.SemanticMutation) (cid.Cid, error) {
-	receipt, err := r.exec.Apply(ctx, value)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return receipt.NewRoot, nil
+	return r.MaterializeAuthentication(ctx, candidate)
 }
 
 func materializeTree(t *testing.T, remote *realRemote, files map[string][]byte, chunkSize int) cid.Cid {
@@ -184,7 +134,7 @@ func materializeTree(t *testing.T, remote *realRemote, files map[string][]byte, 
 			t.Fatal(err)
 		}
 	}
-	result, err := unixfs.MaterializeStagedDirectory(t.Context(), remote, remote, root)
+	result, err := materializeHybrid(t, remote, remote, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +184,7 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(small.Body) != "small payload" || small.Resolution == nil || small.Read != nil {
+	if string(small.Body) != "small payload" || small.Resolution == nil || small.Authentication != nil {
 		t.Fatalf("raw read = %#v body=%q", small, small.Body)
 	}
 	if got := countedBlocks.gets[small.Target.KeyString()]; got != 1 {
@@ -246,14 +196,14 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stat.Size != uint64(len(large)) || stat.ChunkSize != 64 || stat.StorageKind != "list" {
+	if stat.Size != uint64(len(large)) || stat.ChunkSize != 64 || stat.StorageKind != "positional" {
 		t.Fatalf("large stat = %#v", stat)
 	}
-	if len(remote.reads) != 1 || remote.reads[0].Query.Start == nil || *remote.reads[0].Query.Start != 0 || remote.reads[0].Query.End == nil || *remote.reads[0].Query.End != 1 {
+	if len(remote.reads) != 1 || remote.reads[0].Operation != "binding" || remote.reads[0].Input == nil || remote.reads[0].Input.Number != math.MaxUint64 {
 		t.Fatalf("large stat did not use a bounded metadata query: %#v", remote.reads)
 	}
-	if len(stat.MetadataRead.RangeSegments) != 1 {
-		t.Fatalf("metadata query returned %d segments, want 1", len(stat.MetadataRead.RangeSegments))
+	if stat.AuthenticationMetadata == nil || stat.AuthenticationMetadata.Result.Binding == nil {
+		t.Fatal("metadata query omitted authenticated structural metadata")
 	}
 
 	remote.reads = nil
@@ -264,7 +214,7 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	if !bytes.Equal(ranged.Body, large[61:192]) {
 		t.Fatal("verified list range bytes differ")
 	}
-	if ranged.Resolution == nil || ranged.Read == nil || ranged.Read.ProofList.Root.String() != ranged.Target.String() {
+	if ranged.Resolution == nil || ranged.Authentication == nil || ranged.Authentication.Request.Root != ranged.Target.String() {
 		t.Fatalf("resolve-to-read continuity was not retained: %#v", ranged)
 	}
 	if len(remote.reads) != 2 || remote.reads[1].Root != ranged.Resolution.Target.String() {
@@ -299,7 +249,7 @@ func TestStagedPathProjectionRebuildsLayoutsWithoutReadingFilePayloads(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			if unixfsmodel.StorageKindFromCID(listCID) != "list" {
+			if unixfsmodel.StorageKindFromCID(listCID) != "positional" {
 				t.Fatalf("large payload CID = %s, want List", listCID)
 			}
 			staged := unixfs.NewStagedDirectory()
@@ -465,7 +415,7 @@ func TestVerifiedReaderUsesManifestTypeForMapBackedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileRoot, err := remote.CreateStagedRoot(t.Context(), map[string]string{
+	fileRoot, err := remote.UpdateStagedRoot(t.Context(), cid.Undef, map[string]string{
 		"@payload":  payloadCID.String(),
 		"@comments": commentCID.String(),
 		"nested":    commentCID.String(),
@@ -477,7 +427,7 @@ func TestVerifiedReaderUsesManifestTypeForMapBackedFile(t *testing.T) {
 	if err := unixfs.SetStagedFile(staged, "report.docx", fileRoot); err != nil {
 		t.Fatal(err)
 	}
-	materialized, err := unixfs.MaterializeStagedDirectory(t.Context(), remote, remote, staged)
+	materialized, err := materializeHybrid(t, remote, remote, staged)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +441,7 @@ func TestVerifiedReaderUsesManifestTypeForMapBackedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stat.Kind != unixfs.StagedKindFile || stat.StorageKind != "map" || stat.PayloadKind != "raw" {
+	if stat.Kind != unixfs.StagedKindFile || stat.StorageKind != "prefix" || stat.PayloadKind != "raw" {
 		t.Fatalf("map-backed file stat = %#v", stat)
 	}
 	if !stat.NodeRoot.Equals(fileRoot) || !stat.Payload.Equals(payloadCID) || stat.PayloadBinding == nil {
@@ -535,7 +485,7 @@ func TestVerifiedReaderUsesDirectManifestCIDAsDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{
+	root, err := remote.UpdateStagedRoot(t.Context(), cid.Undef, map[string]string{
 		"@payload":          rootManifestCID.String(),
 		"direct":            directCID.String(),
 		"direct/readme.txt": fileCID.String(),
@@ -572,62 +522,26 @@ func TestVerifiedReaderUsesDirectManifestCIDAsDirectory(t *testing.T) {
 	}
 }
 
-func TestVerifiedReaderAppliesMapDirectoryInferenceOnlyToV1(t *testing.T) {
-	remote := newRealRemote(t)
-	emptyBlock, err := unixfsmodel.EncodeDirectoryManifest(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	emptyCID, err := remote.PutWithCodec(t.Context(), emptyBlock.Data, emptyBlock.Codec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childRoot, err := remote.CreateStagedRoot(t.Context(), map[string]string{"@payload": emptyCID.String()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	v1Bytes := []byte(`{"entries":["legacy"]}`)
-	v1CID, err := remote.PutWithCodec(t.Context(), v1Bytes, unixfsmodel.DirectoryManifestCodecV1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{
-		"@payload": v1CID.String(),
-		"legacy":   childRoot.String(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stat, err := reader.Stat(t.Context(), root, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stat.Kind != unixfs.StagedKindDirectory || stat.PayloadKind != "raw" || len(stat.Entries) != 0 {
-		t.Fatalf("legacy directory stat = %#v", stat)
-	}
-
-	rawV1CID, err := remote.Put(t.Context(), v1Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rawRoot, err := remote.CreateStagedRoot(t.Context(), map[string]string{
-		"@payload": rawV1CID.String(),
-		"legacy":   childRoot.String(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rawStat, err := reader.Stat(t.Context(), rawRoot, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rawStat.Kind != unixfs.StagedKindDirectory || rawStat.PayloadKind != "raw" {
-		t.Fatalf("historical raw V1 directory stat = %#v", rawStat)
+func TestVerifiedReaderRejectsUntypedDirectoryManifests(t *testing.T) {
+	for _, codec := range []uint64{0x310001, cid.Raw} {
+		t.Run(fmt.Sprint(codec), func(t *testing.T) {
+			remote := newRealRemote(t)
+			payload, err := remote.PutWithCodec(t.Context(), []byte(`{"entries":["legacy"]}`), codec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := remote.UpdateStagedRoot(t.Context(), cid.Undef, map[string]string{"@payload": payload.String()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reader.Stat(t.Context(), root, "legacy"); err == nil {
+				t.Fatal("inferred child type from retired directory manifest")
+			}
+		})
 	}
 }
 
@@ -649,15 +563,15 @@ func TestVerifiedReaderFetchesEachAuthenticatedRangeBlockOnce(t *testing.T) {
 	if !bytes.Equal(result.Body, body) {
 		t.Fatal("verified repeated-chunk body differs")
 	}
-	if result.Read == nil || len(result.Read.RangeSegments) < 2 {
-		t.Fatalf("range fixture did not produce multiple segments: %#v", result.Read)
+	if result.Authentication == nil || len(result.Authentication.Result.Range.Segments) < 2 {
+		t.Fatalf("range fixture did not produce multiple segments: %#v", result.Authentication)
 	}
 	unique := make(map[string]struct{})
-	for _, raw := range result.Read.RangeSegments {
-		unique[raw] = struct{}{}
+	for _, raw := range result.Authentication.Result.Range.Segments {
+		unique[raw.Target.String()] = struct{}{}
 	}
-	if len(unique) >= len(result.Read.RangeSegments) {
-		t.Fatalf("range fixture did not reuse a chunk CID: %v", result.Read.RangeSegments)
+	if len(unique) >= len(result.Authentication.Result.Range.Segments) {
+		t.Fatalf("range fixture did not reuse a chunk CID: %v", result.Authentication.Result.Range.Segments)
 	}
 	for raw := range unique {
 		key, err := cid.Parse(raw)
@@ -670,7 +584,7 @@ func TestVerifiedReaderFetchesEachAuthenticatedRangeBlockOnce(t *testing.T) {
 	}
 }
 
-func TestMaterializeStagedDirectoryRejectsNonCanonicalChild(t *testing.T) {
+func TestHybridMaterializationRejectsNonCanonicalChild(t *testing.T) {
 	payload, err := cid.Parse("bafkqaaa")
 	if err != nil {
 		t.Fatal(err)
@@ -685,8 +599,8 @@ func TestMaterializeStagedDirectoryRejectsNonCanonicalChild(t *testing.T) {
 				Kind: unixfs.StagedKindFile,
 				Key:  payload,
 			}
-			if _, err := unixfs.MaterializeStagedDirectory(t.Context(), remote, remote, root); err == nil {
-				t.Fatalf("MaterializeStagedDirectory accepted non-canonical child %q", name)
+			if _, err := materializeHybrid(t, remote, remote, root); err == nil {
+				t.Fatalf("hybrid materialization accepted non-canonical child %q", name)
 			}
 		})
 	}
@@ -702,7 +616,7 @@ func TestVerifiedReaderRejectsAuthenticatedUnknownTargetCodec(t *testing.T) {
 	// makes it an invalid typed root. A valid parent proof may authenticate this
 	// opaque value, but the UnixFS runtime must not reinterpret it as raw bytes.
 	unknown := cid.NewCidV1(0x300101, digest)
-	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{"file.txt": unknown.String()})
+	root, err := remote.UpdateStagedRoot(t.Context(), cid.Undef, map[string]string{"file.txt": unknown.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,13 +634,13 @@ func TestVerifiedReaderRejectsAuthenticatedUnknownTargetCodec(t *testing.T) {
 
 type tamperedRemote struct{ *realRemote }
 
-func (r tamperedRemote) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	result, err := r.realRemote.Resolve(ctx, request)
+func (r tamperedRemote) Authenticate(ctx context.Context, request protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
+	result, err := r.realRemote.Authenticate(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	wrong, _ := cid.Parse("bafkqaaa")
-	result.Target = wrong.String()
+	result.Resolved = wrong.String()
 	return result, nil
 }
 
@@ -756,7 +670,7 @@ type fixedRootCreator struct {
 	root cid.Cid
 }
 
-func (c fixedRootCreator) CreateStagedRoot(context.Context, map[string]string) (cid.Cid, error) {
+func (c fixedRootCreator) UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error) {
 	return c.root, nil
 }
 
@@ -778,9 +692,11 @@ type splicedReadRemote struct {
 	other cid.Cid
 }
 
-func (r splicedReadRemote) Read(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
-	request.Root = r.other.String()
-	return r.realRemote.Read(ctx, request)
+func (r splicedReadRemote) Authenticate(ctx context.Context, request protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
+	if request.Operation != "resolve" {
+		request.Root = r.other.String()
+	}
+	return r.realRemote.Authenticate(ctx, request)
 }
 
 func TestVerifiedReaderRejectsTamperedResultAndPayloadBytes(t *testing.T) {
@@ -928,11 +844,11 @@ func TestVerifiedWriterRejectsCandidateWithWrongDirectoryProjection(t *testing.T
 				t.Fatal(err)
 			}
 			writer, err := unixfs.NewWriter(unixfs.WriterOptions{
-				Remote: remote,
-				Blocks: remote,
-				Roots:  fixedRootCreator{root: empty.Key},
-				Lists:  remote,
-				Layout: layout,
+				Remote:   remote,
+				Blocks:   remote,
+				Roots:    fixedRootCreator{root: empty.Key},
+				Payloads: remote,
+				Layout:   layout,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1053,7 +969,7 @@ func TestVerifiedWriterRejectsNonCanonicalPathsBeforeAnyIO(t *testing.T) {
 	remote := newRealRemote(t)
 	root := materializeTree(t, remote, map[string][]byte{"file": []byte("payload")}, 32)
 	counting := &countingWriterRemote{inner: remote}
-	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: counting, Blocks: counting, Roots: counting, Lists: counting, ChunkSize: 32})
+	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: counting, Blocks: counting, Roots: counting, Payloads: counting, ChunkSize: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1101,9 +1017,58 @@ func keptBody(result *unixfs.ReadResult) []byte {
 
 var _ unixfs.Remote = (*realRemote)(nil)
 var _ unixfs.BlockStore = (*realRemote)(nil)
-var _ unixfs.StagedRootCreator = (*realRemote)(nil)
-var _ unixfs.FixedListPayloadWriter = (*realRemote)(nil)
+var _ unixfs.StagedRootWriter = (*realRemote)(nil)
+var _ unixfs.MeasuredPayloadWriter = (*realRemote)(nil)
 var _ unixfs.Remote = (*countingWriterRemote)(nil)
 var _ unixfs.BlockStore = (*countingWriterRemote)(nil)
-var _ unixfs.StagedRootCreator = (*countingWriterRemote)(nil)
-var _ unixfs.FixedListPayloadWriter = (*countingWriterRemote)(nil)
+var _ unixfs.StagedRootWriter = (*countingWriterRemote)(nil)
+var _ unixfs.MeasuredPayloadWriter = (*countingWriterRemote)(nil)
+
+func (r *realRemote) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
+	adapter, err := unixfs.NewAuthenticationAdapter(unixfs.LayoutHybridV1, r, r.engine, maltcid.KZG4096)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return adapter.CreateMeasuredPayload(ctx, chunks, total, chunk)
+}
+func (r *countingWriterRemote) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
+	r.mutationCalls++
+	return r.inner.CreateMeasuredPayload(ctx, chunks, total, chunk)
+}
+func (r *countingWriterRemote) Authenticate(ctx context.Context, request protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
+	r.remoteCalls++
+	return r.inner.Authenticate(ctx, request)
+}
+
+func materializeHybrid(t *testing.T, roots unixfs.StagedRootWriter, blocks unixfs.StagedBlockStore, node *unixfs.StagedNode) (*unixfs.StagedMaterializeResult, error) {
+	t.Helper()
+	layout, err := unixfs.NewLayout(unixfs.LayoutHybridV1)
+	if err != nil {
+		return nil, err
+	}
+	return layout.Materialize(t.Context(), roots, blocks, node)
+}
+
+func TestVerifiedReaderRejectsTamperedRangeBytes(t *testing.T) {
+	remote := newRealRemote(t)
+	body := bytes.Repeat([]byte("range-authentication"), 8)
+	root, _, err := unixfs.MaterializeStagedFilePayload(t.Context(), remote, remote, bytes.NewReader(body), int64(len(body)), 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reader.ReadPositionalPayloadRange(t.Context(), root, 5, 62)
+	if err != nil || !bytes.Equal(result.Body, body[5:67]) {
+		t.Fatalf("valid range: %v", err)
+	}
+	corrupted, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: corruptBlocks{inner: remote}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := corrupted.ReadPositionalPayloadRange(t.Context(), root, 5, 62); err == nil {
+		t.Fatal("accepted corrupted authenticated range segments")
+	}
+}

@@ -43,7 +43,9 @@ func TestBuildsMatchedKZGAndIPAFixtureFromDeclaredBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if maltcid.BackendKindOf(kzgBuild.root) != maltcid.BackendKindKZG || maltcid.BackendKindOf(ipaBuild.root) != maltcid.BackendKindIPA || kzgBuild.root.Equals(ipaBuild.root) {
+	kzgDescriptor, _, kzgErr := maltcid.ParseRoot(kzgBuild.root)
+	ipaDescriptor, _, ipaErr := maltcid.ParseRoot(ipaBuild.root)
+	if kzgErr != nil || ipaErr != nil || kzgDescriptor.Profile != maltcid.KZG4096 || ipaDescriptor.Profile != maltcid.IPA256 || kzgBuild.root.Equals(ipaBuild.root) {
 		t.Fatalf("backend roots = %s, %s", kzgBuild.root, ipaBuild.root)
 	}
 	if len(kzgBuild.objects) != 2 || len(ipaBuild.objects) != 2 {

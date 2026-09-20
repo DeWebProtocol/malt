@@ -103,7 +103,7 @@ type PlanFilesystemBlocks interface {
 }
 
 type PlanFilesystemGraph interface {
-	encryptedfs.GraphWriter
+	encryptedfs.CandidatePublisher
 }
 
 type PlanFilesystemProfile interface {

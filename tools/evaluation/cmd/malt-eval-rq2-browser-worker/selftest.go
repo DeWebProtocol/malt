@@ -32,10 +32,10 @@ import (
 
 const (
 	browserE0CapabilityID = "rq2.wasm-writer"
-	browserE0ProfileID    = "rq2-wasm-writer-positive-hostile-v1"
+	browserE0ProfileID    = "rq2-wasm-writer-positive-hostile-v2"
 	// Updated only when the ordered compiled case contract intentionally
 	// changes together with the evaluator-owned registry.
-	browserE0ExpectedProfileSHA256 = "8a46f8c36ac11d89f1453645faccfaf9d04802307ef16df10840d2db58448c52"
+	browserE0ExpectedProfileSHA256 = "53449df9e3f9dd285e0b2db48044c03b4bbbce9797f56e5c0a902ae9d830deb0"
 )
 
 var browserE0Profile = e0selftest.Profile{
@@ -671,7 +671,7 @@ func newBrowserE0DelayedGatewayProxy(target string, delay time.Duration) (*brows
 
 func (p *browserE0DelayedGatewayProxy) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	p.mu.Lock()
-	armed := p.armed && request.Method == http.MethodPost && request.URL.Path == "/v1/client-roots"
+	armed := p.armed && request.Method == http.MethodPost && request.URL.Path == "/v1/evaluation/authentication/batches"
 	if armed {
 		p.requests++
 	}

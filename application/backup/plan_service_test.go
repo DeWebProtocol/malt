@@ -166,7 +166,7 @@ type inspectingPlanFilesystem struct {
 }
 
 func newInspectingPlanFilesystem(order *[]string) *inspectingPlanFilesystem {
-	root, err := maltcid.NewSemanticRoot(maltcid.SemanticKindMap, maltcid.BackendKindKZG, make([]byte, maltcid.KZGCommitmentSize))
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, make([]byte, maltcid.KZGCommitmentSize))
 	if err != nil {
 		panic(err)
 	}
@@ -688,7 +688,7 @@ func TestPlanBackupRetryRestoresExactDurableCandidateBeforeRemoteWork(t *testing
 	}
 	workspace := bucketsyncWorkspaceInitialized(t)
 	base := cid.MustParse(workspace.Base.Root)
-	candidate, err := maltcid.NewSemanticRoot(maltcid.SemanticKindMap, maltcid.BackendKindKZG, append([]byte{1}, make([]byte, maltcid.KZGCommitmentSize-1)...))
+	candidate, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, append([]byte{1}, make([]byte, maltcid.KZGCommitmentSize-1)...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,7 +770,7 @@ func TestPlanBackupRejectsConflictAndUnacceptedBaseBeforeSnapshotPublication(t *
 			policy: func(t *testing.T, _ bucketsync.Workspace) PlanRootPolicy {
 				commitment := make([]byte, maltcid.KZGCommitmentSize)
 				commitment[0] = 1
-				root, err := maltcid.NewSemanticRoot(maltcid.SemanticKindMap, maltcid.BackendKindKZG, commitment)
+				root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, commitment)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1006,7 +1006,7 @@ func TestRestoredBaselinePreventsUnchangedRepublish(t *testing.T) {
 
 func bucketsyncWorkspaceInitialized(t *testing.T) bucketsync.Workspace {
 	t.Helper()
-	root, err := maltcid.NewSemanticRoot(maltcid.SemanticKindMap, maltcid.BackendKindKZG, make([]byte, maltcid.KZGCommitmentSize))
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, make([]byte, maltcid.KZGCommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}

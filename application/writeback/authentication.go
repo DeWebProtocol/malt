@@ -11,16 +11,12 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-type AuthenticationPlanner interface {
-	PlanRooted(context.Context, cid.Cid, []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error)
-}
-type AuthenticationOptions struct {
-	Planner AuthenticationPlanner
-	Remote  AuthenticationMaterializer
+type Planner interface {
+	Plan(context.Context, cid.Cid, []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error)
 }
 
 func (s *Service) replayAuthentication(ctx context.Context, view filesystemservice.View, batch staging.UploadBatch, result Result) (Result, error) {
-	candidates, required, root, err := s.authentication.Planner.PlanRooted(ctx, view.Root, append([]journal.Operation(nil), batch.Operations...))
+	candidates, required, root, err := s.planner.Plan(ctx, view.Root, append([]journal.Operation(nil), batch.Operations...))
 	if err != nil {
 		return result, err
 	}
@@ -45,6 +41,10 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 		result.NoAuthenticatedChange = true
 		return result, nil
 	}
+	prepared := protocol.AuthenticationBatch{Profile: protocol.AuthenticationBatchProfile, TransactionID: batch.TransactionID, Base: view.Root.String(), Root: root.String(), Candidates: candidates}
+	if err := prepared.Validate(); err != nil {
+		return result, fmt.Errorf("invalid typed plan: %w", err)
+	}
 	available := map[string]staging.UploadPayload{}
 	for _, p := range batch.Payloads {
 		available[p.CID.KeyString()] = p
@@ -53,8 +53,8 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 	for _, op := range batch.Operations {
 		if op.Kind == journal.KindWrite {
 			c, err := cid.Parse(op.PayloadCID)
-			if err != nil {
-				return result, err
+			if err != nil || c.Prefix().Codec != cid.Raw {
+				return result, fmt.Errorf("staged write requires a raw payload CID")
 			}
 			staged[c.KeyString()] = true
 		}
@@ -79,33 +79,21 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 			return result, fmt.Errorf("payload receipt substituted CID")
 		}
 	}
-	if len(candidates) == 0 {
-		return result, fmt.Errorf("typed plan omitted changed Root")
+	receipt, err := s.remote.MaterializeAuthenticationBatch(ctx, prepared)
+	if err != nil {
+		return result, err
 	}
-	last, err := cid.Decode(candidates[len(candidates)-1].Root)
-	if err != nil || !last.Equals(root) {
-		return result, fmt.Errorf("typed plan is not children-before-parent")
+	if err := receipt.Validate(prepared); err != nil {
+		return result, err
 	}
-	for _, candidate := range candidates {
-		expected, err := cid.Decode(candidate.Root)
-		if err != nil {
-			return result, err
-		}
-		got, err := s.authentication.Remote.MaterializeAuthentication(ctx, candidate)
-		if err != nil {
-			return result, err
-		}
-		if !got.Equals(expected) {
-			return result, fmt.Errorf("authentication receipt substituted Root")
-		}
-	}
+	result.Receipt = receipt
 	result.CandidateRoot = root
 	result.RemotePersisted = true
 	return s.completeCandidate(ctx, view, batch, result)
 }
 
-// AuthenticationMaterializer persists an exact candidate and returns an
-// untrusted receipt CID. It owns neither publication nor accepted-root policy.
+// AuthenticationMaterializer persists an exact batch and returns an untrusted
+// operational receipt. It owns neither publication nor accepted-root policy.
 type AuthenticationMaterializer interface {
-	MaterializeAuthentication(context.Context, protocol.AuthenticationCandidate) (cid.Cid, error)
+	MaterializeAuthenticationBatch(context.Context, protocol.AuthenticationBatch) (protocol.AuthenticationReceipt, error)
 }

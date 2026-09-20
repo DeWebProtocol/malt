@@ -13,24 +13,23 @@ import (
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	"github.com/dewebprotocol/malt-client/unixfs/encrypted"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
 	materialmemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
-	"github.com/dewebprotocol/malt-core/execution"
-	runtimegraph "github.com/dewebprotocol/malt-core/graph/runtime"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
 type profileRemote struct {
-	scope    string
-	graph    *runtimegraph.RuntimeGraph
-	executor *execution.Executor
-	blocks   *casmemory.Store
-	puts     [][]byte
-	roots    []map[string]string
+	engine *engine.Engine
+	nodes  *materialmemory.Nodes
+	blocks *casmemory.Store
+	puts   [][]byte
+	roots  []map[string]string
 }
 
 func newProfileRemote(t *testing.T) *profileRemote {
@@ -39,29 +38,28 @@ func newProfileRemote(t *testing.T) *profileRemote {
 
 func newProfileRemoteBackend(t *testing.T, backend maltcid.BackendKind) *profileRemote {
 	t.Helper()
-	const scope = "encrypted-unixfs-test"
-	options := []runtimegraph.Option{runtimegraph.WithNamespace(scope)}
-	if backend == maltcid.BackendKindIPA {
+	profiles := engine.NewRegistry()
+	switch backend {
+	case maltcid.BackendKindKZG:
+		scheme, err := kzg.NewScheme()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := profiles.Register(scheme); err != nil {
+			t.Fatal(err)
+		}
+	case maltcid.BackendKindIPA:
 		scheme, err := ipa.NewCommitterScheme(ipa.ProfileCompact)
 		if err != nil {
 			t.Fatal(err)
 		}
-		options = append(options,
-			runtimegraph.WithCommitmentBackend(backend, scheme),
-			runtimegraph.WithDefaultCommitmentBackend(backend),
-		)
+		if err := profiles.Register(scheme); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatal("unsupported backend")
 	}
-	graph, err := runtimegraph.NewGraph(scope, materialmemory.New(true), options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	executor, err := execution.NewExecutor(execution.Options{
-		Scope: scope, Resolver: graph, Maps: graph.Semantic(), Lists: graph.ListSemantic(), Writer: graph.Writer(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &profileRemote{scope: scope, graph: graph, executor: executor, blocks: casmemory.New()}
+	return &profileRemote{engine: engine.New(input.DefaultRegistry(), profiles), nodes: materialmemory.NewNodes(), blocks: casmemory.New()}
 }
 
 func TestEncryptedSnapshotPublishesExactIPARoots(t *testing.T) {
@@ -108,32 +106,6 @@ func TestEncryptedSnapshotPublishesExactIPARoots(t *testing.T) {
 	}
 }
 
-func (r *profileRemote) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	core, err := request.Core()
-	if err != nil {
-		return nil, err
-	}
-	result, err := r.executor.Resolve(ctx, core)
-	if err != nil {
-		return nil, err
-	}
-	wire, err := protocol.NewResolveResult(result)
-	return &wire, err
-}
-
-func (r *profileRemote) Read(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
-	core, err := request.Core()
-	if err != nil {
-		return nil, err
-	}
-	result, err := r.executor.Read(ctx, core)
-	if err != nil {
-		return nil, err
-	}
-	wire, err := protocol.NewReadResult(result)
-	return &wire, err
-}
-
 func (r *profileRemote) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	return r.blocks.Get(ctx, key)
 }
@@ -167,38 +139,6 @@ func (w *failOnceBlockWriter) PutWithCodec(ctx context.Context, data []byte, cod
 		return cid.Undef, errors.New("transient block publication failure")
 	}
 	return w.inner.PutWithCodec(ctx, data, codec)
-}
-
-func (r *profileRemote) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	copyBindings := make(map[string]string, len(bindings))
-	values := make(map[string]cid.Cid, len(bindings))
-	for key, raw := range bindings {
-		value, err := cid.Parse(raw)
-		if err != nil {
-			return cid.Undef, err
-		}
-		copyBindings[key] = raw
-		values[key] = value
-	}
-	r.roots = append(r.roots, copyBindings)
-	set, err := arcset.NewArcSet(values)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return r.graph.StructureCreator().CreateStructure(ctx, r.scope, set)
-}
-
-func (r *profileRemote) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	empty := cid.MustParse("bafkqaaa")
-	return r.CreateStagedRoot(ctx, map[string]string{"@payload": empty.String()})
-}
-
-func (r *profileRemote) ApplyFixedListPayloadMutation(ctx context.Context, value mutation.SemanticMutation) (cid.Cid, error) {
-	receipt, err := r.executor.Apply(ctx, value)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return receipt.NewRoot, nil
 }
 
 func TestEncryptedProfileBuildReadRangeAndRestore(t *testing.T) {
@@ -583,28 +523,6 @@ type substitutingGraph struct {
 	substituteList bool
 }
 
-func (g *substitutingGraph) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	root, err := g.inner.CreateStagedRoot(ctx, bindings)
-	if err == nil && g.substituteMap {
-		g.substituteMap = false
-		return cid.MustParse("bafkqaaa"), nil
-	}
-	return root, err
-}
-
-func (g *substitutingGraph) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	return g.CreateStagedRoot(ctx, map[string]string{"@payload": "bafkqaaa"})
-}
-
-func (g *substitutingGraph) ApplyFixedListPayloadMutation(ctx context.Context, value mutation.SemanticMutation) (cid.Cid, error) {
-	root, err := g.inner.ApplyFixedListPayloadMutation(ctx, value)
-	if err == nil && g.substituteList {
-		g.substituteList = false
-		return cid.MustParse("bafkqaaa"), nil
-	}
-	return root, err
-}
-
 func TestEncryptedSnapshotRejectsRemoteMapAndListRootSubstitution(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -891,12 +809,12 @@ func TestEncryptedDatasetViewRejectsForgeryAndIgnoresMutableCompatibilityCopies(
 
 type tamperedProfileRemote struct{ *profileRemote }
 
-func (r tamperedProfileRemote) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	result, err := r.profileRemote.Resolve(ctx, request)
+func (r tamperedProfileRemote) Authenticate(ctx context.Context, request protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
+	result, err := r.profileRemote.Authenticate(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	result.Target = "bafkqaaa"
+	result.Resolved = "bafkqaaa"
 	return result, nil
 }
 
@@ -934,4 +852,41 @@ func slicesEqual(left, right []string) bool {
 		}
 	}
 	return true
+}
+
+func (r *profileRemote) Authenticate(ctx context.Context, request protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
+	result, err := authentication.Execute(ctx, r.engine, request, r.nodes)
+	return &result, err
+}
+func (r *profileRemote) MaterializeAuthentication(ctx context.Context, candidate protocol.AuthenticationCandidate) (cid.Cid, error) {
+	if err := authentication.Materialize(ctx, r.engine, candidate, r.nodes); err != nil {
+		return cid.Undef, err
+	}
+	if candidate.State.Descriptor.Layout == maltcid.Prefix {
+		bindings := make(map[string]string)
+		for _, entry := range candidate.State.Entries {
+			label := string(entry.Input.Data)
+			if entry.Input.Kind == input.System {
+				label = "@payload"
+			}
+			bindings[label] = entry.Target.String()
+		}
+		r.roots = append(r.roots, bindings)
+	}
+	return cid.Decode(candidate.Root)
+}
+func (g *substitutingGraph) MaterializeAuthentication(ctx context.Context, candidate protocol.AuthenticationCandidate) (cid.Cid, error) {
+	root, err := g.inner.MaterializeAuthentication(ctx, candidate)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if candidate.State.Descriptor.Layout == maltcid.Prefix && g.substituteMap {
+		g.substituteMap = false
+		return cid.MustParse("bafkqaaa"), nil
+	}
+	if candidate.State.Descriptor.Layout == maltcid.Positional && g.substituteList {
+		g.substituteList = false
+		return cid.MustParse("bafkqaaa"), nil
+	}
+	return root, nil
 }

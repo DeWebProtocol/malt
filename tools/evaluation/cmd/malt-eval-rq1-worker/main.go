@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	workerRecordSchema  = "malt-rq1-worker-record/v1"
+	workerRecordSchema  = "malt-rq1-worker-record/v2"
 	workerRequestSchema = "malt-rq1-worker-request/v1"
 	maxWorkerLineBytes  = 1 << 20
 	maxWorkerRequests   = 1_000_000
@@ -74,28 +74,28 @@ type workerRecord struct {
 }
 
 type workerMetrics struct {
-	NetworkRequests             uint64           `json:"network_requests"`
-	CriticalSequentialRounds    uint64           `json:"critical_sequential_rounds"`
-	BlockLoadCalls              uint64           `json:"block_load_calls"`
-	BlocksVerified              uint64           `json:"blocks_verified"`
-	CASGetRequests              uint64           `json:"cas_get_requests"`
-	CASBytes                    uint64           `json:"cas_bytes"`
-	CARBytes                    uint64           `json:"car_bytes"`
-	CARBlocks                   uint64           `json:"car_blocks"`
-	ProofBytes                  uint64           `json:"proof_bytes"`
-	ProofSteps                  uint64           `json:"proof_steps"`
-	NetworkDurationNS           uint64           `json:"network_duration_ns"`
-	CIDVerifyDurationNS         uint64           `json:"cid_verify_duration_ns"`
-	CARDecodeDurationNS         uint64           `json:"car_decode_duration_ns"`
-	PathReplayDurationNS        uint64           `json:"path_replay_duration_ns"`
-	ProofDecodeDurationNS       uint64           `json:"proof_decode_duration_ns"`
-	ProofVerifyDurationNS       uint64           `json:"proof_verify_duration_ns"`
-	PayloadReadDurationNS       uint64           `json:"payload_read_duration_ns"`
-	PayloadBindingDurationNS    uint64           `json:"payload_binding_duration_ns"`
-	ServerArcTable              serverPhaseTotal `json:"server_arc_table"`
-	ServerMaterialization       serverPhaseTotal `json:"server_materialization"`
-	ServerOpen                  serverPhaseTotal `json:"server_open"`
-	ServerProofSerialization    serverPhaseTotal `json:"server_proof_serialization"`
+	NetworkRequests          uint64           `json:"network_requests"`
+	CriticalSequentialRounds uint64           `json:"critical_sequential_rounds"`
+	BlockLoadCalls           uint64           `json:"block_load_calls"`
+	BlocksVerified           uint64           `json:"blocks_verified"`
+	CASGetRequests           uint64           `json:"cas_get_requests"`
+	CASBytes                 uint64           `json:"cas_bytes"`
+	CARBytes                 uint64           `json:"car_bytes"`
+	CARBlocks                uint64           `json:"car_blocks"`
+	ProofBytes               uint64           `json:"proof_bytes"`
+	ProofSteps               uint64           `json:"proof_steps"`
+	NetworkDurationNS        uint64           `json:"network_duration_ns"`
+	CIDVerifyDurationNS      uint64           `json:"cid_verify_duration_ns"`
+	CARDecodeDurationNS      uint64           `json:"car_decode_duration_ns"`
+	PathReplayDurationNS     uint64           `json:"path_replay_duration_ns"`
+	ProofDecodeDurationNS    uint64           `json:"proof_decode_duration_ns"`
+	ProofVerifyDurationNS    uint64           `json:"proof_verify_duration_ns"`
+	PayloadReadDurationNS    uint64           `json:"payload_read_duration_ns"`
+	PayloadBindingDurationNS uint64           `json:"payload_binding_duration_ns"`
+	ServerArcTable           serverPhaseTotal `json:"server_arc_table"`
+	ServerMaterialization    serverPhaseTotal `json:"server_materialization"`
+	ServerOpen               serverPhaseTotal `json:"server_open"`
+
 	ServerResponseSerialization serverPhaseTotal `json:"server_response_serialization"`
 	ClientUserCPUNS             uint64           `json:"client_user_cpu_ns"`
 	ClientSystemCPUNS           uint64           `json:"client_system_cpu_ns"`
@@ -525,7 +525,7 @@ func (config workerConfig) observeGatewayHealth(ctx context.Context) (gatewayHea
 		"status":                                  "ok",
 		"evaluation_instance_token":               config.instanceToken,
 		"evaluation_rq1_cache_observation":        evaluationCacheProfile,
-		"evaluation_rq1_read_phases":              "gateway.rq1-read-phases/v1",
+		"evaluation_rq1_read_phases":              "gateway.rq1-read-phases/v2",
 		"evaluation_rq1_application_result_cache": "none",
 		"evaluation_rq1_os_page_cache":            "uncontrolled",
 	} {
@@ -537,7 +537,7 @@ func (config workerConfig) observeGatewayHealth(ctx context.Context) (gatewayHea
 	return gatewayHealth{
 		Profile: "malt-rq1-gateway-health-observation/v1", RawSHA256: hex.EncodeToString(digest[:]), RawBytes: uint64(len(raw)),
 		InstanceToken: config.instanceToken, CacheObservationProfile: evaluationCacheProfile,
-		ReadPhasesProfile: "gateway.rq1-read-phases/v1", ApplicationResultCache: "none", OSPageCache: "uncontrolled",
+		ReadPhasesProfile: "gateway.rq1-read-phases/v2", ApplicationResultCache: "none", OSPageCache: "uncontrolled",
 	}, nil
 }
 

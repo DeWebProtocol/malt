@@ -6,15 +6,13 @@ import (
 	"io"
 
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/mutation"
 	cid "github.com/ipfs/go-cid"
 )
 
-// FixedListPayloadWriter supplies the writer-side operations needed to
-// materialize a fixed-width list payload.
-type FixedListPayloadWriter interface {
-	CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error)
-	ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error)
+// MeasuredPayloadWriter authenticates a chunk sequence and its exact byte
+// measurements. A returned Root is an unaccepted candidate.
+type MeasuredPayloadWriter interface {
+	CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
 }
 
 type declaredSizeReader struct {
@@ -60,14 +58,14 @@ func (r *declaredSizeReader) validateComplete() error {
 	return fmt.Errorf("payload contains %d bytes, expected %d", r.expected-r.remaining, r.expected)
 }
 
-// MaterializeFixedListPayload streams payload chunks into CAS, commits the
-// fixed-list root through writer semantics, and returns the new list root.
-func MaterializeFixedListPayload(ctx context.Context, blocks StagedBlockStore, writer FixedListPayloadWriter, r io.Reader, totalSize uint64, chunkSize int) (cid.Cid, error) {
+// MaterializeMeasuredPayload streams payload chunks into CAS, commits the
+// measured Positional Root through typed authentication, and returns the new list root.
+func MaterializeMeasuredPayload(ctx context.Context, blocks StagedBlockStore, writer MeasuredPayloadWriter, r io.Reader, totalSize uint64, chunkSize int) (cid.Cid, error) {
 	if blocks == nil {
 		return cid.Undef, fmt.Errorf("block store is nil")
 	}
 	if writer == nil {
-		return cid.Undef, fmt.Errorf("fixed-list payload writer is nil")
+		return cid.Undef, fmt.Errorf("measured payload writer is nil")
 	}
 	sized, err := newDeclaredSizeReader(r, totalSize)
 	if err != nil {
@@ -98,26 +96,13 @@ func MaterializeFixedListPayload(ctx context.Context, blocks StagedBlockStore, w
 		}
 	}
 
-	if typed, ok := writer.(interface {
-		CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
-	}); ok {
-		return typed.CreateMeasuredPayload(ctx, chunks, totalSize, uint64(chunkSize))
-	}
-	baseRoot, err := writer.CreateFixedListBaseRoot(ctx)
-	if err != nil {
-		return cid.Undef, err
-	}
-	mut, err := unixfsmodel.FixedListPayloadMutation(baseRoot, chunks, totalSize, uint64(chunkSize))
-	if err != nil {
-		return cid.Undef, err
-	}
-	return writer.ApplyFixedListPayloadMutation(ctx, mut)
+	return writer.CreateMeasuredPayload(ctx, chunks, totalSize, uint64(chunkSize))
 }
 
 // MaterializeStagedFilePayload stores a file payload according to the UnixFS
 // staged-add policy. Small files become raw CAS payloads; larger files become
-// fixed-width list payloads.
-func MaterializeStagedFilePayload(ctx context.Context, blocks StagedBlockStore, writer FixedListPayloadWriter, r io.Reader, size int64, chunkSize int) (cid.Cid, bool, error) {
+// measured Positional payloads.
+func MaterializeStagedFilePayload(ctx context.Context, blocks StagedBlockStore, writer MeasuredPayloadWriter, r io.Reader, size int64, chunkSize int) (cid.Cid, bool, error) {
 	if size < 0 {
 		return cid.Undef, false, fmt.Errorf("file size must not be negative")
 	}
@@ -145,7 +130,7 @@ func MaterializeStagedFilePayload(ctx context.Context, blocks StagedBlockStore, 
 		}
 		return payload, false, nil
 	}
-	payload, err := MaterializeFixedListPayload(ctx, blocks, writer, r, uint64(size), chunkSize)
+	payload, err := MaterializeMeasuredPayload(ctx, blocks, writer, r, uint64(size), chunkSize)
 	if err != nil {
 		return cid.Undef, false, err
 	}

@@ -45,7 +45,7 @@ func (f *fakeUnixFS) ReadFileRange(_ context.Context, root cid.Cid, _ string, of
 	f.rangeLength = length
 	return &unixfs.ReadResult{Body: []byte("range"), Target: root}, nil
 }
-func (*fakeUnixFS) ReadListPayloadRange(context.Context, cid.Cid, uint64, uint64) (*unixfs.ReadResult, error) {
+func (*fakeUnixFS) ReadPositionalPayloadRange(context.Context, cid.Cid, uint64, uint64) (*unixfs.ReadResult, error) {
 	return nil, nil
 }
 func (f *fakeUnixFS) EmptyDirectory(context.Context) (*unixfs.WriteResult, error) {

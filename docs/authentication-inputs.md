@@ -18,13 +18,13 @@ uint64 positions/selectors use decimal strings on the wire. UnixFS path parsing
 stays in `unixfs/model`; AuthenticationSteps produces explicit component labels.
 A full-path index instead submits one opaque full-path label. A Root's AA, not
 slash syntax inferred by the generic engine, chooses the conversion rule.
-Existing Map/List UnixFS adapters now build V0 Roots with their retained
-application semantics. Only Prefix supports system bindings; Positional
+The current UnixFS planner builds Prefix and Positional V0 Roots directly
+through typed authentication. No semantic Map/List adapter remains. Only Prefix supports system bindings; Positional
 metadata is structural. New low-level clients can choose native 32-byte keys
 or a registered label rule explicitly.
 
 Writeback preserves the base Root's layout, AA and exact VC profile. Historical
-V2/V3 views remain readable through Core compatibility code and are rebuilt for
-new V0 candidates rather than relabeled. Payload CIDs and accepted/candidate
+V2/V3 roots and retired API profiles are not decoded or rewritten by this
+implementation. Payload CIDs and accepted/candidate
 policy remain independent. V stays zero until an explicit maintainer
 production-ready declaration, regardless of package SemVer or deployments.

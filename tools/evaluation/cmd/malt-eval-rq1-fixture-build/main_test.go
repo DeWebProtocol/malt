@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -22,19 +21,25 @@ func TestBuildMALTProducesExactDepthTrie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if maltcid.BackendKindOf(root) != maltcid.BackendKindKZG || maltcid.SemanticKindOf(root) != maltcid.SemanticKindMap {
+	if !fixturePrefixRoot(root) {
 		t.Fatalf("root = %s", root)
 	}
-	// 1 root + (D-1) intermediate maps for each disjoint first segment.
+	// 1 root + (D-1) intermediate Prefix Roots for each disjoint first segment.
 	if len(objects) != 1+(1-1)+(2-1)+(4-1)+(8-1) {
 		t.Fatalf("object count = %d", len(objects))
 	}
 	top := objects[len(objects)-1]
-	if !top.root.Equals(root) || len(top.entries) != len(exactDepths) {
+	if top.Root != root.String() || len(top.State.Entries) != len(exactDepths) {
 		t.Fatalf("top object = %#v", top)
 	}
 	for _, name := range []string{"d1", "d2", "d4", "d8"} {
-		if !top.entries[name].Defined() {
+		found := false
+		for _, entry := range top.State.Entries {
+			if string(entry.Input.Data) == name && entry.Target.Defined() {
+				found = true
+			}
+		}
+		if !found {
 			t.Fatalf("top object lacks %q", name)
 		}
 	}
