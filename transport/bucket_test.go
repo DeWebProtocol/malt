@@ -12,7 +12,9 @@ import (
 
 	client "github.com/dewebprotocol/malt-client/transport"
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/traversal"
 )
 
 func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
@@ -34,7 +36,7 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/buckets/bkt_one/authentication/query":
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String()})
+			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String(), Traversal: traversal.Traversal{Results: []engine.Result{}}})
 		case "/v1/buckets/bkt_one/head":
 			_ = json.NewEncoder(w).Encode(client.BucketRef{
 				BucketID: "bkt_one", Name: "main", Kind: "main", State: "open",
