@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
-	github.com/dewebprotocol/malt-core v0.0.9-rc.5
+	github.com/dewebprotocol/malt-core v0.0.9-rc.6
 	github.com/hanwen/go-fuse/v2 v2.11.0
 	github.com/ipfs/boxo v0.41.0
 	github.com/ipfs/go-block-format v0.2.4
