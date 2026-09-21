@@ -49,7 +49,7 @@ func BuildFixture(ctx context.Context, source *rq2fixture.SourceDefinition) (*rq
 	return fixture, nil
 }
 func fixtureEngine(backend string) (*engine.Engine, error) {
-	var scheme engine.ProfileVerifier
+	var scheme engine.Profile
 	var err error
 	switch backend {
 	case "kzg":

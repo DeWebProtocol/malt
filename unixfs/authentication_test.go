@@ -9,7 +9,7 @@ import (
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/journal"
 	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"strings"
 	"testing"
 	"time"
@@ -178,7 +178,7 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := authverifier.New(nil)
+	local, err := authbuiltin.NewVerifier(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

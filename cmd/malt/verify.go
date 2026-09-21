@@ -7,7 +7,7 @@ import (
 
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +52,7 @@ func runVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("decode authentication result: %w", err)
 	}
-	e, err := authverifier.New(nil)
+	e, err := authbuiltin.NewVerifier(nil)
 	if err != nil {
 		return err
 	}

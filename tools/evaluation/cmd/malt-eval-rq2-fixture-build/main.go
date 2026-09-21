@@ -200,7 +200,7 @@ func loopbackHost(host string) bool {
 }
 
 func buildBackend(ctx context.Context, backend string, source *rq2fixture.SourceDefinition) (*builtBackend, error) {
-	var scheme engine.ProfileVerifier
+	var scheme engine.Profile
 	var err error
 	switch backend {
 	case "kzg":

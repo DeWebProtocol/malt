@@ -16,7 +16,7 @@ import (
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -195,7 +195,7 @@ func NewReader(opts ReaderOptions) (Reader, error) {
 	verifier := opts.Verifier
 	if verifier == nil {
 		var err error
-		verifier, err = authverifier.New(nil)
+		verifier, err = authbuiltin.NewVerifier(nil)
 		if err != nil {
 			return nil, fmt.Errorf("initialize local authentication verifier: %w", err)
 		}

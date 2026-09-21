@@ -62,7 +62,7 @@ func TestCurrentProjectionAllFileOperationsAndSharedMeasuredChildren(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			var scheme engine.ProfileVerifier
+			var scheme engine.Profile
 			if backend == "kzg" {
 				scheme, err = kzg.NewScheme()
 			} else {
