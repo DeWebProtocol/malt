@@ -31,7 +31,7 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
-	authenticationverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authenticationbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -344,7 +344,7 @@ func bootstrapMALT(ctx context.Context, evaluation *gatewaytransport.Client, boo
 }
 
 func verifyFixture(ctx context.Context, client *http.Client, baseURL string, evaluation *gatewaytransport.Client, remote *transport.Client, unixRoot, maltRoot, payloadCID cid.Cid, payload []byte) error {
-	verifier, err := authenticationverifier.New(nil, maltcid.KZG4096)
+	verifier, err := authenticationbuiltin.NewVerifier(nil, maltcid.KZG4096)
 	if err != nil {
 		return err
 	}

@@ -378,7 +378,7 @@ func corruptOnlyBlob(t *testing.T, directory string, size int) {
 // Cache hits exercise real IPA proofs. The counter injects one verifier
 // failure so recovery cannot silently trust stored evidence.
 type countingVerifier struct {
-	commitment.IndexVerifier
+	commitment.Verifier
 	calls      int
 	rejectNext bool
 }
@@ -390,7 +390,7 @@ func (v *countingVerifier) VerifyIndex(root commitment.Value, index uint64, cell
 		v.rejectNext = false
 		return false, errors.New("invalid cached proof")
 	}
-	return v.IndexVerifier.VerifyIndex(root, index, cell, proof)
+	return v.Verifier.VerifyIndex(root, index, cell, proof)
 }
 func newCountingVerifier(t *testing.T) (*countingVerifier, *engine.Engine) {
 	t.Helper()
@@ -398,7 +398,7 @@ func newCountingVerifier(t *testing.T) (*countingVerifier, *engine.Engine) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counter := &countingVerifier{IndexVerifier: scheme}
+	counter := &countingVerifier{Verifier: scheme}
 	profiles := engine.NewRegistry()
 	if err := profiles.Register(counter); err != nil {
 		t.Fatal(err)

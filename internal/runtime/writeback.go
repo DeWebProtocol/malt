@@ -51,7 +51,7 @@ type writerFactory interface {
 
 type authenticationEngineFactory struct {
 	once    sync.Once
-	schemes []engine.ProfileVerifier
+	schemes []engine.Profile
 	err     error
 }
 
@@ -73,7 +73,7 @@ func (f *authenticationEngineFactory) New() (*engine.Engine, error) {
 			f.err = fmt.Errorf("initialize IPA writer: %w", err)
 			return
 		}
-		f.schemes = []engine.ProfileVerifier{kzgScheme, ipaScheme}
+		f.schemes = []engine.Profile{kzgScheme, ipaScheme}
 	})
 	if f.err != nil {
 		return nil, f.err

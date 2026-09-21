@@ -7,7 +7,7 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +108,7 @@ func plannerRawCID(t *testing.T, body []byte) cid.Cid {
 	return key
 }
 
-func mustKZG(t *testing.T) commitment.IndexCommitment {
+func mustKZG(t *testing.T) commitment.Backend {
 	t.Helper()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
@@ -127,9 +127,9 @@ type plannerFixture struct {
 	candidates map[string]protocol.AuthenticationCandidate
 }
 
-func newPlannerEnvironment(t *testing.T, layout unixfs.LayoutKind, scheme commitment.IndexCommitment) (*plannerFixture, *unixfs.AuthenticationAdapter) {
+func newPlannerEnvironment(t *testing.T, layout unixfs.LayoutKind, scheme commitment.Backend) (*plannerFixture, *unixfs.AuthenticationAdapter) {
 	t.Helper()
-	profile := scheme.(engine.ProfileVerifier)
+	profile := scheme.(engine.Profile)
 	profiles := engine.NewRegistry()
 	if err := profiles.Register(profile); err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func newPlannerEnvironment(t *testing.T, layout unixfs.LayoutKind, scheme commit
 	return f, creator
 }
 
-func newPlannerFixture(t *testing.T, layoutKind unixfs.LayoutKind, scheme commitment.IndexCommitment) *plannerFixture {
+func newPlannerFixture(t *testing.T, layoutKind unixfs.LayoutKind, scheme commitment.Backend) *plannerFixture {
 	t.Helper()
 	f, creator := newPlannerEnvironment(t, layoutKind, scheme)
 	f.oldPayload = f.blocks.putRaw(t, []byte("old body"))
@@ -167,7 +167,7 @@ func newPlannerFixture(t *testing.T, layoutKind unixfs.LayoutKind, scheme commit
 	return f
 }
 
-func newSharedHybridFixture(t *testing.T, scheme commitment.IndexCommitment) *plannerFixture {
+func newSharedHybridFixture(t *testing.T, scheme commitment.Backend) *plannerFixture {
 	t.Helper()
 	f, creator := newPlannerEnvironment(t, unixfs.LayoutHybridV1, scheme)
 	empty, err := unixfsmodel.EncodeDirectoryManifest(nil)
@@ -248,7 +248,7 @@ func (f *plannerFixture) resolve(t *testing.T, root cid.Cid, path string) (cid.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := authverifier.New(nil)
+	verifier, err := authbuiltin.NewVerifier(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestPlannerSelectsOnlyFinalStagedPayloads(t *testing.T) {
 		})
 	}
 }
-func plannerScheme(t *testing.T, backend string) commitment.IndexCommitment {
+func plannerScheme(t *testing.T, backend string) commitment.Backend {
 	t.Helper()
 	if backend == "kzg" {
 		return mustKZG(t)

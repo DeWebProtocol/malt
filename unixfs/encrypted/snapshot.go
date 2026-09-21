@@ -175,7 +175,7 @@ type recordingGraph struct {
 
 func newRecordingGraph(backend maltcid.BackendKind) (*recordingGraph, error) {
 	var scheme interface {
-		commitment.IndexCommitment
+		commitment.Backend
 		ProfileID() maltcid.ProfileID
 	}
 	var profile maltcid.ProfileID

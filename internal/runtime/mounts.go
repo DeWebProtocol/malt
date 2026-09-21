@@ -14,7 +14,7 @@ import (
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -322,7 +322,7 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 	if err != nil {
 		return nil, fmt.Errorf("open filesystem trust store: %w", err)
 	}
-	verifier, err := authverifier.New(nil)
+	verifier, err := authbuiltin.NewVerifier(nil)
 	if err != nil {
 		return nil, fmt.Errorf("initialize filesystem verifier: %w", err)
 	}

@@ -161,7 +161,7 @@ func (w *browserWriter) initialize(request initializeRequest) (initializeRespons
 		return initializeResponse{}, err
 	}
 	started := time.Now()
-	var scheme engine.ProfileVerifier
+	var scheme engine.Profile
 	if request.Backend == "kzg" {
 		scheme, err = kzg.NewScheme()
 	} else {

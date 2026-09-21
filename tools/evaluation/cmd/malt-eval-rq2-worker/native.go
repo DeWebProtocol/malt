@@ -41,7 +41,7 @@ func newNativeSession(config workerConfig, remote *transport.Client, evaluation 
 	if config.clientKind != rq2wire.ClientNative || config.lifecycle != rq2wire.LifecycleNativeLong {
 		return nil, fmt.Errorf("native worker requires native-long-lived coordinate")
 	}
-	var scheme engine.ProfileVerifier
+	var scheme engine.Profile
 	var err error
 	switch config.backend {
 	case "kzg":

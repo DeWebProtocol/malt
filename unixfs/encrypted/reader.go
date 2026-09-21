@@ -17,7 +17,7 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
-	authverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -96,7 +96,7 @@ func NewReader(opts ReaderOptions) (*Reader, error) {
 	verifier := opts.Verifier
 	if verifier == nil {
 		var err error
-		verifier, err = authverifier.New(nil)
+		verifier, err = authbuiltin.NewVerifier(nil)
 		if err != nil {
 			return nil, fmt.Errorf("initialize encrypted UnixFS verifier: %w", err)
 		}
