@@ -194,7 +194,15 @@ func (p *Planner) Plan(ctx context.Context, base cid.Cid, operations []journal.O
 		if err != nil {
 			return err
 		}
-		if !root.Equals(node.key) && !produced[root.KeyString()] {
+		if persisted, ok := bases[root.KeyString()]; ok {
+			// Reuse a verified before-image instead of adding a new lineage edge.
+			// Swapping sibling states must not emit B previous=A and A previous=B.
+			// A changed final Root still needs its original candidate in the batch
+			// so the durable receipt names the exact selected Root.
+			if node == tree && !root.Equals(base) {
+				candidates = append(candidates, persisted)
+			}
+		} else if !produced[root.KeyString()] {
 			candidates = append(candidates, candidate)
 			produced[root.KeyString()] = true
 		}
