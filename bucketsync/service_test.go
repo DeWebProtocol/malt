@@ -12,20 +12,20 @@ import (
 	"time"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	"github.com/dewebprotocol/malt-client/transport"
+	transport "github.com/dewebprotocol/malt-client/transport/capability"
 	cid "github.com/ipfs/go-cid"
 )
 
 type fakeGateway struct {
-	head     transport.BucketRef
-	result   transport.BucketPushResult
+	head     transport.ObservedHead
+	result   transport.ApplyResult
 	headErr  error
 	pushErr  error
 	onHead   func()
-	lastPush transport.BucketPushRequest
+	lastPush transport.ApplyRequest
 }
 
-func (f *fakeGateway) BucketHead(context.Context) (*transport.BucketRef, error) {
+func (f *fakeGateway) ObserveHead(context.Context) (*transport.ObservedHead, error) {
 	if f.onHead != nil {
 		f.onHead()
 	}
@@ -36,7 +36,7 @@ func (f *fakeGateway) BucketHead(context.Context) (*transport.BucketRef, error) 
 	return &value, nil
 }
 
-func (f *fakeGateway) PushBucket(_ context.Context, request transport.BucketPushRequest) (*transport.BucketPushResult, error) {
+func (f *fakeGateway) ApplyCandidate(_ context.Context, request transport.ApplyRequest) (*transport.ApplyResult, error) {
 	f.lastPush = request
 	if f.pushErr != nil {
 		return nil, f.pushErr
@@ -52,7 +52,7 @@ func TestPushStashesBeforeFetchAndKeepsOriginalBase(t *testing.T) {
 	mergedRoot := testCID(t, "merged")
 	now := time.Now().UTC()
 	gateway := &fakeGateway{head: testHead("cmt_base", baseRoot, 1, now)}
-	service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
+	service, err := OpenRemote(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestPushStashesBeforeFetchAndKeepsOriginalBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	gateway.head = testHead("cmt_remote", remoteRoot, 2, now)
-	gateway.result = transport.BucketPushResult{
+	gateway.result = transport.ApplyResult{
 		Status:    "merged",
 		Head:      testHead("cmt_merge", mergedRoot, 3, now),
 		Candidate: testCommit("cmt_candidate", candidateRoot, baseRoot, []string{"cmt_base"}, "local edit", now),
@@ -106,11 +106,11 @@ func TestBranchWorkspacesArePersistedIndependently(t *testing.T) {
 	branchHead.Name = "heads/team/photos"
 	branchHead.Kind = "explicit"
 	path := filepath.Join(t.TempDir(), "buckets.json")
-	mainService, err := OpenBranch(path, &fakeGateway{head: mainHead}, "bkt_one", "main")
+	mainService, err := OpenRemoteBranch(path, &fakeGateway{head: mainHead}, "bkt_one", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	branchService, err := OpenBranch(path, &fakeGateway{head: branchHead}, "bkt_one", "heads/team/photos")
+	branchService, err := OpenRemoteBranch(path, &fakeGateway{head: branchHead}, "bkt_one", "heads/team/photos")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestFailedFetchLeavesPendingStash(t *testing.T) {
 	candidateRoot := testCID(t, "candidate")
 	now := time.Now().UTC()
 	gateway := &fakeGateway{head: testHead("cmt_base", baseRoot, 1, now)}
-	service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
+	service, err := OpenRemote(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestRestorePendingReinstatesExactFrozenPushIdentity(t *testing.T) {
 	now := time.Now().UTC()
 	gateway := &fakeGateway{head: testHead("cmt_base", baseRoot, 1, now)}
 	path := filepath.Join(t.TempDir(), "buckets.json")
-	service, err := Open(path, gateway, "bkt_one")
+	service, err := OpenRemote(path, gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestRestorePendingReinstatesExactFrozenPushIdentity(t *testing.T) {
 	if restored.ID != stash.ID || restored.PushID != stash.PushID || !restored.RequestFrozen {
 		t.Fatalf("restored stash = %#v", restored)
 	}
-	reopened, err := Open(path, gateway, "bkt_one")
+	reopened, err := OpenRemote(path, gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestRestorePendingReinstatesExactFrozenPushIdentity(t *testing.T) {
 
 func TestPushRequiresAnObservedBase(t *testing.T) {
 	gateway := &fakeGateway{}
-	service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
+	service, err := OpenRemote(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestPushRequiresCandidateStagedAgainstCapturedBase(t *testing.T) {
 	candidateRoot := testCID(t, "candidate")
 	now := time.Now().UTC()
 	gateway := &fakeGateway{head: testHead("cmt_base", baseRoot, 1, now)}
-	service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
+	service, err := OpenRemote(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,15 +260,15 @@ func TestPushRequiresCandidateStagedAgainstCapturedBase(t *testing.T) {
 	if _, err := service.Stage(candidateRoot, captured, cid.Undef, ""); err != nil {
 		t.Fatal(err)
 	}
-	gateway.result = transport.BucketPushResult{
+	gateway.result = transport.ApplyResult{
 		Status: "branched", Head: gateway.head,
 		Candidate: testCommit("cmt_candidate", candidateRoot, capturedCID(t, captured.Root), []string{captured.CommitID}, "", now),
 		Commit:    testCommit("cmt_candidate", candidateRoot, capturedCID(t, captured.Root), []string{captured.CommitID}, "", now),
-		Branch: func() *transport.BucketRef {
+		Branch: func() *transport.ObservedHead {
 			value := testHead("cmt_candidate", candidateRoot, 1, now)
 			value.Name, value.Kind = "conflicts/alice/one", "conflict"
 			return &value
-		}(), MergeBase: captured.Root, Conflicts: []transport.BucketConflict{{Coordinate: "docs/readme"}},
+		}(), MergeBase: captured.Root, Conflicts: []transport.Conflict{{Coordinate: "docs/readme"}},
 	}
 	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, ""); err != nil {
 		t.Fatal(err)
@@ -279,19 +279,19 @@ func TestPushRequiresCandidateStagedAgainstCapturedBase(t *testing.T) {
 }
 
 type delayedHeadGateway struct {
-	head    transport.BucketRef
+	head    transport.ObservedHead
 	started chan<- struct{}
 	release <-chan struct{}
 }
 
-func (g *delayedHeadGateway) BucketHead(context.Context) (*transport.BucketRef, error) {
+func (g *delayedHeadGateway) ObserveHead(context.Context) (*transport.ObservedHead, error) {
 	g.started <- struct{}{}
 	<-g.release
 	value := g.head
 	return &value, nil
 }
 
-func (*delayedHeadGateway) PushBucket(context.Context, transport.BucketPushRequest) (*transport.BucketPushResult, error) {
+func (*delayedHeadGateway) ApplyCandidate(context.Context, transport.ApplyRequest) (*transport.ApplyResult, error) {
 	return nil, errors.New("unexpected push")
 }
 
@@ -299,7 +299,7 @@ func TestConcurrentPullResponsesDoNotRegressWorkspaceRevision(t *testing.T) {
 	now := time.Now().UTC()
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	initial := &fakeGateway{head: testHead("cmt_one", testCID(t, "one"), 1, now)}
-	service, err := Open(path, initial, "bkt_one")
+	service, err := OpenRemote(path, initial, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,11 +312,11 @@ func TestConcurrentPullResponsesDoNotRegressWorkspaceRevision(t *testing.T) {
 	olderGateway := &delayedHeadGateway{
 		head: testHead("cmt_two", testCID(t, "two"), 2, now), started: started, release: release,
 	}
-	older, err := Open(path, olderGateway, "bkt_one")
+	older, err := OpenRemote(path, olderGateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := Open(path, &fakeGateway{head: testHead("cmt_three", testCID(t, "three"), 3, now)}, "bkt_one")
+	newer, err := OpenRemote(path, &fakeGateway{head: testHead("cmt_three", testCID(t, "three"), 3, now)}, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,18 +348,18 @@ func TestConcurrentPullResponsesDoNotRegressWorkspaceRevision(t *testing.T) {
 }
 
 type delayedPushGateway struct {
-	head    transport.BucketRef
-	result  transport.BucketPushResult
+	head    transport.ObservedHead
+	result  transport.ApplyResult
 	started chan<- struct{}
 	release <-chan struct{}
 }
 
-func (g *delayedPushGateway) BucketHead(context.Context) (*transport.BucketRef, error) {
+func (g *delayedPushGateway) ObserveHead(context.Context) (*transport.ObservedHead, error) {
 	value := g.head
 	return &value, nil
 }
 
-func (g *delayedPushGateway) PushBucket(_ context.Context, _ transport.BucketPushRequest) (*transport.BucketPushResult, error) {
+func (g *delayedPushGateway) ApplyCandidate(_ context.Context, _ transport.ApplyRequest) (*transport.ApplyResult, error) {
 	g.started <- struct{}{}
 	<-g.release
 	value := g.result
@@ -372,7 +372,7 @@ func TestDelayedPushResponseDoesNotRegressNewerObservedHead(t *testing.T) {
 	baseRoot := testCID(t, "base")
 	candidateRoot := testCID(t, "candidate")
 	baseHead := testHead("cmt_one", baseRoot, 1, now)
-	initial, err := Open(path, &fakeGateway{head: baseHead}, "bkt_one")
+	initial, err := OpenRemote(path, &fakeGateway{head: baseHead}, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,8 +391,8 @@ func TestDelayedPushResponseDoesNotRegressNewerObservedHead(t *testing.T) {
 	release := make(chan struct{})
 	pushHead := testHead("cmt_two", candidateRoot, 2, now)
 	candidateCommit := testCommit("cmt_two", candidateRoot, baseRoot, []string{"cmt_one"}, "delayed push", now)
-	pusher, err := Open(path, &delayedPushGateway{
-		head: baseHead, result: transport.BucketPushResult{Status: "fast_forward", Head: pushHead, Candidate: candidateCommit, Commit: candidateCommit},
+	pusher, err := OpenRemote(path, &delayedPushGateway{
+		head: baseHead, result: transport.ApplyResult{Status: "fast_forward", Head: pushHead, Candidate: candidateCommit, Commit: candidateCommit},
 		started: started, release: release,
 	}, "bkt_one")
 	if err != nil {
@@ -408,7 +408,7 @@ func TestDelayedPushResponseDoesNotRegressNewerObservedHead(t *testing.T) {
 	}()
 	<-started
 	newerHead := testHead("cmt_three", testCID(t, "newer"), 3, now)
-	observer, err := Open(path, &fakeGateway{head: newerHead}, "bkt_one")
+	observer, err := OpenRemote(path, &fakeGateway{head: newerHead}, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestInvalidPushResultLeavesPendingStash(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	baseHead := testHead("opaque-base", baseRoot, 1, now)
 	gateway := &fakeGateway{head: baseHead}
-	service, err := Open(path, gateway, "bkt_one")
+	service, err := OpenRemote(path, gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestInvalidPushResultLeavesPendingStash(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := testCommit("opaque-candidate", candidateRoot, baseRoot, []string{"opaque-base"}, "local edit", now)
-	gateway.result = transport.BucketPushResult{
+	gateway.result = transport.ApplyResult{
 		Status: "fast_forward", Head: testHead("another-version", candidateRoot, 2, now), Candidate: candidate, Commit: candidate,
 	}
 	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, "local edit"); err == nil {
@@ -477,19 +477,19 @@ func TestPushResultsDoNotOrderAgainstDescriptiveBaseRevision(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		result     transport.BucketPushResult
+		result     transport.ApplyResult
 		wantStatus string
 		wantStash  int
 	}{
 		{
 			name: "fast-forward",
-			result: transport.BucketPushResult{
+			result: transport.ApplyResult{
 				Status: "fast_forward", Head: testHead(candidate.ID, candidateRoot, 2, now), Candidate: candidate, Commit: candidate,
 			},
 		},
 		{
 			name: "merged",
-			result: transport.BucketPushResult{
+			result: transport.ApplyResult{
 				Status:    "merged",
 				Head:      testHead("opaque-merge", mergedRoot, 2, now),
 				Candidate: candidate,
@@ -499,14 +499,14 @@ func TestPushResultsDoNotOrderAgainstDescriptiveBaseRevision(t *testing.T) {
 		},
 		{
 			name: "branched",
-			result: transport.BucketPushResult{
+			result: transport.ApplyResult{
 				Status: "branched", Head: testHead("opaque-base", baseRoot, 2, now), Candidate: candidate, Commit: candidate,
-				Branch: func() *transport.BucketRef {
+				Branch: func() *transport.ObservedHead {
 					value := testHead(candidate.ID, candidateRoot, 1, now)
 					value.Name, value.Kind = "conflicts/alice/one", "conflict"
 					return &value
 				}(),
-				MergeBase: baseRoot.String(), Conflicts: []transport.BucketConflict{{Coordinate: "docs/readme"}},
+				MergeBase: baseRoot.String(), Conflicts: []transport.Conflict{{Coordinate: "docs/readme"}},
 			},
 			wantStatus: "branched",
 			wantStash:  1,
@@ -518,7 +518,7 @@ func TestPushResultsDoNotOrderAgainstDescriptiveBaseRevision(t *testing.T) {
 			// The captured revision is deliberately unrelated to the result
 			// revision. It describes the observation and is not a CAS token.
 			gateway := &fakeGateway{head: testHead("opaque-base", baseRoot, 50, now), result: test.result}
-			service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
+			service, err := OpenRemote(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -559,7 +559,7 @@ func TestPushRetryAfterResponseLossReusesFrozenRequest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	baseHead := testHead("opaque-base", baseRoot, 1, now)
 	firstGateway := &fakeGateway{head: baseHead, pushErr: errors.New("connection reset after request commit")}
-	first, err := Open(path, firstGateway, "bkt_one")
+	first, err := OpenRemote(path, firstGateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,25 +577,25 @@ func TestPushRetryAfterResponseLossReusesFrozenRequest(t *testing.T) {
 		t.Fatal("Push succeeded despite response loss")
 	}
 	original := firstGateway.lastPush
-	if original.PushID == "" || original.Message != "first request" {
+	if original.OperationID == "" || original.Message != "first request" {
 		t.Fatalf("first push request = %#v", original)
 	}
 
 	candidate := testCommit("opaque-candidate", candidateRoot, baseRoot, []string{"opaque-base"}, "first request", now)
 	replayGateway := &fakeGateway{
 		head: testHead("opaque-candidate", candidateRoot, 2, now),
-		result: transport.BucketPushResult{
+		result: transport.ApplyResult{
 			Status: "fast_forward", Head: testHead("opaque-candidate", candidateRoot, 2, now), Candidate: candidate, Commit: candidate,
 		},
 	}
-	reopened, err := Open(path, replayGateway, "bkt_one")
+	reopened, err := OpenRemote(path, replayGateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reopened.Push(t.Context(), candidateRoot, cid.Undef, "different retry"); err == nil || !strings.Contains(err.Error(), "retry message") {
 		t.Fatalf("changed retry error = %v", err)
 	}
-	if replayGateway.lastPush.PushID != "" {
+	if replayGateway.lastPush.OperationID != "" {
 		t.Fatal("changed retry reached the Gateway")
 	}
 	if _, err := reopened.Push(t.Context(), candidateRoot, cid.Undef, ""); err != nil {
@@ -618,7 +618,7 @@ func TestVersionTwoStashFreezesRequestOnFirstPush(t *testing.T) {
 	candidateRoot := testCID(t, "candidate")
 	now := time.Now().UTC()
 	gateway := &fakeGateway{head: testHead("opaque-base", baseRoot, 1, now), pushErr: errors.New("offline")}
-	service, err := Open(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
+	service, err := OpenRemote(filepath.Join(t.TempDir(), "buckets.json"), gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,11 +675,11 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	candidate.ChangeSetCID = changeSet.String()
 	gateway := &fakeGateway{
 		head: testHead("opaque-base", baseRoot, 1, now),
-		result: transport.BucketPushResult{
+		result: transport.ApplyResult{
 			Status: "fast_forward", Head: testHead(candidate.ID, candidateRoot, 2, now), Candidate: candidate, Commit: candidate,
 		},
 	}
-	service, err := Open(path, gateway, "bkt_one")
+	service, err := OpenRemote(path, gateway, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +692,7 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, "message B"); err == nil || !strings.Contains(err.Error(), "retry message") {
 		t.Fatalf("changed migrated retry error = %v", err)
 	}
-	if gateway.lastPush.PushID != "" {
+	if gateway.lastPush.OperationID != "" {
 		t.Fatal("changed migrated retry reached Gateway")
 	}
 	afterRejected := readPersistedState(t, path).Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
@@ -703,7 +703,7 @@ func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
 	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, ""); err != nil {
 		t.Fatal(err)
 	}
-	if gateway.lastPush.Message != "message A" || gateway.lastPush.ChangeSetCID != changeSet.String() || gateway.lastPush.PushID != "push-original" || gateway.lastPush.BaseCommit != base.CommitID || gateway.lastPush.BaseRoot != base.Root || gateway.lastPush.BaseRevision != base.Revision {
+	if gateway.lastPush.Message != "message A" || gateway.lastPush.ChangeSetCID != changeSet.String() || gateway.lastPush.OperationID != "push-original" || gateway.lastPush.BaseCommit != base.CommitID || gateway.lastPush.BaseRoot != base.Root || gateway.lastPush.BaseRevision != base.Revision {
 		t.Fatalf("migrated retry request = %#v", gateway.lastPush)
 	}
 }
@@ -723,7 +723,7 @@ func TestVersionOneNeverSentPendingStashIsConservativelyFrozen(t *testing.T) {
 		UpdatedAt: now,
 	})
 
-	service, err := Open(path, &fakeGateway{}, "bkt_one")
+	service, err := OpenRemote(path, &fakeGateway{}, "bkt_one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -755,14 +755,14 @@ func TestVersionTwoMissingRequestFrozenIsRejected(t *testing.T) {
 		UpdatedAt: now,
 	})
 
-	if _, err := Open(path, &fakeGateway{}, "bkt_one"); err == nil || !strings.Contains(err.Error(), "lacks explicit request_frozen") {
+	if _, err := OpenRemote(path, &fakeGateway{}, "bkt_one"); err == nil || !strings.Contains(err.Error(), "lacks explicit request_frozen") {
 		t.Fatalf("Open error for incomplete version 2 state = %v", err)
 	}
 }
 
-func testHead(commit string, root cid.Cid, revision uint64, now time.Time) transport.BucketRef {
-	return transport.BucketRef{
-		BucketID: "bkt_one", Name: "main", Kind: "main", State: "open", CommitID: commit,
+func testHead(commit string, root cid.Cid, revision uint64, now time.Time) transport.ObservedHead {
+	return transport.ObservedHead{
+		DatasetID: "bkt_one", Name: "main", Kind: "main", State: "open", CommitID: commit,
 		Root: root.String(), Revision: revision, CreatedAt: now, UpdatedAt: now,
 	}
 }
@@ -845,13 +845,28 @@ func capturedCID(t *testing.T, value string) cid.Cid {
 	return parsed
 }
 
-func testCommit(id string, root, baseRoot cid.Cid, parents []string, message string, now time.Time) transport.BucketCommit {
+func testCommit(id string, root, baseRoot cid.Cid, parents []string, message string, now time.Time) transport.Commit {
 	base := ""
 	if baseRoot.Defined() {
 		base = baseRoot.String()
 	}
-	return transport.BucketCommit{
-		ID: id, BucketID: "bkt_one", Root: root.String(), Parents: parents, BaseRoot: base,
+	return transport.Commit{
+		ID: id, DatasetID: "bkt_one", Root: root.String(), Parents: parents, BaseRoot: base,
 		Author: "alice", Message: message, CreatedAt: now,
 	}
+}
+
+func testDatasetBinding(head transport.ObservedHead) transport.DatasetBinding {
+	branch := strings.TrimPrefix(head.Name, "heads/")
+	if branch == "" {
+		branch = "main"
+	}
+	return transport.DatasetBinding{DatasetID: "bkt_one", Branch: branch}
+}
+func (f *fakeGateway) DatasetBinding() transport.DatasetBinding { return testDatasetBinding(f.head) }
+func (g *delayedHeadGateway) DatasetBinding() transport.DatasetBinding {
+	return testDatasetBinding(g.head)
+}
+func (g *delayedPushGateway) DatasetBinding() transport.DatasetBinding {
+	return testDatasetBinding(g.head)
 }

@@ -19,12 +19,12 @@ type capturingRootCreator struct {
 	bindings map[string]string
 }
 
-func (c *capturingRootCreator) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
+func (c *capturingRootCreator) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
 	c.bindings = make(map[string]string, len(bindings))
 	for path, target := range bindings {
 		c.bindings[path] = target
 	}
-	return c.realRemote.CreateStagedRoot(ctx, bindings)
+	return c.realRemote.UpdateStagedRoot(ctx, previous, bindings)
 }
 
 func (b *flushCountingBlocks) Flush(context.Context) error {

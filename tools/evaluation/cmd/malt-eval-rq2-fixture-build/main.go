@@ -2,7 +2,7 @@
 // browser source fixture for paper RQ2. It computes KZG and IPA complete roots
 // from declared bytes, uploads every payload, bootstraps each disposable
 // Gateway through the secret evaluation capability, re-fetches and verifies
-// both complete views, and only then atomically publishes one strict fixture.
+// both authentication graphs, and only then atomically publishes one strict fixture.
 package main
 
 import (
@@ -23,21 +23,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	listtree "github.com/dewebprotocol/malt-core/auth/semantic/list/tree"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -53,18 +47,11 @@ type gatewayRegistration struct {
 	bootstrapToken string
 }
 
-type builtObject struct {
-	kind    arcset.Kind
-	root    cid.Cid
-	entries []gatewaytransport.BootstrapEntry
-	commit  mutation.CommitDescriptor
-}
-
 type builtBackend struct {
 	backend string
 	root    cid.Cid
-	scheme  commitment.IndexCommitment
-	objects []builtObject
+	engine  *engine.Engine
+	objects []protocol.AuthenticationCandidate
 }
 
 type artifactDescriptor struct {
@@ -213,74 +200,33 @@ func loopbackHost(host string) bool {
 }
 
 func buildBackend(ctx context.Context, backend string, source *rq2fixture.SourceDefinition) (*builtBackend, error) {
-	var scheme commitment.IndexCommitment
+	var scheme engine.ProfileVerifier
 	var err error
-	if backend == "kzg" {
+	switch backend {
+	case "kzg":
 		scheme, err = kzg.NewScheme()
-	} else if backend == "ipa" {
+	case "ipa":
 		scheme, err = ipa.NewScheme()
-	} else {
-		return nil, fmt.Errorf("unsupported RQ2 backend %q", backend)
+	default:
+		return nil, fmt.Errorf("unsupported backend %q", backend)
 	}
 	if err != nil {
 		return nil, err
 	}
-	store := materializermemory.New(true)
-	lister, err := listtree.NewList(scheme, store)
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		return nil, err
+	}
+	e := engine.New(input.DefaultRegistry(), profiles)
+	candidates, err := source.Candidates(ctx, e, backend)
 	if err != nil {
 		return nil, err
 	}
-	mapper, err := mappingradix.NewMap(scheme, store)
+	root, err := cid.Parse(candidates[len(candidates)-1].Root)
 	if err != nil {
 		return nil, err
 	}
-	bindings := make(map[string]cid.Cid, len(source.DirectFiles)+len(source.ListFiles))
-	for _, file := range source.DirectFiles {
-		key, err := rawCID(file.Bytes)
-		if err != nil {
-			return nil, err
-		}
-		bindings[file.Path] = key
-	}
-	objects := make([]builtObject, 0, len(source.ListFiles)+1)
-	for index, file := range source.ListFiles {
-		chunks := make([]cid.Cid, len(file.Chunks))
-		entries := make([]gatewaytransport.BootstrapEntry, len(file.Chunks))
-		for chunkIndex, chunk := range file.Chunks {
-			key, err := rawCID(chunk.Bytes)
-			if err != nil {
-				return nil, err
-			}
-			chunks[chunkIndex] = key
-			coordinate := chunk.Index
-			entries[chunkIndex] = gatewaytransport.BootstrapEntry{Index: &coordinate, Target: key}
-		}
-		root, err := lister.CommitFixed(ctx, fmt.Sprintf("rq2-list-%03d", index), chunks, file.ChunkSize, file.TotalSize)
-		if err != nil {
-			return nil, err
-		}
-		bindings[file.Path] = root
-		objects = append(objects, builtObject{
-			kind: arcset.KindList, root: root, entries: entries,
-			commit: mutation.CommitDescriptor{FixedList: &mutation.FixedListCommit{ChunkSize: file.ChunkSize, TotalSize: file.TotalSize}},
-		})
-	}
-	root, err := mapper.Commit(ctx, "rq2-root", mapping.NewViewFrom(bindings))
-	if err != nil {
-		return nil, err
-	}
-	paths := make([]string, 0, len(bindings))
-	for path := range bindings {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	rootEntries := make([]gatewaytransport.BootstrapEntry, len(paths))
-	for index, pathValue := range paths {
-		path := pathValue
-		rootEntries[index] = gatewaytransport.BootstrapEntry{Path: &path, Target: bindings[pathValue]}
-	}
-	objects = append(objects, builtObject{kind: arcset.KindMap, root: root, entries: rootEntries})
-	return &builtBackend{backend: backend, root: root, scheme: scheme, objects: objects}, nil
+	return &builtBackend{backend: backend, root: root, engine: e, objects: candidates}, nil
 }
 
 func sourceBlocks(source *rq2fixture.SourceDefinition) ([]transport.Block, error) {
@@ -333,50 +279,49 @@ func initializeGateway(ctx context.Context, registration gatewayRegistration, bu
 		return err
 	}
 	if health.Status != "ok" || health.EvaluationInstanceToken != registration.instanceToken || health.BlobBackend != "embedded" || health.ArcTableMode != "versioned" ||
-		health.CommitmentBackends != "ipa,kzg" || health.ClientRootExactAcceptance != "true" || health.EvaluationClientRootBootstrap != gatewaytransport.BootstrapProfile {
+		health.CommitmentBackends != "ipa,kzg" || health.AuthenticationExactAcceptance != "true" || health.EvaluationAuthenticationBootstrap != gatewaytransport.BootstrapProfile {
 		return fmt.Errorf("Gateway health does not expose the exact clean RQ2 bootstrap boundary")
 	}
-	results, err := remote.PutBatch(ctx, blocks)
-	if err != nil {
-		return fmt.Errorf("upload RQ2 source blocks: %w", err)
-	}
-	if len(results) != len(blocks) {
-		return fmt.Errorf("upload RQ2 source blocks returned %d results, want %d", len(results), len(blocks))
-	}
-	for index, block := range blocks {
-		expected, err := rawCID(block.Data)
-		if err != nil || !results[index].CID.Equals(expected) {
-			return fmt.Errorf("Gateway returned a mismatched source block CID")
-		}
-	}
-	backendKind := maltcid.BackendKind(build.backend)
-	for index, object := range build.objects {
-		result, err := evaluation.BootstrapEvaluationObject(ctx, registration.bootstrapToken, gatewaytransport.BootstrapObject{
-			OperationID: fmt.Sprintf("rq2-%s-bootstrap-%03d", build.backend, index), Kind: object.kind,
-			Backend: backendKind, ExpectedRoot: object.root, Entries: object.entries, Commit: object.commit,
-		})
+	for offset := 0; offset < len(blocks); offset += transport.MaxCASBatchBlocks {
+		part := blocks[offset:min(len(blocks), offset+transport.MaxCASBatchBlocks)]
+		results, err := remote.PutBatch(ctx, part)
 		if err != nil {
-			return fmt.Errorf("bootstrap object %d: %w", index, err)
+			return fmt.Errorf("upload RQ2 source blocks: %w", err)
 		}
-		if !result.Root.Equals(object.root) {
-			return fmt.Errorf("bootstrap object %d returned root %s, want %s", index, result.Root, object.root)
+		if len(results) != len(part) {
+			return fmt.Errorf("source upload result count differs")
+		}
+		for i, block := range part {
+			expected, err := rawCID(block.Data)
+			if err != nil || !results[i].CID.Equals(expected) {
+				return fmt.Errorf("source upload returned a mismatched CID")
+			}
 		}
 	}
-	view, err := remote.FetchUpdateView(ctx, build.root, &protocol.UpdateViewBounds{MaxObjects: 4096, MaxTotalEntries: 65536, MaxDepth: 256})
-	if err != nil {
-		return fmt.Errorf("fetch bootstrapped complete update view: %w", err)
+	for i, candidate := range build.objects {
+		result, err := evaluation.BootstrapEvaluationObject(ctx, registration.bootstrapToken, gatewaytransport.BootstrapObject{OperationID: fmt.Sprintf("rq2-%s-bootstrap-%03d", build.backend, i), Candidate: candidate})
+		if err != nil {
+			return fmt.Errorf("bootstrap candidate %d: %w", i, err)
+		}
+		if result.Root.String() != candidate.Root {
+			return fmt.Errorf("bootstrap candidate %d returned an unexpected Root", i)
+		}
 	}
-	runtime, err := clientwriter.NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{backendKind: build.scheme})
+	session, err := authenticationgraph.New(evaluation, build.engine)
 	if err != nil {
 		return err
 	}
-	verified, err := runtime.VerifyUpdateView(ctx, view.View)
-	if err != nil {
-		return fmt.Errorf("verify bootstrapped complete update view: %w", err)
+	if _, err := session.Load(ctx, build.root); err != nil {
+		return fmt.Errorf("import bootstrapped authentication graph: %w", err)
 	}
-	if err := fixture.ValidateInitialView(verified.View, build.backend); err != nil {
+	view, err := session.Snapshot()
+	if err != nil {
+		return err
+	}
+	if err := fixture.ValidateInitialGraph(view, build.backend); err != nil {
 		return fmt.Errorf("bootstrapped source/root oracle: %w", err)
 	}
+
 	return nil
 }
 

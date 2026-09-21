@@ -12,24 +12,19 @@ import (
 	"sync"
 
 	"github.com/dewebprotocol/malt-client/application"
-	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
 	writebackapp "github.com/dewebprotocol/malt-client/application/writeback"
 	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
-	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	unixfsclientroot "github.com/dewebprotocol/malt-client/unixfs/clientroot"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
+	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -40,8 +35,8 @@ type gatewayWritableRemote interface {
 	Get(context.Context, cid.Cid) ([]byte, error)
 	Put(context.Context, []byte) (cid.Cid, error)
 	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
-	FetchUpdateView(context.Context, cid.Cid, *protocol.UpdateViewBounds) (*gatewayclient.UpdateViewResponse, error)
-	SubmitClientRootResult(context.Context, clientwriter.ComputeResult) (*gatewayclient.ClientRootResponse, error)
+	AuthenticationCandidate(context.Context, cid.Cid) (*protocol.AuthenticationCandidate, error)
+	transportcap.AuthenticationBatch
 }
 
 type gatewayWritableBlocks interface {
@@ -51,21 +46,21 @@ type gatewayWritableBlocks interface {
 }
 
 type writerFactory interface {
-	New() (*clientwriter.Runtime, error)
+	New() (*engine.Engine, error)
 }
 
-type clientRootWriterFactory struct {
+type authenticationEngineFactory struct {
 	once    sync.Once
-	schemes map[maltcid.BackendKind]commitment.IndexCommitment
+	schemes []engine.ProfileVerifier
 	err     error
 }
 
-// New returns an isolated speculative materializer over shared immutable
+// New returns an authentication engine over shared immutable
 // commitment parameters. The compact IPA profile changes only local execution
 // memory and performance; it does not change roots, proofs, or transcripts.
-func (f *clientRootWriterFactory) New() (*clientwriter.Runtime, error) {
+func (f *authenticationEngineFactory) New() (*engine.Engine, error) {
 	if f == nil {
-		return nil, fmt.Errorf("client-root writer factory is nil")
+		return nil, fmt.Errorf("authentication engine factory is nil")
 	}
 	f.once.Do(func() {
 		kzgScheme, err := kzg.NewScheme()
@@ -78,19 +73,18 @@ func (f *clientRootWriterFactory) New() (*clientwriter.Runtime, error) {
 			f.err = fmt.Errorf("initialize IPA writer: %w", err)
 			return
 		}
-		f.schemes = map[maltcid.BackendKind]commitment.IndexCommitment{
-			maltcid.BackendKindKZG: kzgScheme,
-			maltcid.BackendKindIPA: ipaScheme,
-		}
+		f.schemes = []engine.ProfileVerifier{kzgScheme, ipaScheme}
 	})
 	if f.err != nil {
 		return nil, f.err
 	}
-	schemes := make(map[maltcid.BackendKind]commitment.IndexCommitment, len(f.schemes))
-	for backend, scheme := range f.schemes {
-		schemes[backend] = scheme
+	profiles := engine.NewRegistry()
+	for _, scheme := range f.schemes {
+		if err := profiles.Register(scheme); err != nil {
+			return nil, err
+		}
 	}
-	return clientwriter.NewRuntime(materializermemory.New(true), schemes)
+	return engine.New(input.DefaultRegistry(), profiles), nil
 }
 
 type gatewayWritableBindingOptions struct {
@@ -121,10 +115,9 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if spec.WritePolicy != filesystemmount.WriteBack || spec.DatasetID != opts.View.DatasetID || spec.Branch != opts.View.Branch || !opts.View.Root.Defined() {
 		return nil, fmt.Errorf("Gateway writable binding Spec and View do not match")
 	}
-	backend := maltcid.BackendKindOf(opts.View.Root)
-	if maltcid.SemanticKindOf(opts.View.Root) != maltcid.SemanticKindMap ||
-		(backend != maltcid.BackendKindKZG && backend != maltcid.BackendKindIPA) {
-		return nil, fmt.Errorf("Gateway writable binding accepted root is not a supported typed MALT Map")
+	descriptor, _, err := maltcid.ParseRoot(opts.View.Root)
+	if err != nil || descriptor.Layout != maltcid.Prefix {
+		return nil, fmt.Errorf("Gateway writable binding requires an authenticated Prefix Root")
 	}
 	if nilInterface(opts.Base) || nilInterface(opts.Remote) || nilInterface(opts.Roots) || nilInterface(opts.WriterFactory) {
 		return nil, fmt.Errorf("Gateway writable binding requires base, remote, roots, and writer factory")
@@ -141,10 +134,7 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if err != nil {
 		return nil, err
 	}
-	staged, err := staging.New(staging.Options{
-		Base: opts.Base, CacheDirectory: cacheDirectory, JournalPath: journalPath,
-		MaxStagedFileBytes: opts.MaxStagedFileBytes,
-	})
+	staged, err := staging.New(staging.Options{Base: opts.Base, CacheDirectory: cacheDirectory, JournalPath: journalPath, MaxStagedFileBytes: opts.MaxStagedFileBytes})
 	if err != nil {
 		return nil, fmt.Errorf("open filesystem write-back staging: %w", err)
 	}
@@ -152,11 +142,11 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if err := ensureWritableLayoutState(filepath.Join(filepath.Dir(journalPath), "layout.json"), spec); err != nil {
 		return binding, fmt.Errorf("bind filesystem write-back layout: %w", err)
 	}
-	planner, err := unixfsclientroot.New(layout, blocks)
+	e, err := opts.WriterFactory.New()
 	if err != nil {
 		return binding, err
 	}
-	writer, err := opts.WriterFactory.New()
+	planner, err := unixfsplanner.New(layout, blocks, opts.Remote, e)
 	if err != nil {
 		return binding, err
 	}
@@ -168,37 +158,8 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 	if source == "" {
 		source = gatewayWritebackSource
 	}
-	replayOptions := writebackapp.Options{
-		Queue: staged, Payloads: blocks, Remote: gatewayClientRootRemote{client: opts.Remote},
-		Writer: writer, Planner: planner, Roots: roots, TrustAlias: spec.TrustAlias, Source: source,
-	}
-	if layout == unixfs.LayoutRootedV1 {
-		remote, ok := opts.Remote.(transportcap.AuthenticationWriter)
-		if !ok {
-			return binding, fmt.Errorf("rooted writeback needs authentication transport")
-		}
-		profiles := engine.NewRegistry()
-		k, err := kzg.NewScheme()
-		if err != nil {
-			return binding, err
-		}
-		if err = profiles.Register(k); err != nil {
-			return binding, err
-		}
-		i, err := ipa.NewCommitterScheme(ipa.ProfileCompact)
-		if err != nil {
-			return binding, err
-		}
-		if err = profiles.Register(i); err != nil {
-			return binding, err
-		}
-		planner, err := unixfsclientroot.NewAuthentication(blocks, remote, engine.New(input.DefaultRegistry(), profiles))
-		if err != nil {
-			return binding, err
-		}
-		replayOptions.Authentication = &writebackapp.AuthenticationOptions{Planner: planner, Remote: remote}
-	}
-	replay, err := writebackapp.New(replayOptions)
+	replay, err := writebackapp.New(writebackapp.Options{Queue: staged, Payloads: blocks, Remote: opts.Remote,
+		Planner: planner, Roots: roots, TrustAlias: spec.TrustAlias, Source: source})
 	if err != nil {
 		return binding, err
 	}
@@ -556,72 +517,6 @@ func mapStagingError(err error) error {
 	}
 }
 
-type gatewayClientRootRemote struct {
-	client gatewayWritableRemote
-}
-
-func (r gatewayClientRootRemote) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *protocol.UpdateViewBounds) (clientrootapp.ViewEnvelope, error) {
-	if nilInterface(r.client) {
-		return clientrootapp.ViewEnvelope{}, fmt.Errorf("Gateway client-root remote is nil")
-	}
-	response, err := r.client.FetchUpdateView(ctx, root, bounds)
-	if err != nil {
-		return clientrootapp.ViewEnvelope{}, err
-	}
-	if response == nil {
-		return clientrootapp.ViewEnvelope{}, fmt.Errorf("Gateway returned a nil update view")
-	}
-	return clientrootapp.ViewEnvelope{View: response.View, WireBytes: response.WireBytes}, nil
-}
-
-func (r gatewayClientRootRemote) SubmitClientRoot(ctx context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
-	if nilInterface(r.client) {
-		return clientrootapp.ReceiptEnvelope{}, fmt.Errorf("Gateway client-root remote is nil")
-	}
-	response, err := r.client.SubmitClientRootResult(ctx, prepared)
-	if err != nil {
-		return clientrootapp.ReceiptEnvelope{}, err
-	}
-	if response == nil {
-		return clientrootapp.ReceiptEnvelope{}, fmt.Errorf("Gateway returned a nil client-root receipt")
-	}
-	return clientrootapp.ReceiptEnvelope{
-		Receipt: response.Receipt, RequestWireBytes: response.RequestWireBytes, ResponseWireBytes: response.ResponseWireBytes,
-		RequestEncodingNS: response.RequestEncodingNS, ResponseVerifyNS: response.ResponseVerifyNS,
-		Idempotent: response.Idempotent,
-		Gateway: clientrootapp.GatewayPhaseMetrics{
-			OldStateValidationNS: response.Gateway.OldStateValidationNS,
-			GatewayReplayNS:      response.Gateway.GatewayReplayNS,
-			PersistNS:            response.Gateway.PersistNS, ReceiptNS: response.Gateway.ReceiptNS,
-		},
-		WriteAccounting: mapGatewayWriteAccounting(response.WriteAccounting, response.WriteAccountingWireBytes),
-	}, nil
-}
-
-func mapGatewayWriteAccounting(source gatewayclient.ClientRootWriteAccounting, wireBytes uint64) clientrootapp.GatewayWriteAccounting {
-	result := clientrootapp.GatewayWriteAccounting{
-		Profile: source.Profile, Available: source.Available, UnavailableReason: source.UnavailableReason,
-		ByteMethod: source.ByteMethod, ObjectLedgerSHA256: source.ObjectLedgerSHA256,
-		WireBytes: wireBytes, Categories: make([]clientrootapp.GatewayWriteCategoryAccounting, len(source.Categories)),
-	}
-	for index, category := range source.Categories {
-		result.Categories[index] = clientrootapp.GatewayWriteCategoryAccounting{
-			Category: category.Category, AttemptedWrites: category.AttemptedWrites, AttemptedBytes: category.AttemptedBytes,
-			AttemptedNewWrites: category.AttemptedNewWrites, AttemptedNewBytes: category.AttemptedNewBytes,
-			AttemptedReplacementWrites: category.AttemptedReplacementWrites, AttemptedReplacementBytes: category.AttemptedReplacementBytes,
-			AttemptedSameValueWrites: category.AttemptedSameValueWrites, AttemptedSameValueBytes: category.AttemptedSameValueBytes,
-			AttemptedDeleteWrites: category.AttemptedDeleteWrites, AttemptedDeleteBytes: category.AttemptedDeleteBytes,
-			NewlyPersistedWrites: category.NewlyPersistedWrites, GrossNewBytes: category.GrossNewBytes,
-			NewWrites: category.NewWrites, NewBytes: category.NewBytes, ReplacedWrites: category.ReplacedWrites,
-			ReplacementNewBytes: category.ReplacementNewBytes, ReplacementReclaimedBytes: category.ReplacementReclaimedBytes,
-			SameValueWrites: category.SameValueWrites, DeletedWrites: category.DeletedWrites,
-			DeletedReclaimedBytes: category.DeletedReclaimedBytes, ReclaimedBytes: category.ReclaimedBytes,
-			NetBytes: category.NetBytes,
-		}
-	}
-	return result
-}
-
 func nilInterface(value any) bool {
 	if value == nil {
 		return true
@@ -638,5 +533,4 @@ func nilInterface(value any) bool {
 var (
 	_ filesystemmount.WritableBinding = (*runtimeWritableBinding)(nil)
 	_ filesystemmount.ReadHandle      = (*runtimeReadHandle)(nil)
-	_ clientrootapp.Remote            = gatewayClientRootRemote{}
 )

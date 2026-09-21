@@ -6,19 +6,14 @@ import (
 	"sync"
 	"testing"
 
-	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
 	"github.com/dewebprotocol/malt-client/journal"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -34,7 +29,7 @@ func TestReplayComputesPersistsAndRecordsUnacceptedCandidate(t *testing.T) {
 	if result.Profile != ResultProfile || !result.BaseRoot.Equals(fixture.view.Root) || !result.CandidateRoot.Defined() || result.CandidateRoot.Equals(result.BaseRoot) || !result.RemotePersisted || !result.CandidateStored || result.RootAccepted {
 		t.Fatalf("write-back result=%#v", result)
 	}
-	if fixture.remote.submitted == nil || !fixture.remote.submitted.Candidate.Equals(result.CandidateRoot) {
+	if fixture.remote.submitted == nil || fixture.remote.submitted.Root != result.CandidateRoot.String() {
 		t.Fatalf("submitted bundle=%#v", fixture.remote.submitted)
 	}
 	if !fixture.roots.accepted.Equals(fixture.view.Root) || !fixture.roots.candidate.Equals(result.CandidateRoot) {
@@ -58,7 +53,7 @@ func TestReplayCompletesVerifiedNoChangeWithoutCandidateOrMutation(t *testing.T)
 	if !result.NoAuthenticatedChange || result.RemotePersisted || result.CandidateRoot.Defined() || result.CandidateStored || result.RootAccepted {
 		t.Fatalf("no-change write-back result=%#v", result)
 	}
-	if fixture.payloads.puts != 0 || fixture.remote.fetches != 1 || fixture.remote.submitted != nil || fixture.roots.candidate.Defined() {
+	if fixture.payloads.puts != 0 || fixture.plans != 1 || fixture.remote.submitted != nil || fixture.roots.candidate.Defined() {
 		t.Fatalf("no-change write-back performed a mutation: remote=%#v roots=%#v", fixture.remote, fixture.roots)
 	}
 	if fixture.queue.completed != 1 || !fixture.queue.candidate.Equals(fixture.view.Root) || fixture.queue.conflicted != 0 {
@@ -132,7 +127,7 @@ func TestReplayRejectsPayloadCIDSubstitutionBeforePayloadPublication(t *testing.
 	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
 		t.Fatal("payload CID substitution was accepted")
 	}
-	if fixture.remote.fetches != 1 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
+	if fixture.plans != 1 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
 		t.Fatalf("write-back continued after payload substitution: remote=%#v queue=%#v", fixture.remote, fixture.queue)
 	}
 }
@@ -143,7 +138,7 @@ func TestReplayRecomputesStagedPayloadCIDBeforeCallingStore(t *testing.T) {
 	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
 		t.Fatal("staged payload body with a false CID was accepted")
 	}
-	if fixture.payloads.puts != 0 || fixture.remote.fetches != 0 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
+	if fixture.payloads.puts != 0 || fixture.plans != 0 || fixture.remote.submitted != nil || fixture.queue.completed != 0 || fixture.roots.candidate.Defined() {
 		t.Fatalf("write-back continued after local payload corruption: payloads=%#v remote=%#v queue=%#v", fixture.payloads, fixture.remote, fixture.queue)
 	}
 }
@@ -154,7 +149,7 @@ func TestReplayRejectsUndefinedStagedPayloadCIDBeforeCallingStore(t *testing.T) 
 	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); err == nil {
 		t.Fatal("undefined staged payload CID was accepted")
 	}
-	if fixture.payloads.puts != 0 || fixture.remote.fetches != 0 {
+	if fixture.payloads.puts != 0 || fixture.plans != 0 {
 		t.Fatalf("write-back continued after undefined payload CID: payloads=%#v remote=%#v", fixture.payloads, fixture.remote)
 	}
 }
@@ -165,7 +160,7 @@ func TestReplayRejectsStaleAcceptedRootBeforeFreezingQueue(t *testing.T) {
 	if _, err := fixture.service(t).Replay(t.Context(), fixture.view); !errors.Is(err, ErrStaleAcceptedView) {
 		t.Fatalf("stale accepted View error=%v", err)
 	}
-	if fixture.queue.prepared != 0 || fixture.payloads.puts != 0 || fixture.remote.fetches != 0 {
+	if fixture.queue.prepared != 0 || fixture.payloads.puts != 0 || fixture.plans != 0 {
 		t.Fatalf("stale View performed I/O: queue=%#v payloads=%#v remote=%#v", fixture.queue, fixture.payloads, fixture.remote)
 	}
 }
@@ -221,97 +216,53 @@ func TestReplayPreservesConflictWhenAcceptedRootAdvancesAfterCandidateObservatio
 }
 
 type writebackFixture struct {
-	view     filesystemservice.View
-	update   mutation.UpdateView
-	intent   mutation.SemanticIntent
-	payload  cid.Cid
-	runtime  *clientwriter.Runtime
-	queue    *fakeQueue
-	payloads *fakePayloadStore
-	remote   *fakeClientRootRemote
-	roots    *fakeRootPolicy
-	noChange bool
+	view      filesystemservice.View
+	candidate protocol.AuthenticationCandidate
+	payload   cid.Cid
+	queue     *fakeQueue
+	payloads  *fakePayloadStore
+	remote    *fakeAuthenticationRemote
+	roots     *fakeRootPolicy
+	noChange  bool
+	plans     int
 }
 
 func newWritebackFixture(t *testing.T) *writebackFixture {
 	t.Helper()
-	ctx := t.Context()
 	scheme, err := kzg.NewScheme()
 	if err != nil {
 		t.Fatal(err)
 	}
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(input.DefaultRegistry(), profiles)
 	oldPayload := writebackRawCID(t, []byte("old"))
 	newBody := []byte("new")
 	newPayload := writebackRawCID(t, newBody)
-	oldMap, err := mappingradix.NewMap(scheme, materializermemory.New(true))
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("payload")), Target: oldPayload}}}
+	base, err := authentication.Prepare(t.Context(), e, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldRoot, err := oldMap.Commit(ctx, "writeback-fixture", mapping.NewViewFrom(map[string]cid.Cid{"payload": oldPayload}))
+	state.Entries = []engine.Entry{{Input: input.LabelValue([]byte("payload")), Target: newPayload}}
+	candidate, err := authentication.PrepareUpdate(t.Context(), e, base, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinate, err := arcset.NewMapCoordinate("payload")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{{Coordinate: coordinate, Target: arcset.NewCASTarget(oldPayload)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	update := mutation.UpdateView{
-		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
-		BaseRoot: oldRoot, Bounds: mutation.UpdateViewBounds{MaxObjects: 8, MaxTotalEntries: 64, MaxDepth: 8},
-		Objects: []mutation.UpdateObject{{ObjectID: "root", Root: oldRoot, Kind: arcset.KindMap, Entries: entries}},
-	}
-	before, after := arcset.NewCASTarget(oldPayload), arcset.NewCASTarget(newPayload)
-	intent := mutation.SemanticIntent{
-		Profile: mutation.SemanticIntentProfile, BaseRoot: oldRoot, TopOutputID: "root-output",
-		Transitions: []mutation.IntentTransition{{
-			ID: "root-output", ObjectID: "root", OldRoot: oldRoot, Kind: arcset.KindMap,
-			Backend: maltcid.BackendKindKZG,
-			Changes: []mutation.IntentChange{{Coordinate: coordinate, Before: &before, After: &after}},
-		}},
-	}
-	runtime, err := clientwriter.NewRuntime(materializermemory.New(true), map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKindKZG: scheme})
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation := journal.Operation{
-		Intent: journal.Intent{
-			OperationID: "op-one", RetryID: "retry-one", DatasetID: "dataset", Branch: "main",
-			BaseRoot: oldRoot.String(), BaseRevision: 7, Kind: journal.KindWrite,
-			Path: "docs/file.txt", PayloadCID: newPayload.String(),
-		},
-		Sequence: 1, Status: journal.StatusPendingUpload,
-	}
+	oldRoot := cid.MustParse(base.Root)
+	operation := journal.Operation{Intent: journal.Intent{OperationID: "op-one", RetryID: "retry-one", DatasetID: "dataset", Branch: "main", BaseRoot: oldRoot.String(), BaseRevision: 7, Kind: journal.KindWrite, Path: "docs/file.txt", PayloadCID: newPayload.String()}, Sequence: 1, Status: journal.StatusPendingUpload}
 	view := filesystemservice.View{DatasetID: "dataset", Branch: "main", Root: oldRoot, Revision: 7}
-	batch := staging.UploadBatch{
-		View: view, TransactionID: "fs-writeback-one", Operations: []journal.Operation{operation},
-		Pending: []journal.Operation{operation}, Payloads: []staging.UploadPayload{{CID: newPayload, Body: newBody}},
-	}
-	return &writebackFixture{
-		view: view, update: update, intent: intent, payload: newPayload, runtime: runtime,
+	batch := staging.UploadBatch{View: view, TransactionID: "fs-writeback-one", Operations: []journal.Operation{operation}, Pending: []journal.Operation{operation}, Payloads: []staging.UploadPayload{{CID: newPayload, Body: newBody}}}
+	return &writebackFixture{view: view, candidate: candidate, payload: newPayload,
 		queue: &fakeQueue{batch: batch}, payloads: &fakePayloadStore{expected: newPayload},
-		remote: &fakeClientRootRemote{view: update}, roots: &fakeRootPolicy{accepted: oldRoot},
-	}
+		remote: &fakeAuthenticationRemote{engine: e}, roots: &fakeRootPolicy{accepted: oldRoot}}
 }
 
 func (f *writebackFixture) service(t *testing.T) *Service {
 	t.Helper()
-	service, err := New(Options{
-		Queue: f.queue, Payloads: f.payloads, Remote: f.remote, Writer: f.runtime,
-		Planner: PlannerFunc(func(_ context.Context, view mutation.UpdateView, operations []journal.Operation) (mutation.SemanticIntent, bool, error) {
-			if !view.BaseRoot.Equals(f.update.BaseRoot) || len(operations) == 0 || operations[len(operations)-1].OperationID != "op-one" {
-				return mutation.SemanticIntent{}, false, errors.New("planner received substituted input")
-			}
-			if f.noChange {
-				return mutation.SemanticIntent{}, false, nil
-			}
-			return f.intent, true, nil
-		}),
-		Roots: f.roots, TrustAlias: "docs", Source: "test write-back",
-	})
+	service, err := New(Options{Queue: f.queue, Payloads: f.payloads, Remote: f.remote, Planner: f, Roots: f.roots, TrustAlias: "docs", Source: "test write-back"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,38 +336,27 @@ func (s *fakePayloadStore) Put(_ context.Context, body []byte) (cid.Cid, error) 
 	return computed, nil
 }
 
-type fakeClientRootRemote struct {
-	view              mutation.UpdateView
-	fetches           int
-	submitted         *mutation.ClientRootBundle
+type fakeAuthenticationRemote struct {
+	engine            *engine.Engine
+	submitted         *protocol.AuthenticationBatch
 	substituteReceipt bool
 }
 
-func (r *fakeClientRootRemote) FetchUpdateView(_ context.Context, root cid.Cid, _ *protocol.UpdateViewBounds) (clientrootapp.ViewEnvelope, error) {
-	r.fetches++
-	if !root.Equals(r.view.BaseRoot) {
-		return clientrootapp.ViewEnvelope{}, errors.New("unexpected update-view root")
+func (r *fakeAuthenticationRemote) MaterializeAuthenticationBatch(ctx context.Context, batch protocol.AuthenticationBatch) (protocol.AuthenticationReceipt, error) {
+	if err := authentication.ValidateBatch(ctx, r.engine, batch); err != nil {
+		return protocol.AuthenticationReceipt{}, err
 	}
-	return clientrootapp.ViewEnvelope{View: r.view, WireBytes: 1}, nil
-}
-
-func (r *fakeClientRootRemote) SubmitClientRoot(_ context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
-	bundle := prepared.Bundle
-	copyBundle := bundle
-	r.submitted = &copyBundle
-	digest, err := bundle.Digest()
+	copyBatch := batch
+	r.submitted = &copyBatch
+	digest, err := batch.Digest()
 	if err != nil {
-		return clientrootapp.ReceiptEnvelope{}, err
+		return protocol.AuthenticationReceipt{}, err
 	}
-	candidate := bundle.Candidate
+	root := batch.Root
 	if r.substituteReceipt {
-		candidate = bundle.View.BaseRoot
+		root = batch.Base
 	}
-	return clientrootapp.ReceiptEnvelope{Receipt: mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
-		BaseRoot: bundle.View.BaseRoot, Candidate: candidate, BundleDigest: digest,
-		DurableBoundary: "test-atomic-v1",
-	}}, nil
+	return protocol.AuthenticationReceipt{Profile: protocol.AuthenticationReceiptProfile, TransactionID: batch.TransactionID, Base: batch.Base, Root: root, Digest: digest, DurableBoundary: "test-atomic-v1"}, nil
 }
 
 type fakeRootPolicy struct {
@@ -479,4 +419,15 @@ func writebackRawCID(t *testing.T, body []byte) cid.Cid {
 		t.Fatal(err)
 	}
 	return cid.NewCidV1(cid.Raw, digest)
+}
+
+func (f *writebackFixture) Plan(_ context.Context, base cid.Cid, operations []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error) {
+	f.plans++
+	if !base.Equals(f.view.Root) || len(operations) == 0 || operations[len(operations)-1].OperationID != "op-one" {
+		return nil, nil, cid.Undef, errors.New("planner received substituted input")
+	}
+	if f.noChange {
+		return nil, nil, base, nil
+	}
+	return []protocol.AuthenticationCandidate{f.candidate}, []cid.Cid{f.payload}, cid.MustParse(f.candidate.Root), nil
 }

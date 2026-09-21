@@ -5,22 +5,13 @@ import (
 	"fmt"
 
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
-	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
 )
 
 type addMaterializeResult = unixfs.StagedMaterializeResult
 
-func loadExistingCurrentTree(ctx context.Context, gateway unixfs.Remote, casClient addCASClient, rootCID string) (*unixfs.StagedNode, error) {
-	verifier, err := clientverifier.NewDefault()
-	if err != nil {
-		return nil, fmt.Errorf("initialize local verifier: %w", err)
-	}
-	kind := unixfs.LayoutHybridV1
-	if _, ok := gateway.(*rootedMaterializer); ok {
-		kind = unixfs.LayoutRootedV1
-	}
+func loadExistingCurrentTree(ctx context.Context, gateway unixfs.Remote, casClient addCASClient, rootCID string, kind unixfs.LayoutKind) (*unixfs.StagedNode, error) {
 	statter, err := unixfs.NewStagedPathStatter(unixfs.ReaderOptions{Layout: kind,
-		Remote: gateway, Blocks: casClient, Verifier: verifier,
+		Remote: gateway, Blocks: casClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize verified UnixFS path projector: %w", err)
@@ -28,10 +19,7 @@ func loadExistingCurrentTree(ctx context.Context, gateway unixfs.Remote, casClie
 	return unixfs.LoadStagedCurrentTree(ctx, statter, casClient, rootCID)
 }
 
-func materializeDirectory(ctx context.Context, gateway unixfs.StagedRootCreator, casClient addCASClient, node *unixfs.StagedNode, kind unixfs.LayoutKind) (*addMaterializeResult, error) {
-	if _, ok := gateway.(*rootedMaterializer); ok {
-		kind = unixfs.LayoutRootedV1
-	}
+func materializeDirectory(ctx context.Context, gateway unixfs.StagedRootWriter, casClient addCASClient, node *unixfs.StagedNode, kind unixfs.LayoutKind) (*addMaterializeResult, error) {
 	layout, err := unixfs.NewLayout(kind)
 	if err != nil {
 		return nil, err

@@ -7,8 +7,8 @@ import (
 	"slices"
 	"time"
 
-	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/transport"
 )
 
@@ -25,7 +25,7 @@ const (
 	casNew           = "new"
 	casSameValue     = "same-value"
 
-	gatewayAccountingProfile = "gateway.client-root-write-accounting/v2"
+	gatewayAccountingProfile = "gateway.authentication-write-accounting/0"
 	gatewayByteMethod        = "durable-kv-key-plus-value-bytes/v2"
 	canonicalEmptySetupCause = "canonical-empty-setup:"
 
@@ -72,30 +72,7 @@ type exactCategory struct {
 	netBytes                   int64
 }
 
-func accountingFromTransport(value transport.ClientRootWriteAccounting) exactAccounting {
-	result := exactAccounting{
-		profile: value.Profile, available: value.Available, reason: value.UnavailableReason,
-		method: value.ByteMethod, digest: value.ObjectLedgerSHA256,
-		categories: make([]exactCategory, len(value.Categories)),
-	}
-	for index, category := range value.Categories {
-		result.categories[index] = exactCategory{
-			category: category.Category, attemptedWrites: category.AttemptedWrites, attemptedBytes: category.AttemptedBytes,
-			attemptedNewWrites: category.AttemptedNewWrites, attemptedNewBytes: category.AttemptedNewBytes,
-			attemptedReplacementWrites: category.AttemptedReplacementWrites, attemptedReplacementBytes: category.AttemptedReplacementBytes,
-			attemptedSameWrites: category.AttemptedSameValueWrites, attemptedSameBytes: category.AttemptedSameValueBytes,
-			attemptedDeleteWrites: category.AttemptedDeleteWrites, attemptedDeleteBytes: category.AttemptedDeleteBytes,
-			newlyPersistedWrites: category.NewlyPersistedWrites, grossNewBytes: category.GrossNewBytes,
-			newWrites: category.NewWrites, newBytes: category.NewBytes, replacedWrites: category.ReplacedWrites,
-			replacementNewBytes: category.ReplacementNewBytes, replacementReclaimedBytes: category.ReplacementReclaimedBytes,
-			sameWrites: category.SameValueWrites, deletedWrites: category.DeletedWrites,
-			deletedReclaimedBytes: category.DeletedReclaimedBytes, reclaimedBytes: category.ReclaimedBytes, netBytes: category.NetBytes,
-		}
-	}
-	return result
-}
-
-func accountingFromApplication(value clientrootapp.GatewayWriteAccounting) exactAccounting {
+func accountingFromTransport(value gatewaytransport.WriteAccounting) exactAccounting {
 	result := exactAccounting{
 		profile: value.Profile, available: value.Available, reason: value.UnavailableReason,
 		method: value.ByteMethod, digest: value.ObjectLedgerSHA256,
@@ -135,7 +112,7 @@ func (result *runResult) appendGatewayAccounting(commitID string, accounting exa
 		appendAttempt := func(disposition string, count, bytes uint64) {
 			result.appendEvent(writeEvent{
 				CommitID: commitID, Stage: stageAttempted, Category: category.category,
-				Cause: "gateway-client-root-object-ledger", Disposition: disposition,
+				Cause: "gateway-authentication-object-ledger", Disposition: disposition,
 				ObjectKey: key(disposition), Count: count, Bytes: bytes, CASClassification: casNotApplicable,
 			})
 		}
@@ -150,7 +127,7 @@ func (result *runResult) appendGatewayAccounting(commitID string, accounting exa
 			}
 			result.appendEvent(writeEvent{
 				CommitID: commitID, Stage: stageCommitted, Category: category.category,
-				Cause: "gateway-client-root-object-ledger", Disposition: disposition,
+				Cause: "gateway-authentication-object-ledger", Disposition: disposition,
 				ObjectKey: key(disposition), Count: count, Bytes: flowBytes, GrossNewBytes: gross,
 				ReclaimedBytes: reclaimed, NetBytes: net, CASClassification: casNotApplicable,
 			})

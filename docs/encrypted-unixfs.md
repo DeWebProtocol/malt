@@ -2,7 +2,7 @@
 
 `malt.encrypted-unixfs/v1` is a runtime-owned application profile for backup,
 restore, synchronization, filesystem projection, and authorized browser
-inspection. It changes no MALT Core Root, CID, ProofList, mutation, receipt, or
+inspection. It changes no MALT Core Root, CID, authentication proof, or
 commitment encoding.
 
 The profile stores a directory as authenticated MALT relations instead of a
@@ -84,11 +84,11 @@ An untrusted Gateway can resolve a supplied token but cannot recover the name
 used to derive it. Enumeration is performed by an authorized consumer:
 
 1. resolve `@payload` under the locally selected directory Root;
-2. verify the returned ProofList locally;
+2. verify the returned typed authentication evidence locally;
 3. fetch and verify the encrypted manifest bytes against that payload CID;
 4. decrypt the manifest locally;
 5. derive or read the listed opaque token for the selected child;
-6. resolve that token under the same directory Root and verify its ProofList.
+6. resolve that token under the same directory Root and verify its typed authentication evidence.
 
 This is equally applicable to the daemon, a host-filesystem adapter, a local
 API client, an Obsidian integration, or browser code with an authorized key
@@ -117,7 +117,7 @@ chunk context adds the decimal chunk index after that relative path.
 
 AEAD authentication is defense in depth, not a substitute for MALT
 verification. Every remote read must still start at a locally selected Root,
-verify its ProofList, verify the ciphertext CID, and only then decrypt.
+verify its typed authentication evidence, verify the ciphertext CID, and only then decrypt.
 
 ## Verified publication
 
@@ -125,14 +125,14 @@ Backup preparation is a local transaction. While holding the selected Plan's
 cross-process operation lock, the runtime first removes any ciphertext snapshot
 spool left by a crashed or unsuccessfully cleaned prior run, then checks the
 workspace for pending/conflicted work. It encrypts changed files into a
-Plan-exclusive owner-private local CAS and computes every Map/List Root locally
+Plan-exclusive owner-private local CAS and computes every Prefix/Positional Root locally
 with the selected MALT Core commitment backend. Normal cleanup errors are
 returned to the caller, and the next invocation retries stale-spool recovery.
 No ciphertext or graph object is sent to the Gateway during preparation.
 
 After all source fingerprints remain stable, publication uploads the exact
 locally CID-bound ciphertext blocks and replays graph objects child before
-parent. Every Gateway block CID and Map/List Root must equal the locally
+parent. Every Gateway block CID and Prefix/Positional Root must equal the locally
 computed value; substitution aborts before Bucket stage or push. Remote
 success never accepts the resulting dataset Root. The locally computed Root is
 durably recorded as a candidate before Bucket stage/push. A candidate with no
@@ -185,3 +185,7 @@ push call; complete or discard it with the previous runtime before upgrading.
 Likewise, an interrupted path-based filesystem installation journal from the
 pre-release runtime must be recovered with that runtime before this version
 continues; new installation journals are parent-pinned format version 2.
+
+The application storage tag `list` remains part of this encrypted profile. It
+selects current Positional authentication and does not call a Core List adapter.
+The local reader verifies authenticated chunk geometry before decryption.

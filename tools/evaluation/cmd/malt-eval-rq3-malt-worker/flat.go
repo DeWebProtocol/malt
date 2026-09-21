@@ -3,277 +3,106 @@ package main
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
 const (
-	flatNamespace     = "rq3-flat"
 	flatSentinelCause = "canonical-empty-setup:flat-layout-sentinel"
 	flatSentinelJSON  = `{"schema_version":"malt-eval-rq3-flat-layout/v1"}`
 )
 
-// flatRootOracle is a worker-local, incrementally materialized Core Map. It
-// never consumes Gateway state or responses: every expected post-commit root
-// is computed from the frozen before/after values before the Gateway mutation
-// is submitted.
+// The unmeasured oracle computes expected Roots before each Gateway request.
+// Core Writers own a closed immutable node DAG: retaining only the newest
+// Writer shares unchanged descendants without retaining obsolete ancestors.
 type flatRootOracle struct {
-	semantic *mappingradix.Map
-	store    *materializermemory.Store
-	root     cid.Cid
+	writer *authentication.Writer
+	root   cid.Cid
 }
 
-func newFlatRootOracle(ctx context.Context, initial []gatewaytransport.FlatMapChange) (*flatRootOracle, error) {
+func newFlatRootOracle(ctx context.Context, initial []gatewaytransport.FlatPrefixChange) (*flatRootOracle, error) {
 	if len(initial) == 0 {
-		return nil, fmt.Errorf("flat root oracle requires an initial view")
+		return nil, fmt.Errorf("flat oracle requires an initial state")
 	}
 	scheme, err := kzg.NewScheme()
 	if err != nil {
-		return nil, fmt.Errorf("initialize flat root oracle KZG: %w", err)
+		return nil, err
 	}
-	// Non-branching replaces logical snapshots; retainCurrentRoot below also
-	// reclaims historical radix node caches from the unmeasured worker heap.
-	store := materializermemory.New(false)
-	semantic, err := mappingradix.NewMap(scheme, store)
-	if err != nil {
-		return nil, fmt.Errorf("initialize flat root oracle map: %w", err)
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		return nil, err
 	}
-	values := make(map[arcset.Path]cid.Cid, len(initial))
-	for index, change := range initial {
-		if change.Path.IsEmpty() || change.Before.Defined() || !change.After.Defined() {
-			return nil, fmt.Errorf("flat root oracle initial change %d is invalid", index)
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.KZG4096}, Entries: make([]engine.Entry, len(initial))}
+	for i, change := range initial {
+		if change.Input.Kind != input.Label || len(change.Input.Data) == 0 || change.Input.Validate() != nil || change.Before.Defined() || !change.After.Defined() {
+			return nil, fmt.Errorf("invalid flat oracle initial binding %d", i)
 		}
-		if _, duplicate := values[change.Path]; duplicate {
-			return nil, fmt.Errorf("flat root oracle initial view repeats %s", change.Path.String())
+		state.Entries[i] = engine.Entry{Input: change.Input, Target: change.After}
+	}
+	writer, err := authentication.BuildWriter(ctx, engine.New(input.DefaultRegistry(), profiles), state)
+	if err != nil {
+		return nil, err
+	}
+	return &flatRootOracle{writer: writer, root: writer.Root()}, nil
+}
+func (o *flatRootOracle) apply(ctx context.Context, changes []gatewaytransport.FlatPrefixChange) (cid.Cid, error) {
+	if o == nil || o.writer == nil {
+		return cid.Undef, fmt.Errorf("flat oracle is not initialized")
+	}
+	delta := authentication.Delta{Changes: make([]engine.Change, len(changes))}
+	for i, change := range changes {
+		if change.Input.Kind != input.Label || len(change.Input.Data) == 0 || change.Input.Validate() != nil {
+			return cid.Undef, fmt.Errorf("flat change requires an explicit label")
 		}
-		values[change.Path] = change.After
+		delta.Changes[i] = engine.Change{Input: change.Input, Before: change.Before, After: change.After}
 	}
-	root, err := semantic.Commit(ctx, flatNamespace, mapping.NewViewFromPaths(values))
+	writer, err := o.writer.Apply(ctx, delta)
 	if err != nil {
-		return nil, fmt.Errorf("commit flat root oracle initial view: %w", err)
+		return cid.Undef, err
 	}
-	oracle := &flatRootOracle{semantic: semantic, store: store, root: root}
-	oracle.retainCurrentRoot()
-	return oracle, nil
+	o.writer, o.root = writer, writer.Root()
+	return o.root, nil
 }
 
-func (o *flatRootOracle) apply(ctx context.Context, changes []gatewaytransport.FlatMapChange) (cid.Cid, error) {
-	if o == nil || o.semantic == nil || o.store == nil || !o.root.Defined() {
-		return cid.Undef, fmt.Errorf("flat root oracle is not initialized")
-	}
-	updates := make([]mapping.BatchUpdate, len(changes))
-	for index, change := range changes {
-		updates[index] = mapping.BatchUpdate{Key: change.Path, OldValue: change.Before, NewValue: change.After}
-	}
-	next, err := o.semantic.BatchUpdate(ctx, flatNamespace, o.root, updates)
+// fullFlatRoot reconstructs the complete post-image from live source files,
+// without using the mutation deltas or any Gateway response/state.
+func fullFlatRoot(ctx context.Context, files map[string]logicalFile) (cid.Cid, error) {
+	initial, err := directFlatSnapshotChanges(files)
 	if err != nil {
-		return cid.Undef, fmt.Errorf("apply flat root oracle update: %w", err)
+		return cid.Undef, err
 	}
-	o.root = next
-	o.retainCurrentRoot()
-	return next, nil
+	oracle, err := newFlatRootOracle(ctx, initial)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return oracle.root, nil
 }
-
-// retainCurrentRoot bounds the output-independent oracle by the current radix
-// tree. The measured Gateway retains every historical ArcTable root; keeping
-// those unmeasured node caches in the worker would make heap use grow with the
-// replay length and could prevent a full repository history from completing.
-func (o *flatRootOracle) retainCurrentRoot() {
-	o.store.RetainRoots(map[string][]cid.Cid{flatNamespace: {o.root}})
-}
-
 func verifyFlatGatewayRoot(operation string, expected, observed cid.Cid) error {
 	if !expected.Defined() || !observed.Defined() || !expected.Equals(observed) {
-		return fmt.Errorf("%s Gateway root differs from the independent per-commit flat oracle", operation)
+		return fmt.Errorf("%s Gateway Root differs from independent per-commit flat oracle", operation)
 	}
 	return nil
 }
-
 func flatSentinelBlock() classifiedBlock {
-	return classifiedBlock{
-		block:    transport.Block{Codec: cid.DagJSON, Data: []byte(flatSentinelJSON)},
-		category: categoryCASMetadata, cause: flatSentinelCause, suffix: "flat-layout-sentinel",
-	}
+	return classifiedBlock{block: transport.Block{Codec: cid.DagJSON, Data: []byte(flatSentinelJSON)}, category: categoryCASMetadata, cause: flatSentinelCause, suffix: "flat-layout-sentinel"}
 }
-
-func flatSentinelEntry() (blueprintEntry, error) {
-	coordinate, err := arcset.NewMapCoordinate("@malt-eval/layout")
-	if err != nil {
-		return blueprintEntry{}, err
-	}
+func flatSentinelEntry() (engine.Entry, error) {
 	block := flatSentinelBlock()
 	key, err := clientcas.CIDForBlock(block.block)
-	if err != nil {
-		return blueprintEntry{}, err
-	}
-	target := arcset.NewCASTarget(key)
-	return blueprintEntry{coordinate: coordinate, literal: &target}, nil
+	return engine.Entry{Input: input.LabelValue([]byte("@malt-eval/layout")), Target: key}, err
 }
-
-func flatCoordinate(filePath string, mode bool) (arcset.CanonicalCoordinate, error) {
+func flatInput(filePath string, mode bool) input.Value {
 	prefix := "rq3/files/"
 	if mode {
 		prefix = "rq3/modes/"
 	}
-	return arcset.NewMapCoordinate(prefix + filePath)
-}
-
-func flatFileEntries(path string, file logicalFile) ([]blueprintEntry, error) {
-	coordinate, err := flatCoordinate(path, false)
-	if err != nil {
-		return nil, err
-	}
-	payload := file.payload
-	if !payload.Defined() {
-		var err error
-		payload, err = clientcas.CIDForBlock(transport.Block{Codec: cid.Raw, Data: file.data})
-		if err != nil {
-			return nil, err
-		}
-	}
-	payloadTarget := arcset.NewCASTarget(payload)
-
-	mode, err := modeCASBlock(file.mode)
-	if err != nil {
-		return nil, err
-	}
-	modeCID, err := clientcas.CIDForBlock(mode.block)
-	if err != nil {
-		return nil, err
-	}
-	modeCoordinate, err := flatCoordinate(path, true)
-	if err != nil {
-		return nil, err
-	}
-	modeTarget := arcset.NewCASTarget(modeCID)
-	return []blueprintEntry{
-		{coordinate: coordinate, literal: &payloadTarget},
-		{coordinate: modeCoordinate, literal: &modeTarget},
-	}, nil
-}
-
-func buildFlatBlueprint(files map[string]logicalFile, chunkBytes uint64) (*hybridBlueprint, error) {
-	if chunkBytes == 0 || chunkBytes > uint64(^uint(0)>>1) {
-		return nil, fmt.Errorf("flat blueprint fixed chunk size is outside host bounds")
-	}
-	topID := objectLogicalID("flat", "")
-	entries := make([]blueprintEntry, 0, 1+2*len(files))
-	sentinel, err := flatSentinelEntry()
-	if err != nil {
-		return nil, err
-	}
-	entries = append(entries, sentinel)
-	paths := make([]string, 0, len(files))
-	for path := range files {
-		paths = append(paths, path)
-	}
-	slices.Sort(paths)
-	for _, path := range paths {
-		added, err := flatFileEntries(path, files[path])
-		if err != nil {
-			return nil, fmt.Errorf("flat blueprint file %q: %w", path, err)
-		}
-		entries = append(entries, added...)
-	}
-	object := &semanticBlueprint{logicalID: topID, kind: arcset.KindMap, entries: entries}
-	if err := finalizeBlueprint(object, nil); err != nil {
-		return nil, err
-	}
-	return &hybridBlueprint{
-		topID: topID, objects: map[string]*semanticBlueprint{topID: object}, order: []string{topID},
-		manifests:   map[string]classifiedBlock{"@malt-eval/layout": flatSentinelBlock()},
-		directories: map[string]*directoryIndex{},
-	}, nil
-}
-
-func buildFlatBlueprintNext(old *hybridBlueprint, changes []fileChange, chunkBytes uint64) (*hybridBlueprint, error) {
-	if old == nil || old.objects[old.topID] == nil || len(changes) == 0 || chunkBytes == 0 {
-		return nil, fmt.Errorf("incremental flat blueprint is incomplete")
-	}
-	entries := make(map[string]blueprintEntry, len(old.objects[old.topID].entries)+2*len(changes))
-	for _, entry := range old.objects[old.topID].entries {
-		entries[string(entry.coordinate.Bytes())] = entry
-	}
-	for _, change := range changes {
-		pathCoordinate, err := flatCoordinate(change.path, false)
-		if err != nil {
-			return nil, err
-		}
-		modeCoordinate, err := flatCoordinate(change.path, true)
-		if err != nil {
-			return nil, err
-		}
-		delete(entries, string(pathCoordinate.Bytes()))
-		delete(entries, string(modeCoordinate.Bytes()))
-		if change.after == nil {
-			continue
-		}
-		added, err := flatFileEntries(change.path, *change.after)
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range added {
-			entries[string(entry.coordinate.Bytes())] = entry
-		}
-	}
-	ordered := make([]blueprintEntry, 0, len(entries))
-	for _, entry := range entries {
-		ordered = append(ordered, entry)
-	}
-	object := &semanticBlueprint{logicalID: old.topID, kind: arcset.KindMap, entries: ordered}
-	if err := finalizeBlueprint(object, nil); err != nil {
-		return nil, err
-	}
-	return &hybridBlueprint{
-		topID: old.topID, objects: map[string]*semanticBlueprint{old.topID: object}, order: []string{old.topID},
-		manifests: old.manifests, directories: map[string]*directoryIndex{},
-	}, nil
-}
-
-func (b graphBuilder) buildFlat(ctx context.Context, files map[string]logicalFile) (*hybridGraph, error) {
-	if b.scheme == nil || b.store == nil {
-		return nil, fmt.Errorf("flat graph builder is incomplete")
-	}
-	blueprint, err := buildFlatBlueprint(files, b.chunkBytes)
-	if err != nil {
-		return nil, err
-	}
-	top := blueprint.objects[blueprint.topID]
-	entries := make([]arcset.ArcEntry, len(top.entries))
-	values := make(map[arcset.Path]cid.Cid, len(top.entries))
-	for index, entry := range top.entries {
-		if entry.literal == nil {
-			return nil, fmt.Errorf("flat graph contains a non-literal binding")
-		}
-		entries[index] = arcset.ArcEntry{Coordinate: entry.coordinate, Target: *entry.literal}
-		values[arcset.CanonicalizePath(entry.coordinate.String())] = entry.literal.CID()
-	}
-	canonical, err := arcset.NewCanonicalArcSet(arcset.KindMap, entries)
-	if err != nil {
-		return nil, err
-	}
-	semantic, err := mappingradix.NewMap(b.scheme, b.store)
-	if err != nil {
-		return nil, err
-	}
-	root, err := semantic.Commit(ctx, flatNamespace, mapping.NewViewFromPaths(values))
-	if err != nil {
-		return nil, err
-	}
-	object := &semanticObject{
-		logicalID: blueprint.topID, kind: arcset.KindMap, root: root, entries: canonical, refs: map[string]string{},
-	}
-	return &hybridGraph{
-		root: root, topID: blueprint.topID, objects: map[string]*semanticObject{blueprint.topID: object},
-		order: []string{blueprint.topID}, manifests: blueprint.manifests, directories: map[string]*directoryIndex{},
-	}, nil
+	return input.LabelValue([]byte(prefix + filePath))
 }

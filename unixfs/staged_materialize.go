@@ -23,9 +23,10 @@ type StagedMaterializeResult struct {
 	Arcs             int
 }
 
-// StagedRootCreator creates a map root from already serialized bindings.
-type StagedRootCreator interface {
-	CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error)
+// StagedRootWriter computes a directory candidate while preserving an existing
+// Root descriptor. An undefined base creates a new directory.
+type StagedRootWriter interface {
+	UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error)
 }
 
 // StagedBlockStore is the block subset needed by staged materialization.
@@ -52,21 +53,15 @@ func AddStagedMaterializeStats(dst *StagedMaterializeResult, src *StagedMaterial
 	dst.ArcCount += src.ArcCount
 }
 
-// MaterializeStagedDirectory preserves the historical hybrid-v1 behavior.
-// New layout-aware callers should select an implementation with NewLayout.
-func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
-	return materializeHybridDirectory(ctx, roots, blocks, node)
-}
-
 // materializeHybridDirectory writes the changed portions of a staged UnixFS
 // directory tree and returns its map root. Unchanged staged directories keep
 // their existing Key while changed directories are committed bottom-up.
-func materializeHybridDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+func materializeHybridDirectory(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	return materializeDirectoryProjection(ctx, roots, blocks, node, true)
 }
-func materializeDirectoryProjection(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode, includeDescendants bool) (*StagedMaterializeResult, error) {
+func materializeDirectoryProjection(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode, includeDescendants bool) (*StagedMaterializeResult, error) {
 	if node == nil || node.Kind != StagedKindDirectory {
-		return nil, fmt.Errorf("MaterializeStagedDirectory requires a directory node")
+		return nil, fmt.Errorf("directory materialization requires a directory node")
 	}
 
 	names := make([]string, 0, len(node.Children))
@@ -160,20 +155,13 @@ func materializeDirectoryProjection(ctx context.Context, roots StagedRootCreator
 		aliases = nil
 	}
 	bindings := unixfsmodel.DirectoryRootBindings(payloadCID, childKeys, aliases)
-	var rootCID cid.Cid
-	if updater, ok := roots.(interface {
-		UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error)
-	}); ok {
-		rootCID, err = updater.UpdateStagedRoot(ctx, node.Key, bindings)
-	} else {
-		rootCID, err = roots.CreateStagedRoot(ctx, bindings)
-	}
+	rootCID, err := roots.UpdateStagedRoot(ctx, node.Key, bindings)
 	if err != nil {
 		return nil, err
 	}
 	node.Key = rootCID
 	node.Changed = false
-	node.StorageKind = "map"
+	node.StorageKind = "prefix"
 	arcCount := unixfsmodel.CountDefinedBindings(bindings)
 	return &StagedMaterializeResult{
 		Key:              rootCID,
@@ -188,10 +176,11 @@ func materializeDirectoryProjection(ctx context.Context, roots StagedRootCreator
 	}, nil
 }
 
-func materializeFlatDirectory(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+func materializeFlatDirectory(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	if node == nil || node.Kind != StagedKindDirectory {
 		return nil, fmt.Errorf("flat layout requires a directory node")
 	}
+	base := node.Key
 	bindings := make(map[string]string)
 	descendants := make(map[string]cid.Cid)
 	stats := &StagedMaterializeResult{}
@@ -205,12 +194,12 @@ func materializeFlatDirectory(ctx context.Context, roots StagedRootCreator, bloc
 		}
 	}
 	bindings["@payload"] = payload.String()
-	root, err := roots.CreateStagedRoot(ctx, bindings)
+	root, err := roots.UpdateStagedRoot(ctx, base, bindings)
 	if err != nil {
 		return nil, err
 	}
 	node.Key = root
-	node.StorageKind = "map"
+	node.StorageKind = "prefix"
 	node.Changed = false
 	arcCount := unixfsmodel.CountDefinedBindings(bindings)
 	stats.Key = root

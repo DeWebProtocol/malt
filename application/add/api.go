@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/application"
-	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -33,52 +33,13 @@ type Options = addBuildOptions
 type IgnoreOptions = addIgnoreOptions
 type Result = addUnixFSResult
 
-// GraphRemote is the narrow untrusted graph capability used by the add
-// materializer.
-type GraphRemote interface {
-	unixfs.Remote
-	unixfs.StagedRootCreator
-}
-
-// Materializer combines graph operations with the UnixFS-owned fixed-list writer.
-// It has no concrete HTTP response types.
+// Materializer supplies untrusted typed queries and candidate storage. UnixFS
+// computes the selected layout and candidate Roots locally.
 type Materializer interface {
-	GraphRemote
-	unixfs.FixedListPayloadWriter
-}
-
-type materializer struct {
-	GraphRemote
-	lists unixfs.FixedListPayloadWriter
-}
-
-// NewMaterializer composes a native graph port with the UnixFS fixed-list adapter.
-func NewMaterializer(graph GraphRemote, lists unixfs.FixedListPayloadWriter) (Materializer, error) {
-	if graph == nil {
-		return nil, fmt.Errorf("add graph remote is nil")
-	}
-	if lists == nil {
-		return nil, fmt.Errorf("add fixed-list writer is nil")
-	}
-	return &materializer{GraphRemote: graph, lists: lists}, nil
-}
-
-func (g *materializer) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	return g.lists.CreateFixedListBaseRoot(ctx)
-}
-
-func (g *materializer) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
-	return g.lists.ApplyFixedListPayloadMutation(ctx, mut)
-}
-
-// Deprecated compatibility names. New code should use GraphRemote,
-// Materializer, and NewMaterializer.
-type GraphGateway = GraphRemote
-type Gateway = Materializer
-
-// Deprecated: use NewMaterializer.
-func NewGateway(graph GraphGateway, lists unixfs.FixedListPayloadWriter) (Gateway, error) {
-	return NewMaterializer(graph, lists)
+	DefaultBackend(context.Context) (maltcid.BackendKind, error)
+	Authenticate(context.Context, protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error)
+	AuthenticationCandidate(context.Context, cid.Cid) (*protocol.AuthenticationCandidate, error)
+	MaterializeAuthentication(context.Context, protocol.AuthenticationCandidate) (cid.Cid, error)
 }
 
 // CAS is the immutable byte capability shared by MALT and Merkle DAG targets.

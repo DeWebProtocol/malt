@@ -9,10 +9,8 @@ import (
 )
 
 const (
-	DirectoryManifestVersionV1 = manifest.VersionV1
 	DirectoryManifestVersionV2 = manifest.VersionV2
 
-	DirectoryManifestCodecV1 = unixfsformat.CodecMaltManifestV1
 	DirectoryManifestCodecV2 = unixfsformat.CodecMaltManifestV2
 
 	// DirectoryManifestCodec is the current UnixFS directory manifest codec.
@@ -23,9 +21,8 @@ const (
 type DirectoryEntryType string
 
 const (
-	DirectoryEntryTypeUnknown DirectoryEntryType = ""
-	DirectoryEntryTypeDir     DirectoryEntryType = "dir"
-	DirectoryEntryTypeFile    DirectoryEntryType = "file"
+	DirectoryEntryTypeDir  DirectoryEntryType = "dir"
+	DirectoryEntryTypeFile DirectoryEntryType = "file"
 )
 
 // DirectoryEntry is one immediate child named by a directory manifest.
@@ -34,9 +31,7 @@ type DirectoryEntry struct {
 	Type DirectoryEntryType `json:"type"`
 }
 
-// DirectoryManifest is a decoded V1 or V2 manifest. V1 entries have an
-// unknown Type and are interpreted only through the historical compatibility
-// rule in the UnixFS reader.
+// DirectoryManifest declares the type of every immediate child.
 type DirectoryManifest struct {
 	Version int              `json:"version"`
 	Entries []DirectoryEntry `json:"entries"`
@@ -87,18 +82,15 @@ func DirectoryManifestPayload(entries []DirectoryEntry) ([]byte, error) {
 }
 
 // ParseDirectoryManifest parses already-fetched bytes according to their CID
-// codec. Historical raw-CID manifests are accepted as V1 because early native
-// runtime writers stored the locked V1 JSON through a codec-less CAS port.
+// codec. Only the current typed directory manifest is accepted.
 func ParseDirectoryManifest(key cid.Cid, data []byte) (*DirectoryManifest, error) {
 	var (
 		value *manifest.DirectoryManifest
 		err   error
 	)
 	switch key.Prefix().Codec {
-	case cid.Raw, DirectoryManifestCodecV1:
-		value, err = manifest.ParseV1DirectoryJSON(data)
 	case DirectoryManifestCodecV2:
-		value, err = manifest.ParseV2DirectoryJSON(data)
+		value, err = manifest.ParseDirectoryJSON(data)
 	default:
 		return nil, fmt.Errorf("unsupported UnixFS directory manifest codec 0x%x", key.Prefix().Codec)
 	}

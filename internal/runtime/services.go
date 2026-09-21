@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/application"
-	clientadd "github.com/dewebprotocol/malt-client/application/add"
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	"github.com/dewebprotocol/malt-client/bucketsync"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
@@ -20,8 +19,6 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/keyring"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	truststore "github.com/dewebprotocol/malt-client/trust"
-	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 // Services is the process-independent composition root for local runtime
@@ -31,25 +28,6 @@ import (
 type Services struct {
 	configPath string
 	plans      *clientbackup.BatchRunner
-}
-
-type gatewayBackupProfile struct {
-	client *gatewayclient.Client
-}
-
-func (p gatewayBackupProfile) DefaultBackend(ctx context.Context) (maltcid.BackendKind, error) {
-	if p.client == nil {
-		return maltcid.BackendKindUnknown, fmt.Errorf("Gateway commitment profile client is nil")
-	}
-	health, err := p.client.Health(ctx)
-	if err != nil {
-		return maltcid.BackendKindUnknown, err
-	}
-	backend := maltcid.BackendKind(strings.ToLower(strings.TrimSpace(health.CommitmentProfile)))
-	if backend != maltcid.BackendKindKZG && backend != maltcid.BackendKindIPA {
-		return maltcid.BackendKindUnknown, fmt.Errorf("Gateway returned unsupported default commitment backend %q", health.CommitmentProfile)
-	}
-	return backend, nil
 }
 
 func NewServices(configPath string) (*Services, error) {
@@ -146,15 +124,7 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 			resultErr = errors.Join(resultErr, blocks.Close())
 		}
 	}()
-	lists, err := unixfs.NewMutationAdapter(remote)
-	if err != nil {
-		return nil, err
-	}
-	graph, err := clientadd.NewMaterializer(remote, lists)
-	if err != nil {
-		return nil, err
-	}
-	filesystem, err := clientbackup.NewPlanFilesystem(graph, remote, blocks, gatewayBackupProfile{client: remote})
+	filesystem, err := clientbackup.NewPlanFilesystem(remote, remote, blocks, remote)
 	if err != nil {
 		return nil, err
 	}

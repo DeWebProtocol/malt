@@ -114,7 +114,7 @@ func compile(ctx context.Context, data []byte, backend string, chunk int) (trace
 		return out, fmt.Errorf("unknown backend")
 	}
 	store := &sink{e: engine.New(input.DefaultRegistry(), profiles), candidates: map[string]protocol.AuthenticationCandidate{}}
-	adapter, err := unixfs.NewAuthenticationAdapter(store, store.e, profile)
+	adapter, err := unixfs.NewAuthenticationAdapter(unixfs.LayoutRootedV1, store, store.e, profile)
 	if err != nil {
 		return out, err
 	}

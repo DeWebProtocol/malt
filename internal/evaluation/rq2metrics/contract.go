@@ -12,7 +12,7 @@ import (
 
 const (
 	// TaxonomyProfile is emitted by every successful RQ2 mutation record.
-	TaxonomyProfile = "malt-rq2-metric-taxonomy/v1"
+	TaxonomyProfile = "malt-rq2-metric-taxonomy/v2"
 	// ResourceAggregationRule prevents reports from stacking byte/count values
 	// merely because their phase durations are in one exclusive wall-time set.
 	ResourceAggregationRule = "bytes-and-counts-field-specific-non-additive/v1"
@@ -35,12 +35,12 @@ type Taxonomy struct {
 }
 
 var contract = Taxonomy{
-	InclusiveTotals: []string{"mutation_total", "client_root_generation", "first_mutation"},
+	InclusiveTotals: []string{"mutation_total", "candidate_generation", "first_mutation"},
 	ExclusiveMutationPhases: []string{
-		"scan", "chunk", "hash", "update_view", "verify_update_view", "normalization",
-		"root_computation", "expected_root_encoding", "client_root_bundle", "upload", "receipt_check",
+		"scan", "chunk", "hash", "graph_snapshot",
+		"candidate_apply", "candidate_export", "batch_encoding", "upload", "receipt_check",
 	},
-	NestedDiagnostics:          []string{"commitment_update", "gateway_replay", "gateway_persist"},
+	NestedDiagnostics:          []string{"gateway_validate_stage", "gateway_persist"},
 	ColdStartupPhases:          []string{"wasm_download", "wasm_instantiate", "parameter_load"},
 	BrowserBoundaryPhases:      []string{"js_wasm_boundary"},
 	OrthogonalResources:        []string{"cpu_total", "peak_memory"},
@@ -82,12 +82,12 @@ func Validate(profile string, values map[string]Observation, browser, coldMutati
 		}
 	}
 	total := values["mutation_total"]
-	clientRoot := values["client_root_generation"]
+	clientRoot := values["candidate_generation"]
 	if !total.Applicable || !clientRoot.Applicable || total.DurationNS == 0 || clientRoot.DurationNS == 0 {
 		return fmt.Errorf("RQ2 inclusive mutation/client-root totals are absent")
 	}
 	if clientRoot.DurationNS > total.DurationNS {
-		return fmt.Errorf("client_root_generation exceeds inclusive mutation_total")
+		return fmt.Errorf("candidate_generation exceeds inclusive mutation_total")
 	}
 	exclusive, err := sumApplicable(values, contract.ExclusiveMutationPhases)
 	if err != nil {
@@ -96,17 +96,14 @@ func Validate(profile string, values map[string]Observation, browser, coldMutati
 	if exclusive > total.DurationNS {
 		return fmt.Errorf("exclusive mutation phases exceed inclusive mutation_total")
 	}
-	sdkExclusive, err := sumApplicable(values, []string{"normalization", "root_computation", "expected_root_encoding"})
+	sdkExclusive, err := sumApplicable(values, []string{"graph_snapshot", "candidate_apply", "candidate_export"})
 	if err != nil {
 		return err
 	}
 	if sdkExclusive > clientRoot.DurationNS {
-		return fmt.Errorf("exclusive SDK phases exceed client_root_generation")
+		return fmt.Errorf("exclusive SDK phases exceed candidate_generation")
 	}
-	if values["commitment_update"].DurationNS > values["root_computation"].DurationNS {
-		return fmt.Errorf("commitment_update exceeds its root_computation parent")
-	}
-	gateway, err := sumApplicable(values, []string{"gateway_replay", "gateway_persist"})
+	gateway, err := sumApplicable(values, []string{"gateway_validate_stage", "gateway_persist"})
 	if err != nil {
 		return err
 	}

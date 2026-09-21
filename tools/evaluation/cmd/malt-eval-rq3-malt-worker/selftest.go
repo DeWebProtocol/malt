@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v7"
+	maltAdapterSelfTestCorpusSchema = "malt-eval-rq3-malt-adapter-self-test/v8"
 	controllerRequestSchema         = "malt-rq3-gateway-controller-request/v3"
 	controllerResponseSchema        = "malt-rq3-gateway-controller-response/v2"
 	controllerCapabilityID          = "rq3.gateway-lifecycle-controller.v2"
@@ -35,7 +35,7 @@ const (
 )
 
 var maltAdapterSelfTestProfile = e0selftest.Profile{
-	ProfileID: "rq3-malt-adapter-positive-hostile-v7",
+	ProfileID: "rq3-malt-adapter-positive-hostile-v8",
 	PositiveCases: []string{
 		"execute-controlled-malt-flat",
 		"execute-git-first-parent-malt-flat",
@@ -84,12 +84,11 @@ type maltAdapterSelfTestPositiveCase struct {
 }
 
 type observingEvaluationGateway struct {
-	base               evaluationGateway
-	healthCalls        int
-	bootstrapCalls     int
-	flatMapCalls       int
-	corruptFlatMapCall int
-	firstFlatRoot      cid.Cid
+	base                  evaluationGateway
+	healthCalls           int
+	flatPrefixCalls       int
+	corruptFlatPrefixCall int
+	firstFlatRoot         cid.Cid
 }
 
 func (g *observingEvaluationGateway) Health(ctx context.Context) (*gatewaytransport.Health, error) {
@@ -97,21 +96,16 @@ func (g *observingEvaluationGateway) Health(ctx context.Context) (*gatewaytransp
 	return g.base.Health(ctx)
 }
 
-func (g *observingEvaluationGateway) BootstrapEvaluationObject(ctx context.Context, authorization string, object gatewaytransport.BootstrapObject) (gatewaytransport.BootstrapResult, error) {
-	g.bootstrapCalls++
-	return g.base.BootstrapEvaluationObject(ctx, authorization, object)
-}
-
-func (g *observingEvaluationGateway) ApplyEvaluationFlatMap(ctx context.Context, authorization string, mutation gatewaytransport.FlatMapMutation) (gatewaytransport.FlatMapResult, error) {
-	g.flatMapCalls++
-	result, err := g.base.ApplyEvaluationFlatMap(ctx, authorization, mutation)
+func (g *observingEvaluationGateway) ApplyEvaluationFlatPrefix(ctx context.Context, authorization string, mutation gatewaytransport.FlatPrefixMutation) (gatewaytransport.FlatPrefixResult, error) {
+	g.flatPrefixCalls++
+	result, err := g.base.ApplyEvaluationFlatPrefix(ctx, authorization, mutation)
 	if err != nil {
 		return result, err
 	}
-	if g.flatMapCalls == 1 {
+	if g.flatPrefixCalls == 1 {
 		g.firstFlatRoot = result.Root
 	}
-	if g.corruptFlatMapCall == g.flatMapCalls && g.firstFlatRoot.Defined() {
+	if g.corruptFlatPrefixCall == g.flatPrefixCalls && g.firstFlatRoot.Defined() {
 		result.Root = g.firstFlatRoot
 	}
 	return result, nil
@@ -357,9 +351,20 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 		if err != nil {
 			return err
 		}
-		wantCapability := maltAdapterV7ExpectedCapability()
-		if len(responses) != len(requests) || !responses[0].OK || responses[0].Capability == nil || !reflect.DeepEqual(*responses[0].Capability, wantCapability) || !responses[len(responses)-1].OK || responses[len(responses)-1].Stream == nil || !responses[len(responses)-1].Stream.Complete {
-			return errors.New("production MALT streaming worker returned an incomplete envelope sequence")
+		wantCapability := maltAdapterV8ExpectedCapability()
+		if len(responses) != len(requests) {
+			return fmt.Errorf("production MALT streaming worker returned %d envelopes, want %d", len(responses), len(requests))
+		}
+		for _, response := range responses {
+			if !response.OK {
+				return fmt.Errorf("production MALT request %s failed: %+v", response.RequestID, response.Error)
+			}
+		}
+		if responses[0].Capability == nil || !reflect.DeepEqual(*responses[0].Capability, wantCapability) {
+			return fmt.Errorf("production MALT capability differs from the current E0 contract: %+v", responses[0].Capability)
+		}
+		if responses[len(responses)-1].Stream == nil || !responses[len(responses)-1].Stream.Complete {
+			return errors.New("production MALT streaming worker did not finish its stream")
 		}
 		var records []commitRecord
 		writeEventsByCommit := make(map[string]int)
@@ -399,14 +404,14 @@ func executeMALTPositiveCase(ctx context.Context, config maltSelfTestConfig, cle
 	})
 }
 
-// maltAdapterV7ExpectedCapability is deliberately independent of
-// supportedCapability. These literals freeze the E0 v7 contract so a
+// maltAdapterV8ExpectedCapability is deliberately independent of
+// supportedCapability. These literals freeze the E0 v8 contract so a
 // production layout, commitment, persistence, or accounting change cannot
 // silently update both the implementation and its expected self-test value.
-func maltAdapterV7ExpectedCapability() capability {
+func maltAdapterV8ExpectedCapability() capability {
 	return capability{
-		SchemaVersion:        "malt-rq3-malt-boundary-capability/v3",
-		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v6",
+		SchemaVersion:        "malt-rq3-malt-boundary-capability/v4",
+		CapabilityID:         "rq3.malt-flat-kzg-fskv-arcset.v7",
 		LayoutProfile:        "malt-flat-canonical-path-map/v1",
 		CommitmentBackend:    "kzg",
 		KVBackend:            "fs",
@@ -434,7 +439,7 @@ func maltAdapterV7ExpectedCapability() capability {
 		SameValueAttempts:        true,
 		OneRootPerCommit:         true,
 		HistoryRetention:         "all-roots",
-		GatewayAccountingProfile: "gateway.client-root-write-accounting/v2",
+		GatewayAccountingProfile: "gateway.authentication-write-accounting/0",
 		GatewayByteMethod:        "durable-kv-key-plus-value-bytes/v2",
 		AggregateKeyBinding:      "object-ledger-sha256/category/disposition/v1",
 		DeleteLifecycle:          true,
@@ -444,7 +449,7 @@ func maltAdapterV7ExpectedCapability() capability {
 		MaximumWholeFileBytes:    67_108_864,
 		MaximumSnapshotFiles:     32_767,
 		MaximumMutationsPerChunk: 32_768,
-		MaximumFlatMapChanges:    65_536,
+		MaximumFlatPrefixChanges: 65_536,
 	}
 }
 
@@ -579,8 +584,8 @@ func executeMALTHostileCase(ctx context.Context, config maltSelfTestConfig, clea
 			if runErr != nil || len(responses) != 2 || !responses[0].OK || responses[1].OK || responses[1].Error == nil || !strings.Contains(responses[1].Error.Message, "commit_list_sha256") {
 				return fmt.Errorf("production MALT stream accepted an invalid preflight commit manifest: responses=%#v err=%v", responses, runErr)
 			}
-			if observed.healthCalls != 1 || observed.bootstrapCalls != 0 || observed.flatMapCalls != 0 {
-				return fmt.Errorf("invalid commit manifest crossed the Gateway side-effect boundary: health=%d bootstrap=%d flat-map=%d", observed.healthCalls, observed.bootstrapCalls, observed.flatMapCalls)
+			if observed.healthCalls != 1 || observed.flatPrefixCalls != 0 {
+				return fmt.Errorf("invalid commit manifest crossed the Gateway side-effect boundary: health=%d flat-prefix=%d", observed.healthCalls, observed.flatPrefixCalls)
 			}
 			return nil
 		})
@@ -600,15 +605,15 @@ func executeMALTHostileCase(ctx context.Context, config maltSelfTestConfig, clea
 			return err
 		}
 		return withDisposableSelfTestGateway(ctx, config, cleanPin, optionsPin, version, testCase.ID, run, func(worker *campaignWorker) error {
-			observed := &observingEvaluationGateway{base: worker.evaluation, corruptFlatMapCall: 2}
+			observed := &observingEvaluationGateway{base: worker.evaluation, corruptFlatPrefixCall: 2}
 			worker.evaluation = observed
 			requests := maltStreamRequests(testCase.ID, run)
 			responses, runErr := runMALTSelfTestWorker(ctx, worker, requests)
 			if runErr != nil || len(responses) != len(requests) || !responses[0].OK || !responses[1].OK || responses[2].OK || responses[2].Error == nil || !strings.Contains(responses[2].Error.Message, "independent per-commit flat oracle") {
 				return fmt.Errorf("production MALT stream accepted a different valid Gateway root: responses=%#v err=%v", responses, runErr)
 			}
-			if observed.flatMapCalls != 2 {
-				return fmt.Errorf("worker performed Gateway mutations after the first wrong root: flat-map calls=%d", observed.flatMapCalls)
+			if observed.flatPrefixCalls != 2 {
+				return fmt.Errorf("worker performed Gateway mutations after the first wrong root: flat-prefix calls=%d", observed.flatPrefixCalls)
 			}
 			for _, response := range responses[3:] {
 				if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "already complete") {

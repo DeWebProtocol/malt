@@ -10,12 +10,12 @@ import (
 func TestTaxonomyContractIsFrozenAndDefensivelyCopied(t *testing.T) {
 	got := Contract()
 	want := Taxonomy{
-		InclusiveTotals: []string{"mutation_total", "client_root_generation", "first_mutation"},
+		InclusiveTotals: []string{"mutation_total", "candidate_generation", "first_mutation"},
 		ExclusiveMutationPhases: []string{
-			"scan", "chunk", "hash", "update_view", "verify_update_view", "normalization",
-			"root_computation", "expected_root_encoding", "client_root_bundle", "upload", "receipt_check",
+			"scan", "chunk", "hash", "graph_snapshot",
+			"candidate_apply", "candidate_export", "batch_encoding", "upload", "receipt_check",
 		},
-		NestedDiagnostics:          []string{"commitment_update", "gateway_replay", "gateway_persist"},
+		NestedDiagnostics:          []string{"gateway_validate_stage", "gateway_persist"},
 		ColdStartupPhases:          []string{"wasm_download", "wasm_instantiate", "parameter_load"},
 		BrowserBoundaryPhases:      []string{"js_wasm_boundary"},
 		OrthogonalResources:        []string{"cpu_total", "peak_memory"},
@@ -40,13 +40,10 @@ func TestValidateReconcilesDurationDomains(t *testing.T) {
 			value["scan"] = Observation{Applicable: true, DurationNS: 101}
 		},
 		"sdk phases exceed subtotal": func(value map[string]Observation) {
-			value["client_root_generation"] = Observation{Applicable: true, DurationNS: 5}
-		},
-		"commitment exceeds root": func(value map[string]Observation) {
-			value["commitment_update"] = Observation{Applicable: true, DurationNS: 11}
+			value["candidate_generation"] = Observation{Applicable: true, DurationNS: 5}
 		},
 		"gateway diagnostics exceed total": func(value map[string]Observation) {
-			value["gateway_replay"] = Observation{Applicable: true, DurationNS: 60}
+			value["gateway_validate_stage"] = Observation{Applicable: true, DurationNS: 60}
 			value["gateway_persist"] = Observation{Applicable: true, DurationNS: 60}
 		},
 		"browser call cannot contain mutation and boundary": func(value map[string]Observation) {
@@ -99,12 +96,11 @@ func validObservations(browser, cold bool) map[string]Observation {
 		values[name] = Observation{}
 	}
 	values["mutation_total"] = Observation{Applicable: true, DurationNS: 100}
-	values["client_root_generation"] = Observation{Applicable: true, DurationNS: 30}
-	for _, name := range []string{"scan", "chunk", "hash", "update_view", "verify_update_view", "normalization", "root_computation", "expected_root_encoding", "client_root_bundle", "upload", "receipt_check"} {
+	values["candidate_generation"] = Observation{Applicable: true, DurationNS: 30}
+	for _, name := range []string{"scan", "chunk", "hash", "graph_snapshot", "candidate_apply", "candidate_export", "batch_encoding", "upload", "receipt_check"} {
 		values[name] = Observation{Applicable: true, DurationNS: 2}
 	}
-	values["commitment_update"] = Observation{Applicable: true, DurationNS: 1}
-	values["gateway_replay"] = Observation{Applicable: true, DurationNS: 2}
+	values["gateway_validate_stage"] = Observation{Applicable: true, DurationNS: 2}
 	values["gateway_persist"] = Observation{Applicable: true, DurationNS: 2}
 	values["cpu_total"] = Observation{Applicable: true, DurationNS: 150}
 	values["peak_memory"] = Observation{Applicable: true, DurationNS: 100}

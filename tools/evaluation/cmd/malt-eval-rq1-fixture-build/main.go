@@ -26,13 +26,12 @@ import (
 	"github.com/dewebprotocol/malt-client/merkledag"
 	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	"github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
-	clientverifier "github.com/dewebprotocol/malt-core/sdk/verifier"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	authenticationverifier "github.com/dewebprotocol/malt-core/sdk/authentication/verifier"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -91,11 +90,6 @@ type descriptor struct {
 	Path          string `json:"path"`
 	SHA256        string `json:"sha256"`
 	Bytes         int64  `json:"bytes"`
-}
-
-type mapObject struct {
-	root    cid.Cid
-	entries map[string]cid.Cid
 }
 
 type trieNode struct {
@@ -211,7 +205,7 @@ func verifyGatewayHealth(ctx context.Context, evaluation *gatewaytransport.Clien
 		return fmt.Errorf("read Gateway health: %w", err)
 	}
 	if health.Status != "ok" || health.EvaluationInstanceToken != token || health.KVBackend != "badger" || health.BlobBackend != "embedded" ||
-		health.ArcTableMode != "versioned" || health.CommitmentProfile != "kzg" || health.EvaluationClientRootBootstrap != gatewaytransport.BootstrapProfile {
+		health.ArcTableMode != "versioned" || health.CommitmentProfile != "kzg" || health.EvaluationAuthenticationBootstrap != gatewaytransport.BootstrapProfile {
 		return errors.New("Gateway does not expose the exact empty RQ1 fixture-build capability")
 	}
 	return nil
@@ -245,7 +239,7 @@ func buildUnixFS(ctx context.Context, remote *transport.Client, payload []byte) 
 	return root, nil
 }
 
-func buildMALT(ctx context.Context, payload cid.Cid) (cid.Cid, []mapObject, error) {
+func buildMALT(ctx context.Context, payload cid.Cid) (cid.Cid, []protocol.AuthenticationCandidate, error) {
 	root := &trieNode{edges: map[string]*trieEdge{}}
 	for _, depth := range exactDepths {
 		if err := root.insert(depth.Segments); err != nil {
@@ -256,11 +250,12 @@ func buildMALT(ctx context.Context, payload cid.Cid) (cid.Cid, []mapObject, erro
 	if err != nil {
 		return cid.Undef, nil, err
 	}
-	mapper, err := radix.NewMap(scheme, memory.New(true))
-	if err != nil {
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
 		return cid.Undef, nil, err
 	}
-	rootCID, objects, err := commitTrie(ctx, mapper, root, payload)
+	e := engine.New(input.DefaultRegistry(), profiles)
+	rootCID, objects, err := commitTrie(ctx, e, root, payload)
 	if err != nil {
 		return cid.Undef, nil, err
 	}
@@ -300,55 +295,48 @@ func (node *trieNode) insert(segments []string) error {
 	return nil
 }
 
-func commitTrie(ctx context.Context, mapper *radix.Map, node *trieNode, payload cid.Cid) (cid.Cid, []mapObject, error) {
+func commitTrie(ctx context.Context, e *engine.Engine, node *trieNode, payload cid.Cid) (cid.Cid, []protocol.AuthenticationCandidate, error) {
 	keys := make([]string, 0, len(node.edges))
 	for key := range node.edges {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	entries := make(map[string]cid.Cid, len(keys))
-	objects := make([]mapObject, 0)
+	objects := make([]protocol.AuthenticationCandidate, 0)
 	for _, key := range keys {
 		edge := node.edges[key]
 		if edge.payload {
 			entries[key] = payload
 			continue
 		}
-		childRoot, childObjects, err := commitTrie(ctx, mapper, edge.child, payload)
+		childRoot, childObjects, err := commitTrie(ctx, e, edge.child, payload)
 		if err != nil {
 			return cid.Undef, nil, err
 		}
 		objects = append(objects, childObjects...)
 		entries[key] = childRoot
 	}
-	root, err := mapper.Commit(ctx, "default", mapping.NewViewFrom(entries))
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: make([]engine.Entry, 0, len(keys))}
+	for _, key := range keys {
+		state.Entries = append(state.Entries, engine.Entry{Input: input.LabelValue([]byte(key)), Target: entries[key]})
+	}
+	candidate, err := authentication.Prepare(ctx, e, state)
 	if err != nil {
 		return cid.Undef, nil, err
 	}
-	objects = append(objects, mapObject{root: root, entries: entries})
-	return root, objects, nil
+	objects = append(objects, candidate)
+	return cid.MustParse(candidate.Root), objects, nil
 }
 
-func bootstrapMALT(ctx context.Context, evaluation *gatewaytransport.Client, bootstrapAuthorizationToken string, objects []mapObject) error {
+func bootstrapMALT(ctx context.Context, evaluation *gatewaytransport.Client, bootstrapAuthorizationToken string, objects []protocol.AuthenticationCandidate) error {
 	for index, object := range objects {
-		keys := make([]string, 0, len(object.entries))
-		for key := range object.entries {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		entries := make([]gatewaytransport.BootstrapEntry, len(keys))
-		for entryIndex, key := range keys {
-			path := key
-			entries[entryIndex] = gatewaytransport.BootstrapEntry{Path: &path, Target: object.entries[key]}
-		}
 		response, err := evaluation.BootstrapEvaluationObject(ctx, bootstrapAuthorizationToken, gatewaytransport.BootstrapObject{
-			OperationID: fmt.Sprintf("rq1-fixture-map-%03d", index+1), Kind: arcset.KindMap,
-			Backend: maltcid.BackendKindKZG, ExpectedRoot: object.root, Entries: entries,
+			OperationID: fmt.Sprintf("rq1-fixture-prefix-%03d", index+1), Candidate: object,
 		})
 		if err != nil {
 			return fmt.Errorf("bootstrap MALT object %d: %w", index, err)
 		}
-		if !response.Root.Equals(object.root) {
+		if response.Root.String() != object.Root {
 			return fmt.Errorf("bootstrap MALT object %d returned a different root/profile", index)
 		}
 	}
@@ -356,7 +344,7 @@ func bootstrapMALT(ctx context.Context, evaluation *gatewaytransport.Client, boo
 }
 
 func verifyFixture(ctx context.Context, client *http.Client, baseURL string, evaluation *gatewaytransport.Client, remote *transport.Client, unixRoot, maltRoot, payloadCID cid.Cid, payload []byte) error {
-	verifier, err := clientverifier.NewDefault()
+	verifier, err := authenticationverifier.New(nil, maltcid.KZG4096)
 	if err != nil {
 		return err
 	}
@@ -388,15 +376,20 @@ func verifyFixture(ctx context.Context, client *http.Client, baseURL string, eva
 		if err := verifyTrustedPath(ctx, client, baseURL, unixRoot, depth.Segments, payloadCID, payload); err != nil {
 			return fmt.Errorf("verify trusted Path depth %d: %w", depth.Depth, err)
 		}
-		request := protocol.ResolveRequest{Profile: protocol.ResolveProfile, Root: maltRoot.String(), Segments: append([]string(nil), depth.Segments...)}
-		result, err := remote.Resolve(ctx, request)
+		steps := make([]input.Value, len(depth.Segments))
+		for i, segment := range depth.Segments {
+			steps[i] = input.LabelValue([]byte(segment))
+		}
+		request := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: maltRoot.String(), Steps: steps, Operation: "resolve"}
+		result, err := remote.Authenticate(ctx, request)
 		if err != nil {
 			return fmt.Errorf("resolve MALT depth %d: %w", depth.Depth, err)
 		}
-		if err := verifier.VerifyResolve(ctx, protocol.ResolveVerification{Request: request, Result: *result}); err != nil {
-			return fmt.Errorf("locally verify MALT depth %d: %w", depth.Depth, err)
+		valid, err := authentication.Verify(verifier, request, *result)
+		if err != nil || !valid || result.AbsentStep != nil {
+			return fmt.Errorf("locally verify MALT depth %d: valid=%t absent=%t: %v", depth.Depth, valid, result.AbsentStep != nil, err)
 		}
-		target, err := cid.Parse(result.Target)
+		target, err := cid.Parse(result.Resolved)
 		if err != nil || !target.Equals(payloadCID) {
 			return fmt.Errorf("MALT depth %d returned a different target", depth.Depth)
 		}
@@ -482,7 +475,7 @@ func (value fixture) validate() error {
 		roots[index] = root
 	}
 	if roots[0].Prefix().Codec != cid.DagProtobuf || !roots[0].Equals(roots[1]) || !roots[0].Equals(roots[2]) ||
-		maltcid.BackendKindOf(roots[3]) != maltcid.BackendKindKZG || maltcid.SemanticKindOf(roots[3]) != maltcid.SemanticKindMap {
+		!fixturePrefixRoot(roots[3]) {
 		return errors.New("constructed RQ1 route roots do not preserve shared Merkle/MALT boundaries")
 	}
 	return nil
@@ -539,4 +532,9 @@ func canonicalToken(value string) bool {
 	}
 	decoded, err := hex.DecodeString(value)
 	return err == nil && hex.EncodeToString(decoded) == value
+}
+
+func fixturePrefixRoot(root cid.Cid) bool {
+	descriptor, _, err := maltcid.ParseRoot(root)
+	return err == nil && descriptor.Layout == maltcid.Prefix && descriptor.InputRule == 1 && descriptor.Profile == maltcid.KZG4096
 }

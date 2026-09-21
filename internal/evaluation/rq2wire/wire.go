@@ -17,7 +17,7 @@ import (
 
 const (
 	WorkerRequestSchema = "malt-rq2-worker-request/v1"
-	WorkerRecordSchema  = "malt-rq2-worker-record/v1"
+	WorkerRecordSchema  = "malt-rq2-worker-record/v2"
 
 	ClientNative      = "native"
 	ClientBrowserWASM = "browser-wasm"
@@ -97,9 +97,9 @@ type RuntimeEvidence struct {
 func ParameterEvidence(backend string) (profile, digest string, inputBytes uint64, ok bool) {
 	switch backend {
 	case "kzg":
-		// go-kzg-4844 v1.1.0 embeds this exact trusted_setup.json as the
-		// public initialization input consumed by NewContext4096Secure().
-		return "go-kzg-4844-v1.1.0-trusted-setup-json", "0229b43f4fac9b17374809520eb621b5ee1a7f74547e7d36918e7d4b122e178d", 447354, true
+		// Core NewScheme consumes its 192-byte opening key and 393216-byte
+		// Lagrange writer key. Digest order is opening key, then writer key.
+		return "malt-kzg4096-binary-opening-then-writer-key/v1", "5ce50c7a06499dee8b17987d594e5552232d9bd7a5ea8c5f1b29e951717f0c9d", 393408, true
 	case "ipa":
 		// go-ipa GenerateRandomPoints consumes this exact 19-byte seed;
 		// VectorLength=256 is fixed code/configuration rather than loaded bytes.
@@ -110,9 +110,11 @@ func ParameterEvidence(backend string) (profile, digest string, inputBytes uint6
 }
 
 type SessionEvidence struct {
-	AcceptedRoot string `json:"accepted_root"`
-	ReceiptCount uint64 `json:"receipt_count"`
-	AuditPassed  bool   `json:"audit_passed"`
+	GraphFetch   PhaseMeasurement `json:"graph_fetch"`
+	GraphImport  PhaseMeasurement `json:"graph_import"`
+	AcceptedRoot string           `json:"accepted_root"`
+	ReceiptCount uint64           `json:"receipt_count"`
+	AuditPassed  bool             `json:"audit_passed"`
 }
 
 type PhaseMeasurement struct {
@@ -157,21 +159,20 @@ type MutationMetrics struct {
 	// TaxonomyProfile binds the executable aggregation contract. Duration
 	// classes are frozen in rq2metrics; bytes/counts remain field-specific,
 	// non-additive resource observations regardless of duration class.
-	TaxonomyProfile      string           `json:"taxonomy_profile"`
-	MutationTotal        PhaseMeasurement `json:"mutation_total"`
-	Scan                 PhaseMeasurement `json:"scan"`
-	Chunk                PhaseMeasurement `json:"chunk"`
-	Hash                 PhaseMeasurement `json:"hash"`
-	UpdateView           PhaseMeasurement `json:"update_view"`
-	VerifyUpdateView     PhaseMeasurement `json:"verify_update_view"`
-	Normalization        PhaseMeasurement `json:"normalization"`
-	CommitmentUpdate     PhaseMeasurement `json:"commitment_update"`
-	ExpectedRootEncoding PhaseMeasurement `json:"expected_root_encoding"`
-	RootComputation      PhaseMeasurement `json:"root_computation"`
-	ClientRootGeneration PhaseMeasurement `json:"client_root_generation"`
-	ClientRootBundle     PhaseMeasurement `json:"client_root_bundle"`
+	TaxonomyProfile string           `json:"taxonomy_profile"`
+	MutationTotal   PhaseMeasurement `json:"mutation_total"`
+	Scan            PhaseMeasurement `json:"scan"`
+	Chunk           PhaseMeasurement `json:"chunk"`
+	Hash            PhaseMeasurement `json:"hash"`
+
+	GraphSnapshot PhaseMeasurement `json:"graph_snapshot"`
+
+	CandidateExport      PhaseMeasurement `json:"candidate_export"`
+	CandidateApply       PhaseMeasurement `json:"candidate_apply"`
+	CandidateGeneration  PhaseMeasurement `json:"candidate_generation"`
+	BatchEncoding        PhaseMeasurement `json:"batch_encoding"`
 	Upload               PhaseMeasurement `json:"upload"`
-	GatewayReplay        PhaseMeasurement `json:"gateway_replay"`
+	GatewayValidateStage PhaseMeasurement `json:"gateway_validate_stage"`
 	GatewayPersist       PhaseMeasurement `json:"gateway_persist"`
 	ReceiptCheck         PhaseMeasurement `json:"receipt_check"`
 	CPUTotal             PhaseMeasurement `json:"cpu_total"`
@@ -201,10 +202,10 @@ func (m MutationMetrics) Validate(clientKind, backend, lifecycle, operation stri
 		name  string
 		value PhaseMeasurement
 	}{
-		{"mutation_total", m.MutationTotal}, {"update_view", m.UpdateView}, {"verify_update_view", m.VerifyUpdateView}, {"normalization", m.Normalization},
-		{"commitment_update", m.CommitmentUpdate}, {"expected_root_encoding", m.ExpectedRootEncoding}, {"root_computation", m.RootComputation},
-		{"client_root_generation", m.ClientRootGeneration}, {"client_root_bundle", m.ClientRootBundle},
-		{"gateway_replay", m.GatewayReplay}, {"gateway_persist", m.GatewayPersist}, {"receipt_check", m.ReceiptCheck},
+		{"mutation_total", m.MutationTotal}, {"graph_snapshot", m.GraphSnapshot},
+		{"candidate_export", m.CandidateExport}, {"candidate_apply", m.CandidateApply},
+		{"candidate_generation", m.CandidateGeneration}, {"batch_encoding", m.BatchEncoding},
+		{"gateway_validate_stage", m.GatewayValidateStage}, {"gateway_persist", m.GatewayPersist}, {"receipt_check", m.ReceiptCheck},
 		{"cpu_total", m.CPUTotal}, {"peak_memory", m.PeakMemory},
 	} {
 		if err := phase.value.validate(phase.name, true); err != nil {
@@ -216,12 +217,9 @@ func (m MutationMetrics) Validate(clientKind, backend, lifecycle, operation stri
 	if err := m.Upload.validate("upload", uploadRequired); err != nil {
 		return err
 	}
-	if m.CommitmentUpdate.DurationNS > m.RootComputation.DurationNS {
-		return fmt.Errorf("commitment_update is a nested root_computation subphase and cannot exceed it")
-	}
-	if m.MutationTotal.DurationNS == 0 || m.UpdateView.Bytes == 0 || m.ClientRootBundle.Bytes == 0 ||
+	if m.MutationTotal.DurationNS == 0 || m.BatchEncoding.Bytes == 0 ||
 		m.ReceiptCheck.Bytes == 0 || m.PeakMemory.Bytes == 0 || uploadRequired && m.Upload.Bytes == 0 {
-		return fmt.Errorf("total latency and directional update/upload/bundle/receipt/memory accounting must be nonzero")
+		return fmt.Errorf("total latency and directional batch/upload/receipt/memory accounting must be nonzero")
 	}
 	browser := clientKind == ClientBrowserWASM
 	cold := lifecycle == LifecycleBrowserCold
@@ -264,10 +262,10 @@ func (m MutationMetrics) durationObservations() map[string]rq2metrics.Observatio
 		value PhaseMeasurement
 	}{
 		{"mutation_total", m.MutationTotal}, {"scan", m.Scan}, {"chunk", m.Chunk}, {"hash", m.Hash},
-		{"update_view", m.UpdateView}, {"verify_update_view", m.VerifyUpdateView}, {"normalization", m.Normalization},
-		{"commitment_update", m.CommitmentUpdate}, {"expected_root_encoding", m.ExpectedRootEncoding},
-		{"root_computation", m.RootComputation}, {"client_root_generation", m.ClientRootGeneration},
-		{"client_root_bundle", m.ClientRootBundle}, {"upload", m.Upload}, {"gateway_replay", m.GatewayReplay},
+		{"graph_snapshot", m.GraphSnapshot},
+		{"candidate_export", m.CandidateExport},
+		{"candidate_apply", m.CandidateApply}, {"candidate_generation", m.CandidateGeneration},
+		{"batch_encoding", m.BatchEncoding}, {"upload", m.Upload}, {"gateway_validate_stage", m.GatewayValidateStage},
 		{"gateway_persist", m.GatewayPersist}, {"receipt_check", m.ReceiptCheck}, {"cpu_total", m.CPUTotal},
 		{"peak_memory", m.PeakMemory}, {"wasm_download", m.WASMDownload}, {"wasm_instantiate", m.WASMInstantiate},
 		{"parameter_load", m.ParameterLoad}, {"first_mutation", m.FirstMutation}, {"js_wasm_boundary", m.JSWASMBoundary},
@@ -278,15 +276,14 @@ func (m MutationMetrics) durationObservations() map[string]rq2metrics.Observatio
 }
 
 type MutationEvidence struct {
-	Operation        string          `json:"operation"`
-	PriorRoot        string          `json:"prior_root"`
-	CandidateRoot    string          `json:"candidate_root"`
-	ReceiptRoot      string          `json:"receipt_root"`
-	ReceiptAccepted  bool            `json:"receipt_accepted"`
-	UpdateViewSHA256 string          `json:"update_view_sha256"`
-	IntentSHA256     string          `json:"intent_sha256"`
-	BundleSHA256     string          `json:"bundle_sha256"`
-	Metrics          MutationMetrics `json:"metrics"`
+	Operation       string `json:"operation"`
+	PriorRoot       string `json:"prior_root"`
+	CandidateRoot   string `json:"candidate_root"`
+	ReceiptRoot     string `json:"receipt_root"`
+	ReceiptAccepted bool   `json:"receipt_accepted"`
+
+	BatchSHA256 string          `json:"batch_sha256"`
+	Metrics     MutationMetrics `json:"metrics"`
 }
 
 type WorkerRecord struct {
@@ -326,6 +323,9 @@ func FailedRecord(request WorkerRequest, class string, err error) WorkerRecord {
 }
 
 func (r WorkerRecord) Validate() error {
+	if !slices.Contains([]string{RecordPreflight, RecordSessionStart, RecordMutation, RecordSessionEnd}, r.RecordKind) {
+		return fmt.Errorf("unsupported RQ2 worker record kind %q", r.RecordKind)
+	}
 	if !IDPattern.MatchString(r.WorkerID) || !IDPattern.MatchString(r.RequestID) || !IDPattern.MatchString(r.SessionID) ||
 		!IDPattern.MatchString(r.PlatformID) || !IDPattern.MatchString(r.FixtureID) || r.SchemaVersion != WorkerRecordSchema {
 		return fmt.Errorf("invalid RQ2 worker record identity")
@@ -359,6 +359,9 @@ func (r WorkerRecord) Validate() error {
 			return fmt.Errorf("native preflight must not claim browser parameter-load provenance")
 		}
 	case RecordSessionStart:
+		if r.Session == nil || r.Session.GraphFetch.validate("graph_fetch", true) != nil || r.Session.GraphImport.validate("graph_import", true) != nil || r.Session.GraphFetch.Bytes == 0 || r.Session.GraphImport.Count == 0 {
+			return fmt.Errorf("session-start omits authenticated graph import")
+		}
 		if r.Measured || r.Session == nil || r.Mutation != nil || r.Runtime != nil || r.Capabilities != nil ||
 			!ValidTypedRoot(r.Session.AcceptedRoot, r.Backend) || r.Session.ReceiptCount != 0 || r.Session.AuditPassed {
 			return fmt.Errorf("invalid RQ2 session-start evidence")
@@ -371,13 +374,16 @@ func (r WorkerRecord) Validate() error {
 			!ValidTypedRoot(r.Mutation.CandidateRoot, r.Backend) || r.Mutation.CandidateRoot != r.Mutation.ReceiptRoot || !r.Mutation.ReceiptAccepted {
 			return fmt.Errorf("invalid RQ2 mutation roots")
 		}
-		for _, digest := range []string{r.Mutation.UpdateViewSHA256, r.Mutation.IntentSHA256, r.Mutation.BundleSHA256} {
+		for _, digest := range []string{r.Mutation.BatchSHA256} {
 			if !CanonicalSHA256(digest) {
 				return fmt.Errorf("invalid RQ2 mutation digest")
 			}
 		}
 		return r.Mutation.Metrics.Validate(r.ClientKind, r.Backend, r.Lifecycle, r.Mutation.Operation)
 	case RecordSessionEnd:
+		if r.Session == nil || r.Session.GraphFetch.validate("graph_fetch", false) != nil || r.Session.GraphImport.validate("graph_import", false) != nil {
+			return fmt.Errorf("session-end carries startup graph import")
+		}
 		if r.Measured || r.Session == nil || r.Mutation != nil || r.Runtime != nil || r.Capabilities != nil ||
 			!ValidTypedRoot(r.Session.AcceptedRoot, r.Backend) || !r.Session.AuditPassed {
 			return fmt.Errorf("invalid RQ2 session-end evidence")
@@ -389,7 +395,7 @@ func (r WorkerRecord) Validate() error {
 }
 
 func RequiredCapabilities(clientKind, backend string) []string {
-	values := []string{"client-root-bundle-v1", "exact-root-receipt-v1", "phase-metrics-v1", "update-view-v1"}
+	values := []string{"authentication-batch-v0", "authentication-candidate-v0", "exact-authentication-receipt-v0", "phase-metrics-v2", "retained-authentication-writer-v0"}
 	if clientKind == ClientNative {
 		values = append(values, "long-lived-session-v1", "native-writer-v1")
 	} else if clientKind == ClientBrowserWASM {
@@ -421,7 +427,12 @@ func ValidateCoordinate(clientKind, backend, lifecycle string) error {
 
 func ValidTypedRoot(value, backend string) bool {
 	parsed, err := cid.Parse(value)
-	return err == nil && maltcid.IsMaltCid(parsed) && string(maltcid.BackendKindOf(parsed)) == backend
+	descriptor, _, rootErr := maltcid.ParseRoot(parsed)
+	profile := maltcid.KZG4096
+	if backend == "ipa" {
+		profile = maltcid.IPA256
+	}
+	return err == nil && rootErr == nil && parsed.String() == value && descriptor.Profile == profile && (backend == "kzg" || backend == "ipa")
 }
 
 func CanonicalSHA256(value string) bool {

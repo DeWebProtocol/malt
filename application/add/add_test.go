@@ -11,8 +11,6 @@ import (
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	"github.com/dewebprotocol/malt-client/trust"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/mutation"
-	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -450,31 +448,6 @@ type countingAddGateway struct {
 	calls int
 }
 
-func (g *countingAddGateway) Resolve(context.Context, protocol.ResolveRequest) (*protocol.ResolveResult, error) {
-	g.calls++
-	return nil, os.ErrInvalid
-}
-
-func (g *countingAddGateway) Read(context.Context, protocol.ReadRequest) (*protocol.ReadResult, error) {
-	g.calls++
-	return nil, os.ErrInvalid
-}
-
-func (g *countingAddGateway) CreateStagedRoot(context.Context, map[string]string) (cid.Cid, error) {
-	g.calls++
-	return cid.Undef, os.ErrInvalid
-}
-
-func (g *countingAddGateway) CreateFixedListBaseRoot(context.Context) (cid.Cid, error) {
-	g.calls++
-	return cid.Undef, os.ErrInvalid
-}
-
-func (g *countingAddGateway) ApplyFixedListPayloadMutation(context.Context, mutation.SemanticMutation) (cid.Cid, error) {
-	g.calls++
-	return cid.Undef, os.ErrInvalid
-}
-
 func (c *countingAddCAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
 	c.puts++
 	return c.inner.Put(ctx, data)
@@ -487,4 +460,14 @@ func (c *countingAddCAS) PutWithCodec(ctx context.Context, data []byte, codec ui
 
 func (c *countingAddCAS) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	return c.inner.Get(ctx, key)
+}
+
+func (g *countingAddGateway) CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error) {
+	g.calls++
+	return cid.Undef, os.ErrInvalid
+}
+
+func (g *countingAddGateway) UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error) {
+	g.calls++
+	return cid.Undef, os.ErrInvalid
 }

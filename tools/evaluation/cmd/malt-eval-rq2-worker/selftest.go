@@ -25,10 +25,10 @@ import (
 
 const (
 	nativeE0CapabilityID = "rq2.native-writer"
-	nativeE0ProfileID    = "rq2-native-writer-positive-hostile-v1"
+	nativeE0ProfileID    = "rq2-native-writer-positive-hostile-v2"
 	// Updated only when the ordered compiled case contract intentionally
 	// changes together with the evaluator-owned registry.
-	nativeE0ExpectedProfileSHA256 = "4496552d3c18ebddf9dfc4736f37bdea346074f6e790f613725ec07b6d8437fe"
+	nativeE0ExpectedProfileSHA256 = "189e22ffdc2aeee2a044ff8df0d31a9dc2482170a0d61a468fdca320761b3014"
 )
 
 var nativeE0Profile = e0selftest.Profile{
@@ -199,7 +199,7 @@ func executeNativeE0Matrix(config nativeE0Config, backend, caseID string) error 
 func executeNativeE0Hostile(config nativeE0Config, caseID string) error {
 	switch caseID {
 	case "reject-malformed-request":
-		valid, err := json.Marshal(nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "preflight", recordPreflight, "", false, ""))
+		valid, err := json.Marshal(nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "preflight", rq2wire.RecordPreflight, "", false, ""))
 		if err != nil {
 			return err
 		}
@@ -239,13 +239,19 @@ func executeNativeE0Hostile(config nativeE0Config, caseID string) error {
 			if err := nativeE0Preflight(execution.harness, config.fixture.FixtureID, "kzg", caseID); err != nil {
 				return err
 			}
-			request := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "session-start", recordSessionStart, "", false, ipaRoot.String())
-			record, err := nativeE0Exchange(execution.harness, request, false, false)
+			request := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "session-start", rq2wire.RecordSessionStart, "", false, ipaRoot.String())
+			if request.Validate() == nil {
+				return errors.New("backend substitution unexpectedly satisfies the current request contract")
+			}
+			raw, err := json.Marshal(request)
 			if err != nil {
 				return err
 			}
-			if record.Success || record.FailureClass != "input_invalid" {
-				return fmt.Errorf("backend/root substitution was not rejected: %+v", record)
+			if err := execution.harness.WriteRaw(raw); err != nil {
+				return err
+			}
+			if err := execution.harness.WaitError(); err != nil {
+				return err
 			}
 			return requireNoNativeE0Submissions(execution)
 		})
@@ -258,7 +264,7 @@ func executeNativeE0Hostile(config nativeE0Config, caseID string) error {
 				return err
 			}
 			initialRoot := execution.root
-			first := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "mutation-current", recordMutation, nativeE0Operations[0], true, initialRoot)
+			first := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "mutation-current", rq2wire.RecordMutation, nativeE0Operations[0], true, initialRoot)
 			firstRecord, err := nativeE0Exchange(execution.harness, first, true, true)
 			if err != nil {
 				return err
@@ -266,7 +272,7 @@ func executeNativeE0Hostile(config nativeE0Config, caseID string) error {
 			if firstRecord.Mutation == nil {
 				return errors.New("stale-root setup mutation omitted mutation evidence")
 			}
-			request := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "mutation-stale", recordMutation, nativeE0Operations[1], true, initialRoot)
+			request := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "mutation-stale", rq2wire.RecordMutation, nativeE0Operations[1], true, initialRoot)
 			record, err := nativeE0Exchange(execution.harness, request, true, false)
 			if err != nil {
 				return err
@@ -308,7 +314,7 @@ func expectNativeWorkerStartupFailure(config nativeE0Config, caseID, fixturePath
 		return err
 	}
 	defer execution.abort()
-	request := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "preflight", recordPreflight, "", false, "")
+	request := nativeE0Request(config.fixture.FixtureID, "kzg", caseID, "preflight", rq2wire.RecordPreflight, "", false, "")
 	var record rq2wire.WorkerRecord
 	if err := execution.harness.Exchange(request, &record); err == nil {
 		return fmt.Errorf("hostile native startup unexpectedly emitted a record: %+v", record)
@@ -332,7 +338,7 @@ func startNativeE0Execution(config nativeE0Config, backend, caseID, fixturePath,
 	}
 	args := []string{
 		"-gateway-base-url", gateway.URL(), "-fixture", fixturePath, "-worker-id", "e0-worker-" + shortNativeE0ID(caseID),
-		"-platform-id", "e0-native", "-client-kind", clientNative, "-backend", backend, "-lifecycle", lifecycleNativeLong,
+		"-platform-id", "e0-native", "-client-kind", rq2wire.ClientNative, "-backend", backend, "-lifecycle", rq2wire.LifecycleNativeLong,
 		"-low-power-arm=" + strconv.FormatBool(config.machine.Descriptor.LowPowerARM()), "-gateway-instance-token", token,
 		"-machine-descriptor", config.machinePath, "-machine-descriptor-sha256", machineSHA,
 		"-machine-descriptor-bytes", strconv.FormatInt(config.machinePin.Bytes, 10), "-request-timeout", config.timeout.String(),
@@ -363,19 +369,19 @@ func runNativeE0Session(harness *rq2e0.Harness, fixture *rq2fixture.Fixture, bac
 	}
 	accepted := root
 	for index, operation := range operations {
-		request := nativeE0Request(fixture.FixtureID, backend, caseID, fmt.Sprintf("mutation-%02d", index), recordMutation, operation, true, accepted)
+		request := nativeE0Request(fixture.FixtureID, backend, caseID, fmt.Sprintf("mutation-%02d", index), rq2wire.RecordMutation, operation, true, accepted)
 		record, err := nativeE0Exchange(harness, request, true, true)
 		if err != nil {
 			return err
 		}
 		if !record.Success || record.Mutation == nil || !record.Mutation.ReceiptAccepted || record.Mutation.Operation != operation || record.Mutation.PriorRoot != accepted || record.Mutation.ReceiptRoot == accepted ||
 			!record.Mutation.Metrics.MutationTotal.Applicable || record.Mutation.Metrics.MutationTotal.DurationNS == 0 ||
-			!record.Mutation.Metrics.ClientRootGeneration.Applicable || !record.Mutation.Metrics.GatewayPersist.Applicable || !record.Mutation.Metrics.ReceiptCheck.Applicable {
+			!record.Mutation.Metrics.CandidateGeneration.Applicable || !record.Mutation.Metrics.GatewayPersist.Applicable || !record.Mutation.Metrics.ReceiptCheck.Applicable {
 			return fmt.Errorf("native production mutation %q returned incomplete evidence: %+v", operation, record)
 		}
 		accepted = record.Mutation.ReceiptRoot
 	}
-	request := nativeE0Request(fixture.FixtureID, backend, caseID, "session-end", recordSessionEnd, "", false, accepted)
+	request := nativeE0Request(fixture.FixtureID, backend, caseID, "session-end", rq2wire.RecordSessionEnd, "", false, accepted)
 	ended, err := nativeE0Exchange(harness, request, true, true)
 	if err != nil {
 		return err
@@ -387,7 +393,7 @@ func runNativeE0Session(harness *rq2e0.Harness, fixture *rq2fixture.Fixture, bac
 }
 
 func nativeE0Preflight(harness *rq2e0.Harness, fixtureID, backend, caseID string) error {
-	request := nativeE0Request(fixtureID, backend, caseID, "preflight", recordPreflight, "", false, "")
+	request := nativeE0Request(fixtureID, backend, caseID, "preflight", rq2wire.RecordPreflight, "", false, "")
 	record, err := nativeE0Exchange(harness, request, true, true)
 	if err != nil {
 		return err
@@ -399,7 +405,7 @@ func nativeE0Preflight(harness *rq2e0.Harness, fixtureID, backend, caseID string
 }
 
 func nativeE0StartSession(harness *rq2e0.Harness, fixtureID, backend, caseID, root string) error {
-	request := nativeE0Request(fixtureID, backend, caseID, "session-start", recordSessionStart, "", false, root)
+	request := nativeE0Request(fixtureID, backend, caseID, "session-start", rq2wire.RecordSessionStart, "", false, root)
 	record, err := nativeE0Exchange(harness, request, true, true)
 	if err != nil {
 		return err
@@ -437,8 +443,8 @@ func nativeE0Exchange(harness *rq2e0.Harness, request rq2wire.WorkerRequest, req
 func nativeE0Request(fixtureID, backend, caseID, requestID, kind, operation string, measured bool, root string) rq2wire.WorkerRequest {
 	return rq2wire.WorkerRequest{
 		SchemaVersion: rq2wire.WorkerRequestSchema, WorkerID: "e0-worker-" + shortNativeE0ID(caseID), RequestID: requestID,
-		RecordKind: kind, SessionID: "e0-session-" + shortNativeE0ID(caseID), ClientKind: clientNative,
-		PlatformID: "e0-native", Backend: backend, Lifecycle: lifecycleNativeLong, FixtureID: fixtureID,
+		RecordKind: kind, SessionID: "e0-session-" + shortNativeE0ID(caseID), ClientKind: rq2wire.ClientNative,
+		PlatformID: "e0-native", Backend: backend, Lifecycle: rq2wire.LifecycleNativeLong, FixtureID: fixtureID,
 		Operation: operation, Measured: measured, ExpectedAcceptedRoot: root,
 	}
 }

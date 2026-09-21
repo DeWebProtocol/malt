@@ -25,7 +25,7 @@ do not own benchmark plans, suites, comparison policy, result schemas, or
 result provenance; those belong in `malt-evaluation`.
 
 It depends on `github.com/dewebprotocol/malt-core` for canonical graph types,
-resolve/read/mutation protocols, ProofList verification, CID rules, and
+typed query/candidate/batch contracts, local verification, CID rules, and
 commitment implementations. It must not copy or redefine those contracts.
 
 The current implementation uses a Gateway for remote ArcTable materialization,
@@ -104,7 +104,7 @@ tools/evaluation/cmd -> internal/evaluation + public runtime capabilities
 ```
 
 `transport.Client` is one reusable HTTP connection, but consumers depend on
-the narrow `Native`, `Mutations`, `CAS`, or `Diagnostics` interfaces rather
+the narrow `Authentication`, `AuthenticationWriter`, `AuthenticationBatch`, `CAS`, or `Diagnostics` interfaces rather
 than a single mega-interface. Merkle DAG compatibility is exposed only through
 the fixed `PostMerkleDAGResolve` and `PostMerkleDAGRead` capabilities; there is
 no arbitrary profile-route escape hatch. Transport results remain untrusted.
@@ -120,7 +120,7 @@ read-through cache, and primary bytes are independently CID-verified before
 return. Cache presence can never satisfy primary `Has`. The default runtime
 configuration remains `gateway`; `local` currently supports local-only
 Merkle-DAG import, and managed native MALT operations reject it until a local
-Native/Mutations executor exists. `transport/capabilitytest` runs the same CAS
+authentication materializer exists. `transport/capabilitytest` runs the same CAS
 contract against mock, Gateway HTTP, local, hybrid, and a peer-loopback adapter;
 the loopback proves the port boundary without declaring a P2P wire profile.
 
@@ -165,17 +165,17 @@ a Gateway head into trusted-root policy.
 
 An explicit CID is parsed before any accepted-root alias lookup. Consequently,
 explicit-CID resolve/read/write operations do not require the alias store to
-exist or be readable; only alias selection opens that local state. Generic
-transport exposes canonical root-structure creation, while the UnixFS gateway
-adapter owns the `@payload` empty-root binding needed by fixed-list
-materialization. The same adapter binds mutation receipts to the gateway's
-returned base root and rejects a response for any other requested root.
+exist or be readable; only alias selection opens that local state. The application selects a creation profile and computes typed candidates locally.
+Directory payloads use an explicit system binding; Positional file payloads
+carry authenticated chunk geometry. Existing Root updates preserve their
+descriptor. The transport returns an exact batch receipt, which is checked
+against the locally computed base, Root, transaction and digest.
 
 ## Verified UnixFS facade
 
 `unixfs` owns the transport-neutral native reader/writer facade. Its remote
-port contains only generic MALT resolve/read operations; CAS and root creation
-are separate narrow capabilities. The facade:
+port contains typed MALT authentication queries; CAS and candidate
+materialization are separate narrow capabilities. The facade:
 
 1. parses `/` as UnixFS application syntax;
 2. constructs requests from a caller-selected trusted root;
@@ -273,7 +273,7 @@ profile; it does not change MALT Core or the existing plaintext semantics of
   hybrid MALT materialization, Merkle DAG import, and candidate recording.
 - `application/writeback`: transport-neutral replay over an exact leased
   staging batch. It verifies payload-store CIDs, obtains a bounded verified
-  client-root view, delegates only canonical intent planning, verifies the
+  typed candidate graph, delegates only canonical intent planning, verifies the
   exact durable receipt, records a candidate, and atomically completes or
   conflicts the batch. It has no accepted-root promotion method and imports no
   concrete transport.
@@ -348,7 +348,7 @@ profile; it does not change MALT Core or the existing plaintext semantics of
   durable mount lifecycle, and the outer platform adapter. For an explicit
   write-back Spec it also owns the concrete per-dataset/branch binding of
   staging state, flat/hybrid UnixFS planning, isolated MALT Core Writer state,
-  the untrusted Gateway client-root remote, and candidate-only trust policy.
+  the untrusted Gateway typed candidate transport, and candidate-only trust policy.
   Before replay it durably freezes the selected layout for that state directory;
   remounting the same dataset/branch with a different profile fails closed.
   Candidate recording and exact journal completion share the accepted-root
@@ -379,20 +379,20 @@ profile; it does not change MALT Core or the existing plaintext semantics of
   and payload verification.
 - `unixfs/encrypted`: runtime-owned encrypted dataset/directory/file manifest
   profile, opaque namespace tokens, AEAD chunking, owner-local snapshot CAS,
-  local KZG/IPA Map/List computation, exact remote-publication checks,
+  local KZG/IPA Prefix/Positional computation, exact remote-publication checks,
   verified full/range reads, and rooted plaintext materialization; it imports
   no trust or concrete transport package.
-- `unixfs/clientroot`: flat-v1/hybrid-v1 filesystem-intent projection over a
-  verified complete update view. It reconstructs and validates the existing
+- `unixfs/planner`: flat-v1/hybrid-v1/rooted-v1 filesystem-intent projection over
+  verified complete typed candidates. It reconstructs and validates the existing
   manifest/tree projection, applies ordered journal intent, uploads canonical
   manifests with exact returned-CID checks, and emits child-before-parent
-  output references for local Core computation. It has no trust, filesystem,
+  exact candidate batches computed by Core. It has no trust, filesystem,
   HTTP, or concrete transport capability.
 
 The `internal` packages are not compatibility promises. The public
 `application`, `application/writeback`, `bucketsync`, `cache`, `filesystem/service`,
 `filesystem/staging`, `filesystem/mount`, `journal`, `localapi`, `transport`,
-`trust`, `unixfs`, `unixfs/encrypted`, `unixfs/clientroot`, and
+`trust`, `unixfs`, `unixfs/encrypted`, `unixfs/planner`, and
 `merkledag` packages are the intended pre-release integration surface; their
 profiles remain experimental until a release policy is published.
 Architecture tests fail if production packages import evaluation support, if

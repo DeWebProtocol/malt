@@ -17,9 +17,9 @@ import (
 	"strings"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -196,7 +196,9 @@ func (f *Fixture) Validate() error {
 			return fmt.Errorf("RQ2 source fixture has an invalid or duplicate backend root")
 		}
 		root, err := cid.Parse(binding.CID)
-		if err != nil || string(maltcid.BackendKindOf(root)) != binding.Backend || root.String() != binding.CID {
+		descriptor, _, rootErr := maltcid.ParseRoot(root)
+		profile, _ := BackendProfile(binding.Backend)
+		if err != nil || rootErr != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Prefix || descriptor.InputRule != uint8(input.BytesSHA256) || root.String() != binding.CID {
 			return fmt.Errorf("RQ2 source fixture %s root is not a canonical typed MALT CID", binding.Backend)
 		}
 		roots[binding.Backend] = root
@@ -392,8 +394,7 @@ func validatePathCoordinate(path, coordinate string) error {
 	if err != nil {
 		return fmt.Errorf("path %q is not a canonical relative UnixFS path", path)
 	}
-	canonical, err := arcset.NewMapCoordinate(path)
-	if err != nil || canonical.String() != coordinate {
+	if err := input.LabelValue([]byte(path)).Validate(); err != nil {
 		return fmt.Errorf("coordinate %q is not canonical", coordinate)
 	}
 	return nil
@@ -605,15 +606,15 @@ func (f *Fixture) ApplySourceOperation(source map[string][]byte, operation Opera
 	}
 }
 
-// ValidateInitialView proves that the fixture's declared source bytes map to
+// ValidateInitialGraph proves that the fixture's declared source bytes map to
 // the campaign's exact initial accepted root for the selected backend.
-func (f *Fixture) ValidateInitialView(view mutation.UpdateView, backend string) error {
+func (f *Fixture) ValidateInitialGraph(view authenticationgraph.View, backend string) error {
 	expected, err := f.Root(backend)
 	if err != nil {
 		return err
 	}
-	if !view.BaseRoot.Equals(expected) {
-		return fmt.Errorf("update-view root %s does not equal fixture %s root %s", view.BaseRoot, backend, expected)
+	if !view.Root.Equals(expected) {
+		return fmt.Errorf("authentication graph Root %s does not equal fixture %s root %s", view.Root, backend, expected)
 	}
-	return f.ValidateViewAgainstSource(view, backend, f.InitialSource())
+	return f.ValidateGraphAgainstSource(view, backend, f.InitialSource())
 }

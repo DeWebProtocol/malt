@@ -4,20 +4,20 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/auth/input"
-	"github.com/dewebprotocol/malt-core/mutation"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
-// AuthenticationAdapter compiles the rooted-v1 UnixFS schema to typed ArcSets.
+// AuthenticationAdapter compiles the selected UnixFS layout to typed ArcSets.
 // Directory payloads are system bindings; names are application labels. File
 // block sequences carry measured structural metadata and no system payload.
 // It computes candidates locally and checks the exact remote receipt.
@@ -25,18 +25,19 @@ type AuthenticationAdapter struct {
 	remote  transportcap.AuthenticationWriter
 	engine  *engine.Engine
 	profile maltcid.ProfileID
+	layout  LayoutKind
 }
 
-func NewAuthenticationAdapter(remote transportcap.AuthenticationWriter, e *engine.Engine, profile maltcid.ProfileID) (*AuthenticationAdapter, error) {
+func NewAuthenticationAdapter(layout LayoutKind, remote transportcap.AuthenticationWriter, e *engine.Engine, profile maltcid.ProfileID) (*AuthenticationAdapter, error) {
+	if _, err := NewLayout(layout); err != nil {
+		return nil, err
+	}
 	if remote == nil {
 		return nil, fmt.Errorf("authentication writer is nil")
 	}
 	if e == nil {
 		if profile == 0 {
 			profile = maltcid.KZG4096
-		}
-		if profile != maltcid.KZG4096 {
-			return nil, fmt.Errorf("non-default backend requires an injected engine")
 		}
 		scheme, err := kzg.NewScheme()
 		if err != nil {
@@ -58,13 +59,14 @@ func NewAuthenticationAdapter(remote transportcap.AuthenticationWriter, e *engin
 	if _, err := maltcid.Profile(profile); err != nil {
 		return nil, err
 	}
-	return &AuthenticationAdapter{remote: remote, engine: e, profile: profile}, nil
-}
-func (a *AuthenticationAdapter) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	return a.UpdateStagedRoot(ctx, cid.Undef, bindings)
+	return &AuthenticationAdapter{remote: remote, engine: e, profile: profile, layout: layout}, nil
 }
 func (a *AuthenticationAdapter) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.UnixFSNameSHA256), Profile: a.profile}, Entries: []engine.Entry{}}
+	rule := uint8(input.BytesSHA256)
+	if a.layout == LayoutRootedV1 {
+		rule = uint8(input.UnixFSNameSHA256)
+	}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: rule, Profile: a.profile}, Entries: []engine.Entry{}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
@@ -80,8 +82,8 @@ func (a *AuthenticationAdapter) UpdateStagedRoot(ctx context.Context, previous c
 			selector = input.SystemValue(input.Payload)
 		} else {
 			parts, err := ParseCanonicalStagedPath(name)
-			if err != nil || len(parts) != 1 || parts[0] != name {
-				return cid.Undef, fmt.Errorf("rooted-v1 requires one canonical directory component: %q", name)
+			if err != nil || len(parts) == 0 || strings.Join(parts, "/") != name || (a.layout == LayoutRootedV1 && len(parts) != 1) {
+				return cid.Undef, fmt.Errorf("invalid directory label for %s: %q", a.layout, name)
 			}
 		}
 		state.Entries = append(state.Entries, engine.Entry{Input: selector, Target: target})
@@ -130,12 +132,4 @@ func (a *AuthenticationAdapter) CreateMeasuredPayload(ctx context.Context, chunk
 		state.Entries[i] = engine.Entry{Input: input.IndexValue(uint64(i)), Target: target}
 	}
 	return a.materialize(ctx, cid.Undef, state)
-}
-
-// These compatibility methods are never used by the typed sequence capability.
-func (a *AuthenticationAdapter) CreateFixedListBaseRoot(context.Context) (cid.Cid, error) {
-	return cid.Undef, fmt.Errorf("typed sequence requires CreateMeasuredPayload")
-}
-func (a *AuthenticationAdapter) ApplyFixedListPayloadMutation(context.Context, mutation.SemanticMutation) (cid.Cid, error) {
-	return cid.Undef, fmt.Errorf("typed sequence does not accept compatibility mutations")
 }

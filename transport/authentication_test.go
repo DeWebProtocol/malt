@@ -28,7 +28,7 @@ func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testi
 			if err := raw.Decode(&observed); err != nil {
 				t.Error(err)
 			}
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationProfile, Resolved: root.String(), Traversal: traversal.Traversal{}})
+			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: root.String(), Traversal: traversal.Traversal{}})
 		case "/v1/authentication/candidates":
 			_ = json.NewEncoder(w).Encode(map[string]string{"profile": protocol.AuthenticationProfile, "root": "bafkqaaa"})
 		default:
@@ -41,7 +41,7 @@ func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	query := protocol.AuthenticationRequest{Profile: protocol.AuthenticationProfile, Root: root.String(), Operation: "binding", Input: &index}
+	query := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Operation: "binding", Input: &index}
 	if _, err = client.Authenticate(t.Context(), query); err != nil {
 		t.Fatal(err)
 	}

@@ -18,8 +18,10 @@ import (
 	"github.com/dewebprotocol/malt-client/cache"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
+	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -58,14 +60,14 @@ type DirEntry struct {
 type Options struct {
 	Reader   unixfs.Reader
 	Cache    *cache.Store
-	Verifier unixfs.LocalVerifier
+	Verifier *engine.Engine
 	Now      func() time.Time
 }
 
 type Service struct {
 	reader   unixfs.LookupReader
 	cache    *cache.Store
-	verifier unixfs.LocalVerifier
+	verifier *engine.Engine
 	now      func() time.Time
 }
 
@@ -149,19 +151,7 @@ func (s *Service) ReadDir(ctx context.Context, view View, rawPath string) ([]Dir
 	entries := make([]DirEntry, len(stat.Entries))
 	for index, entry := range stat.Entries {
 		kind, err := projectionKind(entry.Type)
-		if errors.Is(err, errUnknownProjectionKind) {
-			childPath := path.Join(canonical, entry.Name)
-			childSegments := append(append([]string(nil), segments...), entry.Name)
-			child, statErr := s.reader.Lookup(ctx, view.Root, childPath)
-			if statErr != nil {
-				return nil, statErr
-			}
-			if statErr := validateStat(view, childSegments, child); statErr != nil {
-				return nil, statErr
-			}
-			kind = child.Kind
-			err = nil
-		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -388,7 +378,7 @@ func validateStat(view View, segments []string, stat *unixfs.Stat) error {
 	}
 	switch stat.Kind {
 	case unixfs.StagedKindFile:
-		if stat.PayloadKind != "raw" && stat.PayloadKind != "list" {
+		if stat.PayloadKind != "raw" && stat.PayloadKind != "positional" {
 			return fmt.Errorf("verified UnixFS file has unsupported payload kind %q", stat.PayloadKind)
 		}
 		if len(stat.Entries) != 0 {
@@ -403,29 +393,44 @@ func validateStat(view View, segments []string, stat *unixfs.Stat) error {
 }
 
 func validateResolution(root cid.Cid, segments []string, resolution unixfs.Resolution, target cid.Cid) error {
-	if wire := resolution.Authentication; wire != nil {
-		q := wire.Request
-		r := wire.Result
-		if q.Validate() != nil || q.Profile != protocol.AuthenticationPathProfile || q.Root != root.String() || q.Operation != "resolve" || r.Resolved != target.String() || r.AbsentStep != nil || !resolution.Target.Equals(target) || len(q.Steps) != len(segments) {
-			return fmt.Errorf("typed resolution does not match selected Root/path")
-		}
-		for i, segment := range segments {
-			expected := input.LabelValue([]byte(segment))
-			if segment == "@payload" && i == len(segments)-1 {
-				expected = input.SystemValue(input.Payload)
-			}
-			got := q.Steps[i]
-			if got.Kind != expected.Kind || got.Number != expected.Number || !bytes.Equal(got.Data, expected.Data) {
-				return fmt.Errorf("typed resolution changed path selector")
-			}
-		}
-		return nil
+	wire := resolution.Authentication
+	if wire == nil {
+		return fmt.Errorf("typed resolution is missing")
 	}
-
-	if resolution.Request.Profile != protocol.ResolveProfile || resolution.Result.Profile != protocol.ResolveProfile ||
-		resolution.Request.Root != root.String() || !slices.Equal(resolution.Request.Segments, segments) ||
-		!resolution.Target.Equals(target) || resolution.Result.Target != target.String() {
-		return fmt.Errorf("verified UnixFS resolution does not match the selected root and path")
+	q, result := wire.Request, wire.Result
+	if q.Validate() != nil || q.Profile != protocol.AuthenticationPathProfile || q.Root != root.String() || q.Operation != "resolve" || result.Resolved != target.String() || result.AbsentStep != nil || !resolution.Target.Equals(target) {
+		return fmt.Errorf("typed resolution does not match selected Root/path")
+	}
+	descriptor, _, err := maltcid.ParseRoot(root)
+	if err != nil {
+		return err
+	}
+	expected := make([]input.Value, 0, len(segments))
+	count := len(segments)
+	payload := count > 0 && segments[count-1] == "@payload"
+	if payload {
+		count--
+	}
+	if descriptor.InputRule == uint8(input.BytesSHA256) {
+		if count > 0 {
+			expected = append(expected, input.LabelValue([]byte(strings.Join(segments[:count], "/"))))
+		}
+	} else {
+		for _, segment := range segments[:count] {
+			expected = append(expected, input.LabelValue([]byte(segment)))
+		}
+	}
+	if payload {
+		expected = append(expected, input.SystemValue(input.Payload))
+	}
+	if len(q.Steps) != len(expected) {
+		return fmt.Errorf("typed resolution changed path length")
+	}
+	for i, want := range expected {
+		got := q.Steps[i]
+		if got.Kind != want.Kind || got.Number != want.Number || !bytes.Equal(got.Data, want.Data) {
+			return fmt.Errorf("typed resolution changed path selector")
+		}
 	}
 	return nil
 }
@@ -466,16 +471,12 @@ func infoFromStat(canonical string, stat *unixfs.Stat) Info {
 	}
 }
 
-var errUnknownProjectionKind = errors.New("directory entry kind requires legacy projection")
-
 func projectionKind(value unixfsmodel.DirectoryEntryType) (string, error) {
 	switch value {
 	case unixfsmodel.DirectoryEntryTypeDir:
 		return unixfs.StagedKindDirectory, nil
 	case unixfsmodel.DirectoryEntryTypeFile:
 		return unixfs.StagedKindFile, nil
-	case unixfsmodel.DirectoryEntryTypeUnknown:
-		return "", errUnknownProjectionKind
 	default:
 		return "", fmt.Errorf("directory contains unresolved entry kind %q", value)
 	}

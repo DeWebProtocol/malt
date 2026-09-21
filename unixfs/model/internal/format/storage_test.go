@@ -8,12 +8,12 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-func TestStorageKindFromCIDUsesMALTSemanticKind(t *testing.T) {
-	mapRoot, err := maltcid.NewSemanticRoot(maltcid.SemanticKindMap, maltcid.BackendKindKZG, make([]byte, maltcid.KZGCommitmentSize))
+func TestStorageKindFromCIDUsesTypedLayout(t *testing.T) {
+	mapRoot, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, make([]byte, maltcid.KZGCommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	listRoot, err := maltcid.NewSemanticRoot(maltcid.SemanticKindList, maltcid.BackendKindIPA, make([]byte, maltcid.IPACommitmentSize))
+	listRoot, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Positional, Profile: maltcid.IPA256}, make([]byte, maltcid.IPACommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,19 +22,19 @@ func TestStorageKindFromCIDUsesMALTSemanticKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := cid.NewCidV1(cid.Raw, rawHash)
-	manifestV1 := cid.NewCidV1(CodecMaltManifestV1, rawHash)
+	manifestV1 := cid.NewCidV1(0x310001, rawHash)
 	manifestV2 := cid.NewCidV1(CodecMaltManifestV2, rawHash)
 
 	for name, test := range map[string]struct {
 		cid  cid.Cid
 		want string
 	}{
-		"undefined":   {cid: cid.Undef, want: ""},
-		"raw":         {cid: raw, want: "raw"},
-		"manifest-v1": {cid: manifestV1, want: "raw"},
-		"manifest-v2": {cid: manifestV2, want: "raw"},
-		"map":         {cid: mapRoot, want: "map"},
-		"list":        {cid: listRoot, want: "list"},
+		"undefined":           {cid: cid.Undef, want: ""},
+		"raw":                 {cid: raw, want: "raw"},
+		"retired-manifest-v1": {cid: manifestV1, want: ""},
+		"manifest-v2":         {cid: manifestV2, want: "raw"},
+		"prefix":              {cid: mapRoot, want: "prefix"},
+		"positional":          {cid: listRoot, want: "positional"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := StorageKindFromCID(test.cid); got != test.want {

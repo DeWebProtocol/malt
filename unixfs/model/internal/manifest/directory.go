@@ -1,18 +1,13 @@
 // Package manifest implements the locked directory manifest encodings used by
 // the UnixFS application model.
 //
-// V1 wire shape:
-//
-//	{"entries":["docs","readme.md"]}
-//
 // V2 wire shape:
 //
 //	{"entries":[{"name":"docs","type":"dir"},{"name":"readme.md","type":"file"}]}
 //
 // V2 bytes are canonical: entries are ordered by UTF-8 bytes, object fields
 // have the order shown above, insignificant whitespace is forbidden, and JSON
-// strings use the locked encoder below. The CID codec selects V1 or V2, which
-// also makes an empty manifest unambiguous.
+// strings use the locked encoder below. Only the current V2 codec is accepted.
 package manifest
 
 import (
@@ -27,7 +22,6 @@ import (
 )
 
 const (
-	VersionV1 = 1
 	VersionV2 = 2
 )
 
@@ -37,9 +31,8 @@ const (
 type EntryType string
 
 const (
-	EntryTypeUnknown EntryType = ""
-	EntryTypeDir     EntryType = "dir"
-	EntryTypeFile    EntryType = "file"
+	EntryTypeDir  EntryType = "dir"
+	EntryTypeFile EntryType = "file"
 )
 
 // DirectoryEntry is one immediate child projection.
@@ -60,44 +53,10 @@ var (
 	ErrInvalidManifest = errors.New("invalid directory manifest")
 )
 
-// ParseV1DirectoryJSON decodes the historical name-only manifest. Entries have
-// an unknown type so the caller can apply the locked V1 compatibility rule.
-func ParseV1DirectoryJSON(data []byte) (*DirectoryManifest, error) {
-	if !utf8.Valid(data) {
-		return nil, fmt.Errorf("%w: manifest is not UTF-8", ErrInvalidManifest)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidManifest, err)
-	}
-	for key := range raw {
-		if key != "entries" {
-			return nil, fmt.Errorf("%w: unknown field %q", ErrInvalidManifest, key)
-		}
-	}
-	encodedEntries, ok := raw["entries"]
-	if !ok {
-		return nil, fmt.Errorf("%w: missing required field \"entries\"", ErrInvalidManifest)
-	}
-	var names []string
-	if err := json.Unmarshal(encodedEntries, &names); err != nil {
-		return nil, fmt.Errorf("%w: invalid \"entries\" array: %w", ErrInvalidManifest, err)
-	}
-	entries := make([]DirectoryEntry, len(names))
-	for index, name := range names {
-		entries[index] = DirectoryEntry{Name: name, Type: EntryTypeUnknown}
-	}
-	manifest := &DirectoryManifest{Version: VersionV1, Entries: entries}
-	if err := Validate(manifest); err != nil {
-		return nil, err
-	}
-	return manifest, nil
-}
-
-// ParseV2DirectoryJSON decodes canonical typed manifest bytes. Non-canonical
+// ParseDirectoryJSON decodes canonical typed manifest bytes. Non-canonical
 // encodings fail closed so every implementation computes the same CID for the
 // same normalized manifest.
-func ParseV2DirectoryJSON(data []byte) (*DirectoryManifest, error) {
+func ParseDirectoryJSON(data []byte) (*DirectoryManifest, error) {
 	if !utf8.Valid(data) {
 		return nil, fmt.Errorf("%w: manifest is not UTF-8", ErrInvalidManifest)
 	}
@@ -141,7 +100,7 @@ func ParseV2DirectoryJSON(data []byte) (*DirectoryManifest, error) {
 	if err := Validate(manifest); err != nil {
 		return nil, err
 	}
-	canonical, err := MarshalV2DirectoryEntries(entries)
+	canonical, err := MarshalDirectoryEntries(entries)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +115,7 @@ func Validate(manifest *DirectoryManifest) error {
 	if manifest == nil {
 		return fmt.Errorf("%w: nil manifest", ErrInvalidManifest)
 	}
-	if manifest.Version != VersionV1 && manifest.Version != VersionV2 {
+	if manifest.Version != VersionV2 {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidManifest, manifest.Version)
 	}
 	previous := ""
@@ -164,15 +123,8 @@ func Validate(manifest *DirectoryManifest) error {
 		if err := validateImmediateChildName(entry.Name); err != nil {
 			return fmt.Errorf("%w: entries[%d]: %w", ErrInvalidManifest, index, err)
 		}
-		switch manifest.Version {
-		case VersionV1:
-			if entry.Type != EntryTypeUnknown {
-				return fmt.Errorf("%w: entries[%d]: V1 entry type must be absent", ErrInvalidManifest, index)
-			}
-		case VersionV2:
-			if entry.Type != EntryTypeDir && entry.Type != EntryTypeFile {
-				return fmt.Errorf("%w: entries[%d]: unsupported type %q", ErrInvalidManifest, index, entry.Type)
-			}
+		if entry.Type != EntryTypeDir && entry.Type != EntryTypeFile {
+			return fmt.Errorf("%w: entries[%d]: unsupported type %q", ErrInvalidManifest, index, entry.Type)
 		}
 		if index > 0 && entry.Name <= previous {
 			if entry.Name == previous {
@@ -219,9 +171,9 @@ func hasBoundaryWhitespace(name string) bool {
 	return unicode.IsSpace(first) || unicode.IsSpace(last) || first == '\ufeff' || last == '\ufeff'
 }
 
-// NormalizeV2 returns a sorted copy of entries. Duplicate names are rejected
+// Normalize returns a sorted copy of entries. Duplicate names are rejected
 // rather than resolved by implementation-specific first/last-wins behavior.
-func NormalizeV2(entries []DirectoryEntry) ([]DirectoryEntry, error) {
+func Normalize(entries []DirectoryEntry) ([]DirectoryEntry, error) {
 	normalized := slices.Clone(entries)
 	slices.SortFunc(normalized, func(left, right DirectoryEntry) int {
 		return strings.Compare(left.Name, right.Name)
@@ -233,9 +185,9 @@ func NormalizeV2(entries []DirectoryEntry) ([]DirectoryEntry, error) {
 	return normalized, nil
 }
 
-// MarshalV2DirectoryEntries emits the locked canonical JSON bytes for V2.
-func MarshalV2DirectoryEntries(entries []DirectoryEntry) ([]byte, error) {
-	normalized, err := NormalizeV2(entries)
+// MarshalDirectoryEntries emits the locked canonical JSON bytes for V2.
+func MarshalDirectoryEntries(entries []DirectoryEntry) ([]byte, error) {
+	normalized, err := Normalize(entries)
 	if err != nil {
 		return nil, err
 	}

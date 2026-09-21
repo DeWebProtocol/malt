@@ -6,15 +6,16 @@ import (
 	"sync"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materialmemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	runtimegraph "github.com/dewebprotocol/malt-core/graph/runtime"
-	"github.com/dewebprotocol/malt-core/mutation"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
+	"sort"
 )
 
 // SnapshotBlockStore is the owner-local CAS used while one encrypted snapshot
@@ -30,7 +31,7 @@ type SnapshotBlockStore interface {
 type SnapshotOptions struct {
 	Backend            maltcid.BackendKind
 	LocalBlocks        SnapshotBlockStore
-	RemoteGraph        GraphWriter
+	RemoteGraph        CandidatePublisher
 	RemoteBlocks       BlockWriter
 	PlaintextChunkSize int
 }
@@ -41,7 +42,7 @@ type Snapshot struct {
 	builder      *builder
 	graph        *recordingGraph
 	blocks       *recordingBlocks
-	remoteGraph  GraphWriter
+	remoteGraph  CandidatePublisher
 	remoteBlocks BlockWriter
 	mu           sync.Mutex
 	sealed       bool
@@ -120,26 +121,17 @@ func (s *Snapshot) Publish(ctx context.Context) error {
 			return fmt.Errorf("remote CAS substituted encrypted UnixFS block CID %s with %s", key, remoteKey)
 		}
 	}
-	for index, operation := range s.graph.operations {
-		var (
-			got cid.Cid
-			err error
-		)
-		switch operation.kind {
-		case graphOperationMap:
-			got, err = s.remoteGraph.CreateStagedRoot(ctx, operation.bindings)
-		case graphOperationList:
-			got, err = s.remoteGraph.ApplyFixedListPayloadMutation(ctx, operation.mutation)
-		default:
-			err = fmt.Errorf("unknown encrypted UnixFS graph operation")
-		}
+	for index, candidate := range s.graph.operations {
+		expected := cid.MustParse(candidate.Root)
+		got, err := s.remoteGraph.MaterializeAuthentication(ctx, candidate)
 		if err != nil {
-			return fmt.Errorf("publish encrypted UnixFS graph operation %d: %w", index, err)
+			return fmt.Errorf("publish encrypted UnixFS candidate %d: %w", index, err)
 		}
-		if !got.Equals(operation.expected) {
-			return fmt.Errorf("remote graph substituted encrypted UnixFS root %s with %s", operation.expected, got)
+		if !got.Equals(expected) {
+			return fmt.Errorf("remote graph substituted encrypted UnixFS root %s with %s", expected, got)
 		}
 	}
+
 	s.published = true
 	return nil
 }
@@ -174,92 +166,84 @@ func (s *recordingBlocks) PutWithCodec(ctx context.Context, body []byte, codec u
 	return key, nil
 }
 
-type graphOperationKind uint8
-
-const (
-	graphOperationMap graphOperationKind = iota + 1
-	graphOperationList
-)
-
-type graphOperation struct {
-	kind     graphOperationKind
-	bindings map[string]string
-	mutation mutation.SemanticMutation
-	expected cid.Cid
-}
-
 type recordingGraph struct {
-	graph      *runtimegraph.RuntimeGraph
-	scope      string
-	operations []graphOperation
+	engine     *engine.Engine
+	profile    maltcid.ProfileID
+	operations []protocol.AuthenticationCandidate
+	seen       map[string]bool
 }
 
 func newRecordingGraph(backend maltcid.BackendKind) (*recordingGraph, error) {
-	var (
-		scheme commitment.IndexCommitment
-		err    error
-	)
+	var scheme interface {
+		commitment.IndexCommitment
+		ProfileID() maltcid.ProfileID
+	}
+	var profile maltcid.ProfileID
+	var err error
 	switch backend {
 	case maltcid.BackendKindKZG:
 		scheme, err = kzg.NewScheme()
+		profile = maltcid.KZG4096
 	case maltcid.BackendKindIPA:
 		scheme, err = ipa.NewCommitterScheme(ipa.ProfileCompact)
+		profile = maltcid.IPA256
 	default:
 		return nil, fmt.Errorf("encrypted UnixFS snapshot requires a supported MALT backend, got %q", backend)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("initialize encrypted UnixFS %s root computation: %w", backend, err)
-	}
-	const scope = "encrypted-unixfs-snapshot"
-	graph, err := runtimegraph.NewGraph(
-		scope, materialmemory.New(true),
-		runtimegraph.WithCommitmentBackend(backend, scheme),
-		runtimegraph.WithDefaultCommitmentBackend(backend),
-		runtimegraph.WithNamespace(scope),
-	)
-	if err != nil {
 		return nil, err
 	}
-	return &recordingGraph{graph: graph, scope: scope}, nil
-}
-
-func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	values := make(map[string]cid.Cid, len(bindings))
-	copyBindings := make(map[string]string, len(bindings))
-	for coordinate, raw := range bindings {
-		target, err := cid.Parse(raw)
-		if err != nil {
-			return cid.Undef, err
-		}
-		values[coordinate] = target
-		copyBindings[coordinate] = target.String()
+	profiles := engine.NewRegistry()
+	if err := profiles.Register(scheme); err != nil {
+		return nil, err
 	}
-	set, err := arcset.NewArcSet(values)
-	if err != nil {
-		return cid.Undef, err
-	}
-	root, err := g.graph.StructureCreator().CreateStructure(ctx, g.scope, set)
-	if err != nil {
-		return cid.Undef, err
-	}
-	g.operations = append(g.operations, graphOperation{kind: graphOperationMap, bindings: copyBindings, expected: root})
-	return root, nil
-}
-
-func (g *recordingGraph) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	return g.CreateStagedRoot(ctx, map[string]string{"@payload": "bafkqaaa"})
-}
-
-func (g *recordingGraph) ApplyFixedListPayloadMutation(ctx context.Context, value mutation.SemanticMutation) (cid.Cid, error) {
-	receipt, err := g.graph.Writer().Apply(ctx, g.scope, value)
-	if err != nil {
-		return cid.Undef, err
-	}
-	if !receipt.NewRoot.Defined() {
-		return cid.Undef, fmt.Errorf("local encrypted UnixFS List root is undefined")
-	}
-	g.operations = append(g.operations, graphOperation{kind: graphOperationList, mutation: value, expected: receipt.NewRoot})
-	return receipt.NewRoot, nil
+	return &recordingGraph{engine: engine.New(input.DefaultRegistry(), profiles), profile: profile, seen: make(map[string]bool)}, nil
 }
 
 var _ GraphWriter = (*recordingGraph)(nil)
+
+// CandidatePublisher stores an exact locally computed authentication candidate.
+// Publication is independent of locally accepted roots.
+type CandidatePublisher interface {
+	MaterializeAuthentication(context.Context, protocol.AuthenticationCandidate) (cid.Cid, error)
+}
+
+func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: g.profile}}
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		target, err := cid.Decode(bindings[name])
+		if err != nil {
+			return cid.Undef, err
+		}
+		selector := input.LabelValue([]byte(name))
+		if name == "@payload" {
+			selector = input.SystemValue(input.Payload)
+		}
+		state.Entries = append(state.Entries, engine.Entry{Input: selector, Target: target})
+	}
+	return g.record(ctx, state)
+}
+func (g *recordingGraph) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, Profile: g.profile}, ChunkSize: chunk, TotalSize: total}
+	for i, target := range chunks {
+		state.Entries = append(state.Entries, engine.Entry{Input: input.IndexValue(uint64(i)), Target: target})
+	}
+	return g.record(ctx, state)
+}
+func (g *recordingGraph) record(ctx context.Context, state engine.State) (cid.Cid, error) {
+	candidate, err := authentication.Prepare(ctx, g.engine, state)
+	if err != nil {
+		return cid.Undef, err
+	}
+	root := cid.MustParse(candidate.Root)
+	if !g.seen[root.KeyString()] {
+		g.seen[root.KeyString()] = true
+		g.operations = append(g.operations, candidate)
+	}
+	return root, nil
+}

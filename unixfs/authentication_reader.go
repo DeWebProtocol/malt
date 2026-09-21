@@ -3,7 +3,9 @@ package unixfs
 import (
 	"context"
 	"fmt"
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	"math"
+	"strings"
 
 	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/auth/input"
@@ -29,7 +31,7 @@ func (r *verifiedReader) authenticate(ctx context.Context, q protocol.Authentica
 	}
 	return &protocol.AuthenticationVerification{Request: q, Result: *result}, nil
 }
-func (r *verifiedReader) resolveTypedSegments(ctx context.Context, root cid.Cid, segments []string) (*Resolution, error) {
+func (r *verifiedReader) resolveSegments(ctx context.Context, root cid.Cid, segments []string) (*Resolution, error) {
 	key := stagedProjectionKey(root, segments)
 	if r.stagedResolutions != nil {
 		if cached := r.stagedResolutions[key]; cached != nil {
@@ -43,6 +45,26 @@ func (r *verifiedReader) resolveTypedSegments(ctx context.Context, root cid.Cid,
 		// appends this selector; Core receives an explicit system value.
 		if segment == "@payload" && i == len(segments)-1 {
 			steps[i] = input.SystemValue(input.Payload)
+		}
+	}
+	descriptor, _, err := maltcid.ParseRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	if descriptor.Layout == maltcid.Prefix && descriptor.InputRule == uint8(input.BytesSHA256) {
+		// Flat and hybrid layouts authenticate one opaque full-path label.
+		// A terminal payload projection is a separate explicit system step.
+		count := len(segments)
+		payload := count > 0 && segments[count-1] == "@payload"
+		if payload {
+			count--
+		}
+		steps = []input.Value{}
+		if count > 0 {
+			steps = append(steps, input.LabelValue([]byte(strings.Join(segments[:count], "/"))))
+		}
+		if payload {
+			steps = append(steps, input.SystemValue(input.Payload))
 		}
 	}
 	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: steps, Operation: "resolve"}
@@ -126,10 +148,17 @@ func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start
 	}
 	result.End = end
 	result.Authentication = verified
+	blocks := make(map[string][]byte, len(verified.Result.Range.Segments))
 	for i, segment := range verified.Result.Range.Segments {
-		data, err := r.getBoundBlock(ctx, segment.Target)
-		if err != nil {
-			return nil, err
+		key := segment.Target.KeyString()
+		data, ok := blocks[key]
+		if !ok {
+			var err error
+			data, err = r.getBoundBlock(ctx, segment.Target)
+			if err != nil {
+				return nil, err
+			}
+			blocks[key] = data
 		}
 		index := start/meta.ChunkSize + uint64(i)
 		offset := index * meta.ChunkSize

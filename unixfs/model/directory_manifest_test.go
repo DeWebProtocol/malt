@@ -40,21 +40,19 @@ func TestDirectoryManifestV2GoldenVector(t *testing.T) {
 	}
 }
 
-func TestDirectoryManifestV1AndRawCompatibility(t *testing.T) {
-	payload := []byte(`{"entries":["docs"]}`)
-	for _, codec := range []uint64{unixfs.DirectoryManifestCodecV1, 0x55} {
-		value, err := cidForManifestTest(payload, codec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := unixfs.ParseDirectoryManifest(value, payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if parsed.Version != unixfs.DirectoryManifestVersionV1 ||
-			len(parsed.Entries) != 1 ||
-			parsed.Entries[0].Type != unixfs.DirectoryEntryTypeUnknown {
-			t.Fatalf("manifest = %#v", parsed)
+func TestDirectoryManifestRejectsRetiredV1AndRawCodecs(t *testing.T) {
+	for _, payload := range [][]byte{[]byte(`{"entries":["docs"]}`), []byte(`{"entries":[]}`), []byte(`{"entries":[{"name":"docs","type":"dir"}]}`)} {
+		for _, codec := range []uint64{0x310001, cid.Raw} {
+			key, err := cidForManifestTest(payload, codec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if unixfs.IsDirectoryManifestCID(key) {
+				t.Fatal("recognized retired manifest codec")
+			}
+			if _, err := unixfs.ParseDirectoryManifest(key, payload); err == nil {
+				t.Fatalf("accepted retired manifest codec %x", codec)
+			}
 		}
 	}
 }

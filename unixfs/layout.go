@@ -22,7 +22,7 @@ const (
 // path bindings are projected into the current structured MALT Map root.
 type Layout interface {
 	Kind() LayoutKind
-	Materialize(context.Context, StagedRootCreator, StagedBlockStore, *StagedNode) (*StagedMaterializeResult, error)
+	Materialize(context.Context, StagedRootWriter, StagedBlockStore, *StagedNode) (*StagedMaterializeResult, error)
 }
 
 // ParseLayoutKind validates a persisted layout identifier. Empty values are
@@ -55,7 +55,7 @@ type flatLayout struct{}
 
 func (flatLayout) Kind() LayoutKind { return LayoutFlatV1 }
 
-func (flatLayout) Materialize(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+func (flatLayout) Materialize(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	return materializeFlatDirectory(ctx, roots, blocks, node)
 }
 
@@ -63,14 +63,14 @@ type hybridLayout struct{}
 
 func (hybridLayout) Kind() LayoutKind { return LayoutHybridV1 }
 
-func (hybridLayout) Materialize(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+func (hybridLayout) Materialize(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	return materializeHybridDirectory(ctx, roots, blocks, node)
 }
 
 type rootedLayout struct{}
 
 func (rootedLayout) Kind() LayoutKind { return LayoutRootedV1 }
-func (rootedLayout) Materialize(ctx context.Context, roots StagedRootCreator, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
+func (rootedLayout) Materialize(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
 	if _, ok := roots.(interface {
 		UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error)
 		CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)

@@ -36,7 +36,7 @@ func (a *Authentication) Read(ctx context.Context, selected string, q protocol.A
 		}
 	}
 	q.Root = selection.Root.String()
-	q.Profile = protocol.AuthenticationProfile
+	q.Profile = protocol.AuthenticationPathProfile
 	result, err := a.remote.Authenticate(ctx, q)
 	if err != nil {
 		return nil, err

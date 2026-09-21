@@ -13,9 +13,6 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -106,7 +103,7 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 	if err != nil {
 		return nil, nil, err
 	}
-	applied, err := w.evaluation.ApplyEvaluationFlatMap(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.FlatMapMutation{OperationID: operationID(spec.Snapshot.CommitID, 0), Initial: true, Changes: changes})
+	applied, err := w.evaluation.ApplyEvaluationFlatPrefix(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.FlatPrefixMutation{OperationID: operationID(spec.Snapshot.CommitID, 0), Initial: true, Changes: changes})
 	if err != nil {
 		return nil, nil, fmt.Errorf("apply streamed direct MALT-flat snapshot: %w", err)
 	}
@@ -118,7 +115,7 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 			return nil, nil, err
 		}
 	}
-	replayNS, err := evaluatorNanos(applied.ReplayNanos)
+	replayNS, err := evaluatorNanos(applied.ValidationAndStageNanos)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,7 +123,7 @@ func (w *campaignWorker) startFlatDirectStream(ctx context.Context, spec runSpec
 	if err != nil {
 		return nil, nil, err
 	}
-	result.Commits = append(result.Commits, commitRecord{Order: 0, CommitID: spec.Snapshot.CommitID, Root: applied.Root.String(), HistoryRootsRetained: 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: logical.AdapterPayloadInputBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed), GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
+	result.Commits = append(result.Commits, commitRecord{Order: 0, CommitID: spec.Snapshot.CommitID, Root: applied.Root.String(), HistoryRootsRetained: 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: logical.AdapterPayloadInputBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed), GatewayApplyAndStageWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
 	base := spec
 	base.Snapshot.Files = nil
 	base.Commits = nil
@@ -177,7 +174,7 @@ func (s *flatDirectStream) applyChunk(ctx context.Context, spec runSpec) (*runRe
 			return nil, err
 		}
 		expectedRoot := s.oracle.root
-		var gatewayChanges []gatewaytransport.FlatMapChange
+		var gatewayChanges []gatewaytransport.FlatPrefixChange
 		var oracleElapsed time.Duration
 		if len(logicalChanges) != 0 {
 			gatewayChanges, err = directFlatDeltaChanges(logicalChanges)
@@ -202,7 +199,7 @@ func (s *flatDirectStream) applyChunk(ctx context.Context, spec runSpec) (*runRe
 		nextRoot := s.root
 		var replayNS, persistNS int64
 		if len(logicalChanges) != 0 {
-			next, err := s.worker.evaluation.ApplyEvaluationFlatMap(ctx, s.worker.config.bootstrapAuthorizationToken, gatewaytransport.FlatMapMutation{OperationID: operationID(commit.CommitID, s.nextOrder), BaseRoot: s.root, Changes: gatewayChanges})
+			next, err := s.worker.evaluation.ApplyEvaluationFlatPrefix(ctx, s.worker.config.bootstrapAuthorizationToken, gatewaytransport.FlatPrefixMutation{OperationID: operationID(commit.CommitID, s.nextOrder), BaseRoot: s.root, Changes: gatewayChanges})
 			if err != nil {
 				s.failed = true
 				return nil, fmt.Errorf("apply streamed direct MALT-flat commit %q: %w", commit.CommitID, err)
@@ -216,7 +213,7 @@ func (s *flatDirectStream) applyChunk(ctx context.Context, spec runSpec) (*runRe
 					return nil, err
 				}
 			}
-			replayNS, err = evaluatorNanos(next.ReplayNanos)
+			replayNS, err = evaluatorNanos(next.ValidationAndStageNanos)
 			if err != nil {
 				return nil, err
 			}
@@ -229,7 +226,7 @@ func (s *flatDirectStream) applyChunk(ctx context.Context, spec runSpec) (*runRe
 			return nil, err
 		}
 		logical := logicalRecords[index]
-		result.Commits = append(result.Commits, commitRecord{Order: s.nextOrder, CommitID: commit.CommitID, ParentRoot: s.root.String(), Root: nextRoot.String(), HistoryRootsRetained: s.nextOrder + 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: canonicalPayloadBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed), GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
+		result.Commits = append(result.Commits, commitRecord{Order: s.nextOrder, CommitID: commit.CommitID, ParentRoot: s.root.String(), Root: nextRoot.String(), HistoryRootsRetained: s.nextOrder + 1, LogicalObjectsChanged: logical.LogicalObjectsChanged, LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: canonicalPayloadBytes, AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: durationNanos(time.Since(started) - oracleElapsed - roleIndexElapsed), GatewayApplyAndStageWallNS: replayNS, GatewayPersistWallNS: persistNS, OracleUnmeasured: true})
 		s.root = nextRoot
 		s.nextOrder++
 		s.commitIDs = append(s.commitIDs, commit.CommitID)
@@ -249,17 +246,12 @@ func (s *flatDirectStream) finish(ctx context.Context) (streamStatus, error) {
 		s.failed = true
 		return streamStatus{}, fmt.Errorf("direct MALT-flat stream ended before the frozen commit manifest was exhausted")
 	}
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		s.failed = true
-		return streamStatus{}, fmt.Errorf("initialize final streamed flat oracle: %w", err)
-	}
-	oracle, err := (graphBuilder{chunkBytes: s.base.Workload.ChunkBytes, scheme: scheme, store: materializermemory.New(true)}).buildFlat(ctx, s.state)
+	oracle, err := fullFlatRoot(ctx, s.state)
 	if err != nil {
 		s.failed = true
 		return streamStatus{}, fmt.Errorf("build final streamed MALT-flat independent full oracle: %w", err)
 	}
-	if !oracle.root.Equals(s.root) {
+	if !oracle.Equals(s.root) {
 		s.failed = true
 		return streamStatus{}, fmt.Errorf("final streamed MALT-flat root differs from independent full oracle")
 	}
@@ -357,7 +349,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 	if err != nil {
 		return nil, err
 	}
-	applied, err := w.evaluation.ApplyEvaluationFlatMap(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.FlatMapMutation{
+	applied, err := w.evaluation.ApplyEvaluationFlatPrefix(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.FlatPrefixMutation{
 		OperationID: operationID(spec.Snapshot.CommitID, 0), Initial: true, Changes: changes,
 	})
 	if err != nil {
@@ -372,7 +364,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 			return nil, err
 		}
 	}
-	replayNS, err := evaluatorNanos(applied.ReplayNanos)
+	replayNS, err := evaluatorNanos(applied.ValidationAndStageNanos)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +376,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 		Order: 0, CommitID: spec.Snapshot.CommitID, Root: applied.Root.String(), HistoryRootsRetained: 1,
 		LogicalObjectsChanged: source[0].LogicalObjectsChanged, LogicalBindingsChanged: source[0].LogicalBindingsChanged,
 		LogicalPayloadBytes: source[0].AdapterPayloadInputBytes, AdapterPayloadInputBytes: source[0].AdapterPayloadInputBytes,
-		ClientComputeWallNS: clientNS, GatewayReplayWallNS: replayNS,
+		ClientComputeWallNS: clientNS, GatewayApplyAndStageWallNS: replayNS,
 		GatewayPersistWallNS: persistNS, OracleUnmeasured: true,
 	})
 	root := applied.Root
@@ -396,7 +388,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 			return nil, err
 		}
 		expectedRoot := rootOracle.root
-		var gatewayChanges []gatewaytransport.FlatMapChange
+		var gatewayChanges []gatewaytransport.FlatPrefixChange
 		oracleElapsed = 0
 		if len(logicalChanges) != 0 {
 			gatewayChanges, err = directFlatDeltaChanges(logicalChanges)
@@ -417,7 +409,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 		nextRoot := root
 		replayNS, persistNS = 0, 0
 		if len(logicalChanges) != 0 {
-			next, err := w.evaluation.ApplyEvaluationFlatMap(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.FlatMapMutation{
+			next, err := w.evaluation.ApplyEvaluationFlatPrefix(ctx, w.config.bootstrapAuthorizationToken, gatewaytransport.FlatPrefixMutation{
 				OperationID: operationID(commit.CommitID, uint32(index+1)), BaseRoot: root, Changes: gatewayChanges,
 			})
 			if err != nil {
@@ -431,7 +423,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 					return nil, err
 				}
 			}
-			replayNS, err = evaluatorNanos(next.ReplayNanos)
+			replayNS, err = evaluatorNanos(next.ValidationAndStageNanos)
 			if err != nil {
 				return nil, err
 			}
@@ -450,7 +442,7 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 			HistoryRootsRetained: uint32(index + 2), LogicalObjectsChanged: logical.LogicalObjectsChanged,
 			LogicalBindingsChanged: logical.LogicalBindingsChanged, LogicalPayloadBytes: canonicalPayloadBytes,
 			AdapterPayloadInputBytes: logical.AdapterPayloadInputBytes, ClientComputeWallNS: clientNS,
-			GatewayReplayWallNS: replayNS, GatewayPersistWallNS: persistNS,
+			GatewayApplyAndStageWallNS: replayNS, GatewayPersistWallNS: persistNS,
 			OracleUnmeasured: true,
 		})
 		root = nextRoot
@@ -458,15 +450,11 @@ func (w *campaignWorker) runFlatDirect(ctx context.Context, spec runSpec) (_ *ru
 			return nil, fmt.Errorf("reconcile direct MALT-flat commit %q payloads: %w", commit.CommitID, err)
 		}
 	}
-	scheme, err := kzg.NewScheme()
-	if err != nil {
-		return nil, fmt.Errorf("initialize final direct flat oracle: %w", err)
-	}
-	oracle, err := (graphBuilder{chunkBytes: spec.Workload.ChunkBytes, scheme: scheme, store: materializermemory.New(true)}).buildFlat(ctx, state)
+	oracle, err := fullFlatRoot(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("build final direct MALT-flat independent full oracle: %w", err)
 	}
-	if !oracle.root.Equals(root) {
+	if !oracle.Equals(root) {
 		return nil, fmt.Errorf("final direct MALT-flat root differs from independent full oracle")
 	}
 	if !rootOracle.root.Equals(root) {
@@ -542,36 +530,34 @@ func prevalidateMALTFlatChunk(state map[string]logicalFile, commits []rq3baselin
 	return nil
 }
 
-func directFlatSnapshotChanges(state map[string]logicalFile) ([]gatewaytransport.FlatMapChange, error) {
-	blueprint, err := buildFlatBlueprint(state, 1)
+func directFlatSnapshotChanges(state map[string]logicalFile) ([]gatewaytransport.FlatPrefixChange, error) {
+	if len(state) > maximumMALTSnapshotFiles {
+		return nil, fmt.Errorf("flat snapshot exceeds file bound")
+	}
+	sentinel, err := flatSentinelEntry()
 	if err != nil {
 		return nil, err
 	}
-	entries := blueprint.objects[blueprint.topID].entries
-	changes := make([]gatewaytransport.FlatMapChange, len(entries))
-	if len(changes) > maximumGatewayFlatMapChanges {
-		return nil, fmt.Errorf("direct flat snapshot exceeds %d Gateway changes", maximumGatewayFlatMapChanges)
-	}
-	for index, entry := range entries {
-		if entry.literal == nil {
-			return nil, fmt.Errorf("direct flat snapshot contains a nonliteral target")
-		}
-		changes[index] = gatewaytransport.FlatMapChange{
-			Path: arcset.CanonicalizePath(entry.coordinate.String()), After: entry.literal.CID(),
+	changes := make([]gatewaytransport.FlatPrefixChange, 0, 1+2*len(state))
+	changes = append(changes, gatewaytransport.FlatPrefixChange{Input: sentinel.Input, After: sentinel.Target})
+	for path, file := range state {
+		for _, mode := range []bool{false, true} {
+			target, err := directFlatTarget(&file, mode)
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, gatewaytransport.FlatPrefixChange{Input: flatInput(path, mode), After: target})
 		}
 	}
 	slices.SortFunc(changes, compareFlatChanges)
 	return changes, nil
 }
 
-func directFlatDeltaChanges(changes []fileChange) ([]gatewaytransport.FlatMapChange, error) {
-	result := make([]gatewaytransport.FlatMapChange, 0, 2*len(changes))
+func directFlatDeltaChanges(changes []fileChange) ([]gatewaytransport.FlatPrefixChange, error) {
+	result := make([]gatewaytransport.FlatPrefixChange, 0, 2*len(changes))
 	for _, change := range changes {
 		for _, mode := range []bool{false, true} {
-			coordinate, err := flatCoordinate(change.path, mode)
-			if err != nil {
-				return nil, err
-			}
+			coordinate := flatInput(change.path, mode)
 			before, err := directFlatTarget(change.before, mode)
 			if err != nil {
 				return nil, err
@@ -583,8 +569,8 @@ func directFlatDeltaChanges(changes []fileChange) ([]gatewaytransport.FlatMapCha
 			if before.Defined() && after.Defined() && before.Equals(after) {
 				continue
 			}
-			result = append(result, gatewaytransport.FlatMapChange{
-				Path: arcset.CanonicalizePath(coordinate.String()), Before: before, After: after,
+			result = append(result, gatewaytransport.FlatPrefixChange{
+				Input: coordinate, Before: before, After: after,
 			})
 		}
 	}
@@ -592,8 +578,8 @@ func directFlatDeltaChanges(changes []fileChange) ([]gatewaytransport.FlatMapCha
 	if len(result) == 0 {
 		return nil, fmt.Errorf("direct flat delta contains no changed coordinates")
 	}
-	if len(result) > maximumGatewayFlatMapChanges {
-		return nil, fmt.Errorf("direct flat delta exceeds %d Gateway changes", maximumGatewayFlatMapChanges)
+	if len(result) > maximumGatewayFlatPrefixChanges {
+		return nil, fmt.Errorf("direct flat delta exceeds %d Gateway changes", maximumGatewayFlatPrefixChanges)
 	}
 	return result, nil
 }
@@ -616,6 +602,6 @@ func directFlatTarget(file *logicalFile, mode bool) (cid.Cid, error) {
 	return clientcas.CIDForBlock(block)
 }
 
-func compareFlatChanges(left, right gatewaytransport.FlatMapChange) int {
-	return strings.Compare(left.Path.String(), right.Path.String())
+func compareFlatChanges(left, right gatewaytransport.FlatPrefixChange) int {
+	return strings.Compare(string(left.Input.Data), string(right.Input.Data))
 }

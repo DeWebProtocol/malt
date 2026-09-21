@@ -1,8 +1,7 @@
 //go:build js && wasm
 
-// Command malt-eval-rq2-browser-wasm is the real browser-side client-root
-// writer. A minimal host page loads this artifact and calls its Promise-based
-// JSON RPC. All update-view verification, normalization, commitment work,
+// Command malt-eval-rq2-browser-wasm runs retained typed authentication Writers
+// inside a browser. Its Promise-based JSON RPC keeps candidate verification,
 // payload CID binding, exact receipt validation, and retained-root state live
 // inside WebAssembly rather than in the native browser driver.
 package main
@@ -21,21 +20,17 @@ import (
 	"syscall/js"
 	"time"
 
-	clientrootapp "github.com/dewebprotocol/malt-client/application/clientroot"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2metrics"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2wire"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2write"
 	"github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/mutation"
-	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/auth/input"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -69,39 +64,13 @@ type browserWriter struct {
 	initialized  bool
 	backend      string
 	remote       *transport.Client
-	app          *clientrootapp.Session
+	app          *authenticationgraph.Session
 	fixture      *rq2fixture.Fixture
 	source       map[string][]byte
 	root         cid.Cid
 	serial       uint64
 	receiptCount uint64
 	sessionID    string
-}
-
-type wasmRemote struct{ client *transport.Client }
-
-func (r wasmRemote) FetchUpdateView(ctx context.Context, root cid.Cid, bounds *protocol.UpdateViewBounds) (clientrootapp.ViewEnvelope, error) {
-	response, err := r.client.FetchUpdateView(ctx, root, bounds)
-	if err != nil {
-		return clientrootapp.ViewEnvelope{}, err
-	}
-	return clientrootapp.ViewEnvelope{View: response.View, WireBytes: response.WireBytes}, nil
-}
-
-func (r wasmRemote) SubmitClientRoot(ctx context.Context, prepared clientwriter.ComputeResult) (clientrootapp.ReceiptEnvelope, error) {
-	response, err := r.client.SubmitClientRoot(ctx, prepared.Bundle)
-	if err != nil {
-		return clientrootapp.ReceiptEnvelope{}, err
-	}
-	return clientrootapp.ReceiptEnvelope{
-		Receipt: response.Receipt, RequestWireBytes: response.RequestWireBytes, ResponseWireBytes: response.ResponseWireBytes,
-		RequestEncodingNS: response.RequestEncodingNS, ResponseVerifyNS: response.ResponseVerifyNS,
-		Idempotent: response.Idempotent,
-		Gateway: clientrootapp.GatewayPhaseMetrics{
-			OldStateValidationNS: response.Gateway.OldStateValidationNS, GatewayReplayNS: response.Gateway.GatewayReplayNS,
-			PersistNS: response.Gateway.PersistNS, ReceiptNS: response.Gateway.ReceiptNS,
-		},
-	}, nil
 }
 
 func main() {
@@ -192,13 +161,10 @@ func (w *browserWriter) initialize(request initializeRequest) (initializeRespons
 		return initializeResponse{}, err
 	}
 	started := time.Now()
-	var backend maltcid.BackendKind
-	var scheme commitment.IndexCommitment
+	var scheme engine.ProfileVerifier
 	if request.Backend == "kzg" {
-		backend = maltcid.BackendKindKZG
 		scheme, err = kzg.NewScheme()
 	} else {
-		backend = maltcid.BackendKindIPA
 		scheme, err = ipa.NewScheme()
 	}
 	parameterLoadNS := durationNS(time.Since(started))
@@ -226,14 +192,11 @@ func (w *browserWriter) initialize(request initializeRequest) (initializeRespons
 	if err != nil || health.Status != "ok" || health.EvaluationInstanceToken != request.GatewayInstanceToken {
 		return initializeResponse{}, fmt.Errorf("browser Gateway health did not echo the exact disposable instance token")
 	}
-	writerRuntime, err := clientwriter.NewRuntime(
-		materializermemory.New(true),
-		map[maltcid.BackendKind]commitment.IndexCommitment{backend: scheme},
-	)
-	if err != nil {
+	registry := engine.NewRegistry()
+	if err := registry.Register(scheme); err != nil {
 		return initializeResponse{}, err
 	}
-	app, err := clientrootapp.New(wasmRemote{client: remote}, writerRuntime)
+	app, err := authenticationgraph.New(evaluation, engine.New(input.DefaultRegistry(), registry))
 	if err != nil {
 		return initializeResponse{}, err
 	}
@@ -289,33 +252,32 @@ func (w *browserWriter) exchange(request rq2wire.WorkerRequest) rq2wire.WorkerRe
 	}
 }
 
-var browserBounds = &protocol.UpdateViewBounds{MaxObjects: 4096, MaxTotalEntries: 65536, MaxDepth: 256}
-
 func (w *browserWriter) start(request rq2wire.WorkerRequest) rq2wire.WorkerRecord {
 	if w.root.Defined() || w.sessionID != "" {
 		return rq2wire.FailedRecord(request, "session_state", fmt.Errorf("browser session already started"))
 	}
 	root, err := cid.Parse(request.ExpectedAcceptedRoot)
-	if err != nil || string(maltcid.BackendKindOf(root)) != w.backend {
+	if err != nil || !rq2wire.ValidTypedRoot(root.String(), w.backend) {
 		return rq2wire.FailedRecord(request, "input_invalid", fmt.Errorf("browser root is not a typed %s root", w.backend))
 	}
 	if w.fixture == nil || request.FixtureID != w.fixture.FixtureID {
 		return rq2wire.FailedRecord(request, "fixture_incompatible", fmt.Errorf("browser request fixture identity does not match the pinned source fixture"))
 	}
-	if _, err := w.app.Load(context.Background(), root, browserBounds); err != nil {
+	load, err := w.app.Load(context.Background(), root)
+	if err != nil {
 		return rq2wire.FailedRecord(request, classifyFailure(err), err)
 	}
-	view, err := w.app.SnapshotView()
-	if err != nil || w.fixture.ValidateInitialView(view, w.backend) != nil {
+	view, err := w.app.Snapshot()
+	if err != nil || w.fixture.ValidateInitialGraph(view, w.backend) != nil {
 		if err == nil {
-			err = w.fixture.ValidateInitialView(view, w.backend)
+			err = w.fixture.ValidateInitialGraph(view, w.backend)
 		}
 		return rq2wire.FailedRecord(request, "fixture_incompatible", err)
 	}
 	w.root, w.sessionID, w.source = root, request.SessionID, w.fixture.InitialSource()
 	record := rq2wire.BaseRecord(request)
 	record.Success = true
-	record.Session = &rq2wire.SessionEvidence{AcceptedRoot: root.String()}
+	record.Session = &rq2wire.SessionEvidence{AcceptedRoot: root.String(), GraphFetch: measured(load.FetchNS, load.WireBytes, load.Objects), GraphImport: measured(load.ImportNS, load.WireBytes, load.Objects)}
 	return record
 }
 
@@ -331,17 +293,13 @@ func (w *browserWriter) mutate(request rq2wire.WorkerRequest) rq2wire.WorkerReco
 		return rq2wire.FailedRecord(request, "root_continuity", fmt.Errorf("browser request does not match retained root/session"))
 	}
 	mutationStarted := time.Now()
-	load, err := w.app.Load(context.Background(), w.root, browserBounds)
-	if err != nil {
-		return rq2wire.FailedRecord(request, classifyFailure(err), err)
-	}
 	viewSnapshotStarted := time.Now()
-	view, err := w.app.SnapshotView()
+	view, err := w.app.Snapshot()
 	viewSnapshotNS := durationNS(time.Since(viewSnapshotStarted))
 	if err != nil {
 		return rq2wire.FailedRecord(request, "verification_failed", err)
 	}
-	if err := w.fixture.ValidateViewAgainstSource(view, w.backend, w.source); err != nil {
+	if err := w.fixture.ValidateGraphAgainstSource(view, w.backend, w.source); err != nil {
 		return rq2wire.FailedRecord(request, "fixture_incompatible", fmt.Errorf("browser source pre-image binding: %w", err))
 	}
 	operation, err := w.fixture.Operation(request.Operation)
@@ -360,46 +318,49 @@ func (w *browserWriter) mutate(request rq2wire.WorkerRequest) rq2wire.WorkerReco
 		}
 		return rq2wire.FailedRecord(request, classifyFailure(err), err)
 	}
-	intentPlanningStarted := time.Now()
-	intent, err := planBrowserIntent(view, operation, prepared.payloadCID)
-	intentPlanningNS := durationNS(time.Since(intentPlanningStarted))
+	projectionStarted := time.Now()
+	edit, err := w.app.Begin()
 	if err != nil {
-		return rq2wire.FailedRecord(request, "intent_invalid", err)
+		return rq2wire.FailedRecord(request, "verification_failed", err)
 	}
-	result, err := w.app.Execute(context.Background(), operationID(request), intent)
+	candidate, err := rq2write.Apply(context.Background(), edit, w.root, operation, []cid.Cid{prepared.payloadCID})
+	projectionNS := durationNS(time.Since(projectionStarted))
+	if err != nil {
+		return rq2wire.FailedRecord(request, "projection_invalid", err)
+	}
+	result, err := w.app.Submit(context.Background(), operationID(request), edit, candidate)
 	if err != nil {
 		return rq2wire.FailedRecord(request, classifyFailure(err), err)
 	}
 	if result.Idempotent {
-		return rq2wire.FailedRecord(request, "gateway_instance_reused", fmt.Errorf("disposable Gateway returned an idempotent client-root replay"))
+		return rq2wire.FailedRecord(request, "gateway_instance_reused", fmt.Errorf("disposable Gateway returned an idempotent authentication batch replay"))
 	}
 	mutationTotalNS := durationNS(time.Since(mutationStarted))
-	postView, err := w.app.SnapshotView()
+	postView, err := w.app.Snapshot()
 	if err != nil {
 		return rq2wire.FailedRecord(request, "verification_failed", fmt.Errorf("snapshot browser post-image: %w", err))
 	}
-	if err := w.fixture.ValidateViewAgainstSource(postView, w.backend, prepared.postSource); err != nil {
+	if err := w.fixture.ValidateGraphAgainstSource(postView, w.backend, prepared.postSource); err != nil {
 		return rq2wire.FailedRecord(request, "verification_failed", fmt.Errorf("browser full source post-image oracle: %w", err))
 	}
-	encodedCandidate := result.Candidate.String()
+	encodedCandidate := result.Root.String()
 	parsedCandidate, err := cid.Parse(encodedCandidate)
-	if err != nil || !parsedCandidate.Equals(result.Candidate) {
+	if err != nil || !parsedCandidate.Equals(result.Root) {
 		return rq2wire.FailedRecord(request, "verification_failed", fmt.Errorf("expected-root CID encoding did not round-trip"))
 	}
 	record := rq2wire.BaseRecord(request)
 	record.Success = true
-	metrics, err := browserMetrics(request.Operation, load, prepared, result.Metrics, viewSnapshotNS, intentPlanningNS, uint64(len(encodedCandidate)), payloadUpload, mutationTotalNS)
+	metrics, err := browserMetrics(prepared, result, viewSnapshotNS, projectionNS, payloadUpload, mutationTotalNS)
 	if err != nil {
 		return rq2wire.FailedRecord(request, "measurement_invalid", err)
 	}
 	record.Mutation = &rq2wire.MutationEvidence{
-		Operation: request.Operation, PriorRoot: result.BaseRoot.String(), CandidateRoot: encodedCandidate,
-		ReceiptRoot: result.Receipt.Candidate.String(), ReceiptAccepted: result.Receipt.Candidate.Equals(result.Candidate),
-		UpdateViewSHA256: hex.EncodeToString(result.ViewDigest[:]), IntentSHA256: hex.EncodeToString(result.IntentDigest[:]),
-		BundleSHA256: hex.EncodeToString(result.Receipt.BundleDigest[:]),
-		Metrics:      metrics,
+		Operation: request.Operation, PriorRoot: result.Base.String(), CandidateRoot: encodedCandidate,
+		ReceiptRoot: result.Receipt.Root, ReceiptAccepted: result.Receipt.Root == result.Root.String(),
+		BatchSHA256: result.Receipt.Digest,
+		Metrics:     metrics,
 	}
-	w.root = result.Receipt.Candidate
+	w.root = result.Root
 	w.source = prepared.postSource
 	w.serial++
 	w.receiptCount++
@@ -415,7 +376,7 @@ func (w *browserWriter) end(request rq2wire.WorkerRequest) rq2wire.WorkerRecord 
 	}
 	record := rq2wire.BaseRecord(request)
 	record.Success = true
-	record.Session = &rq2wire.SessionEvidence{AcceptedRoot: w.root.String(), ReceiptCount: w.receiptCount, AuditPassed: true}
+	record.Session = &rq2wire.SessionEvidence{AcceptedRoot: w.root.String(), ReceiptCount: w.receiptCount, AuditPassed: true, GraphFetch: rq2wire.NotApplicablePhase(), GraphImport: rq2wire.NotApplicablePhase()}
 	return record
 }
 
@@ -462,208 +423,26 @@ func (w *browserWriter) prepare(operation rq2fixture.Operation) (browserPayload,
 	return prepared, nil
 }
 
-func browserMetrics(operation string, load clientrootapp.LoadMetrics, payload browserPayload, result clientrootapp.OperationMetrics, viewSnapshotNS, intentPlanningNS, expectedRootBytes uint64, payloadUpload transport.PutBatchMeasurement, mutationTotalNS uint64) (rq2wire.MutationMetrics, error) {
+func browserMetrics(payload browserPayload, result authenticationgraph.Result, snapshotNS, projectionNS uint64, payloadUpload transport.PutBatchMeasurement, mutationTotalNS uint64) (rq2wire.MutationMetrics, error) {
 	phase := func(duration, bytes, count uint64) rq2wire.PhaseMeasurement {
 		return measured(duration, bytes, max(uint64(1), count))
 	}
-	sdk := result.SDK
-	externalNormalizationNS, err := rq2metrics.AddDurations(viewSnapshotNS, intentPlanningNS)
+	generation, err := rq2metrics.AddDurations(snapshotNS, projectionNS)
 	if err != nil {
-		return rq2wire.MutationMetrics{}, fmt.Errorf("external normalization timing: %w", err)
+		return rq2wire.MutationMetrics{}, err
 	}
-	normalizationNS, err := rq2metrics.AddDurations(externalNormalizationNS, sdk.ViewNormalizationNS, sdk.IntentNormalizationNS)
-	if err != nil {
-		return rq2wire.MutationMetrics{}, fmt.Errorf("complete normalization timing: %w", err)
-	}
-	clientRootGenerationNS, err := rq2metrics.AddDurations(externalNormalizationNS, sdk.TotalNS)
-	if err != nil {
-		return rq2wire.MutationMetrics{}, fmt.Errorf("complete client-root generation timing: %w", err)
-	}
+	computation, submission := result.Computation, result.Submission
 	return rq2wire.MutationMetrics{
-		TaxonomyProfile: rq2metrics.TaxonomyProfile,
-		MutationTotal:   phase(mutationTotalNS, 0, 1),
-		Scan:            payload.scan, Chunk: payload.chunk, Hash: payload.hash,
-		UpdateView:       phase(load.UpdateViewFetchNS, load.UpdateViewWireBytes, 1),
-		VerifyUpdateView: phase(load.VerifyUpdateViewNS, load.UpdateViewWireBytes, 1),
-		Normalization:    phase(normalizationNS, 0, 4),
-		CommitmentUpdate: phase(sdk.CommitmentUpdateNS, 0, 1), ExpectedRootEncoding: phase(sdk.ExpectedRootEncodingNS, expectedRootBytes, 1),
-		RootComputation: phase(sdk.RootComputationNS, 0, 1), ClientRootGeneration: phase(clientRootGenerationNS, 0, 1),
-		ClientRootBundle: phase(result.BundleEncodingNS, result.BundleWireBytes, 1),
-		// Upload is only the payload CAS request round trip. Bundle request
-		// bytes and receipt response bytes remain directionally separated.
-		Upload:        phase(payloadUpload.RoundTripNS, payloadUpload.RequestWireBytes, 1),
-		GatewayReplay: phase(result.Gateway.GatewayReplayNS, 0, 1), GatewayPersist: phase(result.Gateway.PersistNS, 0, 1),
-		ReceiptCheck: phase(result.ReceiptCheckNS, result.ReceiptWireBytes, 1),
-		CPUTotal:     rq2wire.NotApplicablePhase(), PeakMemory: rq2wire.NotApplicablePhase(),
-		WASMDownload: rq2wire.NotApplicablePhase(), WASMInstantiate: rq2wire.NotApplicablePhase(), ParameterLoad: rq2wire.NotApplicablePhase(),
-		FirstMutation: rq2wire.NotApplicablePhase(), JSWASMBoundary: rq2wire.NotApplicablePhase(),
+		TaxonomyProfile: rq2metrics.TaxonomyProfile, MutationTotal: phase(mutationTotalNS, 0, 1), Scan: payload.scan, Chunk: payload.chunk, Hash: payload.hash,
+		GraphSnapshot: phase(snapshotNS, 0, 1), CandidateApply: phase(computation.ApplyNS, 0, computation.Candidates), CandidateExport: phase(computation.ExportNS, computation.CandidateBytes, computation.Candidates), CandidateGeneration: phase(generation, 0, 1),
+		BatchEncoding: phase(submission.RequestEncodingNS, submission.RequestWireBytes, 1), Upload: phase(payloadUpload.RoundTripNS, payloadUpload.RequestWireBytes, 1),
+		GatewayValidateStage: phase(submission.Gateway.ValidationAndStageNS, 0, 1), GatewayPersist: phase(submission.Gateway.PersistNS, 0, 1), ReceiptCheck: phase(submission.ResponseVerifyNS, submission.ResponseWireBytes, 1),
+		CPUTotal: rq2wire.NotApplicablePhase(), PeakMemory: rq2wire.NotApplicablePhase(), WASMDownload: rq2wire.NotApplicablePhase(), WASMInstantiate: rq2wire.NotApplicablePhase(), ParameterLoad: rq2wire.NotApplicablePhase(), FirstMutation: rq2wire.NotApplicablePhase(), JSWASMBoundary: rq2wire.NotApplicablePhase(),
 	}, nil
 }
 
 func measured(duration, bytes, count uint64) rq2wire.PhaseMeasurement {
 	return rq2wire.ObservedPhase(duration, bytes, count)
-}
-
-func planBrowserIntent(view mutation.UpdateView, operation rq2fixture.Operation, payload cid.Cid) (mutation.SemanticIntent, error) {
-	root, err := browserRootObject(view)
-	if err != nil {
-		return mutation.SemanticIntent{}, err
-	}
-	target := root
-	after := arcset.NewCASTarget(payload)
-	var changes []mutation.IntentChange
-	switch operation.Kind {
-	case rq2fixture.KindDirectInsert:
-		coordinate, err := arcset.NewMapCoordinate(operation.DestinationPath)
-		if err != nil {
-			return mutation.SemanticIntent{}, err
-		}
-		for _, entry := range root.Entries.Entries() {
-			if bytes.Equal(entry.Coordinate.Bytes(), coordinate.Bytes()) {
-				return mutation.SemanticIntent{}, fmt.Errorf("browser map destination %q already exists", operation.DestinationPath)
-			}
-		}
-		changes = []mutation.IntentChange{{Coordinate: coordinate, After: &after}}
-	case rq2fixture.KindDirectReplace, rq2fixture.KindDocumentEdit:
-		entry, err := browserDirectEntryAt(root, operation.SourcePath)
-		if err != nil {
-			return mutation.SemanticIntent{}, err
-		}
-		before := entry.Target
-		changes = []mutation.IntentChange{{Coordinate: entry.Coordinate, Before: &before, After: &after}}
-	case rq2fixture.KindListAppend, rq2fixture.KindListReplace:
-		target, err = browserListObjectForPath(view, operation.SourcePath)
-		if err != nil {
-			return mutation.SemanticIntent{}, err
-		}
-		if operation.Kind == rq2fixture.KindListAppend {
-			changes = []mutation.IntentChange{{Coordinate: arcset.NewListCoordinateUint64(uint64(target.Entries.Len())), After: &after}}
-			if target.Commit.FixedList != nil {
-				descriptor := *target.Commit.FixedList
-				target.Commit.FixedList = &descriptor
-				if descriptor.ChunkSize == 0 || descriptor.TotalSize%descriptor.ChunkSize != 0 {
-					return mutation.SemanticIntent{}, fmt.Errorf("browser fixed-list append has a partial final chunk")
-				}
-				target.Commit.FixedList.TotalSize += target.Commit.FixedList.ChunkSize
-			}
-		} else {
-			if operation.ListIndex == nil || *operation.ListIndex >= uint64(target.Entries.Len()) {
-				return mutation.SemanticIntent{}, fmt.Errorf("browser list replacement index is outside the current list")
-			}
-			entry := target.Entries.Entries()[*operation.ListIndex]
-			before := entry.Target
-			changes = []mutation.IntentChange{{Coordinate: entry.Coordinate, Before: &before, After: &after}}
-		}
-	default:
-		return mutation.SemanticIntent{}, fmt.Errorf("unsupported browser operation kind %q", operation.Kind)
-	}
-	return browserPropagate(view, target, changes)
-}
-
-type browserParent struct {
-	object mutation.UpdateObject
-	entry  arcset.ArcEntry
-}
-
-func browserPropagate(view mutation.UpdateView, target mutation.UpdateObject, changes []mutation.IntentChange) (mutation.SemanticIntent, error) {
-	objects := make(map[string]mutation.UpdateObject, len(view.Objects))
-	parents := make(map[string][]browserParent)
-	for _, object := range view.Objects {
-		objects[object.Root.KeyString()] = object
-	}
-	for _, object := range view.Objects {
-		for _, entry := range object.Entries.Entries() {
-			if _, ok := objects[entry.Target.CID().KeyString()]; ok && maltcid.SemanticKindOf(entry.Target.CID()) != maltcid.SemanticKindUnknown {
-				parents[entry.Target.CID().KeyString()] = append(parents[entry.Target.CID().KeyString()], browserParent{object: object, entry: entry})
-			}
-		}
-	}
-	transitions := make([]mutation.IntentTransition, 0, len(view.Objects))
-	current, currentChanges := target, changes
-	for step := 0; ; step++ {
-		id := fmt.Sprintf("step-%03d", step)
-		top := current.Root.Equals(view.BaseRoot)
-		transition := mutation.IntentTransition{
-			ID: id, ObjectID: current.ObjectID, OldRoot: current.Root, Kind: current.Kind,
-			Backend: maltcid.BackendKindOf(current.Root), Changes: currentChanges, Commit: current.Commit,
-		}
-		if !top {
-			transition.ExpectedUses = 1
-		}
-		transitions = append(transitions, transition)
-		if top {
-			return mutation.SemanticIntent{Profile: mutation.SemanticIntentProfile, BaseRoot: view.BaseRoot, Transitions: transitions, TopOutputID: id}, nil
-		}
-		edges := parents[current.Root.KeyString()]
-		if len(edges) != 1 {
-			return mutation.SemanticIntent{}, fmt.Errorf("browser target has %d parents", len(edges))
-		}
-		before := edges[0].entry.Target
-		kind := arcset.TargetKindMap
-		if current.Kind == arcset.KindList {
-			kind = arcset.TargetKindList
-		}
-		currentChanges = []mutation.IntentChange{{Coordinate: edges[0].entry.Coordinate, Before: &before, OutputID: id, OutputKind: kind}}
-		current = edges[0].object
-		if step >= len(view.Objects) {
-			return mutation.SemanticIntent{}, fmt.Errorf("browser parent chain does not close")
-		}
-	}
-}
-
-func browserRootObject(view mutation.UpdateView) (mutation.UpdateObject, error) {
-	for _, object := range view.Objects {
-		if object.Root.Equals(view.BaseRoot) {
-			return object, nil
-		}
-	}
-	return mutation.UpdateObject{}, fmt.Errorf("browser update view omits root object")
-}
-
-func browserDirectEntryAt(object mutation.UpdateObject, path string) (arcset.ArcEntry, error) {
-	coordinate, err := arcset.NewMapCoordinate(path)
-	if err != nil {
-		return arcset.ArcEntry{}, err
-	}
-	for _, entry := range object.Entries.Entries() {
-		if bytes.Equal(entry.Coordinate.Bytes(), coordinate.Bytes()) {
-			if entry.Target.Kind() != arcset.TargetKindCAS || maltcid.SemanticKindOf(entry.Target.CID()) != maltcid.SemanticKindUnknown {
-				return arcset.ArcEntry{}, fmt.Errorf("browser coordinate %q is not a direct CAS target", path)
-			}
-			return entry, nil
-		}
-	}
-	return arcset.ArcEntry{}, fmt.Errorf("browser direct source coordinate %q is absent", path)
-}
-
-func browserListObjectForPath(view mutation.UpdateView, path string) (mutation.UpdateObject, error) {
-	root, err := browserRootObject(view)
-	if err != nil {
-		return mutation.UpdateObject{}, err
-	}
-	coordinate, err := arcset.NewMapCoordinate(path)
-	if err != nil {
-		return mutation.UpdateObject{}, err
-	}
-	var listRoot cid.Cid
-	for _, entry := range root.Entries.Entries() {
-		if bytes.Equal(entry.Coordinate.Bytes(), coordinate.Bytes()) {
-			if entry.Target.Kind() != arcset.TargetKindList || maltcid.SemanticKindOf(entry.Target.CID()) != maltcid.SemanticKindList {
-				return mutation.UpdateObject{}, fmt.Errorf("browser coordinate %q is not a list target", path)
-			}
-			listRoot = entry.Target.CID()
-			break
-		}
-	}
-	if !listRoot.Defined() {
-		return mutation.UpdateObject{}, fmt.Errorf("browser list source coordinate %q is absent", path)
-	}
-	for _, object := range view.Objects {
-		if object.Root.Equals(listRoot) && object.Kind == arcset.KindList {
-			return object, nil
-		}
-	}
-	return mutation.UpdateObject{}, fmt.Errorf("browser list source %q omits its complete object", path)
 }
 
 func canonicalSHA256(value string) bool {
@@ -693,7 +472,7 @@ func classifyFailure(err error) string {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
-	return "client_root_failed"
+	return "authentication_failed"
 }
 
 func durationNS(value time.Duration) uint64 {

@@ -4,41 +4,24 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/machine"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2e0"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2wire"
-	clienttransport "github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/arcset"
-	materializermemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
-	"github.com/dewebprotocol/malt-core/auth/commitment"
-	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
-	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	listtree "github.com/dewebprotocol/malt-core/auth/semantic/list/tree"
-	"github.com/dewebprotocol/malt-core/auth/semantic/mapping"
-	mappingradix "github.com/dewebprotocol/malt-core/auth/semantic/mapping/radix"
-	"github.com/dewebprotocol/malt-core/mutation"
-	"github.com/dewebprotocol/malt-core/protocol"
-	clientwriter "github.com/dewebprotocol/malt-core/sdk/writer"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -274,7 +257,7 @@ func TestRealChromiumExecutesColdAndSteadyBrowserOperations(t *testing.T) {
 	directory := t.TempDir()
 	wasmPath := filepath.Join(directory, "writer.wasm")
 	moduleRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
-	build := exec.Command("go", "build", "-buildvcs=false", "-o", wasmPath, "./tools/evaluation/cmd/malt-eval-rq2-browser-wasm")
+	build := exec.Command("go", "build", "-p=6", "-buildvcs=false", "-o", wasmPath, "./tools/evaluation/cmd/malt-eval-rq2-browser-wasm")
 	build.Dir = moduleRoot
 	build.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", "CGO_ENABLED=0")
 	if output, err := build.CombinedOutput(); err != nil {
@@ -317,10 +300,10 @@ func TestRealChromiumExecutesColdAndSteadyBrowserOperations(t *testing.T) {
 			if err := os.WriteFile(fixturePath, fixtureBytes, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			gateway := httptest.NewServer(gatewayFixture)
+			gateway := gatewayFixture
 			defer gateway.Close()
 			config := hostConfig{
-				gatewayBaseURL: gateway.URL, gatewayToken: token, fixturePath: fixturePath,
+				gatewayBaseURL: gateway.URL(), gatewayToken: token, fixturePath: fixturePath,
 				workerID: "worker-" + testCase.name, platformID: "browser", clientKind: rq2wire.ClientBrowserWASM, backend: testCase.backend,
 				lifecycle: testCase.lifecycle, sessionMutationCount: testCase.sessionMutationCount, requestTimeout: 2 * time.Minute,
 				steadyWarmup: "map-replace",
@@ -394,215 +377,22 @@ func requestFor(config hostConfig, kind, requestID, operation string, measured b
 	}
 }
 
-type testBrowserGateway struct {
-	mu      sync.Mutex
-	token   string
-	views   map[string]mutation.UpdateView
-	runtime *clientwriter.Runtime
-}
-
-func newTestBrowserGateway(t *testing.T, token, backend string) (*testBrowserGateway, cid.Cid, []byte) {
+func newTestBrowserGateway(t *testing.T, token, backend string) (*rq2e0.ConformanceGateway, cid.Cid, []byte) {
 	t.Helper()
-	var scheme commitment.IndexCommitment
-	var err error
-	if backend == "kzg" {
-		scheme, err = kzg.NewScheme()
-	} else {
-		scheme, err = ipa.NewScheme()
-	}
+	fixture := testBrowserSourceFixture(t)
+	gateway, root, err := rq2e0.NewConformanceGateway(fixture, backend, token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := testBrowserUpdateView(t, scheme)
-	writerRuntime, err := clientwriter.NewRuntime(
-		materializermemory.New(true),
-		map[maltcid.BackendKind]commitment.IndexCommitment{maltcid.BackendKind(backend): scheme},
-	)
+	raw, err := json.Marshal(fixture)
 	if err != nil {
+		gateway.Close()
 		t.Fatal(err)
 	}
-	fixture := testBrowserSourceFixture(t, backend, view.BaseRoot)
-	return &testBrowserGateway{token: token, views: map[string]mutation.UpdateView{view.BaseRoot.String(): view}, runtime: writerRuntime}, view.BaseRoot, fixture
+	return gateway, root, raw
 }
 
-func (g *testBrowserGateway) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	response.Header().Set("Content-Type", "application/json")
-	response.Header().Set("Cache-Control", "private, no-store")
-	switch {
-	case request.URL.Path == "/healthz" && request.Method == http.MethodGet:
-		_ = json.NewEncoder(response).Encode(map[string]any{"status": "ok", "evaluation_instance_token": g.token})
-	case strings.HasPrefix(request.URL.Path, "/v1/roots/") && strings.HasSuffix(request.URL.Path, "/update-view") && request.Method == http.MethodGet:
-		root := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/v1/roots/"), "/update-view")
-		g.mu.Lock()
-		view, exists := g.views[root]
-		g.mu.Unlock()
-		if !exists {
-			http.Error(response, "unknown root", http.StatusNotFound)
-			return
-		}
-		wire, err := protocol.NewUpdateView(view)
-		if err != nil {
-			http.Error(response, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_ = json.NewEncoder(response).Encode(wire)
-	case request.URL.Path == "/v1/cas/batch" && request.Method == http.MethodPost:
-		g.handleCASBatch(response, request)
-	case request.URL.Path == "/v1/client-roots" && request.Method == http.MethodPost:
-		g.handleClientRoot(response, request)
-	default:
-		http.NotFound(response, request)
-	}
-}
-
-func (g *testBrowserGateway) handleCASBatch(response http.ResponseWriter, request *http.Request) {
-	var submitted struct {
-		Profile string `json:"profile"`
-		Blocks  []struct {
-			Codec uint64 `json:"codec"`
-			Data  []byte `json:"data"`
-		} `json:"blocks"`
-	}
-	if err := json.NewDecoder(request.Body).Decode(&submitted); err != nil || submitted.Profile != clienttransport.CASPutBatchProfile || len(submitted.Blocks) != 1 {
-		http.Error(response, "invalid CAS batch", http.StatusBadRequest)
-		return
-	}
-	results := make([]map[string]string, len(submitted.Blocks))
-	for index, block := range submitted.Blocks {
-		key, err := clientcas.CIDForBlock(clientcas.Block{Codec: block.Codec, Data: block.Data})
-		if err != nil {
-			http.Error(response, err.Error(), http.StatusBadRequest)
-			return
-		}
-		results[index] = map[string]string{"cid": key.String(), "status": "stored"}
-	}
-	response.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(response).Encode(map[string]any{"profile": clienttransport.CASPutBatchProfile, "results": results})
-}
-
-func (g *testBrowserGateway) handleClientRoot(response http.ResponseWriter, request *http.Request) {
-	var submitted protocol.ClientRootBundle
-	if err := json.NewDecoder(request.Body).Decode(&submitted); err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-	bundle, err := submitted.Core()
-	if err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	view, exists := g.views[bundle.View.BaseRoot.String()]
-	if !exists || !view.BaseRoot.Equals(bundle.View.BaseRoot) {
-		http.Error(response, "stale root", http.StatusConflict)
-		return
-	}
-	verified, err := g.runtime.VerifyUpdateView(request.Context(), bundle.View)
-	if err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-	recomputed, err := g.runtime.ComputeBundle(request.Context(), bundle.TransactionID, verified, bundle.Intent)
-	if err != nil || !recomputed.Bundle.Candidate.Equals(bundle.Candidate) {
-		http.Error(response, "client-root recomputation mismatch", http.StatusBadRequest)
-		return
-	}
-	recomputedDigest, err := recomputed.Bundle.Digest()
-	if err != nil {
-		http.Error(response, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	bundleDigest, err := bundle.Digest()
-	if err != nil || recomputedDigest != bundleDigest {
-		http.Error(response, "client-root bundle digest mismatch", http.StatusBadRequest)
-		return
-	}
-	g.views[bundle.Candidate.String()] = recomputed.NextView
-	receipt := mutation.MaterializationReceipt{
-		Profile: mutation.MaterializationReceiptProfile, TransactionID: bundle.TransactionID,
-		BaseRoot: bundle.View.BaseRoot, Candidate: bundle.Candidate, BundleDigest: bundleDigest,
-		DurableBoundary: "gateway-client-root-atomic-v1",
-	}
-	wireReceipt, err := protocol.NewMaterializationReceipt(receipt, bundle)
-	if err != nil {
-		http.Error(response, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	for name, value := range map[string]string{
-		"X-Malt-Client-Root-Old-State-Validation-Nanos": "1",
-		"X-Malt-Client-Root-Gateway-Replay-Nanos":       "1",
-		"X-Malt-Client-Root-Persist-Nanos":              "1",
-		"X-Malt-Client-Root-Receipt-Nanos":              "1",
-		"X-Malt-Client-Root-Durable-Boundary":           receipt.DurableBoundary,
-		"X-Malt-Client-Root-Idempotent":                 "false",
-		"Server-Timing":                                 "old-state-validation;dur=0.000001, gateway-replay;dur=0.000001, persist;dur=0.000001, receipt;dur=0.000001",
-	} {
-		response.Header().Set(name, value)
-	}
-	accounting, _ := json.Marshal(map[string]any{
-		"profile": "gateway.client-root-write-accounting/v2", "available": false,
-		"unavailable_reason": "integration-test", "byte_method": "durable-kv-key-plus-value-bytes/v2",
-		"categories": []any{},
-	})
-	response.Header().Set("X-Malt-Client-Root-Write-Accounting", base64.RawURLEncoding.EncodeToString(accounting))
-	_ = json.NewEncoder(response).Encode(wireReceipt)
-}
-
-func testBrowserUpdateView(t *testing.T, scheme commitment.IndexCommitment) mutation.UpdateView {
-	t.Helper()
-	ctx := context.Background()
-	document := testRawCID(t, []byte("document"))
-	chunkABytes := make([]byte, 32)
-	chunkBBytes := make([]byte, 32)
-	copy(chunkABytes, "chunk-a")
-	copy(chunkBBytes, "chunk-b")
-	chunkA := testRawCID(t, chunkABytes)
-	chunkB := testRawCID(t, chunkBBytes)
-	store := materializermemory.New(true)
-	lister, err := listtree.NewList(scheme, store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listRoot, err := lister.CommitFixed(ctx, "list", []cid.Cid{chunkA, chunkB}, 32, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mapper, err := mappingradix.NewMap(scheme, store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := mapper.Commit(ctx, "root", mapping.NewViewFrom(map[string]cid.Cid{"document.txt": document, "list.bin": listRoot}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	documentCoordinate, _ := arcset.NewMapCoordinate("document.txt")
-	listCoordinate, _ := arcset.NewMapCoordinate("list.bin")
-	rootEntries, err := arcset.NewCanonicalArcSet(arcset.KindMap, []arcset.ArcEntry{
-		{Coordinate: documentCoordinate, Target: arcset.NewCASTarget(document)},
-		{Coordinate: listCoordinate, Target: arcset.NewListTarget(listRoot)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	listEntries, err := arcset.NewCanonicalArcSet(arcset.KindList, []arcset.ArcEntry{
-		{Coordinate: arcset.NewListCoordinateUint64(0), Target: arcset.NewCASTarget(chunkA)},
-		{Coordinate: arcset.NewListCoordinateUint64(1), Target: arcset.NewCASTarget(chunkB)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return mutation.UpdateView{
-		Profile: mutation.UpdateViewProfile, StateProfile: mutation.StatefulCompleteVectorsProfile,
-		BaseRoot: root, Bounds: mutation.UpdateViewBounds{MaxObjects: 8, MaxTotalEntries: 64, MaxDepth: 8},
-		Objects: []mutation.UpdateObject{
-			{ObjectID: "list", Root: listRoot, Kind: arcset.KindList, Entries: listEntries, Commit: mutation.CommitDescriptor{FixedList: &mutation.FixedListCommit{ChunkSize: 32, TotalSize: 64}}},
-			{ObjectID: "root", Root: root, Kind: arcset.KindMap, Entries: rootEntries},
-		},
-	}
-}
-
-func testBrowserSourceFixture(t *testing.T, backend string, root cid.Cid) []byte {
+func testBrowserSourceFixture(t *testing.T) *rq2fixture.Fixture {
 	t.Helper()
 	document := []byte("document")
 	chunkA := make([]byte, 32)
@@ -611,13 +401,12 @@ func testBrowserSourceFixture(t *testing.T, backend string, root cid.Cid) []byte
 	copy(chunkB, "chunk-b")
 	index := uint64(0)
 	seed := sha256.Sum256([]byte("browser source fixture seed"))
-	value := rq2fixture.Fixture{
-		SchemaVersion: rq2fixture.SchemaVersion, FixtureID: "fixture", MutationSeedSHA256: hex.EncodeToString(seed[:]),
-		InitialRoots: []rq2fixture.RootBinding{{Backend: backend, CID: root.String()}},
-		DirectFiles:  []rq2fixture.DirectFile{{Path: "document.txt", Coordinate: "document.txt", Bytes: document, CID: testRawCID(t, document).String()}},
-		ListFiles: []rq2fixture.ListFile{{
+	value := rq2fixture.SourceDefinition{
+		SchemaVersion: rq2fixture.SourceSchemaVersion, FixtureID: "fixture", MutationSeedSHA256: hex.EncodeToString(seed[:]),
+		DirectFiles: []rq2fixture.SourceDirectFile{{Path: "document.txt", Coordinate: "document.txt", Bytes: document}},
+		ListFiles: []rq2fixture.SourceListFile{{
 			Path: "list.bin", Coordinate: "list.bin", ChunkSize: 32, TotalSize: 64,
-			Chunks: []rq2fixture.ListChunk{{Index: 0, Bytes: chunkA, CID: testRawCID(t, chunkA).String()}, {Index: 1, Bytes: chunkB, CID: testRawCID(t, chunkB).String()}},
+			Chunks: []rq2fixture.SourceListChunk{{Index: 0, Bytes: chunkA}, {Index: 1, Bytes: chunkB}},
 		}},
 		Operations: []rq2fixture.Operation{
 			{Name: "document-edit-cid-binding-submit", Kind: rq2fixture.KindDocumentEdit, SourcePath: "document.txt", SourceCoordinate: "document.txt", PayloadBytes: 32},
@@ -627,23 +416,11 @@ func testBrowserSourceFixture(t *testing.T, backend string, root cid.Cid) []byte
 			{Name: "list-replace", Kind: rq2fixture.KindListReplace, SourcePath: "list.bin", SourceCoordinate: "list.bin", PayloadBytes: 32, ListIndex: &index},
 		},
 	}
-	raw, err := json.Marshal(value)
+	fixture, err := rq2e0.BuildFixture(t.Context(), &value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rq2fixture.Decode(raw); err != nil {
-		t.Fatal(err)
-	}
-	return raw
-}
-
-func testRawCID(t *testing.T, value []byte) cid.Cid {
-	t.Helper()
-	key, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: value})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return key
+	return fixture
 }
 
 func preflightRequest(config hostConfig) rq2wire.WorkerRequest {

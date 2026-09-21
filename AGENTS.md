@@ -10,7 +10,7 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 
 ## Boundaries
 
-- Do not define MALT protocol, ProofList, commitment, CID, schema, or canonical
+- Do not define MALT protocol, authentication proof, commitment, CID, schema, or canonical
   graph semantics here; use the `malt-core` module.
 - Keep `module github.com/dewebprotocol/malt-client` and the release-tag block
   intact until a dedicated pre-v1 namespace-cutover PR satisfies
@@ -89,15 +89,14 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 - `application/writeback` owns transport-neutral replay of a leased staging
   batch. It plans before payload publication, uploads only final staged raw
   bodies referenced by the normalized intent, invokes the MALT Core
-  client-root workflow, verifies the durable receipt, records only a candidate,
+  typed candidate/batch workflow, verifies the durable receipt, records only a candidate,
   and then completes the exact batch under the accepted-root promotion fence or
   atomically conflicts it. It must not import a concrete Gateway transport or
   expose accepted-root promotion.
-- `unixfs/clientroot` owns the concrete flat-v1/hybrid-v1 projection from a
-  verified complete update view plus durable filesystem operations into an
-  output-free semantic intent. It verifies old and newly stored manifest CIDs
-  and must not import trust, filesystem, application, HTTP, or a concrete
-  transport.
+- `unixfs/planner` owns flat-v1/hybrid-v1/rooted-v1 projection from verified
+  complete typed candidates plus filesystem intent into exact ordered Core
+  candidates. It verifies old/new manifest CIDs and must not import trust,
+  filesystem, application, HTTP, or a concrete transport.
 - `filesystem/mount` owns durable desired/pending-unmount state and the
   daemon-managed lifecycle contract. One process-held registry lease excludes
   competing managers on supported Linux/macOS/BSD and Windows targets; other
@@ -137,9 +136,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 - `application/backup.BatchRunner` owns plan selection, batch execution, and
   typed partial-failure aggregation. Foreground, daemon, and scheduled adapters
   must use that same runner contract.
-- `bucketsync` production synchronization uses
-  `transport/capability.DatasetBranch`; its concrete Gateway DTO adapter lives
-  only in `gateway_compat.go` for the pre-release compatibility window.
+- `bucketsync` uses the transport-neutral dataset branch capability. The old
+  concrete Gateway DTO adapter and Open/OpenBranch compatibility entrypoints
+  are removed; keep production callers on OpenRemote/OpenRemoteBranch.
 - `internal/runtime` is the process-independent composition root. It may bind
   concrete local configuration, transport, trust, keyring, synchronization,
   UnixFS, verified filesystem, cache, and platform-mount capabilities into
@@ -154,9 +153,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   persistence from cache/journal state or promote an accepted root.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
-  behavior here rather than under `cmd/malt`. Its semantic mutation adapter
-  consumes `transport/capability.Mutations`; only `gateway_compat.go` may
-  import legacy Gateway mutation DTOs during the compatibility window.
+  behavior here rather than under `cmd/malt`. Its typed authentication adapter
+  consumes narrow current authentication capabilities. No legacy Gateway DTO
+  or mutation compatibility adapter is retained.
 - `merkledag/` owns the compatibility adapter and local CID/link-evidence
   replay; `merkledag/importer` owns import construction. Do not represent this
   evidence as a MALT ProofList.

@@ -23,7 +23,7 @@ func TestPackageBoundaries(t *testing.T) {
 		{path: "cache", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-core"}},
 		{path: "journal", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-core"}},
 		{path: "unixfs", banned: []string{"github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/merkledag"}},
-		{path: "unixfs/clientroot", banned: []string{"net/http", "github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust"}},
+		{path: "unixfs/planner", banned: []string{"net/http", "github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust"}},
 		{path: "filesystem", banned: []string{"net/http", "github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust"}},
 		{path: "filesystem/staging", banned: []string{"net/http", "github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-core"}},
 		{path: "filesystem/platform/fuse", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/cache", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust"}},
@@ -172,7 +172,7 @@ func TestSemanticTransportCapabilitiesExcludeGatewayAndTrustDependencies(t *test
 	checkExactImports(t, filepath.Join(root, "bucketsync", "service.go"), []string{
 		"github.com/dewebprotocol/malt-client/transport",
 	})
-	checkExactImports(t, filepath.Join(root, "unixfs", "gateway_adapter.go"), []string{
+	checkExactImports(t, filepath.Join(root, "unixfs", "authentication_adapter.go"), []string{
 		"github.com/dewebprotocol/malt-client/transport",
 	})
 	checkSourceTokens(t, filepath.Join(root, "application", "add"), []string{
@@ -204,27 +204,15 @@ func TestLocalAndHybridTransportPolicyStayOutsideApplications(t *testing.T) {
 	}
 }
 
-func TestConcreteGatewayDTOImportsRemainCompatibilityOnly(t *testing.T) {
+func TestApplicationsUseCapabilitiesWithoutConcreteGatewayDTOAdapters(t *testing.T) {
 	root := moduleRoot(t)
-	want := map[string]struct{}{
-		filepath.Join("bucketsync", "gateway_compat.go"): {},
-		filepath.Join("unixfs", "gateway_compat.go"):     {},
-	}
 	for _, directory := range []string{"bucketsync", "unixfs"} {
-		for _, importer := range exactImporters(t, filepath.Join(root, directory), "github.com/dewebprotocol/malt-client/transport") {
-			relative, err := filepath.Rel(root, importer)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, ok := want[relative]; !ok {
-				t.Errorf("%s imports concrete Gateway DTOs outside a compatibility adapter", relative)
-				continue
-			}
-			delete(want, relative)
-		}
+		checkExactImports(t, filepath.Join(root, directory), []string{"github.com/dewebprotocol/malt-client/transport"})
 	}
-	for missing := range want {
-		t.Errorf("expected compatibility adapter %s does not import the concrete Gateway transport", missing)
+	for _, retired := range []string{"bucketsync/gateway_compat.go", "unixfs/gateway_compat.go", "unixfs/gateway_adapter.go", "application/clientroot", "unixfs/clientroot"} {
+		if _, err := os.Stat(filepath.Join(root, retired)); !os.IsNotExist(err) {
+			t.Errorf("retired adapter remains: %s (stat: %v)", retired, err)
+		}
 	}
 }
 

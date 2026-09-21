@@ -3,27 +3,27 @@ package main
 import "github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
 
 const (
-	workerRequestSchema          = "malt-rq3-malt-worker-request/v2"
-	workerResponseSchema         = "malt-rq3-malt-worker-response/v2"
-	capabilitySchema             = "malt-rq3-malt-boundary-capability/v3"
-	runResultSchema              = "malt-rq3-malt-run-result/v2"
-	capabilityID                 = "rq3.malt-flat-kzg-fskv-arcset.v6"
-	systemMALTFlat               = "malt-flat"
-	operationCapabilities        = "capabilities"
-	operationRun                 = "run"
-	operationStreamStart         = "stream-start"
-	operationStreamChunk         = "stream-chunk"
-	operationStreamFinish        = "stream-finish"
-	resultScopeComplete          = "complete-run"
-	resultScopeStreamStart       = "stream-start"
-	resultScopeStreamChunk       = "stream-chunk"
-	maxWorkerLineBytes           = rq3baseline.MaximumJSONLRecordBytes
-	maxWorkerRequests            = 4_096
-	maximumMALTWholeFileBytes    = 64 << 20
-	maximumGatewayFlatMapChanges = 65_536
-	maximumMALTSnapshotFiles     = (maximumGatewayFlatMapChanges - 1) / 2
-	maximumMALTChunkMutations    = maximumGatewayFlatMapChanges / 2
-	maximumMALTCommitManifest    = 100_000
+	workerRequestSchema             = "malt-rq3-malt-worker-request/v2"
+	workerResponseSchema            = "malt-rq3-malt-worker-response/v3"
+	capabilitySchema                = "malt-rq3-malt-boundary-capability/v4"
+	runResultSchema                 = "malt-rq3-malt-run-result/v3"
+	capabilityID                    = "rq3.malt-flat-kzg-fskv-arcset.v7"
+	systemMALTFlat                  = "malt-flat"
+	operationCapabilities           = "capabilities"
+	operationRun                    = "run"
+	operationStreamStart            = "stream-start"
+	operationStreamChunk            = "stream-chunk"
+	operationStreamFinish           = "stream-finish"
+	resultScopeComplete             = "complete-run"
+	resultScopeStreamStart          = "stream-start"
+	resultScopeStreamChunk          = "stream-chunk"
+	maxWorkerLineBytes              = rq3baseline.MaximumJSONLRecordBytes
+	maxWorkerRequests               = 4_096
+	maximumMALTWholeFileBytes       = 64 << 20
+	maximumGatewayFlatPrefixChanges = 65_536
+	maximumMALTSnapshotFiles        = (maximumGatewayFlatPrefixChanges - 1) / 2
+	maximumMALTChunkMutations       = maximumGatewayFlatPrefixChanges / 2
+	maximumMALTCommitManifest       = 100_000
 )
 
 type workerRequest struct {
@@ -121,7 +121,7 @@ type capability struct {
 	MaximumWholeFileBytes    int      `json:"maximum_whole_file_bytes"`
 	MaximumSnapshotFiles     int      `json:"maximum_snapshot_files"`
 	MaximumMutationsPerChunk int      `json:"maximum_mutations_per_chunk"`
-	MaximumFlatMapChanges    int      `json:"maximum_flat_map_changes"`
+	MaximumFlatPrefixChanges int      `json:"maximum_prefix_changes"`
 }
 
 type runResult struct {
@@ -155,10 +155,10 @@ type commitRecord struct {
 	// the inclusive client-observed source-to-durable operation wall time,
 	// including payload upload and submission. Gateway replay/persist are
 	// nested diagnostics and must not be added to this total.
-	ClientComputeWallNS  int64 `json:"client_compute_wall_ns"`
-	GatewayReplayWallNS  int64 `json:"gateway_replay_wall_ns"`
-	GatewayPersistWallNS int64 `json:"gateway_persist_wall_ns"`
-	OracleUnmeasured     bool  `json:"oracle_unmeasured"`
+	ClientComputeWallNS        int64 `json:"client_compute_wall_ns"`
+	GatewayApplyAndStageWallNS int64 `json:"gateway_apply_and_stage_wall_ns"`
+	GatewayPersistWallNS       int64 `json:"gateway_persist_wall_ns"`
+	OracleUnmeasured           bool  `json:"oracle_unmeasured"`
 }
 
 type writeEvent struct {
@@ -194,11 +194,11 @@ func supportedCapability() capability {
 		},
 		AttemptedVsPersisted: true, ReplacementByteFlow: true, SameValueAttempts: true,
 		OneRootPerCommit: true, HistoryRetention: "all-roots",
-		GatewayAccountingProfile: "gateway.client-root-write-accounting/v2",
+		GatewayAccountingProfile: "gateway.authentication-write-accounting/0",
 		GatewayByteMethod:        "durable-kv-key-plus-value-bytes/v2",
 		AggregateKeyBinding:      "object-ledger-sha256/category/disposition/v1", DeleteLifecycle: true,
 		MissingCategories: []string{}, MissingMetrics: []string{}, GapsFailClosed: true,
 		MaximumWholeFileBytes: maximumMALTWholeFileBytes, MaximumSnapshotFiles: maximumMALTSnapshotFiles,
-		MaximumMutationsPerChunk: maximumMALTChunkMutations, MaximumFlatMapChanges: maximumGatewayFlatMapChanges,
+		MaximumMutationsPerChunk: maximumMALTChunkMutations, MaximumFlatPrefixChanges: maximumGatewayFlatPrefixChanges,
 	}
 }
