@@ -12,8 +12,10 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
 	client "github.com/dewebprotocol/malt-client/transport"
+	"github.com/dewebprotocol/malt-core/auth/engine"
 	"github.com/dewebprotocol/malt-core/auth/input"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/traversal"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -68,7 +70,7 @@ func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 			if request.Root != root.String() || request.Operation != "binding" || request.Input == nil || string(request.Input.Data) != "name" {
 				t.Fatalf("resolve request = %#v", request)
 			}
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String()})
+			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String(), Traversal: traversal.Traversal{Results: []engine.Result{}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/cas":
 			body, _ := io.ReadAll(r.Body)
 			if string(body) != string(payload) {
