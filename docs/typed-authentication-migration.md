@@ -49,7 +49,7 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.9-rc.6` at commit
-`9f1794e15df0414c95c217b3526d6b57631c1193` for independent module builds.
+Native builds pin published Core `v0.0.9-rc.7` at commit
+`afd54714ce0a019bf35c5c158ba09b48855db621` for independent module builds.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.
