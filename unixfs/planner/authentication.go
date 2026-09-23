@@ -8,8 +8,8 @@ import (
 	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -76,11 +76,8 @@ func (p *Planner) Plan(ctx context.Context, base cid.Cid, operations []journal.O
 			return nil, fmt.Errorf("directory entry bound exceeded")
 		}
 		d := candidate.State.Descriptor
-		rule := uint8(input.BytesSHA256)
-		if p.layout == unixfs.LayoutRootedV1 {
-			rule = uint8(input.UnixFSNameSHA256)
-		}
-		if d.Layout != maltcid.Prefix || d.InputRule != rule {
+		rule := uint8(derivation.SHA256)
+		if d.Layout != maltcid.Prefix || d.DerivationProfile != rule {
 			return nil, fmt.Errorf("directory input rule differs from selected layout")
 		}
 		if err := authentication.ValidateCandidate(ctx, p.engine, *candidate); err != nil {
@@ -90,22 +87,19 @@ func (p *Planner) Plan(ctx context.Context, base cid.Cid, operations []journal.O
 		targets := map[string]cid.Cid{}
 		payload := cid.Undef
 		for _, binding := range candidate.State.Entries {
-			switch binding.Input.Kind {
-			case input.System:
-				if binding.Input.Number != input.Payload || payload.Defined() {
-					return nil, fmt.Errorf("unexpected directory system binding")
+			name := string(binding.Label)
+			if name == "@payload" {
+				if payload.Defined() {
+					return nil, fmt.Errorf("duplicate directory payload label")
 				}
 				payload = binding.Target
-			case input.Label:
-				name := string(binding.Input.Data)
-				parts, err := unixfs.ParseCanonicalStagedPath(name)
-				if err != nil || len(parts) == 0 || strings.Join(parts, "/") != name || (p.layout == unixfs.LayoutRootedV1 && len(parts) != 1) {
-					return nil, fmt.Errorf("invalid directory label")
-				}
-				targets[name] = binding.Target
-			default:
-				return nil, fmt.Errorf("unexpected directory selector")
+				continue
 			}
+			parts, err := unixfs.ParseCanonicalStagedPath(name)
+			if err != nil || len(parts) == 0 || strings.Join(parts, "/") != name || (p.layout == unixfs.LayoutRootedV1 && len(parts) != 1) {
+				return nil, fmt.Errorf("invalid directory label")
+			}
+			targets[name] = binding.Target
 		}
 		if p.layout == unixfs.LayoutFlatV1 {
 			node := &treeNode{kind: unixfsmodel.DirectoryEntryTypeDir, key: root, manifest: payload, children: map[string]*treeNode{}}

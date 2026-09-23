@@ -2,16 +2,17 @@ package application_test
 
 import (
 	"context"
+	"testing"
+
 	"github.com/dewebprotocol/malt-client/application"
 	"github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	sdk "github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
-	"testing"
 )
 
 type authenticationRemote struct {
@@ -47,19 +48,19 @@ func TestAuthenticationSelectsCallerRootAndVerifiesBeforeReturning(t *testing.T)
 	if err = registry.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(input.DefaultRegistry(), registry)
+	e := engine.New(registry)
 	remote := &authenticationRemote{e: e, nodes: memory.NewNodes()}
 	app, err := application.NewAuthentication(application.NewExplicitRootSelector(), remote, e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	value := input.LabelValue([]byte("a/b"))
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.IPA256}, Entries: []engine.Entry{{Input: value, Target: cid.MustParse("bafkqaaa")}}}
+	value := []byte("a/b")
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: value, Target: cid.MustParse("bafkqaaa")}}}
 	candidate, err := app.Store(t.Context(), state, cid.Undef)
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := protocol.AuthenticationRequest{Operation: "binding", Input: &value}
+	q := protocol.AuthenticationRequest{Operation: "binding", Label: &value}
 	result, err := app.Read(t.Context(), candidate.Root, q)
 	if err != nil || !result.Binding.Present {
 		t.Fatal("typed read", err)

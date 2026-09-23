@@ -6,8 +6,7 @@ import (
 
 	"github.com/dewebprotocol/malt-client/unixfs"
 	model "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -36,7 +35,7 @@ func authenticationBindings(node *treeNode, layout unixfs.LayoutKind) map[string
 }
 
 func authenticationEntries(node *treeNode, layout unixfs.LayoutKind) []engine.Entry {
-	entries := []engine.Entry{{Input: input.SystemValue(input.Payload), Target: node.manifest}}
+	entries := []engine.Entry{{Label: []byte("@payload"), Target: node.manifest}}
 	bindings := authenticationBindings(node, layout)
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
@@ -44,7 +43,7 @@ func authenticationEntries(node *treeNode, layout unixfs.LayoutKind) []engine.En
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		entries = append(entries, engine.Entry{Input: input.LabelValue([]byte(name)), Target: bindings[name]})
+		entries = append(entries, engine.Entry{Label: []byte(name), Target: bindings[name]})
 	}
 	return entries
 }

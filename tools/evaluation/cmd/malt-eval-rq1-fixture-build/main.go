@@ -27,8 +27,8 @@ import (
 	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	authenticationbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
@@ -254,7 +254,7 @@ func buildMALT(ctx context.Context, payload cid.Cid) (cid.Cid, []protocol.Authen
 	if err := profiles.Register(scheme); err != nil {
 		return cid.Undef, nil, err
 	}
-	e := engine.New(input.DefaultRegistry(), profiles)
+	e := engine.New(profiles)
 	rootCID, objects, err := commitTrie(ctx, e, root, payload)
 	if err != nil {
 		return cid.Undef, nil, err
@@ -316,9 +316,9 @@ func commitTrie(ctx context.Context, e *engine.Engine, node *trieNode, payload c
 		objects = append(objects, childObjects...)
 		entries[key] = childRoot
 	}
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: make([]engine.Entry, 0, len(keys))}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: make([]engine.Entry, 0, len(keys))}
 	for _, key := range keys {
-		state.Entries = append(state.Entries, engine.Entry{Input: input.LabelValue([]byte(key)), Target: entries[key]})
+		state.Entries = append(state.Entries, engine.Entry{Label: []byte(key), Target: entries[key]})
 	}
 	candidate, err := authentication.Prepare(ctx, e, state)
 	if err != nil {
@@ -344,7 +344,7 @@ func bootstrapMALT(ctx context.Context, evaluation *gatewaytransport.Client, boo
 }
 
 func verifyFixture(ctx context.Context, client *http.Client, baseURL string, evaluation *gatewaytransport.Client, remote *transport.Client, unixRoot, maltRoot, payloadCID cid.Cid, payload []byte) error {
-	verifier, err := authenticationbuiltin.NewVerifier(nil, maltcid.KZG4096)
+	verifier, err := authenticationbuiltin.NewVerifier(maltcid.KZG4096)
 	if err != nil {
 		return err
 	}
@@ -376,9 +376,9 @@ func verifyFixture(ctx context.Context, client *http.Client, baseURL string, eva
 		if err := verifyTrustedPath(ctx, client, baseURL, unixRoot, depth.Segments, payloadCID, payload); err != nil {
 			return fmt.Errorf("verify trusted Path depth %d: %w", depth.Depth, err)
 		}
-		steps := make([]input.Value, len(depth.Segments))
+		steps := make([][]byte, len(depth.Segments))
 		for i, segment := range depth.Segments {
-			steps[i] = input.LabelValue([]byte(segment))
+			steps[i] = []byte(segment)
 		}
 		request := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: maltRoot.String(), Steps: steps, Operation: "resolve"}
 		result, err := remote.Authenticate(ctx, request)
@@ -536,5 +536,5 @@ func canonicalToken(value string) bool {
 
 func fixturePrefixRoot(root cid.Cid) bool {
 	descriptor, _, err := maltcid.ParseRoot(root)
-	return err == nil && descriptor.Layout == maltcid.Prefix && descriptor.InputRule == 1 && descriptor.Profile == maltcid.KZG4096
+	return err == nil && descriptor.Layout == maltcid.Prefix && descriptor.DerivationProfile == uint8(derivation.SHA256) && descriptor.Profile == maltcid.KZG4096
 }

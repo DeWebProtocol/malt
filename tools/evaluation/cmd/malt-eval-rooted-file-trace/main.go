@@ -18,8 +18,7 @@ import (
 	"github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -113,7 +112,7 @@ func compile(ctx context.Context, data []byte, backend string, chunk int) (trace
 	default:
 		return out, fmt.Errorf("unknown backend")
 	}
-	store := &sink{e: engine.New(input.DefaultRegistry(), profiles), candidates: map[string]protocol.AuthenticationCandidate{}}
+	store := &sink{e: engine.New(profiles), candidates: map[string]protocol.AuthenticationCandidate{}}
 	adapter, err := unixfs.NewAuthenticationAdapter(unixfs.LayoutRootedV1, store, store.e, profile)
 	if err != nil {
 		return out, err
@@ -188,9 +187,9 @@ func compile(ctx context.Context, data []byte, backend string, chunk int) (trace
 			if err != nil {
 				return out, err
 			}
-			steps := make([]input.Value, 0, len(parts))
+			steps := make([][]byte, 0, len(parts))
 			for _, part := range parts {
-				steps = append(steps, input.LabelValue([]byte(part)))
+				steps = append(steps, []byte(part))
 			}
 			out.Queries = append(out.Queries, protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: result.Key.String(), Steps: steps, Operation: "resolve"})
 		}

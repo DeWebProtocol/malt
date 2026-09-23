@@ -52,7 +52,7 @@ func runVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("decode authentication result: %w", err)
 	}
-	e, err := authbuiltin.NewVerifier(nil)
+	e, err := authbuiltin.NewVerifier()
 	if err != nil {
 		return err
 	}

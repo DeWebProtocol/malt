@@ -9,8 +9,8 @@ import (
 
 	"github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -27,13 +27,13 @@ func TestVerifyCommandBindsTypedResultToSelectedRequest(t *testing.T) {
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(input.DefaultRegistry(), profiles)
+	e := engine.New(profiles)
 	nodes := memory.NewNodes()
-	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("docs/file")), Target: cid.MustParse("bafkqaaa")}}}, nodes)
+	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte("docs/file"), Target: cid.MustParse("bafkqaaa")}}}, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: []input.Value{input.LabelValue([]byte("docs/file"))}, Operation: "resolve"}
+	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: [][]byte{[]byte("docs/file")}, Operation: "resolve"}
 	result, err := authentication.Execute(t.Context(), e, q, nodes)
 	if err != nil {
 		t.Fatal(err)
@@ -45,11 +45,11 @@ func TestVerifyCommandBindsTypedResultToSelectedRequest(t *testing.T) {
 		valid  bool
 	}{
 		{"valid", func(*protocol.AuthenticationRequest) {}, true},
-		{"changed label", func(q *protocol.AuthenticationRequest) { q.Steps = []input.Value{input.LabelValue([]byte("other"))} }, false},
+		{"changed label", func(q *protocol.AuthenticationRequest) { q.Steps = [][]byte{[]byte("other")} }, false},
 		{"changed operation", func(q *protocol.AuthenticationRequest) {
 			q.Operation = "binding"
-			value := input.LabelValue([]byte("docs/file"))
-			q.Input = &value
+			value := []byte("docs/file")
+			q.Label = &value
 		}, false},
 		{"invalid root", func(q *protocol.AuthenticationRequest) { q.Root = "bafkqaaa" }, false},
 	} {

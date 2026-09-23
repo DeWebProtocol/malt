@@ -2,28 +2,28 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
-	"encoding/json"
 	"github.com/dewebprotocol/malt-client/cache"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
-	"strings"
 )
 
 type fakeReader struct {
@@ -311,17 +311,17 @@ func directoryStat(root cid.Cid, path string, node, payload cid.Cid, entries []u
 }
 
 func testResolution(root cid.Cid, segments []string, target cid.Cid) unixfs.Resolution {
-	steps := []input.Value{}
+	steps := [][]byte{}
 	count := len(segments)
 	payload := count > 0 && segments[count-1] == "@payload"
 	if payload {
 		count--
 	}
 	if count > 0 {
-		steps = append(steps, input.LabelValue([]byte(strings.Join(segments[:count], "/"))))
+		steps = append(steps, []byte(strings.Join(segments[:count], "/")))
 	}
 	if payload {
-		steps = append(steps, input.SystemValue(input.Payload))
+		steps = append(steps, []byte("@payload"))
 	}
 	request := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: steps, Operation: "resolve"}
 	result := protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String()}
@@ -403,7 +403,7 @@ func newCountingVerifier(t *testing.T) (*countingVerifier, *engine.Engine) {
 	if err := profiles.Register(counter); err != nil {
 		t.Fatal(err)
 	}
-	return counter, engine.New(input.DefaultRegistry(), profiles)
+	return counter, engine.New(profiles)
 }
 func authenticatedFileResolution(t *testing.T, view *View, path string, payload cid.Cid) unixfs.Resolution {
 	t.Helper()
@@ -415,9 +415,9 @@ func authenticatedFileResolution(t *testing.T, view *View, path string, payload 
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(input.DefaultRegistry(), profiles)
+	e := engine.New(profiles)
 	nodes := memory.NewNodes()
-	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Input: input.LabelValue([]byte(path)), Target: payload}}}, nodes)
+	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte(path), Target: payload}}}, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}

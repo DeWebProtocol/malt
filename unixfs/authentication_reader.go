@@ -3,12 +3,11 @@ package unixfs
 import (
 	"context"
 	"fmt"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	"math"
 	"strings"
 
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	cid "github.com/ipfs/go-cid"
@@ -38,33 +37,25 @@ func (r *verifiedReader) resolveSegments(ctx context.Context, root cid.Cid, segm
 			return cached, nil
 		}
 	}
-	steps := make([]input.Value, len(segments))
+	steps := make([][]byte, len(segments))
 	for i, segment := range segments {
-		steps[i] = input.LabelValue([]byte(segment))
-		// Public paths reject @-prefixed names. Only the internal payload projection
-		// appends this selector; Core receives an explicit system value.
-		if segment == "@payload" && i == len(segments)-1 {
-			steps[i] = input.SystemValue(input.Payload)
-		}
+		steps[i] = []byte(segment)
+
 	}
-	descriptor, _, err := maltcid.ParseRoot(root)
-	if err != nil {
-		return nil, err
-	}
-	if descriptor.Layout == maltcid.Prefix && descriptor.InputRule == uint8(input.BytesSHA256) {
+	if r.layoutKind != LayoutRootedV1 {
 		// Flat and hybrid layouts authenticate one opaque full-path label.
-		// A terminal payload projection is a separate explicit system step.
+		// A terminal payload projection is a separate ordinary payload-label step.
 		count := len(segments)
 		payload := count > 0 && segments[count-1] == "@payload"
 		if payload {
 			count--
 		}
-		steps = []input.Value{}
+		steps = [][]byte{}
 		if count > 0 {
-			steps = append(steps, input.LabelValue([]byte(strings.Join(segments[:count], "/"))))
+			steps = append(steps, []byte(strings.Join(segments[:count], "/")))
 		}
 		if payload {
-			steps = append(steps, input.SystemValue(input.Payload))
+			steps = append(steps, []byte("@payload"))
 		}
 	}
 	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: steps, Operation: "resolve"}
@@ -86,8 +77,8 @@ func (r *verifiedReader) resolveSegments(ctx context.Context, root cid.Cid, segm
 	return result, nil
 }
 func (r *verifiedReader) readTypedMetadata(ctx context.Context, root cid.Cid) (*protocol.AuthenticationVerification, engine.Metadata, error) {
-	selector := input.IndexValue(math.MaxUint64)
-	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: []input.Value{}, Operation: "binding", Input: &selector}
+	selector := coordinate.EncodeIndex(math.MaxUint64)
+	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: [][]byte{}, Operation: "binding", Label: &selector}
 	verified, err := r.authenticate(ctx, q)
 	if err != nil {
 		return nil, engine.Metadata{}, err
@@ -112,8 +103,8 @@ func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start
 	} else {
 		// This proof is retained in an internal Stat, but re-bind it rather than
 		// treating a caller-mutated metadata field as authoritative.
-		selector := input.IndexValue(math.MaxUint64)
-		q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: []input.Value{}, Operation: "binding", Input: &selector}
+		selector := coordinate.EncodeIndex(math.MaxUint64)
+		q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: [][]byte{}, Operation: "binding", Label: &selector}
 		var valid bool
 		valid, err = authentication.Verify(r.authenticationVerifier, q, metadata.Result)
 		if err == nil && !valid {
@@ -138,7 +129,7 @@ func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start
 	if length != nil {
 		end = min(end, saturatingAdd(start, *length))
 	}
-	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: []input.Value{}, Operation: "range", Start: &start, End: &end}
+	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: [][]byte{}, Operation: "range", Start: &start, End: &end}
 	verified, err := r.authenticate(ctx, q)
 	if err != nil {
 		return nil, err

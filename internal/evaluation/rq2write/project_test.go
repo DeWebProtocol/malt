@@ -16,8 +16,7 @@ import (
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -75,7 +74,7 @@ func TestCurrentProjectionAllFileOperationsAndSharedMeasuredChildren(t *testing.
 			if err := registry.Register(scheme); err != nil {
 				t.Fatal(err)
 			}
-			session, err := authenticationgraph.New(remote, engine.New(input.DefaultRegistry(), registry))
+			session, err := authenticationgraph.New(remote, engine.New(registry))
 			if err != nil {
 				t.Fatal(err)
 			}

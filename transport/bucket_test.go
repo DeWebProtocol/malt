@@ -12,7 +12,7 @@ import (
 
 	client "github.com/dewebprotocol/malt-client/transport"
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
-	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/traversal"
 )

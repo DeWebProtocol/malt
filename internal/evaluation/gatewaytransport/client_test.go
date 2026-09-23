@@ -15,8 +15,8 @@ import (
 	"github.com/dewebprotocol/malt-client/merkledag"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -214,7 +214,7 @@ func TestBootstrapUsesDistinctAuthorizationAndBindsRootAccounting(t *testing.T) 
 		if err := decoder.Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Profile != gatewaytransport.BootstrapProfile || body.OperationID != object.OperationID || body.Candidate.Root != object.Candidate.Root || len(body.Candidate.State.Entries) != 1 || string(body.Candidate.State.Entries[0].Input.Data) != "payload" {
+		if body.Profile != gatewaytransport.BootstrapProfile || body.OperationID != object.OperationID || body.Candidate.Root != object.Candidate.Root || len(body.Candidate.State.Entries) != 1 || string(body.Candidate.State.Entries[0].Label) != "payload" {
 			t.Fatalf("bootstrap request = %#v", body)
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -371,8 +371,8 @@ func validBootstrapCandidate(t *testing.T) gatewaytransport.BootstrapObject {
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(input.DefaultRegistry(), profiles)
-	candidate, err := authentication.Prepare(t.Context(), e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("payload")), Target: mustRawCID(t, "bootstrap-target")}}})
+	e := engine.New(profiles)
+	candidate, err := authentication.Prepare(t.Context(), e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: []byte("payload"), Target: mustRawCID(t, "bootstrap-target")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,12 +9,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
-const FlatPrefixProfile = "gateway.evaluation-flat-prefix-mutation/0"
+const FlatPrefixProfile = "gateway.evaluation-flat-prefix-mutation/1"
 
 type FlatPrefixMutation struct {
 	OperationID string
@@ -24,7 +24,7 @@ type FlatPrefixMutation struct {
 }
 
 type FlatPrefixChange struct {
-	Input  input.Value
+	Label  []byte
 	Before cid.Cid
 	After  cid.Cid
 }
@@ -50,9 +50,9 @@ func (c *Client) ApplyEvaluationFlatPrefix(ctx context.Context, authorizationTok
 		return FlatPrefixResult{}, fmt.Errorf("evaluation flat-prefix base is not a KZG Prefix/AA=1 Root")
 	}
 	type wireChange struct {
-		Input  input.Value `json:"input"`
-		Before string      `json:"before,omitempty"`
-		After  string      `json:"after,omitempty"`
+		Label  []byte `json:"label"`
+		Before string `json:"before,omitempty"`
+		After  string `json:"after,omitempty"`
 	}
 	body := struct {
 		Profile     string       `json:"profile"`
@@ -69,13 +69,13 @@ func (c *Client) ApplyEvaluationFlatPrefix(ctx context.Context, authorizationTok
 	}
 	paths := make([]string, len(value.Changes))
 	for index, change := range value.Changes {
-		if change.Input.Kind != input.Label || len(change.Input.Data) == 0 || change.Input.Validate() != nil || (!change.Before.Defined() && !change.After.Defined()) ||
+		if len(change.Label) == 0 || (!change.Before.Defined() && !change.After.Defined()) ||
 			(change.Before.Defined() && change.After.Defined() && change.Before.Equals(change.After)) ||
 			value.Initial && (change.Before.Defined() || !change.After.Defined()) {
 			return FlatPrefixResult{}, fmt.Errorf("evaluation flat-prefix change %d is invalid", index)
 		}
-		paths[index] = string(change.Input.Data)
-		body.Changes[index].Input = change.Input
+		paths[index] = string(change.Label)
+		body.Changes[index].Label = change.Label
 		if change.Before.Defined() {
 			body.Changes[index].Before = change.Before.String()
 		}
@@ -165,5 +165,5 @@ func validFlatPrefixOperationID(value string) bool {
 
 func currentFlatPrefixRoot(root cid.Cid) bool {
 	d, _, err := maltcid.ParseRoot(root)
-	return err == nil && d.Layout == maltcid.Prefix && d.InputRule == 1 && d.Profile == maltcid.KZG4096
+	return err == nil && d.Layout == maltcid.Prefix && d.DerivationProfile == uint8(derivation.SHA256) && d.Profile == maltcid.KZG4096
 }

@@ -5,19 +5,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dewebprotocol/malt-client/cache"
-	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
-	"github.com/dewebprotocol/malt-client/journal"
-	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
-	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/cache"
+	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
+	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-client/unixfs"
+	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -88,7 +88,7 @@ func testTypedUnixFSWritesReadsAndPreservesHistory(t *testing.T, kind unixfs.Lay
 		t.Fatal("wrong typed range")
 	}
 	for _, entry := range remote.candidates[file.CandidateRoot.KeyString()].State.Entries {
-		if kind == unixfs.LayoutRootedV1 && strings.Contains(string(entry.Input.Data), "/") {
+		if kind == unixfs.LayoutRootedV1 && strings.Contains(string(entry.Label), "/") {
 			t.Fatal("rooted directory included flattened aliases")
 		}
 	}
@@ -134,7 +134,7 @@ func TestRootedRangeRejectsAuthenticatedIncorrectChunkLengths(t *testing.T) {
 	}
 }
 
-func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
+func TestRootedPlannerAndExplicitLayoutFilesystemReader(t *testing.T) {
 	remote := newRealRemote(t)
 	layout, _ := unixfs.NewLayout(unixfs.LayoutRootedV1)
 	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Layout: layout})
@@ -174,11 +174,11 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Layout: " ROOTED-V1 "})
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := authbuiltin.NewVerifier(nil)
+	local, err := authbuiltin.NewVerifier()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestRootedPlannerAndAutomaticFilesystemReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs, err := filesystemservice.New(filesystemservice.Options{Reader: reader, Cache: store, Verifier: local})
+	fs, err := filesystemservice.New(filesystemservice.Options{Reader: reader, Cache: store, Verifier: local, Layout: " ROOTED-V1 "})
 	if err != nil {
 		t.Fatal(err)
 	}

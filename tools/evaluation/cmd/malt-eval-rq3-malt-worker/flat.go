@@ -8,8 +8,8 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -40,14 +40,14 @@ func newFlatRootOracle(ctx context.Context, initial []gatewaytransport.FlatPrefi
 	if err := profiles.Register(scheme); err != nil {
 		return nil, err
 	}
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.KZG4096}, Entries: make([]engine.Entry, len(initial))}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: make([]engine.Entry, len(initial))}
 	for i, change := range initial {
-		if change.Input.Kind != input.Label || len(change.Input.Data) == 0 || change.Input.Validate() != nil || change.Before.Defined() || !change.After.Defined() {
+		if len(change.Label) == 0 || change.Before.Defined() || !change.After.Defined() {
 			return nil, fmt.Errorf("invalid flat oracle initial binding %d", i)
 		}
-		state.Entries[i] = engine.Entry{Input: change.Input, Target: change.After}
+		state.Entries[i] = engine.Entry{Label: change.Label, Target: change.After}
 	}
-	writer, err := authentication.BuildWriter(ctx, engine.New(input.DefaultRegistry(), profiles), state)
+	writer, err := authentication.BuildWriter(ctx, engine.New(profiles), state)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +59,10 @@ func (o *flatRootOracle) apply(ctx context.Context, changes []gatewaytransport.F
 	}
 	delta := authentication.Delta{Changes: make([]engine.Change, len(changes))}
 	for i, change := range changes {
-		if change.Input.Kind != input.Label || len(change.Input.Data) == 0 || change.Input.Validate() != nil {
+		if len(change.Label) == 0 {
 			return cid.Undef, fmt.Errorf("flat change requires an explicit label")
 		}
-		delta.Changes[i] = engine.Change{Input: change.Input, Before: change.Before, After: change.After}
+		delta.Changes[i] = engine.Change{Label: change.Label, Before: change.Before, After: change.After}
 	}
 	writer, err := o.writer.Apply(ctx, delta)
 	if err != nil {
@@ -97,12 +97,12 @@ func flatSentinelBlock() classifiedBlock {
 func flatSentinelEntry() (engine.Entry, error) {
 	block := flatSentinelBlock()
 	key, err := clientcas.CIDForBlock(block.block)
-	return engine.Entry{Input: input.LabelValue([]byte("@malt-eval/layout")), Target: key}, err
+	return engine.Entry{Label: []byte("@malt-eval/layout"), Target: key}, err
 }
-func flatInput(filePath string, mode bool) input.Value {
+func flatInput(filePath string, mode bool) []byte {
 	prefix := "rq3/files/"
 	if mode {
 		prefix = "rq3/modes/"
 	}
-	return input.LabelValue([]byte(prefix + filePath))
+	return []byte(prefix + filePath)
 }

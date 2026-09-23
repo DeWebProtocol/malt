@@ -16,8 +16,8 @@ import (
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -291,7 +291,7 @@ func TestGatewayWritableBindingReplaysFlatUnixFSAndSurvivesRemount(t *testing.T)
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	remote := &replayingGatewayWritableRemote{blocks: map[string][]byte{}, candidates: map[string]protocol.AuthenticationCandidate{}, engine: engine.New(input.DefaultRegistry(), profiles)}
+	remote := &replayingGatewayWritableRemote{blocks: map[string][]byte{}, candidates: map[string]protocol.AuthenticationCandidate{}, engine: engine.New(profiles)}
 	oldBody := []byte("old remote body")
 	oldPayload, err := remote.Put(t.Context(), oldBody)
 	if err != nil {
@@ -628,7 +628,7 @@ func runtimeMALTMapRoot(t *testing.T, backend maltcid.BackendKind, marker byte) 
 	if backend == maltcid.BackendKindIPA {
 		profile = maltcid.IPA256
 	}
-	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: profile}, commitment)
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: profile}, commitment)
 	if err != nil {
 		t.Fatal(err)
 	}

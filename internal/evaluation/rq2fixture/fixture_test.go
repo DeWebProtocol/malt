@@ -10,8 +10,8 @@ import (
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -73,7 +73,7 @@ func testFixture(t *testing.T) (*Fixture, authenticationgraph.View, []byte) {
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := authentication.Prepare(context.Background(), engine.New(input.DefaultRegistry(), profiles), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("document.txt")), Target: key}}})
+	candidate, err := authentication.Prepare(context.Background(), engine.New(profiles), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: []byte("document.txt"), Target: key}}})
 	if err != nil {
 		t.Fatal(err)
 	}

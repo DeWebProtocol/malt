@@ -10,8 +10,8 @@ import (
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
 	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -237,16 +237,16 @@ func newWritebackFixture(t *testing.T) *writebackFixture {
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(input.DefaultRegistry(), profiles)
+	e := engine.New(profiles)
 	oldPayload := writebackRawCID(t, []byte("old"))
 	newBody := []byte("new")
 	newPayload := writebackRawCID(t, newBody)
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("payload")), Target: oldPayload}}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: []byte("payload"), Target: oldPayload}}}
 	base, err := authentication.Prepare(t.Context(), e, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Entries = []engine.Entry{{Input: input.LabelValue([]byte("payload")), Target: newPayload}}
+	state.Entries = []engine.Entry{{Label: []byte("payload"), Target: newPayload}}
 	candidate, err := authentication.PrepareUpdate(t.Context(), e, base, state)
 	if err != nil {
 		t.Fatal(err)

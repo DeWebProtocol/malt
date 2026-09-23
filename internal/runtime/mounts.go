@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dewebprotocol/malt-client/cache"
 	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
@@ -322,7 +323,7 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 	if err != nil {
 		return nil, fmt.Errorf("open filesystem trust store: %w", err)
 	}
-	verifier, err := authbuiltin.NewVerifier(nil)
+	verifier, err := authbuiltin.NewVerifier()
 	if err != nil {
 		return nil, fmt.Errorf("initialize filesystem verifier: %w", err)
 	}
@@ -340,12 +341,22 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 		if err != nil {
 			return nil, err
 		}
-		reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: blocks, Verifier: verifier})
+		layoutCtx, layoutCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		bucketInfo, layoutErr := remote.GetBucket(layoutCtx)
+		layoutCancel()
+		if layoutErr != nil {
+			return nil, errors.Join(layoutErr, blocks.Close())
+		}
+		layout, layoutErr := unixfs.ParseLayoutKind(string(bucketInfo.Layout))
+		if layoutErr != nil {
+			return nil, errors.Join(layoutErr, blocks.Close())
+		}
+		reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: blocks, Verifier: verifier, Layout: layout})
 		if err != nil {
 			return nil, errors.Join(err, blocks.Close())
 		}
 		service, err := filesystemservice.New(filesystemservice.Options{
-			Reader: reader, Cache: payloadCache, Verifier: verifier,
+			Reader: reader, Cache: payloadCache, Verifier: verifier, Layout: layout,
 		})
 		if err != nil {
 			return nil, errors.Join(err, blocks.Close())

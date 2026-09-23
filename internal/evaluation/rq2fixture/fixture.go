@@ -19,7 +19,7 @@ import (
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -198,7 +198,7 @@ func (f *Fixture) Validate() error {
 		root, err := cid.Parse(binding.CID)
 		descriptor, _, rootErr := maltcid.ParseRoot(root)
 		profile, _ := BackendProfile(binding.Backend)
-		if err != nil || rootErr != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Prefix || descriptor.InputRule != uint8(input.BytesSHA256) || root.String() != binding.CID {
+		if err != nil || rootErr != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Prefix || descriptor.DerivationProfile != uint8(derivation.SHA256) || root.String() != binding.CID {
 			return fmt.Errorf("RQ2 source fixture %s root is not a canonical typed MALT CID", binding.Backend)
 		}
 		roots[binding.Backend] = root
@@ -393,9 +393,6 @@ func validatePathCoordinate(path, coordinate string) error {
 	_, err := unixfs.ParseCanonicalStagedPath(path)
 	if err != nil {
 		return fmt.Errorf("path %q is not a canonical relative UnixFS path", path)
-	}
-	if err := input.LabelValue([]byte(path)).Validate(); err != nil {
-		return fmt.Errorf("coordinate %q is not canonical", coordinate)
 	}
 	return nil
 }

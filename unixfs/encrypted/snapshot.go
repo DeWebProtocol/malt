@@ -3,19 +3,20 @@ package encrypted
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
-	"sort"
 )
 
 // SnapshotBlockStore is the owner-local CAS used while one encrypted snapshot
@@ -197,7 +198,7 @@ func newRecordingGraph(backend maltcid.BackendKind) (*recordingGraph, error) {
 	if err := profiles.Register(scheme); err != nil {
 		return nil, err
 	}
-	return &recordingGraph{engine: engine.New(input.DefaultRegistry(), profiles), profile: profile, seen: make(map[string]bool)}, nil
+	return &recordingGraph{engine: engine.New(profiles), profile: profile, seen: make(map[string]bool)}, nil
 }
 
 var _ GraphWriter = (*recordingGraph)(nil)
@@ -209,7 +210,7 @@ type CandidatePublisher interface {
 }
 
 func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: g.profile}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: g.profile}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
@@ -220,18 +221,18 @@ func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[stri
 		if err != nil {
 			return cid.Undef, err
 		}
-		selector := input.LabelValue([]byte(name))
+		selector := []byte(name)
 		if name == "@payload" {
-			selector = input.SystemValue(input.Payload)
+			selector = []byte("@payload")
 		}
-		state.Entries = append(state.Entries, engine.Entry{Input: selector, Target: target})
+		state.Entries = append(state.Entries, engine.Entry{Label: selector, Target: target})
 	}
 	return g.record(ctx, state)
 }
 func (g *recordingGraph) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, Profile: g.profile}, ChunkSize: chunk, TotalSize: total}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: g.profile}, ChunkSize: chunk, TotalSize: total}
 	for i, target := range chunks {
-		state.Entries = append(state.Entries, engine.Entry{Input: input.IndexValue(uint64(i)), Target: target})
+		state.Entries = append(state.Entries, engine.Entry{Label: coordinate.EncodeIndex(uint64(i)), Target: target})
 	}
 	return g.record(ctx, state)
 }

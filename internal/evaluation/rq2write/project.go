@@ -11,8 +11,9 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -23,7 +24,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 	if err != nil {
 		return cid.Undef, err
 	}
-	if state.Descriptor.Layout != maltcid.Prefix || state.Descriptor.InputRule != uint8(input.BytesSHA256) {
+	if state.Descriptor.Layout != maltcid.Prefix || state.Descriptor.DerivationProfile != uint8(derivation.SHA256) {
 		return cid.Undef, fmt.Errorf("RQ2 file root requires Prefix AA1")
 	}
 	for _, payload := range payloads {
@@ -40,7 +41,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 		if err != nil {
 			return cid.Undef, err
 		}
-		if child.Descriptor.Layout != maltcid.Positional || child.Descriptor.InputRule != uint8(input.Direct) || child.Descriptor.Profile != state.Descriptor.Profile || child.ChunkSize == 0 {
+		if child.Descriptor.Layout != maltcid.Positional || child.Descriptor.DerivationProfile != uint8(derivation.Direct) || child.Descriptor.Profile != state.Descriptor.Profile || child.ChunkSize == 0 {
 			return cid.Undef, fmt.Errorf("file requires a measured Positional Root with the parent's VC profile")
 		}
 		if len(payloads) != 1 {
@@ -53,7 +54,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 			}
 			count := uint64(len(child.Entries)) + 1
 			total := child.TotalSize + child.ChunkSize
-			delta = authentication.Delta{Changes: []engine.Change{{Input: input.IndexValue(count - 1), After: payloads[0]}}, Count: &count, TotalSize: &total}
+			delta = authentication.Delta{Changes: []engine.Change{{Label: coordinate.EncodeIndex(count - 1), After: payloads[0]}}, Count: &count, TotalSize: &total}
 		} else {
 			if operation.ListIndex == nil || *operation.ListIndex >= uint64(len(child.Entries)) {
 				return cid.Undef, fmt.Errorf("replacement index is outside measured file")
@@ -65,7 +66,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 			}
 			var before cid.Cid
 			for _, entry := range child.Entries {
-				if entry.Input.Kind == input.Index && entry.Input.Number == index {
+				if bytes.Equal(entry.Label, coordinate.EncodeIndex(index)) {
 					before = entry.Target
 					break
 				}
@@ -73,7 +74,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 			if !before.Defined() {
 				return cid.Undef, fmt.Errorf("replacement index is absent")
 			}
-			delta.Changes = []engine.Change{{Input: input.IndexValue(index), Before: before, After: payloads[0]}}
+			delta.Changes = []engine.Change{{Label: coordinate.EncodeIndex(index), Before: before, After: payloads[0]}}
 		}
 		nextChild, err := edit.Apply(ctx, edge.Target, delta)
 		if err != nil {
@@ -81,18 +82,18 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 		}
 		// Select the caller's exact file edge; never rewrite every parent of an
 		// aliased immutable child or reject a valid copy-on-write graph.
-		return edit.Apply(ctx, root, authentication.Delta{Changes: []engine.Change{{Input: edge.Input, Before: edge.Target, After: nextChild}}})
+		return edit.Apply(ctx, root, authentication.Delta{Changes: []engine.Change{{Label: edge.Label, Before: edge.Target, After: nextChild}}})
 	}
 	insert := func(path string, payload cid.Cid) (engine.Change, error) {
 		if path == "" {
 			return engine.Change{}, fmt.Errorf("insert path is empty")
 		}
 		for _, entry := range state.Entries {
-			if entry.Input.Kind == input.Label && bytes.Equal(entry.Input.Data, []byte(path)) {
+			if bytes.Equal(entry.Label, []byte(path)) {
 				return engine.Change{}, fmt.Errorf("destination %q already exists", path)
 			}
 		}
-		return engine.Change{Input: input.LabelValue([]byte(path)), After: payload}, nil
+		return engine.Change{Label: []byte(path), After: payload}, nil
 	}
 	var changes []engine.Change
 	switch operation.Kind {
@@ -124,7 +125,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 		if entry.Target.Type() != cid.Raw {
 			return cid.Undef, fmt.Errorf("source %q is not a direct file", operation.SourcePath)
 		}
-		change := engine.Change{Input: entry.Input, Before: entry.Target}
+		change := engine.Change{Label: entry.Label, Before: entry.Target}
 		if operation.Kind == rq2fixture.KindDirectReplace || operation.Kind == rq2fixture.KindDocumentEdit {
 			if len(payloads) != 1 {
 				return cid.Undef, fmt.Errorf("replacement requires one payload")
@@ -148,7 +149,7 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 }
 func entryAt(state engine.State, path string) (engine.Entry, error) {
 	for _, entry := range state.Entries {
-		if entry.Input.Kind == input.Label && bytes.Equal(entry.Input.Data, []byte(path)) {
+		if bytes.Equal(entry.Label, []byte(path)) {
 			return entry, nil
 		}
 	}

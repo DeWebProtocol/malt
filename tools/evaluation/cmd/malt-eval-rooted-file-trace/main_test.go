@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/dewebprotocol/malt-core/auth/input"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	"testing"
+
+	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 func TestFileSnapshotsUseRuntimeSchemaAndRetainHistory(t *testing.T) {
@@ -20,13 +20,13 @@ func TestFileSnapshotsUseRuntimeSchemaAndRetainHistory(t *testing.T) {
 		if c.State.Descriptor.Layout == maltcid.Positional {
 			positional = true
 			for _, e := range c.State.Entries {
-				if e.Input.Kind == input.System {
+				if string(e.Label) == "@payload" {
 					t.Fatal("positional system")
 				}
 			}
 		} else {
 			for _, e := range c.State.Entries {
-				if e.Input.Kind == input.Label && string(e.Input.Data) == "dir/file" {
+				if string(e.Label) == "dir/file" {
 					t.Fatal("flattened alias")
 				}
 			}

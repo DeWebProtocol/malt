@@ -6,19 +6,18 @@ import (
 	"github.com/dewebprotocol/malt-client/unixfs"
 )
 
-// These exact roots were checked against the pre-migration implementation at
-// runtime ab962c1 / Core a4526f8. Current fixtures construct and verify them
-// exclusively through typed authentication, with no retired API dependency.
+// Coordinate derivation profile 4 and the ordinary @payload label deliberately
+// produce new Roots. Pin both commitment backends and application layouts.
 func TestPlannerPinnedProjectionRoots(t *testing.T) {
 	vectors := []struct {
 		backend    string
 		layout     unixfs.LayoutKind
 		base, root string
 	}{
-		{"kzg", unixfs.LayoutFlatV1, "bagayfqabaazacmfze4exzhvviw3sb7h4ehs62tn7ykojeik36kt5f6usrqfbhv4wfb7vul5jv7dwhcq6lg6dpduih6aa", "bagayfqabaazacmegan6r54akwdmlask2dx3zpxqgsggdv4zc6ye3bwh33cvglx5ot2cg33qhwy7x5jkryjtv2utlev6q"},
-		{"kzg", unixfs.LayoutHybridV1, "bagayfqabaazacmemxjwhgyl5ip5pzyevwne6dizdq32tks56nazob2ejnfk4fuzcnnlzmffwmpfssr3kmb3g4b5lkhva", "bagayfqabaazacmexxooangyfu4pjzu2figy3jksylpmismk5dffb6jg4nukalgs3r6a4hlqolabiltjinvaqutidczsq"},
-		{"ipa", unixfs.LayoutFlatV1, "bagayfqabaaraeicgadr257uwj6q4srhzcq263wx2up52elb2ceywlqifdiqbqkyrde", "bagayfqabaaraeia5w73pqwtr446izozdarmfqbzunvmto5j5t4skxktq4p7xdnfwri"},
-		{"ipa", unixfs.LayoutHybridV1, "bagayfqabaaraeibxnhglkks2se5kw3kcs3jsclmrbioeaivysuwth7b7qa5vef4xiq", "bagayfqabaaraeiaqqpchxfje4vx4np6rcrrnzgzux2adpxhkp4xdrpholcvjyziyki"},
+		{"kzg", unixfs.LayoutFlatV1, "bagcifqabaazacmfrbtk5jo7yzhgft4gquke6jtikw4d53qbkxmwvt3szqbw4nyaahvhn2sxiz2h5ee365moypjp662ua", "bagcifqabaazacmfwpxhyqwib5g2g5brlm3nzta57tmpjv4rc4wlcfr3f3vsmp6dauz3hlpw3eehduv5dpzz24z2ah7ja"},
+		{"kzg", unixfs.LayoutHybridV1, "bagcifqabaazacmfkewl72lvptsnjjszisj2xovlplh5uchkkg5mregctpneqvdn2roj32j65eyan2jkgot64bffj2ooq", "bagcifqabaazacmeddjmrenpwith5fzd3wvgaacvrwo2o2awua2et47teyrmlcxc3k6mlhz6awhdtsbq7j32zkobuywpq"},
+		{"ipa", unixfs.LayoutFlatV1, "bagcifqabaaraeiaekt4db5lipemlmgwqv6lzg5vphxdfx5amzat3nb77vrhefhxqke", "bagcifqabaaraeidkr6efv6fnxnuqlzjew4rnstz6rhimljts6xv4d2dc4d6ao6754u"},
+		{"ipa", unixfs.LayoutHybridV1, "bagcifqabaaraeicmnjg2mgypq67mlyfdjl6ctvnwmrfilijvfj5scues2ly5xeqok4", "bagcifqabaaraeia2wsa4q2yiwi6zwz2hzsyt7kpphgu675pomwuct2xi6j4zvsyq4e"},
 	}
 	for _, v := range vectors {
 		t.Run(v.backend+"/"+string(v.layout), func(t *testing.T) {
