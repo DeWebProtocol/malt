@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	workerRecordSchema  = "malt-rq1-worker-record/v2"
+	workerRecordSchema  = "malt-rq1-worker-record/v3"
 	workerRequestSchema = "malt-rq1-worker-request/v1"
 	maxWorkerLineBytes  = 1 << 20
 	maxWorkerRequests   = 1_000_000
@@ -525,7 +525,7 @@ func (config workerConfig) observeGatewayHealth(ctx context.Context) (gatewayHea
 		"status":                                  "ok",
 		"evaluation_instance_token":               config.instanceToken,
 		"evaluation_rq1_cache_observation":        evaluationCacheProfile,
-		"evaluation_rq1_read_phases":              "gateway.rq1-read-phases/v2",
+		"evaluation_rq1_read_phases":              "gateway.rq1-read-phases/v3",
 		"evaluation_rq1_application_result_cache": "none",
 		"evaluation_rq1_os_page_cache":            "uncontrolled",
 	} {
@@ -537,7 +537,7 @@ func (config workerConfig) observeGatewayHealth(ctx context.Context) (gatewayHea
 	return gatewayHealth{
 		Profile: "malt-rq1-gateway-health-observation/v1", RawSHA256: hex.EncodeToString(digest[:]), RawBytes: uint64(len(raw)),
 		InstanceToken: config.instanceToken, CacheObservationProfile: evaluationCacheProfile,
-		ReadPhasesProfile: "gateway.rq1-read-phases/v2", ApplicationResultCache: "none", OSPageCache: "uncontrolled",
+		ReadPhasesProfile: "gateway.rq1-read-phases/v3", ApplicationResultCache: "none", OSPageCache: "uncontrolled",
 	}, nil
 }
 

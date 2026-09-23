@@ -335,7 +335,7 @@ func serveClientRouteSelfTestControl(writer http.ResponseWriter, request *http.R
 		_ = json.NewEncoder(writer).Encode(map[string]string{
 			"status": "ok", "evaluation_instance_token": clientRouteSelfTestToken,
 			"evaluation_rq1_cache_observation":        evaluationCacheProfile,
-			"evaluation_rq1_read_phases":              "gateway.rq1-read-phases/v2",
+			"evaluation_rq1_read_phases":              "gateway.rq1-read-phases/v3",
 			"evaluation_rq1_application_result_cache": "none",
 			"evaluation_rq1_os_page_cache":            "uncontrolled",
 		})
