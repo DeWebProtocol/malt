@@ -13,8 +13,7 @@ import (
 
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
@@ -96,7 +95,7 @@ func NewReader(opts ReaderOptions) (*Reader, error) {
 	verifier := opts.Verifier
 	if verifier == nil {
 		var err error
-		verifier, err = authbuiltin.NewVerifier(nil)
+		verifier, err = authbuiltin.NewVerifier()
 		if err != nil {
 			return nil, fmt.Errorf("initialize encrypted UnixFS verifier: %w", err)
 		}
@@ -748,11 +747,11 @@ func (r *Reader) resolve(ctx context.Context, root cid.Cid, segments []string) (
 	if err := ctx.Err(); err != nil {
 		return cid.Undef, err
 	}
-	steps := make([]input.Value, len(segments))
+	steps := make([][]byte, len(segments))
 	for i, segment := range segments {
-		steps[i] = input.LabelValue([]byte(segment))
+		steps[i] = []byte(segment)
 		if segment == "@payload" {
-			steps[i] = input.SystemValue(input.Payload)
+			steps[i] = []byte("@payload")
 		}
 	}
 	request := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: steps, Operation: "resolve"}

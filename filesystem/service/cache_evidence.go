@@ -10,7 +10,7 @@ import (
 	"github.com/dewebprotocol/malt-client/cache"
 	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 )
 

@@ -4,6 +4,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,12 +15,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"bytes"
 	"github.com/dewebprotocol/malt-client/cache"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -58,6 +57,7 @@ type DirEntry struct {
 }
 
 type Options struct {
+	Layout   unixfs.LayoutKind
 	Reader   unixfs.Reader
 	Cache    *cache.Store
 	Verifier *engine.Engine
@@ -65,6 +65,7 @@ type Options struct {
 }
 
 type Service struct {
+	layout   unixfs.LayoutKind
 	reader   unixfs.LookupReader
 	cache    *cache.Store
 	verifier *engine.Engine
@@ -82,11 +83,18 @@ func New(opts Options) (*Service, error) {
 	if opts.Cache != nil && opts.Verifier == nil {
 		return nil, fmt.Errorf("filesystem cache requires a local MALT verifier")
 	}
+	if opts.Layout == "" {
+		opts.Layout = unixfs.LayoutHybridV1
+	}
+	layout, err := unixfs.ParseLayoutKind(string(opts.Layout))
+	if err != nil {
+		return nil, err
+	}
 	now := opts.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{reader: reader, cache: opts.Cache, verifier: opts.Verifier, now: now}, nil
+	return &Service{layout: layout, reader: reader, cache: opts.Cache, verifier: opts.Verifier, now: now}, nil
 }
 
 // Stat resolves a path below the exact caller-selected root and returns only
@@ -104,7 +112,7 @@ func (s *Service) Stat(ctx context.Context, view View, rawPath string) (Info, er
 	if err != nil {
 		return Info{}, err
 	}
-	if err := validateStat(view, segments, stat); err != nil {
+	if err := validateStat(s.layout, view, segments, stat); err != nil {
 		return Info{}, err
 	}
 	if stat.Kind == unixfs.StagedKindDirectory {
@@ -122,7 +130,7 @@ func (s *Service) Stat(ctx context.Context, view View, rawPath string) (Info, er
 	if err != nil {
 		return Info{}, err
 	}
-	if err := validateStat(view, segments, stat); err != nil {
+	if err := validateStat(s.layout, view, segments, stat); err != nil {
 		return Info{}, err
 	}
 	return infoFromStat(canonical, stat), nil
@@ -142,7 +150,7 @@ func (s *Service) ReadDir(ctx context.Context, view View, rawPath string) ([]Dir
 	if err != nil {
 		return nil, err
 	}
-	if err := validateStat(view, segments, stat); err != nil {
+	if err := validateStat(s.layout, view, segments, stat); err != nil {
 		return nil, err
 	}
 	if stat.Kind != unixfs.StagedKindDirectory {
@@ -205,7 +213,7 @@ func (s *Service) read(ctx context.Context, view View, rawPath string, offset ui
 	if err != nil {
 		return nil, Info{}, err
 	}
-	if err := validateStat(view, segments, stat); err != nil {
+	if err := validateStat(s.layout, view, segments, stat); err != nil {
 		return nil, Info{}, err
 	}
 	if stat.Kind != unixfs.StagedKindFile {
@@ -225,7 +233,7 @@ func (s *Service) read(ctx context.Context, view View, rawPath string, offset ui
 	if err != nil {
 		return nil, Info{}, err
 	}
-	if err := validateStat(view, segments, stat); err != nil {
+	if err := validateStat(s.layout, view, segments, stat); err != nil {
 		return nil, Info{}, err
 	}
 	info := infoFromStat(canonical, stat)
@@ -355,7 +363,7 @@ func canonicalPath(raw string) (string, []string, error) {
 	return strings.Join(segments, "/"), segments, nil
 }
 
-func validateStat(view View, segments []string, stat *unixfs.Stat) error {
+func validateStat(layout unixfs.LayoutKind, view View, segments []string, stat *unixfs.Stat) error {
 	if stat == nil {
 		return fmt.Errorf("verified UnixFS reader returned a nil stat")
 	}
@@ -365,12 +373,12 @@ func validateStat(view View, segments []string, stat *unixfs.Stat) error {
 	if !stat.NodeRoot.Defined() || !stat.Payload.Defined() || stat.Resolution.Target != stat.NodeRoot {
 		return fmt.Errorf("verified UnixFS stat has inconsistent node or payload identity")
 	}
-	if err := validateResolution(view.Root, segments, stat.Resolution, stat.NodeRoot); err != nil {
+	if err := validateResolution(layout, view.Root, segments, stat.Resolution, stat.NodeRoot); err != nil {
 		return err
 	}
 	if stat.PayloadBinding != nil {
 		payloadSegments := append(append([]string(nil), segments...), "@payload")
-		if err := validateResolution(view.Root, payloadSegments, *stat.PayloadBinding, stat.Payload); err != nil {
+		if err := validateResolution(layout, view.Root, payloadSegments, *stat.PayloadBinding, stat.Payload); err != nil {
 			return err
 		}
 	} else if !stat.Payload.Equals(stat.NodeRoot) {
@@ -392,7 +400,7 @@ func validateStat(view View, segments []string, stat *unixfs.Stat) error {
 	return nil
 }
 
-func validateResolution(root cid.Cid, segments []string, resolution unixfs.Resolution, target cid.Cid) error {
+func validateResolution(layout unixfs.LayoutKind, root cid.Cid, segments []string, resolution unixfs.Resolution, target cid.Cid) error {
 	wire := resolution.Authentication
 	if wire == nil {
 		return fmt.Errorf("typed resolution is missing")
@@ -401,34 +409,34 @@ func validateResolution(root cid.Cid, segments []string, resolution unixfs.Resol
 	if q.Validate() != nil || q.Profile != protocol.AuthenticationPathProfile || q.Root != root.String() || q.Operation != "resolve" || result.Resolved != target.String() || result.AbsentStep != nil || !resolution.Target.Equals(target) {
 		return fmt.Errorf("typed resolution does not match selected Root/path")
 	}
-	descriptor, _, err := maltcid.ParseRoot(root)
+	_, _, err := maltcid.ParseRoot(root)
 	if err != nil {
 		return err
 	}
-	expected := make([]input.Value, 0, len(segments))
+	expected := make([][]byte, 0, len(segments))
 	count := len(segments)
 	payload := count > 0 && segments[count-1] == "@payload"
 	if payload {
 		count--
 	}
-	if descriptor.InputRule == uint8(input.BytesSHA256) {
+	if layout != unixfs.LayoutRootedV1 {
 		if count > 0 {
-			expected = append(expected, input.LabelValue([]byte(strings.Join(segments[:count], "/"))))
+			expected = append(expected, []byte(strings.Join(segments[:count], "/")))
 		}
 	} else {
 		for _, segment := range segments[:count] {
-			expected = append(expected, input.LabelValue([]byte(segment)))
+			expected = append(expected, []byte(segment))
 		}
 	}
 	if payload {
-		expected = append(expected, input.SystemValue(input.Payload))
+		expected = append(expected, []byte("@payload"))
 	}
 	if len(q.Steps) != len(expected) {
 		return fmt.Errorf("typed resolution changed path length")
 	}
 	for i, want := range expected {
 		got := q.Steps[i]
-		if got.Kind != want.Kind || got.Number != want.Number || !bytes.Equal(got.Data, want.Data) {
+		if !bytes.Equal(got, want) {
 			return fmt.Errorf("typed resolution changed path selector")
 		}
 	}

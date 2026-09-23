@@ -29,8 +29,7 @@ import (
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
@@ -217,7 +216,7 @@ func buildBackend(ctx context.Context, backend string, source *rq2fixture.Source
 	if err := profiles.Register(scheme); err != nil {
 		return nil, err
 	}
-	e := engine.New(input.DefaultRegistry(), profiles)
+	e := engine.New(profiles)
 	candidates, err := source.Candidates(ctx, e, backend)
 	if err != nil {
 		return nil, err

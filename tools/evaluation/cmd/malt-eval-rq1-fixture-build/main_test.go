@@ -35,7 +35,7 @@ func TestBuildMALTProducesExactDepthTrie(t *testing.T) {
 	for _, name := range []string{"d1", "d2", "d4", "d8"} {
 		found := false
 		for _, entry := range top.State.Entries {
-			if string(entry.Input.Data) == name && entry.Target.Defined() {
+			if string(entry.Label) == name && entry.Target.Defined() {
 				found = true
 			}
 		}

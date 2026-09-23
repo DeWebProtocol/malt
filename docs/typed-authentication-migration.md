@@ -1,19 +1,21 @@
 # Typed authentication migration
 
-The runtime uses the sole current Core path: `auth/input`, `auth/tree`,
-`auth/engine`, explicit traversal, and `sdk/authentication`. Native HTTP queries
-use `malt.authentication/1`; candidates use `malt.authentication/0`. Ordered
-writes use `malt.authentication-batch/0` and exact
-`malt.authentication-receipt/0` checks. No old Resolve/Read, Map-proof,
+The runtime uses the sole current Core path: `derivation`, `auth/tree`,
+`engine`, explicit traversal, and `sdk/authentication`. Native HTTP queries
+use `malt.authentication/3`; candidates use `malt.authentication/2`. Ordered
+writes use `malt.authentication-batch/1` and exact
+`malt.authentication-receipt/1` checks. No old Resolve/Read, Map-proof,
 UpdateView, semantic intent, client-root bundle, or WASM fallback is used.
 
 ## Reads and application layouts
 
-Flat-v1 uses one complete-path label under AA=1 and may target a payload or
+Flat-v1 uses one complete-path label and may target a payload or
 manifest directly. Hybrid-v1 preserves its flattened relations plus directory
-Roots. Rooted-v1 uses explicit directory-name steps under AA=2. If the selected
+Roots. Rooted-v1 uses explicit directory-name steps. If the selected
 target remains a Prefix Root, a content read explicitly authenticates its
-system payload selector. The literal label `@payload` is not a Core selector.
+ordinary `@payload` label. All directory layouts use public SHA256 derivation
+(profile 4); ReaderOptions and filesystem service options carry the application
+layout. Managed mounts obtain it from the selected Bucket metadata.
 Positional chunk Roots expose authenticated geometry and byte ranges, with no
 system payload binding.
 
@@ -30,8 +32,8 @@ chunk width must match the encryption manifest before range slicing/decryption.
 
 ## Writes, retries, and trust
 
-The UnixFS planner imports bounded complete candidates, verifies original typed
-inputs and manifest CIDs, applies ordered intent, and computes children before
+The UnixFS planner imports bounded complete candidates, verifies original label
+bytes and manifest CIDs, applies ordered intent, and computes children before
 parents. Shared directories support copy-on-write changes. Flat/hybrid/rooted
 planning, unchanged-subtree reuse, batching, and no-change completion remain.
 Only final staged payloads referenced by the resulting plan are uploaded.
@@ -49,7 +51,7 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.9` at commit
-`e389418cf6715ae58a97255196833b410b0962d1` for independent module builds.
+Native builds pin published Core `v0.0.10-rc.1` at commit
+`933ef9824d5d852f819bdc91b244ce7b7e800706` for independent module builds.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.

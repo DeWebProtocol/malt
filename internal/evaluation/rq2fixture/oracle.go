@@ -5,8 +5,9 @@ import (
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -24,7 +25,7 @@ func (f *Fixture) ValidateGraphAgainstSource(view authenticationgraph.View, back
 		return err
 	}
 	descriptor, _, err := maltcid.ParseRoot(view.Root)
-	if err != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Prefix || descriptor.InputRule != uint8(input.BytesSHA256) {
+	if err != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Prefix || descriptor.DerivationProfile != uint8(derivation.SHA256) {
 		return fmt.Errorf("source root requires Prefix AA1 for backend %s", backend)
 	}
 	root, err := view.State(view.Root)
@@ -36,10 +37,10 @@ func (f *Fixture) ValidateGraphAgainstSource(view authenticationgraph.View, back
 	}
 	entries := make(map[string]engine.Entry, len(root.Entries))
 	for _, entry := range root.Entries {
-		if entry.Input.Kind != input.Label || entry.Input.Validate() != nil {
+		if entry.Label == nil {
 			return fmt.Errorf("root contains a non-label input")
 		}
-		path := string(entry.Input.Data)
+		path := string(entry.Label)
 		if err := validatePathCoordinate(path, path); err != nil {
 			return err
 		}
@@ -63,7 +64,7 @@ func (f *Fixture) ValidateGraphAgainstSource(view authenticationgraph.View, back
 			continue
 		}
 		descriptor, _, err := maltcid.ParseRoot(entry.Target)
-		if err != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Positional || descriptor.InputRule != uint8(input.Direct) {
+		if err != nil || descriptor.Profile != profile || descriptor.Layout != maltcid.Positional || descriptor.DerivationProfile != uint8(derivation.Direct) {
 			return fmt.Errorf("source file %q requires a Positional AA0 Root for backend %s", path, backend)
 		}
 		object, err := view.State(entry.Target)
@@ -102,8 +103,9 @@ func validateChunkEntries(state engine.State, data []byte) error {
 	// Match by explicit index; input slice order is not an authenticated property.
 	seen := make(map[uint64]bool, len(state.Entries))
 	for _, entry := range state.Entries {
-		index := entry.Input.Number
-		if entry.Input.Kind != input.Index || entry.Input.Validate() != nil || index >= count || seen[index] {
+		coord, decodeErr := coordinate.Parse(entry.Label)
+		index := coord.Index
+		if decodeErr != nil || coord.Kind != coordinate.Index || index >= count || seen[index] {
 			return fmt.Errorf("chunk input is duplicate, invalid or outside the measured sequence")
 		}
 		seen[index] = true

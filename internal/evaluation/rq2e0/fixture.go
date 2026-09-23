@@ -3,11 +3,11 @@ package rq2e0
 import (
 	"context"
 	"fmt"
+
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -66,5 +66,5 @@ func fixtureEngine(backend string) (*engine.Engine, error) {
 	if err := profiles.Register(scheme); err != nil {
 		return nil, err
 	}
-	return engine.New(input.DefaultRegistry(), profiles), nil
+	return engine.New(profiles), nil
 }

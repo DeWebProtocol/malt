@@ -17,7 +17,6 @@ import (
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq3baseline"
-	"github.com/dewebprotocol/malt-core/auth/input"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -303,7 +302,7 @@ func TestSubtreeRenameUpdatesAllBindingsIncrementallyAndMatchesFullOracle(t *tes
 		t.Fatal(err)
 	}
 	for _, change := range delta {
-		if string(change.Input.Data) == "rq3/files/peer/file" || string(change.Input.Data) == "rq3/modes/peer/file" {
+		if string(change.Label) == "rq3/files/peer/file" || string(change.Label) == "rq3/modes/peer/file" {
 			t.Fatal("rename included unaffected peer binding")
 		}
 	}
@@ -529,7 +528,7 @@ func TestFlatGraphRepresentsEmptyRegularFileAsWholeBlobBinding(t *testing.T) {
 	}
 	found := false
 	for _, change := range initial {
-		if string(change.Input.Data) == "rq3/files/empty.txt" {
+		if string(change.Label) == "rq3/files/empty.txt" {
 			found = change.After.Equals(empty)
 		}
 	}
@@ -589,7 +588,7 @@ func TestFlatGraphNamespacesUserPathsAwayFromInternalMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, change := range changes {
-		if string(change.Input.Data) == "@malt-eval/layout" {
+		if string(change.Label) == "@malt-eval/layout" {
 			t.Fatal("user path changed internal sentinel")
 		}
 	}
@@ -659,15 +658,15 @@ func TestFlatRootOracleExportsOnlyCurrentMaterialization(t *testing.T) {
 		}
 		return key
 	}
-	path := input.LabelValue([]byte("rq3/files/file"))
+	path := []byte("rq3/files/file")
 	current := blockCID("initial")
-	oracle, err := newFlatRootOracle(t.Context(), []gatewaytransport.FlatPrefixChange{{Input: path, After: current}})
+	oracle, err := newFlatRootOracle(t.Context(), []gatewaytransport.FlatPrefixChange{{Label: path, After: current}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for index := 0; index < 128; index++ {
 		next := blockCID(fmt.Sprintf("version-%d", index))
-		if _, err := oracle.apply(t.Context(), []gatewaytransport.FlatPrefixChange{{Input: path, Before: current, After: next}}); err != nil {
+		if _, err := oracle.apply(t.Context(), []gatewaytransport.FlatPrefixChange{{Label: path, Before: current, After: next}}); err != nil {
 			t.Fatal(err)
 		}
 		current = next

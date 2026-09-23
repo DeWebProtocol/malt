@@ -10,8 +10,9 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -88,14 +89,14 @@ func graphFixture(t *testing.T) (*Session, *fixtureRemote, *countedScheme, cid.C
 	if err := registry.Register(counted); err != nil {
 		t.Fatal(err)
 	}
-	e := engine.New(input.DefaultRegistry(), registry)
+	e := engine.New(registry)
 	payload := raw(t, "first chunk")
-	child, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.IndexValue(0), Target: payload}}, ChunkSize: 11, TotalSize: 11})
+	child, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: coordinate.EncodeIndex(0), Target: payload}}, ChunkSize: 11, TotalSize: 11})
 	if err != nil {
 		t.Fatal(err)
 	}
 	childRoot, _ := cid.Parse(child.Root)
-	parent, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Input: input.LabelValue([]byte("first")), Target: childRoot}, {Input: input.LabelValue([]byte("alias")), Target: childRoot}}})
+	parent, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: []byte("first"), Target: childRoot}, {Label: []byte("alias"), Target: childRoot}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +130,11 @@ func TestRetainedWritersCopyOnWriteAndExactReceipt(t *testing.T) {
 	stale, _ := s.Begin()
 	edit, _ := s.Begin()
 	after := raw(t, "second data")
-	nextChild, err := edit.Apply(ctx, child, authentication.Delta{Changes: []engine.Change{{Input: input.IndexValue(0), Before: payload, After: after}}})
+	nextChild, err := edit.Apply(ctx, child, authentication.Delta{Changes: []engine.Change{{Label: coordinate.EncodeIndex(0), Before: payload, After: after}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := edit.Apply(ctx, root, authentication.Delta{Changes: []engine.Change{{Input: input.LabelValue([]byte("first")), Before: child, After: nextChild}}})
+	next, err := edit.Apply(ctx, root, authentication.Delta{Changes: []engine.Change{{Label: []byte("first"), Before: child, After: nextChild}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,14 +147,14 @@ func TestRetainedWritersCopyOnWriteAndExactReceipt(t *testing.T) {
 	}
 	state, _ := preview.State(next)
 	for _, entry := range state.Entries {
-		if string(entry.Input.Data) == "alias" && !entry.Target.Equals(child) {
+		if string(entry.Label) == "alias" && !entry.Target.Equals(child) {
 			t.Fatal("alias was rebound")
 		}
 	}
 	// A snapshot is caller-owned; changing its input or target must not poison a writer.
 	old, _ := s.Snapshot()
 	oldState := old.States[root.String()]
-	oldState.Entries[0].Input.Data[0] ^= 1
+	oldState.Entries[0].Label[0] ^= 1
 	oldState.Entries[0].Target = after
 	for _, bad := range []string{"root", "transaction", "digest", "boundary", "profile"} {
 		r.wrong = bad

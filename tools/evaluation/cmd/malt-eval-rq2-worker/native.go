@@ -5,19 +5,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2wire"
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2metrics"
+	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2wire"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2write"
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -58,7 +57,7 @@ func newNativeSession(config workerConfig, remote *transport.Client, evaluation 
 	if err := registry.Register(scheme); err != nil {
 		return nil, err
 	}
-	app, err := authenticationgraph.New(evaluation, engine.New(input.DefaultRegistry(), registry))
+	app, err := authenticationgraph.New(evaluation, engine.New(registry))
 	if err != nil {
 		return nil, err
 	}

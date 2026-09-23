@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
-	"github.com/dewebprotocol/malt-core/auth/input"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -29,8 +28,8 @@ func TestApplyEvaluationFlatPrefixUsesSecretOnlyAndRequiresArcSetOnlyAccounting(
 			OperationID string `json:"operation_id"`
 			Initial     bool   `json:"initial"`
 			Changes     []struct {
-				Input input.Value `json:"input"`
-				After string      `json:"after"`
+				Label []byte `json:"label"`
+				After string `json:"after"`
 			} `json:"changes"`
 		}
 		decoder := json.NewDecoder(request.Body)
@@ -39,7 +38,7 @@ func TestApplyEvaluationFlatPrefixUsesSecretOnlyAndRequiresArcSetOnlyAccounting(
 			t.Fatal(err)
 		}
 		if body.Profile != gatewaytransport.FlatPrefixProfile || body.OperationID != "snapshot" ||
-			!body.Initial || len(body.Changes) != 1 || string(body.Changes[0].Input.Data) != "rq3/file-sha256/abc" ||
+			!body.Initial || len(body.Changes) != 1 || string(body.Changes[0].Label) != "rq3/file-sha256/abc" ||
 			body.Changes[0].After != target.String() {
 			t.Fatalf("flat-prefix request = %#v", body)
 		}
@@ -55,7 +54,7 @@ func TestApplyEvaluationFlatPrefixUsesSecretOnlyAndRequiresArcSetOnlyAccounting(
 
 	result, err := newEvaluationClient(t, server.URL, 0).ApplyEvaluationFlatPrefix(t.Context(), secret, gatewaytransport.FlatPrefixMutation{
 		OperationID: "snapshot", Initial: true,
-		Changes: []gatewaytransport.FlatPrefixChange{{Input: input.LabelValue([]byte("rq3/file-sha256/abc")), After: target}},
+		Changes: []gatewaytransport.FlatPrefixChange{{Label: []byte("rq3/file-sha256/abc"), After: target}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +93,7 @@ func TestApplyEvaluationFlatPrefixRejectsNonzeroDisabledCategoryCounter(t *testi
 
 	_, err := newEvaluationClient(t, server.URL, 0).ApplyEvaluationFlatPrefix(t.Context(), secret, gatewaytransport.FlatPrefixMutation{
 		OperationID: "snapshot", Initial: true,
-		Changes: []gatewaytransport.FlatPrefixChange{{Input: input.LabelValue([]byte("rq3/file-sha256/abc")), After: target}},
+		Changes: []gatewaytransport.FlatPrefixChange{{Label: []byte("rq3/file-sha256/abc"), After: target}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "non-ArcSet metadata") {
 		t.Fatalf("disabled-category attempted same-value counter error = %v", err)

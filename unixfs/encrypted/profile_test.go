@@ -16,8 +16,7 @@ import (
 	materialmemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -59,7 +58,7 @@ func newProfileRemoteBackend(t *testing.T, backend maltcid.BackendKind) *profile
 	default:
 		t.Fatal("unsupported backend")
 	}
-	return &profileRemote{engine: engine.New(input.DefaultRegistry(), profiles), nodes: materialmemory.NewNodes(), blocks: casmemory.New()}
+	return &profileRemote{engine: engine.New(profiles), nodes: materialmemory.NewNodes(), blocks: casmemory.New()}
 }
 
 func TestEncryptedSnapshotPublishesExactIPARoots(t *testing.T) {
@@ -865,8 +864,8 @@ func (r *profileRemote) MaterializeAuthentication(ctx context.Context, candidate
 	if candidate.State.Descriptor.Layout == maltcid.Prefix {
 		bindings := make(map[string]string)
 		for _, entry := range candidate.State.Entries {
-			label := string(entry.Input.Data)
-			if entry.Input.Kind == input.System {
+			label := string(entry.Label)
+			if string(entry.Label) == "@payload" {
 				label = "@payload"
 			}
 			bindings[label] = entry.Target.String()

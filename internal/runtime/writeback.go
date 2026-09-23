@@ -22,8 +22,7 @@ import (
 	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
@@ -84,7 +83,7 @@ func (f *authenticationEngineFactory) New() (*engine.Engine, error) {
 			return nil, err
 		}
 	}
-	return engine.New(input.DefaultRegistry(), profiles), nil
+	return engine.New(profiles), nil
 }
 
 type gatewayWritableBindingOptions struct {

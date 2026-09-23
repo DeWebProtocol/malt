@@ -3,10 +3,12 @@ package rq2fixture
 import (
 	"context"
 	"fmt"
+
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -31,16 +33,16 @@ func (s *SourceDefinition) Candidates(ctx context.Context, e *engine.Engine, bac
 		if err != nil {
 			return nil, err
 		}
-		bindings = append(bindings, engine.Entry{Input: input.LabelValue([]byte(file.Path)), Target: target})
+		bindings = append(bindings, engine.Entry{Label: []byte(file.Path), Target: target})
 	}
 	for _, file := range s.ListFiles {
-		state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, Profile: profile}, ChunkSize: file.ChunkSize, TotalSize: file.TotalSize, Entries: make([]engine.Entry, len(file.Chunks))}
+		state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: profile}, ChunkSize: file.ChunkSize, TotalSize: file.TotalSize, Entries: make([]engine.Entry, len(file.Chunks))}
 		for i, chunk := range file.Chunks {
 			target, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: chunk.Bytes})
 			if err != nil {
 				return nil, err
 			}
-			state.Entries[i] = engine.Entry{Input: input.IndexValue(chunk.Index), Target: target}
+			state.Entries[i] = engine.Entry{Label: coordinate.EncodeIndex(chunk.Index), Target: target}
 		}
 		candidate, err := authentication.Prepare(ctx, e, state)
 		if err != nil {
@@ -51,9 +53,9 @@ func (s *SourceDefinition) Candidates(ctx context.Context, e *engine.Engine, bac
 			seen[candidate.Root] = true
 		}
 		target, _ := cid.Parse(candidate.Root)
-		bindings = append(bindings, engine.Entry{Input: input.LabelValue([]byte(file.Path)), Target: target})
+		bindings = append(bindings, engine.Entry{Label: []byte(file.Path), Target: target})
 	}
-	candidate, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: profile}, Entries: bindings})
+	candidate, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: profile}, Entries: bindings})
 	if err != nil {
 		return nil, err
 	}

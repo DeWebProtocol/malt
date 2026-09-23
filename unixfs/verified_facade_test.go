@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"testing"
 
@@ -13,15 +15,14 @@ import (
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	materialmemory "github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
-	"math"
-	"sort"
 )
 
 type realRemote struct {
@@ -82,7 +83,7 @@ func newRealRemote(t *testing.T) *realRemote {
 	if err := profiles.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	return &realRemote{engine: engine.New(input.DefaultRegistry(), profiles), nodes: materialmemory.NewNodes(), candidates: map[string]protocol.AuthenticationCandidate{}, blocks: casmemory.New()}
+	return &realRemote{engine: engine.New(profiles), nodes: materialmemory.NewNodes(), candidates: map[string]protocol.AuthenticationCandidate{}, blocks: casmemory.New()}
 }
 
 func (r *realRemote) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
@@ -98,7 +99,7 @@ func (r *realRemote) PutWithCodec(ctx context.Context, data []byte, codec uint64
 }
 
 func (r *realRemote) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.KZG4096}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
@@ -109,11 +110,11 @@ func (r *realRemote) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bin
 		if err != nil {
 			return cid.Undef, err
 		}
-		selector := input.LabelValue([]byte(name))
+		selector := []byte(name)
 		if name == "@payload" {
-			selector = input.SystemValue(input.Payload)
+			selector = []byte("@payload")
 		}
-		state.Entries = append(state.Entries, engine.Entry{Input: selector, Target: target})
+		state.Entries = append(state.Entries, engine.Entry{Label: selector, Target: target})
 	}
 	candidate, err := authentication.Prepare(ctx, r.engine, state)
 	if err != nil {
@@ -199,7 +200,7 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	if stat.Size != uint64(len(large)) || stat.ChunkSize != 64 || stat.StorageKind != "positional" {
 		t.Fatalf("large stat = %#v", stat)
 	}
-	if len(remote.reads) != 1 || remote.reads[0].Operation != "binding" || remote.reads[0].Input == nil || remote.reads[0].Input.Number != math.MaxUint64 {
+	if len(remote.reads) != 1 || remote.reads[0].Operation != "binding" || remote.reads[0].Label == nil || string(*remote.reads[0].Label) != string(coordinate.EncodeIndex(math.MaxUint64)) {
 		t.Fatalf("large stat did not use a bounded metadata query: %#v", remote.reads)
 	}
 	if stat.AuthenticationMetadata == nil || stat.AuthenticationMetadata.Result.Binding == nil {

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/gatewaytransport"
-	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -386,7 +386,7 @@ func (s *Session) Submit(ctx context.Context, transaction string, edit *Edit, ro
 func cloneState(state engine.State) engine.State {
 	state.Entries = append([]engine.Entry{}, state.Entries...)
 	for i := range state.Entries {
-		state.Entries[i].Input.Data = bytes.Clone(state.Entries[i].Input.Data)
+		state.Entries[i].Label = bytes.Clone(state.Entries[i].Label)
 	}
 	return state
 }

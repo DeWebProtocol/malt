@@ -539,14 +539,14 @@ func directFlatSnapshotChanges(state map[string]logicalFile) ([]gatewaytransport
 		return nil, err
 	}
 	changes := make([]gatewaytransport.FlatPrefixChange, 0, 1+2*len(state))
-	changes = append(changes, gatewaytransport.FlatPrefixChange{Input: sentinel.Input, After: sentinel.Target})
+	changes = append(changes, gatewaytransport.FlatPrefixChange{Label: sentinel.Label, After: sentinel.Target})
 	for path, file := range state {
 		for _, mode := range []bool{false, true} {
 			target, err := directFlatTarget(&file, mode)
 			if err != nil {
 				return nil, err
 			}
-			changes = append(changes, gatewaytransport.FlatPrefixChange{Input: flatInput(path, mode), After: target})
+			changes = append(changes, gatewaytransport.FlatPrefixChange{Label: flatInput(path, mode), After: target})
 		}
 	}
 	slices.SortFunc(changes, compareFlatChanges)
@@ -570,7 +570,7 @@ func directFlatDeltaChanges(changes []fileChange) ([]gatewaytransport.FlatPrefix
 				continue
 			}
 			result = append(result, gatewaytransport.FlatPrefixChange{
-				Input: coordinate, Before: before, After: after,
+				Label: coordinate, Before: before, After: after,
 			})
 		}
 	}
@@ -603,5 +603,5 @@ func directFlatTarget(file *logicalFile, mode bool) (cid.Cid, error) {
 }
 
 func compareFlatChanges(left, right gatewaytransport.FlatPrefixChange) int {
-	return strings.Compare(string(left.Input.Data), string(right.Input.Data))
+	return strings.Compare(string(left.Label), string(right.Label))
 }

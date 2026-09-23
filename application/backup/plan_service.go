@@ -20,6 +20,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 	encryptedfs "github.com/dewebprotocol/malt-client/unixfs/encrypted"
+	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
@@ -305,7 +306,7 @@ func (s *PlanService) Backup(ctx context.Context, message string) (backupResult 
 	backend := maltcid.BackendKindUnknown
 	if baseCID.Defined() {
 		descriptor, _, parseErr := maltcid.ParseRoot(baseCID)
-		if parseErr != nil || descriptor.Layout != maltcid.Prefix || descriptor.InputRule != 1 {
+		if parseErr != nil || descriptor.Layout != maltcid.Prefix || descriptor.DerivationProfile != uint8(derivation.SHA256) {
 			return nil, fmt.Errorf("backup plan base is not a supported Prefix Root with byte-label inputs")
 		}
 		profile, profileErr := maltcid.Profile(descriptor.Profile)

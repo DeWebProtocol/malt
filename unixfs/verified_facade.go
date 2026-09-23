@@ -14,7 +14,7 @@ import (
 
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -150,6 +150,7 @@ type WriterOptions struct {
 }
 
 type verifiedReader struct {
+	layoutKind             LayoutKind
 	authentication         transportcap.Authentication
 	authenticationVerifier *engine.Engine
 	blocks                 BlockGetter
@@ -187,20 +188,22 @@ func NewReader(opts ReaderOptions) (Reader, error) {
 	if opts.Blocks == nil {
 		return nil, fmt.Errorf("unixfs block getter is nil")
 	}
-	if opts.Layout != "" {
-		if _, err := ParseLayoutKind(string(opts.Layout)); err != nil {
-			return nil, err
-		}
+	if opts.Layout == "" {
+		opts.Layout = LayoutHybridV1
+	}
+	layout, err := ParseLayoutKind(string(opts.Layout))
+	if err != nil {
+		return nil, err
 	}
 	verifier := opts.Verifier
 	if verifier == nil {
 		var err error
-		verifier, err = authbuiltin.NewVerifier(nil)
+		verifier, err = authbuiltin.NewVerifier()
 		if err != nil {
 			return nil, fmt.Errorf("initialize local authentication verifier: %w", err)
 		}
 	}
-	return &verifiedReader{authentication: opts.Remote, authenticationVerifier: verifier, blocks: opts.Blocks}, nil
+	return &verifiedReader{layoutKind: layout, authentication: opts.Remote, authenticationVerifier: verifier, blocks: opts.Blocks}, nil
 }
 
 // NewStagedPathStatter constructs the lightweight verified projection used to
@@ -217,7 +220,7 @@ func NewStagedPathStatter(opts ReaderOptions) (StagedPathStatter, error) {
 
 func (r *verifiedReader) newStagedPathSession(blocks BlockGetter) StagedPathStatter {
 	return &verifiedReader{
-		authentication: r.authentication, authenticationVerifier: r.authenticationVerifier,
+		layoutKind: r.layoutKind, authentication: r.authentication, authenticationVerifier: r.authenticationVerifier,
 		blocks:            blocks,
 		stagedResolutions: make(map[stagedProjectionCacheKey]*Resolution),
 		stagedManifests:   make(map[stagedProjectionCacheKey]stagedManifestProjection),

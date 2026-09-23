@@ -41,7 +41,7 @@ func TestEvaluationAuthenticationCandidateBindsSelectedRootAndCurrentWire(t *tes
 					return
 				}
 				if mode == "duplicate-key" {
-					raw = bytes.Replace(raw, []byte(`"profile":`), []byte(`"profile":"malt.authentication/0","profile":`), 1)
+					raw = bytes.Replace(raw, []byte(`"profile":`), []byte(`"profile":"malt.authentication/2","profile":`), 1)
 				}
 				_, _ = w.Write(raw)
 			}))

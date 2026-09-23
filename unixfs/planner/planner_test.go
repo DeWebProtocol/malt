@@ -3,11 +3,6 @@ package planner
 import (
 	"context"
 	"fmt"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
-	"github.com/dewebprotocol/malt-core/protocol"
-	"github.com/dewebprotocol/malt-core/sdk/authentication"
-	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +14,10 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
+	"github.com/dewebprotocol/malt-core/engine"
+	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -134,7 +133,7 @@ func newPlannerEnvironment(t *testing.T, layout unixfs.LayoutKind, scheme commit
 	if err := profiles.Register(profile); err != nil {
 		t.Fatal(err)
 	}
-	f := &plannerFixture{layout: layout, blocks: &plannerBlocks{values: map[string][]byte{}}, engine: engine.New(input.DefaultRegistry(), profiles), nodes: materializermemory.NewNodes(), candidates: map[string]protocol.AuthenticationCandidate{}}
+	f := &plannerFixture{layout: layout, blocks: &plannerBlocks{values: map[string][]byte{}}, engine: engine.New(profiles), nodes: materializermemory.NewNodes(), candidates: map[string]protocol.AuthenticationCandidate{}}
 	creator, err := unixfs.NewAuthenticationAdapter(layout, f, f.engine, profile.ProfileID())
 	if err != nil {
 		t.Fatal(err)
@@ -239,16 +238,16 @@ func (f *plannerFixture) resolve(t *testing.T, root cid.Cid, path string) (cid.C
 	if f.layout == unixfs.LayoutRootedV1 {
 		labels = strings.Split(path, "/")
 	}
-	steps := make([]input.Value, len(labels))
+	steps := make([][]byte, len(labels))
 	for i, label := range labels {
-		steps[i] = input.LabelValue([]byte(label))
+		steps[i] = []byte(label)
 	}
 	query := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Operation: "resolve", Steps: steps}
 	result, err := authentication.Execute(t.Context(), f.engine, query, f.nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := authbuiltin.NewVerifier(nil)
+	verifier, err := authbuiltin.NewVerifier()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +311,7 @@ func TestPlannerRejectsManifestCIDSubstitutionAndCorruptOldManifest(t *testing.T
 	}
 	f.blocks.substitutePut = cid.Undef
 	for _, entry := range f.candidates[f.root.KeyString()].State.Entries {
-		if entry.Input.Kind == input.System {
+		if string(entry.Label) == "@payload" {
 			f.blocks.values[entry.Target.KeyString()] = []byte("corrupt manifest")
 		}
 	}

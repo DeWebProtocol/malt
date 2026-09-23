@@ -29,8 +29,7 @@ import (
 	"github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/engine"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -196,7 +195,7 @@ func (w *browserWriter) initialize(request initializeRequest) (initializeRespons
 	if err := registry.Register(scheme); err != nil {
 		return initializeResponse{}, err
 	}
-	app, err := authenticationgraph.New(evaluation, engine.New(input.DefaultRegistry(), registry))
+	app, err := authenticationgraph.New(evaluation, engine.New(registry))
 	if err != nil {
 		return initializeResponse{}, err
 	}

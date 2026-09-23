@@ -9,8 +9,9 @@ import (
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/auth/coordinate"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -54,7 +55,7 @@ func NewAuthenticationAdapter(layout LayoutKind, remote transportcap.Authenticat
 		if err := profiles.Register(i); err != nil {
 			return nil, err
 		}
-		e = engine.New(input.DefaultRegistry(), profiles)
+		e = engine.New(profiles)
 	}
 	if _, err := maltcid.Profile(profile); err != nil {
 		return nil, err
@@ -62,11 +63,8 @@ func NewAuthenticationAdapter(layout LayoutKind, remote transportcap.Authenticat
 	return &AuthenticationAdapter{remote: remote, engine: e, profile: profile, layout: layout}, nil
 }
 func (a *AuthenticationAdapter) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
-	rule := uint8(input.BytesSHA256)
-	if a.layout == LayoutRootedV1 {
-		rule = uint8(input.UnixFSNameSHA256)
-	}
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: rule, Profile: a.profile}, Entries: []engine.Entry{}}
+	rule := uint8(derivation.SHA256)
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: rule, Profile: a.profile}, Entries: []engine.Entry{}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
@@ -77,16 +75,16 @@ func (a *AuthenticationAdapter) UpdateStagedRoot(ctx context.Context, previous c
 		if err != nil {
 			return cid.Undef, err
 		}
-		selector := input.LabelValue([]byte(name))
+		selector := []byte(name)
 		if name == "@payload" {
-			selector = input.SystemValue(input.Payload)
+			selector = []byte("@payload")
 		} else {
 			parts, err := ParseCanonicalStagedPath(name)
 			if err != nil || len(parts) == 0 || strings.Join(parts, "/") != name || (a.layout == LayoutRootedV1 && len(parts) != 1) {
 				return cid.Undef, fmt.Errorf("invalid directory label for %s: %q", a.layout, name)
 			}
 		}
-		state.Entries = append(state.Entries, engine.Entry{Input: selector, Target: target})
+		state.Entries = append(state.Entries, engine.Entry{Label: selector, Target: target})
 	}
 	return a.materialize(ctx, previous, state)
 }
@@ -127,9 +125,9 @@ func (a *AuthenticationAdapter) materialize(ctx context.Context, previous cid.Ci
 	return expected, nil
 }
 func (a *AuthenticationAdapter) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunkSize uint64) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, Profile: a.profile}, ChunkSize: chunkSize, TotalSize: total, Entries: make([]engine.Entry, len(chunks))}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: a.profile}, ChunkSize: chunkSize, TotalSize: total, Entries: make([]engine.Entry, len(chunks))}
 	for i, target := range chunks {
-		state.Entries[i] = engine.Entry{Input: input.IndexValue(uint64(i)), Target: target}
+		state.Entries[i] = engine.Entry{Label: coordinate.EncodeIndex(uint64(i)), Target: target}
 	}
 	return a.materialize(ctx, cid.Undef, state)
 }

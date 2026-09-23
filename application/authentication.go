@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt-core/auth/engine"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	coresdk "github.com/dewebprotocol/malt-core/sdk/authentication"
 	cid "github.com/ipfs/go-cid"

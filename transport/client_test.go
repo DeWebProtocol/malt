@@ -12,8 +12,8 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
 	client "github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/auth/engine"
-	"github.com/dewebprotocol/malt-core/auth/input"
+	"github.com/dewebprotocol/malt-core/derivation"
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/traversal"
 	"github.com/dewebprotocol/malt-core/wire/maltcid"
@@ -67,7 +67,7 @@ func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Root != root.String() || request.Operation != "binding" || request.Input == nil || string(request.Input.Data) != "name" {
+			if request.Root != root.String() || request.Operation != "binding" || request.Label == nil || string(*request.Label) != "name" {
 				t.Fatalf("resolve request = %#v", request)
 			}
 			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String(), Traversal: traversal.Traversal{Results: []engine.Result{}}})
@@ -319,13 +319,13 @@ func (a *recordingAuthorizer) Authorize(request *http.Request) error {
 
 func testAuthenticationRoot(t *testing.T) cid.Cid {
 	t.Helper()
-	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: uint8(input.BytesSHA256), Profile: maltcid.IPA256}, make([]byte, 32))
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return root
 }
 func testAuthenticationQuery(root cid.Cid, label string) protocol.AuthenticationRequest {
-	value := input.LabelValue([]byte(label))
-	return protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Operation: "binding", Input: &value}
+	value := []byte(label)
+	return protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Operation: "binding", Label: &value}
 }
