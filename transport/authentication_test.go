@@ -10,9 +10,9 @@ import (
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
 	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/engine"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/traversal"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 )
 
 func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/application"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

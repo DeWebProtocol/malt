@@ -12,7 +12,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	encryptedfs "github.com/dewebprotocol/malt-client/unixfs/encrypted"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
