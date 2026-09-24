@@ -15,9 +15,9 @@ import (
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/engine"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
 	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

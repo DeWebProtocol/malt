@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 )
 
 func TestFileSnapshotsUseRuntimeSchemaAndRetainHistory(t *testing.T) {

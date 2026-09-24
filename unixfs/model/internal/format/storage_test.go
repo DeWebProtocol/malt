@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt-core/derivation"
-	maltcid "github.com/dewebprotocol/malt-core/wire/maltcid"
+	maltcid "github.com/dewebprotocol/malt-core/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )

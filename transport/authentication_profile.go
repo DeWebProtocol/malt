@@ -3,7 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 )
 
 // DefaultBackend is an untrusted creation preference. Existing Roots select

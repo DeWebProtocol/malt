@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	unixfsformat "github.com/dewebprotocol/malt-client/unixfs/model/internal/format"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 )
 
 func TestNewManifestCIDUsesV2Codec(t *testing.T) {

@@ -15,10 +15,10 @@ import (
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	authbuiltin "github.com/dewebprotocol/malt-core/sdk/authentication/builtin"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

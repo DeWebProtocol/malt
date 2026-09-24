@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-core/derivation"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

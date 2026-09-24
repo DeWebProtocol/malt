@@ -11,7 +11,7 @@ import (
 
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	"github.com/dewebprotocol/malt-core/derivation"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 )
 
 func TestExplicitCIDContentCommandsDoNotOpenBrokenTrustStore(t *testing.T) {

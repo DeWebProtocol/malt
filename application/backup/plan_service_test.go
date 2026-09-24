@@ -14,7 +14,7 @@ import (
 	"github.com/dewebprotocol/malt-client/bucketsync"
 	encryptedfs "github.com/dewebprotocol/malt-client/unixfs/encrypted"
 	"github.com/dewebprotocol/malt-core/derivation"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 

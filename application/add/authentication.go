@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	"github.com/dewebprotocol/malt-core/wire/maltcid"
+	"github.com/dewebprotocol/malt-core/maltcid"
 )
 
 // projectionWriter belongs to the UnixFS layout compiler, not the transport.
