@@ -1,11 +1,13 @@
 package main
 
 import (
-	"github.com/dewebprotocol/malt-client/application"
+	"errors"
+
 	"github.com/spf13/cobra"
 )
 
 func init() {
+	resolveCmd.Flags().String("layout", "", "UnixFS layout override (defaults to the selected Bucket layout, or hybrid-v1 without a Bucket)")
 	rootCmd.AddCommand(resolveCmd)
 }
 
@@ -16,29 +18,14 @@ var resolveCmd = &cobra.Command{
 	RunE:  runResolve,
 }
 
-func runResolve(cmd *cobra.Command, args []string) error {
-	client, err := gatewayClient()
+func runResolve(cmd *cobra.Command, args []string) (resultErr error) {
+	content, err := configuredContent(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	rawPath := ""
-	if len(args) > 1 {
-		rawPath = args[1]
-	}
-	reader, err := newUnixFSReader(client)
-	if err != nil {
-		return err
-	}
-	roots, err := rootsForSelector(args[0])
-	if err != nil {
-		return err
-	}
-	app, err := application.NewUnixFS(reader, nil, roots)
-	if err != nil {
-		return err
-	}
-	resolution, err := app.Resolve(cmd.Context(), args[0], rawPath)
+	defer func() { resultErr = errors.Join(resultErr, content.Close()) }()
+	app := content.UnixFS
+	resolution, err := app.Resolve(cmd.Context(), args[0], optionalPath(args))
 	if err != nil {
 		return daemonCommandError(err)
 	}

@@ -732,7 +732,7 @@ func TestEncryptedSnapshotRejectsMismatchedVerifiedManifestReuse(t *testing.T) {
 	}
 }
 
-func TestEncryptedDatasetViewRejectsForgeryAndIgnoresMutableCompatibilityCopies(t *testing.T) {
+func TestEncryptedDatasetViewRejectsForgeryAndOwnsReturnedCopies(t *testing.T) {
 	remote := newProfileRemote(t)
 	key := [32]byte{7, 1, 7}
 	source := t.TempDir()
@@ -772,10 +772,18 @@ func TestEncryptedDatasetViewRejectsForgeryAndIgnoresMutableCompatibilityCopies(
 	if err != nil {
 		t.Fatal(err)
 	}
-	view.Root = cid.MustParse("bafkqaaa")
-	view.ManifestCID = cid.MustParse("bafkqaaa")
-	view.Manifest.DatasetID = "attacker"
-	view.Bindings[0].Root = cid.MustParse("bafkqaaa")
+	manifest, err := view.VerifiedManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.DatasetID = "attacker"
+	manifest.Bindings[0].Name = "attacker"
+	copiedBinding, ok := view.Binding(binding.Manifest.ID)
+	if !ok {
+		t.Fatal("verified binding missing")
+	}
+	copiedBinding.Root = cid.MustParse("bafkqaaa")
+
 	body, err := reader.ReadFile(t.Context(), view, "binding", "value.txt", resolveKey)
 	if err != nil || string(body) != "verified" {
 		t.Fatalf("read through mutated compatibility view = %q, %v", body, err)
@@ -796,11 +804,7 @@ func TestEncryptedDatasetViewRejectsForgeryAndIgnoresMutableCompatibilityCopies(
 	if !reused.ManifestCID.Equals(built.ManifestCID) {
 		t.Fatalf("reused manifest CID = %s, want %s", reused.ManifestCID, built.ManifestCID)
 	}
-	forged := &encrypted.DatasetView{
-		Root: built.Root, ManifestCID: built.ManifestCID,
-		Manifest: encrypted.DatasetManifest{DatasetID: "bucket", Branch: "main"},
-		Bindings: []encrypted.BindingView{{Manifest: binding.Manifest, Root: binding.Root}},
-	}
+	forged := &encrypted.DatasetView{}
 	if _, err := reader.OpenDirectory(t.Context(), forged, "binding", "", resolveKey); err == nil || !strings.Contains(err.Error(), "not locally verified") {
 		t.Fatalf("forged dataset view error = %v", err)
 	}

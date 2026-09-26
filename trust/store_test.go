@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -70,11 +69,6 @@ const testRoot = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
 const candidateRoot = "bafkreib6u4dvknbd5g7pp7z2ex2jvdkbo3hytm5v6hlx3q3iibgfk5j5wi"
 const secondCandidateRoot = "bafkqaaa"
 
-func TestRecordAndCandidateLegacyUnkeyedLiteralsRemainSourceCompatible(t *testing.T) {
-	_ = Candidate{"", "", "", time.Time{}}
-	_ = Record{"", "", "", "", "", "", time.Time{}, nil}
-}
-
 func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
 	store, err := Open(path)
@@ -87,11 +81,11 @@ func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	if _, err := store.AddCandidate("docs", candidateRoot, testRoot, "upload"); err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot || len(record.Candidates) != 1 {
+	if record.Accepted.Root != testRoot || len(record.Candidates) != 1 {
 		t.Fatalf("candidate changed accepted root: %#v", record)
 	}
 	if _, err := store.AcceptCandidate("docs", candidateRoot, "manual"); err != nil {
@@ -101,11 +95,11 @@ func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err = reopened.Get("docs")
+	record, err = reopened.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != candidateRoot || record.PreviousRoot != testRoot {
+	if record.Accepted.Root != candidateRoot || record.Accepted.PreviousRoot != testRoot {
 		t.Fatalf("accepted record = %#v", record)
 	}
 	if _, err := reopened.AcceptCandidate("docs", testRoot, "rollback"); !errors.Is(err, ErrCandidateNotFound) {
@@ -122,17 +116,17 @@ func TestBootstrapCandidateRequiresExplicitCandidateAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != "" || len(record.Candidates) != 1 || record.Candidates[0].BaseRoot != "" {
+	if record.Accepted != nil || len(record.Candidates) != 1 || record.Candidates[0].BaseRoot != "" {
 		t.Fatalf("bootstrap candidate record = %#v", record)
 	}
-	if _, _, err := AcceptedRoot(store, "fresh"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := AcceptedRoot(store, "fresh"); !errors.Is(err, ErrNoAcceptedRoot) {
 		t.Fatalf("bootstrap candidate became accepted: %v", err)
 	}
 	record, err = store.AcceptCandidate("fresh", candidateRoot, "explicit-bootstrap")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != candidateRoot || len(record.Candidates) != 0 {
+	if record.Accepted.Root != candidateRoot || len(record.Candidates) != 0 {
 		t.Fatalf("accepted bootstrap candidate = %#v", record)
 	}
 }
@@ -150,8 +144,8 @@ func TestCIDRepresentationsAreCanonicalizedAcrossTrustWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot {
-		t.Fatalf("trusted root = %q, want canonical %q", record.AcceptedRoot, testRoot)
+	if record.Accepted.Root != testRoot {
+		t.Fatalf("trusted root = %q, want canonical %q", record.Accepted.Root, testRoot)
 	}
 	record, err = store.AddCandidate("docs", alternateCandidate, alternateRoot, "upload")
 	if err != nil {
@@ -164,7 +158,7 @@ func TestCIDRepresentationsAreCanonicalizedAcrossTrustWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != candidateRoot || record.PreviousRoot != testRoot {
+	if record.Accepted.Root != candidateRoot || record.Accepted.PreviousRoot != testRoot {
 		t.Fatalf("accepted canonical record = %#v", record)
 	}
 }
@@ -185,22 +179,21 @@ func TestTrustEquivalentRootPreservesDistinctPreviousRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != candidateRoot || record.PreviousRoot != testRoot {
+	if record.Accepted.Root != candidateRoot || record.Accepted.PreviousRoot != testRoot {
 		t.Fatalf("equivalent re-trust changed root history: %#v", record)
 	}
-	if record.Profile != "updated" || record.Gateway != "third.example" || record.Source != "refresh" {
+	if record.Profile != "updated" || record.Gateway != "third.example" || record.Accepted.Source != "refresh" {
 		t.Fatalf("equivalent re-trust did not refresh metadata: %#v", record)
 	}
 }
 
 func TestOpenCanonicalizesPersistedCIDRepresentationsAndDuplicates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
-	persisted := legacyState{Version: 1, Roots: map[string]Record{
+	persisted := state{Version: trustStoreVersion, Roots: map[string]RootState{
 		"docs": {
-			Alias:        "docs",
-			AcceptedRoot: alternateCIDString(t, testRoot),
-			PreviousRoot: alternateCIDString(t, secondCandidateRoot),
-			Candidates: []Candidate{
+			Alias:    "docs",
+			Accepted: &AcceptedRootState{Root: alternateCIDString(t, testRoot), PreviousRoot: alternateCIDString(t, secondCandidateRoot)},
+			Candidates: []CandidateRoot{
 				{Root: alternateCIDString(t, candidateRoot), BaseRoot: alternateCIDString(t, testRoot), Source: "first"},
 				{Root: candidateRoot, BaseRoot: testRoot, Source: "last"},
 			},
@@ -212,11 +205,11 @@ func TestOpenCanonicalizesPersistedCIDRepresentationsAndDuplicates(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot || record.PreviousRoot != secondCandidateRoot {
+	if record.Accepted.Root != testRoot || record.Accepted.PreviousRoot != secondCandidateRoot {
 		t.Fatalf("canonical persisted record = %#v", record)
 	}
 	if len(record.Candidates) != 1 || record.Candidates[0].Root != candidateRoot || record.Candidates[0].BaseRoot != testRoot || record.Candidates[0].Source != "last" {
@@ -229,13 +222,12 @@ func TestOpenCanonicalizesPersistedCIDRepresentationsAndDuplicates(t *testing.T)
 
 func TestOpenDropsPersistedCandidateEquivalentToAcceptedRoot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
-	persisted := legacyState{Version: 1, Roots: map[string]Record{
+	persisted := state{Version: trustStoreVersion, Roots: map[string]RootState{
 		"docs": {
-			Alias:        "docs",
-			AcceptedRoot: alternateCIDString(t, testRoot),
-			PreviousRoot: alternateCIDString(t, secondCandidateRoot),
-			Candidates: []Candidate{
-				{Root: testRoot, BaseRoot: alternateCIDString(t, testRoot), Source: "legacy-self"},
+			Alias:    "docs",
+			Accepted: &AcceptedRootState{Root: alternateCIDString(t, testRoot), PreviousRoot: alternateCIDString(t, secondCandidateRoot)},
+			Candidates: []CandidateRoot{
+				{Root: testRoot, BaseRoot: alternateCIDString(t, testRoot), Source: "self-candidate"},
 				{Root: alternateCIDString(t, candidateRoot), BaseRoot: testRoot, Source: "real-candidate"},
 			},
 		},
@@ -246,35 +238,34 @@ func TestOpenDropsPersistedCandidateEquivalentToAcceptedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot || record.PreviousRoot != secondCandidateRoot {
+	if record.Accepted.Root != testRoot || record.Accepted.PreviousRoot != secondCandidateRoot {
 		t.Fatalf("canonical persisted record = %#v", record)
 	}
 	if len(record.Candidates) != 1 || record.Candidates[0].Root != candidateRoot || record.Candidates[0].Source != "real-candidate" {
-		t.Fatalf("persisted candidates after self-candidate migration = %#v", record.Candidates)
+		t.Fatalf("persisted candidates after normalization = %#v", record.Candidates)
 	}
 	if _, err := store.AcceptCandidate("docs", alternateCIDString(t, testRoot), "manual"); !errors.Is(err, ErrCandidateNotFound) {
 		t.Fatalf("accept equivalent-to-current candidate error = %v, want ErrCandidateNotFound", err)
 	}
-	after, err := store.Get("docs")
+	after, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.AcceptedRoot != testRoot || after.PreviousRoot != secondCandidateRoot {
+	if after.Accepted.Root != testRoot || after.Accepted.PreviousRoot != secondCandidateRoot {
 		t.Fatalf("rejected self-acceptance changed roots: %#v", after)
 	}
 }
 
 func TestOpenDropsPreviousRootEquivalentToAcceptedRoot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
-	persisted := legacyState{Version: 1, Roots: map[string]Record{
+	persisted := state{Version: trustStoreVersion, Roots: map[string]RootState{
 		"docs": {
-			Alias:        "docs",
-			AcceptedRoot: alternateCIDString(t, testRoot),
-			PreviousRoot: testRoot,
+			Alias:    "docs",
+			Accepted: &AcceptedRootState{Root: alternateCIDString(t, testRoot), PreviousRoot: testRoot},
 		},
 	}}
 	writeTestState(t, path, persisted)
@@ -283,32 +274,22 @@ func TestOpenDropsPreviousRootEquivalentToAcceptedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot || record.PreviousRoot != "" {
+	if record.Accepted.Root != testRoot || record.Accepted.PreviousRoot != "" {
 		t.Fatalf("canonical reload retained a self previous root: %#v", record)
 	}
 }
 
 func TestOpenRejectsMalformedPersistedCID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
-	writeTestState(t, path, legacyState{Version: 1, Roots: map[string]Record{
-		"docs": {Alias: "docs", AcceptedRoot: "not-a-cid"},
+	writeTestState(t, path, state{Version: trustStoreVersion, Roots: map[string]RootState{
+		"docs": {Alias: "docs", Accepted: &AcceptedRootState{Root: "not-a-cid"}},
 	}})
 	if _, err := Open(path); err == nil {
 		t.Fatal("Open accepted malformed persisted CID")
-	}
-}
-
-func TestOpenRejectsLegacyAliasWithoutAcceptedRoot(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roots.json")
-	writeTestState(t, path, legacyState{Version: 1, Roots: map[string]Record{
-		"docs": {Alias: "docs"},
-	}})
-	if _, err := Open(path); err == nil {
-		t.Fatal("Open migrated a v1 alias without the formerly required accepted root")
 	}
 }
 
@@ -339,11 +320,11 @@ func TestAddCandidateRejectsStaleBaseAfterAcceptedRootAdvances(t *testing.T) {
 	if _, err := store.AddCandidate("docs", secondCandidateRoot, testRoot, "stale-operation"); !errors.Is(err, ErrStaleCandidate) {
 		t.Fatalf("AddCandidate stale error = %v, want ErrStaleCandidate", err)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != candidateRoot || len(record.Candidates) != 0 {
+	if record.Accepted.Root != candidateRoot || len(record.Candidates) != 0 {
 		t.Fatalf("stale add changed record: %#v", record)
 	}
 }
@@ -368,11 +349,11 @@ func TestAcceptCandidateRejectsStaleSibling(t *testing.T) {
 	if _, err := store.AcceptCandidate("docs", candidateRoot, "manual"); !errors.Is(err, ErrStaleCandidate) {
 		t.Fatalf("AcceptCandidate stale error = %v, want ErrStaleCandidate", err)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != secondCandidateRoot || record.PreviousRoot != testRoot {
+	if record.Accepted.Root != secondCandidateRoot || record.Accepted.PreviousRoot != testRoot {
 		t.Fatalf("stale acceptance changed record: %#v", record)
 	}
 }
@@ -393,7 +374,7 @@ func TestIndependentStoresReloadBeforeMutating(t *testing.T) {
 	if _, err := second.Trust("second", candidateRoot, "unixfs", "", "second-process"); err != nil {
 		t.Fatal(err)
 	}
-	roots, err := first.List()
+	roots, err := first.ListStates()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,120 +411,12 @@ func TestIndependentStoresSerializeConcurrentMutations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	roots, err := stores[0].List()
+	roots, err := stores[0].ListStates()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(roots) != 20 {
 		t.Fatalf("roots after concurrent writers = %d, want 20", len(roots))
-	}
-}
-
-func TestLegacyV1StoreMigratesToStructuredV2WithoutChangingTrust(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roots.json")
-	writeTestState(t, path, legacyState{Version: 1, Roots: map[string]Record{
-		"docs": {
-			Alias: "docs", Profile: "unixfs", Gateway: "https://gateway.example",
-			AcceptedRoot: testRoot, Source: "manual",
-			Candidates: []Candidate{{Root: candidateRoot, BaseRoot: testRoot, Source: "local-write"}},
-		},
-	}})
-	legacyBytes, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	record, err := store.Get("docs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.AcceptedRoot != testRoot || len(record.Candidates) != 1 || record.Candidates[0].Root != candidateRoot {
-		t.Fatalf("migrated compatibility record = %#v", record)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var persisted state
-	if err := json.Unmarshal(data, &persisted); err != nil {
-		t.Fatal(err)
-	}
-	value := persisted.Roots["docs"]
-	if persisted.Version != trustStoreVersion || value.Accepted == nil || value.Accepted.Root != testRoot {
-		t.Fatalf("migrated persisted state = %#v", persisted)
-	}
-	if strings.Contains(string(data), `"accepted_root"`) {
-		t.Fatalf("v2 store retained flattened v1 authority field: %s", data)
-	}
-	assertLegacyRecovery(t, path, legacyBytes)
-	if _, err := Open(path); err != nil {
-		t.Fatal(err)
-	}
-	assertLegacyRecovery(t, path, legacyBytes)
-}
-
-func TestLegacyV1MigrationFailureRetainsExactRecoveryArtifact(t *testing.T) {
-	tests := []struct {
-		name      string
-		configure func(*storeFileOps, string, error)
-	}{
-		{
-			name: "live temporary write",
-			configure: func(ops *storeFileOps, _ string, injected error) {
-				write := ops.write
-				ops.write = func(file *os.File, data []byte) (int, error) {
-					name := filepath.Base(file.Name())
-					if strings.HasPrefix(name, ".roots-") && !strings.HasPrefix(name, ".roots-v1-recovery-") {
-						return 0, injected
-					}
-					return write(file, data)
-				}
-			},
-		},
-		{
-			name: "post-rename directory sync",
-			configure: func(ops *storeFileOps, livePath string, injected error) {
-				syncParent := ops.syncParent
-				ops.syncParent = func(path string) error {
-					if path == livePath {
-						return injected
-					}
-					return syncParent(path)
-				}
-			},
-		},
-		{
-			name: "final live-file protection",
-			configure: func(ops *storeFileOps, livePath string, injected error) {
-				secure := ops.secure
-				liveCalls := 0
-				ops.secure = func(path string) error {
-					if path == livePath {
-						liveCalls++
-						if liveCalls == 2 {
-							return injected
-						}
-					}
-					return secure(path)
-				}
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "roots.json")
-			legacyBytes := writeLegacyStore(t, path)
-			injected := errors.New("injected migration failure")
-			ops := defaultStoreFileOps()
-			test.configure(&ops, path, injected)
-			if _, err := openWithFileOps(path, ops); !errors.Is(err, injected) {
-				t.Fatalf("Open error = %v, want injected failure", err)
-			}
-			assertLegacyRecovery(t, path, legacyBytes)
-		})
 	}
 }
 
@@ -563,7 +436,7 @@ func TestObservedHeadNeverBecomesCandidateOrAcceptedImplicitly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot || len(record.Candidates) != 1 || record.Candidates[0].Root != candidateRoot {
+	if record.Accepted.Root != testRoot || len(record.Candidates) != 1 || record.Candidates[0].Root != candidateRoot {
 		t.Fatalf("remote observation changed accepted/candidate state: %#v", record)
 	}
 	state, err := store.GetState("docs")
@@ -598,16 +471,6 @@ func TestObservedOnlyAliasRequiresExplicitObservationAcceptance(t *testing.T) {
 	if _, err := store.ObserveHead("docs", observedHead(testRoot, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get("docs"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("compatibility Get exposed observation-only alias: %v", err)
-	}
-	compatibilityRecords, err := store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(compatibilityRecords) != 0 {
-		t.Fatalf("compatibility List exposed observation-only state: %#v", compatibilityRecords)
-	}
 	states, err := store.ListStates()
 	if err != nil {
 		t.Fatal(err)
@@ -615,7 +478,7 @@ func TestObservedOnlyAliasRequiresExplicitObservationAcceptance(t *testing.T) {
 	if len(states) != 1 || states[0].Accepted != nil || len(states[0].ObservedHeads) != 1 {
 		t.Fatalf("structured state omitted observation-only alias: %#v", states)
 	}
-	if _, _, err := AcceptedRoot(store, "docs"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := AcceptedRoot(store, "docs"); !errors.Is(err, ErrNoAcceptedRoot) {
 		t.Fatalf("observed-only alias accepted-root error = %v", err)
 	}
 	if _, err := store.AddCandidate("docs", candidateRoot, testRoot, "local-write"); !errors.Is(err, ErrStaleCandidate) {
@@ -632,7 +495,7 @@ func TestObservedOnlyAliasRequiresExplicitObservationAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != testRoot || len(record.Candidates) != 0 || len(state.ObservedHeads) != 1 {
+	if record.Accepted.Root != testRoot || len(record.Candidates) != 0 || len(state.ObservedHeads) != 1 {
 		t.Fatalf("explicit observation acceptance record=%#v state=%#v", record, state)
 	}
 }
@@ -676,7 +539,7 @@ func TestObserveHeadRejectsMalformedTupleWithoutCreatingAlias(t *testing.T) {
 	if _, err := store.ObserveHead("docs", malformed); err == nil {
 		t.Fatal("ObserveHead accepted a corrupt remote root")
 	}
-	if _, err := store.Get("docs"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetState("docs"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("malformed observation created trust state: %v", err)
 	}
 }
@@ -715,37 +578,25 @@ func writeTestState(t *testing.T, path string, value any) {
 	}
 }
 
-func writeLegacyStore(t *testing.T, path string) []byte {
-	t.Helper()
-	value := legacyState{Version: 1, Roots: map[string]Record{
-		"docs": {Alias: "docs", AcceptedRoot: testRoot, Profile: "unixfs", Source: "manual"},
-	}}
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
-func assertLegacyRecovery(t *testing.T, path string, want []byte) {
-	t.Helper()
-	recoveryPath := LegacyRecoveryPath(path)
-	got, err := os.ReadFile(recoveryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("legacy recovery bytes changed:\n got %q\nwant %q", got, want)
-	}
-	info, err := os.Stat(recoveryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("legacy recovery mode = %o, want owner-only", info.Mode().Perm())
+func TestOpenRejectsOtherVersionsWithoutRewritingState(t *testing.T) {
+	for _, version := range []int{0, 1, 3} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "roots.json")
+			writeTestState(t, path, state{Version: version, Roots: map[string]RootState{}})
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Open(path); err == nil {
+				t.Fatal("accepted unsupported trust state")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("rejected state was rewritten")
+			}
+		})
 	}
 }

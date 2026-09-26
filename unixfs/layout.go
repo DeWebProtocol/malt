@@ -3,7 +3,6 @@ package unixfs
 import (
 	"context"
 	"fmt"
-	cid "github.com/ipfs/go-cid"
 	"strings"
 )
 
@@ -26,7 +25,7 @@ type Layout interface {
 }
 
 // ParseLayoutKind validates a persisted layout identifier. Empty values are
-// deliberately rejected so compatibility defaults remain caller-owned.
+// deliberately rejected so application defaults remain caller-owned.
 func ParseLayoutKind(raw string) (LayoutKind, error) {
 	kind := LayoutKind(strings.ToLower(strings.TrimSpace(raw)))
 	switch kind {
@@ -56,7 +55,7 @@ type flatLayout struct{}
 func (flatLayout) Kind() LayoutKind { return LayoutFlatV1 }
 
 func (flatLayout) Materialize(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
-	return materializeFlatDirectory(ctx, roots, blocks, node)
+	return materializeDirectory(ctx, roots, blocks, node, LayoutFlatV1, true)
 }
 
 type hybridLayout struct{}
@@ -64,18 +63,12 @@ type hybridLayout struct{}
 func (hybridLayout) Kind() LayoutKind { return LayoutHybridV1 }
 
 func (hybridLayout) Materialize(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
-	return materializeHybridDirectory(ctx, roots, blocks, node)
+	return materializeDirectory(ctx, roots, blocks, node, LayoutHybridV1, true)
 }
 
 type rootedLayout struct{}
 
 func (rootedLayout) Kind() LayoutKind { return LayoutRootedV1 }
 func (rootedLayout) Materialize(ctx context.Context, roots StagedRootWriter, blocks StagedBlockStore, node *StagedNode) (*StagedMaterializeResult, error) {
-	if _, ok := roots.(interface {
-		UpdateStagedRoot(context.Context, cid.Cid, map[string]string) (cid.Cid, error)
-		CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
-	}); !ok {
-		return nil, fmt.Errorf("rooted-v1 requires the typed authentication adapter")
-	}
-	return materializeDirectoryProjection(ctx, roots, blocks, node, false)
+	return materializeDirectory(ctx, roots, blocks, node, LayoutRootedV1, true)
 }

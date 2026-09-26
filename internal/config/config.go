@@ -12,6 +12,7 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
+	"github.com/dewebprotocol/malt-client/internal/strictjson"
 )
 
 const (
@@ -134,22 +135,7 @@ func Load(path string) (*Config, error) {
 	if err := securefile.Secure(path); err != nil {
 		return nil, fmt.Errorf("protect runtime config: %w", err)
 	}
-	var legacy struct {
-		Backup struct {
-			Jobs      json.RawMessage `json:"jobs"`
-			StatePath json.RawMessage `json:"state_path"`
-		} `json:"backup"`
-	}
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return nil, fmt.Errorf("decode runtime config: %w", err)
-	}
-	if len(legacy.Backup.Jobs) != 0 {
-		return nil, fmt.Errorf("legacy backup.jobs is no longer supported; create Plan bindings with `malt backup bind` and schedules with `malt backup schedule set`")
-	}
-	if len(legacy.Backup.StatePath) != 0 {
-		return nil, fmt.Errorf("legacy backup.state_path is no longer supported; remove it and use the Plan-only backup.history_dir")
-	}
-	if err := json.Unmarshal(data, defaults); err != nil {
+	if err := strictjson.Decode(data, defaults); err != nil {
 		return nil, fmt.Errorf("decode runtime config: %w", err)
 	}
 	defaults.applyDefaults()

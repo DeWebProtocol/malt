@@ -208,14 +208,9 @@ leave the durable stash pending. This metadata is distinct from the accepted
 root policy in package `trust`.
 
 Bucket workspace schema version 3 persists branch-qualified workspace keys and
-`request_frozen` explicitly. When a version 1 file is opened, every pending
-stash is conservatively treated as
-possibly sent: its original base, push ID, message, and change-set are frozen
-and atomically rewritten as version 3 before retry is possible. Version 1 had
-no durable sent/not-sent distinction, so this rule also freezes a legacy stash
-that in fact never reached Gateway. A version 2 file must contain an explicit
-boolean `request_frozen` for every stash before its main-only key is migrated;
-incomplete v2 records are rejected rather than interpreted as unsent work.
+an explicit boolean `request_frozen` for every stash. Only version 3 is
+accepted. Earlier schemas, unknown fields, and missing freeze markers are
+rejected without rewriting the state file.
 
 ## Reusable application use cases
 
@@ -365,23 +360,21 @@ Package `trust` owns three durable, disjoint states:
   one accepted base; and
 - `AcceptedRootState` alone is authoritative for reads.
 
-Trust-store schema v2 persists those states separately. Opening schema v1
-first retains an owner-only, exact-byte recovery artifact at
-`<trust-store>.v1-recovery`, then atomically migrates its flattened accepted
-root and candidates to v2. The runtime never deletes that rollback artifact
-automatically. The compatibility `Record` API remains available and exposes
-only aliases that already have an accepted root; observation-only aliases are
-visible through `GetState` and `ListStates`. `AcceptedRoot` never falls back
-to response data, an observation, or a candidate. Mutation and UnixFS writer
+Trust-store schema v2 persists these states separately. `RootState` is the
+single read and mutation result model; an observation-only alias has no
+`accepted` field. `AcceptedRoot` returns `ErrNoAcceptedRoot` for that alias and
+never falls back to an observation or candidate. Mutation and UnixFS writer
 results remain candidates until `AcceptCandidate` is called explicitly.
 Remote backup heads use `Roots.ObserveHead`; they cannot pass the candidate
 acceptance route. A user may explicitly promote only a recorded observation
 with `Roots.AcceptObserved` or `malt root accept-observed`.
-Use `malt root state [alias]`, `Store.GetState`, or `Store.ListStates` to
-inspect the structured plane without changing the compatibility shape of
-`Record`. The private local API exposes the same read model at
-`GET /v1/trust-states[/{alias}]` and keeps candidate and observation acceptance
-on separate routes.
+
+Use `malt root list`, `malt root state [alias]`, `Store.GetState`, or
+`Store.ListStates` to inspect the same structured model. The private daemon API
+exposes it at `GET /v1/roots[/{alias}]`; accepted roots appear at
+`accepted.root`, and candidate and observation acceptance have separate routes.
+Only the current trust schema is accepted. There is no flattened `Record`
+adapter, old-state migration, or alternate compatibility endpoint.
 
 Transport does not import or mutate this package.
 
@@ -718,11 +711,6 @@ Merkle DAG evidence is intentionally not converted into a MALT ProofList.
 CARv1 evidence, but public transport does not provide the evaluator-only route
 that obtains such a bundle.
 
-For compatibility tools that need to inspect blocks outside UnixFS, import
-`github.com/dewebprotocol/malt-client/merkledag/ipld`. Its parser verifies
-bytes against the supplied CID before decoding and exposes `ParseBlock`,
-`ResolveLink`, `GetAllLinks`, and `FollowLink`; applications may register
-additional bounded codecs.
 
 ## CLI output
 
@@ -744,8 +732,10 @@ malt bucket branch <name> [--from commit-id]
 
 Native `malt add` and `malt rm` first read the selected Bucket's immutable
 layout, materialize with that implementation, and stage their results
-automatically. An explicit `malt add --layout` that disagrees with the Bucket
-is rejected before payload upload. `bucket stage` is the explicit bridge for
+automatically. `resolve`, `stat`, and `cat` use that same selected layout.
+An explicit `--layout` that disagrees with the Bucket is rejected before content
+work. Without a selected Bucket, content commands default to `hybrid-v1` and
+accept an explicit layout override. `bucket stage` is the explicit bridge for
 candidates materialized by another tool; its base values must have been
 captured before that materialization, and the external tool remains responsible
 for using the Bucket's persisted layout.

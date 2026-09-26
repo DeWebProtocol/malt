@@ -19,6 +19,7 @@ import (
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	clientdaemon "github.com/dewebprotocol/malt-client/internal/daemon"
+	"github.com/dewebprotocol/malt-client/internal/filelock"
 	clientruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 	truststore "github.com/dewebprotocol/malt-client/trust"
@@ -484,4 +485,12 @@ func removeDaemonStateIfMatch(path string, expected daemonState) error {
 		return nil
 	}
 	return os.Remove(path)
+}
+
+func acquireDaemonLifecycleLock(path string) (func() error, error) {
+	unlock, err := filelock.TryAcquire(path)
+	if err != nil {
+		return nil, fmt.Errorf("another daemon lifecycle operation is in progress: %w", err)
+	}
+	return unlock, nil
 }

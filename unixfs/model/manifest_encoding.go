@@ -8,7 +8,7 @@
 // V2 bytes are canonical: entries are ordered by UTF-8 bytes, object fields
 // have the order shown above, insignificant whitespace is forbidden, and JSON
 // strings use the locked encoder below. Only the current V2 codec is accepted.
-package manifest
+package unixfs
 
 import (
 	"bytes"
@@ -21,42 +21,15 @@ import (
 	"unicode/utf8"
 )
 
-const (
-	VersionV2 = 2
-)
-
-// EntryType is the UnixFS projection assigned to one immediate child by its
-// parent directory manifest. It is independent of the target's MALT semantic
-// kind.
-type EntryType string
-
-const (
-	EntryTypeDir  EntryType = "dir"
-	EntryTypeFile EntryType = "file"
-)
-
-// DirectoryEntry is one immediate child projection.
-type DirectoryEntry struct {
-	Name string    `json:"name"`
-	Type EntryType `json:"type"`
-}
-
-// DirectoryManifest is the decoded application manifest. Version is selected
-// by the payload CID codec and is not duplicated in the JSON body.
-type DirectoryManifest struct {
-	Version int
-	Entries []DirectoryEntry
-}
-
 var (
 	// ErrInvalidManifest indicates JSON that is not a valid directory manifest.
 	ErrInvalidManifest = errors.New("invalid directory manifest")
 )
 
-// ParseDirectoryJSON decodes canonical typed manifest bytes. Non-canonical
+// parseDirectoryJSON decodes canonical typed manifest bytes. Non-canonical
 // encodings fail closed so every implementation computes the same CID for the
 // same normalized manifest.
-func ParseDirectoryJSON(data []byte) (*DirectoryManifest, error) {
+func parseDirectoryJSON(data []byte) (*DirectoryManifest, error) {
 	if !utf8.Valid(data) {
 		return nil, fmt.Errorf("%w: manifest is not UTF-8", ErrInvalidManifest)
 	}
@@ -96,11 +69,11 @@ func ParseDirectoryJSON(data []byte) (*DirectoryManifest, error) {
 			return nil, fmt.Errorf("%w: entries[%d].type: %w", ErrInvalidManifest, index, err)
 		}
 	}
-	manifest := &DirectoryManifest{Version: VersionV2, Entries: entries}
-	if err := Validate(manifest); err != nil {
+	manifest := &DirectoryManifest{Version: DirectoryManifestVersionV2, Entries: entries}
+	if err := validateDirectoryManifest(manifest); err != nil {
 		return nil, err
 	}
-	canonical, err := MarshalDirectoryEntries(entries)
+	canonical, err := marshalDirectoryEntries(entries)
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +83,12 @@ func ParseDirectoryJSON(data []byte) (*DirectoryManifest, error) {
 	return manifest, nil
 }
 
-// Validate checks version, type, and sorted unique immediate-child invariants.
-func Validate(manifest *DirectoryManifest) error {
+// validateDirectoryManifest checks version, type, and sorted unique immediate-child invariants.
+func validateDirectoryManifest(manifest *DirectoryManifest) error {
 	if manifest == nil {
 		return fmt.Errorf("%w: nil manifest", ErrInvalidManifest)
 	}
-	if manifest.Version != VersionV2 {
+	if manifest.Version != DirectoryManifestVersionV2 {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidManifest, manifest.Version)
 	}
 	previous := ""
@@ -123,7 +96,7 @@ func Validate(manifest *DirectoryManifest) error {
 		if err := validateImmediateChildName(entry.Name); err != nil {
 			return fmt.Errorf("%w: entries[%d]: %w", ErrInvalidManifest, index, err)
 		}
-		if entry.Type != EntryTypeDir && entry.Type != EntryTypeFile {
+		if entry.Type != DirectoryEntryTypeDir && entry.Type != DirectoryEntryTypeFile {
 			return fmt.Errorf("%w: entries[%d]: unsupported type %q", ErrInvalidManifest, index, entry.Type)
 		}
 		if index > 0 && entry.Name <= previous {
@@ -171,23 +144,23 @@ func hasBoundaryWhitespace(name string) bool {
 	return unicode.IsSpace(first) || unicode.IsSpace(last) || first == '\ufeff' || last == '\ufeff'
 }
 
-// Normalize returns a sorted copy of entries. Duplicate names are rejected
+// normalizeDirectoryEntries returns a sorted copy of entries. Duplicate names are rejected
 // rather than resolved by implementation-specific first/last-wins behavior.
-func Normalize(entries []DirectoryEntry) ([]DirectoryEntry, error) {
+func normalizeDirectoryEntries(entries []DirectoryEntry) ([]DirectoryEntry, error) {
 	normalized := slices.Clone(entries)
 	slices.SortFunc(normalized, func(left, right DirectoryEntry) int {
 		return strings.Compare(left.Name, right.Name)
 	})
-	manifest := &DirectoryManifest{Version: VersionV2, Entries: normalized}
-	if err := Validate(manifest); err != nil {
+	manifest := &DirectoryManifest{Version: DirectoryManifestVersionV2, Entries: normalized}
+	if err := validateDirectoryManifest(manifest); err != nil {
 		return nil, err
 	}
 	return normalized, nil
 }
 
-// MarshalDirectoryEntries emits the locked canonical JSON bytes for V2.
-func MarshalDirectoryEntries(entries []DirectoryEntry) ([]byte, error) {
-	normalized, err := Normalize(entries)
+// marshalDirectoryEntries emits the locked canonical JSON bytes for V2.
+func marshalDirectoryEntries(entries []DirectoryEntry) ([]byte, error) {
+	normalized, err := normalizeDirectoryEntries(entries)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-package format
+package unixfs
 
 import (
 	maltcid "github.com/dewebprotocol/malt-core/maltcid"
@@ -11,7 +11,7 @@ func StorageKindFromCID(c cid.Cid) string {
 		return ""
 	}
 	switch c.Prefix().Codec {
-	case cid.Raw, CodecMaltManifestV2:
+	case cid.Raw, DirectoryManifestCodec:
 		return "raw"
 	}
 	descriptor, _, err := maltcid.ParseRoot(c)

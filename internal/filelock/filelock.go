@@ -12,12 +12,27 @@ import (
 )
 
 func Acquire(path string, timeout time.Duration) (func() error, error) {
+	if timeout <= 0 {
+		return nil, fmt.Errorf("local lock timeout must be positive")
+	}
+	return acquirePath(path, timeout)
+}
+
+// AcquireBlocking waits for a short serialized state transition without a
+// deadline. Trust promotions and accepted-root fences use the same primitive.
+func AcquireBlocking(path string) (func() error, error) {
+	return acquirePath(path, -1)
+}
+
+// TryAcquire fails immediately if another process holds the lock.
+func TryAcquire(path string) (func() error, error) {
+	return acquirePath(path, 0)
+}
+
+func acquirePath(path string, timeout time.Duration) (func() error, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, fmt.Errorf("local lock path is empty")
-	}
-	if timeout <= 0 {
-		return nil, fmt.Errorf("local lock timeout must be positive")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err

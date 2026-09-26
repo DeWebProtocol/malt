@@ -72,23 +72,6 @@ func TestCurrentPlanFilesystemCapabilityAndErrorShapesCompile(t *testing.T) {
 	_ = PlanFailure{"", "", "", "", false, "", false, nil, "", "", "", false, ""}
 }
 
-type legacyPlanRootPolicy struct{}
-
-func (legacyPlanRootPolicy) AcceptedRoot(string) (cid.Cid, error)                    { return cid.Undef, nil }
-func (legacyPlanRootPolicy) ObserveCandidate(string, cid.Cid, cid.Cid, string) error { return nil }
-
-func TestLegacyPlanRootPolicyRemainsSourceCompatibleAndFailsClosedForObservation(t *testing.T) {
-	var legacy PlanRootPolicy = legacyPlanRootPolicy{}
-	service := &PlanService{
-		plan:  Plan{ID: "plan-one", Name: "documents", BucketID: "bucket-one", Branch: "main"},
-		sync:  &fakeSync{workspace: bucketsync.Workspace{Remote: bucketsync.Head{CommitID: "commit-one", Root: "bafkqaaa", Revision: 1}}},
-		roots: legacy,
-	}
-	if _, err := service.acceptedObservedRoot(t.Context(), cid.Undef); err == nil || !strings.Contains(err.Error(), "does not support remote head observations") {
-		t.Fatalf("legacy policy observation error = %v", err)
-	}
-}
-
 func TestAcceptedObservedRootRecordsObservationNotCandidate(t *testing.T) {
 	remoteRoot := cid.MustParse("bafkqaaa")
 	policy := &recordingPlanRootPolicy{acceptedErr: errors.New("no accepted root")}
@@ -574,7 +557,7 @@ func TestPlanBackupSkipsUnchangedBindings(t *testing.T) {
 	}
 }
 
-func TestPlanBackupRepublishesLegacyArchiveResultAsEncryptedFilesystem(t *testing.T) {
+func TestPlanBackupRejectsRetiredArchiveResult(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -584,7 +567,7 @@ func TestPlanBackupRepublishesLegacyArchiveResultAsEncryptedFilesystem(t *testin
 	}
 	now := time.Now().UTC()
 	plan := Plan{
-		ID: "plan_migrate", Name: "documents", BucketID: "bucket-a", Branch: "main", CreatedAt: now,
+		ID: "plan_retired", Name: "documents", BucketID: "bucket-a", Branch: "main", CreatedAt: now,
 		Bindings: []Binding{{ID: "binding_first", Name: "first", Source: source, PathName: "first", CreatedAt: now}},
 	}
 	var order []string
@@ -620,11 +603,8 @@ func TestPlanBackupRepublishesLegacyArchiveResultAsEncryptedFilesystem(t *testin
 		t.Fatal(err)
 	}
 	result, err := service.Backup(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Skipped || result.Profile != encryptedfs.ProfileID || filesystem.manifestBuilds != 1 {
-		t.Fatalf("legacy profile migration result=%#v manifest builds=%d", result, filesystem.manifestBuilds)
+	if err == nil || !strings.Contains(err.Error(), "unsupported profile") || result != nil || len(order) != 0 {
+		t.Fatalf("retired history result=%#v error=%v work=%v", result, err, order)
 	}
 }
 
@@ -663,7 +643,7 @@ func TestPlanBackupRejectsLegacyPendingProfileBeforeRemoteWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := service.Backup(t.Context(), "")
-	if !errors.Is(err, ErrPendingWorkspace) || !strings.Contains(err.Error(), "previous MALT runtime") {
+	if !errors.Is(err, ErrPendingWorkspace) || !strings.Contains(err.Error(), "unsupported profile") {
 		t.Fatalf("legacy pending error = %v", err)
 	}
 	if result == nil || result.Profile != "malt-backup/" {

@@ -14,24 +14,19 @@ import (
 // Flat directories bind manifest CIDs; hybrid directories bind child Roots and
 // include descendant labels. Rooted directories bind immediate children only.
 func authenticationBindings(node *treeNode, layout unixfs.LayoutKind) map[string]cid.Cid {
-	out := map[string]cid.Cid{}
-	var collect func(*treeNode, string)
-	collect = func(parent *treeNode, prefix string) {
-		for _, name := range sortedChildNames(parent) {
-			child := parent.children[name]
-			label := prefix + name
-			target := child.key
-			if layout == unixfs.LayoutFlatV1 && child.kind == model.DirectoryEntryTypeDir {
-				target = child.manifest
-			}
-			out[label] = target
-			if layout != unixfs.LayoutRootedV1 && child.kind == model.DirectoryEntryTypeDir {
-				collect(child, label+"/")
-			}
+	children := make([]unixfs.DirectoryChild, 0, len(node.children))
+	for _, name := range sortedChildNames(node) {
+		child := node.children[name]
+		projected := unixfs.DirectoryChild{
+			Name: name, Directory: child.kind == model.DirectoryEntryTypeDir,
+			Root: child.key, Manifest: child.manifest,
 		}
+		if projected.Directory && layout != unixfs.LayoutRootedV1 {
+			projected.Descendants = authenticationBindings(child, layout)
+		}
+		children = append(children, projected)
 	}
-	collect(node, "")
-	return out
+	return unixfs.ProjectDirectoryBindings(layout, children)
 }
 
 func authenticationEntries(node *treeNode, layout unixfs.LayoutKind) []engine.Entry {

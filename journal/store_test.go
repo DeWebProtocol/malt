@@ -55,7 +55,7 @@ func TestJournalReplayOrderRetryIdentityAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := reopened.Pending()
+	pending, err := reopened.Replayable()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestConflictResolutionCompletionAndPruningRemainExplicit(t *testing.T) {
 	if completed.Status != StatusCompleted || completed.ResultRoot != resultRoot || completed.RetryID != replacement.RetryID {
 		t.Fatalf("completed operation = %#v", completed)
 	}
-	if pending, err := store.Pending(); err != nil || len(pending) != 0 {
+	if pending, err := store.Replayable(); err != nil || len(pending) != 0 {
 		t.Fatalf("pending after completion = %#v, %v", pending, err)
 	}
 	if reopened, err := Open(journalPath); err != nil {
@@ -494,7 +494,7 @@ func TestConcurrentJournalWritersPreserveEverySequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := reopened.Pending()
+	pending, err := reopened.Replayable()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ func makeCASClient(gatewayRequired bool) (*localruntime.CASBinding, error) {
 	if cfg.Transport.CASPolicy == clientconfig.CASPolicyLocal {
 		return localruntime.ComposeCAS(cfg, nil, gatewayRequired)
 	}
-	options, err := gatewayOptions(cfg, cfg.Gateway.Bucket, "")
+	options, err := localruntime.GatewayOptions(cfg, cfg.Gateway.Bucket, "")
 	if err != nil {
 		return nil, err
 	}

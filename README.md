@@ -435,9 +435,18 @@ and Merkle DAG reads, records writer results as candidates, and exposes
 candidate promotion only as an explicit call. Its `application/add` package
 owns the CLI-independent ignore, symlink, staging, layout selection, and Merkle
 DAG import workflow used by `malt add`. Package `unixfs` defines the
-application-level `Layout` interface and the stable `flat-v1` and
-`hybrid-v1` identifiers. Layout selection does not change MALT Core codecs,
+application-level `Layout` interface and the `flat-v1`, `hybrid-v1`, and `rooted-v1` identifiers. Layout selection does not change MALT Core codecs,
 proofs, commitments, or canonical graph semantics.
+
+Content commands (`resolve`, `stat`, `cat`, and `rm`) share the runtime
+composition root and use the selected Bucket's layout. Without a Bucket they
+default to `hybrid-v1`; `--layout` selects another current layout. An override
+that conflicts with a selected Bucket fails before content work.
+
+Only current pre-release state structures are supported: trust v2, workspace
+v3, and the encrypted UnixFS backup profile. Old schemas and retired fields
+are rejected without migration. The daemon and CLI root APIs return structured
+`RootState` values, including `accepted.root`, candidates, and observed heads.
 
 Explicit CIDs are selected without opening `roots.json`; the trust store is
 required only for an alias. A missing, corrupt, or unwritable alias store
@@ -534,9 +543,8 @@ See [tools/evaluation/README.md](./tools/evaluation/README.md) for the adapter
 inventory and build boundary.
 
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
-typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the
-generic CID-bound raw, DAG-PB, DAG-CBOR, DAG-JSON, and legacy JSON parser/link
-toolkit for runtime-side compatibility code.
+typed diagnostic metrics snapshot. Merkle DAG import and verified link replay
+remain in `merkledag`; the unused generic IPLD parser toolkit is retired.
 
 The CLI exposes the same fail-closed read path without consulting the MALT root
 store:

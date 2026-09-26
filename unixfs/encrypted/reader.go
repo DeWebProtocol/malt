@@ -40,19 +40,9 @@ type Reader struct {
 	lists    unixfs.Reader
 }
 
+// DatasetView is an immutable, locally verified dataset. Only LoadDataset can
+// initialize it; exported accessors return values or independent copies.
 type DatasetView struct {
-	Root        cid.Cid
-	ManifestCID cid.Cid
-	Epoch       uint32
-	Manifest    DatasetManifest
-	Bindings    []BindingView
-	verified    *verifiedDataset
-}
-
-// verifiedDataset is the immutable authority behind a DatasetView. The
-// exported fields remain as read-oriented compatibility snapshots, but no
-// verifier or manifest-reuse path trusts those caller-mutable copies.
-type verifiedDataset struct {
 	root        cid.Cid
 	manifestCID cid.Cid
 	epoch       uint32
@@ -177,8 +167,7 @@ func (v *DatasetView) Binding(id string) (BindingView, bool) {
 	return verified.bindings[index], true
 }
 
-// VerifiedRoot returns the locally verified dataset Root. It never consults
-// the caller-mutable compatibility fields on DatasetView.
+// VerifiedRoot returns the locally verified dataset Root.
 func (v *DatasetView) VerifiedRoot() (cid.Cid, error) {
 	verified, err := v.verifiedSnapshot()
 	if err != nil {
@@ -206,21 +195,15 @@ func (v *DatasetView) VerifiedManifest() (DatasetManifest, error) {
 }
 
 func newVerifiedDatasetView(root, manifestCID cid.Cid, epoch uint32, manifest DatasetManifest, bindings []BindingView) *DatasetView {
-	sealed := &verifiedDataset{
-		root: root, manifestCID: manifestCID, epoch: epoch,
-		manifest: cloneDatasetManifest(manifest), bindings: append([]BindingView(nil), bindings...),
-	}
-	return &DatasetView{
-		Root: root, ManifestCID: manifestCID, Epoch: epoch,
-		Manifest: cloneDatasetManifest(manifest), Bindings: append([]BindingView(nil), bindings...), verified: sealed,
-	}
+	return &DatasetView{root: root, manifestCID: manifestCID, epoch: epoch,
+		manifest: cloneDatasetManifest(manifest), bindings: append([]BindingView(nil), bindings...)}
 }
 
-func (v *DatasetView) verifiedSnapshot() (*verifiedDataset, error) {
-	if v == nil || v.verified == nil || !v.verified.root.Defined() || !v.verified.manifestCID.Defined() {
+func (v *DatasetView) verifiedSnapshot() (*DatasetView, error) {
+	if v == nil || !v.root.Defined() || !v.manifestCID.Defined() {
 		return nil, fmt.Errorf("encrypted UnixFS dataset view is not locally verified")
 	}
-	return v.verified, nil
+	return v, nil
 }
 
 func cloneDatasetManifest(value DatasetManifest) DatasetManifest {

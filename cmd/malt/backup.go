@@ -9,6 +9,7 @@ import (
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	"github.com/dewebprotocol/malt-client/internal/keyring"
+	localruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	"github.com/spf13/cobra"
 )
@@ -212,7 +213,7 @@ func runRestore(cmd *cobra.Command, args []string) (resultErr error) {
 		}
 		discover = true
 		destination = args[0]
-		options, optionsErr := requiredGatewayOptions(cfg, "", "")
+		options, optionsErr := localruntime.RequiredGatewayOptions(cfg, "", "")
 		if optionsErr != nil {
 			return optionsErr
 		}

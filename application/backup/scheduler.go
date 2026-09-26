@@ -14,6 +14,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
+	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	encryptedfs "github.com/dewebprotocol/malt-client/unixfs/encrypted"
 )
 
@@ -354,7 +355,7 @@ func (h *History) load() (historyFile, error) {
 		return historyFile{}, fmt.Errorf("secure backup history permissions: %w", err)
 	}
 	var value historyFile
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := strictjson.Decode(data, &value); err != nil {
 		return historyFile{}, fmt.Errorf("decode backup history: %w", err)
 	}
 	if value.Version != 2 {

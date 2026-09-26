@@ -24,7 +24,7 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 		return result, fmt.Errorf("typed planner returned no Root")
 	}
 	if root.Equals(view.Root) {
-		matched, err := s.roots.(acceptedRootCompleter).CompleteIfAccepted(s.trustAlias, view.Root, func() error { var err error; result.Completed, err = s.queue.CompleteNoChange(ctx, batch); return err })
+		matched, err := s.roots.CompleteIfAccepted(s.trustAlias, view.Root, func() error { var err error; result.Completed, err = s.queue.CompleteNoChange(ctx, batch); return err })
 		if err != nil {
 			return result, err
 		}

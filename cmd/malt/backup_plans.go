@@ -17,6 +17,7 @@ import (
 	"github.com/dewebprotocol/malt-client/application"
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
+	localruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
@@ -123,7 +124,7 @@ func runBackupBind(cmd *cobra.Command, args []string) error {
 	if err := clientbackup.ValidateSource(source, configuredProtectedPaths(cfg, configPath)); err != nil {
 		return err
 	}
-	accountOptions, err := requiredGatewayOptions(cfg, "", "")
+	accountOptions, err := localruntime.RequiredGatewayOptions(cfg, "", "")
 	if err != nil {
 		return err
 	}
@@ -139,7 +140,7 @@ func runBackupBind(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	selectedOptions, err := requiredGatewayOptions(cfg, bucketValue.ID, branch)
+	selectedOptions, err := localruntime.RequiredGatewayOptions(cfg, bucketValue.ID, branch)
 	if err != nil {
 		return err
 	}

@@ -101,22 +101,11 @@ func (r *Roots) CompleteIfAccepted(alias string, expected cid.Cid, operation fun
 	if !expected.Defined() {
 		return false, fmt.Errorf("expected accepted root is undefined")
 	}
-	fence, ok := r.policy.(trust.AcceptedRootFence)
-	if !ok {
-		return false, fmt.Errorf("trusted-root policy does not support accepted-root fencing")
-	}
-	err := fence.WithAcceptedRoot(alias, expected.String(), operation)
+	err := r.policy.WithAcceptedRoot(alias, expected.String(), operation)
 	if errors.Is(err, trust.ErrAcceptedRootChanged) {
 		return false, nil
 	}
 	return err == nil, err
-}
-
-func (r *Roots) List() ([]trust.Record, error) {
-	if r == nil || r.policy == nil {
-		return nil, fmt.Errorf("trusted-root application is nil")
-	}
-	return r.policy.List()
 }
 
 // ListStates returns explicit accepted/candidate/observed trust-plane states.
@@ -124,18 +113,7 @@ func (r *Roots) ListStates() ([]trust.RootState, error) {
 	if r == nil || r.policy == nil {
 		return nil, fmt.Errorf("trusted-root application is nil")
 	}
-	policy, ok := r.policy.(trust.ObservationPolicy)
-	if !ok {
-		return nil, fmt.Errorf("trusted-root policy does not support observations")
-	}
-	return policy.ListStates()
-}
-
-func (r *Roots) Get(alias string) (trust.Record, error) {
-	if r == nil || r.policy == nil {
-		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
-	}
-	return r.policy.Get(alias)
+	return r.policy.ListStates()
 }
 
 // GetState returns the explicit accepted/candidate/observed trust-plane state.
@@ -143,16 +121,12 @@ func (r *Roots) GetState(alias string) (trust.RootState, error) {
 	if r == nil || r.policy == nil {
 		return trust.RootState{}, fmt.Errorf("trusted-root application is nil")
 	}
-	policy, ok := r.policy.(trust.ObservationPolicy)
-	if !ok {
-		return trust.RootState{}, fmt.Errorf("trusted-root policy does not support observations")
-	}
-	return policy.GetState(alias)
+	return r.policy.GetState(alias)
 }
 
-func (r *Roots) Trust(alias, root, profile, gateway, source string) (trust.Record, error) {
+func (r *Roots) Trust(alias, root, profile, gateway, source string) (trust.RootState, error) {
 	if r == nil || r.policy == nil {
-		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
+		return trust.RootState{}, fmt.Errorf("trusted-root application is nil")
 	}
 	return r.policy.Trust(alias, root, profile, gateway, source)
 }
@@ -161,15 +135,15 @@ func (r *Roots) Trust(alias, root, profile, gateway, source string) (trust.Recor
 // accepting it. A defined base must still be the alias's accepted root. An
 // undefined base denotes a bootstrap candidate and is valid only while the
 // alias has no accepted root.
-func (r *Roots) RecordCandidate(alias string, candidateRoot, baseRoot cid.Cid, source string) (trust.Record, error) {
+func (r *Roots) RecordCandidate(alias string, candidateRoot, baseRoot cid.Cid, source string) (trust.RootState, error) {
 	if r == nil || r.policy == nil {
-		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
+		return trust.RootState{}, fmt.Errorf("trusted-root application is nil")
 	}
 	if strings.TrimSpace(alias) == "" {
-		return trust.Record{}, fmt.Errorf("candidate alias is empty")
+		return trust.RootState{}, fmt.Errorf("candidate alias is empty")
 	}
 	if !candidateRoot.Defined() {
-		return trust.Record{}, fmt.Errorf("candidate root must be defined")
+		return trust.RootState{}, fmt.Errorf("candidate root must be defined")
 	}
 	base := ""
 	if baseRoot.Defined() {
@@ -191,11 +165,7 @@ func (r *Roots) HasCandidate(alias string, candidateRoot, baseRoot cid.Cid) (boo
 	if r == nil || r.policy == nil || !candidateRoot.Defined() {
 		return false, fmt.Errorf("candidate inspection request is incomplete")
 	}
-	policy, ok := r.policy.(trust.ObservationPolicy)
-	if !ok {
-		return false, fmt.Errorf("trusted-root policy does not support candidate-state inspection")
-	}
-	state, err := policy.GetState(alias)
+	state, err := r.policy.GetState(alias)
 	if err != nil {
 		return false, err
 	}
@@ -217,15 +187,11 @@ func (r *Roots) ObserveHead(alias, source, datasetID, branch, commitID string, r
 	if r == nil || r.policy == nil {
 		return fmt.Errorf("trusted-root application is nil")
 	}
-	policy, ok := r.policy.(trust.ObservationPolicy)
-	if !ok {
-		return fmt.Errorf("trusted-root policy does not support observations")
-	}
 	rootText := ""
 	if root.Defined() {
 		rootText = root.String()
 	}
-	_, err := policy.ObserveHead(alias, trust.ObservedHead{
+	_, err := r.policy.ObserveHead(alias, trust.ObservedHead{
 		Source: source, DatasetID: datasetID, Branch: branch,
 		CommitID: commitID, Root: rootText, Revision: revision,
 	})
@@ -234,28 +200,24 @@ func (r *Roots) ObserveHead(alias, source, datasetID, branch, commitID string, r
 
 // AcceptCandidate is the only application use case that promotes a recorded
 // candidate. Callers must invoke it as an explicit local action.
-func (r *Roots) AcceptCandidate(alias string, candidate cid.Cid, source string) (trust.Record, error) {
+func (r *Roots) AcceptCandidate(alias string, candidate cid.Cid, source string) (trust.RootState, error) {
 	if r == nil || r.policy == nil {
-		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
+		return trust.RootState{}, fmt.Errorf("trusted-root application is nil")
 	}
 	if !candidate.Defined() {
-		return trust.Record{}, fmt.Errorf("candidate root is undefined")
+		return trust.RootState{}, fmt.Errorf("candidate root is undefined")
 	}
 	return r.policy.AcceptCandidate(alias, candidate.String(), source)
 }
 
 // AcceptObserved explicitly promotes a recorded remote observation. It cannot
 // accept a root that was never recorded by ObserveHead.
-func (r *Roots) AcceptObserved(alias string, observed cid.Cid, profile, gateway, source string) (trust.Record, error) {
+func (r *Roots) AcceptObserved(alias string, observed cid.Cid, profile, gateway, source string) (trust.RootState, error) {
 	if r == nil || r.policy == nil {
-		return trust.Record{}, fmt.Errorf("trusted-root application is nil")
+		return trust.RootState{}, fmt.Errorf("trusted-root application is nil")
 	}
 	if !observed.Defined() {
-		return trust.Record{}, fmt.Errorf("observed root is undefined")
+		return trust.RootState{}, fmt.Errorf("observed root is undefined")
 	}
-	policy, ok := r.policy.(trust.ObservationPolicy)
-	if !ok {
-		return trust.Record{}, fmt.Errorf("trusted-root policy does not support observations")
-	}
-	return policy.AcceptObserved(alias, observed.String(), profile, gateway, source)
+	return r.policy.AcceptObserved(alias, observed.String(), profile, gateway, source)
 }

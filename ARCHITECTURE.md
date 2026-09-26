@@ -358,14 +358,12 @@ profile; it does not change MALT Core or the existing plaintext semantics of
   leave mount control unconfigured until a native adapter exists.
 - `merkledag`: isolated compatibility profile adapter and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
-- `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
-  Merkle-DAG compatibility applications.
 - `internal/daemon`: local Unix-socket/Windows-pipe runtime control API,
   including optional mount lifecycle routes backed by the shared manager.
 - `internal/keyring`: runtime-owned backup epoch keys and per-Bucket derivation.
 - `internal/durablefile`: platform-specific parent-directory synchronization
   after security-sensitive atomic state replacement.
-- `internal/filelock`: bounded cross-process locks for runtime-owned state
+- `internal/filelock`: blocking, timed, and immediate cross-process locks for runtime-owned state
   transitions, with stateful idempotent unlock/close release so an unlock error
   retains a retryable descriptor and a completed unlock is never repeated on an
   invalid handle.

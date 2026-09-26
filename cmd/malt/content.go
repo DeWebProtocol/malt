@@ -1,12 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/dewebprotocol/malt-client/application"
-	client "github.com/dewebprotocol/malt-client/transport"
+	localruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
-	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -34,52 +33,32 @@ var rmCmd = &cobra.Command{
 func init() {
 	catCmd.Flags().Uint64("offset", 0, "range start in bytes (requires --length)")
 	catCmd.Flags().Uint64("length", 0, "range length in bytes (requires --offset)")
-	statCmd.Flags().String("layout", string(unixfs.LayoutHybridV1), "UnixFS application layout (hybrid-v1, flat-v1, rooted-v1)")
-	catCmd.Flags().String("layout", string(unixfs.LayoutHybridV1), "UnixFS application layout (hybrid-v1, flat-v1, rooted-v1)")
-	rmCmd.Flags().String("layout", string(unixfs.LayoutHybridV1), "UnixFS application layout (hybrid-v1, flat-v1, rooted-v1)")
+	statCmd.Flags().String("layout", "", "UnixFS layout override (defaults to the selected Bucket layout, or hybrid-v1 without a Bucket)")
+	catCmd.Flags().String("layout", "", "UnixFS layout override (defaults to the selected Bucket layout, or hybrid-v1 without a Bucket)")
+	rmCmd.Flags().String("layout", "", "UnixFS layout override (defaults to the selected Bucket layout, or hybrid-v1 without a Bucket)")
 	rootCmd.AddCommand(statCmd, catCmd, rmCmd)
 }
 
-func newUnixFSReader(remote *client.Client) (unixfs.Reader, error) {
-	return unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
-}
-
-func newUnixFSWriter(remote *client.Client, kind unixfs.LayoutKind) (unixfs.Writer, error) {
-	layout, err := unixfs.NewLayout(kind)
+func configuredContent(cmd *cobra.Command, selector string) (*localruntime.Content, error) {
+	services, err := configuredRuntimeServices()
 	if err != nil {
 		return nil, err
 	}
-	return unixfs.NewWriter(unixfs.WriterOptions{
-		Remote: remote,
-		Blocks: remote,
-		Layout: layout,
-	})
+	layout, err := cmd.Flags().GetString("layout")
+	if err != nil {
+		return nil, err
+	}
+	return services.OpenContent(cmd.Context(), selector, layout)
 }
 
-func runStat(cmd *cobra.Command, args []string) error {
-	remote, err := gatewayClient()
+func runStat(cmd *cobra.Command, args []string) (resultErr error) {
+	content, err := configuredContent(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	path := optionalPath(args)
-	layoutText, _ := cmd.Flags().GetString("layout")
-	layout, err := unixfs.ParseLayoutKind(layoutText)
-	if err != nil {
-		return err
-	}
-	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Layout: layout})
-	if err != nil {
-		return err
-	}
-	roots, err := rootsForSelector(args[0])
-	if err != nil {
-		return err
-	}
-	app, err := application.NewUnixFS(reader, nil, roots)
-	if err != nil {
-		return err
-	}
-	stat, err := app.Stat(cmd.Context(), args[0], path)
+	defer func() { resultErr = errors.Join(resultErr, content.Close()) }()
+	app := content.UnixFS
+	stat, err := app.Stat(cmd.Context(), args[0], optionalPath(args))
 	if err != nil {
 		return daemonCommandError(err)
 	}
@@ -87,33 +66,18 @@ func runStat(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCat(cmd *cobra.Command, args []string) error {
+func runCat(cmd *cobra.Command, args []string) (resultErr error) {
 	offsetSet := cmd.Flags().Changed("offset")
 	lengthSet := cmd.Flags().Changed("length")
 	if offsetSet != lengthSet {
 		return fmt.Errorf("--offset and --length must be provided together")
 	}
-	remote, err := gatewayClient()
+	content, err := configuredContent(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	layoutText, _ := cmd.Flags().GetString("layout")
-	layout, err := unixfs.ParseLayoutKind(layoutText)
-	if err != nil {
-		return err
-	}
-	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Layout: layout})
-	if err != nil {
-		return err
-	}
-	roots, err := rootsForSelector(args[0])
-	if err != nil {
-		return err
-	}
-	app, err := application.NewUnixFS(reader, nil, roots)
-	if err != nil {
-		return err
-	}
+	defer func() { resultErr = errors.Join(resultErr, content.Close()) }()
+	app := content.UnixFS
 	var result *unixfs.ReadResult
 	if offsetSet {
 		offset, _ := cmd.Flags().GetUint64("offset")
@@ -129,50 +93,15 @@ func runCat(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-func runRemove(cmd *cobra.Command, args []string) error {
-	remote, err := gatewayClient()
+func runRemove(cmd *cobra.Command, args []string) (resultErr error) {
+	content, err := configuredContent(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	roots, err := rootsForSelector(args[0])
-	if err != nil {
-		return err
-	}
-	selected, err := roots.Select(args[0])
-	if err != nil {
-		return err
-	}
-	bucketSyncer, bucketBase, bucketLayout, err := prepareBucketCandidate(cmd.Context(), remote, selected.Root)
-	if err != nil {
-		return err
-	}
-	if bucketSyncer == nil || cmd.Flags().Changed("layout") {
-		value, _ := cmd.Flags().GetString("layout")
-		selected, parseErr := unixfs.ParseLayoutKind(value)
-		if parseErr != nil {
-			return parseErr
-		}
-		if bucketSyncer != nil && selected != bucketLayout {
-			return fmt.Errorf("--layout conflicts with selected Bucket layout")
-		}
-		bucketLayout = selected
-	}
-	writer, err := newUnixFSWriter(remote, bucketLayout)
-	if err != nil {
-		return err
-	}
-	app, err := application.NewUnixFS(writer, writer, roots)
-	if err != nil {
-		return err
-	}
-	result, err := app.RemovePath(cmd.Context(), args[0], args[1])
+	defer func() { resultErr = errors.Join(resultErr, content.Close()) }()
+	result, err := content.RemovePath(cmd.Context(), args[0], args[1])
 	if err != nil {
 		return daemonCommandError(err)
-	}
-	if bucketSyncer != nil {
-		if _, err := bucketSyncer.Stage(result.CandidateRoot, bucketBase, cid.Undef, "malt rm"); err != nil {
-			return fmt.Errorf("candidate %s was materialized but could not be staged: %w", result.CandidateRoot, err)
-		}
 	}
 	printJSON(result)
 	return nil

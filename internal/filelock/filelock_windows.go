@@ -26,7 +26,7 @@ func acquire(path string, timeout time.Duration) (func() error, error) {
 			_ = file.Close()
 			return nil, err
 		}
-		if time.Now().After(deadline) {
+		if timeout >= 0 && time.Now().After(deadline) {
 			_ = file.Close()
 			return nil, fmt.Errorf("timed out waiting for local lock %s", path)
 		}

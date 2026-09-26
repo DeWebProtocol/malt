@@ -38,3 +38,12 @@ UnixFS profile remain under their own runtime contracts.
 
 See [the Go API](go-api.md), [encrypted UnixFS](encrypted-unixfs.md), and the
 [v0.0.5 ownership ledger](v0.0.5-parity.md) for their respective boundaries.
+
+Current runtime simplification keeps one structured trust model and accepts
+only current state schemas. `internal/runtime` binds content commands and
+mounts to the same Bucket layout and gateway credentials. `unixfs` shares one
+directory-binding projection between staged materialization and typed mutation
+planning; `unixfs/model` owns one manifest representation and codec.
+`application/backup` separates backup, sync, restore, and manifest policy from
+the local installation transaction engine, whose dependencies are plan identity
+and filesystem state. Platform locking is shared through `internal/filelock`.

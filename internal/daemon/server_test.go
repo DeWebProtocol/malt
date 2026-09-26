@@ -125,8 +125,8 @@ func TestLocalAPIKeepsCandidateSeparate(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trust status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	record, err := store.Get("docs")
-	if err != nil || record.AcceptedRoot != root {
+	record, err := store.GetState("docs")
+	if err != nil || record.Accepted.Root != root {
 		t.Fatalf("record=%#v err=%v", record, err)
 	}
 }
@@ -162,12 +162,12 @@ func TestLocalAPIAcceptsOnlyRecordedObservationThroughObservationRoute(t *testin
 	if response.Code != http.StatusOK {
 		t.Fatalf("observation acceptance status=%d body=%s", response.Code, response.Body.String())
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	state, stateErr := store.GetState("docs")
-	if err != nil || stateErr != nil || record.AcceptedRoot != root || len(record.Candidates) != 0 || len(state.ObservedHeads) != 1 {
+	if err != nil || stateErr != nil || record.Accepted.Root != root || len(record.Candidates) != 0 || len(state.ObservedHeads) != 1 {
 		t.Fatalf("accepted observation record=%#v state=%#v err=%v stateErr=%v", record, state, err, stateErr)
 	}
-	stateRequest := httptest.NewRequest(http.MethodGet, "/v1/trust-states/docs", nil)
+	stateRequest := httptest.NewRequest(http.MethodGet, "/v1/roots/docs", nil)
 	stateResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(stateResponse, stateRequest)
 	if stateResponse.Code != http.StatusOK || !strings.Contains(stateResponse.Body.String(), `"observed_heads"`) ||

@@ -15,7 +15,6 @@ import (
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	"github.com/dewebprotocol/malt-client/bucketsync"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
-	"github.com/dewebprotocol/malt-client/internal/deviceauth"
 	"github.com/dewebprotocol/malt-client/internal/keyring"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	truststore "github.com/dewebprotocol/malt-client/trust"
@@ -106,7 +105,7 @@ func (s *Services) PlanService(cfg *clientconfig.Config, plan clientbackup.Plan)
 	if err != nil {
 		return nil, err
 	}
-	remoteOptions, err := requiredGatewayOptions(cfg, plan.BucketID, plan.Branch)
+	remoteOptions, err := RequiredGatewayOptions(cfg, plan.BucketID, plan.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -242,33 +241,6 @@ func (e *planEnvironment) Get(selector string) (clientbackup.Plan, error) {
 
 func (e *planEnvironment) PlanService(plan clientbackup.Plan) (clientbackup.PlanOperations, error) {
 	return e.services.PlanService(e.config, plan)
-}
-
-func requiredGatewayOptions(cfg *clientconfig.Config, bucketID, branch string) (gatewayclient.Options, error) {
-	if cfg == nil {
-		return gatewayclient.Options{}, fmt.Errorf("runtime config is nil")
-	}
-	opts := gatewayclient.Options{
-		BaseURL: cfg.GatewayBaseURL(), BucketID: strings.TrimSpace(bucketID),
-		BucketBranch: strings.TrimSpace(branch),
-	}
-	if token := strings.TrimSpace(cfg.Gateway.APIKey); token != "" {
-		opts.TenantBearerToken = token
-		return opts, nil
-	}
-	provider := deviceauth.FileProvider{Path: cfg.Gateway.CredentialPath}
-	value, err := provider.Load()
-	if errors.Is(err, deviceauth.ErrNotFound) {
-		return gatewayclient.Options{}, fmt.Errorf("Gateway account is not authenticated; run `malt login`")
-	}
-	if err != nil {
-		return gatewayclient.Options{}, err
-	}
-	if strings.TrimRight(value.Gateway, "/") != strings.TrimRight(cfg.GatewayBaseURL(), "/") {
-		return gatewayclient.Options{}, fmt.Errorf("stored device credential belongs to %s; run `malt login` for %s", value.Gateway, cfg.GatewayBaseURL())
-	}
-	opts.DeviceAuthorizer = provider
-	return opts, nil
 }
 
 var _ clientbackup.PlanRunner = (*Services)(nil)
