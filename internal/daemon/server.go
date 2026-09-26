@@ -82,7 +82,7 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	s.mux.HandleFunc("GET /v1/roots", func(w http.ResponseWriter, _ *http.Request) {
-		roots, err := s.roots.List()
+		roots, err := s.roots.ListStates()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -90,28 +90,12 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusOK, map[string]any{"roots": roots})
 	})
 	s.mux.HandleFunc("GET /v1/roots/{alias}", func(w http.ResponseWriter, r *http.Request) {
-		record, err := s.roots.Get(r.PathValue("alias"))
+		record, err := s.roots.GetState(r.PathValue("alias"))
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, record)
-	})
-	s.mux.HandleFunc("GET /v1/trust-states", func(w http.ResponseWriter, _ *http.Request) {
-		states, err := s.roots.ListStates()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"states": states})
-	})
-	s.mux.HandleFunc("GET /v1/trust-states/{alias}", func(w http.ResponseWriter, r *http.Request) {
-		state, err := s.roots.GetState(r.PathValue("alias"))
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, state)
 	})
 	s.mux.HandleFunc("PUT /v1/roots/{alias}", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

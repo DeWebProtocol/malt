@@ -1,4 +1,4 @@
-package format
+package unixfs
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ func TestStorageKindFromCIDUsesTypedLayout(t *testing.T) {
 	}
 	raw := cid.NewCidV1(cid.Raw, rawHash)
 	manifestV1 := cid.NewCidV1(0x310001, rawHash)
-	manifestV2 := cid.NewCidV1(CodecMaltManifestV2, rawHash)
+	manifestV2 := cid.NewCidV1(DirectoryManifestCodec, rawHash)
 
 	for name, test := range map[string]struct {
 		cid  cid.Cid

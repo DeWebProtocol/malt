@@ -66,24 +66,18 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadDropsLegacyBackupArchiveTempDirectoryOnRewrite(t *testing.T) {
+func TestLoadRejectsRetiredBackupArchiveTempDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"gateway":{"base_url":"http://127.0.0.1:9090"},"backup":{"temp_dir":"/legacy/archive-staging"}}`), 0o600); err != nil {
+	data := []byte(`{"backup":{"temp_dir":"/legacy/archive-staging"}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), `unknown field "temp_dir"`) {
+		t.Fatalf("retired backup field error = %v", err)
 	}
-	if err := Write(path, loaded); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "temp_dir") || strings.Contains(string(data), "archive-staging") {
-		t.Fatalf("rewritten runtime config retained obsolete archive staging: %s", data)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("rejected config was changed: %q, %v", got, err)
 	}
 }
 
@@ -139,7 +133,7 @@ func TestLoadRejectsLegacyBackupJobs(t *testing.T) {
 		if err := os.WriteFile(path, []byte(`{"backup":{"jobs":`+raw+`}}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "backup.jobs") {
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), `unknown field "jobs"`) {
 			t.Fatalf("legacy backup.jobs=%s error = %v", raw, err)
 		}
 	}
@@ -151,7 +145,7 @@ func TestLoadRejectsLegacyBackupStatePath(t *testing.T) {
 		if err := os.WriteFile(path, []byte(`{"backup":{"state_path":`+raw+`}}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "backup.state_path") {
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), `unknown field "state_path"`) {
 			t.Fatalf("legacy backup.state_path=%s error = %v", raw, err)
 		}
 	}

@@ -391,11 +391,6 @@ func (s *Store) Get(operationID string) (Operation, error) {
 	return result, err
 }
 
-// Pending is the compatibility name for Replayable.
-func (s *Store) Pending() ([]Operation, error) {
-	return s.Replayable()
-}
-
 // Replayable returns ordered local, offline, and pending-upload work. An
 // unresolved conflict is deliberately excluded from automatic replay.
 func (s *Store) Replayable() ([]Operation, error) {

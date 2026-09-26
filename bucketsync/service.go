@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
+	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
+	"github.com/dewebprotocol/malt-client/internal/strictjson"
 	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	cid "github.com/ipfs/go-cid"
 )
@@ -479,22 +481,14 @@ func (s *Service) withState(write bool, operation func() error) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	unlock, err := acquireLock(s.path + ".lock")
+	unlock, err := filelock.Acquire(s.path+".lock", 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("lock Bucket workspace: %w", err)
 	}
 	defer func() { _ = unlock() }()
-	migrated, err := s.reload()
+	err = s.reload()
 	if err != nil {
 		return err
-	}
-	// Version 1 could not distinguish a never-sent stash from one whose
-	// response was lost. Persist the conservative freeze before any operation
-	// can retry or alter its request fingerprint.
-	if migrated {
-		if err := s.write(); err != nil {
-			return fmt.Errorf("migrate Bucket workspace: %w", err)
-		}
 	}
 	if err := operation(); err != nil {
 		return err
@@ -505,98 +499,68 @@ func (s *Service) withState(write bool, operation func() error) error {
 	return s.write()
 }
 
-func (s *Service) reload() (bool, error) {
+func (s *Service) reload() error {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		s.state = persistedState{Version: bucketWorkspaceVersion, Workspaces: map[string]Workspace{}}
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := securefile.Secure(s.path); err != nil {
-		return false, fmt.Errorf("protect Bucket workspace: %w", err)
+		return fmt.Errorf("protect Bucket workspace: %w", err)
 	}
 	var state persistedState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return false, fmt.Errorf("decode Bucket workspace: %w", err)
+	if err := strictjson.Decode(data, &state); err != nil {
+		return fmt.Errorf("decode Bucket workspace: %w", err)
 	}
 	if state.Workspaces == nil {
 		state.Workspaces = map[string]Workspace{}
 	}
-	migrated := false
-	switch state.Version {
-	case 1:
-		// Version 1 omitted RequestFrozen. Treat every pending request as if
-		// it may already have reached the remote executor, preserving its exact fingerprint.
-		for id, workspace := range state.Workspaces {
-			for i := range workspace.Stashes {
-				if workspace.Stashes[i].Status == "pending" {
-					workspace.Stashes[i].RequestFrozen = true
-				}
-			}
-			state.Workspaces[id] = workspace
-		}
-		state.Workspaces = migrateMainWorkspaces(state.Workspaces)
-		state.Version = bucketWorkspaceVersion
-		migrated = true
-	case 2:
-		if err := validateVersionTwoFreezeFields(data); err != nil {
-			return false, err
-		}
-		state.Workspaces = migrateMainWorkspaces(state.Workspaces)
-		state.Version = bucketWorkspaceVersion
-		migrated = true
-	case bucketWorkspaceVersion:
-	default:
-		return false, fmt.Errorf("unsupported Bucket workspace version %d", state.Version)
+	if state.Version != bucketWorkspaceVersion {
+		return fmt.Errorf("unsupported Bucket workspace version %d", state.Version)
+	}
+	if err := validateFreezeFields(data); err != nil {
+		return err
 	}
 	for id, workspace := range state.Workspaces {
 		branch, err := normalizeBranch(workspace.Branch)
 		if err != nil || workspaceKey(workspace.BucketID, branch) != id {
-			return false, fmt.Errorf("Bucket workspace key does not match record")
+			return fmt.Errorf("Bucket workspace key does not match record")
 		}
 		workspace.Branch = branch
 		if err := validateHead(workspace.Base); err != nil {
-			return false, fmt.Errorf("Bucket %s base: %w", id, err)
+			return fmt.Errorf("Bucket %s base: %w", id, err)
 		}
 		if err := validateHead(workspace.Remote); err != nil {
-			return false, fmt.Errorf("Bucket %s remote: %w", id, err)
+			return fmt.Errorf("Bucket %s remote: %w", id, err)
 		}
 		for _, stash := range workspace.Stashes {
 			if stash.ID == "" || stash.PushID == "" || (stash.Status != "pending" && stash.Status != "branched") {
-				return false, fmt.Errorf("Bucket %s has an invalid stash", id)
+				return fmt.Errorf("Bucket %s has an invalid stash", id)
 			}
 			if _, err := cid.Parse(stash.CandidateRoot); err != nil {
-				return false, fmt.Errorf("Bucket %s stash root: %w", id, err)
+				return fmt.Errorf("Bucket %s stash root: %w", id, err)
 			}
 			if err := validateHead(stash.Base); err != nil {
-				return false, fmt.Errorf("Bucket %s stash base: %w", id, err)
+				return fmt.Errorf("Bucket %s stash base: %w", id, err)
 			}
 		}
 	}
 	s.state = state
-	return migrated, nil
+	return nil
 }
 
 func workspaceKey(bucketID, branch string) string {
 	return bucketID + "@" + base64.RawURLEncoding.EncodeToString([]byte(branch))
 }
 
-func migrateMainWorkspaces(values map[string]Workspace) map[string]Workspace {
-	next := make(map[string]Workspace, len(values))
-	for _, workspace := range values {
-		workspace.Branch = "main"
-		next[workspaceKey(workspace.BucketID, workspace.Branch)] = workspace
-	}
-	return next
-}
-
 func normalizeBranch(raw string) (string, error) {
 	return bucketbranch.NormalizeSelector(raw)
 }
 
-func validateVersionTwoFreezeFields(data []byte) error {
+func validateFreezeFields(data []byte) error {
 	var raw struct {
 		Workspaces map[string]struct {
 			Stashes []json.RawMessage `json:"stashes"`

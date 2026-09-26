@@ -366,8 +366,8 @@ func TestRunRecordsAliasResultAsCandidateWithoutAcceptance(t *testing.T) {
 	if execution.BaseRoot != accepted.String() || execution.Alias != "docs" {
 		t.Fatalf("execution = %#v", execution)
 	}
-	record, _ := store.Get("docs")
-	if record.AcceptedRoot != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() {
+	record, _ := store.GetState("docs")
+	if record.Accepted.Root != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() {
 		t.Fatalf("add use case changed trust unexpectedly: %#v", record)
 	}
 }
@@ -402,11 +402,11 @@ func TestRunTreatsCIDShapedAliasAsAliasAndRecordsCandidate(t *testing.T) {
 	if execution.BaseRoot != accepted.String() || execution.Alias != alias {
 		t.Fatalf("execution = %#v, want accepted alias selection", execution)
 	}
-	record, err := store.Get(alias)
+	record, err := store.GetState(alias)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() || record.Candidates[0].BaseRoot != accepted.String() {
+	if record.Accepted.Root != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() || record.Candidates[0].BaseRoot != accepted.String() {
 		t.Fatalf("CID-shaped alias candidate recording = %#v", record)
 	}
 }

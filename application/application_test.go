@@ -125,19 +125,19 @@ func TestUnixFSUseCaseSelectsAcceptedRootAndRecordsCandidateWithoutAcceptance(t 
 	if !facade.removeRoot.Equals(accepted) || !removed.BaseRoot.Equals(accepted) || !removed.CandidateRoot.Equals(candidate) || removed.Accepted {
 		t.Fatalf("remove used root %s and returned %#v", facade.removeRoot, removed)
 	}
-	record, err := store.Get("docs")
+	record, err := store.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() {
+	if record.Accepted.Root != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() {
 		t.Fatalf("candidate recording changed trust unexpectedly: %#v", record)
 	}
 	if _, err := roots.AcceptCandidate("docs", candidate, "explicit-test"); err != nil {
 		t.Fatal(err)
 	}
-	record, _ = store.Get("docs")
-	if record.AcceptedRoot != candidate.String() {
-		t.Fatalf("explicit acceptance left root at %s", record.AcceptedRoot)
+	record, _ = store.GetState("docs")
+	if record.Accepted.Root != candidate.String() {
+		t.Fatalf("explicit acceptance left root at %s", record.Accepted.Root)
 	}
 }
 
@@ -173,8 +173,8 @@ func TestUnixFSUseCaseRejectsWriterClaimingAutomaticAcceptance(t *testing.T) {
 	if _, err := app.AddFile(t.Context(), "docs", "file.txt", []byte("body")); err == nil {
 		t.Fatal("application accepted a writer result marked as automatically accepted")
 	}
-	record, _ := store.Get("docs")
-	if record.AcceptedRoot != accepted.String() || len(record.Candidates) != 0 {
+	record, _ := store.GetState("docs")
+	if record.Accepted.Root != accepted.String() || len(record.Candidates) != 0 {
 		t.Fatalf("rejected result changed trust state: %#v", record)
 	}
 }
@@ -196,8 +196,8 @@ func TestUnixFSUseCaseRejectsCrossRootWriterSplice(t *testing.T) {
 	if _, err := app.AddFile(t.Context(), "docs", "file.txt", []byte("body")); err == nil {
 		t.Fatal("application accepted a writer result bound to another root")
 	}
-	record, _ := store.Get("docs")
-	if record.AcceptedRoot != accepted.String() || len(record.Candidates) != 0 {
+	record, _ := store.GetState("docs")
+	if record.Accepted.Root != accepted.String() || len(record.Candidates) != 0 {
 		t.Fatalf("cross-root result changed trust state: %#v", record)
 	}
 }
@@ -232,7 +232,7 @@ func TestRootsKeepsRemoteObservationOutOfCandidateSelection(t *testing.T) {
 		t.Fatal("candidate acceptance accepted a remote observation")
 	}
 	record, err := roots.AcceptObserved("docs", observed, "unixfs", "", "manual-observation")
-	if err != nil || record.AcceptedRoot != observed.String() {
+	if err != nil || record.Accepted.Root != observed.String() {
 		t.Fatalf("explicit observation acceptance record=%#v err=%v", record, err)
 	}
 }

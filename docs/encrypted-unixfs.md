@@ -174,17 +174,13 @@ key material. The runtime's default commit message is fixed and contains no
 Plan, binding, or path name. A user-supplied commit message is publication
 metadata and may disclose whatever plaintext the user puts in it.
 
-This profile replaces the repository's pre-release tar/gzip backup format. The
-old decoder is intentionally absent. Before upgrading a branch whose only copy
-uses that format, restore it with the previous binary and republish from the
-plaintext tree. Local Plan configuration accepts legacy `archive_name` once
-and emits `path_name`; this configuration migration does not decode old remote
-backup objects. A pending publication journal whose result names the old
-profile is left unchanged and rejected before any Gateway status, stage, or
-push call; complete or discard it with the previous runtime before upgrading.
-Likewise, an interrupted path-based filesystem installation journal from the
-pre-release runtime must be recovered with that runtime before this version
-continues; new installation journals are parent-pinned format version 2.
+Only the current encrypted UnixFS profile is supported. The pre-release
+tar/gzip decoder, `archive_name` and `remote_path` aliases, and automatic
+history migration are absent. Plans use `path_name`; results use `profile`.
+Retired fields, unsupported result profiles, and unsupported installation
+journal versions are rejected without rewriting them or contacting Gateway.
+Current installation journals use parent-pinned format version 2 and retain
+their crash-recovery and quarantine behavior.
 
 The application storage tag `list` remains part of this encrypted profile. It
 selects current Positional authentication and does not call a Core List adapter.

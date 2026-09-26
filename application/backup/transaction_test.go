@@ -16,7 +16,7 @@ func TestRecoverPreparedInstallLeavesOriginalTree(t *testing.T) {
 	entry := makeInstallEntry(t, parent, "binding", "old", "new", true)
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStatePrepared, entry)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestRecoverPartialMultiBindingInstallRestoresAllOriginals(t *testing.T) {
 	second.Phase = installPhasePreserved
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStatePrepared, first, second)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestRecoverCompletedRollbackIsIdempotent(t *testing.T) {
 	entry.Phase = installPhaseInstalled
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStatePrepared, entry)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestRecoverResumesAfterStagingCleanupBeforeJournalRemoval(t *testing.T) {
 	if _, err := os.Stat(journal); err != nil {
 		t.Fatalf("journal was removed before the parent pin: %v", err)
 	}
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestRecoverRetainsJournalAndPinWhenStagingCleanupFails(t *testing.T) {
 	if err := os.Chmod(parent, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	err := service.recoverInstallTransaction(journal)
 	if chmodErr := os.Chmod(parent, 0o700); chmodErr != nil {
 		t.Fatal(chmodErr)
@@ -187,7 +187,7 @@ func TestRecoverPartialMultiBindingRollbackCanResume(t *testing.T) {
 	}
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStatePrepared, blocked, recovered)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err == nil || !strings.Contains(err.Error(), "parent identity") {
 		t.Fatalf("first recovery error = %v", err)
 	}
@@ -214,7 +214,7 @@ func TestRecoverInstalledNewDestinationRemovesUncommittedTree(t *testing.T) {
 	entry.Phase = installPhaseInstalled
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStatePrepared, entry)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestRecoverCommittedInstallKeepsNewTreeAndCleansJournal(t *testing.T) {
 	entry.Phase = installPhaseInstalled
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStateCommitted, entry)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestRecoverInvalidJournalFailsClosed(t *testing.T) {
 	if err := os.WriteFile(journal, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err == nil || !strings.Contains(err.Error(), "unsafe") {
 		t.Fatalf("invalid journal error = %v", err)
 	}
@@ -283,7 +283,7 @@ func TestRecoverQuarantinesEditsMadeAfterInterruptedInstall(t *testing.T) {
 	writeTreeValue(t, entry.Destination, "user-edit")
 	journal := filepath.Join(parent, "transaction.json")
 	writeTestTransaction(t, journal, installStatePrepared, entry)
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	err := service.recoverInstallTransaction(journal)
 	var quarantineErr *RecoveryQuarantineError
 	if !errors.As(err, &quarantineErr) || len(quarantineErr.Paths) != 1 {
@@ -330,7 +330,7 @@ func TestRecoverInstallFailsClosedWhenPinnedParentPathIsReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTreeValue(t, filepath.Join(parent, "binding"), "external")
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
+	service := installer{planID: "plan_test"}
 	if err := service.recoverInstallTransaction(journal); err == nil || !strings.Contains(err.Error(), "parent") {
 		t.Fatalf("replaced parent recovery error = %v", err)
 	}
@@ -341,7 +341,7 @@ func TestRecoverInstallFailsClosedWhenPinnedParentPathIsReplaced(t *testing.T) {
 	}
 }
 
-func TestRecoverLegacyPathBasedInstallJournalRequiresPreviousRuntime(t *testing.T) {
+func TestRecoverRejectsUnsupportedInstallJournal(t *testing.T) {
 	journal := filepath.Join(t.TempDir(), "transaction.json")
 	data, err := json.Marshal(installTransaction{Version: 1, PlanID: "plan_test", State: installStatePrepared})
 	if err != nil {
@@ -350,8 +350,8 @@ func TestRecoverLegacyPathBasedInstallJournalRequiresPreviousRuntime(t *testing.
 	if err := os.WriteFile(journal, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service := &PlanService{plan: Plan{ID: "plan_test"}}
-	if err := service.recoverInstallTransaction(journal); err == nil || !strings.Contains(err.Error(), "previous MALT runtime") {
+	service := installer{planID: "plan_test"}
+	if err := service.recoverInstallTransaction(journal); err == nil || !strings.Contains(err.Error(), "unsupported filesystem installation journal version") {
 		t.Fatalf("legacy install journal error = %v", err)
 	}
 }

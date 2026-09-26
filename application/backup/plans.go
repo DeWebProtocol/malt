@@ -17,6 +17,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/durablefile"
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
+	"github.com/dewebprotocol/malt-client/internal/strictjson"
 )
 
 const planStoreVersion = 1
@@ -46,32 +47,6 @@ type Binding struct {
 	Source    string    `json:"source"`
 	PathName  string    `json:"path_name"`
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// UnmarshalJSON accepts the pre-release archive_name field so existing local
-// Plan configuration can cross the data-model cutover without implying that
-// new snapshots are archives.
-func (b *Binding) UnmarshalJSON(data []byte) error {
-	type bindingWire struct {
-		ID                string    `json:"id"`
-		Name              string    `json:"name"`
-		Source            string    `json:"source"`
-		PathName          string    `json:"path_name"`
-		LegacyArchiveName string    `json:"archive_name"`
-		CreatedAt         time.Time `json:"created_at"`
-	}
-	var wire bindingWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	if wire.PathName != "" && wire.LegacyArchiveName != "" && wire.PathName != wire.LegacyArchiveName {
-		return fmt.Errorf("backup binding path_name conflicts with legacy archive_name")
-	}
-	if wire.PathName == "" {
-		wire.PathName = wire.LegacyArchiveName
-	}
-	*b = Binding{ID: wire.ID, Name: wire.Name, Source: wire.Source, PathName: wire.PathName, CreatedAt: wire.CreatedAt}
-	return nil
 }
 
 type planFile struct {
@@ -433,7 +408,7 @@ func (s *PlanStore) load() (planFile, error) {
 		return planFile{}, fmt.Errorf("secure backup plans: %w", err)
 	}
 	var value planFile
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := strictjson.Decode(data, &value); err != nil {
 		return planFile{}, fmt.Errorf("decode backup plans: %w", err)
 	}
 	if value.Version != planStoreVersion {

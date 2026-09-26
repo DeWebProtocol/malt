@@ -29,6 +29,8 @@ func (fixedRootPolicy) ObserveHead(string, string, string, string, string, cid.C
 	return nil
 }
 
+func (fixedRootPolicy) HasCandidate(string, cid.Cid, cid.Cid) (bool, error) { return false, nil }
+
 func (k fixedKeys) ActiveEpoch() uint32 { return k.epoch }
 func (k fixedKeys) BucketKey(uint32, string) ([32]byte, error) {
 	return k.key, nil

@@ -27,57 +27,34 @@ func TestValidateSourceRejectsProtectedPathInEitherDirection(t *testing.T) {
 	}
 }
 
-func TestBindingMigratesLegacyArchiveNameToPathName(t *testing.T) {
-	created := time.Now().UTC().Format(time.RFC3339Nano)
-	var binding Binding
-	if err := json.Unmarshal([]byte(`{"id":"binding","name":"Documents","source":"/tmp/documents","archive_name":"Documents","created_at":"`+created+`"}`), &binding); err != nil {
-		t.Fatal(err)
-	}
-	if binding.PathName != "Documents" {
-		t.Fatalf("migrated path name = %q", binding.PathName)
-	}
-	data, err := json.Marshal(binding)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "archive_name") || !strings.Contains(string(data), `"path_name":"Documents"`) {
-		t.Fatalf("migrated binding JSON = %s", data)
-	}
-	if err := json.Unmarshal([]byte(`{"path_name":"one","archive_name":"two"}`), &binding); err == nil {
-		t.Fatal("conflicting legacy and current path names were accepted")
-	}
-}
-
-func TestResultMigratesLegacyRemotePathToProfile(t *testing.T) {
-	var result Result
-	if err := json.Unmarshal([]byte(`{"source":"plan","remote_path":"malt-backup/","candidate_root":"bafkqaaa"}`), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Profile != "malt-backup/" {
-		t.Fatalf("migrated result profile = %q", result.Profile)
-	}
-	data, err := json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "remote_path") || !strings.Contains(string(data), `"profile":"malt-backup/"`) {
-		t.Fatalf("migrated result JSON = %s", data)
-	}
-}
-
-func TestResultLegacyProfileMigrationRejectsAmbiguityAndResetsReceiver(t *testing.T) {
-	var result Result
-	if err := json.Unmarshal([]byte(`{"profile":"malt.encrypted-unixfs/v1"}`), &result); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(`{"remote_path":"malt-backup/"}`), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Profile != "malt-backup/" {
-		t.Fatalf("reused result profile = %q", result.Profile)
-	}
-	if err := json.Unmarshal([]byte(`{"profile":"malt.encrypted-unixfs/v1","remote_path":"malt-backup/"}`), &result); err == nil || !strings.Contains(err.Error(), "conflicts") {
-		t.Fatalf("ambiguous result fields error = %v", err)
+func TestCurrentStoresRejectRetiredFieldsWithoutRewriting(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		open       func(string) error
+	}{
+		{"binding", `{"version":1,"plans":{"p":{"bindings":[{"archive_name":"Documents"}]}}}`, func(path string) error { _, err := OpenPlanStore(path); return err }},
+		{"result", `{"version":2,"plans":{"p":{"last_result":{"remote_path":"malt-backup/"}}}}`, func(path string) error {
+			h, err := NewHistory(path)
+			if err != nil {
+				return err
+			}
+			_, err = h.Snapshot()
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.json")
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.open(path); err == nil || !strings.Contains(err.Error(), "unknown field") {
+				t.Fatalf("retired field error = %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != tc.data {
+				t.Fatalf("rejected state changed: %q, %v", got, err)
+			}
+		})
 	}
 }
 

@@ -34,16 +34,11 @@ type PayloadStore interface {
 	Put(context.Context, []byte) (cid.Cid, error)
 }
 
-// RootPolicy supplies only accepted-root selection and candidate recording.
-// It deliberately exposes no acceptance method to this service. A production
-// policy must additionally implement the private acceptedRootCompleter fence
-// before a verified no-change batch can be completed.
+// RootPolicy exposes accepted-root selection, candidate recording and fenced
+// completion. It deliberately has no accepted-root promotion method.
 type RootPolicy interface {
 	AcceptedRoot(string) (cid.Cid, error)
 	ObserveCandidate(string, cid.Cid, cid.Cid, string) error
-}
-
-type acceptedRootCompleter interface {
 	CompleteIfAccepted(string, cid.Cid, func() error) (bool, error)
 }
 
@@ -86,9 +81,6 @@ type Result struct {
 func New(opts Options) (*Service, error) {
 	if opts.Queue == nil || opts.Payloads == nil || opts.Remote == nil || opts.Planner == nil || opts.Roots == nil {
 		return nil, fmt.Errorf("filesystem write-back requires queue, payload, batch materializer, planner, and root-policy capabilities")
-	}
-	if _, ok := opts.Roots.(acceptedRootCompleter); !ok {
-		return nil, fmt.Errorf("filesystem write-back root policy does not support accepted-root fenced completion")
 	}
 	alias := strings.TrimSpace(opts.TrustAlias)
 	if alias == "" {
@@ -153,7 +145,7 @@ func (s *Service) completeCandidate(ctx context.Context, view filesystemservice.
 		return result, fmt.Errorf("record verified filesystem candidate: %w", err)
 	}
 	result.CandidateStored = true
-	roots := s.roots.(acceptedRootCompleter)
+	roots := s.roots
 	var completed []journal.Operation
 	matched, completeErr := roots.CompleteIfAccepted(s.trustAlias, view.Root, func() error {
 		var err error

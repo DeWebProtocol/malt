@@ -48,7 +48,7 @@ var rootListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		roots, err := app.List()
+		roots, err := app.ListStates()
 		if err != nil {
 			return err
 		}

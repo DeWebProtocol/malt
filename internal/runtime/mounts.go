@@ -329,7 +329,7 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 	}
 	writerFactory := &authenticationEngineFactory{}
 	router, err := newGatewayFilesystemRouter(func(datasetID, branch string) (filesystemmount.ViewFilesystem, error) {
-		options, err := requiredGatewayOptions(cfg, datasetID, branch)
+		options, err := RequiredGatewayOptions(cfg, datasetID, branch)
 		if err != nil {
 			return nil, err
 		}
@@ -342,12 +342,8 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 			return nil, err
 		}
 		layoutCtx, layoutCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		bucketInfo, layoutErr := remote.GetBucket(layoutCtx)
+		layout, layoutErr := DatasetLayout(layoutCtx, remote, "")
 		layoutCancel()
-		if layoutErr != nil {
-			return nil, errors.Join(layoutErr, blocks.Close())
-		}
-		layout, layoutErr := unixfs.ParseLayoutKind(string(bucketInfo.Layout))
 		if layoutErr != nil {
 			return nil, errors.Join(layoutErr, blocks.Close())
 		}
@@ -363,7 +359,7 @@ func NewMountManager(cfg *clientconfig.Config) (*filesystemmount.Manager, error)
 		}
 		return &ownedViewFilesystem{ViewFilesystem: service, release: blocks.Close}, nil
 	}, func(ctx context.Context, spec filesystemmount.Spec, view filesystemservice.View, service filesystemmount.ViewFilesystem) (filesystemmount.WritableBinding, error) {
-		options, err := requiredGatewayOptions(cfg, spec.DatasetID, spec.Branch)
+		options, err := RequiredGatewayOptions(cfg, spec.DatasetID, spec.Branch)
 		if err != nil {
 			return nil, err
 		}

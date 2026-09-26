@@ -364,11 +364,11 @@ func TestGatewayWritableBindingReplaysFlatUnixFSAndSurvivesRemount(t *testing.T)
 	if remote.submitted == nil || remote.submitted.Root != result.CandidateRoot {
 		t.Fatalf("submitted bundle=%#v result=%#v", remote.submitted, result)
 	}
-	record, err := trust.Get("docs")
+	record, err := trust.GetState("docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != view.Root.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != result.CandidateRoot {
+	if record.Accepted.Root != view.Root.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != result.CandidateRoot {
 		t.Fatalf("trust record=%#v", record)
 	}
 	newPayload, err := cid.Prefix{Version: 1, Codec: cid.Raw, MhType: 0x12, MhLength: -1}.Sum(newBody)

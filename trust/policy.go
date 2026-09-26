@@ -6,27 +6,17 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// Policy is the compatibility accepted/candidate root boundary. Network
-// transports and application readers may consult it, but they cannot promote
-// a candidate without an explicit AcceptCandidate call. Observation-aware
-// callers use the additive ObservationPolicy.
+// Policy is the current accepted/candidate/observed root boundary. Promotion
+// always requires an explicit local action; durable completion shares its fence.
 type Policy interface {
-	List() ([]Record, error)
-	Get(string) (Record, error)
-	Trust(string, string, string, string, string) (Record, error)
-	AddCandidate(string, string, string, string) (Record, error)
-	AcceptCandidate(string, string, string) (Record, error)
-}
-
-// ObservationPolicy extends the compatibility Policy with explicit remote
-// observation state. Recording an observation cannot mutate an accepted root;
-// AcceptObserved is a separate explicit local action.
-type ObservationPolicy interface {
-	Policy
+	AcceptedRootFence
 	ListStates() ([]RootState, error)
 	GetState(string) (RootState, error)
-	ObserveHead(string, ObservedHead) (Record, error)
-	AcceptObserved(string, string, string, string, string) (Record, error)
+	Trust(string, string, string, string, string) (RootState, error)
+	AddCandidate(string, string, string, string) (RootState, error)
+	AcceptCandidate(string, string, string) (RootState, error)
+	ObserveHead(string, ObservedHead) (RootState, error)
+	AcceptObserved(string, string, string, string, string) (RootState, error)
 }
 
 // AcceptedRootFence is the narrow local durability fence used when completing
@@ -38,24 +28,23 @@ type AcceptedRootFence interface {
 
 // AcceptedRoot resolves an alias to the currently accepted root CID. It never
 // falls back to a candidate or a root supplied by an untrusted response.
-func AcceptedRoot(policy Policy, alias string) (cid.Cid, Record, error) {
+func AcceptedRoot(policy Policy, alias string) (cid.Cid, RootState, error) {
 	if policy == nil {
-		return cid.Undef, Record{}, fmt.Errorf("trusted-root policy is nil")
+		return cid.Undef, RootState{}, fmt.Errorf("trusted-root policy is nil")
 	}
-	record, err := policy.Get(alias)
+	record, err := policy.GetState(alias)
 	if err != nil {
-		return cid.Undef, Record{}, err
+		return cid.Undef, RootState{}, err
 	}
-	if record.AcceptedRoot == "" {
+	if record.Accepted == nil {
 		return cid.Undef, record, ErrNoAcceptedRoot
 	}
-	root, err := cid.Parse(record.AcceptedRoot)
+	root, err := cid.Parse(record.Accepted.Root)
 	if err != nil {
-		return cid.Undef, Record{}, fmt.Errorf("accepted root for %q is invalid: %w", record.Alias, err)
+		return cid.Undef, RootState{}, fmt.Errorf("accepted root for %q is invalid: %w", record.Alias, err)
 	}
 	return root, record, nil
 }
 
 var _ Policy = (*Store)(nil)
-var _ ObservationPolicy = (*Store)(nil)
 var _ AcceptedRootFence = (*Store)(nil)

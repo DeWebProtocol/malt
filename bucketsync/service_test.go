@@ -613,7 +613,7 @@ func TestPushRetryAfterResponseLossReusesFrozenRequest(t *testing.T) {
 	}
 }
 
-func TestVersionTwoStashFreezesRequestOnFirstPush(t *testing.T) {
+func TestCurrentStashFreezesRequestOnFirstPush(t *testing.T) {
 	baseRoot := testCID(t, "base")
 	candidateRoot := testCID(t, "candidate")
 	now := time.Now().UTC()
@@ -641,7 +641,7 @@ func TestVersionTwoStashFreezesRequestOnFirstPush(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), `"request_frozen": false`) {
-		t.Fatalf("version 2 stash did not persist an explicit request_frozen=false: %s", data)
+		t.Fatalf("current stash did not persist an explicit request_frozen=false: %s", data)
 	}
 	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, "first push override"); err == nil {
 		t.Fatal("Push succeeded while Gateway was offline")
@@ -651,102 +651,17 @@ func TestVersionTwoStashFreezesRequestOnFirstPush(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(workspace.Stashes) != 1 || !workspace.Stashes[0].RequestFrozen || workspace.Stashes[0].Message != "first push override" {
-		t.Fatalf("first push did not freeze version 2 stash: %#v", workspace.Stashes)
+		t.Fatalf("first push did not freeze current stash: %#v", workspace.Stashes)
 	}
 }
 
-func TestVersionOnePendingMigrationPreservesPossiblySentRequest(t *testing.T) {
-	baseRoot := testCID(t, "base")
-	candidateRoot := testCID(t, "candidate")
-	changeSet := testCID(t, "change-set")
-	now := time.Now().UTC()
-	path := filepath.Join(t.TempDir(), "buckets.json")
-	base := Head{CommitID: "opaque-base", Root: baseRoot.String(), Revision: 1}
-	writeVersionOneWorkspace(t, path, Workspace{
-		BucketID: "bkt_one", Initialized: true, Base: base, Remote: base,
-		Stashes: []Stash{{
-			ID: "legacy-stash", PushID: "push-original", CandidateRoot: candidateRoot.String(), Base: base,
-			ChangeSetCID: changeSet.String(), Message: "message A", Status: "pending", CreatedAt: now, UpdatedAt: now,
-		}},
-		UpdatedAt: now,
-	})
-
-	candidate := testCommit("opaque-candidate", candidateRoot, baseRoot, []string{"opaque-base"}, "message A", now)
-	candidate.ChangeSetCID = changeSet.String()
-	gateway := &fakeGateway{
-		head: testHead("opaque-base", baseRoot, 1, now),
-		result: transport.ApplyResult{
-			Status: "fast_forward", Head: testHead(candidate.ID, candidateRoot, 2, now), Candidate: candidate, Commit: candidate,
-		},
-	}
-	service, err := OpenRemote(path, gateway, "bkt_one")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	migrated := readPersistedState(t, path)
-	legacy := migrated.Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
-	if migrated.Version != bucketWorkspaceVersion || !legacy.RequestFrozen || legacy.Message != "message A" || legacy.ChangeSetCID != changeSet.String() || legacy.PushID != "push-original" || legacy.Base != base {
-		t.Fatalf("migrated workspace did not preserve frozen request: %#v", migrated)
-	}
-	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, "message B"); err == nil || !strings.Contains(err.Error(), "retry message") {
-		t.Fatalf("changed migrated retry error = %v", err)
-	}
-	if gateway.lastPush.OperationID != "" {
-		t.Fatal("changed migrated retry reached Gateway")
-	}
-	afterRejected := readPersistedState(t, path).Workspaces[workspaceKey("bkt_one", "main")].Stashes[0]
-	if afterRejected.Message != "message A" || afterRejected.ChangeSetCID != changeSet.String() || afterRejected.PushID != "push-original" || !afterRejected.RequestFrozen {
-		t.Fatalf("rejected retry altered migrated request: %#v", afterRejected)
-	}
-
-	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, ""); err != nil {
-		t.Fatal(err)
-	}
-	if gateway.lastPush.Message != "message A" || gateway.lastPush.ChangeSetCID != changeSet.String() || gateway.lastPush.OperationID != "push-original" || gateway.lastPush.BaseCommit != base.CommitID || gateway.lastPush.BaseRoot != base.Root || gateway.lastPush.BaseRevision != base.Revision {
-		t.Fatalf("migrated retry request = %#v", gateway.lastPush)
-	}
-}
-
-func TestVersionOneNeverSentPendingStashIsConservativelyFrozen(t *testing.T) {
+func TestCurrentMissingRequestFrozenIsRejected(t *testing.T) {
 	baseRoot := testCID(t, "base")
 	candidateRoot := testCID(t, "candidate")
 	now := time.Now().UTC()
 	path := filepath.Join(t.TempDir(), "buckets.json")
 	base := Head{CommitID: "opaque-base", Root: baseRoot.String(), Revision: 1}
-	writeVersionOneWorkspace(t, path, Workspace{
-		BucketID: "bkt_one", Initialized: true, Base: base, Remote: base,
-		Stashes: []Stash{{
-			ID: "never-sent", PushID: "push-never-sent", CandidateRoot: candidateRoot.String(), Base: base,
-			Message: "original", Status: "pending", CreatedAt: now, UpdatedAt: now,
-		}},
-		UpdatedAt: now,
-	})
-
-	service, err := OpenRemote(path, &fakeGateway{}, "bkt_one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := service.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(workspace.Stashes) != 1 || !workspace.Stashes[0].RequestFrozen || workspace.Stashes[0].Message != "original" {
-		t.Fatalf("never-sent version 1 stash was not conservatively frozen: %#v", workspace.Stashes)
-	}
-	persisted := readPersistedState(t, path)
-	if persisted.Version != bucketWorkspaceVersion || !persisted.Workspaces[workspaceKey("bkt_one", "main")].Stashes[0].RequestFrozen {
-		t.Fatalf("version 1 migration was not durable before retry: %#v", persisted)
-	}
-}
-
-func TestVersionTwoMissingRequestFrozenIsRejected(t *testing.T) {
-	baseRoot := testCID(t, "base")
-	candidateRoot := testCID(t, "candidate")
-	now := time.Now().UTC()
-	path := filepath.Join(t.TempDir(), "buckets.json")
-	base := Head{CommitID: "opaque-base", Root: baseRoot.String(), Revision: 1}
-	writeWorkspaceWithoutRequestFrozen(t, path, 2, Workspace{
+	writeWorkspaceWithoutRequestFrozen(t, path, bucketWorkspaceVersion, Workspace{
 		BucketID: "bkt_one", Initialized: true, Base: base, Remote: base,
 		Stashes: []Stash{{
 			ID: "incomplete-v2", PushID: "push-incomplete", CandidateRoot: candidateRoot.String(), Base: base,
@@ -756,7 +671,7 @@ func TestVersionTwoMissingRequestFrozenIsRejected(t *testing.T) {
 	})
 
 	if _, err := OpenRemote(path, &fakeGateway{}, "bkt_one"); err == nil || !strings.Contains(err.Error(), "lacks explicit request_frozen") {
-		t.Fatalf("Open error for incomplete version 2 state = %v", err)
+		t.Fatalf("Open error for incomplete current state = %v", err)
 	}
 }
 
@@ -767,23 +682,18 @@ func testHead(commit string, root cid.Cid, revision uint64, now time.Time) trans
 	}
 }
 
-func writeVersionOneWorkspace(t *testing.T, path string, workspace Workspace) {
-	t.Helper()
-	writeWorkspaceWithoutRequestFrozen(t, path, 1, workspace)
-}
-
 func writeWorkspaceWithoutRequestFrozen(t *testing.T, path string, version int, workspace Workspace) {
 	t.Helper()
-	state := persistedState{Version: version, Workspaces: map[string]Workspace{workspace.BucketID: workspace}}
+	state := persistedState{Version: version, Workspaces: map[string]Workspace{workspaceKey(workspace.BucketID, "main"): workspace}}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var legacy map[string]any
-	if err := json.Unmarshal(data, &legacy); err != nil {
+	var persisted map[string]any
+	if err := json.Unmarshal(data, &persisted); err != nil {
 		t.Fatal(err)
 	}
-	workspaces, ok := legacy["workspaces"].(map[string]any)
+	workspaces, ok := persisted["workspaces"].(map[string]any)
 	if !ok {
 		t.Fatal("version 1 fixture has no workspaces object")
 	}
@@ -801,7 +711,7 @@ func writeWorkspaceWithoutRequestFrozen(t *testing.T, path string, version int, 
 			delete(stashObject, "request_frozen")
 		}
 	}
-	data, err = json.MarshalIndent(legacy, "", "  ")
+	data, err = json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -869,4 +779,27 @@ func (g *delayedHeadGateway) DatasetBinding() transport.DatasetBinding {
 }
 func (g *delayedPushGateway) DatasetBinding() transport.DatasetBinding {
 	return testDatasetBinding(g.head)
+}
+
+func TestRejectsRetiredWorkspaceVersions(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		path := filepath.Join(t.TempDir(), "buckets.json")
+		before, err := json.Marshal(persistedState{Version: version, Workspaces: map[string]Workspace{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, before, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := OpenRemote(path, &fakeGateway{}, "bkt_one"); err == nil {
+			t.Fatal("accepted retired workspace version")
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("rejected workspace was rewritten")
+		}
+	}
 }

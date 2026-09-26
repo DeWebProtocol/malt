@@ -20,7 +20,7 @@ func TestDirectoryManifestV2GoldenVector(t *testing.T) {
 	if string(block.Data) != wantPayload {
 		t.Fatalf("payload = %q", block.Data)
 	}
-	if block.Codec != unixfs.DirectoryManifestCodecV2 {
+	if block.Codec != unixfs.DirectoryManifestCodec {
 		t.Fatalf("codec = 0x%x", block.Codec)
 	}
 	value, err := unixfs.NewDirectoryManifestCID(block.Data)

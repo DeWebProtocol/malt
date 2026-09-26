@@ -25,7 +25,7 @@ func acquire(path string, timeout time.Duration) (func() error, error) {
 		if !os.IsExist(err) {
 			return nil, err
 		}
-		if time.Now().After(deadline) {
+		if timeout >= 0 && time.Now().After(deadline) {
 			return nil, fmt.Errorf("timed out waiting for local lock %s", path)
 		}
 		time.Sleep(10 * time.Millisecond)

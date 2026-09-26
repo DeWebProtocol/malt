@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -53,28 +52,6 @@ type Result struct {
 	CompletedAt         time.Time              `json:"completed_at"`
 	RetriedPending      bool                   `json:"retried_pending,omitempty"`
 	ReconciledPending   bool                   `json:"reconciled_pending,omitempty"`
-}
-
-// UnmarshalJSON accepts the pre-release remote_path result field. That value
-// identified the removed archive location; current results identify the
-// application profile instead.
-func (r *Result) UnmarshalJSON(data []byte) error {
-	type resultAlias Result
-	wire := struct {
-		resultAlias
-		LegacyRemotePath string `json:"remote_path"`
-	}{}
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	if wire.Profile != "" && wire.LegacyRemotePath != "" && wire.Profile != wire.LegacyRemotePath {
-		return fmt.Errorf("backup result profile conflicts with legacy remote_path")
-	}
-	if wire.Profile == "" {
-		wire.Profile = wire.LegacyRemotePath
-	}
-	*r = Result(wire.resultAlias)
-	return nil
 }
 
 func ValidateSource(source string, protected []string) error {

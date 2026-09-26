@@ -77,7 +77,7 @@ func TestPrepareSyncRetryAcceptsEveryObservedPlanRootInOneRound(t *testing.T) {
 	if !retry || confirmations != len(result.Failures) {
 		t.Fatalf("retry=%v confirmations=%d, want true/%d", retry, confirmations, len(result.Failures))
 	}
-	records, err := store.List()
+	records, err := store.ListStates()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,12 +131,12 @@ func TestPrepareSyncRetryAcceptsLocallyVerifiedCandidateThroughCandidatePolicy(t
 	if !retry || !strings.Contains(prompt, "locally verified candidate") {
 		t.Fatalf("candidate retry=%v prompt=%q", retry, prompt)
 	}
-	record, err := store.Get(alias)
+	record, err := store.GetState(alias)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.AcceptedRoot != candidate {
-		t.Fatalf("accepted candidate root = %q", record.AcceptedRoot)
+	if record.Accepted.Root != candidate {
+		t.Fatalf("accepted candidate root = %q", record.Accepted.Root)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/bucketsync"
+	localruntime "github.com/dewebprotocol/malt-client/internal/runtime"
 	client "github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	cid "github.com/ipfs/go-cid"
@@ -222,7 +223,7 @@ func bucketSyncService() (*bucketsync.Service, error) {
 	if strings.TrimSpace(cfg.Gateway.Bucket) == "" {
 		return nil, fmt.Errorf("gateway.bucket is not configured")
 	}
-	options, err := requiredGatewayOptions(cfg, cfg.Gateway.Bucket, "")
+	options, err := localruntime.RequiredGatewayOptions(cfg, cfg.Gateway.Bucket, "")
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +235,7 @@ func bucketSyncService() (*bucketsync.Service, error) {
 }
 
 // prepareBucketCandidate captures the Bucket base before candidate
-// materialization. A nil service means the runtime is using legacy routes.
+// materialization. A nil service means no managed Bucket is selected.
 func prepareBucketCandidate(
 	ctx context.Context,
 	remote *client.Client,
@@ -247,13 +248,9 @@ func prepareBucketCandidate(
 	if err != nil {
 		return nil, bucketsync.Head{}, "", err
 	}
-	selected, err := remote.GetBucket(ctx)
+	layout, err := localruntime.DatasetLayout(ctx, remote, "")
 	if err != nil {
 		return nil, bucketsync.Head{}, "", err
-	}
-	layout, err := unixfs.ParseLayoutKind(string(selected.Layout))
-	if err != nil {
-		return nil, bucketsync.Head{}, "", fmt.Errorf("decode selected Bucket layout: %w", err)
 	}
 	syncer, err := bucketsync.OpenRemote(cfg.Workspace.StatePath, remote, remote.SelectedBucket())
 	if err != nil {
