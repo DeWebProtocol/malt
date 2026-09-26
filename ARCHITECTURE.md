@@ -63,10 +63,28 @@ Application separators are parsed here. MALT core receives typed segment
 arrays and resolves canonical arcs; HTTP uses JSON arrays rather than assigning
 core semantics to `/`, `.`, or `[]`.
 
-The current native UnixFS materializer is `hybrid`: each directory becomes an
-authenticated map root, and ancestor maps also retain descendant root-relative
-path bindings. Pure flat and pure hierarchical materializers are possible
-future runtime strategies, not aliases for the current implementation.
+Native UnixFS supports `flat-v1`, `hybrid-v1`, and `rooted-v1`. Flat authenticates
+all paths at the top Root; hybrid also retains child Roots and descendant labels;
+rooted authenticates immediate children at each directory.
+
+`unixfs/planner.Prepare` opens only directories needed by ordered filesystem
+intent. It retains verified immutable Core Writers by exact Root in a per-planner
+LRU bounded to 64 Roots and a conservative 64 MiB charge. A touched child must
+agree with its parent's redundant hybrid projection. Untouched subtrees retain
+their authenticated bindings; they are not recursively audited by a local edit.
+Candidate export remains complete under the current Core wire contract.
+
+`writeplan` collects local blocks, ordered candidates, base/final Roots and,
+for write-back, journal transaction identity before remote writes. Native
+add/rm and encrypted snapshots share its exact-CID/Root persistence executor;
+ordinary native writes use a private disk spool, encrypted backups retain their
+existing ciphertext spool. The executor preserves optional CAS batch writes,
+bounded to 4,096 blocks and 8 MiB of decoded bodies, with larger individual
+blocks using the single-block port. Every block acknowledgement is checked
+before candidate installation. Write-back uses the atomic authentication batch
+receipt. Initial/import candidate installation remains child-before-parent,
+with individual acknowledgements and no cross-object atomicity claim.
+Publication and candidate/accepted-root policy remain outside this package.
 
 For `malt add --target merkle-dag`, the runtime uses Boxo to construct explicit
 dag-pb UnixFS blocks and writes those immutable blocks through the same untrusted

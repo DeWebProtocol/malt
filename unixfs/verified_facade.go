@@ -171,12 +171,14 @@ type stagedManifestProjection struct {
 
 type verifiedWriter struct {
 	*verifiedReader
-	store     BlockStore
-	roots     StagedRootWriter
-	lists     MeasuredPayloadWriter
-	layout    Layout
-	chunkSize int
-	tempDir   string
+	store        BlockStore
+	roots        StagedRootWriter
+	lists        MeasuredPayloadWriter
+	layout       Layout
+	chunkSize    int
+	tempDir      string
+	preparing    bool
+	preparedTree *StagedNode
 }
 
 // NewReader verifies typed authentication results locally and binds every
@@ -658,6 +660,18 @@ func (r *verifiedReader) getBoundBlock(ctx context.Context, key cid.Cid) ([]byte
 // EmptyDirectory materializes and verifies a new empty UnixFS directory. The
 // returned root is a candidate until the caller explicitly accepts it.
 func (w *verifiedWriter) EmptyDirectory(ctx context.Context) (*WriteResult, error) {
+	if w.canPrepare() {
+		var result *WriteResult
+		err := w.runPrepared(ctx, cid.Undef, func(local *verifiedWriter) (cid.Cid, error) {
+			var err error
+			result, err = local.EmptyDirectory(ctx)
+			if err != nil {
+				return cid.Undef, err
+			}
+			return result.CandidateRoot, nil
+		})
+		return result, err
+	}
 	current := NewStagedDirectory()
 	current.Changed = true
 	return w.materializeWrite(ctx, cid.Undef, "", StagedKindDirectory, 0, current)
@@ -666,6 +680,18 @@ func (w *verifiedWriter) EmptyDirectory(ctx context.Context) (*WriteResult, erro
 // AddDirectory ensures that rawPath is a directory below trustedRoot. Existing
 // files on the path are rejected instead of silently replaced.
 func (w *verifiedWriter) AddDirectory(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*WriteResult, error) {
+	if w.canPrepare() {
+		var result *WriteResult
+		err := w.runPrepared(ctx, trustedRoot, func(local *verifiedWriter) (cid.Cid, error) {
+			var err error
+			result, err = local.AddDirectory(ctx, trustedRoot, rawPath)
+			if err != nil {
+				return cid.Undef, err
+			}
+			return result.CandidateRoot, nil
+		})
+		return result, err
+	}
 	segments, err := ParseCanonicalStagedPath(rawPath)
 	if err != nil {
 		return nil, err
@@ -723,6 +749,18 @@ func (w *verifiedWriter) AddFileStream(ctx context.Context, trustedRoot cid.Cid,
 // materializes the changed directory ancestry. A short or overlong stream is
 // rejected before a candidate root is returned.
 func (w *verifiedWriter) AddFileSized(ctx context.Context, trustedRoot cid.Cid, rawPath string, src io.Reader, size int64) (*WriteResult, error) {
+	if w.canPrepare() {
+		var result *WriteResult
+		err := w.runPrepared(ctx, trustedRoot, func(local *verifiedWriter) (cid.Cid, error) {
+			var err error
+			result, err = local.AddFileSized(ctx, trustedRoot, rawPath, src, size)
+			if err != nil {
+				return cid.Undef, err
+			}
+			return result.CandidateRoot, nil
+		})
+		return result, err
+	}
 	if src == nil {
 		return nil, fmt.Errorf("unixfs file stream is nil")
 	}
@@ -825,6 +863,18 @@ func requireFilePath(root *StagedNode, segments []string) error {
 }
 
 func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*RemoveResult, error) {
+	if w.canPrepare() {
+		var result *RemoveResult
+		err := w.runPrepared(ctx, trustedRoot, func(local *verifiedWriter) (cid.Cid, error) {
+			var err error
+			result, err = local.RemovePath(ctx, trustedRoot, rawPath)
+			if err != nil {
+				return cid.Undef, err
+			}
+			return result.CandidateRoot, nil
+		})
+		return result, err
+	}
 	segments, err := ParseCanonicalStagedPath(rawPath)
 	if err != nil {
 		return nil, err
@@ -855,6 +905,10 @@ func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, ra
 }
 
 func (w *verifiedWriter) verifyStagedCandidate(ctx context.Context, candidate cid.Cid, expected *StagedNode) error {
+	if w.preparing {
+		w.preparedTree = expected
+		return nil
+	}
 	projected, err := LoadStagedCurrentTree(ctx, w, w.store, candidate.String())
 	if err != nil {
 		return err

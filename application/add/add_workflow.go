@@ -2,10 +2,14 @@ package add
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
+	"github.com/dewebprotocol/malt-client/writeplan"
+	"github.com/dewebprotocol/malt-core/protocol"
+	cid "github.com/ipfs/go-cid"
 )
 
 type addUnixFSResult struct {
@@ -37,15 +41,21 @@ func addInputsWithUnixFS(ctx context.Context, remote Materializer, casClient add
 	return nil, fmt.Errorf("unsupported add target/model/layout %q/%q/%q", normalized.Target, normalized.Model, normalized.Layout)
 }
 
-func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (result *addUnixFSResult, err error) {
 	if remote == nil {
 		return nil, fmt.Errorf("graph materialization capability is required")
 	}
-	projection, err := newProjectionWriter(ctx, remote, unixFSLayoutKind(opts.Layout))
+	staging, err := writeplan.NewStaging("", remote, casClient)
 	if err != nil {
 		return nil, err
 	}
-	staged, err := buildAddStagingTree(ctx, casClient, projection, rawInputs, opts)
+	defer func() { err = errors.Join(err, staging.Close()) }()
+	local := preparedMaterializer{Materializer: remote, staging: staging}
+	projection, err := newProjectionWriter(ctx, local, unixFSLayoutKind(opts.Layout))
+	if err != nil {
+		return nil, err
+	}
+	staged, err := buildAddStagingTree(ctx, staging, projection, rawInputs, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +68,22 @@ func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient
 		}
 		rootNode = unixfs.MergeStagedNodes(existing, staged.Root)
 	}
-	mat, err := materializeDirectory(ctx, projection, casClient, rootNode, unixFSLayoutKind(opts.Layout))
+	mat, err := materializeDirectory(ctx, projection, staging, rootNode, unixFSLayoutKind(opts.Layout))
 	if err != nil {
+		return nil, err
+	}
+	base := cid.Undef
+	if strings.TrimSpace(root) != "" {
+		base, err = cid.Decode(root)
+		if err != nil {
+			return nil, err
+		}
+	}
+	plan, err := staging.Plan(base, mat.Key)
+	if err != nil {
+		return nil, err
+	}
+	if err := plan.Persist(ctx, casClient, remote); err != nil {
 		return nil, err
 	}
 	return &addUnixFSResult{
@@ -74,4 +98,16 @@ func addInputsWithMALTUnixFS(ctx context.Context, remote Materializer, casClient
 		Arcs:             staged.Arcs + mat.Arcs,
 		SymlinkRoots:     staged.SymlinkRoots,
 	}, nil
+}
+
+type preparedMaterializer struct {
+	Materializer
+	staging *writeplan.Staging
+}
+
+func (p preparedMaterializer) AuthenticationCandidate(ctx context.Context, root cid.Cid) (*protocol.AuthenticationCandidate, error) {
+	return p.staging.AuthenticationCandidate(ctx, root)
+}
+func (p preparedMaterializer) MaterializeAuthentication(ctx context.Context, candidate protocol.AuthenticationCandidate) (cid.Cid, error) {
+	return p.staging.MaterializeAuthentication(ctx, candidate)
 }

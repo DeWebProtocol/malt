@@ -429,3 +429,26 @@ func plannerScheme(t *testing.T, backend string) commitment.Backend {
 	}
 	return scheme
 }
+
+// Plan is a test harness that installs locally prepared manifests into the
+// fixture CAS. Production calls Prepare and persists through writeplan.
+func (p *Planner) Plan(ctx context.Context, base cid.Cid, operations []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error) {
+	plan, err := p.Prepare(ctx, base, operations)
+	if err != nil {
+		return nil, nil, cid.Undef, err
+	}
+	for _, block := range plan.Blocks {
+		body, err := block.Read(ctx)
+		if err != nil {
+			return nil, nil, cid.Undef, err
+		}
+		got, err := p.blocks.(*plannerBlocks).PutWithCodec(ctx, body, block.CID.Prefix().Codec)
+		if err != nil {
+			return nil, nil, cid.Undef, err
+		}
+		if !got.Equals(block.CID) {
+			return nil, nil, cid.Undef, fmt.Errorf("manifest CID substitution")
+		}
+	}
+	return plan.Candidates, plan.Required, plan.Root, nil
+}

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
+	"github.com/dewebprotocol/malt-client/writeplan"
 	"github.com/dewebprotocol/malt-core/auth/commitment"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
@@ -109,28 +110,15 @@ func (s *Snapshot) Publish(ctx context.Context) error {
 	// attempt may replay these exact objects, but callers cannot append new
 	// blocks or roots that would be omitted by a later retry.
 	s.sealed = true
-	for _, key := range s.blocks.keys {
-		body, err := s.blocks.local.Get(ctx, key)
-		if err != nil {
-			return fmt.Errorf("read local encrypted UnixFS snapshot block %s: %w", key, err)
-		}
-		remoteKey, err := s.remoteBlocks.Put(ctx, body)
-		if err != nil {
-			return fmt.Errorf("publish encrypted UnixFS snapshot block %s: %w", key, err)
-		}
-		if !remoteKey.Equals(key) {
-			return fmt.Errorf("remote CAS substituted encrypted UnixFS block CID %s with %s", key, remoteKey)
-		}
+	if len(s.graph.operations) == 0 {
+		return fmt.Errorf("encrypted snapshot has no prepared Root")
 	}
-	for index, candidate := range s.graph.operations {
-		expected := cid.MustParse(candidate.Root)
-		got, err := s.remoteGraph.MaterializeAuthentication(ctx, candidate)
-		if err != nil {
-			return fmt.Errorf("publish encrypted UnixFS candidate %d: %w", index, err)
-		}
-		if !got.Equals(expected) {
-			return fmt.Errorf("remote graph substituted encrypted UnixFS root %s with %s", expected, got)
-		}
+	plan := writeplan.Plan{Root: cid.MustParse(s.graph.operations[len(s.graph.operations)-1].Root), Candidates: s.graph.operations}
+	for _, key := range s.blocks.keys {
+		plan.Blocks = append(plan.Blocks, writeplan.Block{CID: key, Read: func(ctx context.Context) ([]byte, error) { return s.blocks.local.Get(ctx, key) }})
+	}
+	if err := plan.Persist(ctx, s.remoteBlocks, s.remoteGraph); err != nil {
+		return fmt.Errorf("publish encrypted UnixFS snapshot: %w", err)
 	}
 
 	s.published = true
