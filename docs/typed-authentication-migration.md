@@ -32,9 +32,11 @@ chunk width must match the encryption manifest before range slicing/decryption.
 
 ## Writes, retries, and trust
 
-The UnixFS planner imports bounded complete candidates, verifies original label
-bytes and manifest CIDs, applies ordered intent, and computes children before
-parents. Shared directories support copy-on-write changes. Flat/hybrid/rooted
+The UnixFS planner imports bounded complete candidates along affected paths,
+retains verified immutable Writers, checks original labels and opened manifest
+CIDs, applies ordered intent, and computes children before parents. It returns
+a local `writeplan.Plan`; manifest uploads occur only during persistence.
+Shared directories support copy-on-write changes. Flat/hybrid/rooted
 planning, unchanged-subtree reuse, batching, and no-change completion remain.
 Only final staged payloads referenced by the resulting plan are uploaded.
 
@@ -51,7 +53,7 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.10-rc.2` at commit
-`fbed20626cfe9ceef26f1666a00742a7f2cb9079` for independent module builds.
+Native builds pin published Core `v0.0.10-rc.3` at commit
+`6f16b13f3abe9cbd0992e83e1457663935e5a72f` for independent module builds.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.

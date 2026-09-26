@@ -162,18 +162,18 @@ func TestRootedPlannerAndExplicitLayoutFilesystemReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, required, root, err := planner.Plan(t.Context(), empty.CandidateRoot, operations)
+	plan, err := planner.Prepare(t.Context(), empty.CandidateRoot, operations)
+	candidates, required, root := plan.Candidates, plan.Required, plan.Root
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(candidates) != 2 || len(required) != 1 || !required[0].Equals(payload) {
 		t.Fatalf("wrong plan: %d %v", len(candidates), required)
 	}
-	for _, candidate := range candidates {
-		if _, err := remote.MaterializeAuthentication(t.Context(), candidate); err != nil {
-			t.Fatal(err)
-		}
+	if err := plan.Persist(t.Context(), remote, remote); err != nil {
+		t.Fatal(err)
 	}
+
 	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote, Layout: " ROOTED-V1 "})
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +205,8 @@ func TestRootedPlannerAndExplicitLayoutFilesystemReader(t *testing.T) {
 	}
 	// A frozen write followed by unlink must return the exact original Root.
 	operations = append(operations, journal.Operation{Intent: journal.Intent{OperationID: "delete", RetryID: "retry-delete", DatasetID: "dataset", Branch: "main", BaseRoot: empty.CandidateRoot.String(), Kind: journal.KindUnlink, Path: "docs/file"}, Sequence: 3, Status: journal.StatusPendingUpload, CreatedAt: time.Now(), UpdatedAt: time.Now()}, journal.Operation{Intent: journal.Intent{OperationID: "rmdir", RetryID: "retry-rmdir", DatasetID: "dataset", Branch: "main", BaseRoot: empty.CandidateRoot.String(), Kind: journal.KindUnlink, Path: "docs"}, Sequence: 4, Status: journal.StatusPendingUpload, CreatedAt: time.Now(), UpdatedAt: time.Now()})
-	_, required, again, err := planner.Plan(t.Context(), empty.CandidateRoot, operations)
+	againPlan, err := planner.Prepare(t.Context(), empty.CandidateRoot, operations)
+	required, again := againPlan.Required, againPlan.Root
 	if err != nil {
 		t.Fatal(err)
 	}

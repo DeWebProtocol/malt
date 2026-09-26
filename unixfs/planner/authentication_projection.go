@@ -14,6 +14,9 @@ import (
 // Flat directories bind manifest CIDs; hybrid directories bind child Roots and
 // include descendant labels. Rooted directories bind immediate children only.
 func authenticationBindings(node *treeNode, layout unixfs.LayoutKind) map[string]cid.Cid {
+	if !node.dirty && node.retained != nil {
+		return node.retained
+	}
 	children := make([]unixfs.DirectoryChild, 0, len(node.children))
 	for _, name := range sortedChildNames(node) {
 		child := node.children[name]

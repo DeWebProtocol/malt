@@ -9,6 +9,7 @@ import (
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
 	"github.com/dewebprotocol/malt-client/journal"
+	"github.com/dewebprotocol/malt-client/writeplan"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/engine"
@@ -320,7 +321,7 @@ type fakePayloadStore struct {
 	puts       int
 }
 
-func (s *fakePayloadStore) Put(_ context.Context, body []byte) (cid.Cid, error) {
+func (s *fakePayloadStore) PutWithCodec(_ context.Context, body []byte, codec uint64) (cid.Cid, error) {
 	s.puts++
 	computed, err := s.expected.Prefix().Sum(body)
 	if err != nil {
@@ -421,13 +422,13 @@ func writebackRawCID(t *testing.T, body []byte) cid.Cid {
 	return cid.NewCidV1(cid.Raw, digest)
 }
 
-func (f *writebackFixture) Plan(_ context.Context, base cid.Cid, operations []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error) {
+func (f *writebackFixture) Prepare(_ context.Context, base cid.Cid, operations []journal.Operation) (writeplan.Plan, error) {
 	f.plans++
 	if !base.Equals(f.view.Root) || len(operations) == 0 || operations[len(operations)-1].OperationID != "op-one" {
-		return nil, nil, cid.Undef, errors.New("planner received substituted input")
+		return writeplan.Plan{}, errors.New("planner received substituted input")
 	}
 	if f.noChange {
-		return nil, nil, base, nil
+		return writeplan.Plan{Base: base, Root: base}, nil
 	}
-	return []protocol.AuthenticationCandidate{f.candidate}, []cid.Cid{f.payload}, cid.MustParse(f.candidate.Root), nil
+	return writeplan.Plan{Base: base, Root: cid.MustParse(f.candidate.Root), Candidates: []protocol.AuthenticationCandidate{f.candidate}, Required: []cid.Cid{f.payload}}, nil
 }
