@@ -81,3 +81,60 @@ func TestPrepareLoadsAffectedDirectoriesAndRetainsVerifiedWriters(t *testing.T) 
 		})
 	}
 }
+
+func TestPrepareAllowsRepeatedAncestorManifests(t *testing.T) {
+	for _, backend := range []string{"kzg", "ipa"} {
+		for _, layout := range []unixfs.LayoutKind{unixfs.LayoutFlatV1, unixfs.LayoutHybridV1, unixfs.LayoutRootedV1} {
+			t.Run(backend+"/"+string(layout), func(t *testing.T) {
+				f, creator := newPlannerEnvironment(t, layout, plannerScheme(t, backend))
+				before := f.blocks.putRaw(t, []byte("before"))
+				unchanged := f.blocks.putRaw(t, []byte("unchanged"))
+				tree := unixfs.NewStagedDirectory()
+				for path, payload := range map[string]cid.Cid{"a/a/a/file": before, "keep.txt": unchanged} {
+					if err := unixfs.SetStagedFile(tree, path, payload); err != nil {
+						t.Fatal(err)
+					}
+				}
+				projection, err := unixfs.NewLayout(layout)
+				if err != nil {
+					t.Fatal(err)
+				}
+				original, err := projection.Materialize(t.Context(), creator, f.blocks, tree)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.root = original.Key
+				if layout == unixfs.LayoutFlatV1 {
+					// Both ancestors have one child named "a" of type directory.
+					// Their equal manifest CIDs do not identify equal subtrees.
+					parent, parentFound := f.resolve(t, f.root, "a")
+					child, childFound := f.resolve(t, f.root, "a/a")
+					if !parentFound || !childFound || !parent.Equals(child) {
+						t.Fatal("fixture must reuse the flat manifest along the ancestor path")
+					}
+				}
+				after := f.blocks.putRaw(t, []byte("after"))
+				operations := []journal.Operation{plannerOperation(f.root, 1, journal.KindWrite, "a/a/a/file", "", after)}
+				plan, err := f.planner(t).Prepare(t.Context(), f.root, operations)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if plan.Root.Equals(f.root) || !containsPayload(plan.Required, after) {
+					t.Fatal("planned edit omitted the changed payload")
+				}
+				if err := plan.Persist(t.Context(), f.blocks, f); err != nil {
+					t.Fatal(err)
+				}
+				for path, want := range map[string]cid.Cid{"a/a/a/file": after, "keep.txt": unchanged} {
+					got, found := f.resolve(t, plan.Root, path)
+					if !found || !got.Equals(want) {
+						t.Fatalf("updated %s = %s, want %s", path, got, want)
+					}
+				}
+				if got, found := f.resolve(t, f.root, "a/a/a/file"); !found || !got.Equals(before) {
+					t.Fatal("edit changed the original snapshot")
+				}
+			})
+		}
+	}
+}

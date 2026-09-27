@@ -67,16 +67,19 @@ func (p *Planner) Prepare(ctx context.Context, base cid.Cid, operations []journa
 		if objects > 4096 || depth > 256 {
 			return fmt.Errorf("directory traversal bound exceeded")
 		}
-		if ancestors[node.key.KeyString()] {
-			return fmt.Errorf("cyclic directory")
-		}
-		lineage := make(map[string]bool, len(ancestors)+1)
-		for k := range ancestors {
-			lineage[k] = true
-		}
-		lineage[node.key.KeyString()] = true
+		lineage := ancestors
 		targets := node.retained
+		// Only independent MALT Roots identify authenticated directory contents.
+		// Flat child keys are manifests and can repeat along a valid path.
 		if p.layout != unixfs.LayoutFlatV1 || node.key.Equals(base) {
+			if ancestors[node.key.KeyString()] {
+				return fmt.Errorf("cyclic directory")
+			}
+			lineage = make(map[string]bool, len(ancestors)+1)
+			for k := range ancestors {
+				lineage[k] = true
+			}
+			lineage[node.key.KeyString()] = true
 			writer, err := p.loadWriter(ctx, node.key)
 			if err != nil {
 				return err
