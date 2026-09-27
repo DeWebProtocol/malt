@@ -506,7 +506,7 @@ Package `application/writeback` composes the staging queue with payload,
 exact batch materialization, planner, and local root-policy capabilities.
 `Service.Replay` checks its accepted View, freezes ordered intent, validates
 staged bodies, and asks the typed UnixFS planner for complete exact candidates.
-Only final referenced raw payload CIDs are uploaded. It submits one
+The prepared plan uploads changed manifests and final referenced raw payloads. It submits one
 `AuthenticationBatch`, checks the exact receipt, records only a candidate,
 and completes under the accepted-root fence. No old UpdateView, semantic
 intent, client-root bundle, ComputeResult, or application/clientroot.Remote
@@ -529,16 +529,27 @@ described below.
 
 Package `unixfs/planner` plans flat-v1, hybrid-v1, and rooted-v1 updates
 from bounded complete typed candidates and CID-checked manifests. It verifies
-the exact selected Root, reconstructs the application projection, and rejects
-manifest/binding mismatches before applying ordered journal operations.
+the exact selected Root and loads directory manifests along affected paths.
+Verified immutable Writers are retained in a bounded per-planner cache; repeated
+plans against the same Root avoid re-downloading and re-importing those states.
+Opened hybrid children must agree with the parent projection. Untouched subtrees
+retain their authenticated bindings without a recursive consistency audit.
 
 Flat planning produces the exact top Prefix candidate; hybrid/rooted planning
 emits changed children before parents. New children inherit the selected
 profile; existing children retain their verified descriptor. Equal shared
 projections reuse one result, while divergent edits copy on write. Canonical
 V2 manifest CIDs are checked locally; unchanged manifests are not stored again.
-The planner returns exact Core candidates and final payload requirements for
-write-back batching, with no trust, HTTP, or concrete transport dependency.
+`Prepare` returns a `writeplan.Plan` containing exact Core candidates, final
+payload requirements, and local manifest blocks. It performs no remote writes.
+`writeplan.PersistBatch` checks local dependencies before uploading, then binds
+the exact batch receipt; `Persist` serves native add/rm and encrypted snapshots
+using individual candidate acknowledgements. Pass the block writer itself so
+its optional CAS batch capability remains available. Batches are bounded to
+4,096 blocks and 8 MiB; larger single blocks retain single-block writes. Every
+returned CID and batch status is checked before candidate installation.
+Neither executor publishes a head or accepts a Root. Candidate wire exports
+remain complete, not delta proofs.
 
 Package `filesystem/mount` owns the next outer lifecycle boundary. A durable
 `mount.Spec` binds mount ID, dataset, branch, mountpoint, local trust alias,

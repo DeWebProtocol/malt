@@ -31,7 +31,7 @@ type Queue interface {
 // PayloadStore persists immutable local file bodies. Returned CIDs are
 // untrusted and must equal the exact locally staged CID.
 type PayloadStore interface {
-	Put(context.Context, []byte) (cid.Cid, error)
+	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
 }
 
 // RootPolicy exposes accepted-root selection, candidate recording and fenced

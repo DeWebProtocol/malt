@@ -7,21 +7,26 @@ import (
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
 	"github.com/dewebprotocol/malt-client/journal"
+	"github.com/dewebprotocol/malt-client/writeplan"
 	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
 )
 
 type Planner interface {
-	Plan(context.Context, cid.Cid, []journal.Operation) ([]protocol.AuthenticationCandidate, []cid.Cid, cid.Cid, error)
+	Prepare(context.Context, cid.Cid, []journal.Operation) (writeplan.Plan, error)
 }
 
 func (s *Service) replayAuthentication(ctx context.Context, view filesystemservice.View, batch staging.UploadBatch, result Result) (Result, error) {
-	candidates, required, root, err := s.planner.Plan(ctx, view.Root, append([]journal.Operation(nil), batch.Operations...))
+	plan, err := s.planner.Prepare(ctx, view.Root, append([]journal.Operation(nil), batch.Operations...))
 	if err != nil {
 		return result, err
 	}
+	root := plan.Root
 	if !root.Defined() {
 		return result, fmt.Errorf("typed planner returned no Root")
+	}
+	if !plan.Base.Equals(view.Root) {
+		return result, fmt.Errorf("typed plan substituted base Root")
 	}
 	if root.Equals(view.Root) {
 		matched, err := s.roots.CompleteIfAccepted(s.trustAlias, view.Root, func() error { var err error; result.Completed, err = s.queue.CompleteNoChange(ctx, batch); return err })
@@ -41,10 +46,7 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 		result.NoAuthenticatedChange = true
 		return result, nil
 	}
-	prepared := protocol.AuthenticationBatch{Profile: protocol.AuthenticationBatchProfile, TransactionID: batch.TransactionID, Base: view.Root.String(), Root: root.String(), Candidates: candidates}
-	if err := prepared.Validate(); err != nil {
-		return result, fmt.Errorf("invalid typed plan: %w", err)
-	}
+	plan.TransactionID = batch.TransactionID
 	available := map[string]staging.UploadPayload{}
 	for _, p := range batch.Payloads {
 		available[p.CID.KeyString()] = p
@@ -60,7 +62,7 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 		}
 	}
 	selected := map[string]staging.UploadPayload{}
-	for _, key := range required {
+	for _, key := range plan.Required {
 		if staged[key.KeyString()] {
 			p, ok := available[key.KeyString()]
 			if !ok {
@@ -69,21 +71,13 @@ func (s *Service) replayAuthentication(ctx context.Context, view filesystemservi
 			selected[key.KeyString()] = p
 		}
 	}
-	// All requirements are checked before publishing any staged body.
+	// Plan includes local manifests; append only the frozen journal bodies
+	// actually consumed by the final filesystem projection.
 	for _, p := range selected {
-		got, err := s.payloads.Put(ctx, p.Body)
-		if err != nil {
-			return result, err
-		}
-		if !got.Equals(p.CID) {
-			return result, fmt.Errorf("payload receipt substituted CID")
-		}
+		plan.Blocks = append(plan.Blocks, writeplan.Bytes(p.CID, p.Body))
 	}
-	receipt, err := s.remote.MaterializeAuthenticationBatch(ctx, prepared)
+	receipt, err := plan.PersistBatch(ctx, s.payloads, s.remote)
 	if err != nil {
-		return result, err
-	}
-	if err := receipt.Validate(prepared); err != nil {
 		return result, err
 	}
 	result.Receipt = receipt

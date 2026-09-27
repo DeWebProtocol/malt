@@ -12,19 +12,19 @@ import (
 	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
+	"github.com/dewebprotocol/malt-client/writeplan"
 	cid "github.com/ipfs/go-cid"
 )
 
 // BlockStore is the exact immutable-block capability needed to read verified
-// old manifests and publish canonical new manifests. Both directions are
-// independently checked against their CIDs by Planner.
+// old manifests. Canonical new manifests stay in the local prepared plan.
 type BlockStore interface {
 	Get(context.Context, cid.Cid) ([]byte, error)
-	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
 }
 
 type manifestStore struct {
-	blocks BlockStore
+	blocks  BlockStore
+	planned []writeplan.Block
 }
 
 type treeNode struct {
@@ -34,6 +34,20 @@ type treeNode struct {
 	children      map[string]*treeNode
 	dirty         bool
 	manifestDirty bool
+	retained      map[string]cid.Cid
+	load          func() error
+}
+
+func (n *treeNode) ensure() error {
+	if n.load == nil {
+		return nil
+	}
+	load := n.load
+	if err := load(); err != nil {
+		return err
+	}
+	n.load = nil
+	return nil
 }
 
 func (p *manifestStore) readManifest(ctx context.Context, key cid.Cid) (*unixfsmodel.DirectoryManifest, error) {
@@ -75,13 +89,7 @@ func (p *manifestStore) storeManifest(ctx context.Context, node *treeNode) error
 		node.manifestDirty = false
 		return nil
 	}
-	stored, err := p.blocks.PutWithCodec(ctx, block.Data, block.Codec)
-	if err != nil {
-		return err
-	}
-	if !stored.Equals(expected) {
-		return fmt.Errorf("manifest store substituted CID %s for %s", stored, expected)
-	}
+	p.planned = append(p.planned, writeplan.Bytes(expected, block.Data))
 	node.manifest = expected
 	node.manifestDirty = false
 	return nil
@@ -134,6 +142,9 @@ func applyOperations(root *treeNode, operations []journal.Operation) error {
 			if child == nil {
 				return fmt.Errorf("filesystem unlink %q is absent", operation.Path)
 			}
+			if err := child.ensure(); err != nil {
+				return err
+			}
 			if child.kind == unixfsmodel.DirectoryEntryTypeDir && len(child.children) != 0 {
 				return fmt.Errorf("filesystem unlink %q is a non-empty directory", operation.Path)
 			}
@@ -174,6 +185,9 @@ func applyRename(root *treeNode, source []string, rawDestination string) error {
 		return fmt.Errorf("source %q is absent", sourcePath)
 	}
 	if existing := destinationParent.children[destinationName]; existing != nil {
+		if err := existing.ensure(); err != nil {
+			return err
+		}
 		if existing.kind != value.kind {
 			return fmt.Errorf("destination %q has a different kind", destinationPath)
 		}
@@ -190,6 +204,9 @@ func applyRename(root *treeNode, source []string, rawDestination string) error {
 
 func directoryAt(root *treeNode, segments []string) (*treeNode, []*treeNode, error) {
 	current := root
+	if err := current.ensure(); err != nil {
+		return nil, nil, err
+	}
 	ancestors := []*treeNode{root}
 	for _, segment := range segments {
 		child := current.children[segment]
@@ -200,6 +217,9 @@ func directoryAt(root *treeNode, segments []string) (*treeNode, []*treeNode, err
 			return nil, nil, fmt.Errorf("filesystem path component %q is not a directory", segment)
 		}
 		current = child
+		if err := current.ensure(); err != nil {
+			return nil, nil, err
+		}
 		ancestors = append(ancestors, current)
 	}
 	return current, ancestors, nil
