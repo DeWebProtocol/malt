@@ -144,12 +144,26 @@ func (s *StreamSession) verifyPaths(ctx context.Context, paths []string) error {
 			return err
 		}
 		parts := strings.Split(path, "/")
+		want, exists := s.state[path]
 		if s.flat {
 			parts = []string{path}
 		}
 		for _, part := range parts {
 			dir, directoryErr := unixfsio.NewDirectoryFromNode(dag, node)
 			if directoryErr != nil {
+				// Replacing a directory with a regular file removes all former
+				// descendants. A CID-checked regular-file ancestor establishes
+				// absence; malformed or missing DAG nodes remain errors.
+				if !exists && !s.flat {
+					regular, kindErr := regularFileNode(node)
+					if kindErr != nil {
+						return kindErr
+					}
+					if regular {
+						err = os.ErrNotExist
+						break
+					}
+				}
 				return fmt.Errorf("readback %q: %w", path, directoryErr)
 			}
 			node, err = dir.Find(ctx, part)
@@ -157,8 +171,15 @@ func (s *StreamSession) verifyPaths(ctx context.Context, paths []string) error {
 				break
 			}
 		}
-		want, exists := s.state[path]
 		if !exists {
+			// Git can delete file p and add p/child in the same commit. The
+			// regular-file binding p is absent even though the derived directory
+			// p exists. Flat HAMT keys remain opaque and cannot use this rule.
+			if err == nil && !s.flat && s.hasSourceDescendant(path) {
+				if _, directoryErr := unixfsio.NewDirectoryFromNode(dag, node); directoryErr == nil {
+					continue
+				}
+			}
 			if !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("readback deleted path %q returned %v", path, err)
 			}
@@ -195,4 +216,29 @@ func (s *StreamSession) verifyPaths(ctx context.Context, paths []string) error {
 		}
 	}
 	return nil
+}
+
+func (s *StreamSession) hasSourceDescendant(path string) bool {
+	prefix := path + "/"
+	for sourcePath := range s.state {
+		if strings.HasPrefix(sourcePath, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func regularFileNode(node ipld.Node) (bool, error) {
+	if _, ok := node.(*merkledag.RawNode); ok {
+		return true, nil
+	}
+	proto, ok := node.(*merkledag.ProtoNode)
+	if !ok {
+		return false, nil
+	}
+	info, err := unixfs.FSNodeFromBytes(proto.Data())
+	if err != nil {
+		return false, err
+	}
+	return info.Type() == unixfs.TFile || info.Type() == unixfs.TRaw, nil
 }
