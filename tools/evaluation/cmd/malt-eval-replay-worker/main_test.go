@@ -64,3 +64,55 @@ func TestReplayRejectsAmbiguousOrIncompleteInput(t *testing.T) {
 		}
 	}
 }
+
+func TestReplayEmptyInitialTreeDeleteAllAndResume(t *testing.T) {
+	for _, profile := range []string{"merkledag-nested", "hamt-nested", "hamt-flat"} {
+		t.Run(profile, func(t *testing.T) {
+			raw, mode := true, uint32(0o644)
+			layout := rq3baseline.LayoutSpec{Model: "unixfs", FileLayout: "balanced", DirectoryLayout: "hamt", Chunking: rq3baseline.ChunkingSpec{Algorithm: "fixed", SizeBytes: 262144}, HAMTFanout: 256, RawFileLeaf: &raw}
+			system := rq3baseline.SystemHAMTUnixFS
+			if profile == "merkledag-nested" {
+				system, layout.DirectoryLayout, layout.HAMTFanout = rq3baseline.SystemMerkleDAGUnixFS, "basic", 0
+			}
+			initial := rq3baseline.RunSpec{System: system, Layout: layout, Snapshot: rq3baseline.Snapshot{CommitID: "empty", Files: []rq3baseline.FrozenFile{}}, Commits: []rq3baseline.Commit{}}
+			data := []byte("from empty")
+			digest := sha256.Sum256(data)
+			hash := hex.EncodeToString(digest[:])
+			put := rq3baseline.Mutation{Kind: "insert", Path: "nested/file", FileKind: "regular", Mode: &mode, PayloadBase64: base64.StdEncoding.EncodeToString(data), PayloadSHA256: hash}
+			del := rq3baseline.Mutation{Kind: "delete", Path: "nested/file", FileKind: "regular", ExpectedOldMode: &mode, ExpectedOldSHA256: hash}
+			chunk := rq3baseline.RunSpec{System: system, Layout: layout, Commits: []rq3baseline.Commit{{CommitID: "put", Mutations: []rq3baseline.Mutation{put}}, {CommitID: "delete", Mutations: []rq3baseline.Mutation{del}}, {CommitID: "no-op", Mutations: []rq3baseline.Mutation{}}, {CommitID: "resume", Mutations: []rq3baseline.Mutation{put}}, {CommitID: "empty-again", Mutations: []rq3baseline.Mutation{del}}}}
+			var input, output bytes.Buffer
+			encoder := json.NewEncoder(&input)
+			for _, req := range []request{{Schema: requestSchema, ID: "1", Operation: "capabilities"}, {Schema: requestSchema, ID: "2", Operation: "start", Profile: profile, Run: &initial}, {Schema: requestSchema, ID: "3", Operation: "chunk", Profile: profile, Run: &chunk}, {Schema: requestSchema, ID: "4", Operation: "finish", Profile: profile}} {
+				if err := encoder.Encode(req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := run(context.Background(), &input, &output); err != nil {
+				t.Fatal(err)
+			}
+			decoder := json.NewDecoder(&output)
+			var replies [4]response
+			for i := range replies {
+				if err := decoder.Decode(&replies[i]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !replies[3].Complete || !replies[3].ReadbackVerified || replies[3].Applied != 6 {
+				t.Fatal("empty history lost coverage or readback")
+			}
+			start := replies[1].Records[0]
+			if start.AdapterPayloadInputBytes != 0 || start.Root == "" || start.CAS.Total.NewlyPersistedBytes == 0 {
+				t.Fatal("empty root not materialized and accounted")
+			}
+			for _, index := range []int{1, 2, 4} {
+				if replies[2].Records[index].Root != start.Root {
+					t.Fatal("canonical empty root was not restored")
+				}
+			}
+			if len(replies[2].Records[2].CAS.Events) != 0 {
+				t.Fatal("empty no-op rewrote objects")
+			}
+		})
+	}
+}

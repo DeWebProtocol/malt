@@ -68,7 +68,7 @@ func startStream(ctx context.Context, spec RunSpec, flat, preserveMode bool) (_ 
 			returnErr = errors.Join(returnErr, retryCleanup(store.close), retryCleanup(payloads.close))
 		}
 	}()
-	state, source, err := prepareStreamSnapshot(spec, payloads)
+	state, source, err := prepareStreamSnapshotWithEmpty(spec, payloads, preserveMode)
 	if err != nil {
 		return nil, CommitRecord{}, err
 	}
@@ -102,6 +102,11 @@ func startStream(ctx context.Context, spec RunSpec, flat, preserveMode bool) (_ 
 			return nil, CommitRecord{}, fmt.Errorf("snapshot commit %q put %q: %w", spec.Snapshot.CommitID, frozen.Path, err)
 		}
 		executions = append(executions, MutationExecution{Index: index, Kind: MutationInsert, Path: frozen.Path, Translation: "snapshot_put_file", LogicalObjectsChanged: 1, LogicalBindingsChanged: 1, LogicalPayloadBytes: int64(len(data))})
+	}
+	if len(state) == 0 {
+		if err := editor.EnsureRoot(ctx); err != nil {
+			return nil, CommitRecord{}, fmt.Errorf("materialize empty snapshot: %w", err)
+		}
 	}
 	elapsed := time.Since(started).Nanoseconds()
 	root := editor.Root()

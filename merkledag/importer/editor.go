@@ -67,6 +67,24 @@ func (e *Editor) Root() string {
 	return e.root.Cid().String()
 }
 
+// EnsureRoot materializes the canonical empty directory when no file has yet
+// been added. The normal file-put path does not write an unused empty root.
+func (e *Editor) EnsureRoot(ctx context.Context) error {
+	if e.root != nil {
+		return nil
+	}
+	dir, err := e.newDirectory()
+	if err != nil {
+		return err
+	}
+	root, err := e.storeDirectory(ctx, dir)
+	if err != nil {
+		return err
+	}
+	e.root = root
+	return nil
+}
+
 // PutFile writes or replaces one file in the current DAG.
 func (e *Editor) PutFile(ctx context.Context, filePath string, data []byte, mode fs.FileMode) error {
 	clean, parts, err := cleanPathParts(filePath)
