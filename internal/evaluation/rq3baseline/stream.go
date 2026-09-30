@@ -25,10 +25,35 @@ type StreamSession struct {
 	parentRoot      string
 	failed          bool
 	commitIDs       []string
+	flat            bool
+	preserveMode    bool
 }
 
 // StartStream validates and applies one immutable initial snapshot.
 func StartStream(ctx context.Context, spec RunSpec) (_ *StreamSession, _ CommitRecord, returnErr error) {
+	return startStream(ctx, spec, false, false)
+}
+
+// StartFlatHAMTStream uses the same frozen source, file encoding and accounting
+// store as StartStream, with full paths indexed in one HAMT instead of nested
+// directories. The caller must publish this as a distinct adapter profile.
+func StartFlatHAMTStream(ctx context.Context, spec RunSpec) (*StreamSession, CommitRecord, error) {
+	if spec.System != SystemHAMTUnixFS {
+		return nil, CommitRecord{}, fmt.Errorf("flat HAMT stream requires the HAMT file encoding profile")
+	}
+	return startStream(ctx, spec, true, false)
+}
+
+// StartReplayStream preserves file permissions, including raw-leaf file roots.
+// This is a new encoding profile, separate from the preserved RQ3 contract.
+func StartReplayStream(ctx context.Context, spec RunSpec, flat bool) (*StreamSession, CommitRecord, error) {
+	if flat && spec.System != SystemHAMTUnixFS {
+		return nil, CommitRecord{}, fmt.Errorf("flat index requires HAMT")
+	}
+	return startStream(ctx, spec, flat, true)
+}
+
+func startStream(ctx context.Context, spec RunSpec, flat, preserveMode bool) (_ *StreamSession, _ CommitRecord, returnErr error) {
 	if spec.Commits == nil || len(spec.Commits) != 0 {
 		return nil, CommitRecord{}, fmt.Errorf("stream start requires an explicit empty commit chunk")
 	}
@@ -47,12 +72,17 @@ func StartStream(ctx context.Context, spec RunSpec) (_ *StreamSession, _ CommitR
 	if err != nil {
 		return nil, CommitRecord{}, err
 	}
-	editor, err := merkledagimport.NewEditor(store, importerOptions(spec))
+	options := importerOptions(spec)
+	options.PreserveFileMode = preserveMode
+	editor, err := merkledagimport.NewEditor(store, options)
+	if flat {
+		editor, err = merkledagimport.NewFlatHAMTEditor(store, options)
+	}
 	if err != nil {
 		return nil, CommitRecord{}, fmt.Errorf("create UnixFS stream editor: %w", err)
 	}
 	minimal := RunSpec{System: spec.System, Layout: spec.Layout}
-	session := &StreamSession{spec: minimal, store: store, editor: editor, state: cloneLogicalState(state), validationState: state, payloads: payloads, seenCommits: map[string]struct{}{spec.Snapshot.CommitID: {}}, commitIDs: []string{spec.Snapshot.CommitID}}
+	session := &StreamSession{spec: minimal, store: store, editor: editor, state: cloneLogicalState(state), validationState: state, payloads: payloads, seenCommits: map[string]struct{}{spec.Snapshot.CommitID: {}}, commitIDs: []string{spec.Snapshot.CommitID}, flat: flat, preserveMode: preserveMode}
 	if err := payloads.reconcile(session.state, session.validationState); err != nil {
 		return nil, CommitRecord{}, fmt.Errorf("reconcile hash stream snapshot payloads: %w", err)
 	}
@@ -86,6 +116,16 @@ func StartStream(ctx context.Context, spec RunSpec) (_ *StreamSession, _ CommitR
 
 // ApplyChunk prevalidates a complete bounded chunk before mutating the Editor.
 func (s *StreamSession) ApplyChunk(ctx context.Context, commits []Commit) ([]CommitRecord, error) {
+	return s.applyChunk(ctx, commits, false)
+}
+
+// ApplyChunkWithReadback checks every touched path at its own commit root,
+// before applying the next commit. Readback is excluded from write timings.
+func (s *StreamSession) ApplyChunkWithReadback(ctx context.Context, commits []Commit) ([]CommitRecord, error) {
+	return s.applyChunk(ctx, commits, true)
+}
+
+func (s *StreamSession) applyChunk(ctx context.Context, commits []Commit, readback bool) ([]CommitRecord, error) {
 	if s == nil || s.editor == nil || s.store == nil || s.failed {
 		return nil, fmt.Errorf("hash stream session is not initialized")
 	}
@@ -121,6 +161,18 @@ func (s *StreamSession) ApplyChunk(ctx context.Context, commits []Commit) ([]Com
 			return nil, fmt.Errorf("commit %q produced an empty root", commit.id)
 		}
 		accounting, putNanos, getNanos := s.store.finishPhase()
+		if readback {
+			paths := make([]string, 0, len(commit.mutations)*2)
+			for _, mutation := range commit.mutations {
+				paths = append(paths, mutation.mutation.Path)
+				if mutation.mutation.Destination != "" {
+					paths = append(paths, mutation.mutation.Destination)
+				}
+			}
+			if err := s.verifyPaths(ctx, paths); err != nil {
+				return nil, fmt.Errorf("commit %q: %w", commit.id, err)
+			}
+		}
 		records = append(records, CommitRecord{CommitID: commit.id, ParentRoot: s.parentRoot, Root: root, LogicalObjectsChanged: logicalObjects, LogicalBindingsChanged: logicalBindings, LogicalPayloadBytes: logicalPayload, AdapterPayloadInputBytes: source[commitIndex].AdapterPayloadInputBytes, Mutations: executions, CAS: accounting, ClientPhases: phaseMetrics(elapsed, putNanos, getNanos)})
 		s.parentRoot = root
 	}

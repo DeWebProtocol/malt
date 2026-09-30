@@ -187,6 +187,9 @@ type CASAccounting struct {
 }
 
 type CASWriteEvent struct {
+	// ObjectRole is exported only by the separate replay-worker protocol. The
+	// preserved RQ3 wire format and its accounting categories stay unchanged.
+	ObjectRole              string `json:"-"`
 	Sequence                int    `json:"sequence"`
 	CID                     string `json:"cid"`
 	Codec                   uint64 `json:"codec"`

@@ -56,7 +56,11 @@ type Options struct {
 	ChunkSize   int
 	HAMTFanout  int
 	RawFileLeaf bool
-	Ignore      PathFilter
+	// PreserveFileMode wraps a raw file root in a dag-pb UnixFS file node
+	// carrying its permissions. Raw chunk leaves remain enabled. This is an
+	// explicit encoding profile; the historical default remains unchanged.
+	PreserveFileMode bool
+	Ignore           PathFilter
 }
 
 // PathFilter lets callers apply local import policy without storing that policy
@@ -349,6 +353,25 @@ func (i *pathImporter) importFileReader(_ context.Context, name string, r io.Rea
 	}
 	if err != nil {
 		return nil, fmt.Errorf("build unixfs file dag for %s: %w", name, err)
+	}
+	if i.opts.PreserveFileMode && root.Cid().Type() == cid.Raw {
+		info := unixfs.NewFSNode(unixfs.TFile)
+		info.SetMode(mode)
+		info.AddBlockSize(uint64(len(root.RawData())))
+		encoded, err := info.GetBytes()
+		if err != nil {
+			return nil, err
+		}
+		parent := new(merkledag.ProtoNode)
+		parent.SetCidBuilder(i.build)
+		parent.SetData(encoded)
+		if err := parent.AddNodeLink("", root); err != nil {
+			return nil, err
+		}
+		if err := i.dag.Add(context.TODO(), parent); err != nil {
+			return nil, err
+		}
+		root = parent
 	}
 	return root, nil
 }

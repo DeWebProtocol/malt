@@ -110,6 +110,23 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 	if err != nil {
 		return cid.Undef, err
 	}
+	role := "file_content"
+	if codec == cid.DagProtobuf {
+		node, decodeErr := merkledag.DecodeProtobuf(data)
+		if decodeErr != nil {
+			return cid.Undef, decodeErr
+		}
+		info, decodeErr := unixfs.FSNodeFromBytes(node.Data())
+		if decodeErr != nil {
+			return cid.Undef, decodeErr
+		}
+		switch info.Type() {
+		case unixfs.TDirectory:
+			role = "directory_relation"
+		case unixfs.THAMTShard:
+			role = "hamt_relation"
+		}
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,6 +170,7 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 	}
 	s.phaseAttempts[keyString] = struct{}{}
 	s.events = append(s.events, CASWriteEvent{
+		ObjectRole:              role,
 		Sequence:                len(s.events),
 		CID:                     keyString,
 		Codec:                   codec,
