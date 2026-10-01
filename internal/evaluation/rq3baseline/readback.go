@@ -91,12 +91,18 @@ func (s *StreamSession) VerifyAll(ctx context.Context) error {
 	return s.VerifyPaths(ctx, paths)
 }
 
-// RetainedCAS independently enumerates the actual CAS files before cleanup.
+// RetainedCAS independently enumerates the actual CAS objects before cleanup.
 // It measures serialized object bodies, excluding filesystem allocation and
 // inode metadata; no physical-device write amplification is implied.
 func (s *StreamSession) RetainedCAS() (objects, bytes int64, err error) {
 	if s == nil || s.failed || s.store == nil {
 		return 0, 0, fmt.Errorf("invalid stream")
+	}
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	if s.store.archive != nil {
+		report, err := s.store.archive.inventory()
+		return report.Objects, report.BodyBytes, err
 	}
 	err = filepath.WalkDir(s.store.root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -117,6 +123,23 @@ func (s *StreamSession) RetainedCAS() (objects, bytes int64, err error) {
 		return nil
 	})
 	return
+}
+
+// FinishReplayStorage reconciles all CAR frames with the disk index, closes
+// the backend, and inventories its files before cleanup. This is terminal:
+// further reads/mutations are rejected. It does not resume a failed replay.
+func (s *StreamSession) FinishReplayStorage() (*ReplayStorage, error) {
+	if s == nil || s.failed || s.store == nil || s.store.archive == nil {
+		return nil, fmt.Errorf("invalid archive replay stream")
+	}
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	report, err := s.store.archive.finish()
+	if err != nil {
+		s.failed = true
+		return nil, err
+	}
+	return &report, nil
 }
 
 // VerifyPaths checks the active CAS root against the independently validated

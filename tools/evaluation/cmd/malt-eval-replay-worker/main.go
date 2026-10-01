@@ -18,8 +18,8 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/strictjson"
 )
 
-const requestSchema = "malt-replay-worker-request/v1"
-const responseSchema = "malt-replay-worker-response/v1"
+const requestSchema = "malt-replay-worker-request/v2"
+const responseSchema = "malt-replay-worker-response/v2"
 
 type request struct {
 	Schema    string               `json:"schema_version"`
@@ -43,6 +43,8 @@ type response struct {
 	Applied          uint32                     `json:"applied"`
 	RetainedObjects  int64                      `json:"retained_objects,string"`
 	RetainedBytes    int64                      `json:"retained_bytes,string"`
+	StorageBackend   string                     `json:"storage_backend"`
+	Storage          *rq3baseline.ReplayStorage `json:"storage,omitempty"`
 }
 
 func main() {
@@ -86,7 +88,7 @@ func run(ctx context.Context, input io.Reader, output io.Writer) (returnErr erro
 		if req.Schema != requestSchema || req.ID == "" || finished {
 			return fmt.Errorf("invalid replay request envelope or terminal stream")
 		}
-		res := response{Schema: responseSchema, ID: req.ID, OK: true}
+		res := response{Schema: responseSchema, ID: req.ID, OK: true, StorageBackend: rq3baseline.ReplayStorageBackend}
 		var err error
 		switch req.Operation {
 		case "capabilities":
@@ -151,7 +153,10 @@ func run(ctx context.Context, input io.Reader, output io.Writer) (returnErr erro
 				err = session.VerifyAll(ctx)
 			}
 			if err == nil {
-				res.RetainedObjects, res.RetainedBytes, err = session.RetainedCAS()
+				res.Storage, err = session.FinishReplayStorage()
+				if err == nil {
+					res.RetainedObjects, res.RetainedBytes = res.Storage.Objects, res.Storage.BodyBytes
+				}
 			}
 			if err == nil {
 				err = session.Close()

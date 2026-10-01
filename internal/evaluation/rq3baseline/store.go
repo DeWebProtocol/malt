@@ -34,6 +34,7 @@ type accountingStore struct {
 	root    string
 	initErr error
 	closed  bool
+	archive *archiveCAS
 
 	phaseAttempts map[string]struct{}
 	events        []CASWriteEvent
@@ -46,6 +47,21 @@ type accountingStore struct {
 func newAccountingStore() *accountingStore {
 	root, err := os.MkdirTemp("", "malt-rq3-logical-cas-")
 	return &accountingStore{root: root, initErr: err}
+}
+
+func newReplayAccountingStore() *accountingStore {
+	s := newAccountingStore()
+	if s.initErr == nil {
+		s.archive, s.initErr = newArchiveCAS(s.root, archiveSegmentBytes)
+	}
+	return s
+}
+
+func (s *accountingStore) readBlock(key cid.Cid) ([]byte, error) {
+	if s.archive != nil {
+		return s.archive.get(key)
+	}
+	return os.ReadFile(s.blockPath(key))
 }
 
 func (s *accountingStore) beginPhase() {
@@ -74,7 +90,7 @@ func (s *accountingStore) Get(ctx context.Context, key cid.Cid) ([]byte, error) 
 		s.mu.Unlock()
 		return nil, fmt.Errorf("evaluator CAS is closed")
 	}
-	data, err := os.ReadFile(s.blockPath(key))
+	data, err := s.readBlock(key)
 	if err == nil {
 		s.readObjects++
 		s.readBytes += int64(len(data))
@@ -143,7 +159,7 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 	keyString := key.String()
 	status := statusNewlyPersisted
 	objectPath := s.blockPath(key)
-	if existing, readErr := os.ReadFile(objectPath); readErr == nil {
+	if existing, readErr := s.readBlock(key); readErr == nil {
 		if !bytes.Equal(existing, data) {
 			return cid.Undef, fmt.Errorf("CID collision for %s", key)
 		}
@@ -154,6 +170,10 @@ func (s *accountingStore) PutWithCodec(ctx context.Context, data []byte, codec u
 		}
 	} else if !os.IsNotExist(readErr) {
 		return cid.Undef, readErr
+	} else if s.archive != nil {
+		if err := s.archive.appendNew(key, data); err != nil {
+			return cid.Undef, err
+		}
 	} else {
 		if err := os.MkdirAll(filepath.Dir(objectPath), 0o700); err != nil {
 			return cid.Undef, err
@@ -191,21 +211,21 @@ func (s *accountingStore) blockPath(key cid.Cid) string {
 
 func (s *accountingStore) close() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.closed = true
 	root := s.root
-	s.mu.Unlock()
+	var closeErr error
+	if s.archive != nil {
+		closeErr = s.archive.closeHandles()
+	}
 	if root == "" {
-		return nil
+		return closeErr
 	}
 	if err := os.RemoveAll(root); err != nil {
-		return err
+		return errors.Join(closeErr, err)
 	}
-	s.mu.Lock()
-	if s.root == root {
-		s.root = ""
-	}
-	s.mu.Unlock()
-	return nil
+	s.root = ""
+	return closeErr
 }
 
 // retryCleanup gives one-shot and construction-failure paths a second owner

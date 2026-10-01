@@ -54,10 +54,18 @@ func StartReplayStream(ctx context.Context, spec RunSpec, flat bool) (*StreamSes
 }
 
 func startStream(ctx context.Context, spec RunSpec, flat, preserveMode bool) (_ *StreamSession, _ CommitRecord, returnErr error) {
+	factory := newAccountingStore
+	if preserveMode {
+		factory = newReplayAccountingStore
+	}
+	return startStreamWithStore(ctx, spec, flat, preserveMode, factory)
+}
+
+func startStreamWithStore(ctx context.Context, spec RunSpec, flat, preserveMode bool, factory func() *accountingStore) (_ *StreamSession, _ CommitRecord, returnErr error) {
 	if spec.Commits == nil || len(spec.Commits) != 0 {
 		return nil, CommitRecord{}, fmt.Errorf("stream start requires an explicit empty commit chunk")
 	}
-	store := newAccountingStore()
+	store := factory()
 	payloads, err := newPayloadStore()
 	if err != nil {
 		return nil, CommitRecord{}, errors.Join(err, retryCleanup(store.close))

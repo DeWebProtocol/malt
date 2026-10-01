@@ -44,6 +44,10 @@ func TestReplayProtocolVerifiesModesAndRetainsNoOpCommits(t *testing.T) {
 	if !replies[3].Complete || !replies[3].ReadbackVerified || replies[3].Applied != 3 || replies[3].RetainedObjects == 0 {
 		t.Fatal("incomplete verified history")
 	}
+	storage := replies[3].Storage
+	if storage == nil || replies[3].StorageBackend != rq3baseline.ReplayStorageBackend || !storage.Reconciled || storage.Objects != replies[3].RetainedObjects || storage.BodyBytes != replies[3].RetainedBytes || storage.IndexWriterComplete {
+		t.Fatal("terminal response omitted or overclaimed backend observation")
+	}
 	if replies[1].Records[0].Root == replies[2].Records[0].Root || replies[2].Records[0].Root != replies[2].Records[1].Root {
 		t.Fatal("mode change or no-op root semantics lost")
 	}
@@ -54,8 +58,9 @@ func TestReplayProtocolVerifiesModesAndRetainsNoOpCommits(t *testing.T) {
 
 func TestReplayRejectsAmbiguousOrIncompleteInput(t *testing.T) {
 	for _, input := range []string{
-		`{"schema_version":"malt-replay-worker-request/v1","request_id":"1","operation":"capabilities","profile":""} {}`,
-		`{"schema_version":"malt-replay-worker-request/v1","request_id":"1","request_id":"2","operation":"capabilities","profile":""}`,
+		`{"schema_version":"malt-replay-worker-request/v2","request_id":"1","operation":"capabilities","profile":""} {}`,
+		`{"schema_version":"malt-replay-worker-request/v2","request_id":"1","request_id":"2","operation":"capabilities","profile":""}`,
+		`{"schema_version":"malt-replay-worker-request/v2","request_id":"1","operation":"capabilities","profile":""}`,
 		`{"schema_version":"malt-replay-worker-request/v1","request_id":"1","operation":"capabilities","profile":""}`,
 	} {
 		var output bytes.Buffer
