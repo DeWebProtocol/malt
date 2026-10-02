@@ -23,6 +23,22 @@ type Editor struct {
 	opts  Options
 	build cid.Prefix
 	root  ipld.Node
+	flat  bool
+}
+
+// NewFlatHAMTEditor indexes canonical full paths as opaque HAMT keys. Its
+// root is an application index, not a hierarchical UnixFS directory. File
+// encoding and the underlying Boxo HAMT remain identical to NewEditor.
+func NewFlatHAMTEditor(store Store, opts Options) (*Editor, error) {
+	if opts.DirLayout != DirLayoutHAMT {
+		return nil, fmt.Errorf("flat path index requires an explicit HAMT directory layout")
+	}
+	editor, err := NewEditor(store, opts)
+	if err != nil {
+		return nil, err
+	}
+	editor.flat = true
+	return editor, nil
 }
 
 // NewEditor creates an incremental UnixFS DAG editor.
@@ -51,11 +67,32 @@ func (e *Editor) Root() string {
 	return e.root.Cid().String()
 }
 
+// EnsureRoot materializes the canonical empty directory when no file has yet
+// been added. The normal file-put path does not write an unused empty root.
+func (e *Editor) EnsureRoot(ctx context.Context) error {
+	if e.root != nil {
+		return nil
+	}
+	dir, err := e.newDirectory()
+	if err != nil {
+		return err
+	}
+	root, err := e.storeDirectory(ctx, dir)
+	if err != nil {
+		return err
+	}
+	e.root = root
+	return nil
+}
+
 // PutFile writes or replaces one file in the current DAG.
 func (e *Editor) PutFile(ctx context.Context, filePath string, data []byte, mode fs.FileMode) error {
 	clean, parts, err := cleanPathParts(filePath)
 	if err != nil {
 		return err
+	}
+	if e.flat {
+		parts = []string{clean}
 	}
 	importer := pathImporter{
 		dag:   e.dag,
@@ -77,9 +114,12 @@ func (e *Editor) PutFile(ctx context.Context, filePath string, data []byte, mode
 // RemoveFile removes one file from the current DAG and prunes empty parent
 // directories.
 func (e *Editor) RemoveFile(ctx context.Context, filePath string) error {
-	_, parts, err := cleanPathParts(filePath)
+	clean, parts, err := cleanPathParts(filePath)
 	if err != nil {
 		return err
+	}
+	if e.flat {
+		parts = []string{clean}
 	}
 	if e.root == nil {
 		return fmt.Errorf("remove %s: %w", filePath, os.ErrNotExist)

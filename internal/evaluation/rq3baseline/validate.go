@@ -108,6 +108,12 @@ func StartValidationStream(spec RunSpec) (_ *ValidationStreamSession, _ SourceCo
 // request still owns its encoded corpus, while live semantic state contains
 // only path/mode/digest/size metadata backed by the private payload store.
 func prepareStreamSnapshot(spec RunSpec, payloads *payloadStore) (map[string]logicalFile, SourceCommitAccounting, error) {
+	return prepareStreamSnapshotWithEmpty(spec, payloads, false)
+}
+
+// Empty initial trees belong to the new replay profile. The preserved RQ3
+// protocol retains its published unsupported-gap behavior.
+func prepareStreamSnapshotWithEmpty(spec RunSpec, payloads *payloadStore, allowEmpty bool) (map[string]logicalFile, SourceCommitAccounting, error) {
 	if payloads == nil {
 		return nil, SourceCommitAccounting{}, fmt.Errorf("stream snapshot payload store is nil")
 	}
@@ -120,7 +126,7 @@ func prepareStreamSnapshot(spec RunSpec, payloads *payloadStore) (map[string]log
 	if spec.Snapshot.Files == nil {
 		return nil, SourceCommitAccounting{}, fmt.Errorf("snapshot files must be an explicit array")
 	}
-	if len(spec.Snapshot.Files) == 0 {
+	if len(spec.Snapshot.Files) == 0 && !allowEmpty {
 		return nil, SourceCommitAccounting{}, &UnsupportedError{Gap: "empty_snapshot", Message: "empty snapshot is unsupported because the current Editor cannot materialize or resume an empty directory root"}
 	}
 	if len(spec.Snapshot.Files) > maxFiles {
