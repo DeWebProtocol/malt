@@ -1,4 +1,4 @@
-package capability
+package nodeapi
 
 import (
 	"fmt"
@@ -54,6 +54,9 @@ type ApplyRequest struct {
 	BaseRevision  uint64 `json:"base_revision"`
 	ChangeSetCID  string `json:"change_set_cid,omitempty"`
 	Message       string `json:"message,omitempty"`
+	// MergePolicy "preserve" retains a stale candidate on a conflict branch
+	// instead of asking the service to compute a merged Root.
+	MergePolicy string `json:"merge_policy,omitempty"`
 }
 
 type ApplyResult struct {
@@ -79,6 +82,10 @@ func NormalizeApplyRequest(selectedBranch string, request ApplyRequest) (ApplyRe
 	request.CandidateRoot = strings.TrimSpace(request.CandidateRoot)
 	request.ChangeSetCID = strings.TrimSpace(request.ChangeSetCID)
 	request.Message = strings.TrimSpace(request.Message)
+	request.MergePolicy = strings.TrimSpace(request.MergePolicy)
+	if request.MergePolicy != "" && request.MergePolicy != "preserve" {
+		return ApplyRequest{}, fmt.Errorf("merge policy must be empty or preserve")
+	}
 	branch, err := NormalizeBranch(request.Branch)
 	if err != nil {
 		return ApplyRequest{}, err
@@ -94,8 +101,8 @@ func NormalizeApplyRequest(selectedBranch string, request ApplyRequest) (ApplyRe
 	if selectedBranch != "main" {
 		request.Branch = selectedBranch
 	}
-	if request.OperationID == "" {
-		return ApplyRequest{}, fmt.Errorf("dataset apply operation ID is empty")
+	if request.OperationID == "" || len(request.OperationID) > 256 {
+		return ApplyRequest{}, fmt.Errorf("dataset apply operation ID must contain 1..256 bytes")
 	}
 	candidate, err := cid.Parse(request.CandidateRoot)
 	if err != nil {
@@ -208,6 +215,9 @@ func ValidateApplyResult(datasetID string, request ApplyRequest, value ApplyResu
 			return fmt.Errorf("remote returned a fast-forward head that does not point to the final commit")
 		}
 	case "merged":
+		if request.MergePolicy == "preserve" {
+			return fmt.Errorf("remote merged a candidate despite preserve policy")
+		}
 		if value.Branch != nil || len(value.Conflicts) != 0 || value.Candidate.ID == value.Commit.ID || value.Head.CommitID == "" {
 			return fmt.Errorf("remote returned an inconsistent merged dataset apply")
 		}

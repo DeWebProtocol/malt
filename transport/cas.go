@@ -9,7 +9,7 @@ import (
 	"time"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -20,8 +20,8 @@ const (
 	MaxCASBatchBytes   = 64 << 20
 )
 
-type Block = transportcap.Block
-type PutBatchResult = transportcap.PutResult
+type Block = nodeapi.Block
+type PutBatchResult = nodeapi.PutResult
 
 // PutBatchMeasurement is the exact HTTP-message boundary for one CAS batch.
 // RequestWireBytes and ResponseWireBytes are kept directionally separate;
@@ -134,7 +134,7 @@ func (c *Client) PutBatchMeasured(ctx context.Context, blocks []Block) (PutBatch
 			return PutBatchMeasurement{}, fmt.Errorf("%w: CAS batch result %d returned CID %s, want %s", clientcas.ErrCorruptedBlock, i, got, want)
 		}
 		status := clientcas.PutStatus(raw.Status)
-		if !transportcap.IsValidPutStatus(status) {
+		if !nodeapi.IsValidPutStatus(status) {
 			return PutBatchMeasurement{}, fmt.Errorf("%w: CAS batch result %d has unsupported status %q", clientcas.ErrCorruptedBlock, i, raw.Status)
 		}
 		results[i] = clientcas.PutResult{CID: got, Status: status}

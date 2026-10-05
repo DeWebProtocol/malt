@@ -34,9 +34,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 
 ## Package Ownership
 
-- `transport/capability` owns URL-free, route-free, trust-free semantic ports
-  and untrusted dataset/mutation results shared by Gateway, local, peer, and
-  hybrid implementations. `transport/capabilitytest` owns the reusable adapter
+- `nodeapi` owns URL-free, route-free, trust-free semantic ports
+  and untrusted authentication/dataset results shared by Gateway, local, peer, and
+  hybrid implementations. `nodeapi/nodetest` owns the reusable adapter
   contract, `transport/local` owns the bounded durable local CAS, and
   `transport/hybrid` owns Gateway-primary/read-through-CAS policy. Hybrid `Has`
   remains primary-authoritative and every cache body is CID-verified. Local

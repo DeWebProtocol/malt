@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -13,24 +13,24 @@ import (
 // ErrNotFound reports that a requested CAS block is absent. Remote and local
 // implementations wrap this sentinel so higher layers can distinguish absence
 // from transport, cancellation, and corruption failures.
-var ErrNotFound = transportcap.ErrNotFound
+var ErrNotFound = nodeapi.ErrNotFound
 
 // Block is a CAS block to write. Codec 0 means cid.Raw.
-type Block = transportcap.Block
+type Block = nodeapi.Block
 
 // PutStatus describes how a block write was handled.
-type PutStatus = transportcap.PutStatus
+type PutStatus = nodeapi.PutStatus
 
 const (
-	PutStatusStored             = transportcap.PutStatusStored
-	PutStatusAlreadyPresent     = transportcap.PutStatusAlreadyPresent
-	PutStatusDuplicate          = transportcap.PutStatusDuplicate
-	PutStatusNewlyPersisted     = transportcap.PutStatusNewlyPersisted
-	PutStatusDuplicateInRequest = transportcap.PutStatusDuplicateInRequest
+	PutStatusStored             = nodeapi.PutStatusStored
+	PutStatusAlreadyPresent     = nodeapi.PutStatusAlreadyPresent
+	PutStatusDuplicate          = nodeapi.PutStatusDuplicate
+	PutStatusNewlyPersisted     = nodeapi.PutStatusNewlyPersisted
+	PutStatusDuplicateInRequest = nodeapi.PutStatusDuplicateInRequest
 )
 
 // PutResult is the ordered result for a block write.
-type PutResult = transportcap.PutResult
+type PutResult = nodeapi.PutResult
 
 // Reader provides read-side access to content-addressable storage.
 type Reader interface {

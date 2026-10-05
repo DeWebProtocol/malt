@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -14,7 +14,7 @@ import (
 // untrusted execution state (see ARCHITECTURE.md, section "Trust Model"); a
 // reader that does not verify hashes lets a compromised CAS substitute
 // arbitrary content underneath ProofList header guarantees.
-var ErrCorruptedBlock = transportcap.ErrCorruptedBlock
+var ErrCorruptedBlock = nodeapi.ErrCorruptedBlock
 
 // VerifyingReader wraps a CAS Reader and validates immutable-byte results and
 // receipts before exposing them. It also validates Has identities and, if the
@@ -235,7 +235,7 @@ func verifyBatchResults(blocks []Block, results []PutResult) error {
 		if _, err := verifyPutResult(r.CID, blocks[i].Data, blocks[i].Codec); err != nil {
 			return fmt.Errorf("batch result %d: %w", i, err)
 		}
-		if !transportcap.IsValidPutStatus(r.Status) {
+		if !nodeapi.IsValidPutStatus(r.Status) {
 			return fmt.Errorf("%w: batch result %d has unsupported status %q", ErrCorruptedBlock, i, r.Status)
 		}
 	}

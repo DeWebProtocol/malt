@@ -3,7 +3,7 @@ package transport
 import (
 	"context"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 )
 
 // Diagnostics exposes operator measurements only. It is never part of a
@@ -22,11 +22,11 @@ type MerkleDAGProfile interface {
 }
 
 var (
-	_ transportcap.Authentication       = (*Client)(nil)
-	_ transportcap.AuthenticationWriter = (*Client)(nil)
-	_ transportcap.AuthenticationBatch  = (*Client)(nil)
-	_ transportcap.CAS                  = (*Client)(nil)
-	_ transportcap.BatchCAS             = (*Client)(nil)
-	_ Diagnostics                       = (*Client)(nil)
-	_ MerkleDAGProfile                  = (*Client)(nil)
+	_ nodeapi.Authentication       = (*Client)(nil)
+	_ nodeapi.AuthenticationWriter = (*Client)(nil)
+	_ nodeapi.AuthenticationBatch  = (*Client)(nil)
+	_ nodeapi.CAS                  = (*Client)(nil)
+	_ nodeapi.BatchCAS             = (*Client)(nil)
+	_ Diagnostics                  = (*Client)(nil)
+	_ MerkleDAGProfile             = (*Client)(nil)
 )

@@ -16,7 +16,7 @@ import (
 	filesystemmount "github.com/dewebprotocol/malt-client/filesystem/mount"
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/filesystem/staging"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/dewebprotocol/malt-client/unixfs"
 	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
@@ -35,7 +35,7 @@ type gatewayWritableRemote interface {
 	Put(context.Context, []byte) (cid.Cid, error)
 	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
 	AuthenticationCandidate(context.Context, cid.Cid) (*protocol.AuthenticationCandidate, error)
-	transportcap.AuthenticationBatch
+	nodeapi.AuthenticationBatch
 }
 
 type gatewayWritableBlocks interface {

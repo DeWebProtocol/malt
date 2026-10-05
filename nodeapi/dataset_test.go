@@ -1,4 +1,4 @@
-package capability
+package nodeapi
 
 import (
 	"encoding/json"

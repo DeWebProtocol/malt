@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	client "github.com/dewebprotocol/malt-client/transport"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 )
 
 func TestGatewayHTTPAdapterRejectsInvalidSemanticApplyBeforeRequest(t *testing.T) {
@@ -22,7 +22,7 @@ func TestGatewayHTTPAdapterRejectsInvalidSemanticApplyBeforeRequest(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := remote.ApplyCandidate(t.Context(), transportcap.ApplyRequest{}); err == nil {
+	if _, err := remote.ApplyCandidate(t.Context(), nodeapi.ApplyRequest{}); err == nil {
 		t.Fatal("ApplyCandidate accepted an incomplete semantic request")
 	}
 	if calls != 0 {

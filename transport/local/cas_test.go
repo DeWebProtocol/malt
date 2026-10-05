@@ -13,13 +13,13 @@ import (
 	"testing"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
 func TestBlockIdentityShardsByDigestByte(t *testing.T) {
 	for _, body := range [][]byte{[]byte("a"), []byte("b")} {
-		key, err := clientcas.CIDForBlock(transportcap.Block{Data: body, Codec: cid.Raw})
+		key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body, Codec: cid.Raw})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,10 +74,10 @@ func TestCASRejectsCorruptionAndPutRepairsExactBlock(t *testing.T) {
 	if err := os.WriteFile(store.blockPath(key), []byte("substituted"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(t.Context(), key); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Get(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("corrupt Get error = %v, want ErrCorruptedBlock", err)
 	}
-	if _, err := store.Has(t.Context(), key); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Has(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("corrupt Has error = %v, want ErrCorruptedBlock", err)
 	}
 	repaired, err := store.Put(t.Context(), body)
@@ -92,10 +92,10 @@ func TestCASRejectsCorruptionAndPutRepairsExactBlock(t *testing.T) {
 
 func TestCASBatchPreflightAndDuplicateIdentity(t *testing.T) {
 	store := openTestCAS(t, Options{Directory: t.TempDir(), MaxBlockBytes: 8, MaxBatchBytes: 8, MaxBatchBlocks: 3})
-	if _, err := store.PutBatch(t.Context(), []transportcap.Block{{Data: []byte("small")}, {Data: []byte("too-large")}}); err == nil {
+	if _, err := store.PutBatch(t.Context(), []nodeapi.Block{{Data: []byte("small")}, {Data: []byte("too-large")}}); err == nil {
 		t.Fatal("oversized batch succeeded")
 	}
-	small, err := clientcas.CIDForBlock(transportcap.Block{Data: []byte("small")})
+	small, err := clientcas.CIDForBlock(nodeapi.Block{Data: []byte("small")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +103,11 @@ func TestCASBatchPreflightAndDuplicateIdentity(t *testing.T) {
 	if err != nil || present {
 		t.Fatalf("preflight wrote first block: present=%v err=%v", present, err)
 	}
-	results, err := store.PutBatch(t.Context(), []transportcap.Block{{Data: []byte("same")}, {Data: []byte("same")}})
+	results, err := store.PutBatch(t.Context(), []nodeapi.Block{{Data: []byte("same")}, {Data: []byte("same")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 2 || !results[0].CID.Equals(results[1].CID) || results[1].Status != transportcap.PutStatusDuplicateInRequest {
+	if len(results) != 2 || !results[0].CID.Equals(results[1].CID) || results[1].Status != nodeapi.PutStatusDuplicateInRequest {
 		t.Fatalf("duplicate results = %#v", results)
 	}
 }
@@ -116,7 +116,7 @@ func TestCASBatchErrorMayLeaveVerifiedSubsetAndWholeBatchRetryIsSafe(t *testing.
 	store := openTestCAS(t, Options{Directory: t.TempDir()})
 	ctx, cancel := context.WithCancel(t.Context())
 	store.platform = &cancelAfterWriteStore{inner: store.platform, cancel: cancel}
-	blocks := []transportcap.Block{{Data: []byte("persisted-before-cancel")}, {Data: []byte("not-yet-persisted")}}
+	blocks := []nodeapi.Block{{Data: []byte("persisted-before-cancel")}, {Data: []byte("not-yet-persisted")}}
 	results, err := store.PutBatch(ctx, blocks)
 	if !errors.Is(err, context.Canceled) || results != nil {
 		t.Fatalf("canceled PutBatch = %#v, %v; want nil, context.Canceled", results, err)
@@ -144,7 +144,7 @@ func TestCASConcurrentImmutableWrites(t *testing.T) {
 	first := openTestCAS(t, Options{Directory: directory})
 	second := openTestCAS(t, Options{Directory: directory})
 	body := bytes.Repeat([]byte("concurrent"), 1024)
-	want, err := clientcas.CIDForBlock(transportcap.Block{Data: body, Codec: cid.Raw})
+	want, err := clientcas.CIDForBlock(nodeapi.Block{Data: body, Codec: cid.Raw})
 	if err != nil {
 		t.Fatal(err)
 	}

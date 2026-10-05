@@ -1,8 +1,4 @@
-// Package capability defines transport-neutral, untrusted data-access
-// capabilities consumed by the MALT local runtime. Implementations may use a
-// Gateway, a peer, local storage, or a hybrid policy; none of these interfaces
-// can mutate local trust state.
-package capability
+package nodeapi
 
 import (
 	"context"
@@ -12,7 +8,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// ErrNotFound reports that an immutable block is absent from a transport.
+// ErrNotFound reports that an immutable block is absent from a node service.
 // Implementations wrap this sentinel so callers can distinguish absence from
 // cancellation, corruption, and backend failures without depending on a
 // concrete Gateway, peer, or local-store error type.
@@ -22,8 +18,9 @@ var ErrNotFound = errors.New("cas: block not found")
 // they claim. A transport must never expose mismatched bytes to its caller.
 var ErrCorruptedBlock = errors.New("cas: returned block does not match requested CID")
 
-// CAS transfers immutable bytes. Get implementations must bind returned bytes
-// to the requested CID; callers still enforce application-specific bindings.
+// CAS stores and retrieves immutable bytes. Implementations must bind returned
+// bytes and write results to their CIDs, honor cancellation before side effects,
+// and return caller-owned bytes. Callers enforce application-specific bindings.
 type CAS interface {
 	Put(context.Context, []byte) (cid.Cid, error)
 	PutWithCodec(context.Context, []byte, uint64) (cid.Cid, error)
@@ -98,12 +95,17 @@ type DatasetBranch interface {
 }
 
 // Authentication exposes typed V=0 queries with untrusted proof results.
+// Implementations validate the Core request before execution. A successful
+// result is non-nil; the caller still verifies evidence against its own query
+// and selected Root. No transport, publication, or trust policy is implied.
 type Authentication interface {
 	Authenticate(context.Context, protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error)
 }
 
 // AuthenticationWriter transfers complete candidate materialization. It has
-// no authority to publish or accept a root.
+// no authority to publish or accept a root. Candidate lookup returns a non-nil
+// complete candidate for exactly the requested Root. Materialization validates
+// the complete Core candidate before side effects and returns exactly its Root.
 type AuthenticationWriter interface {
 	AuthenticationCandidate(context.Context, cid.Cid) (*protocol.AuthenticationCandidate, error)
 	MaterializeAuthentication(context.Context, protocol.AuthenticationCandidate) (cid.Cid, error)

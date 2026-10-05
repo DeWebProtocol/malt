@@ -56,6 +56,11 @@ not update an accepted root automatically: remote heads are observations,
 while locally computed or strictly verified writes are candidates. Each has a
 separate explicit acceptance path.
 
+The [public Node API](docs/node-api.md) defines transport-independent CAS,
+authentication and dataset-branch capabilities. Gateway services and HTTP,
+local and hybrid adapters implement the same contracts; synchronization consumes
+them without acquiring root-acceptance authority.
+
 ## Status
 
 This is an experimental, pre-v1 local runtime. It currently provides the
@@ -468,7 +473,7 @@ persists base, observed remote head, and local stashes under a cross-process
 lock and implements stash-before-fetch push ordering. It deliberately does not
 import or mutate package `trust`.
 
-`transport/capability` also defines public single and ordered-batch CAS
+`nodeapi` also defines public single and ordered-batch CAS
 contracts plus stable not-found/corruption classification. `transport/local`
 stores bounded immutable blocks atomically in an owner-private directory and
 pins the opened store boundary with no-follow platform handles, rejects

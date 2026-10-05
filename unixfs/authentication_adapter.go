@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/commitment/kzg"
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
@@ -23,13 +23,13 @@ import (
 // block sequences carry measured structural metadata and no system payload.
 // It computes candidates locally and checks the exact remote receipt.
 type AuthenticationAdapter struct {
-	remote  transportcap.AuthenticationWriter
+	remote  nodeapi.AuthenticationWriter
 	engine  *engine.Engine
 	profile maltcid.ProfileID
 	layout  LayoutKind
 }
 
-func NewAuthenticationAdapter(layout LayoutKind, remote transportcap.AuthenticationWriter, e *engine.Engine, profile maltcid.ProfileID) (*AuthenticationAdapter, error) {
+func NewAuthenticationAdapter(layout LayoutKind, remote nodeapi.AuthenticationWriter, e *engine.Engine, profile maltcid.ProfileID) (*AuthenticationAdapter, error) {
 	if _, err := NewLayout(layout); err != nil {
 		return nil, err
 	}

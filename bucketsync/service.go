@@ -21,7 +21,7 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/filelock"
 	"github.com/dewebprotocol/malt-client/internal/securefile"
 	"github.com/dewebprotocol/malt-client/internal/strictjson"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -32,7 +32,7 @@ var (
 
 const bucketWorkspaceVersion = 3
 
-type Remote = transportcap.DatasetBranch
+type Remote = nodeapi.DatasetBranch
 
 type Head struct {
 	CommitID string `json:"commit_id,omitempty"`
@@ -73,8 +73,8 @@ type Workspace struct {
 }
 
 type PushOutcome struct {
-	Result    transportcap.ApplyResult `json:"result"`
-	Workspace Workspace                `json:"workspace"`
+	Result    nodeapi.ApplyResult `json:"result"`
+	Workspace Workspace           `json:"workspace"`
 }
 
 type persistedState struct {
@@ -108,7 +108,7 @@ func OpenRemoteBranch(path string, remote Remote, bucketID, branch string) (*Ser
 	if path == "" || remote == nil || bucketID == "" {
 		return nil, fmt.Errorf("Bucket sync path, remote dataset capability, Bucket ID, and branch are required")
 	}
-	if err := transportcap.ValidateBinding(bucketID, branch, remote.DatasetBinding()); err != nil {
+	if err := nodeapi.ValidateBinding(bucketID, branch, remote.DatasetBinding()); err != nil {
 		return nil, err
 	}
 	service := &Service{
@@ -131,7 +131,7 @@ func (s *Service) Pull(ctx context.Context) (Workspace, error) {
 	if head == nil {
 		return Workspace{}, fmt.Errorf("remote returned an empty dataset head response")
 	}
-	if err := transportcap.ValidateObservedHead(s.bucketID, s.branch, *head); err != nil {
+	if err := nodeapi.ValidateObservedHead(s.bucketID, s.branch, *head); err != nil {
 		return Workspace{}, err
 	}
 	remote, err := headFromRef(*head)
@@ -351,12 +351,12 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 	if _, err := s.Pull(ctx); err != nil {
 		return PushOutcome{}, err
 	}
-	request := transportcap.ApplyRequest{
+	request := nodeapi.ApplyRequest{
 		OperationID: stash.PushID, Branch: s.branch, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
 		CandidateRoot: stash.CandidateRoot, BaseRevision: stash.Base.Revision,
 		ChangeSetCID: stash.ChangeSetCID, Message: stash.Message,
 	}
-	request, err := transportcap.NormalizeApplyRequest(s.branch, request)
+	request, err := nodeapi.NormalizeApplyRequest(s.branch, request)
 	if err != nil {
 		return PushOutcome{}, err
 	}
@@ -367,7 +367,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 	if result == nil {
 		return PushOutcome{}, fmt.Errorf("remote returned an empty dataset apply response")
 	}
-	if err := transportcap.ValidateApplyResult(s.bucketID, request, *result); err != nil {
+	if err := nodeapi.ValidateApplyResult(s.bucketID, request, *result); err != nil {
 		return PushOutcome{}, err
 	}
 	var workspace Workspace
@@ -628,7 +628,7 @@ func (s *Service) write() error {
 	return nil
 }
 
-func headFromRef(value transportcap.ObservedHead) (Head, error) {
+func headFromRef(value nodeapi.ObservedHead) (Head, error) {
 	head := Head{CommitID: value.CommitID, Root: value.Root, Revision: value.Revision}
 	return head, validateHead(head)
 }
@@ -671,7 +671,7 @@ func hasPending(values []Stash) bool {
 	return false
 }
 
-func conflictsFromRemote(values []transportcap.Conflict) []Conflict {
+func conflictsFromRemote(values []nodeapi.Conflict) []Conflict {
 	result := make([]Conflict, len(values))
 	for i, value := range values {
 		result[i] = Conflict{Coordinate: value.Coordinate, Base: value.Base, Local: value.Local, Remote: value.Remote}

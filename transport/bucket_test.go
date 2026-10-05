@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	client "github.com/dewebprotocol/malt-client/transport"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
 	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/traversal"
@@ -96,7 +96,7 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 	if head, err := transport.BucketHead(t.Context()); err != nil || head.Revision != 2 {
 		t.Fatalf("head=%#v err=%v", head, err)
 	}
-	if binding := transport.DatasetBinding(); binding != (transportcap.DatasetBinding{DatasetID: "bkt_one", Branch: "main"}) {
+	if binding := transport.DatasetBinding(); binding != (nodeapi.DatasetBinding{DatasetID: "bkt_one", Branch: "main"}) {
 		t.Fatalf("dataset binding = %#v", binding)
 	}
 	if head, err := transport.ObserveHead(t.Context()); err != nil || head.DatasetID != "bkt_one" || head.Revision != 2 {
@@ -120,7 +120,7 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 	if receivedPush.BaseRevision != 2 || receivedPush.BaseRoot != root.String() || receivedPush.CandidateRoot != target.String() {
 		t.Fatalf("push request was not canonicalized: %#v", receivedPush)
 	}
-	capabilityResult, err := transport.ApplyCandidate(t.Context(), transportcap.ApplyRequest{
+	capabilityResult, err := transport.ApplyCandidate(t.Context(), nodeapi.ApplyRequest{
 		OperationID: "capability-push", BaseCommit: "cmt_one", BaseRoot: baseText,
 		CandidateRoot: candidateText, BaseRevision: 2,
 	})

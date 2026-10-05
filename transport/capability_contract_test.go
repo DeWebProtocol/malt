@@ -14,9 +14,9 @@ import (
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
+	"github.com/dewebprotocol/malt-client/nodeapi"
+	"github.com/dewebprotocol/malt-client/nodeapi/nodetest"
 	client "github.com/dewebprotocol/malt-client/transport"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
-	"github.com/dewebprotocol/malt-client/transport/capabilitytest"
 	"github.com/dewebprotocol/malt-client/transport/hybrid"
 	localtransport "github.com/dewebprotocol/malt-client/transport/local"
 	cid "github.com/ipfs/go-cid"
@@ -24,13 +24,13 @@ import (
 
 func TestCASCapabilityContractAcrossTransports(t *testing.T) {
 	t.Run("mock", func(t *testing.T) {
-		capabilitytest.RunCAS(t, func(*testing.T) transportcap.CAS { return casmemory.New() })
+		nodetest.RunCAS(t, func(*testing.T) nodeapi.CAS { return casmemory.New() })
 	})
 	t.Run("gateway-http", func(t *testing.T) {
-		capabilitytest.RunCAS(t, newContractGateway)
+		nodetest.RunCAS(t, newContractGateway)
 	})
 	t.Run("local", func(t *testing.T) {
-		capabilitytest.RunCAS(t, func(t *testing.T) transportcap.CAS {
+		nodetest.RunCAS(t, func(t *testing.T) nodeapi.CAS {
 			store, err := localtransport.Open(localtransport.Options{Directory: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
@@ -40,7 +40,7 @@ func TestCASCapabilityContractAcrossTransports(t *testing.T) {
 		})
 	})
 	t.Run("hybrid", func(t *testing.T) {
-		capabilitytest.RunCAS(t, func(t *testing.T) transportcap.CAS {
+		nodetest.RunCAS(t, func(t *testing.T) nodeapi.CAS {
 			cache, err := localtransport.Open(localtransport.Options{Directory: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
@@ -54,7 +54,7 @@ func TestCASCapabilityContractAcrossTransports(t *testing.T) {
 		})
 	})
 	t.Run("peer-ready-loopback", func(t *testing.T) {
-		capabilitytest.RunCAS(t, func(t *testing.T) transportcap.CAS {
+		nodetest.RunCAS(t, func(t *testing.T) nodeapi.CAS {
 			store, err := localtransport.Open(localtransport.Options{Directory: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
@@ -68,7 +68,7 @@ func TestCASCapabilityContractAcrossTransports(t *testing.T) {
 	})
 }
 
-type peerCASLoopback struct{ remote transportcap.BatchCAS }
+type peerCASLoopback struct{ remote nodeapi.BatchCAS }
 
 func (p peerCASLoopback) Put(ctx context.Context, body []byte) (cid.Cid, error) {
 	return p.remote.Put(ctx, append([]byte(nil), body...))
@@ -87,10 +87,10 @@ func (p peerCASLoopback) Has(ctx context.Context, key cid.Cid) (bool, error) {
 	return p.remote.Has(ctx, key)
 }
 
-func (p peerCASLoopback) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]transportcap.PutResult, error) {
-	cloned := make([]transportcap.Block, len(blocks))
+func (p peerCASLoopback) PutBatch(ctx context.Context, blocks []nodeapi.Block) ([]nodeapi.PutResult, error) {
+	cloned := make([]nodeapi.Block, len(blocks))
 	for index, block := range blocks {
-		cloned[index] = transportcap.Block{Data: append([]byte(nil), block.Data...), Codec: block.Codec}
+		cloned[index] = nodeapi.Block{Data: append([]byte(nil), block.Data...), Codec: block.Codec}
 	}
 	return p.remote.PutBatch(ctx, cloned)
 }
@@ -104,7 +104,7 @@ type contractGatewayStore struct {
 	blocks map[string][]byte
 }
 
-func newContractGateway(t *testing.T) transportcap.CAS {
+func newContractGateway(t *testing.T) nodeapi.CAS {
 	t.Helper()
 	store := &contractGatewayStore{blocks: make(map[string][]byte)}
 	server := httptest.NewServer(http.HandlerFunc(store.serveHTTP))
@@ -136,7 +136,7 @@ func (s *contractGatewayStore) serveHTTP(response http.ResponseWriter, request *
 			http.Error(response, "invalid codec", http.StatusBadRequest)
 			return
 		}
-		key, err := clientcas.CIDForBlock(transportcap.Block{Data: body, Codec: codec})
+		key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body, Codec: codec})
 		if err != nil {
 			http.Error(response, err.Error(), http.StatusBadRequest)
 			return
@@ -146,8 +146,8 @@ func (s *contractGatewayStore) serveHTTP(response http.ResponseWriter, request *
 		_ = json.NewEncoder(response).Encode(map[string]string{"cid": key.String()})
 	case request.Method == http.MethodPost && request.URL.Path == base+"/batch":
 		var payload struct {
-			Profile string               `json:"profile"`
-			Blocks  []transportcap.Block `json:"blocks"`
+			Profile string          `json:"profile"`
+			Blocks  []nodeapi.Block `json:"blocks"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.Profile != client.CASPutBatchProfile {
 			http.Error(response, "invalid batch", http.StatusBadRequest)
@@ -161,11 +161,11 @@ func (s *contractGatewayStore) serveHTTP(response http.ResponseWriter, request *
 				http.Error(response, err.Error(), http.StatusBadRequest)
 				return
 			}
-			status := string(transportcap.PutStatusStored)
+			status := string(nodeapi.PutStatusStored)
 			if _, duplicate := seen[key.String()]; duplicate {
-				status = string(transportcap.PutStatusDuplicateInRequest)
+				status = string(nodeapi.PutStatusDuplicateInRequest)
 			} else if s.has(key) {
-				status = string(transportcap.PutStatusAlreadyPresent)
+				status = string(nodeapi.PutStatusAlreadyPresent)
 			}
 			seen[key.String()] = struct{}{}
 			s.put(key, block.Data)
@@ -236,4 +236,4 @@ func (s *contractGatewayStore) has(key cid.Cid) bool {
 	return ok
 }
 
-var _ transportcap.BatchCAS = peerCASLoopback{}
+var _ nodeapi.BatchCAS = peerCASLoopback{}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
 	cid "github.com/ipfs/go-cid"
@@ -40,22 +41,15 @@ func (c *Client) AuthenticationCandidate(ctx context.Context, root cid.Cid) (*pr
 	if err != nil {
 		return nil, err
 	}
-	returned, err := cid.Decode(result.Root)
-	if err != nil || !returned.Equals(root) {
-		return nil, fmt.Errorf("candidate view does not match selected Root")
+	if err := nodeapi.ValidateCandidateResult(root, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }
 func (c *Client) MaterializeAuthentication(ctx context.Context, candidate protocol.AuthenticationCandidate) (cid.Cid, error) {
-	expected, err := cid.Decode(candidate.Root)
+	expected, err := nodeapi.CandidateRoot(candidate)
 	if err != nil {
 		return cid.Undef, err
-	}
-	if _, _, err := maltcid.ParseRoot(expected); err != nil {
-		return cid.Undef, err
-	}
-	if candidate.Profile != protocol.AuthenticationProfile {
-		return cid.Undef, fmt.Errorf("unsupported authentication profile")
 	}
 	var receipt struct {
 		Profile string `json:"profile"`
@@ -65,8 +59,11 @@ func (c *Client) MaterializeAuthentication(ctx context.Context, candidate protoc
 		return cid.Undef, err
 	}
 	root, err := cid.Decode(receipt.Root)
-	if err != nil || receipt.Profile != protocol.AuthenticationProfile || !root.Equals(expected) {
+	if err != nil || receipt.Profile != protocol.AuthenticationProfile {
 		return cid.Undef, fmt.Errorf("materialization receipt changed candidate Root")
+	}
+	if err := nodeapi.ValidateMaterializedRoot(expected, root); err != nil {
+		return cid.Undef, err
 	}
 	return root, nil
 }

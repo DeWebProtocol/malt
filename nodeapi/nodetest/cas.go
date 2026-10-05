@@ -1,7 +1,6 @@
-// Package capabilitytest provides reusable semantic transport conformance
-// suites. Gateway, local, peer, and hybrid adapters can run the same tests
+// Package nodetest provides reusable Node API conformance suites. Gateway, local, peer, and hybrid adapters can run the same tests
 // without exposing their routes or backend DTOs to applications.
-package capabilitytest
+package nodetest
 
 import (
 	"bytes"
@@ -10,12 +9,12 @@ import (
 	"testing"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
 // CASFactory returns a fresh isolated CAS for one contract case.
-type CASFactory func(*testing.T) transportcap.CAS
+type CASFactory func(*testing.T) nodeapi.CAS
 
 // RunCAS runs the transport-neutral immutable-byte contract. Implementations
 // that also expose BatchCAS receive the ordered batch extension cases.
@@ -83,13 +82,13 @@ func RunCAS(t *testing.T, factory CASFactory) {
 		if err != nil || present {
 			t.Fatalf("missing Has = %v, %v", present, err)
 		}
-		if _, err := store.Get(t.Context(), missing); !errors.Is(err, transportcap.ErrNotFound) {
+		if _, err := store.Get(t.Context(), missing); !errors.Is(err, nodeapi.ErrNotFound) {
 			t.Fatalf("missing Get error = %v, want ErrNotFound", err)
 		}
-		if _, err := store.Get(t.Context(), cid.Undef); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+		if _, err := store.Get(t.Context(), cid.Undef); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 			t.Fatalf("undefined Get error = %v, want ErrCorruptedBlock", err)
 		}
-		if _, err := store.Has(t.Context(), cid.Undef); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+		if _, err := store.Has(t.Context(), cid.Undef); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 			t.Fatalf("undefined Has error = %v, want ErrCorruptedBlock", err)
 		}
 	})
@@ -113,7 +112,7 @@ func RunCAS(t *testing.T, factory CASFactory) {
 
 	t.Run("ordered-batch-extension", func(t *testing.T) {
 		store := requireCAS(t, factory)
-		batch, ok := store.(transportcap.BatchCAS)
+		batch, ok := store.(nodeapi.BatchCAS)
 		if !ok {
 			t.Skip("transport does not expose the optional ordered batch extension")
 		}
@@ -123,7 +122,7 @@ func RunCAS(t *testing.T, factory CASFactory) {
 		if present, err := batch.HasBatch(t.Context(), nil); err != nil || len(present) != 0 {
 			t.Fatalf("empty HasBatch = %#v, %v", present, err)
 		}
-		blocks := []transportcap.Block{
+		blocks := []nodeapi.Block{
 			{Data: []byte("batch-raw"), Codec: cid.Raw},
 			{Data: []byte{0xa1, 0x61, 0x62, 0x02}, Codec: 0x71},
 			{Data: []byte("batch-raw"), Codec: cid.Raw},
@@ -134,7 +133,7 @@ func RunCAS(t *testing.T, factory CASFactory) {
 		}
 		for index, block := range blocks {
 			want := canonicalCID(t, block.Data, block.Codec)
-			if !results[index].CID.Equals(want) {
+			if !results[index].CID.Equals(want) || !nodeapi.IsValidPutStatus(results[index].Status) {
 				t.Errorf("PutBatch[%d] CID = %s, want %s", index, results[index].CID, want)
 			}
 		}
@@ -146,7 +145,7 @@ func RunCAS(t *testing.T, factory CASFactory) {
 	})
 }
 
-func requireCAS(t *testing.T, factory CASFactory) transportcap.CAS {
+func requireCAS(t *testing.T, factory CASFactory) nodeapi.CAS {
 	t.Helper()
 	store := factory(t)
 	if store == nil {
@@ -157,7 +156,7 @@ func requireCAS(t *testing.T, factory CASFactory) transportcap.CAS {
 
 func canonicalCID(t *testing.T, body []byte, codec uint64) cid.Cid {
 	t.Helper()
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: body, Codec: codec})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body, Codec: codec})
 	if err != nil {
 		t.Fatal(err)
 	}
