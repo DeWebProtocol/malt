@@ -85,6 +85,38 @@ func TestValidateApplyResultBindsExactRequest(t *testing.T) {
 	}
 }
 
+func TestNestedHeadsBranchBinding(t *testing.T) {
+	const dataset = "dataset-one"
+	selectors := []string{"topic", "heads/heads/topic", "heads/heads/heads/topic"}
+	refs := []string{"heads/topic", "heads/heads/topic", "heads/heads/heads/topic"}
+	for i, selected := range selectors {
+		t.Run(selected, func(t *testing.T) {
+			binding := DatasetBinding{DatasetID: dataset, Branch: selected}
+			for j, branch := range selectors {
+				if err := ValidateBinding(dataset, branch, binding); (err == nil) != (i == j) {
+					t.Fatalf("binding %q to %q: %v", selected, branch, err)
+				}
+				head := ObservedHead{DatasetID: dataset, Name: refs[j], Kind: "explicit", State: "open"}
+				if err := ValidateObservedHead(dataset, selected, head); (err == nil) != (i == j) {
+					t.Fatalf("head %q for %q: %v", head.Name, selected, err)
+				}
+				request := ApplyRequest{OperationID: "publish", CandidateRoot: capabilityCID(t, "candidate").String(), Branch: branch}
+				if _, err := NormalizeApplyRequest(selected, request); (err == nil) != (i == j) {
+					t.Fatalf("request branch %q for %q: %v", branch, selected, err)
+				}
+			}
+			request := ApplyRequest{OperationID: "publish", CandidateRoot: capabilityCID(t, "candidate").String()}
+			for pass := 0; pass < 3; pass++ {
+				var err error
+				request, err = NormalizeApplyRequest(selected, request)
+				if err != nil || request.Branch != selected {
+					t.Fatalf("request branch = %q, %v; want %q", request.Branch, err, selected)
+				}
+			}
+		})
+	}
+}
+
 func TestDatasetCapabilityJSONPreservesExistingPersistentFieldNames(t *testing.T) {
 	value := ApplyResult{
 		Status:    "fast_forward",

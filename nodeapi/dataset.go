@@ -69,6 +69,8 @@ type ApplyResult struct {
 	Conflicts []Conflict    `json:"conflicts,omitempty"`
 }
 
+// NormalizeBranch returns an idempotent selector, retaining the heads/
+// namespace when the logical branch name itself begins with heads/.
 func NormalizeBranch(raw string) (string, error) {
 	return bucketbranch.NormalizeSelector(raw)
 }
@@ -147,13 +149,13 @@ func ValidateBinding(datasetID, branch string, binding DatasetBinding) error {
 }
 
 func ValidateObservedHead(datasetID, branch string, value ObservedHead) error {
-	branch, err := NormalizeBranch(branch)
+	wantName, err := bucketbranch.RefName(branch)
 	if err != nil {
 		return err
 	}
-	wantName, wantKind := "main", "main"
-	if branch != "main" {
-		wantName, wantKind = "heads/"+branch, "explicit"
+	wantKind := "main"
+	if wantName != "main" {
+		wantKind = "explicit"
 	}
 	if strings.TrimSpace(datasetID) == "" || value.DatasetID != datasetID || value.Name != wantName || value.Kind != wantKind || value.State != "open" {
 		return fmt.Errorf("remote returned an invalid dataset %s head", branch)

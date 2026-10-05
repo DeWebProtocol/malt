@@ -45,6 +45,10 @@ or a transaction spanning payloads, authentication state, and publication.
 `NormalizeApplyRequest`, `ValidateObservedHead`, and `ValidateApplyResult` to
 check identity and result relationships. Base commit, root and non-zero revision
 must be supplied together. Operation IDs bind retries to the same request.
+Branch normalization is idempotent: `heads/topic` selects the logical branch
+`topic`, while `heads/heads/topic` selects the distinct logical branch
+`heads/topic` and retains its full selector through binding, transport and
+validation. Adapters must not strip the namespace from a normalized selector.
 `MergePolicy: "preserve"` retains a stale candidate on a conflict branch without
 asking the service to compute a merged Root. A `branched` result is a successful
 conflict-preservation outcome; the HTTP adapter maps it to status 409.

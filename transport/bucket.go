@@ -353,13 +353,13 @@ func ValidateBucketHead(bucketID string, value BucketRef) error {
 // ValidateBucketHeadForBranch verifies the selected writable ref. Explicit
 // branches are represented by the Gateway as heads/<name>.
 func ValidateBucketHeadForBranch(bucketID, branch string, value BucketRef) error {
-	branch, err := normalizeBucketBranch(branch)
+	wantName, err := bucketbranch.RefName(branch)
 	if err != nil {
 		return err
 	}
-	wantName, wantKind := "main", "main"
-	if branch != "main" {
-		wantName, wantKind = "heads/"+branch, "explicit"
+	wantKind := "main"
+	if wantName != "main" {
+		wantKind = "explicit"
 	}
 	if strings.TrimSpace(bucketID) == "" || value.BucketID != bucketID || value.Name != wantName || value.Kind != wantKind || value.State != "open" {
 		return fmt.Errorf("gateway returned an invalid Bucket %s head", branch)

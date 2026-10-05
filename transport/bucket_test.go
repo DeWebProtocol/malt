@@ -247,95 +247,111 @@ func TestBucketHeadRejectsNonMainRef(t *testing.T) {
 }
 
 func TestBucketClientBindsHeadAndPushToExplicitBranch(t *testing.T) {
-	candidateRoot := mustBlockCID(t, []byte("candidate"))
-	now := time.Now().UTC()
-	var request client.BucketPushRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/buckets/bkt_one/head":
-			if r.URL.Query().Get("branch") != "team/photos" {
-				t.Fatalf("branch query = %q", r.URL.RawQuery)
-			}
-			_ = json.NewEncoder(w).Encode(client.BucketRef{
-				BucketID: "bkt_one", Name: "heads/team/photos", Kind: "explicit", State: "open",
-				Revision: 0, CreatedAt: now, UpdatedAt: now,
+	for _, branch := range []struct{ selector, canonical, ref string }{
+		{"heads/team/photos", "team/photos", "heads/team/photos"},
+		{"heads/heads/topic", "heads/heads/topic", "heads/heads/topic"},
+		{"heads/heads/heads/topic", "heads/heads/heads/topic", "heads/heads/heads/topic"},
+	} {
+		t.Run(branch.selector, func(t *testing.T) {
+			candidateRoot := mustBlockCID(t, []byte("candidate"))
+			now := time.Now().UTC()
+			var request client.BucketPushRequest
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/buckets/bkt_one/head":
+					if r.URL.Query().Get("branch") != branch.canonical {
+						t.Fatalf("branch query = %q", r.URL.RawQuery)
+					}
+					_ = json.NewEncoder(w).Encode(client.BucketRef{
+						BucketID: "bkt_one", Name: branch.ref, Kind: "explicit", State: "open",
+						Revision: 0, CreatedAt: now, UpdatedAt: now,
+					})
+				case "/v1/buckets/bkt_one/push":
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Fatal(err)
+					}
+					w.WriteHeader(http.StatusCreated)
+					candidate := client.BucketCommit{
+						ID: "opaque-candidate", BucketID: "bkt_one", Root: candidateRoot.String(),
+						Author: "alice", CreatedAt: now,
+					}
+					_ = json.NewEncoder(w).Encode(client.BucketPushResult{
+						Status: "fast_forward",
+						Head: client.BucketRef{
+							BucketID: "bkt_one", Name: branch.ref, Kind: "explicit", State: "open",
+							CommitID: candidate.ID, Root: candidate.Root, Revision: 1, CreatedAt: now, UpdatedAt: now,
+						},
+						Candidate: candidate, Commit: candidate,
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			transport, err := client.New(client.Options{
+				BaseURL: server.URL, TenantBearerToken: "tenant-secret",
+				BucketID: "bkt_one", BucketBranch: branch.selector,
 			})
-		case "/v1/buckets/bkt_one/push":
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			if err != nil {
 				t.Fatal(err)
 			}
-			w.WriteHeader(http.StatusCreated)
-			candidate := client.BucketCommit{
-				ID: "opaque-candidate", BucketID: "bkt_one", Root: candidateRoot.String(),
-				Author: "alice", CreatedAt: now,
+			if head, err := transport.BucketHead(t.Context()); err != nil || head.Name != branch.ref {
+				t.Fatalf("branch head=%#v err=%v", head, err)
 			}
-			_ = json.NewEncoder(w).Encode(client.BucketPushResult{
-				Status: "fast_forward",
-				Head: client.BucketRef{
-					BucketID: "bkt_one", Name: "heads/team/photos", Kind: "explicit", State: "open",
-					CommitID: candidate.ID, Root: candidate.Root, Revision: 1, CreatedAt: now, UpdatedAt: now,
-				},
-				Candidate: candidate, Commit: candidate,
+			result, err := transport.PushBucket(t.Context(), client.BucketPushRequest{
+				PushID: "branch-push", CandidateRoot: candidateRoot.String(),
 			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	transport, err := client.New(client.Options{
-		BaseURL: server.URL, TenantBearerToken: "tenant-secret",
-		BucketID: "bkt_one", BucketBranch: "heads/team/photos",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head, err := transport.BucketHead(t.Context()); err != nil || head.Name != "heads/team/photos" {
-		t.Fatalf("branch head=%#v err=%v", head, err)
-	}
-	result, err := transport.PushBucket(t.Context(), client.BucketPushRequest{
-		PushID: "branch-push", CandidateRoot: candidateRoot.String(),
-	})
-	if err != nil || result.Head.Name != "heads/team/photos" {
-		t.Fatalf("branch push=%#v err=%v", result, err)
-	}
-	if request.Branch != "team/photos" {
-		t.Fatalf("push branch = %q", request.Branch)
+			if err != nil || result.Head.Name != branch.ref {
+				t.Fatalf("branch push=%#v err=%v", result, err)
+			}
+			if request.Branch != branch.canonical {
+				t.Fatalf("push branch = %q", request.Branch)
+			}
+		})
 	}
 }
 
 func TestCreateBucketBranchCanonicalizesHierarchicalName(t *testing.T) {
-	now := time.Now().UTC()
-	var request struct {
-		Name string `json:"name"`
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/buckets/bkt_one/branches" || r.Method != http.MethodPost {
-			http.NotFound(w, r)
-			return
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(client.BucketRef{
-			BucketID: "bkt_one", Name: "heads/team/photos", Kind: "explicit", State: "open",
-			CreatedAt: now, UpdatedAt: now,
-		})
-	}))
-	defer server.Close()
+	for _, branch := range []struct{ selector, canonical, ref string }{
+		{" heads/team/photos ", "team/photos", "heads/team/photos"},
+		{"heads/heads/topic", "heads/heads/topic", "heads/heads/topic"},
+		{"heads/heads/heads/topic", "heads/heads/heads/topic", "heads/heads/heads/topic"},
+	} {
+		t.Run(branch.selector, func(t *testing.T) {
+			now := time.Now().UTC()
+			var request struct {
+				Name string `json:"name"`
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/buckets/bkt_one/branches" || r.Method != http.MethodPost {
+					http.NotFound(w, r)
+					return
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(client.BucketRef{
+					BucketID: "bkt_one", Name: branch.ref, Kind: "explicit", State: "open",
+					CreatedAt: now, UpdatedAt: now,
+				})
+			}))
+			defer server.Close()
 
-	transport, err := client.New(client.Options{
-		BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err := transport.CreateBucketBranch(t.Context(), " heads/team/photos ", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if request.Name != "team/photos" || value.Name != "heads/team/photos" {
-		t.Fatalf("request=%#v branch=%#v", request, value)
+			transport, err := client.New(client.Options{
+				BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, err := transport.CreateBucketBranch(t.Context(), branch.selector, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if request.Name != branch.canonical || value.Name != branch.ref {
+				t.Fatalf("request=%#v branch=%#v", request, value)
+			}
+		})
 	}
 }
 

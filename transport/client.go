@@ -39,7 +39,8 @@ type Options struct {
 	DeviceAuthorizer  DeviceAuthorizer
 	BucketID          string
 	// BucketBranch selects the writable Bucket ref used by head and push
-	// operations. Empty means main. Explicit names never include heads/.
+	// operations. Empty means main. The optional heads/ namespace is retained
+	// when the logical branch name itself starts with heads/.
 	BucketBranch string
 	// OperatorBearerToken is sent only by MetricsWithStorage. Non-loopback HTTP
 	// base URLs are rejected when it is configured, and credentialed redirects

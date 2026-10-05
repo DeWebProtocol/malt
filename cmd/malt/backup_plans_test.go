@@ -1,15 +1,43 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	clientbackup "github.com/dewebprotocol/malt-client/application/backup"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
+	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	truststore "github.com/dewebprotocol/malt-client/trust"
 )
+
+func TestEnsureBucketBranchRecognizesNestedHeadsName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/buckets/bkt_one/branches" {
+			t.Errorf("unexpected branch request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"branches": []gatewayclient.BucketRef{
+			{BucketID: "bkt_one", Name: "heads/heads/topic", Kind: "explicit", State: "open"},
+		}})
+	}))
+	defer server.Close()
+	client, err := gatewayclient.New(gatewayclient.Options{BaseURL: server.URL, BucketID: "bkt_one", TenantBearerToken: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBucketBranch(t.Context(), client, "heads/heads/topic", true); err != nil {
+		t.Fatalf("existing nested branch was not recognized: %v", err)
+	}
+	if err := ensureBucketBranch(t.Context(), client, "topic", false); err == nil {
+		t.Fatal("nested branch was mistaken for its sibling")
+	}
+}
 
 func TestResolveBackupBindingSourcePreservesWhitespace(t *testing.T) {
 	parent := t.TempDir()

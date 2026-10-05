@@ -209,7 +209,11 @@ func resolveBucket(ctx context.Context, client *gatewayclient.Client, selector s
 }
 
 func ensureBucketBranch(ctx context.Context, client *gatewayclient.Client, branch string, create bool) error {
-	if branch == "main" {
+	want, err := bucketbranch.RefName(branch)
+	if err != nil {
+		return err
+	}
+	if want == "main" {
 		_, err := client.BucketHead(ctx)
 		return err
 	}
@@ -217,7 +221,6 @@ func ensureBucketBranch(ctx context.Context, client *gatewayclient.Client, branc
 	if err != nil {
 		return err
 	}
-	want := "heads/" + branch
 	for _, ref := range refs {
 		if ref.Name == want {
 			return nil

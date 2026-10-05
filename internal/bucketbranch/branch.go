@@ -8,7 +8,9 @@ import (
 )
 
 // NormalizeSelector returns main for the empty/default selector and otherwise
-// returns a canonical explicit branch name without the heads/ namespace.
+// returns an idempotent explicit selector. A name beginning with heads/ keeps
+// its namespace prefix so passing the result through another adapter cannot
+// select a different branch.
 func NormalizeSelector(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "main" {
@@ -17,8 +19,8 @@ func NormalizeSelector(raw string) (string, error) {
 	return NormalizeExplicit(raw)
 }
 
-// NormalizeExplicit validates one user-created branch and removes an optional
-// public heads/ namespace prefix.
+// NormalizeExplicit validates one user-created branch selector. It removes the
+// optional heads/ namespace only when the remaining name is unambiguous.
 func NormalizeExplicit(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "heads/")
@@ -32,7 +34,19 @@ func NormalizeExplicit(raw string) (string, error) {
 			return "", fmt.Errorf("invalid Bucket branch %q", raw)
 		}
 	}
+	if strings.HasPrefix(raw, "heads/") {
+		return "heads/" + raw, nil
+	}
 	return raw, nil
+}
+
+// RefName returns the exact registry ref addressed by a branch selector.
+func RefName(raw string) (string, error) {
+	selector, err := NormalizeSelector(raw)
+	if err != nil || selector == "main" {
+		return selector, err
+	}
+	return "heads/" + strings.TrimPrefix(selector, "heads/"), nil
 }
 
 func validIdentifier(value string) bool {
