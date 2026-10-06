@@ -18,6 +18,7 @@ func TestPackageBoundaries(t *testing.T) {
 		path   string
 		banned []string
 	}{
+		{path: "nodeapi", banned: []string{"net/http", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/gateway"}},
 		{path: "transport", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-client/merkledag", "github.com/dewebprotocol/malt-client/trust"}},
 		{path: "trust", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-client/merkledag"}},
 		{path: "cache", banned: []string{"github.com/dewebprotocol/malt-client/application", "github.com/dewebprotocol/malt-client/filesystem", "github.com/dewebprotocol/malt-client/transport", "github.com/dewebprotocol/malt-client/trust", "github.com/dewebprotocol/malt-client/unixfs", "github.com/dewebprotocol/malt-core"}},
@@ -160,9 +161,9 @@ func TestBackupPlanCompositionLivesOutsideCommandHandlers(t *testing.T) {
 	})
 }
 
-func TestSemanticTransportCapabilitiesExcludeGatewayAndTrustDependencies(t *testing.T) {
+func TestNodeAPIExcludesTransportAndTrustDependencies(t *testing.T) {
 	root := moduleRoot(t)
-	checkExactImports(t, filepath.Join(root, "transport", "capability"), []string{
+	checkExactImports(t, filepath.Join(root, "nodeapi"), []string{
 		"net/http",
 		"net/url",
 		"github.com/dewebprotocol/malt-client/transport",

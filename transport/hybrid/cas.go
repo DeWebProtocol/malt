@@ -10,7 +10,7 @@ import (
 	"reflect"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -23,16 +23,16 @@ type CASErrorObserver func(error)
 // alone decides Has and must persist every successful write; Cache is only an
 // availability/performance optimization.
 type CASOptions struct {
-	Primary      transportcap.CAS
-	Cache        transportcap.CAS
+	Primary      nodeapi.CAS
+	Cache        nodeapi.CAS
 	OnCacheError CASErrorObserver
 }
 
 // CAS composes an authoritative transport with a non-authoritative verified
 // cache. It is topology policy, not application policy.
 type CAS struct {
-	primary      transportcap.CAS
-	cache        transportcap.CAS
+	primary      nodeapi.CAS
+	cache        nodeapi.CAS
 	onCacheError CASErrorObserver
 }
 
@@ -54,7 +54,7 @@ func (c *CAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.
 	if err := c.ready(); err != nil {
 		return cid.Undef, err
 	}
-	want, err := clientcas.CIDForBlock(transportcap.Block{Data: data, Codec: codec})
+	want, err := clientcas.CIDForBlock(nodeapi.Block{Data: data, Codec: codec})
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -63,7 +63,7 @@ func (c *CAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.
 		return cid.Undef, err
 	}
 	if !got.Equals(want) {
-		return cid.Undef, fmt.Errorf("%w: hybrid primary returned %s, want %s", transportcap.ErrCorruptedBlock, got, want)
+		return cid.Undef, fmt.Errorf("%w: hybrid primary returned %s, want %s", nodeapi.ErrCorruptedBlock, got, want)
 	}
 	c.fill(ctx, want, data, codec)
 	return want, nil
@@ -74,12 +74,12 @@ func (c *CAS) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 		return nil, err
 	}
 	if !key.Defined() {
-		return nil, fmt.Errorf("%w: hybrid CAS key is undefined", transportcap.ErrCorruptedBlock)
+		return nil, fmt.Errorf("%w: hybrid CAS key is undefined", nodeapi.ErrCorruptedBlock)
 	}
 	if data, err := verifiedGet(ctx, c.cache, key); err == nil {
 		return data, nil
 	} else {
-		if !errors.Is(err, transportcap.ErrNotFound) {
+		if !errors.Is(err, nodeapi.ErrNotFound) {
 			c.observeCacheError(err)
 		}
 		if err := ctx.Err(); err != nil {
@@ -101,25 +101,25 @@ func (c *CAS) Has(ctx context.Context, key cid.Cid) (bool, error) {
 		return false, err
 	}
 	if !key.Defined() {
-		return false, fmt.Errorf("%w: hybrid CAS key is undefined", transportcap.ErrCorruptedBlock)
+		return false, fmt.Errorf("%w: hybrid CAS key is undefined", nodeapi.ErrCorruptedBlock)
 	}
 	return c.primary.Has(ctx, key)
 }
 
-func (c *CAS) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]transportcap.PutResult, error) {
+func (c *CAS) PutBatch(ctx context.Context, blocks []nodeapi.Block) ([]nodeapi.PutResult, error) {
 	if err := c.ready(); err != nil {
 		return nil, err
 	}
 	if len(blocks) == 0 {
-		return []transportcap.PutResult{}, nil
+		return []nodeapi.PutResult{}, nil
 	}
 	results, err := clientcas.NewVerifyingReader(c.primary).PutBatch(ctx, blocks)
 	if err != nil {
 		return nil, err
 	}
 	for index, result := range results {
-		if !transportcap.IsValidPutStatus(result.Status) {
-			return nil, fmt.Errorf("%w: hybrid primary batch result %d has unsupported status %q", transportcap.ErrCorruptedBlock, index, result.Status)
+		if !nodeapi.IsValidPutStatus(result.Status) {
+			return nil, fmt.Errorf("%w: hybrid primary batch result %d has unsupported status %q", nodeapi.ErrCorruptedBlock, index, result.Status)
 		}
 		c.fill(ctx, result.CID, blocks[index].Data, blocks[index].Codec)
 	}
@@ -136,7 +136,7 @@ func (c *CAS) HasBatch(ctx context.Context, keys []cid.Cid) ([]bool, error) {
 	}
 	for index, key := range keys {
 		if !key.Defined() {
-			return nil, fmt.Errorf("%w: hybrid CAS batch CID %d is undefined", transportcap.ErrCorruptedBlock, index)
+			return nil, fmt.Errorf("%w: hybrid CAS batch CID %d is undefined", nodeapi.ErrCorruptedBlock, index)
 		}
 	}
 	if batch, ok := c.primary.(interface {
@@ -147,7 +147,7 @@ func (c *CAS) HasBatch(ctx context.Context, keys []cid.Cid) ([]bool, error) {
 			return nil, err
 		}
 		if len(result) != len(keys) {
-			return nil, fmt.Errorf("%w: hybrid primary returned %d has results for %d CIDs", transportcap.ErrCorruptedBlock, len(result), len(keys))
+			return nil, fmt.Errorf("%w: hybrid primary returned %d has results for %d CIDs", nodeapi.ErrCorruptedBlock, len(result), len(keys))
 		}
 		return result, nil
 	}
@@ -168,7 +168,7 @@ func (c *CAS) fill(ctx context.Context, want cid.Cid, data []byte, codec uint64)
 	}
 	got, err := c.cache.PutWithCodec(ctx, data, codec)
 	if err == nil && !got.Equals(want) {
-		err = fmt.Errorf("%w: hybrid cache returned %s, want %s", transportcap.ErrCorruptedBlock, got, want)
+		err = fmt.Errorf("%w: hybrid cache returned %s, want %s", nodeapi.ErrCorruptedBlock, got, want)
 	}
 	if err != nil {
 		c.observeCacheError(err)
@@ -188,14 +188,14 @@ func (c *CAS) ready() error {
 	return nil
 }
 
-func verifiedGet(ctx context.Context, source transportcap.CAS, key cid.Cid) ([]byte, error) {
+func verifiedGet(ctx context.Context, source nodeapi.CAS, key cid.Cid) ([]byte, error) {
 	data, err := source.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	got, err := key.Prefix().Sum(data)
 	if err != nil || !got.Equals(key) {
-		return nil, fmt.Errorf("%w: hybrid source body does not match %s", transportcap.ErrCorruptedBlock, key)
+		return nil, fmt.Errorf("%w: hybrid source body does not match %s", nodeapi.ErrCorruptedBlock, key)
 	}
 	return data, nil
 }
@@ -213,4 +213,4 @@ func nilInterface(value any) bool {
 	}
 }
 
-var _ transportcap.BatchCAS = (*CAS)(nil)
+var _ nodeapi.BatchCAS = (*CAS)(nil)

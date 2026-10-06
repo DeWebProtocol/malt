@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	"golang.org/x/sys/unix"
 )
 
@@ -198,17 +198,17 @@ func (s *platformStore) readBlock(ctx context.Context, shard, name string, maxBy
 	fd, err := unix.Openat(shardFD, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
-			return nil, fmt.Errorf("%w: local CAS block is absent", transportcap.ErrNotFound)
+			return nil, fmt.Errorf("%w: local CAS block is absent", nodeapi.ErrNotFound)
 		}
 		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
-			return nil, fmt.Errorf("%w: local CAS block path is unsafe", transportcap.ErrCorruptedBlock)
+			return nil, fmt.Errorf("%w: local CAS block path is unsafe", nodeapi.ErrCorruptedBlock)
 		}
 		if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.ENXIO) || errors.Is(err, unix.ENODEV) {
 			var stat unix.Stat_t
 			if inspectErr := unix.Fstatat(shardFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW); inspectErr == nil && unsafeUnixBlockMetadata(&stat) {
-				return nil, fmt.Errorf("%w: local CAS block exists but is unreadable or is not a regular file", transportcap.ErrCorruptedBlock)
+				return nil, fmt.Errorf("%w: local CAS block exists but is unreadable or is not a regular file", nodeapi.ErrCorruptedBlock)
 			} else if errors.Is(inspectErr, unix.ENOENT) {
-				return nil, fmt.Errorf("%w: local CAS block is absent", transportcap.ErrNotFound)
+				return nil, fmt.Errorf("%w: local CAS block is absent", nodeapi.ErrNotFound)
 			}
 		}
 		return nil, fmt.Errorf("open local CAS block without following links: %w", err)
@@ -228,20 +228,20 @@ func (s *platformStore) readBlock(ctx context.Context, shard, name string, maxBy
 	// this already-open immutable inode to zero. That handle is still contained
 	// and safe to verify; only additional hard links create an external alias.
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink > 1 {
-		return nil, fmt.Errorf("%w: local CAS block must be a regular file without additional hard links", transportcap.ErrCorruptedBlock)
+		return nil, fmt.Errorf("%w: local CAS block must be a regular file without additional hard links", nodeapi.ErrCorruptedBlock)
 	}
 	if stat.Mode&0o777 != 0o600 || stat.Uid != uint32(os.Geteuid()) {
-		return nil, fmt.Errorf("%w: local CAS block is not owner-private", transportcap.ErrCorruptedBlock)
+		return nil, fmt.Errorf("%w: local CAS block is not owner-private", nodeapi.ErrCorruptedBlock)
 	}
 	if stat.Size < 0 || stat.Size > maxBytes {
-		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", transportcap.ErrCorruptedBlock, maxBytes)
+		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", nodeapi.ErrCorruptedBlock, maxBytes)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read local CAS block: %w", err)
 	}
 	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", transportcap.ErrCorruptedBlock, maxBytes)
+		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", nodeapi.ErrCorruptedBlock, maxBytes)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -326,17 +326,17 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, error) {
 	fd, err := unix.Openat(blocksFD, shard, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) && !create {
-			return nil, fmt.Errorf("%w: local CAS shard is absent", transportcap.ErrNotFound)
+			return nil, fmt.Errorf("%w: local CAS shard is absent", nodeapi.ErrNotFound)
 		}
 		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
-			return nil, fmt.Errorf("%w: local CAS shard path is unsafe", transportcap.ErrCorruptedBlock)
+			return nil, fmt.Errorf("%w: local CAS shard path is unsafe", nodeapi.ErrCorruptedBlock)
 		}
 		if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
 			var stat unix.Stat_t
 			if inspectErr := unix.Fstatat(blocksFD, shard, &stat, unix.AT_SYMLINK_NOFOLLOW); inspectErr == nil && unsafeUnixShardMetadata(&stat) {
-				return nil, fmt.Errorf("%w: local CAS shard exists but is not safely searchable; repair its owner-private directory metadata offline", transportcap.ErrCorruptedBlock)
+				return nil, fmt.Errorf("%w: local CAS shard exists but is not safely searchable; repair its owner-private directory metadata offline", nodeapi.ErrCorruptedBlock)
 			} else if errors.Is(inspectErr, unix.ENOENT) && !create {
-				return nil, fmt.Errorf("%w: local CAS shard is absent", transportcap.ErrNotFound)
+				return nil, fmt.Errorf("%w: local CAS shard is absent", nodeapi.ErrNotFound)
 			}
 		}
 		return nil, fmt.Errorf("open local CAS shard without following links: %w", err)
@@ -348,7 +348,7 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, error) {
 	}
 	if err := requireUnixDirectory(fd, "local CAS shard"); err != nil {
 		_ = directory.Close()
-		return nil, fmt.Errorf("%w: %v", transportcap.ErrCorruptedBlock, err)
+		return nil, fmt.Errorf("%w: %v", nodeapi.ErrCorruptedBlock, err)
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
@@ -361,7 +361,7 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, error) {
 	// unrelated immutable blocks back into an online write target.
 	if !created && stat.Mode&0o500 != 0o500 {
 		_ = directory.Close()
-		return nil, fmt.Errorf("%w: local CAS shard is not safely searchable; repair its owner-private directory metadata offline", transportcap.ErrCorruptedBlock)
+		return nil, fmt.Errorf("%w: local CAS shard is not safely searchable; repair its owner-private directory metadata offline", nodeapi.ErrCorruptedBlock)
 	}
 	if create {
 		if err := unix.Fchmod(fd, 0o700); err != nil {
@@ -371,7 +371,7 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, error) {
 	} else {
 		if stat.Mode&0o777 != 0o700 {
 			_ = directory.Close()
-			return nil, fmt.Errorf("%w: local CAS shard is not owner-private", transportcap.ErrCorruptedBlock)
+			return nil, fmt.Errorf("%w: local CAS shard is not owner-private", nodeapi.ErrCorruptedBlock)
 		}
 	}
 	if create {

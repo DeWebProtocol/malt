@@ -5,29 +5,29 @@ import (
 	"testing"
 	"time"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
 type capabilityRemote struct {
-	binding transportcap.DatasetBinding
-	head    transportcap.ObservedHead
+	binding nodeapi.DatasetBinding
+	head    nodeapi.ObservedHead
 	calls   int
-	apply   func(transportcap.ApplyRequest) transportcap.ApplyResult
-	last    transportcap.ApplyRequest
+	apply   func(nodeapi.ApplyRequest) nodeapi.ApplyResult
+	last    nodeapi.ApplyRequest
 }
 
-func (r *capabilityRemote) DatasetBinding() transportcap.DatasetBinding {
+func (r *capabilityRemote) DatasetBinding() nodeapi.DatasetBinding {
 	return r.binding
 }
 
-func (r *capabilityRemote) ObserveHead(context.Context) (*transportcap.ObservedHead, error) {
+func (r *capabilityRemote) ObserveHead(context.Context) (*nodeapi.ObservedHead, error) {
 	r.calls++
 	value := r.head
 	return &value, nil
 }
 
-func (r *capabilityRemote) ApplyCandidate(_ context.Context, request transportcap.ApplyRequest) (*transportcap.ApplyResult, error) {
+func (r *capabilityRemote) ApplyCandidate(_ context.Context, request nodeapi.ApplyRequest) (*nodeapi.ApplyResult, error) {
 	r.calls++
 	r.last = request
 	value := r.apply(request)
@@ -35,7 +35,7 @@ func (r *capabilityRemote) ApplyCandidate(_ context.Context, request transportca
 }
 
 func TestOpenRemoteBranchRejectsMisbindingBeforeIO(t *testing.T) {
-	remote := &capabilityRemote{binding: transportcap.DatasetBinding{DatasetID: "another", Branch: "main"}}
+	remote := &capabilityRemote{binding: nodeapi.DatasetBinding{DatasetID: "another", Branch: "main"}}
 	if _, err := OpenRemote(t.TempDir()+"/workspace.json", remote, "dataset-one"); err == nil {
 		t.Fatal("OpenRemote accepted a capability bound to another dataset")
 	}
@@ -49,21 +49,21 @@ func TestRemoteCapabilityRunsPullAndVerifiedApplyWithoutGatewayDTOs(t *testing.T
 	candidate := testCID(t, "capability-candidate")
 	now := time.Date(2026, time.August, 17, 1, 2, 3, 0, time.UTC)
 	remote := &capabilityRemote{
-		binding: transportcap.DatasetBinding{DatasetID: "dataset-one", Branch: "main"},
-		head: transportcap.ObservedHead{
+		binding: nodeapi.DatasetBinding{DatasetID: "dataset-one", Branch: "main"},
+		head: nodeapi.ObservedHead{
 			DatasetID: "dataset-one", Name: "main", Kind: "main", State: "open",
 			CommitID: "commit-base", Root: base.String(), Revision: 1, CreatedAt: now, UpdatedAt: now,
 		},
 	}
-	remote.apply = func(request transportcap.ApplyRequest) transportcap.ApplyResult {
-		commit := transportcap.Commit{
+	remote.apply = func(request nodeapi.ApplyRequest) nodeapi.ApplyResult {
+		commit := nodeapi.Commit{
 			ID: "commit-candidate", DatasetID: "dataset-one", Root: request.CandidateRoot,
 			Parents: []string{request.BaseCommit}, BaseRoot: request.BaseRoot,
 			Author: "device-one", Message: request.Message, CreatedAt: now,
 		}
-		return transportcap.ApplyResult{
+		return nodeapi.ApplyResult{
 			Status: "fast_forward",
-			Head: transportcap.ObservedHead{
+			Head: nodeapi.ObservedHead{
 				DatasetID: "dataset-one", Name: "main", Kind: "main", State: "open",
 				CommitID: commit.ID, Root: commit.Root, Revision: 2, CreatedAt: now, UpdatedAt: now,
 			},

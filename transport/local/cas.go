@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -145,7 +145,7 @@ func (s *CAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.
 	if int64(len(data)) > s.maxBlockBytes {
 		return cid.Undef, fmt.Errorf("local CAS block exceeds %d bytes", s.maxBlockBytes)
 	}
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: data, Codec: codec})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: data, Codec: codec})
 	if err != nil {
 		return cid.Undef, fmt.Errorf("compute local CAS CID: %w", err)
 	}
@@ -170,7 +170,7 @@ func (s *CAS) Has(ctx context.Context, key cid.Cid) (bool, error) {
 		return false, err
 	}
 	_, err := s.readBlock(ctx, key)
-	if errors.Is(err, transportcap.ErrNotFound) {
+	if errors.Is(err, nodeapi.ErrNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -179,7 +179,7 @@ func (s *CAS) Has(ctx context.Context, key cid.Cid) (bool, error) {
 	return true, nil
 }
 
-func (s *CAS) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]transportcap.PutResult, error) {
+func (s *CAS) PutBatch(ctx context.Context, blocks []nodeapi.Block) ([]nodeapi.PutResult, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (s *CAS) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]tran
 		return nil, err
 	}
 	if len(blocks) == 0 {
-		return []transportcap.PutResult{}, nil
+		return []nodeapi.PutResult{}, nil
 	}
 	if len(blocks) > s.maxBatchBlocks {
 		return nil, fmt.Errorf("local CAS batch exceeds %d blocks", s.maxBatchBlocks)
@@ -208,7 +208,7 @@ func (s *CAS) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]tran
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	results := make([]transportcap.PutResult, len(blocks))
+	results := make([]nodeapi.PutResult, len(blocks))
 	seen := make(map[string]struct{}, len(blocks))
 	for index, block := range blocks {
 		if err := ctx.Err(); err != nil {
@@ -216,7 +216,7 @@ func (s *CAS) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]tran
 		}
 		key := keys[index]
 		if _, duplicate := seen[key.String()]; duplicate {
-			results[index] = transportcap.PutResult{CID: key, Status: transportcap.PutStatusDuplicateInRequest}
+			results[index] = nodeapi.PutResult{CID: key, Status: nodeapi.PutStatusDuplicateInRequest}
 			continue
 		}
 		seen[key.String()] = struct{}{}
@@ -224,7 +224,7 @@ func (s *CAS) PutBatch(ctx context.Context, blocks []transportcap.Block) ([]tran
 		if err != nil {
 			return nil, fmt.Errorf("store local CAS batch block %d: %w", index, err)
 		}
-		results[index] = transportcap.PutResult{CID: key, Status: status}
+		results[index] = nodeapi.PutResult{CID: key, Status: status}
 	}
 	return results, nil
 }
@@ -244,7 +244,7 @@ func (s *CAS) HasBatch(ctx context.Context, keys []cid.Cid) ([]bool, error) {
 	}
 	for index, key := range keys {
 		if !key.Defined() {
-			return nil, fmt.Errorf("%w: local CAS batch CID %d is undefined", transportcap.ErrCorruptedBlock, index)
+			return nil, fmt.Errorf("%w: local CAS batch CID %d is undefined", nodeapi.ErrCorruptedBlock, index)
 		}
 	}
 	result := make([]bool, len(keys))
@@ -258,14 +258,14 @@ func (s *CAS) HasBatch(ctx context.Context, keys []cid.Cid) ([]bool, error) {
 	return result, nil
 }
 
-func (s *CAS) putLocked(ctx context.Context, key cid.Cid, data []byte) (transportcap.PutStatus, error) {
+func (s *CAS) putLocked(ctx context.Context, key cid.Cid, data []byte) (nodeapi.PutStatus, error) {
 	shard, name := blockIdentity(key)
 	if _, err := s.readBlock(ctx, key); err == nil {
 		if err := s.platform.ensureDurable(ctx, shard); err != nil {
 			return "", fmt.Errorf("confirm existing local CAS block durability: %w", err)
 		}
-		return transportcap.PutStatusAlreadyPresent, nil
-	} else if !errors.Is(err, transportcap.ErrNotFound) && !errors.Is(err, transportcap.ErrCorruptedBlock) {
+		return nodeapi.PutStatusAlreadyPresent, nil
+	} else if !errors.Is(err, nodeapi.ErrNotFound) && !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		return "", err
 	}
 
@@ -278,7 +278,7 @@ func (s *CAS) putLocked(ctx context.Context, key cid.Cid, data []byte) (transpor
 	if err := s.platform.ensureDurable(ctx, shard); err != nil {
 		return "", fmt.Errorf("confirm installed local CAS block durability: %w", err)
 	}
-	return transportcap.PutStatusStored, nil
+	return nodeapi.PutStatusStored, nil
 }
 
 func (s *CAS) readBlock(ctx context.Context, key cid.Cid) ([]byte, error) {
@@ -286,7 +286,7 @@ func (s *CAS) readBlock(ctx context.Context, key cid.Cid) ([]byte, error) {
 		return nil, err
 	}
 	if !key.Defined() {
-		return nil, fmt.Errorf("%w: local CAS key is undefined", transportcap.ErrCorruptedBlock)
+		return nil, fmt.Errorf("%w: local CAS key is undefined", nodeapi.ErrCorruptedBlock)
 	}
 	shard, name := blockIdentity(key)
 	data, err := s.platform.readBlock(ctx, shard, name, s.maxBlockBytes)
@@ -298,7 +298,7 @@ func (s *CAS) readBlock(ctx context.Context, key cid.Cid) ([]byte, error) {
 	}
 	got, err := key.Prefix().Sum(data)
 	if err != nil || !got.Equals(key) {
-		return nil, fmt.Errorf("%w: local CAS body does not match %s", transportcap.ErrCorruptedBlock, key)
+		return nil, fmt.Errorf("%w: local CAS body does not match %s", nodeapi.ErrCorruptedBlock, key)
 	}
 	return data, nil
 }
@@ -335,7 +335,7 @@ func (s *CAS) ready() error {
 	return nil
 }
 
-var _ transportcap.BatchCAS = (*CAS)(nil)
+var _ nodeapi.BatchCAS = (*CAS)(nil)
 
 type blockStore interface {
 	readBlock(context.Context, string, string, int64) ([]byte, error)

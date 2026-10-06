@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	"github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	"golang.org/x/sys/windows"
 )
 
@@ -58,7 +58,7 @@ func TestCASRepairsDenyReadBlockDACL(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(t.Context(), key); !errors.Is(err, capability.ErrCorruptedBlock) {
+	if _, err := store.Get(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Get deny-read block error = %v, want ErrCorruptedBlock", err)
 	}
 	if _, err := store.Put(t.Context(), body); err != nil {
@@ -89,7 +89,7 @@ func TestCASCloseRetriesOnlyUnconfirmedWindowsComponents(t *testing.T) {
 	if store.platform == nil || platform.blocks != nil || platform.root != nil {
 		t.Fatalf("failed Close retained an invalid terminally closed component")
 	}
-	key, err := clientcas.CIDForBlock(capability.Block{Data: []byte("closed")})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: []byte("closed")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestCASPreservesOperationalShardOpenErrors(t *testing.T) {
 	if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 		t.Fatalf("Get operational shard error = %v, want sharing violation", err)
 	}
-	if errors.Is(err, capability.ErrCorruptedBlock) {
+	if errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Get operational shard error = %v, must not be corruption", err)
 	}
 }

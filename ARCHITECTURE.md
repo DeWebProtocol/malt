@@ -12,7 +12,7 @@ It owns:
 - the `malt` CLI and local daemon lifecycle;
 - trusted/candidate root state and explicit acceptance;
 - managed-Bucket base/remote/stash state and stash-before-fetch synchronization;
-- semantic remote capabilities with a current Gateway HTTP implementation;
+- public `nodeapi` service capabilities shared with Gateway and its HTTP adapter;
 - UnixFS path, manifest, fixed-list payload, import, and range-body semantics;
 - IPFS-compatible Merkle DAG UnixFS import as an alternative runtime target;
 - local replay verification for gateway Merkle DAG compatibility reads;
@@ -36,6 +36,12 @@ or a permanent prerequisite. The local and hybrid CAS implementations already
 use the same semantic boundary; future peer and local MALT executors must do so
 without changing application, trust, sync, or filesystem layers.
 
+`nodeapi` owns the transport-independent contract above Core. Gateway implements
+it in process and routes HTTP through its managed node services; local/hybrid
+CAS and `transport.Client` implement the same interfaces. Authentication
+semantics remain Core-owned. See [Public Node API](docs/node-api.md) for the
+capability matrix, managed-policy boundary and shared conformance suites.
+
 ## Data flow
 
 ```text
@@ -44,9 +50,9 @@ UnixFS path / local files
           v
   MALT local runtime application adapter
           |
-          | canonical segments, generic resolve/read/mutation/CAS requests
+          | Core query/candidate/batch values and node CAS/dataset requests
           v
-  semantic transport capability
+  public nodeapi capability
           |
           v
  Gateway HTTP / Local CAS / Hybrid / future Peer
@@ -117,7 +123,7 @@ unixfs     -> MALT core verifier + narrow transport ports
 merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
 transport  -> Gateway/local/hybrid adapters; never imports unixfs, merkledag, or trust
-bucketsync -> transport + independent durable synchronization metadata
+bucketsync -> nodeapi.DatasetBranch + independent durable synchronization metadata
 tools/evaluation/cmd -> internal/evaluation + public runtime capabilities
 ```
 
@@ -138,7 +144,7 @@ read-through cache, and primary bytes are independently CID-verified before
 return. Cache presence can never satisfy primary `Has`. The default runtime
 configuration remains `gateway`; `local` currently supports local-only
 Merkle-DAG import, and managed native MALT operations reject it until a local
-authentication materializer exists. `transport/capabilitytest` runs the same CAS
+authentication materializer exists. `nodeapi/nodetest` runs the same CAS
 contract against mock, Gateway HTTP, local, hybrid, and a peer-loopback adapter;
 the loopback proves the port boundary without declaring a P2P wire profile.
 
@@ -297,7 +303,7 @@ profile; it does not change MALT Core or the existing plaintext semantics of
   concrete transport.
 - `transport`: untrusted Gateway HTTP adapter and narrow capability interfaces;
   `transport/local` provides durable local CAS, `transport/hybrid` owns
-  Gateway-primary/read-through policy, and `transport/capabilitytest` provides
+  Gateway-primary/read-through policy, and `nodeapi/nodetest` provides
   adapter conformance.
 - `bucketsync`: durable Bucket base/remote/stash state and push orchestration.
 - `trust`: observed, candidate, and accepted root policy plus durable local

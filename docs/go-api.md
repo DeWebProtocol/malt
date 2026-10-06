@@ -8,32 +8,38 @@ This module is intentionally untagged after historical runtime `v0.0.1` while
 the [runtime namespace decision](runtime-module-namespace.md) is deferred; pin
 current integrations to an exact reviewed commit.
 
-## Public gateway transport
+## Public Node API
 
-Transport-neutral ports live in
-`github.com/dewebprotocol/malt-client/transport/capability`. They identify a
-logical dataset and branch without a URL and return explicitly untrusted typed
-values:
+The transport-independent service contract lives in
+`github.com/dewebprotocol/malt-client/nodeapi`. Gateway in-process services,
+the HTTP client, local/hybrid CAS and synchronization consume these same narrow
+capabilities. See [Public Node API](node-api.md) for ownership, adapter rules,
+conformance tests and implementation limits.
 
 ```go
-var native capability.Native = remote
-var blocks capability.CAS = remote
-var mutations capability.Mutations = remote
-var dataset capability.DatasetBranch = remote
+var queries nodeapi.Authentication = remote
+var writer nodeapi.AuthenticationWriter = remote
+var batches nodeapi.AuthenticationBatch = remote
+var blocks nodeapi.CAS = remote
+var dataset nodeapi.DatasetBranch = remote
 
-binding := dataset.DatasetBinding()
 observed, err := dataset.ObserveHead(ctx)
-result, err := dataset.ApplyCandidate(ctx, capability.ApplyRequest{
+if err != nil { return err }
+result, err := dataset.ApplyCandidate(ctx, nodeapi.ApplyRequest{
     OperationID: "device-operation-id",
     BaseCommit: observed.CommitID, BaseRoot: observed.Root,
     BaseRevision: observed.Revision, CandidateRoot: candidate.String(),
+    MergePolicy: "preserve",
 })
 ```
 
-These interfaces contain no HTTP route, URL, account DTO, or trust-store
-method. `MutationResult`, `ObservedHead`, and `ApplyResult` cannot promote an
-accepted root. `ValidateBinding`, `NormalizeApplyRequest`, and
-`ValidateApplyResult` fail closed before or after an untrusted implementation.
+These interfaces have no URL, HTTP request, daemon control, account DTO, or
+trust-store method. Core owns the authentication request/candidate/receipt
+values. Successful materialization acknowledges persistence at the chosen
+service; publication and accepted-root promotion are separate operations.
+`ObservedHead` and `ApplyResult` remain untrusted observations.
+
+## Gateway HTTP adapter
 
 The root `transport` package is currently the managed Gateway HTTP adapter.
 
@@ -105,13 +111,13 @@ application dependency:
 blocks, err := local.Open(local.Options{
     Directory: "/home/user/.malt-client/local-cas",
 })
-var cas capability.CAS = blocks
+var cas nodeapi.CAS = blocks
 ```
 
 Files are installed atomically below an owner-private store boundary. `Get`
 and `Has` read a bounded regular file and recompute the requested CID; local
 file presence alone is never accepted as block identity. `PutBatch` and
-`HasBatch` implement the optional `capability.BatchCAS` extension. The store
+`HasBatch` implement the optional `nodeapi.BatchCAS` extension. The store
 holds platform directory handles so post-open path replacement cannot redirect
 I/O, never follows a shard/block symlink or reparse point, and rejects FIFO,
 socket, unreadable block, hard-link, wrong-owner, and non-private metadata.
@@ -173,7 +179,7 @@ The generated runtime configuration contains `transport.cas_policy` with
 fields default to `gateway`. Local-only mode currently supports `malt add
 --target merkle-dag`; managed native MALT backup, mount, and write-back require
 Gateway or hybrid because a local authentication materializer is not yet claimed.
-The reusable `transport/capabilitytest.RunCAS` suite is run against mock,
+The reusable `nodeapi/nodetest.RunCAS` suite is run against mock,
 Gateway HTTP, local, hybrid, and peer-loopback implementations. The peer fixture
 defines no network codec, discovery rule, or wire identifier.
 
@@ -195,7 +201,7 @@ No exported signature contains a type from `internal/`.
 
 Package `bucketsync` provides the durable runtime workflow used by the CLI.
 New code constructs it with `OpenRemote` or `OpenRemoteBranch` and a
-`capability.DatasetBranch`. The former `Open`/`OpenBranch` Gateway-DTO adapter is removed.
+`nodeapi.DatasetBranch`. The former `Open`/`OpenBranch` Gateway-DTO adapter is removed.
 Call `CurrentBase` before materializing local work, then `Stage` the candidate
 against that captured commit/root/revision. `Push` refuses unstaged candidates,
 calls `ObserveHead` without changing the stash, leaves it pending across network

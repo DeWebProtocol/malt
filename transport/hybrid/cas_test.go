@@ -8,12 +8,12 @@ import (
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
 type recordingCAS struct {
-	transportcap.CAS
+	nodeapi.CAS
 	gets int
 	has  int
 	puts int
@@ -68,7 +68,7 @@ func TestCASUsesVerifiedCacheButPrimaryAuthority(t *testing.T) {
 
 func TestCASFallsBackFromCorruptCacheAndRepairsIt(t *testing.T) {
 	body := []byte("verified primary payload")
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCASFallsBackFromCorruptCacheAndRepairsIt(t *testing.T) {
 	if err != nil || !bytes.Equal(got, body) {
 		t.Fatalf("Get = %q, %v", got, err)
 	}
-	if len(observed) != 1 || !errors.Is(observed[0], transportcap.ErrCorruptedBlock) {
+	if len(observed) != 1 || !errors.Is(observed[0], nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("cache observations = %v", observed)
 	}
 	cache.getBody = nil
@@ -100,7 +100,7 @@ func TestCASFallsBackFromCorruptCacheAndRepairsIt(t *testing.T) {
 
 func TestCASRejectsSubstitutedPrimaryAndIgnoresCacheWriteFailure(t *testing.T) {
 	wantBody := []byte("expected primary")
-	want, err := clientcas.CIDForBlock(transportcap.Block{Data: wantBody})
+	want, err := clientcas.CIDForBlock(nodeapi.Block{Data: wantBody})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestCASRejectsSubstitutedPrimaryAndIgnoresCacheWriteFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(t.Context(), want); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Get(t.Context(), want); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("substituted primary error = %v, want ErrCorruptedBlock", err)
 	}
 
@@ -146,7 +146,7 @@ func TestCASRejectsTypedNilCapabilities(t *testing.T) {
 
 func TestCASClassifiesMalformedPrimaryBatchResultsAsCorruption(t *testing.T) {
 	body := []byte("batch-body")
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,16 +156,16 @@ func TestCASClassifiesMalformedPrimaryBatchResultsAsCorruption(t *testing.T) {
 		call    func(*CAS) error
 	}{
 		{
-			name: "put result length", primary: &malformedBatchCAS{CAS: casmemory.New(), putResults: []transportcap.PutResult{}},
+			name: "put result length", primary: &malformedBatchCAS{CAS: casmemory.New(), putResults: []nodeapi.PutResult{}},
 			call: func(store *CAS) error {
-				_, err := store.PutBatch(t.Context(), []transportcap.Block{{Data: body}})
+				_, err := store.PutBatch(t.Context(), []nodeapi.Block{{Data: body}})
 				return err
 			},
 		},
 		{
-			name: "put status", primary: &malformedBatchCAS{CAS: casmemory.New(), putResults: []transportcap.PutResult{{CID: key, Status: "invented"}}},
+			name: "put status", primary: &malformedBatchCAS{CAS: casmemory.New(), putResults: []nodeapi.PutResult{{CID: key, Status: "invented"}}},
 			call: func(store *CAS) error {
-				_, err := store.PutBatch(t.Context(), []transportcap.Block{{Data: body}})
+				_, err := store.PutBatch(t.Context(), []nodeapi.Block{{Data: body}})
 				return err
 			},
 		},
@@ -179,7 +179,7 @@ func TestCASClassifiesMalformedPrimaryBatchResultsAsCorruption(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := test.call(store); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+			if err := test.call(store); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 				t.Fatalf("error = %v, want ErrCorruptedBlock", err)
 			}
 		})
@@ -187,7 +187,7 @@ func TestCASClassifiesMalformedPrimaryBatchResultsAsCorruption(t *testing.T) {
 }
 
 type substitutingCAS struct {
-	transportcap.CAS
+	nodeapi.CAS
 	getBody []byte
 }
 
@@ -199,18 +199,18 @@ func (c *substitutingCAS) Get(ctx context.Context, key cid.Cid) ([]byte, error) 
 }
 
 type failingPutCAS struct {
-	transportcap.CAS
+	nodeapi.CAS
 	err error
 }
 
 type malformedBatchCAS struct {
-	transportcap.CAS
-	putResults []transportcap.PutResult
+	nodeapi.CAS
+	putResults []nodeapi.PutResult
 	hasResults []bool
 }
 
-func (c *malformedBatchCAS) PutBatch(context.Context, []transportcap.Block) ([]transportcap.PutResult, error) {
-	return append([]transportcap.PutResult(nil), c.putResults...), nil
+func (c *malformedBatchCAS) PutBatch(context.Context, []nodeapi.Block) ([]nodeapi.PutResult, error) {
+	return append([]nodeapi.PutResult(nil), c.putResults...), nil
 }
 
 func (c *malformedBatchCAS) HasBatch(context.Context, []cid.Cid) ([]bool, error) {

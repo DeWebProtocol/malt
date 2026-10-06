@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/bucketbranch"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -82,6 +83,7 @@ type BucketPushRequest struct {
 	BaseRevision  uint64 `json:"base_revision"`
 	ChangeSetCID  string `json:"change_set_cid,omitempty"`
 	Message       string `json:"message,omitempty"`
+	MergePolicy   string `json:"merge_policy,omitempty"`
 }
 
 type BucketPushResult struct {
@@ -254,48 +256,18 @@ func (c *Client) PushBucket(ctx context.Context, request BucketPushRequest) (*Bu
 	if err := c.requireSelectedBucket(); err != nil {
 		return nil, err
 	}
-	request.PushID = strings.TrimSpace(request.PushID)
-	requestBranch, err := normalizeBucketBranch(request.Branch)
+	normalized, err := nodeapi.NormalizeApplyRequest(c.SelectedBucketBranch(), nodeapi.ApplyRequest{
+		OperationID: request.PushID, Branch: request.Branch, BaseCommit: request.BaseCommit,
+		BaseRoot: request.BaseRoot, CandidateRoot: request.CandidateRoot, BaseRevision: request.BaseRevision,
+		ChangeSetCID: request.ChangeSetCID, Message: request.Message, MergePolicy: request.MergePolicy,
+	})
 	if err != nil {
 		return nil, err
 	}
-	selectedBranch := c.SelectedBucketBranch()
-	if request.Branch != "" && requestBranch != selectedBranch {
-		return nil, fmt.Errorf("Bucket push branch %q does not match selected branch %q", requestBranch, selectedBranch)
-	}
-	request.Branch = ""
-	if selectedBranch != "main" {
-		request.Branch = selectedBranch
-	}
-	request.BaseCommit = strings.TrimSpace(request.BaseCommit)
-	request.BaseRoot = strings.TrimSpace(request.BaseRoot)
-	request.CandidateRoot = strings.TrimSpace(request.CandidateRoot)
-	request.ChangeSetCID = strings.TrimSpace(request.ChangeSetCID)
-	request.Message = strings.TrimSpace(request.Message)
-	if request.PushID == "" {
-		return nil, fmt.Errorf("Bucket push ID is empty")
-	}
-	candidateRoot, err := cid.Parse(request.CandidateRoot)
-	if err != nil {
-		return nil, fmt.Errorf("invalid candidate root: %w", err)
-	}
-	request.CandidateRoot = candidateRoot.String()
-	if (request.BaseCommit == "") != (request.BaseRoot == "") || (request.BaseCommit == "") != (request.BaseRevision == 0) {
-		return nil, fmt.Errorf("Bucket base commit, root, and non-zero revision must be supplied together")
-	}
-	if request.BaseRoot != "" {
-		baseRoot, err := cid.Parse(request.BaseRoot)
-		if err != nil {
-			return nil, fmt.Errorf("invalid base root: %w", err)
-		}
-		request.BaseRoot = baseRoot.String()
-	}
-	if request.ChangeSetCID != "" {
-		changeSet, err := cid.Parse(request.ChangeSetCID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid change-set CID: %w", err)
-		}
-		request.ChangeSetCID = changeSet.String()
+	request = BucketPushRequest{
+		PushID: normalized.OperationID, Branch: normalized.Branch, BaseCommit: normalized.BaseCommit,
+		BaseRoot: normalized.BaseRoot, CandidateRoot: normalized.CandidateRoot, BaseRevision: normalized.BaseRevision,
+		ChangeSetCID: normalized.ChangeSetCID, Message: normalized.Message, MergePolicy: normalized.MergePolicy,
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -381,13 +353,13 @@ func ValidateBucketHead(bucketID string, value BucketRef) error {
 // ValidateBucketHeadForBranch verifies the selected writable ref. Explicit
 // branches are represented by the Gateway as heads/<name>.
 func ValidateBucketHeadForBranch(bucketID, branch string, value BucketRef) error {
-	branch, err := normalizeBucketBranch(branch)
+	wantName, err := bucketbranch.RefName(branch)
 	if err != nil {
 		return err
 	}
-	wantName, wantKind := "main", "main"
-	if branch != "main" {
-		wantName, wantKind = "heads/"+branch, "explicit"
+	wantKind := "main"
+	if wantName != "main" {
+		wantKind = "explicit"
 	}
 	if strings.TrimSpace(bucketID) == "" || value.BucketID != bucketID || value.Name != wantName || value.Kind != wantKind || value.State != "open" {
 		return fmt.Errorf("gateway returned an invalid Bucket %s head", branch)
@@ -408,6 +380,9 @@ func ValidateBucketHeadForBranch(bucketID, branch string, value BucketRef) error
 }
 
 func (c *Client) validatePushResult(request BucketPushRequest, value BucketPushResult, statusCode int) error {
+	if request.MergePolicy == "preserve" && value.Status == "merged" {
+		return fmt.Errorf("gateway merged a candidate despite preserve policy")
+	}
 	switch value.Status {
 	case "fast_forward", "merged":
 		if statusCode != http.StatusCreated || value.Branch != nil {

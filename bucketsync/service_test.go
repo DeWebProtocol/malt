@@ -12,7 +12,7 @@ import (
 	"time"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transport "github.com/dewebprotocol/malt-client/transport/capability"
+	transport "github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
 )
 

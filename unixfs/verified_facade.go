@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/maltcid"
@@ -151,7 +151,7 @@ type WriterOptions struct {
 
 type verifiedReader struct {
 	layoutKind             LayoutKind
-	authentication         transportcap.Authentication
+	authentication         nodeapi.Authentication
 	authenticationVerifier *engine.Engine
 	blocks                 BlockGetter
 	stagedResolutions      map[stagedProjectionCacheKey]*Resolution
@@ -244,7 +244,7 @@ func NewWriter(opts WriterOptions) (Writer, error) {
 		kind = opts.Layout.Kind()
 	}
 	if opts.Roots == nil || opts.Payloads == nil {
-		remote, ok := opts.Remote.(transportcap.AuthenticationWriter)
+		remote, ok := opts.Remote.(nodeapi.AuthenticationWriter)
 		if !ok {
 			return nil, fmt.Errorf("typed authentication writer capability is required")
 		}

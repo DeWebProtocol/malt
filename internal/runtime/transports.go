@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	hybridtransport "github.com/dewebprotocol/malt-client/transport/hybrid"
 	localtransport "github.com/dewebprotocol/malt-client/transport/local"
 )
@@ -16,7 +16,7 @@ import (
 // byte topology. Gateway-only bindings do not own the caller-supplied remote;
 // local and hybrid bindings close their local store exactly once.
 type CASBinding struct {
-	transportcap.CAS
+	nodeapi.CAS
 	closeMu   sync.Mutex
 	closeFunc func() error
 	closed    bool
@@ -46,7 +46,7 @@ func (b *CASBinding) Close() error {
 // gatewayRequired is true for managed-Bucket operations whose blocks must be
 // persisted at the Gateway. A local-only CAS is useful for local Merkle-DAG
 // import now and can back a future local Native/Mutations executor later.
-func ComposeCAS(cfg *clientconfig.Config, gateway transportcap.CAS, gatewayRequired bool) (*CASBinding, error) {
+func ComposeCAS(cfg *clientconfig.Config, gateway nodeapi.CAS, gatewayRequired bool) (*CASBinding, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("runtime config is nil")
 	}

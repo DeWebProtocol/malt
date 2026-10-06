@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 
 	"github.com/dewebprotocol/malt-client/internal/securefile"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	"golang.org/x/sys/windows"
 )
 
@@ -121,16 +121,16 @@ func (s *platformStore) readBlock(ctx context.Context, shard, name string, maxBy
 	metadataHandle, metadata, err := openWindowsFile(path, windows.READ_CONTROL, windows.OPEN_EXISTING, true)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
-			return nil, fmt.Errorf("%w: local CAS block is absent", transportcap.ErrNotFound)
+			return nil, fmt.Errorf("%w: local CAS block is absent", nodeapi.ErrNotFound)
 		}
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 			fallback, _, inspectErr := openWindowsFile(path, 0, windows.OPEN_EXISTING, true)
 			if inspectErr == nil {
 				_ = windows.CloseHandle(fallback)
-				return nil, fmt.Errorf("%w: local CAS block security access is denied", transportcap.ErrCorruptedBlock)
+				return nil, fmt.Errorf("%w: local CAS block security access is denied", nodeapi.ErrCorruptedBlock)
 			}
 			if errors.Is(inspectErr, windows.ERROR_FILE_NOT_FOUND) || errors.Is(inspectErr, windows.ERROR_PATH_NOT_FOUND) {
-				return nil, fmt.Errorf("%w: local CAS block is absent", transportcap.ErrNotFound)
+				return nil, fmt.Errorf("%w: local CAS block is absent", nodeapi.ErrNotFound)
 			}
 		}
 		return nil, fmt.Errorf("open local CAS block without following reparse points: %w", err)
@@ -148,10 +148,10 @@ func (s *platformStore) readBlock(ctx context.Context, shard, name string, maxBy
 	handle, information, err := openWindowsFile(path, windows.GENERIC_READ|windows.READ_CONTROL, windows.OPEN_EXISTING, true)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			return nil, fmt.Errorf("%w: local CAS block became unreadable", transportcap.ErrCorruptedBlock)
+			return nil, fmt.Errorf("%w: local CAS block became unreadable", nodeapi.ErrCorruptedBlock)
 		}
 		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
-			return nil, fmt.Errorf("%w: local CAS block is absent", transportcap.ErrNotFound)
+			return nil, fmt.Errorf("%w: local CAS block is absent", nodeapi.ErrNotFound)
 		}
 		return nil, fmt.Errorf("open local CAS block data handle: %w", err)
 	}
@@ -169,14 +169,14 @@ func (s *platformStore) readBlock(ctx context.Context, shard, name string, maxBy
 	}
 	size := int64(uint64(information.FileSizeHigh)<<32 | uint64(information.FileSizeLow))
 	if size < 0 || size > maxBytes {
-		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", transportcap.ErrCorruptedBlock, maxBytes)
+		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", nodeapi.ErrCorruptedBlock, maxBytes)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read local CAS block: %w", err)
 	}
 	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", transportcap.ErrCorruptedBlock, maxBytes)
+		return nil, fmt.Errorf("%w: local CAS block exceeds %d bytes", nodeapi.ErrCorruptedBlock, maxBytes)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -254,17 +254,17 @@ func (s *platformStore) closeHandle(file *os.File) error {
 
 func validateWindowsBlockHandle(handle windows.Handle, information windows.ByHandleFileInformation) error {
 	if information.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 || information.NumberOfLinks > 1 {
-		return fmt.Errorf("%w: local CAS block must be a regular file without additional hard links", transportcap.ErrCorruptedBlock)
+		return fmt.Errorf("%w: local CAS block must be a regular file without additional hard links", nodeapi.ErrCorruptedBlock)
 	}
 	private, err := securefile.IsSecureHandle(handle)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			return fmt.Errorf("%w: local CAS block security cannot be verified", transportcap.ErrCorruptedBlock)
+			return fmt.Errorf("%w: local CAS block security cannot be verified", nodeapi.ErrCorruptedBlock)
 		}
 		return fmt.Errorf("inspect local CAS block security: %w", err)
 	}
 	if !private {
-		return fmt.Errorf("%w: local CAS block is not owner-private", transportcap.ErrCorruptedBlock)
+		return fmt.Errorf("%w: local CAS block is not owner-private", nodeapi.ErrCorruptedBlock)
 	}
 	return nil
 }
@@ -279,10 +279,10 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, string, 
 	directory, err := s.openShardDirectory(path)
 	if err != nil {
 		if !create && (errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND)) {
-			return nil, "", fmt.Errorf("%w: local CAS shard is absent", transportcap.ErrNotFound)
+			return nil, "", fmt.Errorf("%w: local CAS shard is absent", nodeapi.ErrNotFound)
 		}
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, errUnsafeWindowsDirectory) {
-			return nil, "", fmt.Errorf("%w: local CAS shard path is unsafe: %v", transportcap.ErrCorruptedBlock, err)
+			return nil, "", fmt.Errorf("%w: local CAS shard path is unsafe: %v", nodeapi.ErrCorruptedBlock, err)
 		}
 		return nil, "", fmt.Errorf("open local CAS shard without following reparse points: %w", err)
 	}
@@ -294,7 +294,7 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, string, 
 	}
 	if !owned {
 		_ = directory.Close()
-		return nil, "", fmt.Errorf("%w: local CAS shard is not owned by the current user", transportcap.ErrCorruptedBlock)
+		return nil, "", fmt.Errorf("%w: local CAS shard is not owned by the current user", nodeapi.ErrCorruptedBlock)
 	}
 	if create {
 		if err := protectDirectory(path); err != nil {
@@ -309,7 +309,7 @@ func (s *platformStore) openShard(shard string, create bool) (*os.File, string, 
 		}
 		if !private {
 			_ = directory.Close()
-			return nil, "", fmt.Errorf("%w: local CAS shard is not owner-private", transportcap.ErrCorruptedBlock)
+			return nil, "", fmt.Errorf("%w: local CAS shard is not owner-private", nodeapi.ErrCorruptedBlock)
 		}
 	}
 	return directory, path, nil

@@ -14,14 +14,14 @@ import (
 	"time"
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
-	transportcap "github.com/dewebprotocol/malt-client/transport/capability"
+	"github.com/dewebprotocol/malt-client/nodeapi"
 	"golang.org/x/sys/unix"
 )
 
 func TestCASRejectsFIFOWithoutBlockingAndPutRepairs(t *testing.T) {
 	store := openTestCAS(t, Options{Directory: t.TempDir()})
 	body := []byte("fifo-repair")
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,14 +37,14 @@ func TestCASRejectsFIFOWithoutBlockingAndPutRepairs(t *testing.T) {
 		_, err := store.Get(t.Context(), key)
 		return err
 	})
-	if !errors.Is(getErr, transportcap.ErrCorruptedBlock) {
+	if !errors.Is(getErr, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Get FIFO error = %v, want ErrCorruptedBlock", getErr)
 	}
 	hasErr := callLocalCASWithin(t, func() error {
 		_, err := store.Has(t.Context(), key)
 		return err
 	})
-	if !errors.Is(hasErr, transportcap.ErrCorruptedBlock) {
+	if !errors.Is(hasErr, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Has FIFO error = %v, want ErrCorruptedBlock", hasErr)
 	}
 	putErr := callLocalCASWithin(t, func() error {
@@ -70,7 +70,7 @@ func TestCASRepairsUnreadableOrNonRegularTargets(t *testing.T) {
 			t.Cleanup(func() { _ = os.RemoveAll(base) })
 			store := openTestCAS(t, Options{Directory: base})
 			body := []byte("repair-unreadable-" + object)
-			key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+			key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestCASRepairsUnreadableOrNonRegularTargets(t *testing.T) {
 				_, err := store.Get(t.Context(), key)
 				return err
 			})
-			if !errors.Is(getErr, transportcap.ErrCorruptedBlock) {
+			if !errors.Is(getErr, nodeapi.ErrCorruptedBlock) {
 				t.Fatalf("Get unsafe target error = %v, want ErrCorruptedBlock", getErr)
 			}
 			if _, err := store.Put(t.Context(), body); err != nil {
@@ -132,7 +132,7 @@ func TestCASPutRetriesUnconfirmedDirectoryDurability(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := openTestCAS(t, Options{Directory: t.TempDir()})
 			body := []byte("durability-retry-" + test.name)
-			key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+			key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,7 +197,7 @@ func TestCASCloseRetriesOnlyUnconfirmedPlatformComponents(t *testing.T) {
 	if store.platform == nil || platform.blocks != nil || platform.root != nil {
 		t.Fatalf("failed Close ownership = store:%T blocks:%v root:%v", store.platform, platform.blocks, platform.root)
 	}
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: []byte("closed")})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: []byte("closed")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestCASOpenHandleContainsPostOpenBoundaryReplacement(t *testing.T) {
 func TestCASRejectsShardSymlinkWithoutWritingOutsideBoundary(t *testing.T) {
 	store := openTestCAS(t, Options{Directory: t.TempDir()})
 	body := []byte("shard-symlink-attack")
-	key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+	key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestCASRejectsShardSymlinkWithoutWritingOutsideBoundary(t *testing.T) {
 	if err := os.Symlink(external, filepath.Join(store.blocks, shard)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Put(t.Context(), body); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Put(t.Context(), body); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Put through shard symlink error = %v, want ErrCorruptedBlock", err)
 	}
 	if _, err := os.Stat(filepath.Join(external, name)); !errors.Is(err, os.ErrNotExist) {
@@ -412,7 +412,7 @@ func TestCASReplacesUnsafeTargetWithoutChangingExternalInode(t *testing.T) {
 		t.Run(attack, func(t *testing.T) {
 			store := openTestCAS(t, Options{Directory: t.TempDir()})
 			body := []byte("safe-target-replacement-" + attack)
-			key, err := clientcas.CIDForBlock(transportcap.Block{Data: body})
+			key, err := clientcas.CIDForBlock(nodeapi.Block{Data: body})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -468,10 +468,10 @@ func TestCASVerifiedReadRejectsAndPutRepairsUnsafeBlockPermissions(t *testing.T)
 	if err := os.Chmod(store.blockPath(key), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(t.Context(), key); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Get(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Get unsafe block error = %v, want ErrCorruptedBlock", err)
 	}
-	if _, err := store.Has(t.Context(), key); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Has(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Has unsafe block error = %v, want ErrCorruptedBlock", err)
 	}
 	if _, err := store.Put(t.Context(), []byte("permission-restoration")); err != nil {
@@ -497,7 +497,7 @@ func TestCASVerifiedReadDoesNotMutateUnsafeShardPermissions(t *testing.T) {
 	if err := os.Chmod(shard, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(t.Context(), key); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Get(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Get unsafe shard error = %v, want ErrCorruptedBlock", err)
 	}
 	info, err := os.Stat(shard)
@@ -530,7 +530,7 @@ func TestCASUnreadableShardRequiresExplicitOfflineRepair(t *testing.T) {
 	if err := os.Chmod(shard, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(t.Context(), key); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Get(t.Context(), key); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Get unreadable shard error = %v, want ErrCorruptedBlock", err)
 	}
 	info, err := os.Stat(shard)
@@ -540,7 +540,7 @@ func TestCASUnreadableShardRequiresExplicitOfflineRepair(t *testing.T) {
 	if got := info.Mode().Perm(); got != 0 {
 		t.Fatalf("verified read mutated unreadable shard permissions to %#o", got)
 	}
-	if _, err := store.Put(t.Context(), body); !errors.Is(err, transportcap.ErrCorruptedBlock) {
+	if _, err := store.Put(t.Context(), body); !errors.Is(err, nodeapi.ErrCorruptedBlock) {
 		t.Fatalf("Put unreadable shard error = %v, want safe refusal", err)
 	}
 	info, err = os.Stat(shard)
