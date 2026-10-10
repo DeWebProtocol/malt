@@ -20,12 +20,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	cid "github.com/ipfs/go-cid"
 )
 
 type GraphWriter interface {
 	CreateStagedRoot(context.Context, map[string]string) (cid.Cid, error)
-	unixfs.MeasuredPayloadWriter
+	unixfs.PositionalPayloadWriter
 }
 
 type BlockWriter interface {
@@ -483,7 +484,19 @@ func (b *builder) buildFile(ctx context.Context, parent directoryBuildContext, n
 	cipherChunkSize := uint64(b.chunkSize + envelopeOverhead)
 	if len(chunks) > 1 {
 		storage = StorageList
-		contentRoot, err = b.graph.CreateMeasuredPayload(ctx, chunks, totalCipher, cipherChunkSize)
+		metadata, encodeErr := unixfsmodel.EncodeChunkMetadata(totalCipher, cipherChunkSize, uint64(len(chunks)))
+		if encodeErr != nil {
+			return cid.Undef, encodeErr
+		}
+		payload, putErr := b.blocks.Put(ctx, metadata)
+		if putErr != nil {
+			return cid.Undef, putErr
+		}
+		if bindErr := unixfsmodel.VerifyPayloadCID(payload, metadata); bindErr != nil {
+			return cid.Undef, bindErr
+		}
+		stats.immutableBlocks++
+		contentRoot, err = b.graph.CreatePositionalPayload(ctx, chunks, payload)
 		if err != nil {
 			return cid.Undef, fmt.Errorf("materialize encrypted UnixFS file List: %w", err)
 		}

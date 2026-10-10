@@ -3,6 +3,7 @@ package add
 import (
 	"context"
 	"fmt"
+
 	"github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt-core/maltcid"
 )
@@ -10,7 +11,7 @@ import (
 // projectionWriter belongs to the UnixFS layout compiler, not the transport.
 type projectionWriter interface {
 	unixfs.StagedRootWriter
-	unixfs.MeasuredPayloadWriter
+	unixfs.PositionalPayloadWriter
 }
 
 func newProjectionWriter(ctx context.Context, remote Materializer, layout unixfs.LayoutKind) (*unixfs.AuthenticationAdapter, error) {

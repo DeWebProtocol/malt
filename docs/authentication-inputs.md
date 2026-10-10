@@ -19,8 +19,10 @@ stays in `unixfs/model`; AuthenticationSteps produces explicit component labels.
 A full-path index instead submits one opaque full-path label. A Root's AA, not
 slash syntax inferred by the generic engine, chooses the conversion rule.
 The current UnixFS planner builds Prefix and Positional V0 Roots directly
-through typed authentication. No semantic Map/List adapter remains. Only Prefix supports system bindings; Positional
-metadata is structural. New low-level clients can choose native 32-byte keys
+through typed authentication. No semantic Map/List adapter remains. Prefix
+payload labels are ordinary application bindings. Positional root metadata
+contains the sequence count and an optional opaque payload CID; the application
+verifies and decodes the referenced document. New low-level clients can choose native 32-byte keys
 or a registered label rule explicitly.
 
 Writeback preserves the base Root's layout, AA and exact VC profile. Historical

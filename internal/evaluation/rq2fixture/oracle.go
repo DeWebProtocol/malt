@@ -5,6 +5,7 @@ import (
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
 	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/engine"
@@ -32,7 +33,7 @@ func (f *Fixture) ValidateGraphAgainstSource(view authenticationgraph.View, back
 	if err != nil {
 		return err
 	}
-	if root.Descriptor != descriptor || root.ChunkSize != 0 || root.TotalSize != 0 || len(root.Entries) != len(source) {
+	if root.Descriptor != descriptor || root.PayloadCID.Defined() || len(root.Entries) != len(source) {
 		return fmt.Errorf("root metadata or binding count differs from source")
 	}
 	entries := make(map[string]engine.Entry, len(root.Entries))
@@ -71,7 +72,11 @@ func (f *Fixture) ValidateGraphAgainstSource(view authenticationgraph.View, back
 		if err != nil {
 			return err
 		}
-		if object.Descriptor != descriptor || object.ChunkSize != file.ChunkSize || object.TotalSize != uint64(len(data)) {
+		geometry, err := unixfsmodel.ParseInlineChunkMetadata(object.PayloadCID, uint64(len(object.Entries)))
+		if err != nil {
+			return err
+		}
+		if object.Descriptor != descriptor || geometry.ChunkSize != file.ChunkSize || geometry.TotalSize != uint64(len(data)) {
 			return fmt.Errorf("source file %q measured metadata does not match post-image", path)
 		}
 		if err := validateChunkEntries(object, data); err != nil {
@@ -90,11 +95,12 @@ func (f *Fixture) ValidateGraphAgainstSource(view authenticationgraph.View, back
 	return nil
 }
 func validateChunkEntries(state engine.State, data []byte) error {
-	if state.ChunkSize == 0 {
-		return fmt.Errorf("chunk size is zero")
+	geometry, err := unixfsmodel.ParseInlineChunkMetadata(state.PayloadCID, uint64(len(state.Entries)))
+	if err != nil {
+		return err
 	}
-	count := uint64(len(data)) / state.ChunkSize
-	if uint64(len(data))%state.ChunkSize != 0 {
+	count := uint64(len(data)) / geometry.ChunkSize
+	if uint64(len(data))%geometry.ChunkSize != 0 {
 		count++
 	}
 	if uint64(len(state.Entries)) != count {
@@ -109,8 +115,8 @@ func validateChunkEntries(state engine.State, data []byte) error {
 			return fmt.Errorf("chunk input is duplicate, invalid or outside the measured sequence")
 		}
 		seen[index] = true
-		start := index * state.ChunkSize
-		end := start + min(uint64(len(data))-start, state.ChunkSize)
+		start := index * geometry.ChunkSize
+		end := start + min(uint64(len(data))-start, geometry.ChunkSize)
 		expected, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: data[start:end]})
 		if err != nil || !entry.Target.Equals(expected) {
 			return fmt.Errorf("chunk %d CID does not bind its source bytes", index)

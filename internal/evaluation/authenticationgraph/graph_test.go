@@ -91,7 +91,7 @@ func graphFixture(t *testing.T) (*Session, *fixtureRemote, *countedScheme, cid.C
 	}
 	e := engine.New(registry)
 	payload := raw(t, "first chunk")
-	child, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: coordinate.EncodeIndex(0), Target: payload}}, ChunkSize: 11, TotalSize: 11})
+	child, err := authentication.Prepare(ctx, e, engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: coordinate.EncodeIndex(0), Target: payload}}})
 	if err != nil {
 		t.Fatal(err)
 	}

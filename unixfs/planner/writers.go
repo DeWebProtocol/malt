@@ -47,7 +47,7 @@ func (p *Planner) loadWriter(ctx context.Context, root cid.Cid) (*authentication
 		return nil, err
 	}
 	// Conservatively charge vectors plus retained binding/tree bookkeeping.
-	size := uint64(1024 + len(root.Bytes()))
+	size := uint64(1024 + len(root.Bytes()) + len(candidate.State.PayloadCID.Bytes()))
 	for _, entry := range candidate.State.Entries {
 		size += uint64(512 + len(entry.Label) + len(entry.Target.Bytes()))
 	}

@@ -217,8 +217,8 @@ func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[stri
 	}
 	return g.record(ctx, state)
 }
-func (g *recordingGraph) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: g.profile}, ChunkSize: chunk, TotalSize: total}
+func (g *recordingGraph) CreatePositionalPayload(ctx context.Context, chunks []cid.Cid, payload cid.Cid) (cid.Cid, error) {
+	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: g.profile}, PayloadCID: payload}
 	for i, target := range chunks {
 		state.Entries = append(state.Entries, engine.Entry{Label: coordinate.EncodeIndex(uint64(i)), Target: target})
 	}

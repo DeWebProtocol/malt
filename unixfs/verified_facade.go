@@ -143,7 +143,7 @@ type WriterOptions struct {
 	Blocks    BlockStore
 	Verifier  *engine.Engine
 	Roots     StagedRootWriter
-	Payloads  MeasuredPayloadWriter
+	Payloads  PositionalPayloadWriter
 	Layout    Layout
 	ChunkSize int
 	TempDir   string
@@ -173,7 +173,7 @@ type verifiedWriter struct {
 	*verifiedReader
 	store        BlockStore
 	roots        StagedRootWriter
-	lists        MeasuredPayloadWriter
+	lists        PositionalPayloadWriter
 	layout       Layout
 	chunkSize    int
 	tempDir      string
@@ -271,7 +271,7 @@ func NewWriter(opts WriterOptions) (Writer, error) {
 	}
 	lists := opts.Payloads
 	if lists == nil {
-		lists, _ = opts.Roots.(MeasuredPayloadWriter)
+		lists, _ = opts.Roots.(PositionalPayloadWriter)
 	}
 	if lists == nil {
 		return nil, fmt.Errorf("unixfs fixed-list payload writer is nil")
@@ -438,8 +438,12 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		if err != nil {
 			return nil, err
 		}
-		stat.Size = meta.TotalSize
-		stat.ChunkSize = meta.ChunkSize
+		geometry, err := r.readChunkMetadata(ctx, meta)
+		if err != nil {
+			return nil, err
+		}
+		stat.Size = geometry.TotalSize
+		stat.ChunkSize = geometry.ChunkSize
 		stat.AuthenticationMetadata = proof
 	case "raw":
 		body, err := r.getBoundBlock(ctx, stat.Payload)

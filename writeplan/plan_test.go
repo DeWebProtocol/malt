@@ -3,6 +3,7 @@ package writeplan
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
@@ -98,5 +99,32 @@ func TestBatchReceiptBindsOriginalRequestEvenIfAdapterMutatesInput(t *testing.T)
 	}))
 	if err == nil {
 		t.Fatal("receipt acknowledged a different prepared request")
+	}
+}
+
+func TestPlanOrdersPositionalMetadataDependencies(t *testing.T) {
+	child := fixture(t).Candidates[0]
+	scheme, err := ipa.NewCommitterScheme(ipa.ProfileCompact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := engine.NewRegistry()
+	if err := registry.Register(scheme); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := authentication.Prepare(t.Context(), engine.New(registry), engine.State{
+		Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, DerivationProfile: uint8(derivation.Direct), Profile: maltcid.IPA256},
+		PayloadCID: cid.MustParse(child.Root),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Root: cid.MustParse(parent.Root), Candidates: []protocol.AuthenticationCandidate{child, parent}}
+	if err := plan.validate(); err != nil {
+		t.Fatal(err)
+	}
+	plan.Candidates = []protocol.AuthenticationCandidate{parent, child}
+	if err := plan.validate(); err == nil || !strings.Contains(err.Error(), "child-before-parent") {
+		t.Fatalf("metadata dependency was not ordered: %v", err)
 	}
 }

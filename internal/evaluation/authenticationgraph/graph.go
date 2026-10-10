@@ -153,12 +153,12 @@ func (s *Session) fetch(ctx context.Context, root cid.Cid) (*graph, LoadMetrics,
 		if err != nil {
 			return fmt.Errorf("authenticate candidate %s: %w", key, err)
 		}
-		for _, entry := range candidate.State.Entries {
-			if _, _, err := maltcid.ParseRoot(entry.Target); err == nil {
-				if err := visit(entry.Target, depth+1); err != nil {
+		for _, target := range graphTargets(candidate.State) {
+			if _, _, err := maltcid.ParseRoot(target); err == nil {
+				if err := visit(target, depth+1); err != nil {
 					return err
 				}
-				heights[key] = max(heights[key], 1+heights[entry.Target.String()])
+				heights[key] = max(heights[key], 1+heights[target.String()])
 			}
 		}
 		next.objects[key] = object{writer: writer, state: cloneState(candidate.State), bytes: size}
@@ -326,12 +326,12 @@ func (e *Edit) graph(ctx context.Context, root cid.Cid) (*graph, error) {
 		entries += uint64(len(o.state.Entries))
 		size += o.bytes
 		visiting[key] = true
-		for _, entry := range o.state.Entries {
-			if _, _, err := maltcid.ParseRoot(entry.Target); err == nil {
-				if err := visit(entry.Target, depth+1); err != nil {
+		for _, target := range graphTargets(o.state) {
+			if _, _, err := maltcid.ParseRoot(target); err == nil {
+				if err := visit(target, depth+1); err != nil {
 					return err
 				}
-				heights[key] = max(heights[key], 1+heights[entry.Target.String()])
+				heights[key] = max(heights[key], 1+heights[target.String()])
 			}
 		}
 		next.objects[key] = o
@@ -391,3 +391,14 @@ func cloneState(state engine.State) engine.State {
 	return state
 }
 func elapsed(started time.Time) uint64 { return uint64(max(time.Since(started), 0)) }
+
+func graphTargets(state engine.State) []cid.Cid {
+	targets := make([]cid.Cid, 0, len(state.Entries)+1)
+	if state.PayloadCID.Defined() {
+		targets = append(targets, state.PayloadCID)
+	}
+	for _, entry := range state.Entries {
+		targets = append(targets, entry.Target)
+	}
+	return targets
+}

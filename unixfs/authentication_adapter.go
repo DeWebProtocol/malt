@@ -20,7 +20,7 @@ import (
 
 // AuthenticationAdapter compiles the selected UnixFS layout to typed ArcSets.
 // Directory payloads are system bindings; names are application labels. File
-// block sequences carry measured structural metadata and no system payload.
+// block sequences bind application metadata through an opaque root payload CID.
 // It computes candidates locally and checks the exact remote receipt.
 type AuthenticationAdapter struct {
 	remote  nodeapi.AuthenticationWriter
@@ -124,8 +124,8 @@ func (a *AuthenticationAdapter) materialize(ctx context.Context, previous cid.Ci
 	}
 	return expected, nil
 }
-func (a *AuthenticationAdapter) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunkSize uint64) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: a.profile}, ChunkSize: chunkSize, TotalSize: total, Entries: make([]engine.Entry, len(chunks))}
+func (a *AuthenticationAdapter) CreatePositionalPayload(ctx context.Context, chunks []cid.Cid, payload cid.Cid) (cid.Cid, error) {
+	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: a.profile}, PayloadCID: payload, Entries: make([]engine.Entry, len(chunks))}
 	for i, target := range chunks {
 		state.Entries[i] = engine.Entry{Label: coordinate.EncodeIndex(uint64(i)), Target: target}
 	}

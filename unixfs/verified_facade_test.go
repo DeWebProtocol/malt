@@ -1019,22 +1019,22 @@ func keptBody(result *unixfs.ReadResult) []byte {
 var _ unixfs.Remote = (*realRemote)(nil)
 var _ unixfs.BlockStore = (*realRemote)(nil)
 var _ unixfs.StagedRootWriter = (*realRemote)(nil)
-var _ unixfs.MeasuredPayloadWriter = (*realRemote)(nil)
+var _ unixfs.PositionalPayloadWriter = (*realRemote)(nil)
 var _ unixfs.Remote = (*countingWriterRemote)(nil)
 var _ unixfs.BlockStore = (*countingWriterRemote)(nil)
 var _ unixfs.StagedRootWriter = (*countingWriterRemote)(nil)
-var _ unixfs.MeasuredPayloadWriter = (*countingWriterRemote)(nil)
+var _ unixfs.PositionalPayloadWriter = (*countingWriterRemote)(nil)
 
-func (r *realRemote) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
+func (r *realRemote) CreatePositionalPayload(ctx context.Context, chunks []cid.Cid, payload cid.Cid) (cid.Cid, error) {
 	adapter, err := unixfs.NewAuthenticationAdapter(unixfs.LayoutHybridV1, r, r.engine, maltcid.KZG4096)
 	if err != nil {
 		return cid.Undef, err
 	}
-	return adapter.CreateMeasuredPayload(ctx, chunks, total, chunk)
+	return adapter.CreatePositionalPayload(ctx, chunks, payload)
 }
-func (r *countingWriterRemote) CreateMeasuredPayload(ctx context.Context, chunks []cid.Cid, total, chunk uint64) (cid.Cid, error) {
+func (r *countingWriterRemote) CreatePositionalPayload(ctx context.Context, chunks []cid.Cid, payload cid.Cid) (cid.Cid, error) {
 	r.mutationCalls++
-	return r.inner.CreateMeasuredPayload(ctx, chunks, total, chunk)
+	return r.inner.CreatePositionalPayload(ctx, chunks, payload)
 }
 func (r *countingWriterRemote) Authenticate(ctx context.Context, request protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error) {
 	r.remoteCalls++

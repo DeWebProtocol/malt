@@ -136,8 +136,8 @@ func (s *Staging) Plan(base, root cid.Cid) (Plan, error) {
 		needed[key] = true
 		candidate := s.candidates[index]
 		visit(candidate.Previous)
-		for _, entry := range candidate.State.Entries {
-			visit(entry.Target.String())
+		for _, target := range candidateTargets(candidate) {
+			visit(target.String())
 		}
 	}
 	visit(root.String())
