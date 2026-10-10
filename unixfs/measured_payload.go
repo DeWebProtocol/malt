@@ -9,10 +9,10 @@ import (
 	cid "github.com/ipfs/go-cid"
 )
 
-// MeasuredPayloadWriter authenticates a chunk sequence and its exact byte
-// measurements. A returned Root is an unaccepted candidate.
-type MeasuredPayloadWriter interface {
-	CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error)
+// PositionalPayloadWriter binds a sequence and an opaque application metadata CID.
+// A returned Root is an unaccepted candidate.
+type PositionalPayloadWriter interface {
+	CreatePositionalPayload(context.Context, []cid.Cid, cid.Cid) (cid.Cid, error)
 }
 
 type declaredSizeReader struct {
@@ -60,7 +60,7 @@ func (r *declaredSizeReader) validateComplete() error {
 
 // MaterializeMeasuredPayload streams payload chunks into CAS, commits the
 // measured Positional Root through typed authentication, and returns the new list root.
-func MaterializeMeasuredPayload(ctx context.Context, blocks StagedBlockStore, writer MeasuredPayloadWriter, r io.Reader, totalSize uint64, chunkSize int) (cid.Cid, error) {
+func MaterializeMeasuredPayload(ctx context.Context, blocks StagedBlockStore, writer PositionalPayloadWriter, r io.Reader, totalSize uint64, chunkSize int) (cid.Cid, error) {
 	if blocks == nil {
 		return cid.Undef, fmt.Errorf("block store is nil")
 	}
@@ -90,19 +90,30 @@ func MaterializeMeasuredPayload(ctx context.Context, blocks StagedBlockStore, wr
 	if len(chunks) == 0 {
 		return cid.Undef, fmt.Errorf("empty chunk sequence")
 	}
+	metadata, err := unixfsmodel.EncodeChunkMetadata(totalSize, uint64(chunkSize), uint64(len(chunks)))
+	if err != nil {
+		return cid.Undef, err
+	}
+	payload, err := blocks.Put(ctx, metadata)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("upload chunk metadata: %w", err)
+	}
+	if err = unixfsmodel.VerifyPayloadCID(payload, metadata); err != nil {
+		return cid.Undef, err
+	}
 	if flusher, ok := blocks.(stagedBlockFlusher); ok {
 		if err := flusher.Flush(ctx); err != nil {
 			return cid.Undef, fmt.Errorf("flush payload chunks: %w", err)
 		}
 	}
 
-	return writer.CreateMeasuredPayload(ctx, chunks, totalSize, uint64(chunkSize))
+	return writer.CreatePositionalPayload(ctx, chunks, payload)
 }
 
 // MaterializeStagedFilePayload stores a file payload according to the UnixFS
 // staged-add policy. Small files become raw CAS payloads; larger files become
 // measured Positional payloads.
-func MaterializeStagedFilePayload(ctx context.Context, blocks StagedBlockStore, writer MeasuredPayloadWriter, r io.Reader, size int64, chunkSize int) (cid.Cid, bool, error) {
+func MaterializeStagedFilePayload(ctx context.Context, blocks StagedBlockStore, writer PositionalPayloadWriter, r io.Reader, size int64, chunkSize int) (cid.Cid, bool, error) {
 	if size < 0 {
 		return cid.Undef, false, fmt.Errorf("file size must not be negative")
 	}

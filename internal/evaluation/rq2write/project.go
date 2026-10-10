@@ -11,6 +11,7 @@ import (
 
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/rq2fixture"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
 	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/engine"
@@ -41,26 +42,34 @@ func Apply(ctx context.Context, edit *authenticationgraph.Edit, root cid.Cid, op
 		if err != nil {
 			return cid.Undef, err
 		}
-		if child.Descriptor.Layout != maltcid.Positional || child.Descriptor.DerivationProfile != uint8(derivation.Direct) || child.Descriptor.Profile != state.Descriptor.Profile || child.ChunkSize == 0 {
+		if child.Descriptor.Layout != maltcid.Positional || child.Descriptor.DerivationProfile != uint8(derivation.Direct) || child.Descriptor.Profile != state.Descriptor.Profile || !child.PayloadCID.Defined() {
 			return cid.Undef, fmt.Errorf("file requires a measured Positional Root with the parent's VC profile")
 		}
 		if len(payloads) != 1 {
 			return cid.Undef, fmt.Errorf("chunk operation requires one payload")
 		}
+		geometry, err := unixfsmodel.ParseInlineChunkMetadata(child.PayloadCID, uint64(len(child.Entries)))
+		if err != nil {
+			return cid.Undef, err
+		}
 		var delta authentication.Delta
 		if operation.Kind == rq2fixture.KindListAppend {
-			if child.TotalSize%child.ChunkSize != 0 || operation.PayloadBytes != child.ChunkSize || child.TotalSize > math.MaxUint64-child.ChunkSize {
+			if geometry.TotalSize%geometry.ChunkSize != 0 || operation.PayloadBytes != geometry.ChunkSize || geometry.TotalSize > math.MaxUint64-geometry.ChunkSize {
 				return cid.Undef, fmt.Errorf("append requires a full final chunk and one same-width new chunk")
 			}
 			count := uint64(len(child.Entries)) + 1
-			total := child.TotalSize + child.ChunkSize
-			delta = authentication.Delta{Changes: []engine.Change{{Label: coordinate.EncodeIndex(count - 1), After: payloads[0]}}, Count: &count, TotalSize: &total}
+			total := geometry.TotalSize + geometry.ChunkSize
+			payload, err := unixfsmodel.InlineChunkMetadata(total, geometry.ChunkSize, count)
+			if err != nil {
+				return cid.Undef, err
+			}
+			delta = authentication.Delta{Changes: []engine.Change{{Label: coordinate.EncodeIndex(count - 1), After: payloads[0]}}, Count: &count, PayloadCID: &payload}
 		} else {
 			if operation.ListIndex == nil || *operation.ListIndex >= uint64(len(child.Entries)) {
 				return cid.Undef, fmt.Errorf("replacement index is outside measured file")
 			}
 			index := *operation.ListIndex
-			size := min(child.ChunkSize, child.TotalSize-index*child.ChunkSize)
+			size := min(geometry.ChunkSize, geometry.TotalSize-index*geometry.ChunkSize)
 			if operation.PayloadBytes != size {
 				return cid.Undef, fmt.Errorf("replacement must preserve the authenticated chunk length")
 			}

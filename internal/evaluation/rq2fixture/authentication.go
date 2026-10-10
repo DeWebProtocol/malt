@@ -6,6 +6,7 @@ import (
 
 	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	"github.com/dewebprotocol/malt-client/internal/evaluation/authenticationgraph"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
 	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/engine"
@@ -36,7 +37,11 @@ func (s *SourceDefinition) Candidates(ctx context.Context, e *engine.Engine, bac
 		bindings = append(bindings, engine.Entry{Label: []byte(file.Path), Target: target})
 	}
 	for _, file := range s.ListFiles {
-		state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: profile}, ChunkSize: file.ChunkSize, TotalSize: file.TotalSize, Entries: make([]engine.Entry, len(file.Chunks))}
+		state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: profile}, Entries: make([]engine.Entry, len(file.Chunks))}
+		state.PayloadCID, err = unixfsmodel.InlineChunkMetadata(file.TotalSize, file.ChunkSize, uint64(len(file.Chunks)))
+		if err != nil {
+			return nil, err
+		}
 		for i, chunk := range file.Chunks {
 			target, err := clientcas.CIDForBlock(clientcas.Block{Codec: cid.Raw, Data: chunk.Bytes})
 			if err != nil {

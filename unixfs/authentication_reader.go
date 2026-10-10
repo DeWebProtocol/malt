@@ -6,11 +6,13 @@ import (
 	"math"
 	"strings"
 
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
 	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
 	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 func (r *verifiedReader) authenticate(ctx context.Context, q protocol.AuthenticationRequest) (*protocol.AuthenticationVerification, error) {
@@ -90,11 +92,29 @@ func (r *verifiedReader) readTypedMetadata(ctx context.Context, root cid.Cid) (*
 	if err != nil {
 		return nil, meta, err
 	}
-	if meta.ChunkSize == 0 {
-		return nil, meta, fmt.Errorf("UnixFS bytes require a measured Positional ArcSet")
+	if !meta.PayloadCID.Defined() {
+		return nil, meta, fmt.Errorf("UnixFS bytes require application chunk metadata")
 	}
 	return verified, meta, nil
 }
+func (r *verifiedReader) readChunkMetadata(ctx context.Context, meta engine.Metadata) (unixfsmodel.ChunkMetadata, error) {
+	if !meta.PayloadCID.Defined() {
+		return unixfsmodel.ChunkMetadata{}, fmt.Errorf("missing file chunk metadata")
+	}
+	hash, err := mh.Decode(meta.PayloadCID.Hash())
+	if err != nil {
+		return unixfsmodel.ChunkMetadata{}, err
+	}
+	body := hash.Digest
+	if hash.Code != mh.IDENTITY {
+		body, err = r.getBoundBlock(ctx, meta.PayloadCID)
+		if err != nil {
+			return unixfsmodel.ChunkMetadata{}, err
+		}
+	}
+	return unixfsmodel.ParseChunkMetadata(meta.PayloadCID, body, meta.Count)
+}
+
 func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start uint64, length *uint64, metadata *protocol.AuthenticationVerification) (*ReadResult, error) {
 	var meta engine.Metadata
 	var err error
@@ -117,19 +137,21 @@ func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start
 	if err != nil {
 		return nil, err
 	}
-	if meta.ChunkSize == 0 {
-		return nil, fmt.Errorf("unmeasured sequence")
+	geometry, err := r.readChunkMetadata(ctx, meta)
+	if err != nil {
+		return nil, err
 	}
-	result := &ReadResult{Target: root, Offset: start, TotalSize: meta.TotalSize, ChunkSize: meta.ChunkSize, Authentication: metadata}
-	if start >= meta.TotalSize || (length != nil && *length == 0) {
+	result := &ReadResult{Target: root, Offset: start, TotalSize: geometry.TotalSize, ChunkSize: geometry.ChunkSize, Authentication: metadata}
+	if start >= geometry.TotalSize || (length != nil && *length == 0) {
 		result.End = start
 		return result, nil
 	}
-	end := meta.TotalSize
+	end := geometry.TotalSize
 	if length != nil {
 		end = min(end, saturatingAdd(start, *length))
 	}
-	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: [][]byte{}, Operation: "range", Start: &start, End: &end}
+	firstIndex, stopIndex := start/geometry.ChunkSize, (end-1)/geometry.ChunkSize+1
+	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: [][]byte{}, Operation: "range", Start: &firstIndex, End: &stopIndex}
 	verified, err := r.authenticate(ctx, q)
 	if err != nil {
 		return nil, err
@@ -151,9 +173,9 @@ func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start
 			}
 			blocks[key] = data
 		}
-		index := start/meta.ChunkSize + uint64(i)
-		offset := index * meta.ChunkSize
-		expected := min(meta.ChunkSize, meta.TotalSize-offset)
+		index := start/geometry.ChunkSize + uint64(i)
+		offset := index * geometry.ChunkSize
+		expected := min(geometry.ChunkSize, geometry.TotalSize-offset)
 		if uint64(len(data)) != expected {
 			return nil, fmt.Errorf("payload chunk length differs from authenticated measurements")
 		}

@@ -462,7 +462,7 @@ func (c *countingAddCAS) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	return c.inner.Get(ctx, key)
 }
 
-func (g *countingAddGateway) CreateMeasuredPayload(context.Context, []cid.Cid, uint64, uint64) (cid.Cid, error) {
+func (g *countingAddGateway) CreatePositionalPayload(context.Context, []cid.Cid, cid.Cid) (cid.Cid, error) {
 	g.calls++
 	return cid.Undef, os.ErrInvalid
 }

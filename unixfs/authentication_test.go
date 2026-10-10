@@ -13,6 +13,7 @@ import (
 	filesystemservice "github.com/dewebprotocol/malt-client/filesystem/service"
 	"github.com/dewebprotocol/malt-client/journal"
 	"github.com/dewebprotocol/malt-client/unixfs"
+	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	unixfsplanner "github.com/dewebprotocol/malt-client/unixfs/planner"
 	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/maltcid"
@@ -121,7 +122,11 @@ func TestRootedRangeRejectsAuthenticatedIncorrectChunkLengths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := adapter.CreateMeasuredPayload(t.Context(), []cid.Cid{short, short}, 16, 8)
+	metadata, err := unixfsmodel.InlineChunkMetadata(16, 8, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := adapter.CreatePositionalPayload(t.Context(), []cid.Cid{short, short}, metadata)
 	if err != nil {
 		t.Fatal(err)
 	}

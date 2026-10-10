@@ -2,9 +2,9 @@
 
 The runtime uses the sole current Core path: `derivation`, `auth/tree`,
 `engine`, explicit traversal, and `sdk/authentication`. Native HTTP queries
-use `malt.authentication/3`; candidates use `malt.authentication/2`. Ordered
-writes use `malt.authentication-batch/1` and exact
-`malt.authentication-receipt/1` checks. No old Resolve/Read, Map-proof,
+use `malt.authentication/5`; candidates use `malt.authentication/4`. Ordered
+writes use `malt.authentication-batch/2` and exact
+`malt.authentication-receipt/2` checks. No old Resolve/Read, Map-proof,
 UpdateView, semantic intent, client-root bundle, or WASM fallback is used.
 
 ## Reads and application layouts
@@ -16,8 +16,11 @@ target remains a Prefix Root, a content read explicitly authenticates its
 ordinary `@payload` label. All directory layouts use public SHA256 derivation
 (profile 4); ReaderOptions and filesystem service options carry the application
 layout. Managed mounts obtain it from the selected Bucket metadata.
-Positional chunk Roots expose authenticated geometry and byte ranges, with no
-system payload binding.
+Positional Roots authenticate `count` and an optional `payload_cid` in root
+slot zero. Non-root vectors use every slot. UnixFS stores byte geometry in
+CID-bound application JSON, verifies that document against the authenticated
+count, and converts byte ranges to Core element-index intervals. See
+[chunk metadata](positional-chunk-metadata.md).
 
 `unixfs.AuthenticationAdapter` computes Roots locally and checks exact remote
 candidate identity. The verified reader checks each caller-selected typed
@@ -53,7 +56,8 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.10-rc.3` at commit
-`6f16b13f3abe9cbd0992e83e1457663935e5a72f` for independent module builds.
+Native builds pin Core commit `949fb4e690c81d7ff1b5141ec95ddf7f7a926460`
+through its exact Go pseudo-version for independent module builds. This source
+integration is not a runtime or browser release.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.

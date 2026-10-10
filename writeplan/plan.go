@@ -68,8 +68,8 @@ func (p Plan) validate() error {
 		if err := check(candidate.Previous); err != nil {
 			return err
 		}
-		for _, entry := range candidate.State.Entries {
-			if err := check(entry.Target.String()); err != nil {
+		for _, target := range candidateTargets(candidate) {
+			if err := check(target.String()); err != nil {
 				return err
 			}
 		}
@@ -146,4 +146,15 @@ func (p Plan) PersistBatch(ctx context.Context, blocks BlockWriter, remote Batch
 		return protocol.AuthenticationReceipt{}, err
 	}
 	return receipt, nil
+}
+
+func candidateTargets(candidate protocol.AuthenticationCandidate) []cid.Cid {
+	targets := make([]cid.Cid, 0, len(candidate.State.Entries)+1)
+	if candidate.State.PayloadCID.Defined() {
+		targets = append(targets, candidate.State.PayloadCID)
+	}
+	for _, entry := range candidate.State.Entries {
+		targets = append(targets, entry.Target)
+	}
+	return targets
 }
