@@ -22,9 +22,9 @@ not a current build contract. The original plan is available in
 | `tools/evaluation` | Private measured workers, separate from production policy |
 
 The runtime's Go module namespace remains `github.com/dewebprotocol/malt-client`
-until its separately governed module migration. The module pins reviewed Core
-source by an immutable Go pseudo-version. It does not claim a published release
-or change the frozen evaluator baselines.
+until its separately governed module migration. The module pins published Core
+`v0.0.11-rc.1` by its exact release version and module checksums. This dependency
+update does not publish a runtime release or change frozen evaluator baselines.
 
 ## Preserved behavior
 

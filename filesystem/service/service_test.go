@@ -288,7 +288,13 @@ func TestSelectedRootMismatchAndClosedHandleFailClosed(t *testing.T) {
 
 func testView(t *testing.T) View {
 	t.Helper()
-	return View{DatasetID: "bucket-one", Branch: "main", Root: cid.MustParse("bagayfqabaaraeicgadr257uwj6q4srhzcq263wx2up52elb2ceywlqifdiqbqkyrde"), Revision: 7, EncryptionEpoch: 2}
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{
+		Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256,
+	}, make([]byte, maltcid.IPACommitmentSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return View{DatasetID: "bucket-one", Branch: "main", Root: root, Revision: 7, EncryptionEpoch: 2}
 }
 
 func fileStat(root cid.Cid, path string, payload cid.Cid, payloadKind string, size uint64) *unixfs.Stat {

@@ -6,18 +6,18 @@ import (
 	"github.com/dewebprotocol/malt-client/unixfs"
 )
 
-// Coordinate derivation profile 4 and the ordinary @payload label deliberately
-// produce new Roots. Pin both commitment backends and application layouts.
+// Prefix layout 4 authenticates the original labels, including @payload.
+// Pin both commitment backends and application layouts.
 func TestPlannerPinnedProjectionRoots(t *testing.T) {
 	vectors := []struct {
 		backend    string
 		layout     unixfs.LayoutKind
 		base, root string
 	}{
-		{"kzg", unixfs.LayoutFlatV1, "bagcifqabaazacmfrbtk5jo7yzhgft4gquke6jtikw4d53qbkxmwvt3szqbw4nyaahvhn2sxiz2h5ee365moypjp662ua", "bagcifqabaazacmfwpxhyqwib5g2g5brlm3nzta57tmpjv4rc4wlcfr3f3vsmp6dauz3hlpw3eehduv5dpzz24z2ah7ja"},
-		{"kzg", unixfs.LayoutHybridV1, "bagcifqabaazacmfkewl72lvptsnjjszisj2xovlplh5uchkkg5mregctpneqvdn2roj32j65eyan2jkgot64bffj2ooq", "bagcifqabaazacmeddjmrenpwith5fzd3wvgaacvrwo2o2awua2et47teyrmlcxc3k6mlhz6awhdtsbq7j32zkobuywpq"},
-		{"ipa", unixfs.LayoutFlatV1, "bagcifqabaaraeiaekt4db5lipemlmgwqv6lzg5vphxdfx5amzat3nb77vrhefhxqke", "bagcifqabaaraeidkr6efv6fnxnuqlzjew4rnstz6rhimljts6xv4d2dc4d6ao6754u"},
-		{"ipa", unixfs.LayoutHybridV1, "bagcifqabaaraeicmnjg2mgypq67mlyfdjl6ctvnwmrfilijvfj5scues2ly5xeqok4", "bagcifqabaaraeia2wsa4q2yiwi6zwz2hzsyt7kpphgu675pomwuct2xi6j4zvsyq4e"},
+		{"kzg", unixfs.LayoutFlatV1, "bagcirqabaazacmfgqx4jriyby4rfnxpgy73bm3c2w55nkcxb6fnvdfz7lwjbcckv56bsefdhs4brisrzf54xdoqhzpza", "bagcirqabaazacmfjv7rzswvecxuifmazc3mlp7oe4ij5r2g4l64crjultvzh6xhgedfj6sadvdyxl26kdjgyuc2dazxa"},
+		{"kzg", unixfs.LayoutHybridV1, "bagcirqabaazacmel5k7ccqru7d2tzrolfej5cftvl7bfly4vbtum5l3egotfs4bjosjidlju7geudmc6qpnsbdpnhrra", "bagcirqabaazacmfkcxqk6eoysvogmzfa3yiwpjrvezszhfbgqr5hc6db5enrqraexmbs6nxrqgaksnmnwi7ljpom7epq"},
+		{"ipa", unixfs.LayoutFlatV1, "bagcirqabaaraeic53iby27mw6ofnrlkxaceafffanigphhurusbnlhl3sacen5qd5q", "bagcirqabaaraeidmrezc2pp265vm3ysai7ndv2hi7h5cspkgzb3fixohwxs7n57v2q"},
+		{"ipa", unixfs.LayoutHybridV1, "bagcirqabaaraeiap4ui5j4vobybovm6o3x6fxbtpvszwczbavwcfzs23ovyorgorqq", "bagcirqabaaraeiadccijnvrda33jfrvgtiadcokb3p5ykxg66psqi7xmah24t2zhre"},
 	}
 	for _, v := range vectors {
 		t.Run(v.backend+"/"+string(v.layout), func(t *testing.T) {
