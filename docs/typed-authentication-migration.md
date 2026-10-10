@@ -56,8 +56,8 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin Core commit `949fb4e690c81d7ff1b5141ec95ddf7f7a926460`
-through its exact Go pseudo-version for independent module builds. This source
+Native builds pin published Core `v0.0.10`, commit
+`aaa78737c35f82fe91bb3f749cfddbcb7953ed2b`, for independent module builds. This source
 integration is not a runtime or browser release.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.
