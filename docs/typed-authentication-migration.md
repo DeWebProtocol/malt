@@ -56,8 +56,13 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.10`, commit
-`aaa78737c35f82fe91bb3f749cfddbcb7953ed2b`, for independent module builds. This source
+Native builds pin published Core `v0.0.11-rc.1`, commit
+`704ee38cdafaa628b713b2965b6d407ab0e4205b`, for independent module builds. This source
 integration is not a runtime or browser release.
+Prefix layout 4 authenticates original label bytes and targets. Coordinates
+route the tree lookup; distinct labels at the same full coordinate return an
+error. Retired Prefix layout 1 is rejected without a compatibility reader or
+conversion path. Existing Prefix trees must be rebuilt from their original
+labels and targets, including parent roots that reference rebuilt children.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.
