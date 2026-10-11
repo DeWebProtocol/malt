@@ -73,9 +73,10 @@ func (o *flatRootOracle) apply(ctx context.Context, changes []gatewaytransport.F
 }
 
 // fullFlatRoot reconstructs the complete post-image from live source files,
-// without using the mutation deltas or any Gateway response/state.
+// without using the mutation deltas or any Gateway response/state. Its local
+// reconstruction is independent of the single-request Gateway snapshot limit.
 func fullFlatRoot(ctx context.Context, files map[string]logicalFile) (cid.Cid, error) {
-	initial, err := directFlatSnapshotChanges(files)
+	initial, err := flatSnapshotChanges(files)
 	if err != nil {
 		return cid.Undef, err
 	}

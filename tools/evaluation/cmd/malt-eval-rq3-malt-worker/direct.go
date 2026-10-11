@@ -534,6 +534,13 @@ func directFlatSnapshotChanges(state map[string]logicalFile) ([]gatewaytransport
 	if len(state) > maximumMALTSnapshotFiles {
 		return nil, fmt.Errorf("flat snapshot exceeds file bound")
 	}
+	return flatSnapshotChanges(state)
+}
+
+// flatSnapshotChanges projects every live file into the complete flat state.
+// Gateway request limits belong to directFlatSnapshotChanges: a history can
+// grow beyond its initial request size and still needs a complete final oracle.
+func flatSnapshotChanges(state map[string]logicalFile) ([]gatewaytransport.FlatPrefixChange, error) {
 	sentinel, err := flatSentinelEntry()
 	if err != nil {
 		return nil, err
