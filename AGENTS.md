@@ -5,8 +5,9 @@
 This repository owns the user-controlled MALT local data runtime: CLI, local
 daemon, accepted-root policy, UnixFS application semantics, Merkle DAG import
 compatibility, pluggable transport capabilities, and payload-byte verification.
-It also keeps the runtime-owned executable adapters needed to measure those exact behaviors;
-the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
+This is the edge node implementation. Reproducible measurement drivers, replay
+workers, experiment protocols, and accounting policy live in `malt-evaluation`
+and consume public node/runtime capabilities.
 
 ## Boundaries
 
@@ -28,9 +29,9 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
 - Keep IPFS-style Merkle DAG import and compatibility policy here. A Merkle DAG
   root is a compatibility output, not a MALT-authenticated root or ProofList.
 - Keep benchmark suites, run plans, comparison policy, result schemas, and
-  result provenance in `malt-evaluation`. Code under `tools/evaluation` is a
-  pinned process adapter, not a supported runtime command or an evaluator
-  source of truth.
+  result provenance in `malt-evaluation`. Do not place experiment workers or
+  experiment-specific accounting in this node repository. Expose only reusable
+  node/runtime capabilities and storage observation needed by external callers.
 
 ## Package Ownership
 
@@ -163,13 +164,6 @@ the evaluator that plans and interprets campaigns lives in `malt-evaluation`.
   select configured runtime services, call `application/` use cases, and
   format results, not become a second UnixFS, trust, or plan-composition
   implementation. `cmd/` contains only the supported `malt` product binary.
-- `tools/evaluation/cmd/` owns evaluator-launched runtime process adapters.
-  Preserve their external binary names and wire contracts, but do not treat
-  their Go packages as a compatibility surface.
-- `internal/evaluation/` owns shared implementation for those adapters,
-  including disposable-Gateway instance authentication, bootstrap, raw-CAS,
-  and selective-CAR transport. Production packages and `cmd/malt` must not
-  import it.
 - Preserve `internal/architecture` dependency tests when adding packages or
   moving responsibilities.
 

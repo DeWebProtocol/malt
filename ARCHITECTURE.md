@@ -19,10 +19,11 @@ It owns:
 - application-level payload-byte verification.
 - runtime-side encrypted snapshot creation, restore, and automatic scheduling.
 
-Runtime-specific benchmark process adapters also live in this repository under
-`tools/evaluation`. They exercise this implementation at a pinned commit, but
-do not own benchmark plans, suites, comparison policy, result schemas, or
-result provenance; those belong in `malt-evaluation`.
+Benchmark process adapters, replay workers, experiment fixtures, accounting,
+plans, suites and provenance belong in `malt-evaluation`. Its adapters exercise
+this node through public capabilities at a pinned module version. This runtime
+and Gateway provide edge and cloud node implementations; measurements remain
+outside the node implementation.
 
 It depends on `github.com/dewebprotocol/malt-core` for canonical graph types,
 typed query/candidate/batch contracts, local verification, CID rules, and
@@ -124,7 +125,7 @@ merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
 transport  -> Gateway/local/hybrid adapters; never imports unixfs, merkledag, or trust
 bucketsync -> nodeapi.DatasetBranch + independent durable synchronization metadata
-tools/evaluation/cmd -> internal/evaluation + public runtime capabilities
+malt-evaluation adapters -> public nodeapi / runtime capabilities (external dependency)
 ```
 
 `transport.Client` is one reusable HTTP connection, but consumers depend on
@@ -134,8 +135,8 @@ the fixed `PostMerkleDAGResolve` and `PostMerkleDAGRead` capabilities; there is
 no arbitrary profile-route escape hatch. Transport results remain untrusted.
 The public transport also does not expose evaluation instance credentials,
 bootstrap control, unchecked raw-CAS reads, or the selective-CAR route. Those
-disposable-Gateway capabilities live under `internal/evaluation` and can only
-be composed by evaluator adapters.
+disposable-Gateway capabilities live under `malt-evaluation/internal/nodeeval`
+and can only be composed by evaluator adapters.
 
 `transport/local` is a bounded, atomic, owner-private durable CAS and verifies
 the complete body on both `Get` and `Has`. `transport/hybrid` is transport-level
@@ -287,8 +288,6 @@ profile; it does not change MALT Core or the existing plaintext semantics of
 ## Packages
 
 - `cmd/malt`: CLI and daemon process lifecycle.
-- `tools/evaluation/cmd`: evaluator-launched process adapters. Their executable
-  names and wire contracts are campaign inputs, not supported user CLI.
 - `application`: reusable trusted-root, UnixFS, and Merkle DAG use cases shared
   by command and daemon adapters.
 - `application/backup`: encrypted MALT-native filesystem, local fingerprint, Bucket
@@ -394,8 +393,6 @@ profile; it does not change MALT Core or the existing plaintext semantics of
 - `internal/securefile`: owner-only Unix file modes and protected
   owner-and-SYSTEM Windows file DACLs.
 - `internal/cas`: runtime-side CAS helpers and byte verification.
-- `internal/evaluation`: private adapter support, including evaluation Gateway
-  authentication/control transport and shared workload machinery.
 - `unixfs/model`: UnixFS application values and path rules.
 - `unixfs`: verified UnixFS reader/writer facade, staging, materialization,
   and payload verification.

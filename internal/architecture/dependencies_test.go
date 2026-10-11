@@ -62,20 +62,17 @@ func TestRuntimeModuleNamespaceCutoverRemainsExplicit(t *testing.T) {
 
 func TestProductionPackagesDoNotImportEvaluation(t *testing.T) {
 	root := moduleRoot(t)
+	for _, directory := range []string{"tools/evaluation", "internal/evaluation"} {
+		if _, err := os.Stat(filepath.Join(root, directory)); !os.IsNotExist(err) {
+			t.Fatalf("node runtime must not contain evaluation drivers at %s: %v", directory, err)
+		}
+	}
 	set := token.NewFileSet()
 	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		relative, err := filepath.Rel(root, filePath)
-		if err != nil {
-			return err
-		}
 		if entry.IsDir() {
-			if relative == filepath.Join("internal", "evaluation") ||
-				relative == filepath.Join("tools", "evaluation") {
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if filepath.Ext(filePath) != ".go" || strings.HasSuffix(filePath, "_test.go") {
@@ -90,7 +87,9 @@ func TestProductionPackagesDoNotImportEvaluation(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if value == "github.com/dewebprotocol/malt-client/internal/evaluation" ||
+			if value == "github.com/dewebprotocol/malt-evaluation" ||
+				strings.HasPrefix(value, "github.com/dewebprotocol/malt-evaluation/") ||
+				value == "github.com/dewebprotocol/malt-client/internal/evaluation" ||
 				strings.HasPrefix(value, "github.com/dewebprotocol/malt-client/internal/evaluation/") {
 				t.Errorf("%s imports forbidden production dependency %s", filePath, value)
 			}
@@ -102,7 +101,7 @@ func TestProductionPackagesDoNotImportEvaluation(t *testing.T) {
 	}
 }
 
-func TestCommandNamespacesSeparateProductAndEvaluationBinaries(t *testing.T) {
+func TestCommandNamespaceContainsOnlyProductBinary(t *testing.T) {
 	root := moduleRoot(t)
 	productEntries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
@@ -118,18 +117,6 @@ func TestCommandNamespacesSeparateProductAndEvaluationBinaries(t *testing.T) {
 		t.Fatalf("cmd must contain only the production malt command, got %v", productCommands)
 	}
 
-	evaluationEntries, err := os.ReadDir(filepath.Join(root, "tools", "evaluation", "cmd"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(evaluationEntries) == 0 {
-		t.Fatal("evaluation command namespace is empty")
-	}
-	for _, entry := range evaluationEntries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "malt-eval-") {
-			t.Errorf("tools/evaluation/cmd contains non-evaluation entry %q", entry.Name())
-		}
-	}
 }
 
 func TestPublicTransportContainsNoEvaluationControlPlane(t *testing.T) {
