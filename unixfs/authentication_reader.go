@@ -97,25 +97,33 @@ func (r *verifiedReader) readTypedMetadata(ctx context.Context, root cid.Cid) (*
 	}
 	return verified, meta, nil
 }
-func (r *verifiedReader) readChunkMetadata(ctx context.Context, meta engine.Metadata) (unixfsmodel.ChunkMetadata, error) {
+func (r *verifiedReader) readChunkMetadata(ctx context.Context, meta engine.Metadata, body []byte) (unixfsmodel.ChunkMetadata, []byte, error) {
 	if !meta.PayloadCID.Defined() {
-		return unixfsmodel.ChunkMetadata{}, fmt.Errorf("missing file chunk metadata")
+		return unixfsmodel.ChunkMetadata{}, nil, fmt.Errorf("missing file chunk metadata")
 	}
-	hash, err := mh.Decode(meta.PayloadCID.Hash())
-	if err != nil {
-		return unixfsmodel.ChunkMetadata{}, err
-	}
-	body := hash.Digest
-	if hash.Code != mh.IDENTITY {
-		body, err = r.getBoundBlock(ctx, meta.PayloadCID)
+	if body == nil {
+		hash, err := mh.Decode(meta.PayloadCID.Hash())
 		if err != nil {
-			return unixfsmodel.ChunkMetadata{}, err
+			return unixfsmodel.ChunkMetadata{}, nil, err
+		}
+		body = hash.Digest
+		if hash.Code != mh.IDENTITY {
+			body, err = r.getBoundBlock(ctx, meta.PayloadCID)
+			if err != nil {
+				return unixfsmodel.ChunkMetadata{}, nil, err
+			}
 		}
 	}
-	return unixfsmodel.ParseChunkMetadata(meta.PayloadCID, body, meta.Count)
+	// Retained bytes must still match the authenticated CID and count; decoded
+	// fields from a prior Stat are not authoritative.
+	geometry, err := unixfsmodel.ParseChunkMetadata(meta.PayloadCID, body, meta.Count)
+	if err != nil {
+		return unixfsmodel.ChunkMetadata{}, nil, err
+	}
+	return geometry, body, nil
 }
 
-func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start uint64, length *uint64, metadata *protocol.AuthenticationVerification) (*ReadResult, error) {
+func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start uint64, length *uint64, metadata *protocol.AuthenticationVerification, metadataBody []byte) (*ReadResult, error) {
 	var meta engine.Metadata
 	var err error
 	if metadata == nil {
@@ -137,7 +145,7 @@ func (r *verifiedReader) readTypedRange(ctx context.Context, root cid.Cid, start
 	if err != nil {
 		return nil, err
 	}
-	geometry, err := r.readChunkMetadata(ctx, meta)
+	geometry, _, err := r.readChunkMetadata(ctx, meta, metadataBody)
 	if err != nil {
 		return nil, err
 	}

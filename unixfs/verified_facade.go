@@ -62,6 +62,7 @@ type Stat struct {
 	PayloadBinding         *Resolution                          `json:"payload_binding,omitempty"`
 	rawBody                []byte
 	rawBodyLoaded          bool
+	chunkMetadataBody      []byte
 }
 
 // ReadResult contains only bytes that have been bound to locally verified
@@ -438,13 +439,14 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		if err != nil {
 			return nil, err
 		}
-		geometry, err := r.readChunkMetadata(ctx, meta)
+		geometry, body, err := r.readChunkMetadata(ctx, meta, nil)
 		if err != nil {
 			return nil, err
 		}
 		stat.Size = geometry.TotalSize
 		stat.ChunkSize = geometry.ChunkSize
 		stat.AuthenticationMetadata = proof
+		stat.chunkMetadataBody = body
 	case "raw":
 		body, err := r.getBoundBlock(ctx, stat.Payload)
 		if err != nil {
@@ -595,7 +597,7 @@ func (r *verifiedReader) readStatFile(ctx context.Context, stat *Stat, offset ui
 	}
 	switch stat.PayloadKind {
 	case "positional":
-		result, err := r.readTypedRange(ctx, stat.Payload, offset, length, stat.AuthenticationMetadata)
+		result, err := r.readTypedRange(ctx, stat.Payload, offset, length, stat.AuthenticationMetadata, stat.chunkMetadataBody)
 		if err != nil {
 			return nil, err
 		}
@@ -643,7 +645,7 @@ func (r *verifiedReader) ReadPositionalPayloadRange(ctx context.Context, trusted
 	if parseErr != nil || descriptor.Layout != maltcid.Positional {
 		return nil, fmt.Errorf("%w: target %s is not a positional Root", ErrNotFile, trustedPositionalRoot)
 	}
-	return r.readTypedRange(ctx, trustedPositionalRoot, offset, &length, nil)
+	return r.readTypedRange(ctx, trustedPositionalRoot, offset, &length, nil, nil)
 }
 
 func (r *verifiedReader) getBoundBlock(ctx context.Context, key cid.Cid) ([]byte, error) {

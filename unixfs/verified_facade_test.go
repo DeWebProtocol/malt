@@ -546,6 +546,61 @@ func TestVerifiedReaderRejectsUntypedDirectoryManifests(t *testing.T) {
 	}
 }
 
+func TestVerifiedReaderFetchesChunkMetadataOnce(t *testing.T) {
+	remote := newRealRemote(t)
+	body := bytes.Repeat([]byte("0123456789abcdef"), 8)
+	root := materializeTree(t, remote, map[string][]byte{"file.bin": body}, 16)
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := reader.Stat(t.Context(), root, "file.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := stat.AuthenticationMetadata.Result.Binding.Proof.RootMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		full   bool
+		offset uint64
+		length uint64
+		want   []byte
+	}{
+		{name: "full", full: true, want: body},
+		{name: "one-byte", length: 1, want: body[:1]},
+		{name: "cross-chunk", offset: 15, length: 18, want: body[15:33]},
+		{name: "empty-range", offset: 15},
+		{name: "past-end", offset: uint64(len(body)) + 1, length: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blocks := &countingBlocks{inner: remote, gets: make(map[string]int)}
+			reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: blocks})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result *unixfs.ReadResult
+			if tc.full {
+				result, err = reader.ReadFile(t.Context(), root, "file.bin")
+			} else {
+				result, err = reader.ReadFileRange(t.Context(), root, "file.bin", tc.offset, tc.length)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(result.Body, tc.want) || result.TotalSize != uint64(len(body)) || result.ChunkSize != 16 {
+				t.Fatalf("read differs from authenticated file: %#v", result)
+			}
+			if got := blocks.gets[metadata.PayloadCID.KeyString()]; got != 1 {
+				t.Fatalf("chunk metadata fetched %d times, want 1", got)
+			}
+		})
+	}
+}
+
 func TestVerifiedReaderFetchesEachAuthenticatedRangeBlockOnce(t *testing.T) {
 	remote := newRealRemote(t)
 	chunk := []byte("0123456789abcdef")
