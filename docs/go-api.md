@@ -185,8 +185,8 @@ defines no network codec, discovery rule, or wire identifier.
 
 The public transport does not expose evaluation instance tokens, bootstrap
 control, unchecked raw-CAS reads, or the selective-CAR route. Those
-capabilities are private to the pinned process adapters under
-`tools/evaluation`; they are not a supported integration surface.
+capabilities are private to the process adapters in the separate
+`malt-evaluation` repository; they are not a supported node integration surface.
 
 `Metrics` returns inexpensive monotonic counters. `MetricsWithStorage` also
 requests Gateway's O(live KV entries) logical scan and should be used only by

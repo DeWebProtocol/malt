@@ -19,7 +19,7 @@ not a current build contract. The original plan is available in
 | `internal/runtime` | Reusable composition of local services and transports |
 | `cmd/malt` | CLI and daemon entrypoints |
 | `merkledag` | Isolated IPFS-compatible import and CID/link replay |
-| `tools/evaluation` | Private measured workers, separate from production policy |
+| Evaluation workers | Moved to `malt-evaluation/adapters/node/cmd`; consume public node/runtime capabilities |
 
 The runtime's Go module namespace remains `github.com/dewebprotocol/malt-client`
 until its separately governed module migration. The module pins published Core

@@ -7,7 +7,6 @@ import (
 
 	"github.com/dewebprotocol/malt-client/nodeapi"
 	cid "github.com/ipfs/go-cid"
-	mh "github.com/multiformats/go-multihash"
 )
 
 // ErrNotFound reports that a requested CAS block is absent. Remote and local
@@ -78,11 +77,7 @@ func NormalizeCodec(codec uint64) uint64 {
 
 // CIDForBlock computes the CID for block bytes and codec.
 func CIDForBlock(block Block) (cid.Cid, error) {
-	mhash, err := mh.Sum(block.Data, mh.SHA2_256, -1)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return cid.NewCidV1(NormalizeCodec(block.Codec), mhash), nil
+	return nodeapi.CIDForBlock(block)
 }
 
 // PutBlocks stores blocks, using batch writes when supported.

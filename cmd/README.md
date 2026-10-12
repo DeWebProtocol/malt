@@ -6,6 +6,6 @@ This namespace contains only the supported `malt` runtime binary:
 go build -o bin/malt ./cmd/malt
 ```
 
-Benchmark workers are not product commands. They live under
-[`tools/evaluation/cmd`](../tools/evaluation/cmd) so packaging and API reviews
-cannot confuse evaluator process adapters with the user-facing CLI.
+Benchmark workers are not product commands. They live in
+[`malt-evaluation/adapters/node/cmd`](https://github.com/DeWebProtocol/malt-evaluation/tree/main/adapters/node/cmd)
+and call public node/runtime capabilities.

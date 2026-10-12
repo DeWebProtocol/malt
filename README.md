@@ -532,20 +532,17 @@ and cannot fall back to the public CAS namespace.
 
 ## Evaluation adapters
 
-`cmd/` contains only the supported `malt` product binary. Runtime-specific
-benchmark process adapters live under `tools/evaluation/cmd`, with shared
-private support under `internal/evaluation`. They preserve their external
-`malt-eval-*` executable and wire contracts, but are not a public Go API or
-supported user CLI.
+`cmd/` contains only the supported `malt` product binary. Replay workers,
+benchmark drivers, experimental transports, fixtures, accounting and result
+schemas live in the separate
+[malt-evaluation](https://github.com/DeWebProtocol/malt-evaluation) repository,
+under `adapters/node/cmd` and `internal/nodeeval`.
 
-Evaluation instance authentication, bootstrap control, unchecked raw-CAS
-fetches, and selective-CAR transport are deliberately confined to that private
-boundary. The public `transport` package cannot invoke them. Benchmark suites,
-campaign plans, comparison policy, result schemas, and provenance remain owned
-by the separate
-[malt-evaluation](https://github.com/DeWebProtocol/malt-evaluation) repository.
-See [tools/evaluation/README.md](./tools/evaluation/README.md) for the adapter
-inventory and build boundary.
+The evaluator calls the public `nodeapi`, UnixFS, Merkle DAG and transport
+capabilities. The node provides storage and authentication behavior; the
+evaluator defines workloads and measurement boundaries. Gateway and this
+runtime are cloud and edge implementations of node capabilities, respectively.
+Evaluation builds pin the node module separately from the evaluator revision.
 
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Merkle DAG import and verified link replay
@@ -627,7 +624,8 @@ for completion. None of these operations accepts a candidate automatically.
 The candidate API is a complete-view workflow, not a stateless transition proof.
 
 Evaluation tooling can export bounded file snapshots with
-`go run ./tools/evaluation/cmd/malt-eval-rooted-file-trace --input snapshots.json`.
+`go run ./adapters/node/cmd/malt-eval-rooted-file-trace --input snapshots.json`
+from a `malt-evaluation` checkout.
 The input is an array of complete versions, each containing `files` (canonical
 relative paths mapped to base64 bytes) and `queries` (canonical paths).
 `--backend ipa` and `--chunk-size` select the commitment and file chunk geometry.
