@@ -81,7 +81,7 @@ func TestV2WriterRejectsDuplicateNames(t *testing.T) {
 }
 
 func TestManifestReaderAndWriterRejectUnsupportedChildNames(t *testing.T) {
-	for _, name := range []string{".", "..", "@payload", "\x00", " file", "file ", "\tfile", "file\n", "\u0085file", "file\ufeff"} {
+	for _, name := range []string{".", "..", "\x00", "a/b", "a\\b"} {
 		t.Run(name, func(t *testing.T) {
 			encoded, err := json.Marshal(name)
 			if err != nil {

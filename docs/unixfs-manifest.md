@@ -31,8 +31,7 @@ V2 uses these canonical encoding rules:
 - every entry has exactly `name` followed by `type`;
 - `type` is exactly `dir` or `file`;
 - `name` is one lossless UnixFS path segment: it is non-empty, is neither `.`
-  nor `..`, does not start with the reserved `@` prefix, contains no NUL, `/`,
-  or `\`, and has no leading or trailing Unicode whitespace or U+FEFF;
+  nor `..`, and contains no NUL, `/`, or `\`;
 - entries are unique and sorted by their names' UTF-8 bytes;
 - no insignificant whitespace is emitted;
 - printable Unicode is emitted directly, the short JSON escapes are used for
@@ -60,3 +59,16 @@ manifests, their `0x310001` codec, and the early raw-CID fallback are removed.
 The runtime does not infer file/directory type from a target Root layout.
 Experimental old trees must be rebuilt from their original application data;
 changing a CID prefix does not authenticate a V2 manifest.
+
+The manifest is a lossless payload, so names starting with `@` and boundary
+whitespace are preserved. Interactive staging continues to enforce its stricter
+canonical path policy at the application entry point. Flat repository imports
+use `model.FlatPathLabel`: the empty path maps to `@payload`; a source path
+beginning with `@` is escaped with a leading `/`. Other paths retain their full
+relative spelling. Only the ArcSet is flat; directory payloads never enumerate
+descendants recursively or include child CIDs.
+
+`WriteChunkedFile` stores raw chunks and uses `model.EncodeFileMetadata` for the
+CID-bound `malt.unixfs.chunks/1` payload. Its optional `mode` preserves filesystem
+permission changes; count remains authenticated Positional metadata. CAS receipts
+are checked before the original inputs reach `nodeapi.AuthenticationBuilder`.

@@ -33,7 +33,24 @@ func (r *verifiedReader) authenticate(ctx context.Context, q protocol.Authentica
 	return &protocol.AuthenticationVerification{Request: q, Result: *result}, nil
 }
 func (r *verifiedReader) resolveSegments(ctx context.Context, root cid.Cid, segments []string) (*Resolution, error) {
+	return r.resolveProjection(ctx, root, segments, false)
+}
+
+// Payload projection is explicit so a real @payload path cannot alias it.
+func (r *verifiedReader) resolvePayloadSegments(ctx context.Context, root cid.Cid, segments []string) (*Resolution, error) {
+	return r.resolveProjection(ctx, root, segments, true)
+}
+
+func (r *verifiedReader) parseReadPath(path string) ([]string, error) {
+	if r.layoutKind == LayoutFlatV1 {
+		return unixfsmodel.ParseFlatPath(path)
+	}
+	return unixfsmodel.ParsePath(path)
+}
+
+func (r *verifiedReader) resolveProjection(ctx context.Context, root cid.Cid, segments []string, payload bool) (*Resolution, error) {
 	key := stagedProjectionKey(root, segments)
+	key.payload = payload
 	if r.stagedResolutions != nil {
 		if cached := r.stagedResolutions[key]; cached != nil {
 			return cached, nil
@@ -46,19 +63,21 @@ func (r *verifiedReader) resolveSegments(ctx context.Context, root cid.Cid, segm
 	}
 	if r.layoutKind != LayoutRootedV1 {
 		// Flat and hybrid layouts authenticate one opaque full-path label.
-		// A terminal payload projection is a separate ordinary payload-label step.
-		count := len(segments)
-		payload := count > 0 && segments[count-1] == "@payload"
-		if payload {
-			count--
-		}
 		steps = [][]byte{}
-		if count > 0 {
-			steps = append(steps, []byte(strings.Join(segments[:count], "/")))
+		if len(segments) > 0 {
+			label := []byte(strings.Join(segments, "/"))
+			if r.layoutKind == LayoutFlatV1 {
+				var err error
+				label, err = unixfsmodel.FlatPathLabel(string(label))
+				if err != nil {
+					return nil, err
+				}
+			}
+			steps = append(steps, label)
 		}
-		if payload {
-			steps = append(steps, []byte("@payload"))
-		}
+	}
+	if payload {
+		steps = append(steps, []byte("@payload"))
 	}
 	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Steps: steps, Operation: "resolve"}
 	verified, err := r.authenticate(ctx, q)

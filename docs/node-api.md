@@ -98,3 +98,15 @@ authentication store, or a new replication engine. Current local-only execution
 provides CAS; native backup/mount/write-back still compose Gateway or hybrid
 capabilities. New local executors and network transports can implement the same
 contracts without changing Core or synchronization's authority over local roots.
+
+## Local authentication computation
+
+The narrow `AuthenticationBuilder`, `AuthenticationUpdater` and
+`AuthenticationSnapshot` ports let an in-process node build original state,
+apply Core's checked `authentication.Delta`, and return a Root-checked input
+snapshot without exporting complete authentication vectors on every mutation.
+Gateway's public native storage service implements them. They introduce no HTTP
+update endpoint, publication permission or portable transition proof. Callers
+across a trust boundary verify returned state/proofs with Core at their selected
+Root. UnixFS owns projection and file encoding; node implementations own durable
+relations and reconstructible caches.

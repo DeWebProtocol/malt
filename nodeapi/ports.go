@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/protocol"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -100,6 +102,25 @@ type DatasetBranch interface {
 // and selected Root. No transport, publication, or trust policy is implied.
 type Authentication interface {
 	Authenticate(context.Context, protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error)
+}
+
+// AuthenticationBuilder computes and stores one input view in a local node.
+// This is an in-process storage capability, not a wire update proof or authority
+// to publish. Remote clients still submit and verify exact candidates.
+type AuthenticationBuilder interface {
+	BuildAuthentication(context.Context, engine.State) (cid.Cid, error)
+}
+
+// AuthenticationUpdater applies Core's checked delta against a selected Root.
+// The returned root is operational output, never implicit client acceptance.
+type AuthenticationUpdater interface {
+	ApplyAuthentication(context.Context, cid.Cid, authentication.Delta) (cid.Cid, error)
+}
+
+// AuthenticationSnapshot returns original inputs checked at the selected Root.
+// Callers crossing a trust boundary verify this state locally with Core.
+type AuthenticationSnapshot interface {
+	SnapshotAuthentication(context.Context, cid.Cid) (engine.State, error)
 }
 
 // AuthenticationWriter transfers complete candidate materialization. It has

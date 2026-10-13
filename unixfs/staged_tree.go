@@ -37,7 +37,7 @@ func ParseCanonicalStagedPath(raw string) ([]string, error) {
 		return nil, err
 	}
 	for _, segment := range segments {
-		if strings.TrimSpace(segment) != segment {
+		if strings.TrimSpace(segment) != segment || strings.HasPrefix(segment, "\ufeff") || strings.HasSuffix(segment, "\ufeff") {
 			return nil, fmt.Errorf("%w: path segment is not losslessly canonical: %q", unixfsmodel.ErrInvalidPath, segment)
 		}
 	}
