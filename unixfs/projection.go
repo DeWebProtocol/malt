@@ -1,6 +1,11 @@
 package unixfs
 
-import cid "github.com/ipfs/go-cid"
+import (
+	"strings"
+
+	model "github.com/dewebprotocol/malt-client/unixfs/model"
+	cid "github.com/ipfs/go-cid"
+)
 
 // DirectoryChild describes an already materialized child. Manifest is the
 // immutable directory payload; Root is the authenticated object (or file).
@@ -23,10 +28,23 @@ func ProjectDirectoryBindings(layout LayoutKind, children []DirectoryChild) map[
 		if layout == LayoutFlatV1 && child.Directory {
 			target = child.Manifest
 		}
-		bindings[child.Name] = target
+		name := child.Name
+		if layout == LayoutFlatV1 {
+			label, _ := model.FlatPathLabel(name)
+			name = string(label)
+		}
+		bindings[name] = target
 		if layout != LayoutRootedV1 && child.Directory {
 			for name, target := range child.Descendants {
-				bindings[child.Name+"/"+name] = target
+				if layout == LayoutFlatV1 {
+					name = strings.TrimPrefix(name, "/")
+				}
+				label := child.Name + "/" + name
+				if layout == LayoutFlatV1 {
+					encoded, _ := model.FlatPathLabel(label)
+					label = string(encoded)
+				}
+				bindings[label] = target
 			}
 		}
 	}

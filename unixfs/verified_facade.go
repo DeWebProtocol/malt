@@ -160,8 +160,9 @@ type verifiedReader struct {
 }
 
 type stagedProjectionCacheKey struct {
-	root string
-	path string
+	payload bool
+	root    string
+	path    string
 }
 
 type stagedManifestProjection struct {
@@ -302,7 +303,7 @@ func NewWriter(opts WriterOptions) (Writer, error) {
 }
 
 func (r *verifiedReader) Resolve(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*Resolution, error) {
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := r.parseReadPath(rawPath)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +371,7 @@ func (r *verifiedReader) readDirectoryManifest(
 	var payloadBinding *Resolution
 	switch unixfsmodel.StorageKindFromCID(node.Target) {
 	case "prefix":
-		payloadSegments := append(append([]string(nil), segments...), "@payload")
-		payloadBinding, err = r.resolveSegments(ctx, trustedRoot, payloadSegments)
+		payloadBinding, err = r.resolvePayloadSegments(ctx, trustedRoot, segments)
 		if err != nil {
 			return nil, cid.Undef, nil, fmt.Errorf("resolve directory manifest: %w", err)
 		}
@@ -466,7 +466,7 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 // Directory manifests are still fetched because they define readdir and child
 // projection semantics.
 func (r *verifiedReader) Lookup(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*Stat, error) {
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := r.parseReadPath(rawPath)
 	if err != nil {
 		return nil, err
 	}
@@ -495,8 +495,7 @@ func (r *verifiedReader) Lookup(ctx context.Context, trustedRoot cid.Cid, rawPat
 		stat.Kind = StagedKindFile
 		payloadTarget := resolution.Target
 		if targetKind == "prefix" {
-			payloadSegments := append(append([]string(nil), segments...), "@payload")
-			payloadBinding, err := r.resolveSegments(ctx, trustedRoot, payloadSegments)
+			payloadBinding, err := r.resolvePayloadSegments(ctx, trustedRoot, segments)
 			if err != nil {
 				return nil, fmt.Errorf("resolve file payload: %w", err)
 			}
@@ -526,7 +525,7 @@ func (r *verifiedReader) StatStagedPath(
 	if err != nil {
 		return StagedPathStat{}, err
 	}
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := r.parseReadPath(rawPath)
 	if err != nil {
 		return StagedPathStat{}, err
 	}
@@ -545,8 +544,7 @@ func (r *verifiedReader) StatStagedPath(
 		payload := resolution.Target
 		switch storageKind {
 		case "prefix":
-			payloadSegments := append(append([]string(nil), segments...), "@payload")
-			binding, err := r.resolveSegments(ctx, trustedRoot, payloadSegments)
+			binding, err := r.resolvePayloadSegments(ctx, trustedRoot, segments)
 			if err != nil {
 				return StagedPathStat{}, fmt.Errorf("resolve directory manifest: %w", err)
 			}

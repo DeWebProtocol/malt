@@ -16,6 +16,17 @@ type ChunkMetadata struct {
 	Profile   string `json:"profile"`
 	ChunkSize uint64 `json:"chunk_size,string"`
 	TotalSize uint64 `json:"total_size,string"`
+	// Mode is optional filesystem metadata, bound by the same payload CID.
+	Mode *uint32 `json:"mode,omitempty"`
+}
+
+// EncodeFileMetadata preserves mode-only updates as authenticated writes.
+func EncodeFileMetadata(total, chunk, count uint64, mode uint32) ([]byte, error) {
+	m := ChunkMetadata{Profile: ChunkMetadataProfile, ChunkSize: chunk, TotalSize: total, Mode: &mode}
+	if err := m.Validate(count); err != nil {
+		return nil, err
+	}
+	return json.Marshal(m)
 }
 
 func (m ChunkMetadata) Validate(count uint64) error {
