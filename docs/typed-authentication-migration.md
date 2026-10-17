@@ -56,8 +56,8 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.11-rc.1`, commit
-`704ee38cdafaa628b713b2965b6d407ab0e4205b`, for independent module builds. This source
+Native builds pin published Core `v0.0.11-rc.2`, commit
+`a8b0f9260ff025e834a803f87161685914604d11`, for independent module builds. This source
 integration is not a runtime or browser release.
 Prefix layout 4 authenticates original label bytes and targets. Coordinates
 route the tree lookup; distinct labels at the same full coordinate return an
