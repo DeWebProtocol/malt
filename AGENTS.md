@@ -181,6 +181,8 @@ This repository may be a standalone checkout or a pinned submodule of
 integration guide when working inside that checkout. Its ancestor `go.work`
 can substitute local modules, so check `go env GOWORK` and actual module
 directories before validation.
+The integration repository is the parent checkout, with its workspace at
+`../go.work` and its orchestration scripts at `../scripts/`.
 
 Use the integration root's `scripts/verify-go.sh` for pinned Go combinations.
 For development branches/worktrees, run the selected evaluator's boundary
