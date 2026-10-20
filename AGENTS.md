@@ -169,6 +169,26 @@ and consume public node/runtime capabilities.
 
 ## Validation
 
-Run `gofmt`, `git diff --check`, `go test ./...`, `go vet ./...`, and
-`go build -buildvcs=false ./...` before committing. Also run a Windows
-cross-build for changes to daemon lifecycle, locking, filesystem, or CLI code.
+For Go changes, run `gofmt`, `git diff --check`, `GOWORK=off go test ./...`,
+`GOWORK=off go vet ./...`, and `GOWORK=off go build -buildvcs=false ./...`
+before committing. Also run a Windows cross-build with `GOWORK=off` for changes
+to daemon lifecycle, locking, filesystem, or CLI code. Apply the shared host's
+resource limits to full-module checks. Documentation-only changes require
+relevant content checks and `git diff --check`, not a full Go suite.
+
+This repository may be a standalone checkout or a pinned submodule of
+`malt-integration`. Follow the parent `AGENTS.md` when present and the
+integration guide when working inside that checkout. Its ancestor `go.work`
+can substitute local modules, so check `go env GOWORK` and actual module
+directories before validation.
+
+Use the integration root's `scripts/verify-go.sh` for pinned Go combinations.
+For development branches/worktrees, run the selected evaluator's boundary
+checker with absolute `MALT_CORE_REPO`, `MALT_RUNTIME_REPO`, and `GATEWAY_REPO`
+paths and `MALT_INTEGRATION_REQUIRED=1`; record HEADs and dirty states.
+Standalone runtime checks and Gateway-owned product E2E remain separate
+validation boundaries.
+
+Use a topic branch and PR for runtime changes. Create a branch before editing
+a detached submodule, push child commits to this repository, and update
+integration Git links only in a separate reviewed integration change.
