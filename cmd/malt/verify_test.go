@@ -29,7 +29,7 @@ func TestVerifyCommandBindsTypedResultToSelectedRequest(t *testing.T) {
 	}
 	e := engine.New(profiles)
 	nodes := memory.NewNodes()
-	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte("docs/file"), Target: cid.MustParse("bafkqaaa")}}}, nodes)
+	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte("docs/file"), Target: cid.MustParse("bafkqaaa")}}}, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}

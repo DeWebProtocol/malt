@@ -198,7 +198,7 @@ type CandidatePublisher interface {
 }
 
 func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: g.profile}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: g.profile}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
@@ -218,7 +218,7 @@ func (g *recordingGraph) CreateStagedRoot(ctx context.Context, bindings map[stri
 	return g.record(ctx, state)
 }
 func (g *recordingGraph) CreatePositionalPayload(ctx context.Context, chunks []cid.Cid, payload cid.Cid) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: g.profile}, PayloadCID: payload}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.List, Profile: g.profile}, PayloadCID: payload}
 	for i, target := range chunks {
 		state.Entries = append(state.Entries, engine.Entry{Label: coordinate.EncodeIndex(uint64(i)), Target: target})
 	}

@@ -115,7 +115,7 @@ func newGatewayWritableBinding(ctx context.Context, opts gatewayWritableBindingO
 		return nil, fmt.Errorf("Gateway writable binding Spec and View do not match")
 	}
 	descriptor, _, err := maltcid.ParseRoot(opts.View.Root)
-	if err != nil || descriptor.Layout != maltcid.Prefix {
+	if err != nil || descriptor.Layout != maltcid.Map {
 		return nil, fmt.Errorf("Gateway writable binding requires an authenticated Prefix Root")
 	}
 	if nilInterface(opts.Base) || nilInterface(opts.Remote) || nilInterface(opts.Roots) || nilInterface(opts.WriterFactory) {
@@ -440,7 +440,7 @@ func validCandidateRoot(base, candidate cid.Cid) bool {
 		return false
 	}
 	next, _, err := maltcid.ParseRoot(candidate)
-	if err != nil || next.Layout != maltcid.Prefix {
+	if err != nil || next.Layout != maltcid.Map {
 		return false
 	}
 	old, _, err := maltcid.ParseRoot(base)

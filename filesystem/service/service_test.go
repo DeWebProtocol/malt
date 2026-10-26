@@ -289,7 +289,7 @@ func TestSelectedRootMismatchAndClosedHandleFailClosed(t *testing.T) {
 func testView(t *testing.T) View {
 	t.Helper()
 	root, err := maltcid.NewRoot(maltcid.RootDescriptor{
-		Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256,
+		Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256,
 	}, make([]byte, maltcid.IPACommitmentSize))
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +423,7 @@ func authenticatedFileResolution(t *testing.T, view *View, path string, payload 
 	}
 	e := engine.New(profiles)
 	nodes := memory.NewNodes()
-	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte(path), Target: payload}}}, nodes)
+	root, err := e.Build(t.Context(), engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte(path), Target: payload}}}, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}

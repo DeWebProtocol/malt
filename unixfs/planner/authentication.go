@@ -89,7 +89,7 @@ func (p *Planner) Prepare(ctx context.Context, base cid.Cid, operations []journa
 			if err != nil {
 				return err
 			}
-			if state.Descriptor.Layout != maltcid.Prefix || state.Descriptor.DerivationProfile != uint8(derivation.SHA256) {
+			if state.Descriptor.Layout != maltcid.Map || state.Descriptor.DerivationProfile != uint8(derivation.SHA256) {
 				return fmt.Errorf("directory input rule differs from selected layout")
 			}
 			entries += len(state.Entries)
@@ -136,7 +136,7 @@ func (p *Planner) Prepare(ctx context.Context, base cid.Cid, operations []journa
 					child.manifest = target
 				} else {
 					descriptor, _, err := maltcid.ParseRoot(target)
-					if err != nil || descriptor.Layout != maltcid.Prefix || descriptor.DerivationProfile != uint8(derivation.SHA256) {
+					if err != nil || descriptor.Layout != maltcid.Map || descriptor.DerivationProfile != uint8(derivation.SHA256) {
 						return fmt.Errorf("directory target differs from selected layout")
 					}
 					knownRoots[target.KeyString()] = true

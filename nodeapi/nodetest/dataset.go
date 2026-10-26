@@ -44,7 +44,7 @@ func RunDataset(t *testing.T, factory DatasetFactory) {
 			t.Fatal(err)
 		}
 		candidate, err := sdk.Prepare(t.Context(), e, engine.State{
-			Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256},
+			Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256},
 			Entries:    []engine.Entry{{Label: []byte("file"), Target: target}},
 		})
 		if err != nil {

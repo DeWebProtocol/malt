@@ -19,9 +19,9 @@ func StorageKindFromCID(c cid.Cid) string {
 		return ""
 	}
 	switch descriptor.Layout {
-	case maltcid.Prefix:
+	case maltcid.Map:
 		return "prefix"
-	case maltcid.Positional:
+	case maltcid.List:
 		return "positional"
 	default:
 		return ""

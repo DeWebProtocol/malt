@@ -628,7 +628,7 @@ func runtimeMALTMapRoot(t *testing.T, backend maltcid.BackendKind, marker byte) 
 	if backend == maltcid.BackendKindIPA {
 		profile = maltcid.IPA256
 	}
-	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: profile}, commitment)
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: profile}, commitment)
 	if err != nil {
 		t.Fatal(err)
 	}

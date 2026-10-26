@@ -64,7 +64,7 @@ func NewAuthenticationAdapter(layout LayoutKind, remote nodeapi.AuthenticationWr
 }
 func (a *AuthenticationAdapter) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
 	rule := uint8(derivation.SHA256)
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: rule, Profile: a.profile}, Entries: []engine.Entry{}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: rule, Profile: a.profile}, Entries: []engine.Entry{}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
@@ -125,7 +125,7 @@ func (a *AuthenticationAdapter) materialize(ctx context.Context, previous cid.Ci
 	return expected, nil
 }
 func (a *AuthenticationAdapter) CreatePositionalPayload(ctx context.Context, chunks []cid.Cid, payload cid.Cid) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: a.profile}, PayloadCID: payload, Entries: make([]engine.Entry, len(chunks))}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.List, Profile: a.profile}, PayloadCID: payload, Entries: make([]engine.Entry, len(chunks))}
 	for i, target := range chunks {
 		state.Entries[i] = engine.Entry{Label: coordinate.EncodeIndex(uint64(i)), Target: target}
 	}

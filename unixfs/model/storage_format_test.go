@@ -10,11 +10,11 @@ import (
 )
 
 func TestStorageKindFromCIDUsesTypedLayout(t *testing.T) {
-	mapRoot, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, make([]byte, maltcid.KZGCommitmentSize))
+	mapRoot, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, make([]byte, maltcid.KZGCommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	listRoot, err := maltcid.NewRoot(maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.Positional, Profile: maltcid.IPA256}, make([]byte, maltcid.IPACommitmentSize))
+	listRoot, err := maltcid.NewRoot(maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.List, Profile: maltcid.IPA256}, make([]byte, maltcid.IPACommitmentSize))
 	if err != nil {
 		t.Fatal(err)
 	}

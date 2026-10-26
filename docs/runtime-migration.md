@@ -23,7 +23,7 @@ not a current build contract. The original plan is available in
 
 The runtime's Go module namespace remains `github.com/dewebprotocol/malt-client`
 until its separately governed module migration. The module pins published Core
-`v0.0.11-rc.2` by its exact release version and module checksums. This dependency
+`v0.0.11-rc.4` by its exact release version and module checksums. This dependency
 update does not publish a runtime release or change frozen evaluator baselines.
 
 ## Preserved behavior

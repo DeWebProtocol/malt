@@ -99,7 +99,7 @@ func (r *realRemote) PutWithCodec(ctx context.Context, data []byte, codec uint64
 }
 
 func (r *realRemote) UpdateStagedRoot(ctx context.Context, previous cid.Cid, bindings map[string]string) (cid.Cid, error) {
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}}
 	names := make([]string, 0, len(bindings))
 	for name := range bindings {
 		names = append(names, name)
