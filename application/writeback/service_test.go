@@ -242,7 +242,7 @@ func newWritebackFixture(t *testing.T) *writebackFixture {
 	oldPayload := writebackRawCID(t, []byte("old"))
 	newBody := []byte("new")
 	newPayload := writebackRawCID(t, newBody)
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: []byte("payload"), Target: oldPayload}}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, Entries: []engine.Entry{{Label: []byte("payload"), Target: oldPayload}}}
 	base, err := authentication.Prepare(t.Context(), e, state)
 	if err != nil {
 		t.Fatal(err)

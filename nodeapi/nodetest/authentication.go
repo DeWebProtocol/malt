@@ -42,7 +42,7 @@ func RunAuthentication(t *testing.T, factory AuthenticationFactory) {
 	prepare := func(t *testing.T, label string) protocol.AuthenticationCandidate {
 		t.Helper()
 		state := engine.State{Descriptor: maltcid.RootDescriptor{
-			Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256,
+			Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256,
 		}, Entries: []engine.Entry{{Label: []byte(label), Target: cid.MustParse("bafkqaaa")}}}
 		candidate, err := sdk.Prepare(t.Context(), e, state)
 		if err != nil {
@@ -122,7 +122,7 @@ func RunAuthentication(t *testing.T, factory AuthenticationFactory) {
 		s := factory(t)
 		c := prepare(t, "unwritten")
 		bad := c
-		bad.State.Descriptor.Layout = maltcid.Positional
+		bad.State.Descriptor.Layout = maltcid.List
 		if _, err := s.MaterializeAuthentication(t.Context(), bad); err == nil {
 			t.Fatal("accepted mismatched Root/state descriptor")
 		}

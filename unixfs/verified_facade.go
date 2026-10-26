@@ -640,7 +640,7 @@ func (r *verifiedReader) readStatFile(ctx context.Context, stat *Stat, offset ui
 
 func (r *verifiedReader) ReadPositionalPayloadRange(ctx context.Context, trustedPositionalRoot cid.Cid, offset, length uint64) (*ReadResult, error) {
 	descriptor, _, parseErr := maltcid.ParseRoot(trustedPositionalRoot)
-	if parseErr != nil || descriptor.Layout != maltcid.Positional {
+	if parseErr != nil || descriptor.Layout != maltcid.List {
 		return nil, fmt.Errorf("%w: target %s is not a positional Root", ErrNotFile, trustedPositionalRoot)
 	}
 	return r.readTypedRange(ctx, trustedPositionalRoot, offset, &length, nil, nil)

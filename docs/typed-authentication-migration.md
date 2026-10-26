@@ -56,8 +56,8 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.11-rc.2`, commit
-`a8b0f9260ff025e834a803f87161685914604d11`, for independent module builds. This source
+Native builds pin published Core `v0.0.11-rc.4`, commit
+`595f1e05aa86b0339addaa0f0e2ac6672faa8e00`, for independent module builds. This source
 integration is not a runtime or browser release.
 Prefix layout 4 authenticates original label bytes and targets. Coordinates
 route the tree lookup; distinct labels at the same full coordinate return an
@@ -66,3 +66,9 @@ conversion path. Existing Prefix trees must be rebuilt from their original
 labels and targets, including parent roots that reference rebuilt children.
 New roots use the remote's advertised backend as an
 untrusted creation hint; updates preserve the existing Root descriptor.
+
+Core rc.4 names the authentication layouts Map (4) and List (3). It includes
+rc.3's empty-cell scalar-zero encoding: roots and proofs built with rc.2 or
+earlier must be regenerated from original inputs, including parents that refer
+to changed children. There is no compatibility reader or automatic migration.
+Runtime application layout names and Root V=0 remain unchanged.

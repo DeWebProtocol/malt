@@ -865,7 +865,7 @@ func (r *profileRemote) MaterializeAuthentication(ctx context.Context, candidate
 	if err := authentication.Materialize(ctx, r.engine, candidate, r.nodes); err != nil {
 		return cid.Undef, err
 	}
-	if candidate.State.Descriptor.Layout == maltcid.Prefix {
+	if candidate.State.Descriptor.Layout == maltcid.Map {
 		bindings := make(map[string]string)
 		for _, entry := range candidate.State.Entries {
 			label := string(entry.Label)
@@ -883,11 +883,11 @@ func (g *substitutingGraph) MaterializeAuthentication(ctx context.Context, candi
 	if err != nil {
 		return cid.Undef, err
 	}
-	if candidate.State.Descriptor.Layout == maltcid.Prefix && g.substituteMap {
+	if candidate.State.Descriptor.Layout == maltcid.Map && g.substituteMap {
 		g.substituteMap = false
 		return cid.MustParse("bafkqaaa"), nil
 	}
-	if candidate.State.Descriptor.Layout == maltcid.Positional && g.substituteList {
+	if candidate.State.Descriptor.Layout == maltcid.List && g.substituteList {
 		g.substituteList = false
 		return cid.MustParse("bafkqaaa"), nil
 	}

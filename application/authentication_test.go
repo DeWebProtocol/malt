@@ -55,7 +55,7 @@ func TestAuthenticationSelectsCallerRootAndVerifiesBeforeReturning(t *testing.T)
 		t.Fatal(err)
 	}
 	value := []byte("a/b")
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: value, Target: cid.MustParse("bafkqaaa")}}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: value, Target: cid.MustParse("bafkqaaa")}}}
 	candidate, err := app.Store(t.Context(), state, cid.Undef)
 	if err != nil {
 		t.Fatal(err)

@@ -53,5 +53,5 @@ func WriteChunkedFile(ctx context.Context, blocks FileBlockStore, roots nodeapi.
 	if expected, err := nodeapi.CIDForBlock(nodeapi.Block{Data: metadata, Codec: cid.Raw}); err != nil || !expected.Equals(payload) {
 		return cid.Undef, nodeapi.ErrCorruptedBlock
 	}
-	return roots.BuildAuthentication(ctx, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, DerivationProfile: uint8(derivation.Direct), Profile: profile}, PayloadCID: payload, Entries: entries})
+	return roots.BuildAuthentication(ctx, engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.List, DerivationProfile: uint8(derivation.Direct), Profile: profile}, PayloadCID: payload, Entries: entries})
 }

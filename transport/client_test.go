@@ -319,7 +319,7 @@ func (a *recordingAuthorizer) Authorize(request *http.Request) error {
 
 func testAuthenticationRoot(t *testing.T) cid.Cid {
 	t.Helper()
-	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, make([]byte, 32))
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

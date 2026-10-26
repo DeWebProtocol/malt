@@ -44,7 +44,7 @@ func fixture(t *testing.T) Plan {
 	if err := registry.Register(scheme); err != nil {
 		t.Fatal(err)
 	}
-	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte("name"), Target: cid.MustParse("bafkqaaa")}}}
+	state := engine.State{Descriptor: maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}, Entries: []engine.Entry{{Label: []byte("name"), Target: cid.MustParse("bafkqaaa")}}}
 	candidate, err := authentication.Prepare(t.Context(), engine.New(registry), state)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestPlanOrdersPositionalMetadataDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent, err := authentication.Prepare(t.Context(), engine.New(registry), engine.State{
-		Descriptor: maltcid.RootDescriptor{Layout: maltcid.Positional, DerivationProfile: uint8(derivation.Direct), Profile: maltcid.IPA256},
+		Descriptor: maltcid.RootDescriptor{Layout: maltcid.List, DerivationProfile: uint8(derivation.Direct), Profile: maltcid.IPA256},
 		PayloadCID: cid.MustParse(child.Root),
 	})
 	if err != nil {

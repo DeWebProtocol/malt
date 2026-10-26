@@ -46,7 +46,7 @@ func TestExplicitCIDContentCommandsDoNotOpenBrokenTrustStore(t *testing.T) {
 	catCmd.SetContext(t.Context())
 	rmCmd.SetContext(t.Context())
 
-	selected, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, make([]byte, 48))
+	selected, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Map, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.KZG4096}, make([]byte, 48))
 	if err != nil {
 		t.Fatal(err)
 	}
