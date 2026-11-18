@@ -2,9 +2,9 @@
 
 The runtime uses the sole current Core path: `derivation`, `auth/tree`,
 `engine`, explicit traversal, and `sdk/authentication`. Native HTTP queries
-use `malt.authentication/5`; candidates use `malt.authentication/4`. Ordered
-writes use `malt.authentication-batch/2` and exact
-`malt.authentication-receipt/2` checks. No old Resolve/Read, Map-proof,
+use `malt.authentication/5`; candidates use `malt.authentication/6`. Ordered
+writes use `malt.authentication-batch/3` and exact
+`malt.authentication-receipt/3` checks. No old Resolve/Read, Map-proof,
 UpdateView, semantic intent, client-root bundle, or WASM fallback is used.
 
 ## Reads and application layouts
@@ -56,19 +56,10 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin published Core `v0.0.11-rc.4`, commit
-`595f1e05aa86b0339addaa0f0e2ac6672faa8e00`, for independent module builds. This source
-integration is not a runtime or browser release.
-Prefix layout 4 authenticates original label bytes and targets. Coordinates
-route the tree lookup; distinct labels at the same full coordinate return an
-error. Retired Prefix layout 1 is rejected without a compatibility reader or
-conversion path. Existing Prefix trees must be rebuilt from their original
-labels and targets, including parent roots that reference rebuilt children.
-New roots use the remote's advertised backend as an
-untrusted creation hint; updates preserve the existing Root descriptor.
-
-Core rc.4 names the authentication layouts Map (4) and List (3). It includes
-rc.3's empty-cell scalar-zero encoding: roots and proofs built with rc.2 or
-earlier must be regenerated from original inputs, including parents that refer
-to changed children. There is no compatibility reader or automatic migration.
-Runtime application layout names and Root V=0 remain unchanged.
+Native builds pin Core `v0.0.12-rc.2` at commit
+`0c5dc0029bd89180f1ff9c8f87857c17aef6a094`. Map layout 1 authenticates
+original labels and targets. List layout 2 authenticates contiguous indices.
+Both use Root V=0. When upgrading from layouts 4/3, rebuild trees from the
+original inputs, including parents that reference rebuilt children, and
+regenerate proofs. New roots use the remote's advertised backend as an
+untrusted creation hint. Updates preserve the existing Root descriptor.
