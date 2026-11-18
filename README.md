@@ -639,5 +639,5 @@ and no CAS-transfer latency or full-file read measurement is claimed.
 An upload batch and its writeback result expose `TransactionID`. The batch
 contains individually journaled filesystem operations, whose `OperationID`
 identifies an intent rather than a Delta transaction. Core authentication batches and receipts use `transaction_id` with
-`malt.authentication-batch/2` and `malt.authentication-receipt/2`. A candidate receipt does not publish
+`malt.authentication-batch/3` and `malt.authentication-receipt/3`. A candidate receipt does not publish
 a Bucket head or promote an accepted root.
