@@ -22,9 +22,9 @@ not a current build contract. The original plan is available in
 | Evaluation workers | Moved to `malt-evaluation/adapters/node/cmd`; consume public node/runtime capabilities |
 
 The runtime's Go module namespace remains `github.com/dewebprotocol/malt-client`
-until its separately governed module migration. The module pins published Core
-`v0.0.12-rc.2` by its exact release version and module checksums. This dependency
-update does not publish a runtime release or change frozen evaluator baselines.
+until its separately governed module migration. The module pins the Core ProofList implementation by exact revision in
+`go.mod` and by checksum in `go.sum`. Native queries request the compact
+response and pass the caller-selected request to Core for decoding.
 
 ## Preserved behavior
 

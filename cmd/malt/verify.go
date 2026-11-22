@@ -16,7 +16,8 @@ var verifyCmd = &cobra.Command{
 	Short: "Verify typed authentication against a caller-selected request",
 	Long: `Verify an authentication result against an independently selected request.
 The request JSON fixes the Root, explicit typed steps, and resolve, binding,
-or range operation. The result JSON may be read from a file or stdin.
+or range operation. Read the result from a file or stdin. For a compact
+binary ProofList, pass --result-format prooflist.
 Successful verification authenticates bindings; it does not accept a root.`,
 	Args: cobra.NoArgs,
 	RunE: runVerify,
@@ -24,7 +25,8 @@ Successful verification authenticates bindings; it does not accept a root.`,
 
 func init() {
 	verifyCmd.Flags().String("request", "", "Caller-selected authentication request JSON")
-	verifyCmd.Flags().String("result", "", "Authentication result JSON file or - for stdin")
+	verifyCmd.Flags().String("result", "", "Authentication result file or - for stdin")
+	verifyCmd.Flags().String("result-format", "json", "Result encoding (json or prooflist)")
 	_ = verifyCmd.MarkFlagRequired("request")
 	_ = verifyCmd.MarkFlagRequired("result")
 	rootCmd.AddCommand(verifyCmd)
@@ -44,11 +46,20 @@ func runVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("decode selected authentication request: %w", err)
 	}
-	resultJSON, err := readVerificationInput(cmd, resultPath)
+	body, err := readVerificationInput(cmd, resultPath)
 	if err != nil {
 		return err
 	}
-	result, err := protocol.DecodeAuthenticationResult(resultJSON)
+	format, _ := cmd.Flags().GetString("result-format")
+	var result protocol.AuthenticationResult
+	switch format {
+	case "json":
+		result, err = protocol.DecodeAuthenticationResult(body)
+	case "prooflist":
+		result, err = protocol.DecodeProofList(request, body)
+	default:
+		return fmt.Errorf("unknown result format %q", format)
+	}
 	if err != nil {
 		return fmt.Errorf("decode authentication result: %w", err)
 	}
@@ -85,7 +96,7 @@ func readVerificationInput(cmd *cobra.Command, path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > protocol.MaxVerificationJSONBytes {
-		return nil, fmt.Errorf("verification JSON exceeds size limit")
+		return nil, fmt.Errorf("verification input exceeds size limit")
 	}
 	return data, nil
 }

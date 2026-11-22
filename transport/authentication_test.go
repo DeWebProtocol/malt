@@ -7,21 +7,66 @@ import (
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/transport"
+	"github.com/dewebprotocol/malt-core/auth/arcset/materializer/memory"
+	"github.com/dewebprotocol/malt-core/auth/commitment/ipa"
 	"github.com/dewebprotocol/malt-core/auth/coordinate"
 	"github.com/dewebprotocol/malt-core/derivation"
 	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
-	"github.com/dewebprotocol/malt-core/traversal"
+	"github.com/dewebprotocol/malt-core/sdk/authentication"
+	cid "github.com/ipfs/go-cid"
 )
 
-func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testing.T) {
-	descriptor := maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.List, Profile: maltcid.IPA256}
-	root, err := maltcid.NewRoot(descriptor, make([]byte, 32))
+func bindingFixture(t *testing.T, layout maltcid.Layout, label []byte, target cid.Cid) (cid.Cid, []byte) {
+	t.Helper()
+	scheme, err := ipa.NewCommitterScheme(ipa.ProfileDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
+	registry := engine.NewRegistry()
+	if err := registry.Register(scheme); err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(registry)
+	d := maltcid.RootDescriptor{Layout: layout, DerivationProfile: uint8(derivation.SHA256), Profile: maltcid.IPA256}
+	if layout == maltcid.List {
+		d.DerivationProfile = uint8(derivation.Direct)
+	}
+	state := engine.State{Descriptor: d}
+	if target.Defined() {
+		state.Entries = []engine.Entry{{Label: label, Target: target}}
+	}
+	nodes := memory.NewNodes()
+	root, err := e.Build(t.Context(), state, nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := protocol.AuthenticationRequest{Profile: protocol.AuthenticationPathProfile, Root: root.String(), Operation: "binding", Label: &label}
+	result, err := authentication.Execute(t.Context(), e, q, nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := protocol.EncodeProofList(q, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, wire
+}
+
+func writeProofList(t *testing.T, w http.ResponseWriter, r *http.Request, wire []byte) {
+	t.Helper()
+	if r.Header.Get("Accept") != protocol.ProofListMediaType {
+		t.Error("missing ProofList media type")
+	}
+	w.Header().Set("Content-Type", protocol.ProofListMediaType)
+	_, _ = w.Write(wire)
+}
+
+func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testing.T) {
+	descriptor := maltcid.RootDescriptor{DerivationProfile: uint8(derivation.Direct), Layout: maltcid.List, Profile: maltcid.IPA256}
 	index := coordinate.EncodeIndex(^uint64(0))
+	root, wire := bindingFixture(t, maltcid.List, index, cid.Undef)
 	var observed protocol.AuthenticationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -30,7 +75,7 @@ func TestAuthenticationTransportPreservesUint64AndRejectsChangedReceipt(t *testi
 			if err := raw.Decode(&observed); err != nil {
 				t.Error(err)
 			}
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: root.String(), Traversal: traversal.Traversal{Results: []engine.Result{}}})
+			writeProofList(t, w, r, wire)
 		case "/v1/authentication/candidates":
 			_ = json.NewEncoder(w).Encode(map[string]string{"profile": protocol.AuthenticationProfile, "root": "bafkqaaa"})
 		default:

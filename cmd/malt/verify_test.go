@@ -39,6 +39,10 @@ func TestVerifyCommandBindsTypedResultToSelectedRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	resultJSON, _ := json.Marshal(result)
+	binary, err := protocol.EncodeProofList(q, result)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name   string
 		change func(*protocol.AuthenticationRequest)
@@ -61,19 +65,22 @@ func TestVerifyCommandBindsTypedResultToSelectedRequest(t *testing.T) {
 			if err := os.WriteFile(path, requestJSON, 0600); err != nil {
 				t.Fatal(err)
 			}
-			cmd := &cobra.Command{}
-			cmd.SetContext(t.Context())
-			cmd.Flags().String("request", path, "")
-			cmd.Flags().String("result", "-", "")
-			cmd.SetIn(bytes.NewReader(resultJSON))
-			var output bytes.Buffer
-			cmd.SetOut(&output)
-			err := runVerify(cmd, nil)
-			if test.valid && (err != nil || output.String() != "valid: true\n") {
-				t.Fatalf("verification: %q %v", output.String(), err)
-			}
-			if !test.valid && err == nil {
-				t.Fatal("unbound result accepted")
+			for format, body := range map[string][]byte{"json": resultJSON, "prooflist": binary} {
+				cmd := &cobra.Command{}
+				cmd.SetContext(t.Context())
+				cmd.Flags().String("request", path, "")
+				cmd.Flags().String("result", "-", "")
+				cmd.Flags().String("result-format", format, "")
+				cmd.SetIn(bytes.NewReader(body))
+				var output bytes.Buffer
+				cmd.SetOut(&output)
+				err := runVerify(cmd, nil)
+				if test.valid && (err != nil || output.String() != "valid: true\n") {
+					t.Fatalf("verification: %q %v", output.String(), err)
+				}
+				if !test.valid && err == nil {
+					t.Fatal("unbound result accepted")
+				}
 			}
 		})
 	}
