@@ -33,6 +33,10 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, _ []string) error {
+	format, _ := cmd.Flags().GetString("result-format")
+	if format != "json" && format != "prooflist" {
+		return fmt.Errorf("unknown result format %q", format)
+	}
 	requestPath, _ := cmd.Flags().GetString("request")
 	resultPath, _ := cmd.Flags().GetString("result")
 	if requestPath == "-" && resultPath == "-" {
@@ -50,15 +54,11 @@ func runVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	format, _ := cmd.Flags().GetString("result-format")
 	var result protocol.AuthenticationResult
-	switch format {
-	case "json":
-		result, err = protocol.DecodeAuthenticationResult(body)
-	case "prooflist":
+	if format == "prooflist" {
 		result, err = protocol.DecodeProofList(request, body)
-	default:
-		return fmt.Errorf("unknown result format %q", format)
+	} else {
+		result, err = protocol.DecodeAuthenticationResult(body)
 	}
 	if err != nil {
 		return fmt.Errorf("decode authentication result: %w", err)

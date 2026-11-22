@@ -18,6 +18,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func TestVerifyRejectsUnknownFormatBeforeReadingInput(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, paths := range [][2]string{{"-", missing}, {missing, "-"}} {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("request", paths[0], "")
+		cmd.Flags().String("result", paths[1], "")
+		cmd.Flags().String("result-format", "prooflis", "")
+		input := bytes.NewBufferString("unread")
+		cmd.SetIn(input)
+		if err := runVerify(cmd, nil); err == nil || err.Error() != `unknown result format "prooflis"` {
+			t.Fatalf("request %q, result %q: got %v", paths[0], paths[1], err)
+		}
+		if input.String() != "unread" {
+			t.Fatal("invalid format consumed stdin")
+		}
+	}
+}
+
 func TestVerifyCommandBindsTypedResultToSelectedRequest(t *testing.T) {
 	scheme, err := ipa.NewCommitterScheme(ipa.ProfileDirect)
 	if err != nil {
