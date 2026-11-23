@@ -19,11 +19,15 @@ func (c *Client) Authenticate(ctx context.Context, q protocol.AuthenticationRequ
 	if err := q.Validate(); err != nil {
 		return nil, err
 	}
-	var raw json.RawMessage
-	if err := c.doNative(ctx, http.MethodPost, "/v1/authentication/query", nil, q, &raw); err != nil {
+	request, err := json.Marshal(q)
+	if err != nil {
 		return nil, err
 	}
-	result, err := protocol.DecodeAuthenticationResult(raw)
+	raw, err := c.postProfile(ctx, "/v1/authentication/query", request, protocol.ProofListMediaType)
+	if err != nil {
+		return nil, err
+	}
+	result, err := protocol.DecodeProofList(q, raw)
 	if err != nil {
 		return nil, err
 	}

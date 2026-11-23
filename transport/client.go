@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -376,16 +377,16 @@ func (c *Client) doRawWithAuth(ctx context.Context, method, route string, query 
 // compatibility route. The request and response remain untrusted profile JSON;
 // the merkledag application owns their strict codec and local replay.
 func (c *Client) PostMerkleDAGResolve(ctx context.Context, request []byte) ([]byte, error) {
-	return c.postProfileJSON(ctx, "/v1/compat/merkledag/resolve", request)
+	return c.postProfile(ctx, "/v1/compat/merkledag/resolve", request, "")
 }
 
 // PostMerkleDAGRead sends one request to the fixed Merkle-DAG read
 // compatibility route. It cannot be used to address arbitrary gateway routes.
 func (c *Client) PostMerkleDAGRead(ctx context.Context, request []byte) ([]byte, error) {
-	return c.postProfileJSON(ctx, "/v1/compat/merkledag/read", request)
+	return c.postProfile(ctx, "/v1/compat/merkledag/read", request, "")
 }
 
-func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte) ([]byte, error) {
+func (c *Client) postProfile(ctx context.Context, route string, body []byte, accept string) ([]byte, error) {
 	u, err := c.endpoint(c.nativeRoute(route))
 	if err != nil {
 		return nil, err
@@ -395,6 +396,9 @@ func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
 	resp, err := c.send(req, c.bucketID != "")
 	if err != nil {
 		return nil, err
@@ -403,7 +407,13 @@ func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, c.responseError(resp)
 	}
-	return readBounded(resp.Body, c.maxJSONResponseBytes, "gateway profile JSON response")
+	if accept != "" {
+		mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		if err != nil || mediaType != accept {
+			return nil, fmt.Errorf("unexpected gateway profile Content-Type %q, expected %s", resp.Header.Get("Content-Type"), accept)
+		}
+	}
+	return readBounded(resp.Body, c.maxJSONResponseBytes, "gateway profile response")
 }
 
 func (c *Client) execute(req *http.Request, out any) error {

@@ -56,9 +56,10 @@ new versioned measurement fields. Source workspace validation is not release
 publication. The runtime module namespace/tag gate and exact downstream
 release pins remain separate from this source migration.
 
-Native builds pin Core `v0.0.12-rc.2` at commit
-`0c5dc0029bd89180f1ff9c8f87857c17aef6a094`. Map layout 1 authenticates
-original labels and targets. List layout 2 authenticates contiguous indices.
+Native builds use the Core revision in `go.mod`. The transport requests
+`application/vnd.malt.prooflist.v1`; `malt verify --result-format prooflist`
+verifies a saved binary response against its original request. Map layout 1 authenticates
+original labels and targets. List layout 2 authenticates indices and holes below the count.
 Both use Root V=0. When upgrading from layouts 4/3, rebuild trees from the
 original inputs, including parents that reference rebuilt children, and
 regenerate proofs. New roots use the remote's advertised backend as an

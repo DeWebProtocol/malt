@@ -13,10 +13,8 @@ import (
 	"github.com/dewebprotocol/malt-client/internal/cas"
 	client "github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-core/derivation"
-	"github.com/dewebprotocol/malt-core/engine"
 	"github.com/dewebprotocol/malt-core/maltcid"
 	"github.com/dewebprotocol/malt-core/protocol"
-	"github.com/dewebprotocol/malt-core/traversal"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -56,8 +54,8 @@ func TestClientExposesFixedMerkleDAGRoutesWithoutArbitraryProfileEscapeHatch(t *
 }
 
 func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
-	root := testAuthenticationRoot(t)
 	target := mustBlockCID(t, []byte("target"))
+	root, wire := bindingFixture(t, maltcid.Map, []byte("name"), target)
 	payload := []byte("payload")
 	payloadCID := mustBlockCID(t, payload)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +68,7 @@ func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 			if request.Root != root.String() || request.Operation != "binding" || request.Label == nil || string(*request.Label) != "name" {
 				t.Fatalf("resolve request = %#v", request)
 			}
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String(), Traversal: traversal.Traversal{Results: []engine.Result{}}})
+			writeProofList(t, w, r, wire)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/cas":
 			body, _ := io.ReadAll(r.Body)
 			if string(body) != string(payload) {
@@ -92,8 +90,8 @@ func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Resolved != target.String() {
-		t.Fatalf("target = %q, want %q", result.Resolved, target)
+	if result.Resolved != root.String() || result.Binding == nil || !result.Binding.Target.Equals(target) {
+		t.Fatalf("unexpected binding result %+v", result)
 	}
 	put, err := transport.Put(t.Context(), payload)
 	if err != nil {

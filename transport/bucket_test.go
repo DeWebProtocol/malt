@@ -12,14 +12,12 @@ import (
 
 	"github.com/dewebprotocol/malt-client/nodeapi"
 	client "github.com/dewebprotocol/malt-client/transport"
-	"github.com/dewebprotocol/malt-core/engine"
-	"github.com/dewebprotocol/malt-core/protocol"
-	"github.com/dewebprotocol/malt-core/traversal"
+	"github.com/dewebprotocol/malt-core/maltcid"
 )
 
 func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
-	root := testAuthenticationRoot(t)
 	target := mustBlockCID(t, []byte("target"))
+	root, wire := bindingFixture(t, maltcid.Map, []byte("docs"), target)
 	baseText, err := root.StringOfBase('z') // base58btc instead of CID's default base32
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +34,7 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/buckets/bkt_one/authentication/query":
-			_ = json.NewEncoder(w).Encode(protocol.AuthenticationResult{Profile: protocol.AuthenticationPathProfile, Resolved: target.String(), Traversal: traversal.Traversal{Results: []engine.Result{}}})
+			writeProofList(t, w, r, wire)
 		case "/v1/buckets/bkt_one/head":
 			_ = json.NewEncoder(w).Encode(client.BucketRef{
 				BucketID: "bkt_one", Name: "main", Kind: "main", State: "open",
@@ -90,7 +88,7 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolved, err := transport.Authenticate(t.Context(), testAuthenticationQuery(root, "docs"))
-	if err != nil || resolved.Resolved != target.String() {
+	if err != nil || resolved.Binding == nil || !resolved.Binding.Target.Equals(target) {
 		t.Fatalf("resolve result=%#v err=%v", resolved, err)
 	}
 	if head, err := transport.BucketHead(t.Context()); err != nil || head.Revision != 2 {
